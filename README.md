@@ -15,22 +15,13 @@ Error: Detached while handling command
 
 This happens because the official extension uses a **single shared state** for all sessions. When Session A takes a screenshot, Session B's connection gets "detached."
 
-### Official Claude in Chrome: Pros & Cons
-
-| Pros | Cons |
-|------|------|
-| ✅ Official Anthropic support | ❌ Single session only |
-| ✅ Auto-updates via Chrome Web Store | ❌ Sessions conflict with each other |
-| ✅ Easy one-click install | ❌ "Detached" errors in parallel workflows |
-| ✅ Integrated with Claude Code | ❌ No session isolation |
-| ✅ Native MCP protocol support | ❌ Cannot run concurrent browser automation |
-
 ## The Solution
 
 **Claude Chrome Parallel** solves this by implementing:
 
-- **Session Isolation**: Each Claude Code instance gets its own tab group
-- **Independent CDP Connections**: No shared state between sessions
+- **Direct CDP Connection**: Uses Chrome DevTools Protocol via puppeteer-core
+- **Session Isolation**: Each Claude Code instance gets its own browser context
+- **Independent Tab Management**: No shared state between sessions
 - **Request Queuing**: Per-session request ordering prevents race conditions
 - **MCP Compatible**: Drop-in replacement for Claude in Chrome tools
 
@@ -38,18 +29,67 @@ This happens because the official extension uses a **single shared state** for a
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              Claude Chrome Parallel Extension                    │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │              Session Manager                              │    │
-│  │  ┌─────────────┬─────────────┬─────────────────┐        │    │
-│  │  │  Session A  │  Session B  │  Session C      │        │    │
-│  │  │  TabGroup 1 │  TabGroup 2 │  TabGroup 3     │        │    │
-│  │  │  CDP Conn 1 │  CDP Conn 2 │  CDP Conn 3     │        │    │
-│  │  │  Queue 1    │  Queue 2    │  Queue 3        │        │    │
-│  │  └─────────────┴─────────────┴─────────────────┘        │    │
-│  └─────────────────────────────────────────────────────────┘    │
+│                     Chrome Browser                               │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │  Session A  │  │  Session B  │  │  Session C  │              │
+│  │   Tab 1     │  │   Tab 1     │  │   Tab 1     │              │
+│  │   Tab 2     │  │   Tab 2     │  │             │              │
+│  └─────────────┘  └─────────────┘  └─────────────┘              │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ CDP (WebSocket)
+┌──────────────────────────┴──────────────────────────────────────┐
+│                  claude-chrome-parallel                          │
+│                      MCP Server                                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │  Session A  │  │  Session B  │  │  Session C  │              │
+│  │  Manager    │  │  Manager    │  │  Manager    │              │
+│  └─────────────┘  └─────────────┘  └─────────────┘              │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ stdio (JSON-RPC)
+┌──────────────────────────┴──────────────────────────────────────┐
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │ Claude Code │  │ Claude Code │  │ Claude Code │              │
+│  │  Terminal 1 │  │  Terminal 2 │  │  Terminal 3 │              │
+│  └─────────────┘  └─────────────┘  └─────────────┘              │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Master-Worker Architecture (v2.0)
+
+For **true parallelism** across multiple terminal processes, v2.0 introduces a Master-Worker architecture:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Master Process                         │
+│                                                          │
+│  ┌──────────────┐  ┌─────────────────┐                  │
+│  │  CDPClient   │  │ SessionRegistry │                  │
+│  │  (single)    │  │   (central)     │                  │
+│  └──────────────┘  └─────────────────┘                  │
+│                                                          │
+│  ┌──────────────────────────────────┐                   │
+│  │   IPC Server (Named Pipe/Socket) │                   │
+│  └──────────────────────────────────┘                   │
+└────────────────────┬────────────────────────────────────┘
+                     │ IPC
+       ┌─────────────┼─────────────┐
+       │             │             │
+   Worker A      Worker B      Worker C
+   (MCP stdio)   (MCP stdio)   (MCP stdio)
+   ↑             ↑             ↑
+   Claude 1      Claude 2      Claude 3
+```
+
+**Key Benefits:**
+- **Single Chrome Connection**: Master holds the only CDP connection
+- **No Detached Errors**: Workers delegate to Master via IPC
+- **Session Isolation**: Each worker gets isolated sessions
+- **Auto-Start**: Workers automatically start Master if needed
+
+**Modes:**
+- `serve` (default): Worker mode, connects to Master
+- `serve --master`: Master mode, holds Chrome connection
+- `serve --standalone`: Original mode, direct Chrome connection
 
 ## Installation
 
@@ -57,31 +97,34 @@ This happens because the official extension uses a **single shared state** for a
 
 - Node.js 18+
 - Google Chrome
-- Claude Code CLI
 
-### Install via npm
+### Option 1: Install from npm (after publish)
 
 ```bash
-# Install globally
 npm install -g claude-chrome-parallel
-
-# Run installer (sets up extension + native messaging host)
-claude-chrome-parallel install
 ```
 
-### Manual Chrome Setup
+### Option 2: Install from GitHub
 
-After installation, you need to load the extension in Chrome:
+```bash
+npm install -g github:shaun0927/claude-chrome-parallel
+```
 
-1. Open `chrome://extensions/`
-2. Enable **Developer mode** (top right toggle)
-3. Click **Load unpacked**
-4. Select `~/.claude-chrome-parallel/extension/`
-5. Note the Extension ID for configuration
+### Option 3: Install from local clone
+
+```bash
+git clone https://github.com/shaun0927/claude-chrome-parallel.git
+cd claude-chrome-parallel
+npm install
+npm run build
+npm install -g .
+```
 
 ### Configure Claude Code
 
-Add to your Claude Code MCP settings (`~/.claude/settings.json`):
+Add to your Claude Code config file (`~/.claude.json`):
+
+Find the `"mcpServers"` section and add `chrome-parallel`:
 
 ```json
 {
@@ -89,10 +132,17 @@ Add to your Claude Code MCP settings (`~/.claude/settings.json`):
     "chrome-parallel": {
       "command": "claude-chrome-parallel",
       "args": ["serve"]
-    }
+    },
+    ...existing servers...
   }
 }
 ```
+
+### Restart Claude Code
+
+After configuration, **restart Claude Code** for changes to take effect.
+
+Verify with `/mcp` command - you should see `chrome-parallel` in the server list.
 
 ## Usage
 
@@ -122,9 +172,31 @@ claude
 ```
 
 Each session automatically:
-- Creates its own Chrome tab group
+- Creates its own browser tabs
 - Manages independent CDP connections
 - Queues requests to prevent conflicts
+
+### CLI Commands
+
+```bash
+# Start as Worker (default, connects to Master via IPC)
+claude-chrome-parallel serve
+
+# Start as Master (holds Chrome connection, workers connect to it)
+claude-chrome-parallel serve --master
+
+# Start in standalone mode (original behavior, no Master/Worker)
+claude-chrome-parallel serve --standalone
+
+# Start with custom Chrome debugging port
+claude-chrome-parallel serve --port 9223
+
+# Check Chrome and Master status
+claude-chrome-parallel check
+
+# Show architecture information
+claude-chrome-parallel info
+```
 
 ### Available Tools
 
@@ -133,16 +205,13 @@ All standard Claude in Chrome tools are supported:
 | Tool | Description |
 |------|-------------|
 | `tabs_context_mcp` | Get session's available tabs |
-| `tabs_create_mcp` | Create new tab in session's group |
-| `navigate` | Navigate to URL |
+| `tabs_create_mcp` | Create new tab in session |
+| `navigate` | Navigate to URL or use history |
 | `read_page` | Read accessibility tree |
 | `computer` | Click, type, screenshot, scroll |
 | `form_input` | Fill form fields |
 | `find` | Find elements by description |
 | `javascript_tool` | Execute JavaScript |
-| `read_console_messages` | Read console logs |
-| `read_network_requests` | Monitor network |
-| `gif_creator` | Record browser actions as GIF |
 
 ## How It Works
 
@@ -160,24 +229,18 @@ const sessionId = crypto.randomUUID();
   "params": {
     "sessionId": "550e8400-e29b-41d4-a716-446655440000",
     "name": "computer",
-    "arguments": { "action": "screenshot", "tabId": 123 }
+    "arguments": { "action": "screenshot", "tabId": "ABC123" }
   }
 }
 ```
 
-### Tab Group Isolation
+### Session Isolation
 
-Sessions are isolated by Chrome Tab Groups:
+Sessions are completely isolated:
 
-```
-┌─────────────────────────────────────────────────────┐
-│ Chrome Window                                        │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ │
-│  │ Session A    │ │ Session B    │ │ Session C    │ │
-│  │ [Tab1][Tab2] │ │ [Tab3][Tab4] │ │ [Tab5]       │ │
-│  └──────────────┘ └──────────────┘ └──────────────┘ │
-└─────────────────────────────────────────────────────┘
-```
+- Session A cannot access tabs created by Session B
+- Each session maintains its own element references
+- Request queues are per-session
 
 ### Request Queuing
 
@@ -197,50 +260,44 @@ Queue B: [navigate] → [read_page]
 |---------|-----------------|----------------------|
 | Parallel sessions | ❌ | ✅ |
 | Session isolation | ❌ | ✅ |
-| Tab group per session | ❌ | ✅ |
-| Independent CDP | ❌ | ✅ |
+| Independent tabs | ❌ | ✅ |
 | Request queuing | ❌ | ✅ |
 | MCP compatible | ✅ | ✅ |
-| Auto-update | ✅ | Manual (npm update) |
-| Chrome Web Store | ✅ | Developer mode |
+| No extension needed | ❌ | ✅ |
+| Auto Chrome launch | ❌ | ✅ |
+
+## Chrome Configuration
+
+By default, the package connects to Chrome on port 9222. If Chrome is not running with remote debugging, the package will attempt to start it automatically.
+
+To manually start Chrome with remote debugging:
+
+```bash
+# Windows
+chrome.exe --remote-debugging-port=9222
+
+# macOS
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+
+# Linux
+google-chrome --remote-debugging-port=9222
+```
 
 ## Troubleshooting
 
-### Extension not loading
+### Chrome not connecting
 
 ```bash
-# Reinstall extension files
-claude-chrome-parallel install --force
+# Check if Chrome is running with remote debugging
+claude-chrome-parallel check
+
+# Start Chrome manually with debugging enabled
+chrome --remote-debugging-port=9222
 ```
 
-### Native messaging errors
+### Session conflicts (should not happen)
 
-```bash
-# Check host registration
-claude-chrome-parallel doctor
-```
-
-### Session conflicts
-
-```bash
-# List active sessions
-claude-chrome-parallel sessions
-
-# Clear stale sessions
-claude-chrome-parallel sessions --clear
-```
-
-## Uninstallation
-
-```bash
-# Remove extension and native host
-claude-chrome-parallel uninstall
-
-# Remove npm package
-npm uninstall -g claude-chrome-parallel
-```
-
-Then manually remove the extension from `chrome://extensions/`.
+If you experience session conflicts, the isolation may not be working correctly. Please report an issue.
 
 ## Development
 
@@ -252,19 +309,16 @@ cd claude-chrome-parallel
 # Install dependencies
 npm install
 
-# Build extension
+# Build
 npm run build
 
 # Run tests
 npm test
 
-# Development mode (watch)
-npm run dev
+# Run E2E tests
+npx ts-node scripts/e2e-test.ts
+npx ts-node scripts/parallel-test.ts
 ```
-
-## Contributing
-
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md).
 
 ## License
 
@@ -283,4 +337,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - [Anthropic](https://anthropic.com) for Claude and the MCP protocol
 - [Claude Code](https://github.com/anthropics/claude-code) for the amazing CLI
-- The open-source community for inspiration and feedback
+- [Puppeteer](https://pptr.dev/) for the browser automation library
