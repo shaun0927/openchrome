@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 /**
  * Tests for RequestQueue
  */

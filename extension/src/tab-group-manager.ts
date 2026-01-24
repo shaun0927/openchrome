@@ -2,7 +2,7 @@
  * Tab Group Manager - Manages Chrome tab groups for session isolation
  */
 
-import { TAB_GROUP_COLORS } from './types/session';
+import { TAB_GROUP_COLORS, TabGroupColor } from './types/session';
 
 export class TabGroupManager {
   private sessionToGroup: Map<string, number> = new Map();
@@ -207,7 +207,7 @@ export class TabGroupManager {
   /**
    * Get next color in rotation
    */
-  private getNextColor(): chrome.tabGroups.ColorEnum {
+  private getNextColor(): TabGroupColor {
     const color = TAB_GROUP_COLORS[this.colorIndex % TAB_GROUP_COLORS.length];
     this.colorIndex++;
     return color;

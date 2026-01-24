@@ -2,7 +2,7 @@
  * Session Manager - Manages lifecycle of parallel Claude Code sessions
  */
 
-import type { Session, SessionCreateOptions, SessionInfo, SessionEvent } from './types/session';
+import type { Session, SessionCreateOptions, SessionInfo, SessionEvent, TabGroupColor } from './types/session';
 import { TAB_GROUP_COLORS } from './types/session';
 import { TabGroupManager } from './tab-group-manager';
 import { CDPConnectionPool } from './cdp-pool';
@@ -253,7 +253,7 @@ export class SessionManager {
     sessionId: string,
     tabId: number,
     method: string,
-    params?: object
+    params?: { [key: string]: unknown }
   ): Promise<T> {
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -379,7 +379,7 @@ export class SessionManager {
   /**
    * Get next color in rotation
    */
-  private getNextColor(): chrome.tabGroups.ColorEnum {
+  private getNextColor(): TabGroupColor {
     const color = TAB_GROUP_COLORS[this.colorIndex % TAB_GROUP_COLORS.length];
     this.colorIndex++;
     return color;

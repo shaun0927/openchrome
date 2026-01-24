@@ -95,7 +95,7 @@ export class CDPConnectionPool {
     sessionId: string,
     tabId: number,
     method: string,
-    params?: object
+    params?: { [key: string]: unknown }
   ): Promise<T> {
     // Ensure attached
     await this.attach(sessionId, tabId);
@@ -121,11 +121,12 @@ export class CDPConnectionPool {
         connection.attached = false;
         // Try to reattach and retry once
         await this.attach(sessionId, tabId);
-        return chrome.debugger.sendCommand(
+        const retryResult = await chrome.debugger.sendCommand(
           connection.target,
           method,
           params
-        ) as Promise<T>;
+        );
+        return retryResult as T;
       }
       throw error;
     }

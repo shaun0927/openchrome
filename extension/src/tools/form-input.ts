@@ -4,8 +4,11 @@
 
 import type { MCPResult, MCPToolDefinition } from '../types/mcp';
 import { SessionManager } from '../session-manager';
+import { getRefIdManager } from '../ref-id-manager';
 
 export function createFormInputTool(sessionManager: SessionManager) {
+  const refIdManager = getRefIdManager();
+
   return {
     handler: async (sessionId: string, params: Record<string, unknown>): Promise<MCPResult> => {
       const tabId = params.tabId as number;
@@ -54,35 +57,54 @@ export function createFormInputTool(sessionManager: SessionManager) {
       }
 
       try {
-        // Get the DOM node from the accessibility node reference
-        // The ref format is "ref_N" where N is our internal counter
-        // We need to resolve this to an actual DOM element
+        // Look up the ref in the RefIdManager to get the backendDOMNodeId
+        const refEntry = refIdManager.getRef(sessionId, tabId, ref);
+        if (!refEntry) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error: Element reference ${ref} not found. Please call read_page first to get current element references.`,
+              },
+            ],
+            isError: true,
+          };
+        }
 
+        // Resolve the backendDOMNodeId to a DOM node object ID
+        const resolveResult = await sessionManager.executeCDP<{ object?: { objectId: string } }>(
+          sessionId,
+          tabId,
+          'DOM.resolveNode',
+          { backendNodeId: refEntry.backendDOMNodeId }
+        );
+
+        if (!resolveResult.object?.objectId) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error: Could not resolve element ${ref}. The element may have been removed from the page.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const objectId = resolveResult.object.objectId;
+
+        // Call a function on the element to set its value
         const result = await sessionManager.executeCDP<{ result: { value: unknown } }>(
           sessionId,
           tabId,
-          'Runtime.evaluate',
+          'Runtime.callFunctionOn',
           {
-            expression: `
-              (() => {
-                // For now, we'll use a simple approach of finding elements by their order in the DOM
-                // In a full implementation, we'd maintain a mapping from ref IDs to DOM nodes
-                const refId = "${ref}";
-                const refNum = parseInt(refId.replace('ref_', ''));
-
-                // Get all form elements
-                const formElements = document.querySelectorAll(
-                  'input, textarea, select, [contenteditable="true"]'
-                );
-
-                if (refNum <= 0 || refNum > formElements.length) {
-                  return { error: 'Element not found for ref: ' + refId };
-                }
-
-                const element = formElements[refNum - 1];
+            objectId,
+            functionDeclaration: `
+              function(value) {
+                const element = this;
                 const tagName = element.tagName.toLowerCase();
-                const inputType = element.type?.toLowerCase() || '';
-                const value = ${JSON.stringify(value)};
+                const inputType = (element.type || '').toLowerCase();
 
                 if (tagName === 'input' || tagName === 'textarea') {
                   if (inputType === 'checkbox' || inputType === 'radio') {
@@ -94,7 +116,6 @@ export function createFormInputTool(sessionManager: SessionManager) {
                     element.dispatchEvent(new Event('change', { bubbles: true }));
                   }
                 } else if (tagName === 'select') {
-                  // Find option by value or text
                   const valueStr = String(value);
                   let found = false;
                   for (const option of element.options) {
@@ -114,8 +135,9 @@ export function createFormInputTool(sessionManager: SessionManager) {
                 }
 
                 return { success: true, tagName, inputType, value: String(value) };
-              })()
+              }
             `,
+            arguments: [{ value }],
             returnByValue: true,
           }
         );

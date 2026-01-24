@@ -67,18 +67,17 @@ export function createNavigateTool(sessionManager: SessionManager) {
           normalizedUrl = `https://${url}`;
         }
 
-        // Navigate using CDP for better control
-        await sessionManager.executeCDP(sessionId, tabId, 'Page.navigate', {
-          url: normalizedUrl,
-        });
+        // Set up the load completion listener BEFORE navigating to avoid race conditions
+        // This ensures we don't miss the 'complete' status if the page loads very quickly
+        const loadPromise = new Promise<void>((resolve) => {
+          let resolved = false;
 
-        // Wait for page to load
-        await new Promise<void>((resolve) => {
           const listener = (
             updatedTabId: number,
             changeInfo: chrome.tabs.TabChangeInfo
           ) => {
-            if (updatedTabId === tabId && changeInfo.status === 'complete') {
+            if (updatedTabId === tabId && changeInfo.status === 'complete' && !resolved) {
+              resolved = true;
               chrome.tabs.onUpdated.removeListener(listener);
               resolve();
             }
@@ -87,10 +86,21 @@ export function createNavigateTool(sessionManager: SessionManager) {
 
           // Timeout after 30 seconds
           setTimeout(() => {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
+            if (!resolved) {
+              resolved = true;
+              chrome.tabs.onUpdated.removeListener(listener);
+              resolve();
+            }
           }, 30000);
         });
+
+        // Navigate using CDP for better control
+        await sessionManager.executeCDP(sessionId, tabId, 'Page.navigate', {
+          url: normalizedUrl,
+        });
+
+        // Wait for page to load (listener was already set up before navigation)
+        await loadPromise;
 
         // Get updated tab info
         const tab = await chrome.tabs.get(tabId);

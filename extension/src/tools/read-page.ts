@@ -4,6 +4,7 @@
 
 import type { MCPResult, MCPToolDefinition } from '../types/mcp';
 import { SessionManager } from '../session-manager';
+import { getRefIdManager } from '../ref-id-manager';
 
 interface AXNode {
   nodeId: string;
@@ -28,6 +29,7 @@ interface AccessibilityNode {
 
 export function createReadPageTool(sessionManager: SessionManager) {
   const MAX_OUTPUT_LENGTH = 50000;
+  const refIdManager = getRefIdManager();
 
   async function getAccessibilityTree(
     sessionId: string,
@@ -39,6 +41,10 @@ export function createReadPageTool(sessionManager: SessionManager) {
     }
   ): Promise<string> {
     const { depth = 15, refId, filter = 'all' } = options;
+
+    // Clear existing refs for this tab to start fresh
+    // This ensures refs are consistent within a single read_page call
+    refIdManager.clearTabRefs(sessionId, tabId);
 
     // Get the full accessibility tree
     const result = await sessionManager.executeCDP<{ nodes: AXNode[] }>(
@@ -61,17 +67,21 @@ export function createReadPageTool(sessionManager: SessionManager) {
     // Find root or specified node
     let rootNode: AXNode | undefined;
     if (refId) {
-      rootNode = result.nodes.find((n) => n.nodeId === refId);
+      // Look up the ref in the manager to get the backendDOMNodeId
+      const refEntry = refIdManager.getRef(sessionId, tabId, refId);
+      if (refEntry) {
+        rootNode = result.nodes.find((n) => n.backendDOMNodeId === refEntry.backendDOMNodeId);
+      }
+      if (!rootNode) {
+        // Fall back to direct node lookup
+        rootNode = result.nodes.find((n) => n.nodeId === refId);
+      }
       if (!rootNode) {
         throw new Error(`Node with ref_id ${refId} not found`);
       }
     } else {
       rootNode = result.nodes[0];
     }
-
-    // Convert to our format
-    let refCounter = 1;
-    const refMap = new Map<string, string>();
 
     function convertNode(node: AXNode, currentDepth: number): AccessibilityNode | null {
       if (currentDepth > depth) return null;
@@ -126,9 +136,16 @@ export function createReadPageTool(sessionManager: SessionManager) {
         return null;
       }
 
-      // Generate ref ID
-      const ref = `ref_${refCounter++}`;
-      refMap.set(node.nodeId, ref);
+      // Generate ref ID using the RefIdManager for persistence
+      // This allows form_input and scroll_to to find elements by ref ID
+      const backendDOMNodeId = node.backendDOMNodeId || 0;
+      const ref = refIdManager.generateRef(
+        sessionId,
+        tabId,
+        backendDOMNodeId,
+        role,
+        name
+      );
 
       const result: AccessibilityNode = {
         ref,

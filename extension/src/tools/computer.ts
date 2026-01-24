@@ -4,6 +4,7 @@
 
 import type { MCPResult, MCPToolDefinition } from '../types/mcp';
 import { SessionManager } from '../session-manager';
+import { getRefIdManager } from '../ref-id-manager';
 
 type ActionType =
   | 'left_click'
@@ -36,6 +37,8 @@ interface ComputerParams {
 }
 
 export function createComputerTool(sessionManager: SessionManager) {
+  const refIdManager = getRefIdManager();
+
   async function dispatchMouseEvent(
     sessionId: string,
     tabId: number,
@@ -418,21 +421,58 @@ export function createComputerTool(sessionManager: SessionManager) {
               };
             }
 
-            // Execute JavaScript to scroll element into view
-            await sessionManager.executeCDP(sessionId, tabId, 'Runtime.evaluate', {
-              expression: `
-                (() => {
-                  const refId = "${ref}";
-                  // This would need to use the accessibility node mapping
-                  // For now, return a placeholder
-                  return { success: true, ref: refId };
-                })()
+            // Look up the ref in the RefIdManager to get the backendDOMNodeId
+            const refEntry = refIdManager.getRef(sessionId, tabId, ref);
+            if (!refEntry) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `Error: Element reference ${ref} not found. Please call read_page first to get current element references.`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            // Resolve the backendDOMNodeId to a DOM node object ID
+            const resolveResult = await sessionManager.executeCDP<{ object?: { objectId: string } }>(
+              sessionId,
+              tabId,
+              'DOM.resolveNode',
+              { backendNodeId: refEntry.backendDOMNodeId }
+            );
+
+            if (!resolveResult.object?.objectId) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `Error: Could not resolve element ${ref}. The element may have been removed from the page.`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            // Call scrollIntoView on the element
+            await sessionManager.executeCDP(sessionId, tabId, 'Runtime.callFunctionOn', {
+              objectId: resolveResult.object.objectId,
+              functionDeclaration: `
+                function() {
+                  this.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+                }
               `,
               returnByValue: true,
             });
 
             return {
-              content: [{ type: 'text', text: `Scrolled to element ${ref}` }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Scrolled to element ${ref} (${refEntry.role}${refEntry.name ? ': ' + refEntry.name : ''})`,
+                },
+              ],
             };
           }
 

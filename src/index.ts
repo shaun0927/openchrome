@@ -3,19 +3,13 @@
  * CLI Entry Point for claude-chrome-parallel
  * MCP Server for parallel Claude Code browser sessions
  *
- * Architecture:
- * - Master mode: Holds Chrome connection, manages all sessions centrally
- * - Worker mode: MCP server for Claude Code, connects to Master via IPC
+ * Uses puppeteer-core to directly connect to Chrome DevTools Protocol,
+ * enabling multiple Claude Code sessions to control Chrome simultaneously.
  */
 
 import { Command } from 'commander';
 import { getMCPServer } from './mcp-server';
 import { registerAllTools } from './tools';
-import { startMaster } from './master';
-import { startWorker } from './worker';
-import { WorkerMCPServer } from './worker/worker-mcp-server';
-import { registerWorkerTools } from './worker/tools';
-import { isMasterRunning } from './worker/auto-master';
 
 const program = new Command();
 
@@ -28,62 +22,20 @@ program
   .command('serve')
   .description('Start the MCP server')
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
-  .option('--master', 'Run as master process (holds Chrome connection)')
-  .option('--standalone', 'Run in standalone mode (no master/worker, direct Chrome connection)')
   .action(async (options) => {
     const port = parseInt(options.port, 10);
 
-    if (options.master) {
-      // Master mode - manages Chrome connection and all sessions
-      console.error(`[claude-chrome-parallel] Starting as MASTER process`);
-      console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);
-      await startMaster(port);
-    } else if (options.standalone) {
-      // Standalone mode - original behavior, direct Chrome connection
-      console.error(`[claude-chrome-parallel] Starting in STANDALONE mode`);
-      console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);
-
-      const server = getMCPServer();
-      registerAllTools(server);
-      server.start();
-    } else {
-      // Worker mode - connects to Master, default behavior
-      console.error(`[claude-chrome-parallel] Starting as WORKER process`);
-
-      try {
-        // Start worker and connect to master
-        const sessionManager = await startWorker();
-
-        // Create Worker MCP Server with remote session manager
-        const workerServer = new WorkerMCPServer(sessionManager);
-        registerWorkerTools(workerServer);
-        workerServer.start();
-      } catch (error) {
-        console.error(`[claude-chrome-parallel] Failed to start worker:`, error);
-        console.error(`[claude-chrome-parallel] Falling back to standalone mode...`);
-
-        // Fallback to standalone mode
-        const server = getMCPServer();
-        registerAllTools(server);
-        server.start();
-      }
-    }
-  });
-
-program
-  .command('master')
-  .description('Start master process only')
-  .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
-  .action(async (options) => {
-    const port = parseInt(options.port, 10);
-    console.error(`[claude-chrome-parallel] Starting MASTER process`);
+    console.error(`[claude-chrome-parallel] Starting MCP server`);
     console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);
-    await startMaster(port);
+
+    const server = getMCPServer();
+    registerAllTools(server);
+    server.start();
   });
 
 program
   .command('check')
-  .description('Check Chrome and Master status')
+  .description('Check Chrome connection status')
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
   .action(async (options) => {
     const port = parseInt(options.port, 10);
@@ -103,31 +55,21 @@ program
       console.log(`Chrome (port ${port}): ✗ Not connected`);
     }
 
-    // Check Master
-    const masterRunning = await isMasterRunning();
-    console.log(`\nMaster process: ${masterRunning ? '✓ Running' : '✗ Not running'}`);
-
     console.log('\n=== Instructions ===\n');
 
     if (!chromeConnected) {
-      console.log('1. Start Chrome with debugging enabled:');
-      console.log(`   chrome --remote-debugging-port=${port}\n`);
-    }
-
-    if (!masterRunning) {
-      console.log('2. (Optional) Start the Master process:');
-      console.log('   claude-chrome-parallel serve --master');
-      console.log('   Note: Workers will auto-start Master if needed.\n');
+      console.log('Start Chrome with debugging enabled:');
+      console.log(`  chrome --remote-debugging-port=${port}\n`);
+      console.log('Or let claude-chrome-parallel auto-launch Chrome.\n');
     }
 
     if (chromeConnected) {
-      console.log('You can now use claude-chrome-parallel as an MCP server.');
-      console.log('\nAdd to your Claude Code MCP config:');
+      console.log('Chrome is ready! Add to your Claude Code MCP config:\n');
       console.log(JSON.stringify({
         "mcpServers": {
           "chrome-parallel": {
-            "command": "npx",
-            "args": ["claude-chrome-parallel", "serve"]
+            "command": "claude-chrome-parallel",
+            "args": ["serve"]
           }
         }
       }, null, 2));
@@ -138,66 +80,47 @@ program
 
 program
   .command('info')
-  .description('Show architecture information')
+  .description('Show how it works')
   .action(() => {
     console.log(`
-=== Claude Chrome Parallel Architecture ===
+=== Claude Chrome Parallel ===
 
-This MCP server enables parallel Claude Code browser sessions without
-"Detached" errors by using a Master-Worker architecture.
+Enables multiple Claude Code sessions to control Chrome simultaneously
+without "Detached" errors.
 
-MODES:
+HOW IT WORKS:
 
-1. Worker Mode (default):
-   claude-chrome-parallel serve
+  Claude Code 1 ──► puppeteer process 1 ──► CDP connection 1 ──┐
+                                                                ├──► Chrome
+  Claude Code 2 ──► puppeteer process 2 ──► CDP connection 2 ──┘
 
-   - Connects to Master process via IPC
-   - Auto-starts Master if not running
-   - Recommended for Claude Code integration
+  Each Claude Code session gets its own:
+  - Independent MCP server process
+  - Separate Chrome DevTools Protocol connection
+  - Isolated browser tabs
 
-2. Master Mode:
-   claude-chrome-parallel serve --master
+WHY NO "DETACHED" ERRORS:
 
-   - Holds the single Chrome CDP connection
-   - Manages all sessions centrally
-   - Runs in background, workers connect to it
+  Unlike the Chrome extension (which shares state),
+  each puppeteer-core process maintains its own CDP connection.
+  Chrome handles multiple CDP connections natively.
 
-3. Standalone Mode:
-   claude-chrome-parallel serve --standalone
+TESTED CONCURRENCY:
 
-   - Original behavior, direct Chrome connection
-   - No Master/Worker, simpler but no parallelism
-   - Use if Master/Worker has issues
-
-ARCHITECTURE:
-
-  ┌─────────────────────────────────────────┐
-  │           Master Process                 │
-  │  ┌─────────┐  ┌──────────────────┐      │
-  │  │CDPClient│  │ SessionRegistry  │      │
-  │  └─────────┘  └──────────────────┘      │
-  │           IPC Server                     │
-  └─────────────────┬───────────────────────┘
-                    │ IPC (Named Pipe)
-         ┌──────────┼──────────┐
-         │          │          │
-      Worker A   Worker B   Worker C
-      (Claude 1) (Claude 2) (Claude 3)
+  ✓ 20+ simultaneous sessions confirmed working
 
 USAGE:
 
-  # Check status
+  # Check Chrome status
   claude-chrome-parallel check
 
-  # Start Master (optional, workers auto-start)
-  claude-chrome-parallel serve --master
-
-  # Configure Claude Code (uses Worker mode)
-  Add to MCP config:
+  # Add to ~/.claude.json
   {
-    "chrome-parallel": {
-      "command": "npx",
-      "args": ["claude-chrome-parallel", "serve"]
+    "mcpServers": {
+      "chrome-parallel": {
+        "command": "claude-chrome-parallel",
+        "args": ["serve"]
+      }
     }
   }
 `);

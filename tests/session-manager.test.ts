@@ -1,3 +1,5 @@
+/// <reference types="jest" />
+/// <reference types="chrome" />
 /**
  * Tests for SessionManager
  */

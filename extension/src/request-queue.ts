@@ -1,6 +1,8 @@
 /**
  * Request Queue - Per-session FIFO queue for sequential request processing
  * Prevents race conditions by ensuring only one CDP operation runs at a time per session
+ *
+ * Uses a promise-based lock mechanism to ensure atomic processing.
  */
 
 interface QueueItem<T> {
@@ -11,7 +13,7 @@ interface QueueItem<T> {
 
 export class RequestQueue {
   private queue: QueueItem<unknown>[] = [];
-  private processing = false;
+  private processingPromise: Promise<void> | null = null;
   private sessionId: string;
 
   constructor(sessionId: string) {
@@ -28,31 +30,47 @@ export class RequestQueue {
         resolve: resolve as (value: unknown) => void,
         reject,
       });
-      this.processNext();
+      this.triggerProcessing();
     });
   }
 
   /**
-   * Process the next item in the queue
+   * Trigger processing if not already running
+   * Uses a promise-based lock to ensure atomic access
    */
-  private async processNext(): Promise<void> {
-    if (this.processing || this.queue.length === 0) {
+  private triggerProcessing(): void {
+    if (this.processingPromise) {
+      // Already processing, the current processor will pick up new items
       return;
     }
 
-    this.processing = true;
-    const item = this.queue.shift()!;
+    this.processingPromise = this.processQueue();
+  }
 
+  /**
+   * Process all items in the queue sequentially
+   * This method holds the lock until the queue is empty
+   */
+  private async processQueue(): Promise<void> {
     try {
-      const result = await item.fn();
-      item.resolve(result);
-    } catch (error) {
-      item.reject(error instanceof Error ? error : new Error(String(error)));
+      while (this.queue.length > 0) {
+        const item = this.queue.shift()!;
+
+        try {
+          const result = await item.fn();
+          item.resolve(result);
+        } catch (error) {
+          item.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
     } finally {
-      this.processing = false;
-      // Process next item if any
+      // Release the lock
+      this.processingPromise = null;
+
+      // Check if new items were added while we were finishing
+      // This handles the race where items are added between queue.length check and lock release
       if (this.queue.length > 0) {
-        this.processNext();
+        this.triggerProcessing();
       }
     }
   }
@@ -68,7 +86,7 @@ export class RequestQueue {
    * Check if currently processing
    */
   get isProcessing(): boolean {
-    return this.processing;
+    return this.processingPromise !== null;
   }
 
   /**

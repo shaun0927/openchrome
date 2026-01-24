@@ -25,7 +25,7 @@ export interface Session {
   name: string;
 
   /** Color for the tab group */
-  color: chrome.tabGroups.ColorEnum;
+  color: TabGroupColor;
 }
 
 export interface SessionCreateOptions {
@@ -36,7 +36,7 @@ export interface SessionCreateOptions {
   name?: string;
 
   /** Color for the tab group */
-  color?: chrome.tabGroups.ColorEnum;
+  color?: TabGroupColor;
 }
 
 export interface SessionInfo {
@@ -64,7 +64,7 @@ export interface SessionEvent {
 }
 
 /** Tab group colors available in Chrome */
-export const TAB_GROUP_COLORS: chrome.tabGroups.ColorEnum[] = [
+export const TAB_GROUP_COLORS = [
   'grey',
   'blue',
   'red',
@@ -74,4 +74,6 @@ export const TAB_GROUP_COLORS: chrome.tabGroups.ColorEnum[] = [
   'purple',
   'cyan',
   'orange'
-];
+] as const;
+
+export type TabGroupColor = typeof TAB_GROUP_COLORS[number];

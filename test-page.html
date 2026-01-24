@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Claude Chrome Parallel - Test Page</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #1a1a2e;
+      color: #eee;
+    }
+    h1 { color: #a855f7; }
+    .card {
+      background: #16213e;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    input, button {
+      padding: 10px 16px;
+      margin: 5px;
+      border-radius: 6px;
+      border: 1px solid #444;
+      background: #0f3460;
+      color: #fff;
+    }
+    button {
+      background: #a855f7;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover { background: #9333ea; }
+    #log {
+      background: #0a0a0f;
+      padding: 15px;
+      border-radius: 6px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .success { color: #22c55e; }
+    .error { color: #ef4444; }
+    .info { color: #60a5fa; }
+  </style>
+</head>
+<body>
+  <h1>🔌 Claude Chrome Parallel - Test Page</h1>
+
+  <div class="card">
+    <h3>1. Extension ID 입력</h3>
+    <input type="text" id="extensionId" placeholder="abcdefghijklmnop..." style="width: 300px">
+    <button onclick="saveExtensionId()">저장</button>
+  </div>
+
+  <div class="card">
+    <h3>2. 연결 테스트</h3>
+    <button onclick="testConnection()">Extension 연결 테스트</button>
+    <button onclick="testInitialize()">MCP Initialize</button>
+    <button onclick="listTools()">도구 목록 보기</button>
+  </div>
+
+  <div class="card">
+    <h3>3. 세션 테스트</h3>
+    <input type="text" id="sessionName" placeholder="세션 이름 (예: test-session-1)" style="width: 250px">
+    <button onclick="createSession()">세션 생성</button>
+    <button onclick="listSessions()">세션 목록</button>
+  </div>
+
+  <div class="card">
+    <h3>4. 탭 테스트</h3>
+    <button onclick="getTabContext()">탭 컨텍스트</button>
+    <button onclick="createTab()">새 탭 생성</button>
+  </div>
+
+  <div class="card">
+    <h3>로그</h3>
+    <button onclick="clearLog()">로그 지우기</button>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    let extensionId = localStorage.getItem('extensionId') || '';
+    let currentSessionId = null;
+    let requestId = 1;
+
+    document.getElementById('extensionId').value = extensionId;
+
+    function log(message, type = 'info') {
+      const logEl = document.getElementById('log');
+      const time = new Date().toLocaleTimeString();
+      const className = type;
+      logEl.innerHTML += `<span class="${className}">[${time}] ${message}</span>\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = '';
+    }
+
+    function saveExtensionId() {
+      extensionId = document.getElementById('extensionId').value.trim();
+      localStorage.setItem('extensionId', extensionId);
+      log('Extension ID 저장됨: ' + extensionId, 'success');
+    }
+
+    async function sendToExtension(method, params = {}) {
+      if (!extensionId) {
+        log('Extension ID를 먼저 입력하세요!', 'error');
+        return null;
+      }
+
+      const request = {
+        jsonrpc: '2.0',
+        id: requestId++,
+        method: method,
+        params: params
+      };
+
+      log(`→ ${method}: ${JSON.stringify(params)}`, 'info');
+
+      return new Promise((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage(
+            extensionId,
+            { type: 'mcp-request', request: request },
+            (response) => {
+              if (chrome.runtime.lastError) {
+                log(`✗ Error: ${chrome.runtime.lastError.message}`, 'error');
+                reject(chrome.runtime.lastError);
+              } else {
+                log(`← ${JSON.stringify(response, null, 2)}`, 'success');
+                resolve(response);
+              }
+            }
+          );
+        } catch (e) {
+          log(`✗ Exception: ${e.message}`, 'error');
+          reject(e);
+        }
+      });
+    }
+
+    async function testConnection() {
+      log('연결 테스트 시작...', 'info');
+      try {
+        const response = await sendToExtension('initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {}
+        });
+        if (response) {
+          log('✓ 연결 성공!', 'success');
+        }
+      } catch (e) {
+        log(`✗ 연결 실패: ${e.message}`, 'error');
+      }
+    }
+
+    async function testInitialize() {
+      await sendToExtension('initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {}
+      });
+    }
+
+    async function listTools() {
+      await sendToExtension('tools/list', {});
+    }
+
+    async function createSession() {
+      const name = document.getElementById('sessionName').value || `session-${Date.now()}`;
+      currentSessionId = name;
+      await sendToExtension('sessions/create', {
+        sessionId: name,
+        name: name
+      });
+    }
+
+    async function listSessions() {
+      await sendToExtension('sessions/list', {});
+    }
+
+    async function getTabContext() {
+      if (!currentSessionId) {
+        log('먼저 세션을 생성하세요', 'error');
+        return;
+      }
+      await sendToExtension('tools/call', {
+        name: 'tabs_context_mcp',
+        arguments: { sessionId: currentSessionId }
+      });
+    }
+
+    async function createTab() {
+      if (!currentSessionId) {
+        log('먼저 세션을 생성하세요', 'error');
+        return;
+      }
+      await sendToExtension('tools/call', {
+        name: 'tabs_create_mcp',
+        arguments: { sessionId: currentSessionId }
+      });
+    }
+
+    log('테스트 페이지 로드됨. Extension ID를 입력하고 연결 테스트를 진행하세요.', 'info');
+  </script>
+</body>
+</html>

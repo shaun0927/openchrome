@@ -1,17 +1,16 @@
 {
   "name": "claude-chrome-parallel",
-  "version": "0.1.0",
-  "description": "Chrome extension for parallel Claude Code sessions with MCP support - no more 'Detached' errors",
-  "main": "dist/cli/index.js",
+  "version": "2.0.0",
+  "description": "MCP server for parallel Claude Code browser sessions - no more 'Detached' errors",
+  "main": "dist/index.js",
   "bin": {
-    "claude-chrome-parallel": "./dist/cli/index.js"
+    "claude-chrome-parallel": "./dist/index.js"
   },
   "scripts": {
-    "build": "npm run build:extension && npm run build:cli && npm run build:host",
-    "build:extension": "webpack --config webpack.config.js --mode production",
-    "build:cli": "tsc -p tsconfig.cli.json",
-    "build:host": "cp native-host/host.js dist/native-host/",
-    "dev": "webpack --config webpack.config.js --mode development --watch",
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js serve",
+    "check": "node dist/index.js check",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
@@ -21,10 +20,11 @@
   "keywords": [
     "claude",
     "claude-code",
-    "chrome-extension",
     "mcp",
     "browser-automation",
-    "parallel-sessions"
+    "parallel-sessions",
+    "puppeteer",
+    "chrome"
   ],
   "author": "",
   "license": "MIT",
@@ -37,31 +37,27 @@
   },
   "homepage": "https://github.com/shaun0927/claude-chrome-parallel#readme",
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.50.0",
-    "@types/chrome": "^0.0.300",
-    "@types/node": "^20.0.0",
+    "@types/chrome": "^0.1.36",
     "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
-    "copy-webpack-plugin": "^12.0.0",
     "eslint": "^8.57.0",
     "jest": "^29.7.0",
     "rimraf": "^5.0.0",
     "ts-jest": "^29.1.0",
-    "ts-loader": "^9.5.0",
-    "typescript": "^5.4.0",
-    "webpack": "^5.90.0",
-    "webpack-cli": "^5.1.0"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.0"
   },
   "dependencies": {
-    "commander": "^12.0.0"
+    "commander": "^12.0.0",
+    "puppeteer-core": "^23.11.1"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "files": [
     "dist",
-    "native-host",
     "README.md",
     "LICENSE"
   ]
