@@ -165,8 +165,8 @@ export function createFormInputTool(sessionManager: SessionManager) {
             description: 'Element reference ID from the read_page tool (e.g., "ref_1", "ref_2")',
           },
           value: {
-            type: ['string', 'boolean', 'number'],
-            description: 'The value to set. For checkboxes use boolean, for selects use option value or text.',
+            type: 'string',
+            description: 'The value to set. For checkboxes use "true"/"false", for selects use option value or text.',
           },
         },
         required: ['sessionId', 'tabId', 'ref', 'value'],
