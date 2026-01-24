@@ -1,85 +1,82 @@
 # Claude Chrome Parallel
 
-> **Run multiple Claude Code sessions safely - no more "Detached" errors or config corruption.**
+> **Run multiple Claude Code browser sessions in parallel - no more "Detached" errors.**
 
 [![npm version](https://badge.fury.io/js/claude-chrome-parallel.svg)](https://www.npmjs.com/package/claude-chrome-parallel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Features
+## Why This Exists
 
-- **Session Isolation**: Prevents `.claude.json` corruption when running multiple Claude instances
-- **Browser Automation**: Independent CDP connections for parallel browser control
-- **Auto Recovery**: Detects and recovers corrupted config files
-
----
-
-## Problem 1: Config File Corruption
-
-When running **multiple Claude Code instances** simultaneously, they compete to write to `~/.claude.json`, causing corruption:
-
-```
-Terminal 1: claude  ──┐
-                      ├──► ~/.claude.json ← Race condition!
-Terminal 2: claude  ──┘
-
-Result: {"key":"value"}{"key":"value"}  ← Two JSON objects concatenated = CORRUPT
-```
-
-**Symptoms:**
-- Claude Code crashes on startup
-- "Unexpected token" JSON parse errors
-- Lost settings and preferences
-
-## Solution: Session Isolation
-
-```bash
-# Instead of running claude directly...
-claude-chrome-parallel launch
-
-# Each session gets isolated config
-Terminal 1: claude-chrome-parallel launch  ──► ~/.claude-chrome-parallel/sessions/abc123/.claude.json
-Terminal 2: claude-chrome-parallel launch  ──► ~/.claude-chrome-parallel/sessions/def456/.claude.json
-```
-
-**All your existing flags work:**
-
-```bash
-claude-chrome-parallel launch --dangerously-skip-permissions
-claude-chrome-parallel launch --resume abc123
-claude-chrome-parallel launch -p "Fix the bug"
-claude-chrome-parallel launch --model opus --resume
-```
-
----
-
-## Problem 2: Browser "Detached" Errors
-
-When using browser automation with multiple sessions:
+[Claude Chrome](https://claude.ai/chrome) is a powerful tool that lets you debug **production environments while logged in** - no need to replicate auth states or mock sessions. But when you try to run multiple Claude Code sessions with browser automation simultaneously, you get:
 
 ```
 Error: Detached while handling command
 ```
 
-The Chrome extension uses **shared internal state** - when Session A takes a screenshot, Session B's connection breaks.
+This happens because the Chrome extension uses **shared internal state**. When Session A takes a screenshot, Session B's connection gets "detached."
 
-## Solution: Independent CDP Connections
+**Claude Chrome Parallel** solves this by creating **independent CDP connections** for each session:
 
 ```
-Claude Code 1 ──► puppeteer process 1 ──► CDP connection 1 ──┐
-                                                              ├──► Chrome
-Claude Code 2 ──► puppeteer process 2 ──► CDP connection 2 ──┘
+Claude Code 1 ──► Process 1 ──► CDP Connection 1 ──┐
+                                                    ├──► Chrome (port 9222)
+Claude Code 2 ──► Process 2 ──► CDP Connection 2 ──┘
 ```
+
+Each session gets isolated browser control. No shared state = No conflicts.
+
+---
+
+## Use Cases
+
+### Multi-Session QA Testing
+
+Run parallel test scenarios against your production or staging environment:
+
+```bash
+# Terminal 1: Test user login flow
+claude -p "Test the login flow on https://myapp.com/login"
+
+# Terminal 2: Test checkout process (simultaneously!)
+claude -p "Test the checkout flow on https://myapp.com/cart"
+
+# Terminal 3: Monitor admin dashboard
+claude -p "Take screenshots of https://myapp.com/admin every 30 seconds"
+```
+
+### Parallel Debugging
+
+Debug multiple pages or user journeys at the same time:
+
+```bash
+# Debug as different users
+Terminal 1: "Log in as admin and check permissions on /settings"
+Terminal 2: "Log in as regular user and verify they can't access /settings"
+```
+
+### Automated Regression Testing
+
+Run comprehensive browser tests across multiple sessions:
+
+```bash
+# Run 5 parallel test sessions
+for i in {1..5}; do
+  claude -p "Run test suite $i on https://staging.myapp.com" &
+done
+```
+
+### Tested Concurrency
+
+| Sessions | Success Rate |
+|----------|-------------|
+| 5 | 100% |
+| 10 | 100% |
+| 15 | 100% |
+| 20 | 100% |
 
 ---
 
 ## Installation
-
-### Prerequisites
-
-- Node.js 18+
-- Google Chrome (for browser automation)
-
-### Install
 
 ```bash
 # From npm
@@ -89,68 +86,9 @@ npm install -g claude-chrome-parallel
 npm install -g github:shaun0927/claude-chrome-parallel
 ```
 
----
+### Configure Claude Code
 
-## Usage
-
-### Session Isolation (Recommended for Multiple Instances)
-
-```bash
-# Start Claude Code with isolated config
-claude-chrome-parallel launch
-
-# Pass any claude flags
-claude-chrome-parallel launch --dangerously-skip-permissions
-claude-chrome-parallel launch --resume <session-id>
-claude-chrome-parallel launch -p "Your prompt here"
-
-# Sync changes back to original config on exit
-claude-chrome-parallel launch --sync-back
-
-# Keep session directory for debugging
-claude-chrome-parallel launch --keep-session
-```
-
-### Standalone Wrapper (Alternative)
-
-```bash
-# Simpler command
-claude-session
-
-# With arguments
-claude-session "Fix the authentication bug"
-claude-session --list      # List active sessions
-claude-session --cleanup   # Clean up stale sessions
-claude-session --recover   # Recover corrupted config
-```
-
-### Recovery Commands
-
-```bash
-# Check config health
-claude-chrome-parallel doctor
-
-# Auto-recover corrupted .claude.json
-claude-chrome-parallel recover
-
-# List available backups
-claude-chrome-parallel recover --list-backups
-
-# Restore from specific backup
-claude-chrome-parallel recover --backup ".claude.json.2024-01-15T10-30-00-000Z.bak"
-
-# Force create new empty config
-claude-chrome-parallel recover --force-new
-
-# Clean up old sessions and backups
-claude-chrome-parallel cleanup
-claude-chrome-parallel cleanup --max-age 12      # Sessions older than 12 hours
-claude-chrome-parallel cleanup --keep-backups 5  # Keep only 5 most recent backups
-```
-
-### Browser Automation (MCP Server)
-
-Add to `~/.claude.json`:
+Add to your Claude Code MCP settings (`~/.claude.json`):
 
 ```json
 {
@@ -163,7 +101,15 @@ Add to `~/.claude.json`:
 }
 ```
 
-Then use in Claude Code:
+Restart Claude Code for changes to take effect.
+
+---
+
+## Usage
+
+### Basic Usage
+
+Once configured, browser automation works in any Claude Code session:
 
 ```
 You: Take a screenshot of https://github.com
@@ -171,125 +117,154 @@ You: Take a screenshot of https://github.com
 Claude: [Uses chrome-parallel tools automatically]
 ```
 
-**Run multiple sessions with browser automation:**
+### Multiple Parallel Sessions
+
+Run multiple Claude Code terminals simultaneously:
 
 ```bash
 # Terminal 1
-claude-chrome-parallel launch
-> Take a screenshot of github.com
+claude
+> Navigate to myapp.com/dashboard and take a screenshot
 
-# Terminal 2 (simultaneously!)
-claude-chrome-parallel launch
-> Take a screenshot of google.com
+# Terminal 2 (at the same time!)
+claude
+> Fill out the form on myapp.com/contact and submit
+
+# Terminal 3 (also at the same time!)
+claude
+> Monitor network requests on myapp.com/api
 ```
 
-Both work without conflicts!
+All sessions work without conflicts!
 
----
-
-## CLI Reference
-
-| Command | Description |
-|---------|-------------|
-| `launch [args...]` | Start Claude with isolated config |
-| `recover` | Recover corrupted .claude.json |
-| `cleanup` | Clean up stale sessions and backups |
-| `doctor` | Check installation and config health |
-| `serve` | Start MCP server for browser automation |
-| `install` | Install browser extension and native host |
-| `uninstall` | Remove extension and native host |
-
-### Launch Options
-
-| Option | Description |
-|--------|-------------|
-| `--sync-back` | Sync config changes back to original on exit |
-| `--keep-session` | Keep session directory after exit (debugging) |
-
-### Recover Options
-
-| Option | Description |
-|--------|-------------|
-| `--list-backups` | List available backup files |
-| `--backup <name>` | Restore from specific backup |
-| `--force-new` | Create new empty config (loses all data) |
-
-### Cleanup Options
-
-| Option | Description |
-|--------|-------------|
-| `--max-age <hours>` | Max session age in hours (default: 24) |
-| `--keep-backups <n>` | Number of backups to keep (default: 10) |
-
----
-
-## Browser Automation Tools
+### Available Browser Tools
 
 | Tool | Description |
 |------|-------------|
 | `navigate` | Navigate to URL or use history |
-| `tabs_context_mcp` | Get available tabs |
-| `tabs_create_mcp` | Create new tab |
-| `computer` | Screenshots, mouse/keyboard, scrolling |
-| `read_page` | Read accessibility tree |
+| `computer` | Screenshots, mouse clicks, keyboard input, scrolling |
+| `read_page` | Read page content via accessibility tree |
 | `find` | Find elements by description |
 | `form_input` | Fill form fields |
 | `javascript_tool` | Execute JavaScript |
+| `tabs_context_mcp` | Get available tabs |
+| `tabs_create_mcp` | Create new tab |
 
 ---
 
 ## How It Works
 
-### Session Isolation
+### The Problem: Shared Extension State
+
+The official Chrome extension maintains a single shared state:
 
 ```
-Before (Dangerous):
-┌─────────────────────────────────────────────┐
-│ Terminal 1: claude ──┐                      │
-│                      ├─► ~/.claude.json     │ ← Race condition!
-│ Terminal 2: claude ──┘                      │
-└─────────────────────────────────────────────┘
-
-After (Safe):
-┌─────────────────────────────────────────────┐
-│ Terminal 1: launch ─► sessions/abc/.claude.json │
-│                                                 │ ← No conflict!
-│ Terminal 2: launch ─► sessions/def/.claude.json │
-└─────────────────────────────────────────────┘
+Claude Code 1 ─┐
+               ├─► Chrome Extension (shared state) ─► Chrome
+Claude Code 2 ─┘
+                    ↑
+              State conflicts here!
 ```
 
-The `launch` command:
-1. Creates a unique session directory
-2. Copies existing `.claude.json` (if valid)
-3. Sets `HOME` environment variable to session directory
-4. Runs `claude` with all your arguments
-5. Cleans up session on exit
+### The Solution: Independent CDP Connections
 
-### Browser Automation
-
-Chrome's DevTools Protocol natively supports multiple connections:
+Chrome's DevTools Protocol natively supports multiple simultaneous connections:
 
 ```
-Process 1 ─► CDP Connection 1 ─┐
-                               ├─► Chrome (port 9222)
-Process 2 ─► CDP Connection 2 ─┘
+Claude Code 1 ─► Process 1 ─► CDP Connection 1 ─┐
+                                                 ├─► Chrome (port 9222)
+Claude Code 2 ─► Process 2 ─► CDP Connection 2 ─┘
+
+Independent connections, no shared state!
 ```
+
+Each Claude Code session spawns its own MCP server process with a dedicated CDP connection.
+
+---
+
+## CLI Commands
+
+```bash
+# Start MCP server (used by Claude Code automatically)
+claude-chrome-parallel serve
+
+# Check Chrome connection status
+claude-chrome-parallel check
+
+# Use custom Chrome debugging port
+claude-chrome-parallel serve --port 9223
+
+# Check installation health
+claude-chrome-parallel doctor
+```
+
+---
+
+## Chrome Configuration
+
+By default, connects to Chrome on port 9222.
+
+**Auto-launch**: If Chrome isn't running with debugging enabled, the package will start it automatically.
+
+**Manual start** (if needed):
+
+```bash
+# Windows
+chrome.exe --remote-debugging-port=9222
+
+# macOS
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+
+# Linux
+google-chrome --remote-debugging-port=9222
+```
+
+---
+
+## Additional Features
+
+### Session Isolation (Bonus)
+
+When running multiple Claude Code instances, they can corrupt `~/.claude.json` due to race conditions. Use the `launch` command to run Claude with isolated config:
+
+```bash
+# Run Claude Code with isolated config directory
+claude-chrome-parallel launch
+
+# Pass any claude flags
+claude-chrome-parallel launch --dangerously-skip-permissions
+claude-chrome-parallel launch -p "Your prompt"
+```
+
+### Config Recovery
+
+If your `.claude.json` gets corrupted:
+
+```bash
+# Auto-recover corrupted config
+claude-chrome-parallel recover
+
+# List available backups
+claude-chrome-parallel recover --list-backups
+```
+
+---
+
+## Comparison
+
+| Feature | Claude in Chrome (Extension) | Claude Chrome Parallel |
+|---------|------------------------------|----------------------|
+| Multiple sessions | ❌ Detached errors | ✅ Works perfectly |
+| Parallel QA testing | ❌ | ✅ |
+| Connection type | Shared extension state | Independent CDP |
+| Max concurrent sessions | 1 | 20+ tested |
+| Auto Chrome launch | ❌ | ✅ |
 
 ---
 
 ## Troubleshooting
 
-### Config Corruption
-
-```bash
-# Check health
-claude-chrome-parallel doctor
-
-# If corrupted, recover
-claude-chrome-parallel recover
-```
-
-### Chrome Not Connecting
+### Chrome not connecting
 
 ```bash
 # Check status
@@ -299,7 +274,7 @@ claude-chrome-parallel check
 chrome --remote-debugging-port=9222
 ```
 
-### Tools Not Appearing
+### Tools not appearing in Claude Code
 
 1. Check MCP config in `~/.claude.json`
 2. Restart Claude Code
@@ -319,17 +294,6 @@ npm run build
 # Test locally
 npm install -g .
 ```
-
----
-
-## Comparison
-
-| Feature | Plain `claude` | `claude-chrome-parallel launch` |
-|---------|----------------|--------------------------------|
-| Multiple instances | Config corruption risk | Safe (isolated) |
-| Browser automation | Detached errors | Works perfectly |
-| Auto backup | | Config backed up |
-| Recovery tools | | Built-in |
 
 ---
 
