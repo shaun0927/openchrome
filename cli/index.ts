@@ -7,7 +7,9 @@
  * - uninstall: Remove extension and native messaging host
  * - serve: Start MCP server for Claude Code
  * - sessions: List or clear sessions
+ * - launch: Start Claude Code with isolated config
  * - doctor: Check installation status
+ * - recover: Recover corrupted .claude.json
  */
 
 import { Command } from 'commander';
@@ -16,6 +18,7 @@ import { uninstall } from './uninstall';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { spawn, ChildProcess } from 'child_process';
 
 const program = new Command();
 
@@ -117,6 +120,7 @@ program
       'Extension files': fs.existsSync(getExtensionPath()),
       'Native host manifest': checkNativeHostManifest(),
       'Node.js version': checkNodeVersion(),
+      '.claude.json health': await checkClaudeConfigHealth(),
     };
 
     for (const [name, passed] of Object.entries(checks)) {
@@ -131,7 +135,300 @@ program
       console.log('All checks passed! Extension should be ready to use.');
     } else {
       console.log('Some checks failed. Run "claude-chrome-parallel install" to fix.');
+      if (!checks['.claude.json health']) {
+        console.log('Run "claude-chrome-parallel recover" to fix .claude.json');
+      }
     }
+  });
+
+program
+  .command('launch')
+  .description('Start Claude Code with isolated config (prevents corruption)')
+  .option('--sync-back', 'Sync config changes back to original after session')
+  .option('--keep-session', 'Keep session directory after exit (for debugging)')
+  .argument('[args...]', 'Arguments to pass to claude')
+  .action(async (args: string[], options: { syncBack?: boolean; keepSession?: boolean }) => {
+    const sessionId = generateSessionId();
+    const sessionDir = path.join(getSessionsDir(), sessionId);
+
+    console.log(`Creating isolated session: ${sessionId}`);
+
+    // Create session directory
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    // Copy existing .claude.json if it exists
+    const originalConfig = path.join(os.homedir(), '.claude.json');
+    const sessionConfig = path.join(sessionDir, '.claude.json');
+
+    if (fs.existsSync(originalConfig)) {
+      // Validate before copying
+      const content = fs.readFileSync(originalConfig, 'utf8');
+      if (isValidJson(content)) {
+        fs.copyFileSync(originalConfig, sessionConfig);
+        console.log('Copied existing config to session');
+      } else {
+        console.warn('Warning: Original .claude.json is corrupted, starting fresh');
+        fs.writeFileSync(sessionConfig, '{}');
+      }
+    } else {
+      fs.writeFileSync(sessionConfig, '{}');
+    }
+
+    // Create session metadata
+    const metadata = {
+      id: sessionId,
+      createdAt: new Date().toISOString(),
+      originalHome: os.homedir(),
+    };
+    fs.writeFileSync(
+      path.join(sessionDir, '.session-metadata.json'),
+      JSON.stringify(metadata, null, 2)
+    );
+
+    console.log('Starting Claude Code with isolated config...\n');
+
+    // Set up environment with isolated HOME
+    const env = {
+      ...process.env,
+      HOME: sessionDir,
+      USERPROFILE: sessionDir,
+      CLAUDE_CONFIG_DIR: sessionDir,
+    };
+
+    // Find claude command
+    const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+
+    // Spawn claude with isolated environment
+    const child = spawn(claudeCmd, args, {
+      env,
+      stdio: 'inherit',
+      shell: true,
+    });
+
+    // Handle exit
+    child.on('close', async (code) => {
+      console.log(`\nClaude Code exited with code ${code}`);
+
+      // Sync back if requested
+      if (options.syncBack && fs.existsSync(sessionConfig)) {
+        console.log('Syncing config back to original location...');
+        const sessionContent = fs.readFileSync(sessionConfig, 'utf8');
+        if (isValidJson(sessionContent)) {
+          // Backup original first
+          if (fs.existsSync(originalConfig)) {
+            await createBackupFile(originalConfig);
+          }
+          fs.writeFileSync(originalConfig, sessionContent);
+          console.log('Config synced successfully');
+        } else {
+          console.error('Session config is corrupted, not syncing back');
+        }
+      }
+
+      // Cleanup session
+      if (!options.keepSession) {
+        console.log('Cleaning up session directory...');
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        console.log('Session cleaned up');
+      } else {
+        console.log(`Session kept at: ${sessionDir}`);
+      }
+
+      process.exit(code ?? 0);
+    });
+
+    // Forward signals
+    process.on('SIGINT', () => child.kill('SIGINT'));
+    process.on('SIGTERM', () => child.kill('SIGTERM'));
+  });
+
+program
+  .command('recover')
+  .description('Recover corrupted .claude.json')
+  .option('--backup <name>', 'Restore from specific backup')
+  .option('--list-backups', 'List available backups')
+  .option('--force-new', 'Create new empty config (loses all data)')
+  .action(async (options: { backup?: string; listBackups?: boolean; forceNew?: boolean }) => {
+    const configPath = path.join(os.homedir(), '.claude.json');
+    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+
+    // List backups
+    if (options.listBackups) {
+      console.log('Available backups:\n');
+      if (!fs.existsSync(backupDir)) {
+        console.log('No backups found');
+        return;
+      }
+      const backups = fs.readdirSync(backupDir)
+        .filter(f => f.startsWith('.claude.json.'))
+        .sort()
+        .reverse();
+
+      if (backups.length === 0) {
+        console.log('No backups found');
+        return;
+      }
+
+      for (const backup of backups) {
+        const stats = fs.statSync(path.join(backupDir, backup));
+        console.log(`  ${backup} (${formatBytes(stats.size)})`);
+      }
+      return;
+    }
+
+    // Force new config
+    if (options.forceNew) {
+      if (fs.existsSync(configPath)) {
+        await createBackupFile(configPath);
+      }
+      fs.writeFileSync(configPath, '{}');
+      console.log('Created new empty .claude.json');
+      console.log('Warning: All previous settings have been lost (backup created)');
+      return;
+    }
+
+    // Restore from specific backup
+    if (options.backup) {
+      const backupPath = path.join(backupDir, options.backup);
+      if (!fs.existsSync(backupPath)) {
+        console.error(`Backup not found: ${options.backup}`);
+        process.exit(1);
+      }
+
+      const content = fs.readFileSync(backupPath, 'utf8');
+      if (!isValidJson(content)) {
+        console.error('Selected backup is also corrupted');
+        process.exit(1);
+      }
+
+      if (fs.existsSync(configPath)) {
+        await createBackupFile(configPath);
+      }
+      fs.writeFileSync(configPath, content);
+      console.log(`Restored from backup: ${options.backup}`);
+      return;
+    }
+
+    // Auto-recover
+    console.log('Checking .claude.json...\n');
+
+    if (!fs.existsSync(configPath)) {
+      console.log('No .claude.json found - nothing to recover');
+      return;
+    }
+
+    const content = fs.readFileSync(configPath, 'utf8');
+
+    if (isValidJson(content)) {
+      console.log('✅ .claude.json is valid - no recovery needed');
+      return;
+    }
+
+    console.log('❌ .claude.json is corrupted');
+    console.log('Attempting recovery...\n');
+
+    // Create backup
+    const backup = await createBackupFile(configPath);
+    console.log(`Backup created: ${backup}`);
+
+    // Try to extract valid JSON
+    const recovered = attemptJsonRecovery(content);
+    if (recovered) {
+      fs.writeFileSync(configPath, JSON.stringify(recovered, null, 2));
+      console.log('✅ Successfully recovered .claude.json');
+      return;
+    }
+
+    // Try to restore from backup
+    if (fs.existsSync(backupDir)) {
+      const backups = fs.readdirSync(backupDir)
+        .filter(f => f.startsWith('.claude.json.'))
+        .sort()
+        .reverse();
+
+      for (const backupFile of backups) {
+        const backupContent = fs.readFileSync(path.join(backupDir, backupFile), 'utf8');
+        if (isValidJson(backupContent)) {
+          fs.writeFileSync(configPath, backupContent);
+          console.log(`✅ Restored from backup: ${backupFile}`);
+          return;
+        }
+      }
+    }
+
+    // Last resort: create empty config
+    fs.writeFileSync(configPath, '{}');
+    console.log('⚠️ Could not recover - created new empty config');
+    console.log('Your corrupted file has been backed up');
+  });
+
+program
+  .command('cleanup')
+  .description('Clean up stale sessions and old backups')
+  .option('--max-age <hours>', 'Max session age in hours (default: 24)', '24')
+  .option('--keep-backups <count>', 'Number of backups to keep (default: 10)', '10')
+  .action((options: { maxAge: string; keepBackups: string }) => {
+    const maxAgeMs = parseInt(options.maxAge, 10) * 60 * 60 * 1000;
+    const keepBackups = parseInt(options.keepBackups, 10);
+
+    console.log('Cleaning up stale sessions...\n');
+
+    // Clean up sessions
+    const sessionsDir = getSessionsDir();
+    let sessionsRemoved = 0;
+
+    if (fs.existsSync(sessionsDir)) {
+      const entries = fs.readdirSync(sessionsDir, { withFileTypes: true });
+      const now = Date.now();
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+
+        const sessionDir = path.join(sessionsDir, entry.name);
+        const metadataPath = path.join(sessionDir, '.session-metadata.json');
+
+        let shouldDelete = false;
+
+        if (fs.existsSync(metadataPath)) {
+          try {
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+            const createdAt = new Date(metadata.createdAt).getTime();
+            shouldDelete = (now - createdAt) > maxAgeMs;
+          } catch {
+            shouldDelete = true; // Invalid metadata
+          }
+        } else {
+          shouldDelete = true; // No metadata
+        }
+
+        if (shouldDelete) {
+          fs.rmSync(sessionDir, { recursive: true, force: true });
+          sessionsRemoved++;
+        }
+      }
+    }
+
+    console.log(`Removed ${sessionsRemoved} stale session(s)`);
+
+    // Clean up backups
+    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+    let backupsRemoved = 0;
+
+    if (fs.existsSync(backupDir)) {
+      const backups = fs.readdirSync(backupDir)
+        .filter(f => f.startsWith('.claude.json.'))
+        .sort()
+        .reverse();
+
+      const toRemove = backups.slice(keepBackups);
+      for (const backup of toRemove) {
+        fs.unlinkSync(path.join(backupDir, backup));
+        backupsRemoved++;
+      }
+    }
+
+    console.log(`Removed ${backupsRemoved} old backup(s)`);
+    console.log('\nCleanup complete!');
   });
 
 /**
@@ -193,6 +490,132 @@ function checkNodeVersion(): boolean {
   const version = process.version;
   const major = parseInt(version.slice(1).split('.')[0], 10);
   return major >= 18;
+}
+
+/**
+ * Check .claude.json health
+ */
+async function checkClaudeConfigHealth(): Promise<boolean> {
+  const configPath = path.join(os.homedir(), '.claude.json');
+
+  if (!fs.existsSync(configPath)) {
+    return true; // No config is fine
+  }
+
+  const content = fs.readFileSync(configPath, 'utf8');
+  return isValidJson(content);
+}
+
+/**
+ * Get sessions directory
+ */
+function getSessionsDir(): string {
+  return path.join(os.homedir(), '.claude-chrome-parallel', 'sessions');
+}
+
+/**
+ * Generate a unique session ID
+ */
+function generateSessionId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 8);
+  return `${timestamp}-${random}`;
+}
+
+/**
+ * Check if string is valid JSON
+ */
+function isValidJson(content: string): boolean {
+  try {
+    JSON.parse(content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a backup of a file
+ */
+async function createBackupFile(filePath: string): Promise<string> {
+  const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const basename = path.basename(filePath);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupName = `${basename}.${timestamp}.bak`;
+  const backupPath = path.join(backupDir, backupName);
+
+  fs.copyFileSync(filePath, backupPath);
+  return backupPath;
+}
+
+/**
+ * Format bytes as human readable string
+ */
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+/**
+ * Attempt to recover valid JSON from corrupted content
+ */
+function attemptJsonRecovery(content: string): object | null {
+  const trimmed = content.trim();
+
+  // Try to extract first valid JSON object from concatenated content
+  if (trimmed.includes('}{')) {
+    // Find matching brace for first object
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < trimmed.length; i++) {
+      const char = trimmed[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === '{') depth++;
+      else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          const firstObject = trimmed.substring(0, i + 1);
+          try {
+            return JSON.parse(firstObject);
+          } catch {
+            // Try second object
+            const secondObject = trimmed.substring(i + 1);
+            try {
+              return JSON.parse(secondObject);
+            } catch {
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 program.parse();

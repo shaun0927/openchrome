@@ -1,16 +1,19 @@
 {
   "name": "claude-chrome-parallel",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "MCP server for parallel Claude Code browser sessions - no more 'Detached' errors",
   "main": "dist/index.js",
   "bin": {
-    "claude-chrome-parallel": "./dist/index.js"
+    "claude-chrome-parallel": "./dist/cli/index.js",
+    "claude-session": "./dist/cli/claude-session.js"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "start": "node dist/index.js serve",
-    "check": "node dist/index.js check",
+    "build": "tsc -p tsconfig.cli.json && tsc -p tsconfig.json",
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "build:src": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.cli.json --watch",
+    "start": "node dist/cli/index.js serve",
+    "check": "node dist/cli/index.js check",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
@@ -40,6 +43,9 @@
     "@types/chrome": "^0.1.36",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "@types/uuid": "^9.0.8",
+    "@types/write-file-atomic": "^4.0.3",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",
@@ -51,7 +57,10 @@
   },
   "dependencies": {
     "commander": "^12.0.0",
-    "puppeteer-core": "^23.11.1"
+    "proper-lockfile": "^4.1.2",
+    "puppeteer-core": "^23.11.1",
+    "uuid": "^9.0.0",
+    "write-file-atomic": "^5.0.1"
   },
   "engines": {
     "node": ">=18.0.0"
