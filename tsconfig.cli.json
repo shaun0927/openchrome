@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "sourceMap": true,
+    "outDir": "./dist/cli",
+    "rootDir": "./cli",
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": [
+    "cli/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

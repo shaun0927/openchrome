@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Chrome Parallel</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      width: 320px;
+      padding: 16px;
+      background: #1a1a2e;
+      color: #eaeaea;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #2d2d44;
+    }
+
+    .header-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #7c3aed, #a855f7);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header-text h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .header-text p {
+      font-size: 11px;
+      color: #888;
+      margin-top: 2px;
+    }
+
+    .section {
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: #2d2d44;
+      border-radius: 6px;
+      margin-bottom: 6px;
+    }
+
+    .stat-label {
+      font-size: 13px;
+      color: #ccc;
+    }
+
+    .stat-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: #a855f7;
+    }
+
+    .session-list {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .session-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      background: #2d2d44;
+      border-radius: 6px;
+      margin-bottom: 6px;
+    }
+
+    .session-item:hover {
+      background: #3d3d54;
+    }
+
+    .session-info {
+      flex: 1;
+    }
+
+    .session-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: #fff;
+    }
+
+    .session-meta {
+      font-size: 11px;
+      color: #888;
+      margin-top: 2px;
+    }
+
+    .session-color {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+
+    .session-tabs {
+      font-size: 12px;
+      color: #888;
+      background: #1a1a2e;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 24px;
+      color: #666;
+    }
+
+    .empty-state-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+
+    .empty-state-text {
+      font-size: 13px;
+    }
+
+    .footer {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #2d2d44;
+      text-align: center;
+    }
+
+    .footer-link {
+      font-size: 11px;
+      color: #888;
+      text-decoration: none;
+    }
+
+    .footer-link:hover {
+      color: #a855f7;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .status-dot.active {
+      background: #22c55e;
+    }
+
+    .status-dot.inactive {
+      background: #888;
+    }
+
+    .btn {
+      background: #7c3aed;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 8px;
+    }
+
+    .btn:hover {
+      background: #6d28d9;
+    }
+
+    .btn-secondary {
+      background: #2d2d44;
+    }
+
+    .btn-secondary:hover {
+      background: #3d3d54;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-icon">⚡</div>
+    <div class="header-text">
+      <h1>Claude Chrome Parallel</h1>
+      <p>Parallel session browser automation</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Status</div>
+    <div class="stat-row">
+      <span class="stat-label">
+        <span id="status-dot" class="status-dot active"></span>
+        Extension
+      </span>
+      <span id="status-text" class="stat-value">Active</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Active Sessions</span>
+      <span id="session-count" class="stat-value">0</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Sessions</div>
+    <div id="session-list" class="session-list">
+      <div class="empty-state">
+        <div class="empty-state-icon">📭</div>
+        <div class="empty-state-text">No active sessions</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <button id="refresh-btn" class="btn btn-secondary">Refresh</button>
+    <button id="cleanup-btn" class="btn btn-secondary">Cleanup Inactive</button>
+  </div>
+
+  <div class="footer">
+    <a href="https://github.com/shaun0927/claude-chrome-parallel" target="_blank" class="footer-link">
+      GitHub Repository
+    </a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

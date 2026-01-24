@@ -1,0 +1,9 @@
+{
+  "name": "com.anthropic.claude_chrome_parallel",
+  "description": "Native messaging host for Claude Chrome Parallel extension",
+  "path": "/home/${USER}/.claude-chrome-parallel/native-host/host.js",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://${EXTENSION_ID}/"
+  ]
+}

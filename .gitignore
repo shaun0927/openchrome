@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Test coverage
+coverage/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Package manager locks (optional - uncomment if you don't want to commit them)
+# package-lock.json
+# yarn.lock
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Chrome extension unpacked (when loaded for development)
+extension-unpacked/

@@ -1,0 +1,68 @@
+{
+  "name": "claude-chrome-parallel",
+  "version": "0.1.0",
+  "description": "Chrome extension for parallel Claude Code sessions with MCP support - no more 'Detached' errors",
+  "main": "dist/cli/index.js",
+  "bin": {
+    "claude-chrome-parallel": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "npm run build:extension && npm run build:cli && npm run build:host",
+    "build:extension": "webpack --config webpack.config.js --mode production",
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "build:host": "cp native-host/host.js dist/native-host/",
+    "dev": "webpack --config webpack.config.js --mode development --watch",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src --ext .ts",
+    "clean": "rimraf dist",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "chrome-extension",
+    "mcp",
+    "browser-automation",
+    "parallel-sessions"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shaun0927/claude-chrome-parallel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shaun0927/claude-chrome-parallel/issues"
+  },
+  "homepage": "https://github.com/shaun0927/claude-chrome-parallel#readme",
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.50.0",
+    "@types/chrome": "^0.0.300",
+    "@types/node": "^20.0.0",
+    "@types/jest": "^29.5.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "copy-webpack-plugin": "^12.0.0",
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "rimraf": "^5.0.0",
+    "ts-jest": "^29.1.0",
+    "ts-loader": "^9.5.0",
+    "typescript": "^5.4.0",
+    "webpack": "^5.90.0",
+    "webpack-cli": "^5.1.0"
+  },
+  "dependencies": {
+    "commander": "^12.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "native-host",
+    "README.md",
+    "LICENSE"
+  ]
+}
