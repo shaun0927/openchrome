@@ -128,9 +128,16 @@ export class ChromeLauncher {
   async ensureChrome(options: LaunchOptions = {}): Promise<ChromeInstance> {
     const port = options.port || this.port;
 
-    // Check if already connected
+    // Check if already connected and instance is still valid
     if (this.instance) {
-      return this.instance;
+      // Verify the cached instance is still valid by checking the debug port
+      const currentWs = await checkDebugPort(port);
+      if (currentWs && currentWs === this.instance.wsEndpoint) {
+        return this.instance;
+      }
+      // Instance is stale, clear it
+      console.error('[ChromeLauncher] Cached instance is stale, refreshing...');
+      this.instance = null;
     }
 
     // Check if Chrome is already running with debug port

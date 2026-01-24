@@ -211,13 +211,54 @@ export class CDPClient {
    */
   async connect(): Promise<void> {
     if (this.browser && this.browser.isConnected()) {
-      return;
+      // Verify connection is actually working by checking Chrome endpoint
+      try {
+        const launcher = getChromeLauncher(this.port);
+        const instance = await launcher.ensureChrome();
+        const currentWsUrl = instance.wsEndpoint;
+
+        // Check if the browser's WebSocket URL matches current Chrome
+        const browserWsUrl = this.browser.wsEndpoint();
+        if (browserWsUrl !== currentWsUrl) {
+          console.error('[CDPClient] WebSocket URL mismatch, reconnecting...');
+          await this.forceReconnect();
+          return;
+        }
+        return;
+      } catch {
+        console.error('[CDPClient] Connection check failed, reconnecting...');
+        await this.forceReconnect();
+        return;
+      }
     }
 
     this.connectionState = 'connecting';
     await this.connectInternal();
     this.startHeartbeat();
     console.error('[CDPClient] Connected to Chrome');
+  }
+
+  /**
+   * Force reconnect by disconnecting and reconnecting
+   */
+  async forceReconnect(): Promise<void> {
+    this.stopHeartbeat();
+
+    if (this.browser) {
+      try {
+        this.browser.removeAllListeners('disconnected');
+        await this.browser.disconnect();
+      } catch {
+        // Ignore disconnect errors
+      }
+      this.browser = null;
+      this.sessions.clear();
+    }
+
+    this.connectionState = 'connecting';
+    await this.connectInternal();
+    this.startHeartbeat();
+    console.error('[CDPClient] Reconnected to Chrome');
   }
 
   /**
