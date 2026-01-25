@@ -1,15 +1,57 @@
 # Claude Chrome Parallel
 
-> **Run 20+ Claude Code browser sessions simultaneously, without conflicts.**
+> **Automate your actual browser—with all your logins active.**
 
 [![npm version](https://badge.fury.io/js/claude-chrome-parallel.svg)](https://www.npmjs.com/package/claude-chrome-parallel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+No more "Detached" errors. Run **20+ Claude Code sessions in parallel**.
+
+- ✅ **Authenticated access**: Gmail, Salesforce, LinkedIn—already logged in
+- ✅ **True parallelism**: 5 sites at once, 5x faster
+- ✅ **Multi-account**: Same site, different accounts, isolated sessions
+- ✅ **No bot detection**: Real browser profile, not headless
+
+**This isn't just for developers.** Any web task requiring authentication—previously impossible to automate—is now possible with natural language.
+
 <p align="center">
-  <img src="https://raw.githubusercontent.com/shaun0927/claude-chrome-parallel/main/assets/demo.svg" alt="Chrome Extension vs Claude Chrome Parallel - Animated comparison showing how Chrome Extension fails with 'Detached' error while Claude Chrome Parallel runs 5+ sessions simultaneously" width="100%">
+  <img src="https://raw.githubusercontent.com/shaun0927/claude-chrome-parallel/main/assets/demo.svg" alt="Chrome Extension vs Claude Chrome Parallel - Animated comparison showing parallel execution" width="100%">
 </p>
 
 ---
+
+## Quick Start
+
+```bash
+npm install -g claude-chrome-parallel
+```
+
+Add to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "chrome-parallel": {
+      "command": "ccp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+Restart Claude Code. Done.
+
+```
+You: Take a screenshot of https://github.com
+
+Claude: [Auto-launches browser, captures screenshot]
+```
+
+---
+
+## How It Works
+
+The official Chrome extension crashes when running multiple Claude sessions ("Detached" error). We fixed that.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -18,7 +60,7 @@
 │                    (Google account)            │                            │
 │                                                │                            │
 │   Claude Code 2 ─► Worker B ─► [Tab3] [Tab4] ─┼─► Chrome (single instance) │
-│                    (Naver account)             │     Port 9222              │
+│                    (LinkedIn account)          │     Port 9222              │
 │                                                │                            │
 │   Claude Code 3 ─► Worker C ─► [Tab5] [Tab6] ─┘                            │
 │                    (Amazon account)                                         │
@@ -28,6 +70,48 @@
 │   ✓ Multiple account logins on same site simultaneously                    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Independent CDP connections** per session = No shared state = No conflicts.
+
+---
+
+## Usage Examples
+
+### Multiple Accounts Simultaneously
+
+```
+You: Create "google-personal" and "google-work" Workers,
+     then check the inbox of each Gmail account
+
+Claude: [Creates 2 Workers → Each accesses Gmail with isolated sessions]
+        google-personal: Personal account - 3 new emails
+        google-work: Work account - 7 new emails
+```
+
+### Price Comparison (Parallel)
+
+```
+You: Search for "iPhone 15" lowest price on Amazon, eBay, and Walmart simultaneously
+
+Claude: [3 sites run in parallel]
+        Amazon: $999 (1.2s)
+        eBay: $945 (1.1s)
+        Walmart: $979 (1.3s)
+        Total time: 1.3s (vs 3.6s sequential)
+```
+
+### Parallel QA Testing
+
+```bash
+# Terminal 1
+claude -p "Test myapp.com/login"
+
+# Terminal 2 (at the same time!)
+claude -p "Test myapp.com/checkout"
+
+# Terminal 3 (at the same time!)
+claude -p "Monitor myapp.com/admin"
 ```
 
 ---
@@ -92,134 +176,6 @@ workflow_init({
 
 ---
 
-## Comparison
-
-| | Chrome Extension | Claude Chrome Parallel |
-|---|:---:|:---:|
-| **Concurrent Sessions** | ❌ 1 (Detached error) | ✅ **20+** |
-| **Worker Isolation** | ❌ | ✅ Isolated cookies/sessions |
-| **Multi-account Login** | ❌ | ✅ |
-| **Parallel Execution** | ❌ | ✅ |
-| **Network Simulation** | ❌ | ✅ 3G/4G/offline |
-| **Workflow Orchestration** | ❌ | ✅ |
-| **Auto Chrome Launch** | ❌ | ✅ |
-
----
-
-## Why It Matters
-
-### The Problem
-
-The official Chrome extension has a fatal flaw: **shared internal state**.
-
-```
-Claude Code 1 ─┐
-               ├─► Chrome Extension (shared state) ─► "Detached" error!
-Claude Code 2 ─┘
-```
-
-When Session A takes a screenshot, Session B's connection breaks. You can only run **one session at a time**.
-
-### The Solution
-
-Claude Chrome Parallel creates **independent CDP connections** per session:
-
-```
-Claude Code 1 ─► CDP Connection 1 ─┐
-                                    ├─► Chrome (port 9222)
-Claude Code 2 ─► CDP Connection 2 ─┘
-
-No shared state = No conflicts = 20+ concurrent sessions
-```
-
-### The Real Power: Authenticated Sessions
-
-Unlike headless automation, this runs in **your actual browser** with all your logins active:
-
-- ✅ Access Gmail, Salesforce, LinkedIn while logged in
-- ✅ No credential management or auth flows needed
-- ✅ Bypass bot detection (real browser profile)
-- ✅ Multiple accounts simultaneously (Worker isolation)
-
-**This isn't just for developers.** Any web task requiring authentication—previously impossible to automate—is now possible with natural language.
-
----
-
-## Quick Start (2 minutes)
-
-### 1. Install
-
-```bash
-npm install -g claude-chrome-parallel
-```
-
-### 2. Configure Claude Code
-
-Add to `~/.claude.json`:
-
-```json
-{
-  "mcpServers": {
-    "chrome-parallel": {
-      "command": "ccp",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-### 3. Restart Claude Code and use
-
-```
-You: Take a screenshot of https://github.com
-
-Claude: [Auto-launches browser, captures screenshot]
-```
-
-> **Tip:** `ccp` is a shorthand for `claude-chrome-parallel`.
-
----
-
-## Usage Examples
-
-### Multiple Accounts Simultaneously
-
-```
-You: Create "google-personal" and "google-work" Workers,
-     then check the inbox of each Gmail account
-
-Claude: [Creates 2 Workers → Each accesses Gmail with isolated sessions]
-        google-personal: Personal account - 3 new emails
-        google-work: Work account - 7 new emails
-```
-
-### Price Comparison (Parallel)
-
-```
-You: Search for "iPhone 15" lowest price on Amazon, eBay, and Walmart simultaneously
-
-Claude: [3 sites run in parallel]
-        Amazon: $999 (1.2s)
-        eBay: $945 (1.1s)
-        Walmart: $979 (1.3s)
-        Total time: 1.3s (vs 3.6s sequential)
-```
-
-### Parallel QA Testing
-
-```bash
-# Terminal 1
-claude -p "Test myapp.com/login"
-
-# Terminal 2 (at the same time!)
-claude -p "Test myapp.com/checkout"
-
-# Terminal 3 (at the same time!)
-claude -p "Monitor myapp.com/admin"
-```
-
----
-
 ## Chrome-Sisyphus: Orchestration Skill
 
 For complex multi-site workflows, use the built-in **Chrome-Sisyphus** skill system.
@@ -251,7 +207,7 @@ For complex multi-site workflows, use the built-in **Chrome-Sisyphus** skill sys
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Why This Matters: Context Isolation
+### Context Isolation
 
 **Without isolation** (traditional approach):
 ```
@@ -274,41 +230,33 @@ Background Tasks: (isolated, don't pollute main)
 ├── Worker 1: own context, own screenshots
 ├── Worker 2: own context, own screenshots
 └── Worker 3: own context, own screenshots
-
-Scratchpad Files: (persistent state)
-└── .agent/chrome-sisyphus/*.md
 ```
 
-### Usage
-
-Copy the `.claude/` folder to your project:
+### Setup
 
 ```bash
 cp -r node_modules/claude-chrome-parallel/.claude ~/.claude/
-# Or copy to your project root
 ```
 
-Then use in Claude Code:
+Then use:
 
 ```
 /chrome-sisyphus Compare laptop prices on Amazon, BestBuy, and Newegg
 ```
 
-### Skill Files
+---
 
-```
-.claude/
-├── commands/
-│   └── chrome-sisyphus.md      # /chrome-sisyphus command
-└── skills/
-    └── chrome-sisyphus/
-        ├── SKILL.md            # Skill overview
-        ├── AGENTS.md           # Agent specifications
-        └── agents/
-            ├── decomposer.md   # Task decomposition
-            ├── worker-agent.md # Worker execution (Ralph Loop)
-            └── coordinator.md  # Result integration
-```
+## Comparison
+
+| | Chrome Extension | Claude Chrome Parallel |
+|---|:---:|:---:|
+| **Concurrent Sessions** | ❌ 1 (Detached error) | ✅ **20+** |
+| **Worker Isolation** | ❌ | ✅ Isolated cookies/sessions |
+| **Multi-account Login** | ❌ | ✅ |
+| **Parallel Execution** | ❌ | ✅ |
+| **Network Simulation** | ❌ | ✅ 3G/4G/offline |
+| **Workflow Orchestration** | ❌ | ✅ |
+| **Auto Chrome Launch** | ❌ | ✅ |
 
 ---
 
@@ -353,54 +301,20 @@ Then use in Claude Code:
 ccp serve              # Start MCP server (auto-run by Claude Code)
 ccp check              # Check Chrome connection
 ccp status             # View session status
-ccp status --json      # JSON output
 ccp doctor             # Diagnose installation
 ccp cleanup            # Clean up old sessions
-ccp serve --port 9223  # Use custom port
 ```
 
 ---
 
-## Performance
+## Use Cases
 
-| Concurrent Sessions | Success Rate |
-|:---:|:---:|
-| 5 | 100% |
-| 10 | 100% |
-| 15 | 100% |
-| 20 | 100% |
-
----
-
-## Additional Features
-
-### Network Simulation
-
-```
-You: Test myapp.com loading time on 3G network
-
-Claude: [Applies 3G throttling: 1.5Mbps, 100ms latency]
-```
-
-Presets: `offline`, `slow-2g`, `2g`, `3g`, `4g`, `fast-wifi`, `custom`
-
-### Config Recovery
-
-```bash
-# Auto-recover corrupted .claude.json
-ccp recover
-
-# List backups
-ccp recover --list-backups
-```
-
-### Session Isolation
-
-```bash
-# Run Claude with isolated config (prevents race conditions)
-ccp launch
-ccp launch -p "Your prompt"
-```
+- **Business**: ERP/SaaS data extraction, invoice downloads, repetitive task automation
+- **Research**: Login-required platform data collection, academic DB searches
+- **Social Media**: Multi-account posting, message management, analytics
+- **E-commerce**: Member price monitoring, inventory management, review responses
+- **QA Testing**: Parallel scenario testing, network condition testing
+- **Productivity**: Email organization, calendar management, bookmark management
 
 ---
 
@@ -419,17 +333,6 @@ chrome --remote-debugging-port=9222
 1. Check `~/.claude.json` configuration
 2. Restart Claude Code
 3. Run `/mcp` to verify `chrome-parallel` is listed
-
----
-
-## Use Cases
-
-- **Business**: ERP/SaaS data extraction, invoice downloads, repetitive task automation
-- **Research**: Login-required platform data collection, academic DB searches
-- **Social Media**: Multi-account posting, message management, analytics
-- **E-commerce**: Member price monitoring, inventory management, review responses
-- **QA Testing**: Parallel scenario testing, network condition testing
-- **Productivity**: Email organization, calendar management, bookmark management
 
 ---
 
