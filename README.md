@@ -175,6 +175,98 @@ claude -p "Monitor myapp.com/admin"
 
 ---
 
+## Chrome-Sisyphus: Orchestration Skill
+
+For complex multi-site workflows, use the built-in **Chrome-Sisyphus** skill system.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  /chrome-sisyphus "Compare iPhone prices on Amazon, eBay, Walmart"
+│                              ↓
+│  ┌──────────────────────────────────────────────────────────┐
+│  │            ORCHESTRATOR (Main Session)                   │
+│  │  • Decompose task → 3 workers                           │
+│  │  • Allocate sites → Amazon, eBay, Walmart               │
+│  │  • Context usage: ~500 tokens (lightweight!)            │
+│  └──────────────────────────────────────────────────────────┘
+│                              ↓
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│  │  Worker 1   │  │  Worker 2   │  │  Worker 3   │
+│  │  (Amazon)   │  │  (eBay)     │  │  (Walmart)  │
+│  │  Background │  │  Background │  │  Background │
+│  │  Task       │  │  Task       │  │  Task       │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
+│         ↓                ↓                ↓
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│  │ Scratchpad  │  │ Scratchpad  │  │ Scratchpad  │
+│  │ worker-1.md │  │ worker-2.md │  │ worker-3.md │
+│  └─────────────┘  └─────────────┘  └─────────────┘
+│                              ↓
+│  Results collected → Unified report to user
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Why This Matters: Context Isolation
+
+**Without isolation** (traditional approach):
+```
+Main Session Context:
+├── Worker 1 screenshot (500KB)     ─┐
+├── Worker 1 DOM tree (large)        │
+├── Worker 2 screenshot (500KB)      ├─► Context explosion!
+├── Worker 2 DOM tree (large)        │
+└── Worker 3 ... (keeps growing)    ─┘
+```
+
+**With Chrome-Sisyphus**:
+```
+Main Session: ~500 tokens (stays light)
+├── Task plan
+├── Worker IDs
+└── Status summary only
+
+Background Tasks: (isolated, don't pollute main)
+├── Worker 1: own context, own screenshots
+├── Worker 2: own context, own screenshots
+└── Worker 3: own context, own screenshots
+
+Scratchpad Files: (persistent state)
+└── .agent/chrome-sisyphus/*.md
+```
+
+### Usage
+
+Copy the `.claude/` folder to your project:
+
+```bash
+cp -r node_modules/claude-chrome-parallel/.claude ~/.claude/
+# Or copy to your project root
+```
+
+Then use in Claude Code:
+
+```
+/chrome-sisyphus Compare laptop prices on Amazon, BestBuy, and Newegg
+```
+
+### Skill Files
+
+```
+.claude/
+├── commands/
+│   └── chrome-sisyphus.md      # /chrome-sisyphus command
+└── skills/
+    └── chrome-sisyphus/
+        ├── SKILL.md            # Skill overview
+        ├── AGENTS.md           # Agent specifications
+        └── agents/
+            ├── decomposer.md   # Task decomposition
+            ├── worker-agent.md # Worker execution (Ralph Loop)
+            └── coordinator.md  # Result integration
+```
+
+---
+
 ## MCP Tools
 
 ### Browser Automation
