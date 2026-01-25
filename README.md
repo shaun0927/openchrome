@@ -2,7 +2,7 @@
 
 > **Automate your actual browser—with all your logins active.**
 
-[![npm version](https://badge.fury.io/js/claude-chrome-parallel.svg)](https://www.npmjs.com/package/claude-chrome-parallel)
+[![GitHub release](https://img.shields.io/github/v/release/shaun0927/claude-chrome-parallel)](https://github.com/shaun0927/claude-chrome-parallel/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 No more "Detached" errors. Run **20+ Claude Code sessions in parallel**.
@@ -23,7 +23,13 @@ No more "Detached" errors. Run **20+ Claude Code sessions in parallel**.
 ## Quick Start
 
 ```bash
-npm install -g claude-chrome-parallel
+# Install from GitHub (recommended)
+npm install -g github:shaun0927/claude-chrome-parallel
+
+# Or clone and install locally
+git clone https://github.com/shaun0927/claude-chrome-parallel.git
+cd claude-chrome-parallel
+npm install -g .
 ```
 
 Add to `~/.claude.json`:
