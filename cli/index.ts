@@ -13,8 +13,9 @@
  */
 
 import { Command } from 'commander';
-import { install, installNativeHost } from './install';
-import { uninstall } from './uninstall';
+// Legacy imports - kept for backward compatibility but deprecated
+// import { install, installNativeHost } from './install';
+// import { uninstall } from './uninstall';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -34,47 +35,41 @@ try {
 
 program
   .name('claude-chrome-parallel')
-  .description('Chrome extension for parallel Claude Code sessions')
+  .description('MCP server for parallel Claude Code browser sessions via CDP')
   .version(version);
 
 program
   .command('install')
-  .description('Install extension and native messaging host')
+  .description('[DEPRECATED] Extension install is no longer needed. Use CDP mode instead.')
   .option('-f, --force', 'Force reinstall even if already installed')
   .option('--extension-id <id>', 'Chrome extension ID (for native host configuration)')
-  .action(async (options) => {
-    console.log('Installing Claude Chrome Parallel...\n');
-
-    try {
-      await install(options);
-      console.log('\n✅ Installation complete!\n');
-      console.log('Next steps:');
-      console.log('1. Open chrome://extensions/ in Chrome');
-      console.log('2. Enable "Developer mode" (top right)');
-      console.log('3. Click "Load unpacked"');
-      console.log(`4. Select: ${getExtensionPath()}`);
-      console.log('\n5. Note the Extension ID and run:');
-      console.log('   claude-chrome-parallel install --extension-id <YOUR_ID>');
-    } catch (error) {
-      console.error('❌ Installation failed:', error);
-      process.exit(1);
-    }
+  .action(async () => {
+    console.log('⚠️  DEPRECATED: Extension installation is no longer needed.\n');
+    console.log('Claude Chrome Parallel now uses CDP (Chrome DevTools Protocol) mode,');
+    console.log('which does not require a Chrome extension.\n');
+    console.log('Quick Start:');
+    console.log('  1. Start Chrome with debugging port:');
+    console.log('     chrome --remote-debugging-port=9222\n');
+    console.log('  2. Add to ~/.claude.json:');
+    console.log('     {');
+    console.log('       "mcpServers": {');
+    console.log('         "chrome-parallel": {');
+    console.log('           "command": "ccp",');
+    console.log('           "args": ["serve"]');
+    console.log('         }');
+    console.log('       }');
+    console.log('     }\n');
+    console.log('  3. Restart Claude Code\n');
+    console.log('Run "ccp doctor" to verify your setup.');
   });
 
 program
   .command('uninstall')
-  .description('Remove extension and native messaging host')
+  .description('[DEPRECATED] No longer needed - CDP mode has no extension to uninstall')
   .action(async () => {
-    console.log('Uninstalling Claude Chrome Parallel...\n');
-
-    try {
-      await uninstall();
-      console.log('\n✅ Uninstallation complete!');
-      console.log('Note: You still need to manually remove the extension from chrome://extensions/');
-    } catch (error) {
-      console.error('❌ Uninstallation failed:', error);
-      process.exit(1);
-    }
+    console.log('⚠️  DEPRECATED: Uninstall is no longer needed.\n');
+    console.log('Claude Chrome Parallel now uses CDP mode, which has no extension to uninstall.');
+    console.log('Simply remove the MCP server config from ~/.claude.json if you want to disable it.');
   });
 
 program
@@ -125,26 +120,35 @@ program
   .action(async () => {
     console.log('Checking installation status...\n');
 
-    const checks = {
-      'Extension files': fs.existsSync(getExtensionPath()),
-      'Native host manifest': checkNativeHostManifest(),
-      'Node.js version': checkNodeVersion(),
+    // Core checks (required for CDP mode)
+    const coreChecks = {
+      'Node.js version (>=18)': checkNodeVersion(),
       '.claude.json health': await checkClaudeConfigHealth(),
+      'Chrome debugging port': await checkChromeDebugPort(),
     };
 
-    for (const [name, passed] of Object.entries(checks)) {
+    console.log('Core Requirements:');
+    for (const [name, passed] of Object.entries(coreChecks)) {
       const status = passed ? '✅' : '❌';
-      console.log(`${status} ${name}`);
+      console.log(`  ${status} ${name}`);
     }
 
-    const allPassed = Object.values(checks).every(Boolean);
+    const allPassed = Object.values(coreChecks).every(Boolean);
     console.log();
 
     if (allPassed) {
-      console.log('All checks passed! Extension should be ready to use.');
+      console.log('All checks passed! Ready to use with Claude Code.');
+      console.log('\nUsage:');
+      console.log('  1. Start Chrome with: chrome --remote-debugging-port=9222');
+      console.log('  2. Add to ~/.claude.json:');
+      console.log('     "mcpServers": { "chrome-parallel": { "command": "ccp", "args": ["serve"] } }');
+      console.log('  3. Restart Claude Code');
     } else {
-      console.log('Some checks failed. Run "claude-chrome-parallel install" to fix.');
-      if (!checks['.claude.json health']) {
+      if (!coreChecks['Chrome debugging port']) {
+        console.log('Chrome is not running with debugging port.');
+        console.log('Start Chrome with: chrome --remote-debugging-port=9222');
+      }
+      if (!coreChecks['.claude.json health']) {
         console.log('Run "claude-chrome-parallel recover" to fix .claude.json');
       }
     }
@@ -642,6 +646,27 @@ function checkNodeVersion(): boolean {
   const version = process.version;
   const major = parseInt(version.slice(1).split('.')[0], 10);
   return major >= 18;
+}
+
+/**
+ * Check if Chrome is running with debugging port
+ */
+async function checkChromeDebugPort(port: number = 9222): Promise<boolean> {
+  try {
+    const http = await import('http');
+    return new Promise((resolve) => {
+      const req = http.get(`http://localhost:${port}/json/version`, (res) => {
+        resolve(res.statusCode === 200);
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(2000, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+  } catch {
+    return false;
+  }
 }
 
 /**
