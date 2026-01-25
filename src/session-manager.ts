@@ -5,6 +5,7 @@
 import { Page, Target } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent } from './types/session';
 import { CDPClient, getCDPClient } from './cdp/client';
+import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
 
@@ -13,16 +14,148 @@ function getTargetId(target: Target): string {
   return (target as unknown as { _targetId: string })._targetId;
 }
 
+export interface SessionManagerConfig {
+  /** Session TTL in milliseconds (default: 30 minutes) */
+  sessionTTL?: number;
+  /** Auto-cleanup interval in milliseconds (default: 1 minute) */
+  cleanupInterval?: number;
+  /** Enable auto-cleanup (default: true) */
+  autoCleanup?: boolean;
+  /** Maximum number of sessions (default: 100) */
+  maxSessions?: number;
+  /** Use connection pool for page management (default: true) */
+  useConnectionPool?: boolean;
+}
+
+export interface SessionManagerStats {
+  activeSessions: number;
+  totalTargets: number;
+  totalSessionsCreated: number;
+  totalSessionsCleaned: number;
+  uptime: number;
+  lastCleanup: number | null;
+  memoryUsage: number;
+  connectionPool?: PoolStats;
+}
+
+const DEFAULT_CONFIG: Required<SessionManagerConfig> = {
+  sessionTTL: 30 * 60 * 1000,      // 30 minutes
+  cleanupInterval: 60 * 1000,       // 1 minute
+  autoCleanup: true,
+  maxSessions: 100,
+  useConnectionPool: true,
+};
+
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private targetToSession: Map<string, string> = new Map();
   private cdpClient: CDPClient;
+  private connectionPool: CDPConnectionPool | null = null;
   private queueManager: RequestQueueManager;
   private eventListeners: ((event: SessionEvent) => void)[] = [];
 
-  constructor(cdpClient?: CDPClient) {
+  // TTL & Stats
+  private config: Required<SessionManagerConfig>;
+  private cleanupTimer: NodeJS.Timeout | null = null;
+  private startTime: number = Date.now();
+  private totalSessionsCreated: number = 0;
+  private totalSessionsCleaned: number = 0;
+  private lastCleanupTime: number | null = null;
+
+  constructor(cdpClient?: CDPClient, config?: SessionManagerConfig) {
     this.cdpClient = cdpClient || getCDPClient();
     this.queueManager = new RequestQueueManager();
+    this.config = { ...DEFAULT_CONFIG, ...config };
+
+    if (this.config.useConnectionPool) {
+      this.connectionPool = getCDPConnectionPool();
+    }
+
+    if (this.config.autoCleanup) {
+      this.startAutoCleanup();
+    }
+  }
+
+  /**
+   * Start automatic cleanup interval
+   */
+  private startAutoCleanup(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+    }
+
+    this.cleanupTimer = setInterval(async () => {
+      try {
+        const deleted = await this.cleanupInactiveSessions(this.config.sessionTTL);
+        if (deleted.length > 0) {
+          console.error(`[SessionManager] Auto-cleanup: removed ${deleted.length} inactive session(s)`);
+        }
+        this.lastCleanupTime = Date.now();
+      } catch (error) {
+        console.error('[SessionManager] Auto-cleanup error:', error);
+      }
+    }, this.config.cleanupInterval);
+
+    // Don't prevent process exit
+    this.cleanupTimer.unref();
+  }
+
+  /**
+   * Stop automatic cleanup
+   */
+  stopAutoCleanup(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
+
+  /**
+   * Get session manager statistics
+   */
+  getStats(): SessionManagerStats {
+    let totalTargets = 0;
+    for (const session of this.sessions.values()) {
+      totalTargets += session.targets.size;
+    }
+
+    const stats: SessionManagerStats = {
+      activeSessions: this.sessions.size,
+      totalTargets,
+      totalSessionsCreated: this.totalSessionsCreated,
+      totalSessionsCleaned: this.totalSessionsCleaned,
+      uptime: Date.now() - this.startTime,
+      lastCleanup: this.lastCleanupTime,
+      memoryUsage: process.memoryUsage().heapUsed,
+    };
+
+    if (this.connectionPool) {
+      stats.connectionPool = this.connectionPool.getStats();
+    }
+
+    return stats;
+  }
+
+  /**
+   * Get current configuration
+   */
+  getConfig(): Required<SessionManagerConfig> {
+    return { ...this.config };
+  }
+
+  /**
+   * Update configuration
+   */
+  updateConfig(config: Partial<SessionManagerConfig>): void {
+    this.config = { ...this.config, ...config };
+
+    // Restart cleanup timer if interval changed
+    if (config.cleanupInterval !== undefined || config.autoCleanup !== undefined) {
+      this.stopAutoCleanup();
+      if (this.config.autoCleanup) {
+        this.startAutoCleanup();
+      }
+    }
   }
 
   /**
@@ -46,6 +179,15 @@ export class SessionManager {
       return this.sessions.get(id)!;
     }
 
+    // Check max sessions limit
+    if (this.sessions.size >= this.config.maxSessions) {
+      // Try to cleanup old sessions first
+      const deleted = await this.cleanupInactiveSessions(this.config.sessionTTL);
+      if (deleted.length === 0 && this.sessions.size >= this.config.maxSessions) {
+        throw new Error(`Maximum session limit (${this.config.maxSessions}) reached. Clean up inactive sessions first.`);
+      }
+    }
+
     const name = options.name || `Session ${id.slice(0, 8)}`;
 
     const session: Session = {
@@ -57,6 +199,7 @@ export class SessionManager {
     };
 
     this.sessions.set(id, session);
+    this.totalSessionsCreated++;
     this.emitEvent({ type: 'session:created', sessionId: id, timestamp: Date.now() });
 
     return session;
@@ -99,10 +242,17 @@ export class SessionManager {
       return;
     }
 
-    // Close all pages for this session
+    // Release or close all pages for this session
     for (const targetId of session.targets) {
       try {
-        await this.cdpClient.closePage(targetId);
+        const page = await this.cdpClient.getPageByTargetId(targetId);
+        if (page && this.connectionPool) {
+          // Return page to pool for reuse
+          await this.connectionPool.releasePage(page);
+        } else {
+          // Close directly if no pool
+          await this.cdpClient.closePage(targetId);
+        }
       } catch {
         // Page might already be closed
       }
@@ -131,10 +281,26 @@ export class SessionManager {
       if (now - session.lastActivityAt > maxAgeMs) {
         await this.deleteSession(sessionId);
         deletedSessions.push(sessionId);
+        this.totalSessionsCleaned++;
       }
     }
 
     return deletedSessions;
+  }
+
+  /**
+   * Force cleanup all sessions
+   */
+  async cleanupAllSessions(): Promise<number> {
+    const count = this.sessions.size;
+    const sessionIds = Array.from(this.sessions.keys());
+
+    for (const sessionId of sessionIds) {
+      await this.deleteSession(sessionId);
+      this.totalSessionsCleaned++;
+    }
+
+    return count;
   }
 
   /**
@@ -144,7 +310,18 @@ export class SessionManager {
     await this.ensureConnected();
 
     const session = await this.getOrCreateSession(sessionId);
-    const page = await this.cdpClient.createPage(url);
+
+    // Use connection pool if available
+    let page: Page;
+    if (this.connectionPool) {
+      page = await this.connectionPool.acquirePage();
+      if (url) {
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+      }
+    } else {
+      page = await this.cdpClient.createPage(url);
+    }
+
     const targetId = getTargetId(page.target());
 
     session.targets.add(targetId);

@@ -149,6 +149,19 @@ All sessions work without conflicts!
 | `javascript_tool` | Execute JavaScript |
 | `tabs_context_mcp` | Get available tabs |
 | `tabs_create_mcp` | Create new tab |
+| `network` | Simulate network conditions (3G, 4G, offline, custom) |
+
+### Network Simulation
+
+Test how your app behaves under different network conditions:
+
+```
+You: Simulate 3G network and navigate to myapp.com
+
+Claude: [Applies 3G throttling: 1.5Mbps down, 750Kbps up, 100ms latency]
+```
+
+Available presets: `offline`, `slow-2g`, `2g`, `3g`, `4g`, `fast-wifi`, `custom`, `clear`
 
 ---
 
@@ -196,6 +209,15 @@ claude-chrome-parallel serve --port 9223
 
 # Check installation health
 claude-chrome-parallel doctor
+
+# View session status and statistics
+claude-chrome-parallel status
+
+# View status as JSON (for automation)
+claude-chrome-parallel status --json
+
+# Clean up stale sessions and old backups
+claude-chrome-parallel cleanup --max-age 24 --keep-backups 10
 ```
 
 ---
@@ -259,6 +281,9 @@ claude-chrome-parallel recover --list-backups
 | Connection type | Shared extension state | Independent CDP |
 | Max concurrent sessions | 1 | 20+ tested |
 | Auto Chrome launch | ❌ | ✅ |
+| Network simulation | ❌ | ✅ 3G/4G/offline presets |
+| Session auto-cleanup | ❌ | ✅ TTL-based |
+| Connection pooling | ❌ | ✅ Pre-warmed pages |
 
 ---
 

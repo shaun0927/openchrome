@@ -11,6 +11,7 @@ import { registerFormInputTool } from './form-input';
 import { registerJavascriptTool } from './javascript';
 import { registerTabsContextTool } from './tabs-context';
 import { registerTabsCreateTool } from './tabs-create';
+import { registerNetworkTool } from './network';
 
 export function registerAllTools(server: MCPServer): void {
   registerNavigateTool(server);
@@ -21,6 +22,7 @@ export function registerAllTools(server: MCPServer): void {
   registerJavascriptTool(server);
   registerTabsContextTool(server);
   registerTabsCreateTool(server);
+  registerNetworkTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

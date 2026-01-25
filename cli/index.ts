@@ -363,6 +363,149 @@ program
   });
 
 program
+  .command('status')
+  .description('Show session manager status and statistics')
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    const sessionsDir = getSessionsDir();
+    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+    const configPath = path.join(os.homedir(), '.claude.json');
+
+    // Gather statistics
+    let activeSessions = 0;
+    let totalSessionsSize = 0;
+    const sessionDetails: { id: string; age: string; size: string }[] = [];
+
+    if (fs.existsSync(sessionsDir)) {
+      const entries = fs.readdirSync(sessionsDir, { withFileTypes: true });
+      const now = Date.now();
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+
+        const sessionDir = path.join(sessionsDir, entry.name);
+        const metadataPath = path.join(sessionDir, '.session-metadata.json');
+
+        activeSessions++;
+        const size = getDirSize(sessionDir);
+        totalSessionsSize += size;
+
+        let age = 'unknown';
+        if (fs.existsSync(metadataPath)) {
+          try {
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+            const createdAt = new Date(metadata.createdAt).getTime();
+            age = formatDuration(now - createdAt);
+          } catch {
+            // ignore
+          }
+        }
+
+        sessionDetails.push({
+          id: entry.name,
+          age,
+          size: formatBytes(size),
+        });
+      }
+    }
+
+    // Count backups
+    let backupCount = 0;
+    let backupSize = 0;
+    if (fs.existsSync(backupDir)) {
+      const backups = fs.readdirSync(backupDir).filter(f => f.startsWith('.claude.json.'));
+      backupCount = backups.length;
+      for (const backup of backups) {
+        const stats = fs.statSync(path.join(backupDir, backup));
+        backupSize += stats.size;
+      }
+    }
+
+    // Check config health
+    let configHealthy = true;
+    let configError = '';
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf8');
+      if (!isValidJson(content)) {
+        configHealthy = false;
+        configError = 'Invalid JSON (corrupted)';
+      }
+    }
+
+    // Memory usage
+    const memUsage = process.memoryUsage();
+
+    const status = {
+      sessions: {
+        active: activeSessions,
+        totalSize: formatBytes(totalSessionsSize),
+        details: sessionDetails,
+      },
+      backups: {
+        count: backupCount,
+        totalSize: formatBytes(backupSize),
+      },
+      config: {
+        healthy: configHealthy,
+        error: configError || undefined,
+      },
+      memory: {
+        heapUsed: formatBytes(memUsage.heapUsed),
+        heapTotal: formatBytes(memUsage.heapTotal),
+        rss: formatBytes(memUsage.rss),
+      },
+    };
+
+    if (options.json) {
+      console.log(JSON.stringify(status, null, 2));
+      return;
+    }
+
+    // Pretty print
+    console.log('Claude Chrome Parallel Status');
+    console.log('═'.repeat(40));
+    console.log();
+
+    // Sessions
+    console.log('Sessions');
+    console.log('─'.repeat(20));
+    console.log(`  Active: ${activeSessions}`);
+    console.log(`  Total Size: ${formatBytes(totalSessionsSize)}`);
+    if (sessionDetails.length > 0) {
+      console.log('  Details:');
+      for (const s of sessionDetails) {
+        console.log(`    - ${s.id} (${s.age}, ${s.size})`);
+      }
+    }
+    console.log();
+
+    // Backups
+    console.log('Backups');
+    console.log('─'.repeat(20));
+    console.log(`  Count: ${backupCount}`);
+    console.log(`  Total Size: ${formatBytes(backupSize)}`);
+    console.log();
+
+    // Config
+    console.log('Config Health');
+    console.log('─'.repeat(20));
+    if (configHealthy) {
+      console.log('  ✅ .claude.json is healthy');
+    } else {
+      console.log(`  ❌ .claude.json: ${configError}`);
+      console.log('     Run: claude-chrome-parallel recover');
+    }
+    console.log();
+
+    // Memory
+    console.log('Memory');
+    console.log('─'.repeat(20));
+    console.log(`  Heap Used: ${formatBytes(memUsage.heapUsed)}`);
+    console.log(`  Heap Total: ${formatBytes(memUsage.heapTotal)}`);
+    console.log(`  RSS: ${formatBytes(memUsage.rss)}`);
+  });
+
+program
   .command('cleanup')
   .description('Clean up stale sessions and old backups')
   .option('--max-age <hours>', 'Max session age in hours (default: 24)', '24')
@@ -559,6 +702,44 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+/**
+ * Format duration in milliseconds as human readable string
+ */
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `${days}d ${hours % 24}h`;
+  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+/**
+ * Get total size of a directory recursively
+ */
+function getDirSize(dirPath: string): number {
+  let totalSize = 0;
+
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        totalSize += getDirSize(fullPath);
+      } else if (entry.isFile()) {
+        totalSize += fs.statSync(fullPath).size;
+      }
+    }
+  } catch {
+    // Permission denied or other errors
+  }
+
+  return totalSize;
 }
 
 /**
