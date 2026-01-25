@@ -80,21 +80,22 @@ program
 program
   .command('serve')
   .description('Start MCP server for Claude Code')
-  .action(() => {
-    // This would start the native messaging host
-    // For now, just show info
-    console.log('MCP server mode is handled by the native messaging host.');
-    console.log('Configure in Claude Code settings.json:');
-    console.log(`
-{
-  "mcpServers": {
-    "chrome-parallel": {
-      "command": "claude-chrome-parallel",
-      "args": ["serve"]
-    }
-  }
-}
-`);
+  .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
+  .action(async (options: { port: string }) => {
+    const port = parseInt(options.port, 10);
+
+    console.error(`[claude-chrome-parallel] Starting MCP server`);
+    console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);
+
+    // Import from built dist/ files (relative to dist/cli/)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getMCPServer } = require('../mcp-server');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerAllTools } = require('../tools');
+
+    const server = getMCPServer();
+    registerAllTools(server);
+    server.start();
   });
 
 program
