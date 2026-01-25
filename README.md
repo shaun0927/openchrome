@@ -135,6 +135,45 @@ Claude: [Auto-launches browser, captures screenshot]
 
 ---
 
+## Why It Matters
+
+### The Problem
+
+The official Chrome extension has a fatal flaw: **shared internal state**.
+
+```
+Claude Code 1 ─┐
+               ├─► Chrome Extension (shared state) ─► "Detached" error!
+Claude Code 2 ─┘
+```
+
+When Session A takes a screenshot, Session B's connection breaks. You can only run **one session at a time**.
+
+### The Solution
+
+Claude Chrome Parallel creates **independent CDP connections** per session:
+
+```
+Claude Code 1 ─► CDP Connection 1 ─┐
+                                    ├─► Chrome (port 9222)
+Claude Code 2 ─► CDP Connection 2 ─┘
+
+No shared state = No conflicts = 20+ concurrent sessions
+```
+
+### The Real Power: Authenticated Sessions
+
+Unlike headless automation, this runs in **your actual browser** with all your logins active:
+
+- ✅ Access Gmail, Salesforce, LinkedIn while logged in
+- ✅ No credential management or auth flows needed
+- ✅ Bypass bot detection (real browser profile)
+- ✅ Multiple accounts simultaneously (Worker isolation)
+
+**This isn't just for developers.** Any web task requiring authentication—previously impossible to automate—is now possible with natural language.
+
+---
+
 ## Usage Examples
 
 ### Multiple Accounts Simultaneously
