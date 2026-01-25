@@ -1,6 +1,6 @@
 {
   "name": "claude-chrome-parallel",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "MCP server for parallel Claude Code browser sessions - no more 'Detached' errors",
   "main": "dist/index.js",
   "bin": {
