@@ -1,390 +1,116 @@
 # Claude Chrome Parallel
 
-> **Run multiple Claude Code browser sessions in parallel - no more "Detached" errors.**
+> **20개 이상의 Claude Code 브라우저 세션을 동시에, 충돌 없이.**
 
 [![npm version](https://badge.fury.io/js/claude-chrome-parallel.svg)](https://www.npmjs.com/package/claude-chrome-parallel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## The Power of Authenticated Browser Sessions
-
-Unlike traditional web scraping or automation tools, Claude Chrome Parallel operates within **your already logged-in Chrome browser**. This means:
-
-- **Access authenticated services** - Gmail, Salesforce, LinkedIn, banking portals, admin dashboards
-- **No credential management** - Session cookies and OAuth tokens are already active
-- **Bypass bot detection** - Uses your real browser profile, not headless automation
-- **Access personalized data** - Dashboards, account settings, member-only content
-
-**This is not just a development tool.** While the parallel session feature solves a technical problem for developers, the real power lies in automating *any* web task that requires authentication - tasks that were previously impossible to automate without building complex auth flows.
-
----
-
-## Why This Exists
-
-[Claude Chrome](https://claude.ai/chrome) lets you debug **production environments while logged in**. But when you try to run multiple Claude Code sessions with browser automation simultaneously:
-
 ```
-Error: Detached while handling command
-```
-
-This happens because the Chrome extension uses **shared internal state**. When Session A takes a screenshot, Session B's connection gets "detached."
-
-**Claude Chrome Parallel** solves this by creating **independent CDP connections** for each session:
-
-```
-Claude Code 1 ──► Process 1 ──► CDP Connection 1 ──┐
-                                                    ├──► Chrome (port 9222)
-Claude Code 2 ──► Process 2 ──► CDP Connection 2 ──┘
-```
-
-Each session gets isolated browser control. No shared state = No conflicts.
-
----
-
-## Use Cases
-
-### Beyond Development: Real-World Automation
-
-The combination of **authenticated sessions** + **natural language control** + **parallel execution** enables automation scenarios that were previously impractical:
-
----
-
-### 1. Business Process Automation
-
-#### ERP/SaaS Dashboard Data Collection
-Extract reports from login-required services (Salesforce, HubSpot, Zendesk):
-
-```
-You: Navigate to our Salesforce dashboard and extract this month's sales pipeline data
-
-Claude: [Navigates to authenticated Salesforce, parses tables, extracts structured data]
-```
-
-#### Invoice & Receipt Collection
-Automatically download monthly invoices from multiple services:
-
-```
-You: Go to AWS billing console and download last month's invoice PDF
-
-Claude: [Navigates to authenticated AWS console, finds invoice, triggers download]
-```
-
-#### Repetitive Admin Tasks
-Process approvals, submit forms, update records:
-
-```
-You: Go to our HR portal and approve all pending time-off requests from my team
-
-Claude: [Navigates to HR system, finds pending items, processes each approval]
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│   Claude Code 1 ─► Worker A ─► [Tab1] [Tab2] ─┐                            │
+│                    (Google 계정)               │                            │
+│                                                │                            │
+│   Claude Code 2 ─► Worker B ─► [Tab3] [Tab4] ─┼─► Chrome (단일 인스턴스)   │
+│                    (Naver 계정)                │     Port 9222              │
+│                                                │                            │
+│   Claude Code 3 ─► Worker C ─► [Tab5] [Tab6] ─┘                            │
+│                    (Amazon 계정)                                            │
+│                                                                             │
+│   ✓ 각 Worker는 독립된 쿠키/세션/스토리지                                    │
+│   ✓ 동시 실행해도 "Detached" 에러 없음                                       │
+│   ✓ 하나의 Chrome으로 여러 계정 동시 로그인                                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### 2. Research & Data Collection
+## 핵심 기능
 
-#### Competitive Analysis (Login-Required Platforms)
-Gather intelligence from premium platforms:
+<table>
+<tr>
+<td width="33%" valign="top">
 
-```
-You: Search LinkedIn Sales Navigator for CTOs at fintech startups in NYC and list their profiles
+### 🔀 Worker 격리
 
-Claude: [Uses your LinkedIn Premium session to search and extract profile data]
-```
+각 Worker는 **완전히 독립된 브라우저 컨텍스트**를 가집니다.
 
-#### Academic Database Research
-Access institutional databases that require authentication:
+- 별도의 쿠키/세션
+- 별도의 localStorage
+- 별도의 로그인 상태
 
-```
-You: Search IEEE Xplore for papers on "transformer architecture" from 2023 and list titles with citations
+**동일 사이트에 여러 계정으로 동시 로그인 가능!**
 
-Claude: [Uses your university library login to search and extract paper metadata]
-```
+</td>
+<td width="33%" valign="top">
 
-#### Financial & Real Estate Data
-Access member-only pricing and transaction data:
+### ⚡ 병렬 실행
 
-```
-You: Check my Schwab portfolio and summarize today's gains/losses by sector
-
-Claude: [Navigates authenticated brokerage account, extracts and analyzes positions]
-```
-
----
-
-### 3. Social Media Management
-
-#### Multi-Account Content Publishing
-Post content across platforms:
+여러 탭/Worker에서 **동시에** 작업을 실행합니다.
 
 ```
-You: Post this announcement to our company LinkedIn, Twitter, and Facebook pages
+순차 실행: 1500ms
+  Tab1 ████░░░░ 500ms
+  Tab2     ████░░░░ 500ms
+  Tab3         ████░░░░ 500ms
 
-Claude: [Navigates to each platform with saved sessions, composes and publishes posts]
+병렬 실행: 500ms
+  Tab1 ████░░░░
+  Tab2 ████░░░░
+  Tab3 ████░░░░
 ```
 
-#### Message & Inquiry Management
-Handle customer messages with templates:
+</td>
+<td width="33%" valign="top">
+
+### 🔄 워크플로우 오케스트레이션
+
+복잡한 멀티사이트 작업을 **자동으로 분배**합니다.
 
 ```
-You: Check our Instagram business inbox and reply to product inquiries with our standard response
-
-Claude: [Reads DMs, identifies product questions, sends templated responses]
-```
-
-#### Analytics Collection
-Gather engagement metrics across platforms:
-
-```
-You: Get our Twitter analytics for the past week and summarize engagement trends
-
-Claude: [Accesses Twitter Analytics dashboard, extracts metrics, provides summary]
-```
-
----
-
-### 4. E-Commerce Automation
-
-#### Member Price Monitoring
-Track prices that require membership login:
-
-```
-You: Check the member price for this Costco item and compare with last week
-
-Claude: [Logs into Costco account, finds item, extracts member-only pricing]
-```
-
-#### Inventory & Order Management
-Manage seller accounts across marketplaces:
-
-```
-You: Check our Amazon Seller Central for any new orders and list items running low on inventory
-
-Claude: [Navigates seller dashboard, extracts order and inventory data]
-```
-
-#### Review Management
-Respond to customer reviews at scale:
-
-```
-You: Find all unanswered 4-star reviews on our Shopify store and draft personalized thank-you responses
-
-Claude: [Navigates store admin, identifies reviews, generates contextual responses]
-```
-
----
-
-### 5. Personal Productivity
-
-#### Email Organization
-Manage your inbox intelligently:
-
-```
-You: In Gmail, find all newsletters from the past month and add the "Newsletters" label
-
-Claude: [Searches Gmail, selects matching emails, applies labels]
-```
-
-#### Calendar Management
-Bulk calendar operations:
-
-```
-You: Add these 5 meetings to my Google Calendar with the details from this spreadsheet
-
-Claude: [Creates each calendar event with proper dates, times, and descriptions]
-```
-
-#### Bookmark & Archive Management
-Organize saved content:
-
-```
-You: Save this article to my Notion reading list with its title and summary
-
-Claude: [Extracts metadata, navigates to Notion, creates database entry]
-```
-
----
-
-### 6. QA & Testing
-
-#### Multi-Session QA Testing
-Run parallel test scenarios against production:
-
-```bash
-# Terminal 1: Test user login flow
-claude -p "Test the login flow on https://myapp.com/login"
-
-# Terminal 2: Test checkout process (simultaneously!)
-claude -p "Test the checkout flow on https://myapp.com/cart"
-
-# Terminal 3: Monitor admin dashboard
-claude -p "Take screenshots of https://myapp.com/admin every 30 seconds"
-```
-
-#### Network Condition Testing
-Test performance under various network conditions:
-
-```
-You: Simulate 3G network and test if our checkout page loads within 5 seconds
-
-Claude: [Applies network throttling, measures load time, reports results]
-```
-
-#### Accessibility Auditing
-Analyze page accessibility via the accessibility tree:
-
-```
-You: Check the accessibility tree of our signup form and identify any missing labels
-
-Claude: [Parses full accessibility tree, identifies WCAG compliance issues]
-```
-
----
-
-### 7. Security & Compliance
-
-#### Personal Data Audit
-Check what data services have stored:
-
-```
-You: Navigate to my Google Account privacy settings and list all third-party apps with access
-
-Claude: [Navigates account settings, extracts connected app list]
-```
-
-#### Session Verification
-Verify active sessions across services:
-
-```
-You: Check my GitHub security settings and list all active sessions
-
-Claude: [Navigates GitHub settings, extracts session information]
-```
-
----
-
-## Core Features
-
-### Isolated Workers (Parallel Browser Contexts)
-
-The killer feature of Claude Chrome Parallel is **worker isolation**. Each worker has:
-
-- **Separate browser context** with its own cookies, localStorage, and sessionStorage
-- **Independent tab management** - tabs are scoped to their worker
-- **Complete state isolation** - one worker's login doesn't affect another
-
-```
-You: Create a worker named "google-shopping"
-
-Claude: [Creates isolated browser context]
-        Worker: google-shopping
-        Context: Isolated (separate cookies/storage)
-
-You: In google-shopping worker, search for laptops
-
-Claude: [Opens tab in google-shopping worker context]
-        Any login, preferences, or state is isolated to this worker
-```
-
-**Why This Matters:**
-- Log into different accounts simultaneously (e.g., multiple Gmail accounts)
-- Run parallel price comparisons without cookie conflicts
-- Test multi-user scenarios with complete isolation
-
-### Automatic Task Distribution
-
-When you have multiple tabs open, operations are automatically distributed:
-
-```
-You: Take screenshots of all open tabs
-
-Claude: [Parallel execution across all tabs]
-        Tab 1: Screenshot taken (500ms)
-        Tab 2: Screenshot taken (480ms)
-        Tab 3: Screenshot taken (520ms)
-        Total: ~500ms (parallel) vs ~1500ms (sequential)
-```
-
-### Workflow Orchestration
-
-For complex multi-site operations, use the orchestration tools:
-
-```typescript
-// Initialize a parallel workflow
 workflow_init({
-  name: "Price Comparison",
   workers: [
-    { name: "amazon", url: "https://amazon.com", task: "Search iPhone 15 price" },
-    { name: "ebay", url: "https://ebay.com", task: "Search iPhone 15 price" },
-    { name: "walmart", url: "https://walmart.com", task: "Search iPhone 15 price" }
+    {name: "amazon", ...},
+    {name: "ebay", ...},
+    {name: "walmart", ...}
   ]
 })
-
-// Each worker executes in parallel with isolated contexts
-// Results are collected via workflow_collect
+→ 3개 사이트 동시 실행
+→ 결과 자동 수집
 ```
 
----
-
-## Available MCP Tools
-
-### Browser Automation Tools
-
-| Tool | Description | Key Use Cases |
-|------|-------------|---------------|
-| `navigate` | Navigate to URL, back/forward history | Multi-page workflows |
-| `computer` | Screenshots, mouse clicks, keyboard, scrolling | Non-standard UI interaction |
-| `read_page` | Parse page via accessibility tree | Dynamic content extraction |
-| `find` | Find elements by natural language | "search box", "submit button" |
-| `form_input` | Set form values directly | Fast data entry |
-| `javascript_tool` | Execute arbitrary JavaScript | Complex DOM operations |
-| `network` | Simulate network conditions | Performance testing |
-
-### Tab & Worker Management Tools
-
-| Tool | Description | Key Use Cases |
-|------|-------------|---------------|
-| `tabs_context_mcp` | Get available tabs by worker | Session overview |
-| `tabs_create_mcp` | Create new tab in worker | Parallel tab operations |
-| `worker_create` | Create isolated browser context | Multi-account scenarios |
-| `worker_list` | List all workers and their tabs | Session management |
-| `worker_delete` | Delete worker and close its tabs | Cleanup |
-
-### Orchestration Tools
-
-| Tool | Description | Key Use Cases |
-|------|-------------|---------------|
-| `workflow_init` | Initialize multi-worker workflow | Parallel site operations |
-| `workflow_status` | Get orchestration progress | Monitoring |
-| `workflow_collect` | Collect results from workers | Data aggregation |
-| `workflow_cleanup` | Clean up workflow resources | Session cleanup |
-| `worker_update` | Update worker progress | Progress tracking |
-| `worker_complete` | Mark worker as complete | Workflow completion |
+</td>
+</tr>
+</table>
 
 ---
 
-## Tested Concurrency
+## 기존 방식 vs Claude Chrome Parallel
 
-| Sessions | Success Rate |
-|----------|-------------|
-| 5 | 100% |
-| 10 | 100% |
-| 15 | 100% |
-| 20 | 100% |
+| | Chrome 확장 (기존) | Claude Chrome Parallel |
+|---|:---:|:---:|
+| **동시 세션** | ❌ 1개 (Detached 에러) | ✅ **20개 이상** |
+| **Worker 격리** | ❌ | ✅ 독립 쿠키/세션 |
+| **다중 계정 동시 로그인** | ❌ | ✅ |
+| **병렬 실행** | ❌ | ✅ |
+| **네트워크 시뮬레이션** | ❌ | ✅ 3G/4G/오프라인 |
+| **워크플로우 오케스트레이션** | ❌ | ✅ |
+| **자동 Chrome 실행** | ❌ | ✅ |
 
 ---
 
-## Installation
+## 빠른 시작 (2분)
+
+### 1. 설치
 
 ```bash
-# From npm
 npm install -g claude-chrome-parallel
-
-# Or from GitHub
-npm install -g github:shaun0927/claude-chrome-parallel
 ```
 
-### Configure Claude Code
+### 2. Claude Code 설정
 
-Add to your Claude Code MCP settings (`~/.claude.json`):
+`~/.claude.json`에 추가:
 
 ```json
 {
@@ -397,253 +123,205 @@ Add to your Claude Code MCP settings (`~/.claude.json`):
 }
 ```
 
-> **Note:** `ccp` is a shorthand alias. You can also use the full name `claude-chrome-parallel`.
+### 3. Claude Code 재시작 후 사용
 
-Restart Claude Code for changes to take effect.
+```
+You: https://github.com 스크린샷 찍어줘
+
+Claude: [브라우저 자동 실행, 스크린샷 촬영]
+```
+
+> **Tip:** `ccp`는 `claude-chrome-parallel`의 단축 명령어입니다.
 
 ---
 
-## Usage
+## 사용 예시
 
-### Basic Usage
-
-Once configured, browser automation works in any Claude Code session:
+### 여러 계정 동시 작업
 
 ```
-You: Take a screenshot of https://github.com
+You: "google-personal"과 "google-work" Worker를 만들고,
+     각각 다른 Gmail 계정의 받은편지함을 확인해줘
 
-Claude: [Uses chrome-parallel tools automatically]
+Claude: [Worker 2개 생성 → 각각 독립된 세션으로 Gmail 접속]
+        google-personal: 개인 계정 - 새 메일 3개
+        google-work: 업무 계정 - 새 메일 7개
 ```
 
-### Multiple Parallel Sessions
+### 가격 비교 (병렬)
 
-Run multiple Claude Code terminals simultaneously:
+```
+You: 쿠팡, 11번가, G마켓에서 "아이폰 15" 최저가를 동시에 검색해줘
+
+Claude: [3개 사이트 병렬 실행]
+        쿠팡: 1,200,000원 (1.2초)
+        11번가: 1,180,000원 (1.1초)
+        G마켓: 1,195,000원 (1.3초)
+        총 소요시간: 1.3초 (순차 실행 시 3.6초)
+```
+
+### 병렬 QA 테스트
 
 ```bash
-# Terminal 1
-claude
-> Navigate to myapp.com/dashboard and take a screenshot
+# 터미널 1
+claude -p "myapp.com/login 테스트"
 
-# Terminal 2 (at the same time!)
-claude
-> Fill out the form on myapp.com/contact and submit
+# 터미널 2 (동시에!)
+claude -p "myapp.com/checkout 테스트"
 
-# Terminal 3 (also at the same time!)
-claude
-> Monitor network requests on myapp.com/api
-```
-
-All sessions work without conflicts!
-
-### Network Simulation
-
-Test how your app behaves under different network conditions:
-
-```
-You: Simulate 3G network and navigate to myapp.com
-
-Claude: [Applies 3G throttling: 1.5Mbps down, 750Kbps up, 100ms latency]
-```
-
-Available presets: `offline`, `slow-2g`, `2g`, `3g`, `4g`, `fast-wifi`, `custom`, `clear`
-
----
-
-## How It Works
-
-### The Problem: Shared Extension State
-
-The official Chrome extension maintains a single shared state:
-
-```
-Claude Code 1 ─┐
-               ├─► Chrome Extension (shared state) ─► Chrome
-Claude Code 2 ─┘
-                    ↑
-              State conflicts here!
-```
-
-### The Solution: Independent CDP Connections
-
-Chrome's DevTools Protocol natively supports multiple simultaneous connections:
-
-```
-Claude Code 1 ─► Process 1 ─► CDP Connection 1 ─┐
-                                                 ├─► Chrome (port 9222)
-Claude Code 2 ─► Process 2 ─► CDP Connection 2 ─┘
-
-Independent connections, no shared state!
-```
-
-Each Claude Code session spawns its own MCP server process with a dedicated CDP connection.
-
----
-
-## CLI Commands
-
-> **Tip:** Use `ccp` as a shorthand for `claude-chrome-parallel` in all commands below.
-
-```bash
-# Start MCP server (used by Claude Code automatically)
-ccp serve
-
-# Check Chrome connection status
-ccp check
-
-# Use custom Chrome debugging port
-ccp serve --port 9223
-
-# Check installation health
-ccp doctor
-
-# View session status and statistics
-ccp status
-
-# View status as JSON (for automation)
-ccp status --json
-
-# Clean up stale sessions and old backups
-ccp cleanup --max-age 24 --keep-backups 10
+# 터미널 3 (동시에!)
+claude -p "myapp.com/admin 모니터링"
 ```
 
 ---
 
-## Chrome Configuration
+## MCP 도구
 
-By default, connects to Chrome on port 9222.
+### 브라우저 자동화
 
-**Auto-launch**: If Chrome isn't running with debugging enabled, the package will start it automatically.
+| 도구 | 설명 |
+|------|------|
+| `navigate` | URL 이동, 뒤로/앞으로 |
+| `computer` | 스크린샷, 클릭, 키보드, 스크롤 |
+| `read_page` | 페이지 구조 파싱 (접근성 트리) |
+| `find` | 자연어로 요소 찾기 |
+| `form_input` | 폼 값 직접 입력 |
+| `javascript_tool` | JavaScript 실행 |
+| `network` | 네트워크 조건 시뮬레이션 |
 
-**Manual start** (if needed):
+### Worker & 탭 관리
+
+| 도구 | 설명 |
+|------|------|
+| `worker_create` | 격리된 브라우저 컨텍스트 생성 |
+| `worker_list` | Worker 목록 및 탭 조회 |
+| `worker_delete` | Worker 삭제 |
+| `tabs_create_mcp` | 새 탭 생성 |
+| `tabs_context_mcp` | 탭 정보 조회 |
+
+### 워크플로우 오케스트레이션
+
+| 도구 | 설명 |
+|------|------|
+| `workflow_init` | 병렬 워크플로우 초기화 |
+| `workflow_status` | 진행상황 조회 |
+| `workflow_collect` | 결과 수집 |
+| `workflow_cleanup` | 리소스 정리 |
+
+---
+
+## CLI 명령어
 
 ```bash
-# Windows
-chrome.exe --remote-debugging-port=9222
-
-# macOS
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-
-# Linux
-google-chrome --remote-debugging-port=9222
+ccp serve              # MCP 서버 시작 (Claude Code가 자동 실행)
+ccp check              # Chrome 연결 상태 확인
+ccp status             # 세션 상태 조회
+ccp status --json      # JSON 형식 출력
+ccp doctor             # 설치 상태 진단
+ccp cleanup            # 오래된 세션 정리
+ccp serve --port 9223  # 커스텀 포트 사용
 ```
 
 ---
 
-## Additional Features
+## 성능
 
-### Session Isolation (Bonus)
+| 동시 세션 | 성공률 |
+|:---:|:---:|
+| 5 | 100% |
+| 10 | 100% |
+| 15 | 100% |
+| 20 | 100% |
 
-When running multiple Claude Code instances, they can corrupt `~/.claude.json` due to race conditions. Use the `launch` command to run Claude with isolated config:
+---
 
-```bash
-# Run Claude Code with isolated config directory
-ccp launch
+## 추가 기능
 
-# Pass any claude flags
-ccp launch --dangerously-skip-permissions
-ccp launch -p "Your prompt"
+### 네트워크 시뮬레이션
+
+```
+You: 3G 네트워크에서 myapp.com 로딩 시간 테스트해줘
+
+Claude: [3G 제한 적용: 1.5Mbps, 100ms 지연]
 ```
 
-### Config Recovery
+프리셋: `offline`, `slow-2g`, `2g`, `3g`, `4g`, `fast-wifi`, `custom`
 
-If your `.claude.json` gets corrupted:
+### Config 복구
 
 ```bash
-# Auto-recover corrupted config
+# .claude.json 손상 시 자동 복구
 ccp recover
 
-# List available backups
+# 백업 목록 확인
 ccp recover --list-backups
 ```
 
----
-
-## Comparison
-
-| Feature | Claude in Chrome (Extension) | Claude Chrome Parallel |
-|---------|------------------------------|----------------------|
-| Multiple sessions | ❌ Detached errors | ✅ Works perfectly |
-| Parallel QA testing | ❌ | ✅ |
-| Connection type | Shared extension state | Independent CDP |
-| Max concurrent sessions | 1 | 20+ tested |
-| Auto Chrome launch | ❌ | ✅ |
-| Network simulation | ❌ | ✅ 3G/4G/offline presets |
-| Session auto-cleanup | ❌ | ✅ TTL-based |
-| Connection pooling | ❌ | ✅ Pre-warmed pages |
-
----
-
-## Considerations
-
-### Strengths
-- **Authenticated access** - Automate any login-required service
-- **Natural language element finding** - Resilient to DOM changes
-- **JavaScript execution** - Handle complex SPAs
-- **Visual verification** - Screenshots for evidence/debugging
-
-### Limitations
-- CAPTCHA/bot detection on some services
-- 2FA re-authentication may require manual intervention
-- For high-volume tasks, native APIs are more efficient when available
-- Rate limiting applies to automated interactions
-
-### Recommended Patterns
-1. **Small/critical tasks** → Use this MCP
-2. **High-volume tasks** → Prefer native APIs when available
-3. **Services without APIs** → This MCP is often the only option
-
----
-
-## Troubleshooting
-
-### Chrome not connecting
+### 세션 격리 실행
 
 ```bash
-# Check status
-ccp check
+# 독립된 config로 Claude 실행 (race condition 방지)
+ccp launch
+ccp launch -p "Your prompt"
+```
 
-# Manually start Chrome with debugging
+---
+
+## 문제 해결
+
+### Chrome 연결 안 됨
+
+```bash
+ccp check
+# 또는 수동으로 Chrome 시작
 chrome --remote-debugging-port=9222
 ```
 
-### Tools not appearing in Claude Code
+### 도구가 Claude Code에 안 보임
 
-1. Check MCP config in `~/.claude.json`
-2. Restart Claude Code
-3. Run `/mcp` to verify `chrome-parallel` is listed
+1. `~/.claude.json` 설정 확인
+2. Claude Code 재시작
+3. `/mcp` 명령으로 `chrome-parallel` 확인
 
 ---
 
-## Development
+## 활용 사례
+
+- **비즈니스**: ERP/SaaS 대시보드 데이터 수집, 인보이스 다운로드, 반복 작업 자동화
+- **리서치**: 로그인 필요한 플랫폼 데이터 수집, 학술 DB 검색
+- **소셜 미디어**: 멀티 계정 포스팅, 메시지 관리, 분석 수집
+- **이커머스**: 회원 가격 모니터링, 재고 관리, 리뷰 응답
+- **QA 테스트**: 병렬 시나리오 테스트, 네트워크 조건 테스트
+- **개인 생산성**: 이메일 정리, 캘린더 관리, 북마크 관리
+
+---
+
+## 개발
 
 ```bash
 git clone https://github.com/shaun0927/claude-chrome-parallel.git
 cd claude-chrome-parallel
-
 npm install
 npm run build
-
-# Test locally
-npm install -g .
+npm test
 ```
 
 ---
 
-## License
+## 라이선스
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License - [LICENSE](LICENSE)
 
-## Disclaimer
+---
 
-> **This is an unofficial, community-maintained project.**
-> Not affiliated with or endorsed by Anthropic.
+## 면책 조항
+
+> **비공식 커뮤니티 프로젝트입니다.**
+> Anthropic과 관련이 없습니다.
 >
-> "Claude" is a trademark of Anthropic. This project provides
-> tooling to enhance the Claude Code experience but is not
-> an official Anthropic product.
+> "Claude"는 Anthropic의 상표입니다.
 
 ## Acknowledgments
 
-- [Anthropic](https://anthropic.com) for Claude and the MCP protocol
-- [Claude Code](https://github.com/anthropics/claude-code) for the CLI
-- [Puppeteer](https://pptr.dev/) for browser automation
+- [Anthropic](https://anthropic.com) - Claude와 MCP 프로토콜
+- [Puppeteer](https://pptr.dev/) - 브라우저 자동화
