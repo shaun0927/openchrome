@@ -5,6 +5,12 @@
 [![npm version](https://badge.fury.io/js/claude-chrome-parallel.svg)](https://www.npmjs.com/package/claude-chrome-parallel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/shaun0927/claude-chrome-parallel/main/assets/demo.svg" alt="Chrome Extension vs Claude Chrome Parallel - Animated comparison showing how Chrome Extension fails with 'Detached' error while Claude Chrome Parallel runs 5+ sessions simultaneously" width="100%">
+</p>
+
+---
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                                                                             │
