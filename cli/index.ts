@@ -22,8 +22,8 @@ import { spawn, ChildProcess } from 'child_process';
 
 const program = new Command();
 
-// Package info
-const packageJsonPath = path.join(__dirname, '..', 'package.json');
+// Package info - from dist/cli/ go up two levels to root
+const packageJsonPath = path.join(__dirname, '..', '..', 'package.json');
 let version = '0.1.0';
 try {
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
