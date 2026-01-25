@@ -19,6 +19,8 @@ export interface LaunchOptions {
   port?: number;
   userDataDir?: string;
   headless?: boolean;
+  /** If false, don't auto-launch Chrome when not running (default: false) */
+  autoLaunch?: boolean;
 }
 
 const DEFAULT_PORT = 9222;
@@ -149,6 +151,16 @@ export class ChromeLauncher {
         httpEndpoint: `http://127.0.0.1:${port}`,
       };
       return this.instance;
+    }
+
+    // If autoLaunch is false (default), don't start Chrome automatically
+    if (!options.autoLaunch) {
+      throw new Error(
+        `Chrome is not running with remote debugging on port ${port}.\n\n` +
+        `Please start Chrome manually with:\n` +
+        `  chrome --remote-debugging-port=${port}\n\n` +
+        `Or use --auto-launch flag to start Chrome automatically.`
+      );
     }
 
     // Launch new Chrome instance

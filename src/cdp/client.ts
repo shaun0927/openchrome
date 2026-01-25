@@ -4,12 +4,15 @@
 
 import puppeteer, { Browser, Page, Target, CDPSession } from 'puppeteer-core';
 import { getChromeLauncher } from '../chrome/launcher';
+import { getGlobalConfig } from '../config/global';
 
 export interface CDPClientOptions {
   port?: number;
   maxReconnectAttempts?: number;
   reconnectDelayMs?: number;
   heartbeatIntervalMs?: number;
+  /** If true, auto-launch Chrome when not running (default: false) */
+  autoLaunch?: boolean;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -38,12 +41,16 @@ export class CDPClient {
   private connectionState: ConnectionState = 'disconnected';
   private eventListeners: ((event: ConnectionEvent) => void)[] = [];
   private reconnectAttempts = 0;
+  private autoLaunch: boolean;
 
   constructor(options: CDPClientOptions = {}) {
-    this.port = options.port || 9222;
+    const globalConfig = getGlobalConfig();
+    this.port = options.port || globalConfig.port;
     this.maxReconnectAttempts = options.maxReconnectAttempts || 3;
     this.reconnectDelayMs = options.reconnectDelayMs || 1000;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs || 5000;
+    // Use explicit option if provided, otherwise use global config
+    this.autoLaunch = options.autoLaunch !== undefined ? options.autoLaunch : globalConfig.autoLaunch;
   }
 
   /**
@@ -186,7 +193,7 @@ export class CDPClient {
    */
   private async connectInternal(): Promise<void> {
     const launcher = getChromeLauncher(this.port);
-    const instance = await launcher.ensureChrome();
+    const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
 
     this.browser = await puppeteer.connect({
       browserWSEndpoint: instance.wsEndpoint,
@@ -214,7 +221,7 @@ export class CDPClient {
       // Verify connection is actually working by checking Chrome endpoint
       try {
         const launcher = getChromeLauncher(this.port);
-        const instance = await launcher.ensureChrome();
+        const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
         const currentWsUrl = instance.wsEndpoint;
 
         // Check if the browser's WebSocket URL matches current Chrome

@@ -81,17 +81,25 @@ program
   .command('serve')
   .description('Start MCP server for Claude Code')
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
-  .action(async (options: { port: string }) => {
+  .option('--auto-launch', 'Auto-launch Chrome if not running (default: false)')
+  .action(async (options: { port: string; autoLaunch?: boolean }) => {
     const port = parseInt(options.port, 10);
+    const autoLaunch = options.autoLaunch || false;
 
     console.error(`[claude-chrome-parallel] Starting MCP server`);
     console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);
+    console.error(`[claude-chrome-parallel] Auto-launch Chrome: ${autoLaunch}`);
 
     // Import from built dist/ files (relative to dist/cli/)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { setGlobalConfig } = require('../config/global');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { getMCPServer } = require('../mcp-server');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { registerAllTools } = require('../tools');
+
+    // Set global config before initializing anything
+    setGlobalConfig({ port, autoLaunch });
 
     const server = getMCPServer();
     registerAllTools(server);
