@@ -100,41 +100,6 @@ workflow_init({
 
 ---
 
-## Quick Start (2 minutes)
-
-### 1. Install
-
-```bash
-npm install -g claude-chrome-parallel
-```
-
-### 2. Configure Claude Code
-
-Add to `~/.claude.json`:
-
-```json
-{
-  "mcpServers": {
-    "chrome-parallel": {
-      "command": "ccp",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-### 3. Restart Claude Code and use
-
-```
-You: Take a screenshot of https://github.com
-
-Claude: [Auto-launches browser, captures screenshot]
-```
-
-> **Tip:** `ccp` is a shorthand for `claude-chrome-parallel`.
-
----
-
 ## Why It Matters
 
 ### The Problem
@@ -171,6 +136,41 @@ Unlike headless automation, this runs in **your actual browser** with all your l
 - ✅ Multiple accounts simultaneously (Worker isolation)
 
 **This isn't just for developers.** Any web task requiring authentication—previously impossible to automate—is now possible with natural language.
+
+---
+
+## Quick Start (2 minutes)
+
+### 1. Install
+
+```bash
+npm install -g claude-chrome-parallel
+```
+
+### 2. Configure Claude Code
+
+Add to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "chrome-parallel": {
+      "command": "ccp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+### 3. Restart Claude Code and use
+
+```
+You: Take a screenshot of https://github.com
+
+Claude: [Auto-launches browser, captures screenshot]
+```
+
+> **Tip:** `ccp` is a shorthand for `claude-chrome-parallel`.
 
 ---
 
