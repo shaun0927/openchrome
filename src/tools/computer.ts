@@ -8,6 +8,10 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 
+// Maximum screenshot dimensions to avoid API errors (2000px limit)
+const MAX_SCREENSHOT_WIDTH = 1920;
+const MAX_SCREENSHOT_HEIGHT = 1080;
+
 const definition: MCPToolDefinition = {
   name: 'computer',
   description:
@@ -100,10 +104,47 @@ const handler: ToolHandler = async (
 
     switch (action) {
       case 'screenshot': {
+        // Save original viewport to restore later
+        const originalViewport = page.viewport();
+
+        // ALWAYS ensure viewport is within limits before screenshot
+        // This prevents the 2000px API error regardless of current state
+        const currentWidth = originalViewport?.width ?? 1920;
+        const currentHeight = originalViewport?.height ?? 1080;
+
+        const needsResize = !originalViewport ||
+          currentWidth > MAX_SCREENSHOT_WIDTH ||
+          currentHeight > MAX_SCREENSHOT_HEIGHT;
+
+        if (needsResize) {
+          // Set viewport to max allowed size
+          const newWidth = Math.min(currentWidth, MAX_SCREENSHOT_WIDTH);
+          const newHeight = Math.min(currentHeight, MAX_SCREENSHOT_HEIGHT);
+
+          await page.setViewport({
+            width: newWidth,
+            height: newHeight,
+            deviceScaleFactor: 1, // Ensure 1:1 pixel ratio
+          });
+        }
+
+        // Take screenshot with clip to ensure we don't exceed limits
         const screenshot = await page.screenshot({
           encoding: 'base64',
           type: 'png',
+          fullPage: false, // Only capture viewport, not entire page
+          clip: {
+            x: 0,
+            y: 0,
+            width: Math.min(currentWidth, MAX_SCREENSHOT_WIDTH),
+            height: Math.min(currentHeight, MAX_SCREENSHOT_HEIGHT),
+          },
         });
+
+        // Restore original viewport if we changed it
+        if (needsResize && originalViewport) {
+          await page.setViewport(originalViewport);
+        }
 
         return {
           content: [
@@ -340,8 +381,6 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.mouse.move(coordinate[0], coordinate[1]);
-
         const deltaMultiplier = 100;
         let deltaX = 0;
         let deltaY = 0;
@@ -361,13 +400,29 @@ const handler: ToolHandler = async (
             break;
         }
 
-        await page.mouse.wheel({ deltaX, deltaY });
+        // Try CDP mouse wheel first, fallback to JavaScript scroll if it times out
+        let usedFallback = false;
+        try {
+          await page.mouse.move(coordinate[0], coordinate[1]);
+          await page.mouse.wheel({ deltaX, deltaY });
+        } catch (scrollError) {
+          // Fallback to JavaScript scroll if mouse.wheel fails (timeout, etc.)
+          usedFallback = true;
+          await page.evaluate(
+            (dx: number, dy: number) => {
+              window.scrollBy(dx, dy);
+            },
+            deltaX,
+            deltaY
+          );
+        }
 
+        const scrollMethod = usedFallback ? ' (via JavaScript fallback)' : '';
         return {
           content: [
             {
               type: 'text',
-              text: `Scrolled ${scrollDirection} at (${coordinate[0]}, ${coordinate[1]})`,
+              text: `Scrolled ${scrollDirection} at (${coordinate[0]}, ${coordinate[1]})${scrollMethod}`,
             },
           ],
         };

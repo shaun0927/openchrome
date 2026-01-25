@@ -2,7 +2,7 @@
  * CDP Client - Wrapper around puppeteer-core for Chrome DevTools Protocol
  */
 
-import puppeteer, { Browser, Page, Target, CDPSession } from 'puppeteer-core';
+import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'puppeteer-core';
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 
@@ -40,6 +40,7 @@ export class CDPClient {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private connectionState: ConnectionState = 'disconnected';
   private eventListeners: ((event: ConnectionEvent) => void)[] = [];
+  private targetDestroyedListeners: ((targetId: string) => void)[] = [];
   private reconnectAttempts = 0;
   private autoLaunch: boolean;
 
@@ -74,6 +75,27 @@ export class CDPClient {
     const index = this.eventListeners.indexOf(listener);
     if (index !== -1) {
       this.eventListeners.splice(index, 1);
+    }
+  }
+
+  /**
+   * Add target destroyed listener
+   */
+  addTargetDestroyedListener(listener: (targetId: string) => void): void {
+    this.targetDestroyedListeners.push(listener);
+  }
+
+  /**
+   * Handle target destroyed event
+   */
+  private onTargetDestroyed(targetId: string): void {
+    this.sessions.delete(targetId);
+    for (const listener of this.targetDestroyedListeners) {
+      try {
+        listener(targetId);
+      } catch (e) {
+        console.error('[CDPClient] Target destroyed listener error:', e);
+      }
     }
   }
 
@@ -206,6 +228,13 @@ export class CDPClient {
       this.handleDisconnect();
     });
 
+    // Set up target destroyed handler
+    this.browser.on('targetdestroyed', (target) => {
+      const targetId = getTargetId(target);
+      console.error(`[CDPClient] Target destroyed: ${targetId}`);
+      this.onTargetDestroyed(targetId);
+    });
+
     this.connectionState = 'connected';
     this.emitConnectionEvent({
       type: 'connected',
@@ -297,12 +326,52 @@ export class CDPClient {
     return this.browser;
   }
 
+  // Default viewport for consistent debugging experience
+  static readonly DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
+
   /**
-   * Create a new page
+   * Create a new isolated browser context for session isolation
+   * Each context has its own cookies, localStorage, sessionStorage
    */
-  async createPage(url?: string): Promise<Page> {
+  async createBrowserContext(): Promise<BrowserContext> {
     const browser = this.getBrowser();
-    const page = await browser.newPage();
+    const context = await browser.createBrowserContext();
+    console.error(`[CDPClient] Created new browser context`);
+    return context;
+  }
+
+  /**
+   * Close a browser context and all its pages
+   */
+  async closeBrowserContext(context: BrowserContext): Promise<void> {
+    try {
+      await context.close();
+      console.error(`[CDPClient] Closed browser context`);
+    } catch (e) {
+      // Context may already be closed
+      console.error(`[CDPClient] Error closing browser context:`, e);
+    }
+  }
+
+  /**
+   * Create a new page with default viewport
+   * @param url Optional URL to navigate to
+   * @param context Optional browser context for session isolation
+   */
+  async createPage(url?: string, context?: BrowserContext): Promise<Page> {
+    let page: Page;
+
+    if (context) {
+      // Create page in isolated context
+      page = await context.newPage();
+    } else {
+      // Create page in default context
+      const browser = this.getBrowser();
+      page = await browser.newPage();
+    }
+
+    // Set default viewport for consistent debugging experience
+    await page.setViewport(CDPClient.DEFAULT_VIEWPORT);
 
     if (url) {
       await page.goto(url, { waitUntil: 'domcontentloaded' });

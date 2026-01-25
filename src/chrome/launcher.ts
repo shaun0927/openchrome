@@ -189,10 +189,16 @@ export class ChromeLauncher {
       '--disable-sync',
       '--disable-translate',
       '--metrics-recording-only',
+      // IMPORTANT: Start maximized for proper debugging experience
+      '--start-maximized',
+      // Fallback window size if maximize doesn't work
+      '--window-size=1920,1080',
     ];
 
     if (options.headless) {
       args.push('--headless=new');
+      // For headless, set explicit window size
+      args.push('--window-size=1920,1080');
     }
 
     const chromeProcess = spawn(chromePath, args, {

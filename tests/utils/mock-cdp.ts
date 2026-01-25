@@ -60,6 +60,8 @@ export function createMockPage(options: MockPageOptions = {}): jest.Mocked<Page>
       up: jest.fn().mockResolvedValue(undefined),
     },
     setViewport: jest.fn().mockResolvedValue(undefined),
+    viewport: jest.fn().mockReturnValue({ width: 1280, height: 720 }),
+    isClosed: jest.fn().mockReturnValue(false),
     content: jest.fn().mockResolvedValue('<html></html>'),
     $: jest.fn(),
     $$: jest.fn(),

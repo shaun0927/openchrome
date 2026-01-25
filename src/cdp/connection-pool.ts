@@ -186,11 +186,18 @@ export class CDPConnectionPool {
     }
   }
 
+  // Default viewport for consistent debugging experience
+  static readonly DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
+
   /**
-   * Create a new page
+   * Create a new page with default viewport
    */
   private async createNewPage(): Promise<Page> {
     const page = await this.cdpClient.createPage();
+    // Ensure viewport is set (cdpClient.createPage already sets it, but double-check)
+    if (!page.viewport()) {
+      await page.setViewport(CDPConnectionPool.DEFAULT_VIEWPORT);
+    }
     this.totalPagesCreated++;
     return page;
   }

@@ -261,19 +261,103 @@ Claude: [Navigates GitHub settings, extracts session information]
 
 ---
 
-## Available Browser Tools
+## Core Features
+
+### Isolated Workers (Parallel Browser Contexts)
+
+The killer feature of Claude Chrome Parallel is **worker isolation**. Each worker has:
+
+- **Separate browser context** with its own cookies, localStorage, and sessionStorage
+- **Independent tab management** - tabs are scoped to their worker
+- **Complete state isolation** - one worker's login doesn't affect another
+
+```
+You: Create a worker named "google-shopping"
+
+Claude: [Creates isolated browser context]
+        Worker: google-shopping
+        Context: Isolated (separate cookies/storage)
+
+You: In google-shopping worker, search for laptops
+
+Claude: [Opens tab in google-shopping worker context]
+        Any login, preferences, or state is isolated to this worker
+```
+
+**Why This Matters:**
+- Log into different accounts simultaneously (e.g., multiple Gmail accounts)
+- Run parallel price comparisons without cookie conflicts
+- Test multi-user scenarios with complete isolation
+
+### Automatic Task Distribution
+
+When you have multiple tabs open, operations are automatically distributed:
+
+```
+You: Take screenshots of all open tabs
+
+Claude: [Parallel execution across all tabs]
+        Tab 1: Screenshot taken (500ms)
+        Tab 2: Screenshot taken (480ms)
+        Tab 3: Screenshot taken (520ms)
+        Total: ~500ms (parallel) vs ~1500ms (sequential)
+```
+
+### Workflow Orchestration
+
+For complex multi-site operations, use the orchestration tools:
+
+```typescript
+// Initialize a parallel workflow
+workflow_init({
+  name: "Price Comparison",
+  workers: [
+    { name: "amazon", url: "https://amazon.com", task: "Search iPhone 15 price" },
+    { name: "ebay", url: "https://ebay.com", task: "Search iPhone 15 price" },
+    { name: "walmart", url: "https://walmart.com", task: "Search iPhone 15 price" }
+  ]
+})
+
+// Each worker executes in parallel with isolated contexts
+// Results are collected via workflow_collect
+```
+
+---
+
+## Available MCP Tools
+
+### Browser Automation Tools
 
 | Tool | Description | Key Use Cases |
 |------|-------------|---------------|
-| `navigate` | Navigate to URL, back/forward history, create tabs | Multi-page workflows |
-| `computer` | Screenshots, mouse clicks, keyboard input, scrolling, hover | Non-standard UI interaction |
+| `navigate` | Navigate to URL, back/forward history | Multi-page workflows |
+| `computer` | Screenshots, mouse clicks, keyboard, scrolling | Non-standard UI interaction |
 | `read_page` | Parse page via accessibility tree | Dynamic content extraction |
-| `find` | Find elements by natural language description | "search box", "submit button" |
-| `form_input` | Set form values directly (text, checkbox, select) | Fast data entry |
+| `find` | Find elements by natural language | "search box", "submit button" |
+| `form_input` | Set form values directly | Fast data entry |
 | `javascript_tool` | Execute arbitrary JavaScript | Complex DOM operations |
 | `network` | Simulate network conditions | Performance testing |
-| `tabs_context_mcp` | Get available tabs | Session management |
-| `tabs_create_mcp` | Create new tab | Parallel workflows |
+
+### Tab & Worker Management Tools
+
+| Tool | Description | Key Use Cases |
+|------|-------------|---------------|
+| `tabs_context_mcp` | Get available tabs by worker | Session overview |
+| `tabs_create_mcp` | Create new tab in worker | Parallel tab operations |
+| `worker_create` | Create isolated browser context | Multi-account scenarios |
+| `worker_list` | List all workers and their tabs | Session management |
+| `worker_delete` | Delete worker and close its tabs | Cleanup |
+
+### Orchestration Tools
+
+| Tool | Description | Key Use Cases |
+|------|-------------|---------------|
+| `workflow_init` | Initialize multi-worker workflow | Parallel site operations |
+| `workflow_status` | Get orchestration progress | Monitoring |
+| `workflow_collect` | Collect results from workers | Data aggregation |
+| `workflow_cleanup` | Clean up workflow resources | Session cleanup |
+| `worker_update` | Update worker progress | Progress tracking |
+| `worker_complete` | Mark worker as complete | Workflow completion |
 
 ---
 
@@ -306,12 +390,14 @@ Add to your Claude Code MCP settings (`~/.claude.json`):
 {
   "mcpServers": {
     "chrome-parallel": {
-      "command": "claude-chrome-parallel",
+      "command": "ccp",
       "args": ["serve"]
     }
   }
 }
 ```
+
+> **Note:** `ccp` is a shorthand alias. You can also use the full name `claude-chrome-parallel`.
 
 Restart Claude Code for changes to take effect.
 
@@ -395,27 +481,29 @@ Each Claude Code session spawns its own MCP server process with a dedicated CDP 
 
 ## CLI Commands
 
+> **Tip:** Use `ccp` as a shorthand for `claude-chrome-parallel` in all commands below.
+
 ```bash
 # Start MCP server (used by Claude Code automatically)
-claude-chrome-parallel serve
+ccp serve
 
 # Check Chrome connection status
-claude-chrome-parallel check
+ccp check
 
 # Use custom Chrome debugging port
-claude-chrome-parallel serve --port 9223
+ccp serve --port 9223
 
 # Check installation health
-claude-chrome-parallel doctor
+ccp doctor
 
 # View session status and statistics
-claude-chrome-parallel status
+ccp status
 
 # View status as JSON (for automation)
-claude-chrome-parallel status --json
+ccp status --json
 
 # Clean up stale sessions and old backups
-claude-chrome-parallel cleanup --max-age 24 --keep-backups 10
+ccp cleanup --max-age 24 --keep-backups 10
 ```
 
 ---
@@ -449,11 +537,11 @@ When running multiple Claude Code instances, they can corrupt `~/.claude.json` d
 
 ```bash
 # Run Claude Code with isolated config directory
-claude-chrome-parallel launch
+ccp launch
 
 # Pass any claude flags
-claude-chrome-parallel launch --dangerously-skip-permissions
-claude-chrome-parallel launch -p "Your prompt"
+ccp launch --dangerously-skip-permissions
+ccp launch -p "Your prompt"
 ```
 
 ### Config Recovery
@@ -462,10 +550,10 @@ If your `.claude.json` gets corrupted:
 
 ```bash
 # Auto-recover corrupted config
-claude-chrome-parallel recover
+ccp recover
 
 # List available backups
-claude-chrome-parallel recover --list-backups
+ccp recover --list-backups
 ```
 
 ---
@@ -512,7 +600,7 @@ claude-chrome-parallel recover --list-backups
 
 ```bash
 # Check status
-claude-chrome-parallel check
+ccp check
 
 # Manually start Chrome with debugging
 chrome --remote-debugging-port=9222

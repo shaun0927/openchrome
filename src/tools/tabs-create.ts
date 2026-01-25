@@ -1,5 +1,5 @@
 /**
- * Tabs Create Tool - Create a new tab in the session
+ * Tabs Create Tool - Create a new tab in the session with a specific URL
  */
 
 import { MCPServer } from '../mcp-server';
@@ -8,22 +8,46 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_create_mcp',
-  description: 'Creates a new empty tab in the MCP session.',
+  description: 'Creates a new tab with the specified URL. URL is required to prevent about:blank tab accumulation. Use workerId for parallel browser operations.',
   inputSchema: {
     type: 'object',
-    properties: {},
-    required: [],
+    properties: {
+      url: {
+        type: 'string',
+        description: 'URL to open in the new tab (required)',
+      },
+      workerId: {
+        type: 'string',
+        description: 'Worker ID for parallel operations. Uses default worker if not specified.',
+      },
+    },
+    required: ['url'],
   },
 };
 
 const handler: ToolHandler = async (
   sessionId: string,
-  _args: Record<string, unknown>
+  args: Record<string, unknown>
 ): Promise<MCPResult> => {
   const sessionManager = getSessionManager();
+  const url = args.url as string;
+  const workerId = args.workerId as string | undefined;
+
+  // URL is required
+  if (!url) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'Error: url is required. Use navigate tool without tabId to create a new tab with a URL.',
+        },
+      ],
+      isError: true,
+    };
+  }
 
   try {
-    const { targetId, page } = await sessionManager.createTarget(sessionId, 'about:blank');
+    const { targetId, page, workerId: assignedWorkerId } = await sessionManager.createTarget(sessionId, url, workerId);
 
     return {
       content: [
@@ -32,6 +56,7 @@ const handler: ToolHandler = async (
           text: JSON.stringify(
             {
               tabId: targetId,
+              workerId: assignedWorkerId,
               url: page.url(),
               title: await page.title(),
             },

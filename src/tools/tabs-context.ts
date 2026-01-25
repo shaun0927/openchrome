@@ -9,51 +9,68 @@ import { getSessionManager } from '../session-manager';
 const definition: MCPToolDefinition = {
   name: 'tabs_context_mcp',
   description:
-    'Get context information about the current MCP session tabs. Returns all tab IDs. Use createIfEmpty to create a new tab if none exists.',
+    'Get context information about the current MCP session tabs and workers. Returns all tab IDs grouped by worker.',
   inputSchema: {
     type: 'object',
     properties: {
-      createIfEmpty: {
-        type: 'boolean',
-        description: 'Creates a new tab if the session has no tabs',
+      workerId: {
+        type: 'string',
+        description: 'Optional: Get tabs for a specific worker only.',
       },
     },
     required: [],
   },
 };
 
+interface TabInfo {
+  tabId: string;
+  workerId: string;
+  url: string;
+  title: string;
+}
+
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
-  const createIfEmpty = args.createIfEmpty as boolean | undefined;
   const sessionManager = getSessionManager();
+  const requestedWorkerId = args.workerId as string | undefined;
 
   try {
     const session = await sessionManager.getOrCreateSession(sessionId);
-    let targetIds = sessionManager.getSessionTargetIds(sessionId);
+    const workers = sessionManager.getWorkers(sessionId);
 
-    // Create a new tab if requested and none exist
-    if (createIfEmpty && targetIds.length === 0) {
-      const { targetId } = await sessionManager.createTarget(sessionId, 'about:blank');
-      targetIds = [targetId];
-    }
+    // Get tab info grouped by worker
+    const tabInfos: TabInfo[] = [];
+    const workerTabs: Record<string, TabInfo[]> = {};
 
-    // Get tab info for each target
-    const tabInfos = await Promise.all(
-      targetIds.map(async (targetId) => {
-        const page = await sessionManager.getPage(sessionId, targetId);
-        if (!page) {
-          return { tabId: targetId, url: 'unknown', title: 'unknown' };
+    for (const workerInfo of workers) {
+      // Skip if specific worker requested and this isn't it
+      if (requestedWorkerId && workerInfo.id !== requestedWorkerId) {
+        continue;
+      }
+
+      const targetIds = sessionManager.getWorkerTargetIds(sessionId, workerInfo.id);
+      workerTabs[workerInfo.id] = [];
+
+      for (const targetId of targetIds) {
+        try {
+          const page = await sessionManager.getPage(sessionId, targetId, workerInfo.id);
+          if (page) {
+            const tabInfo: TabInfo = {
+              tabId: targetId,
+              workerId: workerInfo.id,
+              url: page.url(),
+              title: await page.title(),
+            };
+            tabInfos.push(tabInfo);
+            workerTabs[workerInfo.id].push(tabInfo);
+          }
+        } catch {
+          // Target may have been closed, skip it
         }
-
-        return {
-          tabId: targetId,
-          url: page.url(),
-          title: await page.title(),
-        };
-      })
-    );
+      }
+    }
 
     return {
       content: [
@@ -62,8 +79,15 @@ const handler: ToolHandler = async (
           text: JSON.stringify(
             {
               sessionId,
-              tabs: tabInfos,
+              defaultWorkerId: session.defaultWorkerId,
+              workerCount: workers.length,
               tabCount: tabInfos.length,
+              workers: workers.map((w) => ({
+                id: w.id,
+                name: w.name,
+                tabCount: workerTabs[w.id]?.length || 0,
+                tabs: workerTabs[w.id] || [],
+              })),
             },
             null,
             2

@@ -1,9 +1,10 @@
 /**
  * Session Manager - Manages lifecycle of parallel Claude Code sessions
+ * Supports multiple Workers within a single session for parallel browser operations
  */
 
-import { Page, Target } from 'puppeteer-core';
-import { Session, SessionInfo, SessionCreateOptions, SessionEvent } from './types/session';
+import { Page, Target, BrowserContext } from 'puppeteer-core';
+import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
 import { CDPClient, getCDPClient } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { RequestQueueManager } from './utils/request-queue';
@@ -23,13 +24,16 @@ export interface SessionManagerConfig {
   autoCleanup?: boolean;
   /** Maximum number of sessions (default: 100) */
   maxSessions?: number;
-  /** Use connection pool for page management (default: true) */
+  /** Maximum workers per session (default: 20) */
+  maxWorkersPerSession?: number;
+  /** Use connection pool for page management (default: false for worker isolation) */
   useConnectionPool?: boolean;
 }
 
 export interface SessionManagerStats {
   activeSessions: number;
   totalTargets: number;
+  totalWorkers: number;
   totalSessionsCreated: number;
   totalSessionsCleaned: number;
   uptime: number;
@@ -43,12 +47,13 @@ const DEFAULT_CONFIG: Required<SessionManagerConfig> = {
   cleanupInterval: 60 * 1000,       // 1 minute
   autoCleanup: true,
   maxSessions: 100,
-  useConnectionPool: true,
+  maxWorkersPerSession: 20,
+  useConnectionPool: false,         // Disabled by default for worker isolation
 };
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
-  private targetToSession: Map<string, string> = new Map();
+  private targetToWorker: Map<string, { sessionId: string; workerId: string }> = new Map();
   private cdpClient: CDPClient;
   private connectionPool: CDPConnectionPool | null = null;
   private queueManager: RequestQueueManager;
@@ -74,6 +79,11 @@ export class SessionManager {
     if (this.config.autoCleanup) {
       this.startAutoCleanup();
     }
+
+    // Register target destroyed listener
+    this.cdpClient.addTargetDestroyedListener((targetId) => {
+      this.onTargetClosed(targetId);
+    });
   }
 
   /**
@@ -115,13 +125,21 @@ export class SessionManager {
    */
   getStats(): SessionManagerStats {
     let totalTargets = 0;
+    let totalWorkers = 0;
+
     for (const session of this.sessions.values()) {
+      totalWorkers += session.workers.size;
+      for (const worker of session.workers.values()) {
+        totalTargets += worker.targets.size;
+      }
+      // Also count legacy targets
       totalTargets += session.targets.size;
     }
 
     const stats: SessionManagerStats = {
       activeSessions: this.sessions.size,
       totalTargets,
+      totalWorkers,
       totalSessionsCreated: this.totalSessionsCreated,
       totalSessionsCleaned: this.totalSessionsCleaned,
       uptime: Date.now() - this.startTime,
@@ -167,8 +185,10 @@ export class SessionManager {
     }
   }
 
+  // ==================== SESSION MANAGEMENT ====================
+
   /**
-   * Create a new session
+   * Create a new session with a default worker
    */
   async createSession(options: SessionCreateOptions = {}): Promise<Session> {
     await this.ensureConnected();
@@ -181,27 +201,42 @@ export class SessionManager {
 
     // Check max sessions limit
     if (this.sessions.size >= this.config.maxSessions) {
-      // Try to cleanup old sessions first
       const deleted = await this.cleanupInactiveSessions(this.config.sessionTTL);
       if (deleted.length === 0 && this.sessions.size >= this.config.maxSessions) {
-        throw new Error(`Maximum session limit (${this.config.maxSessions}) reached. Clean up inactive sessions first.`);
+        throw new Error(`Maximum session limit (${this.config.maxSessions}) reached.`);
       }
     }
 
     const name = options.name || `Session ${id.slice(0, 8)}`;
+    const defaultWorkerId = 'default';
+
+    // Create default worker with isolated browser context
+    const defaultContext = await this.cdpClient.createBrowserContext();
+    const defaultWorker: Worker = {
+      id: defaultWorkerId,
+      name: 'Default Worker',
+      targets: new Set(),
+      context: defaultContext,
+      createdAt: Date.now(),
+      lastActivityAt: Date.now(),
+    };
 
     const session: Session = {
       id,
-      targets: new Set(),
+      workers: new Map([[defaultWorkerId, defaultWorker]]),
+      defaultWorkerId,
+      targets: new Set(),  // Legacy support
       createdAt: Date.now(),
       lastActivityAt: Date.now(),
       name,
+      context: defaultContext,  // Legacy support
     };
 
     this.sessions.set(id, session);
     this.totalSessionsCreated++;
     this.emitEvent({ type: 'session:created', sessionId: id, timestamp: Date.now() });
 
+    console.error(`[SessionManager] Created session ${id} with default worker`);
     return session;
   }
 
@@ -234,7 +269,7 @@ export class SessionManager {
   }
 
   /**
-   * Delete a session and clean up resources
+   * Delete a session and clean up all workers
    */
   async deleteSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
@@ -242,21 +277,9 @@ export class SessionManager {
       return;
     }
 
-    // Release or close all pages for this session
-    for (const targetId of session.targets) {
-      try {
-        const page = await this.cdpClient.getPageByTargetId(targetId);
-        if (page && this.connectionPool) {
-          // Return page to pool for reuse
-          await this.connectionPool.releasePage(page);
-        } else {
-          // Close directly if no pool
-          await this.cdpClient.closePage(targetId);
-        }
-      } catch {
-        // Page might already be closed
-      }
-      this.targetToSession.delete(targetId);
+    // Delete all workers
+    for (const workerId of session.workers.keys()) {
+      await this.deleteWorkerInternal(session, workerId);
     }
 
     // Clean up request queue
@@ -268,6 +291,8 @@ export class SessionManager {
     // Remove session
     this.sessions.delete(sessionId);
     this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
+
+    console.error(`[SessionManager] Deleted session ${sessionId}`);
   }
 
   /**
@@ -303,63 +328,243 @@ export class SessionManager {
     return count;
   }
 
+  // ==================== WORKER MANAGEMENT ====================
+
   /**
-   * Create a new page/target for a session
+   * Create a new worker within a session
+   * Each worker has its own isolated browser context (cookies, localStorage, etc.)
    */
-  async createTarget(sessionId: string, url?: string): Promise<{ targetId: string; page: Page }> {
+  async createWorker(sessionId: string, options: WorkerCreateOptions = {}): Promise<Worker> {
     await this.ensureConnected();
 
     const session = await this.getOrCreateSession(sessionId);
 
-    // Use connection pool if available
-    let page: Page;
-    if (this.connectionPool) {
-      page = await this.connectionPool.acquirePage();
-      if (url) {
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
-      }
-    } else {
-      page = await this.cdpClient.createPage(url);
+    // Check max workers limit
+    if (session.workers.size >= this.config.maxWorkersPerSession) {
+      throw new Error(`Maximum workers per session (${this.config.maxWorkersPerSession}) reached.`);
     }
 
+    const workerId = options.id || `worker-${crypto.randomUUID().slice(0, 8)}`;
+
+    if (session.workers.has(workerId)) {
+      return session.workers.get(workerId)!;
+    }
+
+    const name = options.name || `Worker ${workerId}`;
+
+    // Create isolated browser context for this worker
+    const context = await this.cdpClient.createBrowserContext();
+
+    const worker: Worker = {
+      id: workerId,
+      name,
+      targets: new Set(),
+      context,
+      createdAt: Date.now(),
+      lastActivityAt: Date.now(),
+    };
+
+    session.workers.set(workerId, worker);
+    this.touchSession(sessionId);
+
+    this.emitEvent({
+      type: 'worker:created',
+      sessionId,
+      workerId,
+      timestamp: Date.now(),
+    });
+
+    console.error(`[SessionManager] Created worker ${workerId} in session ${sessionId}`);
+    return worker;
+  }
+
+  /**
+   * Get a worker by ID
+   */
+  getWorker(sessionId: string, workerId: string): Worker | undefined {
+    const session = this.sessions.get(sessionId);
+    if (!session) return undefined;
+    return session.workers.get(workerId);
+  }
+
+  /**
+   * Get or create a worker
+   */
+  async getOrCreateWorker(sessionId: string, workerId?: string): Promise<Worker> {
+    const session = await this.getOrCreateSession(sessionId);
+
+    // If no workerId specified, use default worker
+    const targetWorkerId = workerId || session.defaultWorkerId;
+
+    let worker = session.workers.get(targetWorkerId);
+    if (!worker) {
+      worker = await this.createWorker(sessionId, { id: targetWorkerId });
+    }
+
+    return worker;
+  }
+
+  /**
+   * List all workers in a session
+   */
+  getWorkers(sessionId: string): WorkerInfo[] {
+    const session = this.sessions.get(sessionId);
+    if (!session) return [];
+
+    const workers: WorkerInfo[] = [];
+    for (const worker of session.workers.values()) {
+      workers.push({
+        id: worker.id,
+        name: worker.name,
+        targetCount: worker.targets.size,
+        createdAt: worker.createdAt,
+        lastActivityAt: worker.lastActivityAt,
+      });
+    }
+
+    return workers;
+  }
+
+  /**
+   * Delete a worker and its resources
+   */
+  async deleteWorker(sessionId: string, workerId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    // Can't delete default worker
+    if (workerId === session.defaultWorkerId) {
+      throw new Error('Cannot delete the default worker. Delete the session instead.');
+    }
+
+    await this.deleteWorkerInternal(session, workerId);
+
+    this.emitEvent({
+      type: 'worker:deleted',
+      sessionId,
+      workerId,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Internal worker deletion (also used for cleanup)
+   */
+  private async deleteWorkerInternal(session: Session, workerId: string): Promise<void> {
+    const worker = session.workers.get(workerId);
+    if (!worker) return;
+
+    // Close all pages in this worker
+    for (const targetId of worker.targets) {
+      try {
+        await this.cdpClient.closePage(targetId);
+      } catch {
+        // Page might already be closed
+      }
+      this.targetToWorker.delete(targetId);
+    }
+
+    // Close the browser context
+    try {
+      await this.cdpClient.closeBrowserContext(worker.context);
+    } catch {
+      // Context might already be closed
+    }
+
+    // Clean up ref IDs for this worker
+    for (const targetId of worker.targets) {
+      getRefIdManager().clearTargetRefs(session.id, targetId);
+    }
+
+    session.workers.delete(workerId);
+    console.error(`[SessionManager] Deleted worker ${workerId} from session ${session.id}`);
+  }
+
+  // ==================== TARGET/PAGE MANAGEMENT ====================
+
+  /**
+   * Create a new page/target for a worker
+   * @param sessionId Session ID
+   * @param url Optional URL to navigate to
+   * @param workerId Optional worker ID (uses default worker if not specified)
+   */
+  async createTarget(
+    sessionId: string,
+    url?: string,
+    workerId?: string
+  ): Promise<{ targetId: string; page: Page; workerId: string }> {
+    await this.ensureConnected();
+
+    const worker = await this.getOrCreateWorker(sessionId, workerId);
+
+    // Create page in the worker's isolated browser context
+    const page = await this.cdpClient.createPage(url, worker.context);
     const targetId = getTargetId(page.target());
 
-    session.targets.add(targetId);
-    this.targetToSession.set(targetId, sessionId);
+    worker.targets.add(targetId);
+    worker.lastActivityAt = Date.now();
+
+    this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
 
     this.emitEvent({
       type: 'session:target-added',
       sessionId,
+      workerId: worker.id,
       targetId,
       timestamp: Date.now(),
     });
 
     this.touchSession(sessionId);
-    return { targetId, page };
+    return { targetId, page, workerId: worker.id };
+  }
+
+  /**
+   * Check if a target is still valid (page not closed)
+   */
+  async isTargetValid(targetId: string): Promise<boolean> {
+    try {
+      const page = await this.cdpClient.getPageByTargetId(targetId);
+      return page !== null && !page.isClosed();
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Get page for a target
+   * @param sessionId Session ID
+   * @param targetId Target/Tab ID
+   * @param workerId Optional worker ID for validation
    */
-  async getPage(sessionId: string, targetId: string): Promise<Page | null> {
-    if (!this.validateTargetOwnership(sessionId, targetId)) {
+  async getPage(sessionId: string, targetId: string, workerId?: string): Promise<Page | null> {
+    const ownerInfo = this.targetToWorker.get(targetId);
+
+    if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
       throw new Error(`Target ${targetId} does not belong to session ${sessionId}`);
+    }
+
+    if (workerId && ownerInfo.workerId !== workerId) {
+      throw new Error(`Target ${targetId} does not belong to worker ${workerId}`);
+    }
+
+    // Validate target is still valid
+    if (!await this.isTargetValid(targetId)) {
+      this.onTargetClosed(targetId);
+      return null;
     }
 
     return this.cdpClient.getPageByTargetId(targetId);
   }
 
   /**
-   * Get all pages for a session
+   * Get all pages for a worker
    */
-  async getSessionPages(sessionId: string): Promise<Page[]> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      return [];
-    }
+  async getWorkerPages(sessionId: string, workerId: string): Promise<Page[]> {
+    const worker = this.getWorker(sessionId, workerId);
+    if (!worker) return [];
 
     const pages: Page[] = [];
-    for (const targetId of session.targets) {
+    for (const targetId of worker.targets) {
       const page = await this.cdpClient.getPageByTargetId(targetId);
       if (page) {
         pages.push(page);
@@ -370,22 +575,42 @@ export class SessionManager {
   }
 
   /**
-   * Get target IDs for a session
+   * Get target IDs for a session (all workers)
    */
   getSessionTargetIds(sessionId: string): string[] {
     const session = this.sessions.get(sessionId);
-    if (!session) {
-      return [];
+    if (!session) return [];
+
+    const allTargets: string[] = [];
+    for (const worker of session.workers.values()) {
+      allTargets.push(...worker.targets);
     }
-    return Array.from(session.targets);
+
+    return allTargets;
   }
 
   /**
-   * Validate target ownership
+   * Get target IDs for a specific worker
+   */
+  getWorkerTargetIds(sessionId: string, workerId: string): string[] {
+    const worker = this.getWorker(sessionId, workerId);
+    if (!worker) return [];
+    return Array.from(worker.targets);
+  }
+
+  /**
+   * Validate target ownership (legacy method, checks session only)
    */
   validateTargetOwnership(sessionId: string, targetId: string): boolean {
-    const owner = this.targetToSession.get(targetId);
-    return owner === sessionId;
+    const ownerInfo = this.targetToWorker.get(targetId);
+    return ownerInfo?.sessionId === sessionId;
+  }
+
+  /**
+   * Get the worker ID that owns a target
+   */
+  getTargetWorkerId(targetId: string): string | undefined {
+    return this.targetToWorker.get(targetId)?.workerId;
   }
 
   /**
@@ -397,11 +622,6 @@ export class SessionManager {
     method: string,
     params?: Record<string, unknown>
   ): Promise<T> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-
     if (!this.validateTargetOwnership(sessionId, targetId)) {
       throw new Error(`Target ${targetId} does not belong to session ${sessionId}`);
     }
@@ -418,42 +638,58 @@ export class SessionManager {
   }
 
   /**
-   * Remove a target from a session
+   * Handle target closed event
    */
-  async removeTarget(sessionId: string, targetId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      return;
+  onTargetClosed(targetId: string): void {
+    const ownerInfo = this.targetToWorker.get(targetId);
+    if (ownerInfo) {
+      const session = this.sessions.get(ownerInfo.sessionId);
+      if (session) {
+        const worker = session.workers.get(ownerInfo.workerId);
+        if (worker) {
+          worker.targets.delete(targetId);
+        }
+        this.targetToWorker.delete(targetId);
+
+        this.emitEvent({
+          type: 'session:target-removed',
+          sessionId: ownerInfo.sessionId,
+          workerId: ownerInfo.workerId,
+          targetId,
+          timestamp: Date.now(),
+        });
+      }
     }
-
-    session.targets.delete(targetId);
-    this.targetToSession.delete(targetId);
-
-    // Clean up ref IDs for this target
-    getRefIdManager().clearTargetRefs(sessionId, targetId);
-
-    this.emitEvent({
-      type: 'session:target-removed',
-      sessionId,
-      targetId,
-      timestamp: Date.now(),
-    });
-
-    this.touchSession(sessionId);
   }
+
+  // ==================== SESSION INFO ====================
 
   /**
    * Get session info (for serialization)
    */
   getSessionInfo(sessionId: string): SessionInfo | undefined {
     const session = this.sessions.get(sessionId);
-    if (!session) {
-      return undefined;
+    if (!session) return undefined;
+
+    let totalTargets = 0;
+    const workers: WorkerInfo[] = [];
+
+    for (const worker of session.workers.values()) {
+      totalTargets += worker.targets.size;
+      workers.push({
+        id: worker.id,
+        name: worker.name,
+        targetCount: worker.targets.size,
+        createdAt: worker.createdAt,
+        lastActivityAt: worker.lastActivityAt,
+      });
     }
 
     return {
       id: session.id,
-      targetCount: session.targets.size,
+      targetCount: totalTargets,
+      workerCount: session.workers.size,
+      workers,
       createdAt: session.createdAt,
       lastActivityAt: session.lastActivityAt,
       name: session.name,
@@ -465,37 +701,16 @@ export class SessionManager {
    */
   getAllSessionInfos(): SessionInfo[] {
     const infos: SessionInfo[] = [];
-    for (const session of this.sessions.values()) {
-      infos.push({
-        id: session.id,
-        targetCount: session.targets.size,
-        createdAt: session.createdAt,
-        lastActivityAt: session.lastActivityAt,
-        name: session.name,
-      });
+    for (const sessionId of this.sessions.keys()) {
+      const info = this.getSessionInfo(sessionId);
+      if (info) {
+        infos.push(info);
+      }
     }
     return infos;
   }
 
-  /**
-   * Handle target closed event
-   */
-  onTargetClosed(targetId: string): void {
-    const sessionId = this.targetToSession.get(targetId);
-    if (sessionId) {
-      const session = this.sessions.get(sessionId);
-      if (session) {
-        session.targets.delete(targetId);
-        this.targetToSession.delete(targetId);
-        this.emitEvent({
-          type: 'session:target-removed',
-          sessionId,
-          targetId,
-          timestamp: Date.now(),
-        });
-      }
-    }
-  }
+  // ==================== EVENT HANDLING ====================
 
   /**
    * Add event listener

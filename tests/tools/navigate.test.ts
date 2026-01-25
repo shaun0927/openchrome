@@ -246,15 +246,18 @@ describe('NavigateTool', () => {
   });
 
   describe('Error Handling', () => {
-    test('returns error for missing tabId', async () => {
+    test('creates new tab when tabId not provided', async () => {
       const handler = await getNavigateHandler();
 
       const result = await handler(testSessionId, {
         url: 'https://example.com',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('tabId is required');
+      // New behavior: creates a new tab instead of returning error
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.created).toBe(true);
+      expect(parsed.tabId).toBeDefined();
     });
 
     test('returns error for missing url', async () => {
@@ -268,11 +271,11 @@ describe('NavigateTool', () => {
       expect(result.content[0].text).toContain('url is required');
     });
 
-    test('returns error when tab not found', async () => {
+    test('returns error when tab is no longer available', async () => {
       const handler = await getNavigateHandler();
 
-      // Use a non-existent target ID
-      mockSessionManager.getPage.mockResolvedValueOnce(null);
+      // Mock isTargetValid to return false for non-existent tab
+      mockSessionManager.isTargetValid.mockResolvedValueOnce(false);
 
       const result = await handler(testSessionId, {
         tabId: 'non-existent-tab',
@@ -280,7 +283,7 @@ describe('NavigateTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('not found');
+      expect(result.content[0].text).toContain('no longer available');
     });
 
     test('handles navigation timeout', async () => {

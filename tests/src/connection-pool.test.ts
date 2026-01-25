@@ -12,6 +12,8 @@ interface MockPage {
   close: jest.Mock;
   createCDPSession: jest.Mock;
   target: jest.Mock;
+  viewport: jest.Mock;
+  setViewport: jest.Mock;
 }
 
 // Mock CDPClient
@@ -36,6 +38,8 @@ function createMockPage(targetId: string = 'target-1'): MockPage {
     close: jest.fn().mockResolvedValue(undefined),
     createCDPSession: jest.fn().mockResolvedValue(mockCdpSession),
     target: jest.fn().mockReturnValue({ _targetId: targetId }),
+    viewport: jest.fn().mockReturnValue({ width: 1920, height: 1080 }),
+    setViewport: jest.fn().mockResolvedValue(undefined),
   };
 }
 

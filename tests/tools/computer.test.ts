@@ -335,7 +335,7 @@ describe('ComputerTool', () => {
   });
 
   describe('Screenshot', () => {
-    test('returns base64 PNG image', async () => {
+    test('returns base64 PNG image with size limits', async () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
       (page.screenshot as jest.Mock).mockResolvedValue('base64-encoded-image-data');
@@ -345,9 +345,17 @@ describe('ComputerTool', () => {
         action: 'screenshot',
       }) as { content: Array<{ type: string; data?: string; mimeType?: string }> };
 
+      // Should call screenshot with clip to ensure size limits
       expect(page.screenshot).toHaveBeenCalledWith({
         encoding: 'base64',
         type: 'png',
+        fullPage: false,
+        clip: {
+          x: 0,
+          y: 0,
+          width: 1280, // Mock viewport width
+          height: 720, // Mock viewport height
+        },
       });
       expect(result.content[0].type).toBe('image');
       expect(result.content[0].data).toBe('base64-encoded-image-data');
@@ -362,6 +370,26 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; mimeType?: string }> };
 
       expect(result.content[0].mimeType).toBe('image/png');
+    });
+
+    test('resizes viewport when larger than max allowed', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Mock a large viewport (e.g., 4K display)
+      (page.viewport as jest.Mock).mockReturnValue({ width: 3840, height: 2160 });
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      });
+
+      // Should have called setViewport to resize
+      expect(page.setViewport).toHaveBeenCalledWith({
+        width: 1920, // MAX_SCREENSHOT_WIDTH
+        height: 1080, // MAX_SCREENSHOT_HEIGHT
+        deviceScaleFactor: 1,
+      });
     });
   });
 
@@ -399,6 +427,28 @@ describe('ComputerTool', () => {
         deltaX: 0,
         deltaY: 300,
       });
+    });
+
+    test('scroll falls back to JavaScript when mouse.wheel times out', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Mock mouse.wheel to throw timeout error
+      (page.mouse.wheel as jest.Mock).mockRejectedValueOnce(
+        new Error('Input.dispatchMouseEvent timed out')
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'scroll',
+        coordinate: [500, 500],
+        scroll_direction: 'down',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      // Should have called evaluate as fallback
+      expect(page.evaluate).toHaveBeenCalled();
+      // Should indicate fallback was used
+      expect(result.content[0].text).toContain('JavaScript fallback');
     });
 
     test('scroll left', async () => {

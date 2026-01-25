@@ -3,17 +3,39 @@
  * Tests for SessionManager TTL, Stats, and Config features
  */
 
-// Mock CDP client instance
-const mockCdpClientInstance = {
-  connect: jest.fn().mockResolvedValue(undefined),
-  createPage: jest.fn().mockResolvedValue({
+// Mock browser context
+const mockBrowserContext = {
+  close: jest.fn().mockResolvedValue(undefined),
+  newPage: jest.fn().mockResolvedValue({
     target: () => ({ _targetId: 'mock-target-id' }),
     goto: jest.fn().mockResolvedValue(undefined),
     close: jest.fn().mockResolvedValue(undefined),
+    setViewport: jest.fn().mockResolvedValue(undefined),
+  }),
+};
+
+// Counter for unique target IDs
+let targetIdCounter = 0;
+
+// Mock CDP client instance
+const mockCdpClientInstance = {
+  connect: jest.fn().mockResolvedValue(undefined),
+  createPage: jest.fn().mockImplementation(() => {
+    const targetId = `mock-target-id-${++targetIdCounter}`;
+    return Promise.resolve({
+      target: () => ({ _targetId: targetId }),
+      goto: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+      setViewport: jest.fn().mockResolvedValue(undefined),
+      isClosed: jest.fn().mockReturnValue(false),
+    });
   }),
   closePage: jest.fn().mockResolvedValue(undefined),
   getPageByTargetId: jest.fn().mockReturnValue(null),
   isConnected: jest.fn().mockReturnValue(true),
+  addTargetDestroyedListener: jest.fn(),
+  createBrowserContext: jest.fn().mockResolvedValue(mockBrowserContext),
+  closeBrowserContext: jest.fn().mockResolvedValue(undefined),
 };
 
 // Mock dependencies
@@ -66,6 +88,7 @@ describe('SessionManager TTL and Stats', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
+    targetIdCounter = 0; // Reset counter
 
     sessionManager = new SessionManager(undefined, {
       sessionTTL: 1000, // 1 second for testing
@@ -277,6 +300,9 @@ describe('SessionManager with Connection Pool', () => {
 describe('SessionManager Auto-Cleanup', () => {
   test('should run auto-cleanup at configured interval', async () => {
     jest.useFakeTimers();
+    // Set system time to a known value
+    const baseTime = 1000000;
+    jest.setSystemTime(baseTime);
 
     const autoManager = new SessionManager(undefined, {
       sessionTTL: 100,
@@ -286,13 +312,12 @@ describe('SessionManager Auto-Cleanup', () => {
     });
 
     const session = await autoManager.createSession({ id: 'test' });
-    (session as any).lastActivityAt = Date.now() - 200;
+    // Set lastActivityAt to 200ms in the past
+    (session as any).lastActivityAt = baseTime - 200;
 
-    // Advance time past cleanup interval
-    jest.advanceTimersByTime(100);
-
-    // Wait for async cleanup
-    await Promise.resolve();
+    // Advance time past cleanup interval (this triggers the interval callback)
+    // Use advanceTimersByTimeAsync to handle async cleanup
+    await jest.advanceTimersByTimeAsync(100);
 
     expect(autoManager.getSession('test')).toBeUndefined();
 
@@ -302,6 +327,8 @@ describe('SessionManager Auto-Cleanup', () => {
 
   test('should stop auto-cleanup when stopAutoCleanup is called', async () => {
     jest.useFakeTimers();
+    const baseTime = 1000000;
+    jest.setSystemTime(baseTime);
 
     const autoManager = new SessionManager(undefined, {
       sessionTTL: 100,
@@ -313,7 +340,7 @@ describe('SessionManager Auto-Cleanup', () => {
     autoManager.stopAutoCleanup();
 
     const session = await autoManager.createSession({ id: 'test' });
-    (session as any).lastActivityAt = Date.now() - 200;
+    (session as any).lastActivityAt = baseTime - 200;
 
     // Advance time past cleanup interval
     jest.advanceTimersByTime(100);
