@@ -73,6 +73,70 @@ program
   });
 
 program
+  .command('setup')
+  .description('Automatically configure MCP server for Claude Code')
+  .option('--dashboard', 'Enable terminal dashboard')
+  .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
+  .action(async (options: { dashboard?: boolean; autoLaunch?: boolean }) => {
+    const { execSync, spawnSync } = require('child_process');
+
+    console.log('Setting up Claude Chrome Parallel for Claude Code...\n');
+
+    // Check if claude CLI is available
+    try {
+      execSync('claude --version', { stdio: 'pipe' });
+    } catch {
+      console.error('❌ Claude Code CLI not found.');
+      console.error('   Please install Claude Code first: https://claude.ai/code');
+      process.exit(1);
+    }
+
+    // Build the command arguments
+    const args = ['serve', '--auto-launch'];
+    if (options.dashboard) {
+      args.push('--dashboard');
+    }
+
+    // Find the path to ccp executable
+    const ccpPath = process.argv[1]; // Current executable path
+    const nodeCommand = 'node';
+    const scriptPath = ccpPath.endsWith('.js') ? ccpPath : path.join(__dirname, 'index.js');
+
+    // Remove existing configuration first (if any)
+    try {
+      execSync('claude mcp remove claude-chrome-parallel 2>/dev/null', { stdio: 'pipe' });
+    } catch {
+      // Ignore if not exists
+    }
+
+    // Add MCP server configuration
+    const fullCommand = `claude mcp add claude-chrome-parallel -- ${nodeCommand} ${scriptPath} ${args.join(' ')}`;
+
+    console.log('Running: claude mcp add claude-chrome-parallel...');
+
+    try {
+      execSync(fullCommand, { stdio: 'inherit' });
+      console.log('\n✅ MCP server configured successfully!\n');
+      console.log('Next steps:');
+      console.log('  1. Restart Claude Code');
+      console.log('  2. Run /mcp to verify "claude-chrome-parallel" is listed');
+      console.log('  3. Try: "example.com을 열고 스크린샷 찍어줘"\n');
+    } catch (error) {
+      console.error('\n❌ Failed to configure MCP server.');
+      console.error('   You can manually add to ~/.claude.json:');
+      console.error('   {');
+      console.error('     "mcpServers": {');
+      console.error('       "claude-chrome-parallel": {');
+      console.error(`         "command": "${nodeCommand}",`);
+      console.error(`         "args": ["${scriptPath}", ${args.map(a => `"${a}"`).join(', ')}]`);
+      console.error('       }');
+      console.error('     }');
+      console.error('   }');
+      process.exit(1);
+    }
+  });
+
+program
   .command('serve')
   .description('Start MCP server for Claude Code')
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')

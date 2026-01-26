@@ -26,11 +26,16 @@ No more "Detached" errors. Run **20+ Claude Code sessions in parallel**.
 # Install from GitHub (recommended)
 npm install -g github:shaun0927/claude-chrome-parallel
 
-# Or clone and install locally
-git clone https://github.com/shaun0927/claude-chrome-parallel.git
-cd claude-chrome-parallel
-npm install -g .
+# Automatic setup (configures MCP for Claude Code)
+ccp setup
+
+# Restart Claude Code
 ```
+
+That's it! The `setup` command automatically registers the MCP server with Claude Code.
+
+<details>
+<summary>Manual setup (if automatic setup fails)</summary>
 
 Add to `~/.claude.json`:
 
@@ -39,13 +44,19 @@ Add to `~/.claude.json`:
   "mcpServers": {
     "chrome-parallel": {
       "command": "ccp",
-      "args": ["serve"]
+      "args": ["serve", "--auto-launch"]
     }
   }
 }
 ```
 
-Restart Claude Code. Done.
+Or run:
+```bash
+claude mcp add claude-chrome-parallel -- ccp serve --auto-launch
+```
+
+Restart Claude Code.
+</details>
 
 ```
 You: Take a screenshot of https://github.com
@@ -304,10 +315,10 @@ Then use:
 ## CLI Commands
 
 ```bash
+ccp setup              # Auto-configure MCP for Claude Code (run this first!)
 ccp serve              # Start MCP server (auto-run by Claude Code)
-ccp check              # Check Chrome connection
-ccp status             # View session status
 ccp doctor             # Diagnose installation
+ccp status             # View session status
 ccp cleanup            # Clean up old sessions
 ```
 
