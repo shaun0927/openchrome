@@ -11,11 +11,35 @@ import { registerFormInputTool } from './form-input';
 import { registerJavascriptTool } from './javascript';
 import { registerTabsContextTool } from './tabs-context';
 import { registerTabsCreateTool } from './tabs-create';
+import { registerTabsCloseTool } from './tabs-close';
 import { registerNetworkTool } from './network';
 import { registerWorkerCreateTool } from './worker-create';
 import { registerWorkerListTool } from './worker-list';
 import { registerWorkerDeleteTool } from './worker-delete';
 import { registerOrchestrationTools } from './orchestration';
+
+// Phase 1 tools
+import { registerPageReloadTool } from './page-reload';
+import { registerCookiesTool } from './cookies';
+import { registerSelectorQueryTool } from './selector-query';
+import { registerPageContentTool } from './page-content';
+import { registerWaitForTool } from './wait-for';
+import { registerStorageTool } from './storage';
+
+// Phase 2 tools
+import { registerUserAgentTool } from './user-agent';
+import { registerGeolocationTool } from './geolocation';
+import { registerEmulateDeviceTool } from './emulate-device';
+import { registerPagePdfTool } from './page-pdf';
+import { registerConsoleCaptureTool } from './console-capture';
+import { registerPerformanceMetricsTool } from './performance-metrics';
+import { registerRequestInterceptTool } from './request-intercept';
+
+// Phase 3 tools
+import { registerXpathQueryTool } from './xpath-query';
+import { registerFileUploadTool } from './file-upload';
+import { registerHttpAuthTool } from './http-auth';
+import { registerDragDropTool } from './drag-drop';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -27,9 +51,33 @@ export function registerAllTools(server: MCPServer): void {
   registerJavascriptTool(server);
   registerNetworkTool(server);
 
+  // Phase 1: Page and content tools
+  registerPageReloadTool(server);
+  registerCookiesTool(server);
+  registerSelectorQueryTool(server);
+  registerPageContentTool(server);
+  registerWaitForTool(server);
+  registerStorageTool(server);
+
+  // Phase 2: Device emulation and settings
+  registerUserAgentTool(server);
+  registerGeolocationTool(server);
+  registerEmulateDeviceTool(server);
+  registerPagePdfTool(server);
+  registerConsoleCaptureTool(server);
+  registerPerformanceMetricsTool(server);
+  registerRequestInterceptTool(server);
+
+  // Phase 3: Advanced tools
+  registerXpathQueryTool(server);
+  registerFileUploadTool(server);
+  registerHttpAuthTool(server);
+  registerDragDropTool(server);
+
   // Tab management
   registerTabsContextTool(server);
   registerTabsCreateTool(server);
+  registerTabsCloseTool(server);
 
   // Worker management (parallel browser operations)
   registerWorkerCreateTool(server);

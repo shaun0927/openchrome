@@ -230,7 +230,8 @@ export class MCPServer {
 
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
-    const sessionId = (toolArgs.sessionId || params.sessionId) as string;
+    // Use 'default' session if no sessionId is provided
+    const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
 
     if (!toolName) {
       throw new Error('Missing tool name');

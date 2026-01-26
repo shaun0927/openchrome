@@ -155,7 +155,13 @@ const handler: ToolHandler = async (
         roleSelectors.push('img', '[role="img"]');
       }
 
-      // Strategy 2: Search by text content
+      // Strategy 2: Search by text content (tokenized matching)
+      // Tokenize query - split by spaces and filter short words (except for exact matches)
+      const queryTokens = searchLower
+        .split(/\s+/)
+        .filter((t) => t.length > 1)
+        .filter((t) => !['the', 'a', 'an', 'to', 'for', 'of', 'in', 'on', 'at'].includes(t));
+
       const textMatches: Element[] = [];
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
       let node = walker.nextNode();
@@ -166,13 +172,14 @@ const handler: ToolHandler = async (
         const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || '';
         const placeholder = inputEl.placeholder?.toLowerCase() || '';
         const title = el.getAttribute('title')?.toLowerCase() || '';
+        const combinedText = `${text} ${ariaLabel} ${placeholder} ${title}`;
 
-        if (
-          text.includes(searchLower) ||
-          ariaLabel.includes(searchLower) ||
-          placeholder.includes(searchLower) ||
-          title.includes(searchLower)
-        ) {
+        // Match if ANY token is found in element content (more flexible matching)
+        const matchesToken = queryTokens.some((token) => combinedText.includes(token));
+        // Or if the full query is found
+        const matchesFull = combinedText.includes(searchLower);
+
+        if (matchesToken || matchesFull) {
           const info = getElementInfo(el);
           if (info) textMatches.push(el);
         }

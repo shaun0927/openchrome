@@ -614,6 +614,76 @@ export class SessionManager {
   }
 
   /**
+   * Close a specific target/tab
+   * @param sessionId Session ID
+   * @param targetId Target/Tab ID to close
+   * @returns true if closed, false if not found
+   */
+  async closeTarget(sessionId: string, targetId: string): Promise<boolean> {
+    const ownerInfo = this.targetToWorker.get(targetId);
+
+    if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
+      return false;
+    }
+
+    try {
+      // Close the page via CDP
+      await this.cdpClient.closePage(targetId);
+
+      // Clean up internal state
+      const session = this.sessions.get(sessionId);
+      if (session) {
+        const worker = session.workers.get(ownerInfo.workerId);
+        if (worker) {
+          worker.targets.delete(targetId);
+        }
+      }
+
+      // Clean up ref IDs
+      getRefIdManager().clearTargetRefs(sessionId, targetId);
+
+      // Remove from mapping
+      this.targetToWorker.delete(targetId);
+
+      this.emitEvent({
+        type: 'session:target-closed',
+        sessionId,
+        workerId: ownerInfo.workerId,
+        targetId,
+        timestamp: Date.now(),
+      });
+
+      return true;
+    } catch (error) {
+      // Page might already be closed
+      this.onTargetClosed(targetId);
+      return true;
+    }
+  }
+
+  /**
+   * Close all tabs in a worker (without deleting the worker)
+   * @param sessionId Session ID
+   * @param workerId Worker ID
+   * @returns Number of tabs closed
+   */
+  async closeWorkerTabs(sessionId: string, workerId: string): Promise<number> {
+    const worker = this.getWorker(sessionId, workerId);
+    if (!worker) return 0;
+
+    const targetIds = Array.from(worker.targets);
+    let closedCount = 0;
+
+    for (const targetId of targetIds) {
+      if (await this.closeTarget(sessionId, targetId)) {
+        closedCount++;
+      }
+    }
+
+    return closedCount;
+  }
+
+  /**
    * Execute a CDP command through the session's queue
    */
   async executeCDP<T = unknown>(

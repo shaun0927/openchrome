@@ -61,7 +61,7 @@ export interface SessionCreateOptions {
 }
 
 export interface SessionEvent {
-  type: 'session:created' | 'session:deleted' | 'session:target-added' | 'session:target-removed' | 'worker:created' | 'worker:deleted';
+  type: 'session:created' | 'session:deleted' | 'session:target-added' | 'session:target-removed' | 'session:target-closed' | 'worker:created' | 'worker:deleted';
   sessionId: string;
   targetId?: string;
   workerId?: string;

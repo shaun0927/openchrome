@@ -271,7 +271,13 @@ Then use:
 | **Worker Isolation** | ❌ | ✅ Isolated cookies/sessions |
 | **Multi-account Login** | ❌ | ✅ |
 | **Parallel Execution** | ❌ | ✅ |
+| **Device Emulation** | ❌ | ✅ iPhone, iPad, Pixel, etc. |
+| **Geolocation Override** | ❌ | ✅ Preset cities + custom |
 | **Network Simulation** | ❌ | ✅ 3G/4G/offline |
+| **Performance Metrics** | ❌ | ✅ FCP, load time, heap |
+| **Request Interception** | ❌ | ✅ Block ads/images/trackers |
+| **PDF Generation** | ❌ | ✅ A4, Letter, landscape |
+| **Console Capture** | ❌ | ✅ With filtering |
 | **Workflow Orchestration** | ❌ | ✅ |
 | **Auto Chrome Launch** | ❌ | ✅ |
 
@@ -289,7 +295,54 @@ Then use:
 | `find` | Find elements by natural language |
 | `form_input` | Set form values directly |
 | `javascript_tool` | Execute JavaScript |
-| `network` | Simulate network conditions |
+
+### Browser Environment
+
+| Tool | Description |
+|------|-------------|
+| `user_agent` | Set User-Agent (presets: chrome, safari, googlebot, etc.) |
+| `geolocation` | Override geolocation (presets: seoul, tokyo, new-york, etc.) |
+| `emulate_device` | Device emulation (iphone-14, ipad-pro, pixel-7, etc.) |
+| `network` | Simulate network conditions (3G, 4G, offline) |
+
+### Page Operations
+
+| Tool | Description |
+|------|-------------|
+| `page_reload` | Reload page (optional cache bypass) |
+| `page_content` | Get HTML content from page or element |
+| `page_pdf` | Generate PDF from page (A4, Letter, landscape, etc.) |
+| `wait_for` | Wait for selector, navigation, function, or timeout |
+
+### DOM Queries
+
+| Tool | Description |
+|------|-------------|
+| `selector_query` | Query elements by CSS selector |
+| `xpath_query` | Query elements by XPath expression |
+
+### Storage & Cookies
+
+| Tool | Description |
+|------|-------------|
+| `cookies` | Get/set/delete browser cookies |
+| `storage` | Manage localStorage/sessionStorage |
+
+### Debugging & Testing
+
+| Tool | Description |
+|------|-------------|
+| `console_capture` | Capture console logs (with type filtering) |
+| `performance_metrics` | Get performance metrics (FCP, load time, JS heap, etc.) |
+| `request_intercept` | Intercept/block/log network requests |
+
+### Advanced Interactions
+
+| Tool | Description |
+|------|-------------|
+| `drag_drop` | Drag and drop by selector or coordinates |
+| `file_upload` | Upload files to file input elements |
+| `http_auth` | Set HTTP Basic Authentication credentials |
 
 ### Worker & Tab Management
 
@@ -300,6 +353,7 @@ Then use:
 | `worker_delete` | Delete Worker |
 | `tabs_create_mcp` | Create new tab |
 | `tabs_context_mcp` | Get tab info |
+| `tabs_close` | Close tabs by ID or worker |
 
 ### Workflow Orchestration
 
@@ -309,6 +363,8 @@ Then use:
 | `workflow_status` | Check progress |
 | `workflow_collect` | Collect results |
 | `workflow_cleanup` | Clean up resources |
+| `worker_update` | Update worker progress |
+| `worker_complete` | Mark worker as complete |
 
 ---
 
