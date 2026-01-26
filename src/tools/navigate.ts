@@ -8,7 +8,10 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
-  description: 'Navigate to a URL, or go forward/back in browser history. If tabId is not provided, creates a new tab with the URL. Use workerId to specify which worker context to use for parallel operations.',
+  description: `Navigate to a URL, or go forward/back in browser history. If tabId is not provided, creates a new tab with the URL. Use workerId to specify which worker context to use for parallel operations.
+
+WHEN TO USE: User explicitly requested browser/UI interaction, visual verification needed, or no API/DB alternative exists.
+PREFER ALTERNATIVES: DB query for data issues, curl/API for API testing, code fix for bugs.`,
   inputSchema: {
     type: 'object',
     properties: {

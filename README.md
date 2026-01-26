@@ -391,6 +391,51 @@ ccp cleanup            # Clean up old sessions
 
 ---
 
+## Recommended CLAUDE.md Configuration
+
+To help Claude choose the right tools, add the following to your project's `CLAUDE.md`:
+
+```markdown
+## Tool Selection Priority
+
+When solving problems, follow this priority order:
+
+1. **Code Analysis** - Read and understand relevant code first
+2. **Direct DB Operations** - For data issues, use database queries
+3. **API Testing** - For API issues, use curl to test directly
+4. **Browser Automation** - Only when above methods are not possible AND UI interaction is required
+
+### When to Use Browser Tools (chrome-parallel)
+
+Use browser automation ONLY when:
+- User explicitly mentions "browser", "site", "page", "screenshot"
+- Visual verification or screenshot is needed
+- UI interaction is required (login flow testing, form submission, etc.)
+- No API/DB alternative exists for the task
+
+### When NOT to Use Browser Tools
+
+- Simple data lookup/modification → Use database directly
+- API response verification → Use curl
+- Code bug fixing → Modify code directly
+- Configuration changes → Edit config files
+
+### Cost Awareness
+
+| Approach | Time | Reliability |
+|----------|------|-------------|
+| DB Query | ~1s | High |
+| API Call | ~2s | High |
+| Code Fix | ~5s | High |
+| Browser  | ~30s+ | Medium |
+
+Browser automation should be your LAST resort, not your first choice.
+```
+
+This guide helps Claude make better tool selection decisions and avoid unnecessary browser operations when simpler alternatives exist.
+
+---
+
 ## Troubleshooting
 
 ### Chrome not connecting

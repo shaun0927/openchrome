@@ -15,6 +15,7 @@ import {
 } from './types/mcp';
 import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, OperationController } from './dashboard/index.js';
+import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 
 export interface MCPServerOptions {
   dashboard?: boolean;
@@ -23,6 +24,7 @@ export interface MCPServerOptions {
 
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
+  private resources: Map<string, MCPResourceDefinition> = new Map();
   private sessionManager: SessionManager;
   private rl: readline.Interface | null = null;
   private dashboard: Dashboard | null = null;
@@ -34,10 +36,20 @@ export class MCPServer {
     this.sessionManager = sessionManager || getSessionManager();
     this.options = options;
 
+    // Register built-in resources
+    this.registerResource(usageGuideResource);
+
     // Initialize dashboard if enabled
     if (options.dashboard) {
       this.initDashboard();
     }
+  }
+
+  /**
+   * Register a resource
+   */
+  registerResource(resource: MCPResourceDefinition): void {
+    this.resources.set(resource.uri, resource);
   }
 
   /**
@@ -166,6 +178,14 @@ export class MCPServer {
           result = await this.handleToolsCall(params);
           break;
 
+        case 'resources/list':
+          result = await this.handleResourcesList();
+          break;
+
+        case 'resources/read':
+          result = await this.handleResourcesRead(params);
+          break;
+
         case 'sessions/list':
           result = await this.handleSessionsList();
           break;
@@ -201,6 +221,7 @@ export class MCPServer {
       protocolVersion: '2024-11-05',
       capabilities: {
         tools: {},
+        resources: {},
       },
       serverInfo: {
         name: 'claude-chrome-parallel',
@@ -218,6 +239,54 @@ export class MCPServer {
       tools.push(registry.definition);
     }
     return { tools };
+  }
+
+  /**
+   * Handle resources/list request
+   */
+  private async handleResourcesList(): Promise<MCPResult> {
+    const resources: MCPResourceDefinition[] = [];
+    for (const resource of this.resources.values()) {
+      resources.push(resource);
+    }
+    return { resources };
+  }
+
+  /**
+   * Handle resources/read request
+   */
+  private async handleResourcesRead(params?: Record<string, unknown>): Promise<MCPResult> {
+    if (!params) {
+      throw new Error('Missing params for resources/read');
+    }
+
+    const uri = params.uri as string;
+    if (!uri) {
+      throw new Error('Missing resource uri');
+    }
+
+    const resource = this.resources.get(uri);
+    if (!resource) {
+      throw new Error(`Unknown resource: ${uri}`);
+    }
+
+    // Get content based on resource type
+    let content: string;
+    if (uri === 'chrome-parallel://usage-guide') {
+      content = getUsageGuideContent();
+    } else {
+      throw new Error(`No content handler for resource: ${uri}`);
+    }
+
+    return {
+      contents: [
+        {
+          uri: resource.uri,
+          mimeType: resource.mimeType,
+          text: content,
+        },
+      ],
+    };
   }
 
   /**
