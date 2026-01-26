@@ -77,24 +77,30 @@ program
   .description('Start MCP server for Claude Code')
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: false)')
-  .action(async (options: { port: string; autoLaunch?: boolean }) => {
+  .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
+  .action(async (options: { port: string; autoLaunch?: boolean; dashboard?: boolean }) => {
     const port = parseInt(options.port, 10);
     const autoLaunch = options.autoLaunch || false;
+    const dashboard = options.dashboard || false;
 
     console.error(`[claude-chrome-parallel] Starting MCP server`);
     console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);
     console.error(`[claude-chrome-parallel] Auto-launch Chrome: ${autoLaunch}`);
+    console.error(`[claude-chrome-parallel] Dashboard: ${dashboard}`);
 
     // Import from built dist/ files (relative to dist/cli/)
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { setGlobalConfig } = require('../config/global');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getMCPServer } = require('../mcp-server');
+    const { getMCPServer, setMCPServerOptions } = require('../mcp-server');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { registerAllTools } = require('../tools');
 
     // Set global config before initializing anything
     setGlobalConfig({ port, autoLaunch });
+
+    // Set MCP server options (including dashboard)
+    setMCPServerOptions({ dashboard });
 
     const server = getMCPServer();
     registerAllTools(server);

@@ -14,14 +14,60 @@ import {
   MCPErrorCodes,
 } from './types/mcp';
 import { SessionManager, getSessionManager } from './session-manager';
+import { Dashboard, getDashboard, ActivityTracker, OperationController } from './dashboard/index.js';
+
+export interface MCPServerOptions {
+  dashboard?: boolean;
+  dashboardRefreshInterval?: number;
+}
 
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
   private sessionManager: SessionManager;
   private rl: readline.Interface | null = null;
+  private dashboard: Dashboard | null = null;
+  private activityTracker: ActivityTracker | null = null;
+  private operationController: OperationController | null = null;
+  private options: MCPServerOptions;
 
-  constructor(sessionManager?: SessionManager) {
+  constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
+    this.options = options;
+
+    // Initialize dashboard if enabled
+    if (options.dashboard) {
+      this.initDashboard();
+    }
+  }
+
+  /**
+   * Initialize the dashboard
+   */
+  private initDashboard(): void {
+    this.dashboard = getDashboard({
+      enabled: true,
+      refreshInterval: this.options.dashboardRefreshInterval || 100,
+    });
+    this.dashboard.setSessionManager(this.sessionManager);
+    this.activityTracker = this.dashboard.getActivityTracker();
+    this.operationController = this.dashboard.getOperationController();
+
+    // Handle quit event
+    this.dashboard.on('quit', () => {
+      console.error('[MCPServer] Dashboard quit requested');
+      this.stop();
+      process.exit(0);
+    });
+
+    // Handle delete session event
+    this.dashboard.on('delete-session', async (sessionId: string) => {
+      try {
+        await this.sessionManager.deleteSession(sessionId);
+        console.error(`[MCPServer] Session ${sessionId} deleted via dashboard`);
+      } catch (error) {
+        console.error(`[MCPServer] Failed to delete session: ${error}`);
+      }
+    });
   }
 
   /**
@@ -40,6 +86,16 @@ export class MCPServer {
    */
   start(): void {
     console.error('[MCPServer] Starting stdio server...');
+
+    // Start dashboard if enabled
+    if (this.dashboard) {
+      const started = this.dashboard.start();
+      if (started) {
+        console.error('[MCPServer] Dashboard started');
+      } else {
+        console.error('[MCPServer] Dashboard could not start (non-TTY environment)');
+      }
+    }
 
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -69,6 +125,7 @@ export class MCPServer {
 
     this.rl.on('close', () => {
       console.error('[MCPServer] stdin closed, shutting down...');
+      this.stop();
       process.exit(0);
     });
 
@@ -189,11 +246,34 @@ export class MCPServer {
       await this.sessionManager.getOrCreateSession(sessionId);
     }
 
+    // Start activity tracking
+    let callId: string | undefined;
+    if (this.activityTracker) {
+      callId = this.activityTracker.startCall(toolName, sessionId || 'default', toolArgs);
+    }
+
     try {
+      // Wait at gate if paused
+      if (this.operationController && callId) {
+        await this.operationController.gate(callId);
+      }
+
       const result = await tool.handler(sessionId, toolArgs);
+
+      // End activity tracking (success)
+      if (this.activityTracker && callId) {
+        this.activityTracker.endCall(callId, 'success');
+      }
+
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+
+      // End activity tracking (error)
+      if (this.activityTracker && callId) {
+        this.activityTracker.endCall(callId, 'error', message);
+      }
+
       return {
         content: [{ type: 'text', text: `Error: ${message}` }],
         isError: true,
@@ -305,19 +385,43 @@ export class MCPServer {
    * Stop the server
    */
   stop(): void {
+    // Stop dashboard
+    if (this.dashboard) {
+      this.dashboard.stop();
+    }
+
     if (this.rl) {
       this.rl.close();
       this.rl = null;
     }
   }
+
+  /**
+   * Check if dashboard is enabled
+   */
+  isDashboardEnabled(): boolean {
+    return this.dashboard !== null && this.dashboard.running;
+  }
+
+  /**
+   * Get the dashboard instance
+   */
+  getDashboard(): Dashboard | null {
+    return this.dashboard;
+  }
 }
 
 // Singleton instance
 let mcpServerInstance: MCPServer | null = null;
+let mcpServerOptions: MCPServerOptions = {};
+
+export function setMCPServerOptions(options: MCPServerOptions): void {
+  mcpServerOptions = options;
+}
 
 export function getMCPServer(): MCPServer {
   if (!mcpServerInstance) {
-    mcpServerInstance = new MCPServer();
+    mcpServerInstance = new MCPServer(undefined, mcpServerOptions);
   }
   return mcpServerInstance;
 }
