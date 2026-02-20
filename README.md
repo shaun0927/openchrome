@@ -7,6 +7,22 @@
 
 Automate your **actual Chrome** — with all your logins, cookies, and sessions intact. Run **20+ parallel browser sessions** from Claude Code without logging in to anything, ever again.
 
+```
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│   "Screenshot my AWS billing, Stripe, and Vercel dashboards" │
+│                                                              │
+│   Playwright MCP ██████████████████████████████████ ~155s    │
+│                  (launch + login×3 + navigate×3)             │
+│                                                              │
+│   CCP            ██ ~5s                                      │
+│                  (already logged in + parallel)               │
+│                                                              │
+│   30x faster. Zero authentication overhead.                  │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/shaun0927/claude-chrome-parallel/main/assets/demo.svg" alt="Chrome Extension vs Claude Chrome Parallel - Animated comparison showing parallel execution" width="100%">
 </p>
@@ -15,13 +31,16 @@ Automate your **actual Chrome** — with all your logins, cookies, and sessions 
 
 ## The Problem
 
-**Playwright MCP** launches a blank browser. No cookies. No logins. You authenticate manually, every single time.
+Every browser automation tool wastes your time before it even starts working.
 
-**The official Chrome Extension** connects to your browser — but crashes the moment you open a second Claude session. `"Detached"` error. Done.
+| Tool | Before your task even begins... | Overhead |
+|------|--------------------------------|----------|
+| **Playwright MCP** | Launch headless → navigate → type email → type password → solve 2FA → wait for redirect → *repeat for each site* | **30-120s per site** |
+| **Chrome Extension** | Works — until you open a 2nd Claude session. `"Detached"` error. | **Session limit: 1** |
+| **Browserbase** | Cloud browser. Your credentials leave your machine. Paid per minute. | **$0.01+/min + latency** |
+| **CCP** | Connect to your Chrome. Already logged in. Go. | **~0s** |
 
-**Browserbase** works, but it's cloud-hosted, paid, and your credentials leave your machine.
-
-**Claude Chrome Parallel** uses your real Chrome profile with all your existing logins, runs 20+ sessions in parallel, and everything stays local. For free.
+**CCP eliminates authentication overhead entirely.** Your Chrome is already logged into everything. That 30-120 seconds per site? Gone. Multiply by 5 parallel sites and you're looking at **10-600 seconds saved per task**.
 
 ---
 
@@ -46,21 +65,21 @@ No "please log in" loops.
 
 ### True Parallelism
 
-Run tasks across multiple sites **at the same time**.
+**20+ Workers. Simultaneous. Independent.**
 
 ```
-Sequential:  12s
-  Gmail    ████████░░░░ 4s
-  Slack        ████████░░░░ 4s
-  Jira             ████████░░░░ 4s
+Other tools (sequential + auth):
+  AWS    🔐 login ████ 50s
+  Stripe       🔐 login ████ 50s
+  Vercel             🔐 login ████ 50s
+  Total:                      ~150s
 
-Parallel:    4s
-  Gmail    ████████░░░░
-  Slack    ████████░░░░
-  Jira     ████████░░░░
+CCP (parallel, zero auth):
+  AWS    ████ 3s
+  Stripe ████ 3s
+  Vercel ████ 3s
+  Total:  ~3s     ← 50x faster
 ```
-
-**5 sites at once. 5x faster. Zero conflicts.**
 
 </td>
 <td width="33%" valign="top">
@@ -158,10 +177,15 @@ Claude: [All 3 require login — but you're already authenticated]
 ### Parallel QA Testing
 
 ```bash
-# Three terminals, three tests, same app, same time
-claude -p "Test login flow on myapp.com"
-claude -p "Test checkout on myapp.com"
-claude -p "Test admin panel on myapp.com"
+# 5 tests, 5 terminals, all at once
+claude -p "Test login flow on myapp.com"       # Worker 1
+claude -p "Test checkout on myapp.com"          # Worker 2
+claude -p "Test admin panel on myapp.com"       # Worker 3
+claude -p "Test mobile view on myapp.com"       # Worker 4
+claude -p "Test form validation on myapp.com"   # Worker 5
+
+# Sequential: ~5 minutes.  Parallel with CCP: ~1 minute.
+# That's your entire smoke test suite before lunch.
 ```
 
 ---
@@ -170,6 +194,8 @@ claude -p "Test admin panel on myapp.com"
 
 | | Playwright MCP | Browserbase | Chrome Extension | **CCP** |
 |---|:---:|:---:|:---:|:---:|
+| **Auth overhead per site** | ❌ 30-120s | ❌ 30-120s | ✅ 0s | **✅ 0s** |
+| **3-site authenticated task** | ~180s | ~180s + cost | N/A (1 session) | **~5s** |
 | **Uses your Chrome logins** | ❌ Blank browser | ❌ Cloud browser | ✅ | **✅** |
 | **Concurrent sessions** | ⚠️ Limited | ✅ (paid) | ❌ 1 (crashes) | **✅ 20+** |
 | **Multi-account isolation** | ❌ | ✅ (paid) | ❌ | **✅** |
@@ -178,7 +204,6 @@ claude -p "Test admin panel on myapp.com"
 | **No bot detection** | ❌ Headless | ❌ Fingerprinted | ✅ | **✅** |
 | **Device emulation** | ✅ | ✅ | ❌ | **✅** |
 | **Network simulation** | ✅ | ❌ | ❌ | **✅** |
-| **PDF generation** | ✅ | ❌ | ❌ | **✅** |
 | **Workflow orchestration** | ❌ | ❌ | ❌ | **✅** |
 | **Adaptive Guidance** | ❌ | ❌ | ❌ | **✅** |
 
