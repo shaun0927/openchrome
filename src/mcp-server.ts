@@ -18,6 +18,9 @@ import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import { HintEngine } from './hints';
+import { getCDPConnectionPool } from './cdp/connection-pool';
+import { getCDPClient } from './cdp/client';
+import { getChromeLauncher } from './chrome/launcher';
 
 export interface MCPServerOptions {
   dashboard?: boolean;
@@ -542,7 +545,7 @@ export class MCPServer {
   }
 
   /**
-   * Stop the server
+   * Stop the server and clean up all Chrome resources
    */
   stop(): void {
     // Stop dashboard
@@ -553,6 +556,48 @@ export class MCPServer {
     if (this.rl) {
       this.rl.close();
       this.rl = null;
+    }
+
+    // Clean up Chrome resources (async, best-effort on exit)
+    this.cleanup().catch((err) => {
+      console.error('[MCPServer] Cleanup error:', err);
+    });
+  }
+
+  /**
+   * Clean up all Chrome resources: sessions, connection pool, CDP, and Chrome process
+   */
+  private async cleanup(): Promise<void> {
+    try {
+      await this.sessionManager.cleanupAllSessions();
+    } catch (e) {
+      console.error('[MCPServer] Session cleanup error:', e);
+    }
+
+    try {
+      const pool = getCDPConnectionPool();
+      await pool.shutdown();
+    } catch {
+      // Pool may not have been initialized
+    }
+
+    try {
+      const cdpClient = getCDPClient();
+      if (cdpClient.isConnected()) {
+        await cdpClient.disconnect();
+      }
+    } catch {
+      // Client may not have been initialized
+    }
+
+    try {
+      const launcher = getChromeLauncher();
+      if (launcher.isConnected()) {
+        await launcher.close();
+        console.error('[MCPServer] Chrome process terminated');
+      }
+    } catch {
+      // Launcher may not have been initialized
     }
   }
 

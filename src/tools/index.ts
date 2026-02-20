@@ -50,6 +50,9 @@ import { registerWaitAndClickTool } from './wait-and-click';
 import { registerBatchExecuteTool } from './batch-execute';
 import { registerLightweightScrollTool } from './lightweight-scroll';
 
+// Lifecycle tools
+import { registerShutdownTool } from './shutdown';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -104,6 +107,9 @@ export function registerAllTools(server: MCPServer): void {
   // Performance tools (P0 - eliminate agent spawn overhead & screenshot bottleneck)
   registerBatchExecuteTool(server);
   registerLightweightScrollTool(server);
+
+  // Lifecycle tools
+  registerShutdownTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
