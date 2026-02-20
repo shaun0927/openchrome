@@ -1,169 +1,278 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 360">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480">
   <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1a1a2e"/>
-      <stop offset="100%" style="stop-color:#16213e"/>
+      <stop offset="0%" style="stop-color:#0d1117"/>
+      <stop offset="100%" style="stop-color:#161b22"/>
     </linearGradient>
     <linearGradient id="successGrad" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#00b894"/>
       <stop offset="100%" style="stop-color:#00cec9"/>
     </linearGradient>
+    <linearGradient id="authGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e17055"/>
+      <stop offset="100%" style="stop-color:#e74c3c"/>
+    </linearGradient>
+    <linearGradient id="taskGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#636e72"/>
+      <stop offset="100%" style="stop-color:#74b9ff"/>
+    </linearGradient>
   </defs>
 
   <!-- Background -->
-  <rect width="800" height="360" fill="url(#bgGrad)"/>
+  <rect width="800" height="480" fill="url(#bgGrad)" rx="12"/>
 
   <!-- Title -->
-  <text x="400" y="28" text-anchor="middle" fill="#fff" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="bold">
-    Chrome Extension vs Claude Chrome Parallel
+  <text x="400" y="30" text-anchor="middle" fill="#fff" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="bold">
+    Playwright MCP vs CCP — 5 Authenticated Sites
+  </text>
+  <text x="400" y="48" text-anchor="middle" fill="#636e72" font-family="system-ui" font-size="11">
+    AWS Billing + Stripe Dashboard + Vercel Usage + GitHub Actions + Slack Messages
   </text>
 
-  <!-- LEFT SIDE: Chrome Extension (Failing) -->
-  <g transform="translate(25, 45)">
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- LEFT SIDE: Playwright MCP (Sequential + Auth overhead) -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <g transform="translate(20, 65)">
     <!-- Header -->
-    <rect x="0" y="0" width="360" height="26" rx="6" ry="6" fill="#2d3436"/>
-    <circle cx="14" cy="13" r="4" fill="#e74c3c"/>
-    <circle cx="28" cy="13" r="4" fill="#f39c12"/>
-    <circle cx="42" cy="13" r="4" fill="#27ae60"/>
-    <text x="180" y="17" text-anchor="middle" fill="#b2bec3" font-family="monospace" font-size="11">Chrome Extension</text>
+    <rect x="0" y="0" width="370" height="24" rx="6" fill="#2d3436"/>
+    <circle cx="14" cy="12" r="4" fill="#e74c3c"/>
+    <circle cx="28" cy="12" r="4" fill="#f39c12"/>
+    <circle cx="42" cy="12" r="4" fill="#27ae60"/>
+    <text x="185" y="16" text-anchor="middle" fill="#b2bec3" font-family="monospace" font-size="10" font-weight="bold">Playwright MCP</text>
 
     <!-- Terminal body -->
-    <rect x="0" y="26" width="360" height="260" fill="#0d1117"/>
-    <rect x="0" y="276" width="360" height="10" rx="0" ry="0" fill="#2d3436"/>
+    <rect x="0" y="24" width="370" height="340" fill="#0d1117" rx="0"/>
+    <rect x="0" y="354" width="370" height="10" rx="0" ry="6" fill="#2d3436"/>
 
-    <!-- Session 1 - Starts, completes -->
-    <text x="10" y="48" fill="#6c5ce7" font-family="monospace" font-size="11">$ claude "Screenshot github.com"</text>
+    <!-- Legend -->
+    <rect x="10" y="32" width="8" height="8" fill="url(#authGrad)" rx="1"/>
+    <text x="22" y="40" fill="#e17055" font-family="monospace" font-size="9">Login (30-60s each)</text>
+    <rect x="160" y="32" width="8" height="8" fill="url(#taskGrad)" rx="1"/>
+    <text x="172" y="40" fill="#74b9ff" font-family="monospace" font-size="9">Task (~3s each)</text>
 
-    <!-- Session 1 progress bar -->
-    <rect x="10" y="56" width="0" height="12" rx="2" fill="url(#successGrad)">
-      <animate attributeName="width" values="0;0;50;100;140;140;140;140;140;140;140" dur="10s" repeatCount="indefinite"/>
+    <!-- Site 1: AWS — auth then task, sequential -->
+    <text x="10" y="62" fill="#b2bec3" font-family="monospace" font-size="10">AWS Billing</text>
+    <!-- Auth bar (long) -->
+    <rect x="90" y="53" width="0" height="10" rx="2" fill="url(#authGrad)">
+      <animate attributeName="width" values="0;0;30;60;90;120;150;180;180;180;180;180;180;180;180;180;180;180;180;180" dur="20s" repeatCount="indefinite"/>
     </rect>
-    <text x="10" y="82" fill="#00b894" font-family="monospace" font-size="11">
-      <tspan>✓ Session 1 completed</tspan>
-      <animate attributeName="opacity" values="0;0;0;0;1;1;1;1;1;1;1" dur="10s" repeatCount="indefinite"/>
+    <text x="92" y="62" fill="#fff" font-family="monospace" font-size="8" opacity="0.8">
+      <tspan>login...</tspan>
+      <animate attributeName="opacity" values="0;0;0.8;0.8;0.8;0.8;0.8;0;0;0;0;0;0;0;0;0;0;0;0;0" dur="20s" repeatCount="indefinite"/>
+    </text>
+    <!-- Task bar (short) -->
+    <rect x="272" y="53" width="0" height="10" rx="2" fill="url(#taskGrad)">
+      <animate attributeName="width" values="0;0;0;0;0;0;0;0;15;15;15;15;15;15;15;15;15;15;15;15" dur="20s" repeatCount="indefinite"/>
+    </rect>
+    <text x="295" y="62" fill="#00b894" font-family="monospace" font-size="9">
+      <tspan>ok</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
     </text>
 
-    <!-- Session 2 - Tries to start, gets error -->
-    <text x="10" y="110" fill="#6c5ce7" font-family="monospace" font-size="11">
-      <tspan>$ claude "Screenshot google.com"</tspan>
-      <animate attributeName="opacity" values="0;0;0;0;0;1;1;1;1;1;1" dur="10s" repeatCount="indefinite"/>
+    <!-- Site 2: Stripe — starts after AWS finishes -->
+    <text x="10" y="86" fill="#b2bec3" font-family="monospace" font-size="10">
+      <tspan>Stripe</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
+    </text>
+    <rect x="90" y="77" width="0" height="10" rx="2" fill="url(#authGrad)">
+      <animate attributeName="width" values="0;0;0;0;0;0;0;0;0;0;30;60;90;120;150;150;150;150;150;150" dur="20s" repeatCount="indefinite"/>
+    </rect>
+    <text x="92" y="86" fill="#fff" font-family="monospace" font-size="8">
+      <tspan>login...</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0.8;0.8;0.8;0.8;0;0;0;0;0;0" dur="20s" repeatCount="indefinite"/>
+    </text>
+    <rect x="242" y="77" width="0" height="10" rx="2" fill="url(#taskGrad)">
+      <animate attributeName="width" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;15;15;15;15;15" dur="20s" repeatCount="indefinite"/>
+    </rect>
+    <text x="265" y="86" fill="#00b894" font-family="monospace" font-size="9">
+      <tspan>ok</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;1;1;1;1" dur="20s" repeatCount="indefinite"/>
     </text>
 
-    <!-- Session 2 attempting -->
-    <text x="10" y="130" fill="#fdcb6e" font-family="monospace" font-size="11">
-      <tspan>Connecting to browser...</tspan>
-      <animate attributeName="opacity" values="0;0;0;0;0;0;1;0;0;0;0" dur="10s" repeatCount="indefinite"/>
+    <!-- Site 3: Vercel — waiting... -->
+    <text x="10" y="110" fill="#b2bec3" font-family="monospace" font-size="10">
+      <tspan>Vercel</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;1;1;1;1" dur="20s" repeatCount="indefinite"/>
+    </text>
+    <rect x="90" y="101" width="0" height="10" rx="2" fill="url(#authGrad)">
+      <animate attributeName="width" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;30;60;90" dur="20s" repeatCount="indefinite"/>
+    </rect>
+    <text x="92" y="110" fill="#fff" font-family="monospace" font-size="8">
+      <tspan>login...</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0.8;0.8;0.8" dur="20s" repeatCount="indefinite"/>
     </text>
 
-    <!-- Error box -->
+    <!-- Site 4: GitHub — not started yet -->
+    <text x="10" y="134" fill="#636e72" font-family="monospace" font-size="10">
+      <tspan>GitHub</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0.5" dur="20s" repeatCount="indefinite"/>
+    </text>
+
+    <!-- Site 5: Slack — not started yet -->
+    <text x="10" y="158" fill="#636e72" font-family="monospace" font-size="10">
+      <tspan>Slack</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0" dur="20s" repeatCount="indefinite"/>
+    </text>
+
+    <!-- Waiting dots -->
+    <text x="90" y="134" fill="#636e72" font-family="monospace" font-size="10">
+      <tspan>waiting...</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0.5" dur="20s" repeatCount="indefinite"/>
+    </text>
+    <text x="90" y="158" fill="#636e72" font-family="monospace" font-size="10">
+      <tspan>waiting...</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0.5" dur="20s" repeatCount="indefinite"/>
+    </text>
+
+    <!-- Memory usage (climbing) -->
     <g>
-      <animate attributeName="opacity" values="0;0;0;0;0;0;0;1;1;1;1" dur="10s" repeatCount="indefinite"/>
-      <rect x="10" y="140" width="340" height="50" rx="4" fill="#2d1b1b"/>
-      <text x="20" y="160" fill="#e74c3c" font-family="monospace" font-size="11" font-weight="bold">
-        ✗ Error: Session Detached
+      <animate attributeName="opacity" values="0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="10" y="185" width="350" height="48" rx="4" fill="#1a1a1a"/>
+      <text x="20" y="201" fill="#e74c3c" font-family="monospace" font-size="9" font-weight="bold">Memory Usage</text>
+      <!-- Memory bar growing -->
+      <rect x="20" y="210" width="0" height="14" rx="2" fill="#e74c3c" opacity="0.6">
+        <animate attributeName="width" values="0;40;60;80;100;120;140;160;180;200;220;240;260;280;280;300;300;320;320;320" dur="20s" repeatCount="indefinite"/>
+      </rect>
+      <text x="20" y="220" fill="#fff" font-family="monospace" font-size="8">
+        <animate attributeName="textContent" values="200MB;400MB;600MB;800MB;1.0GB;1.2GB;1.4GB;1.6GB;1.8GB;2.0GB" dur="20s" repeatCount="indefinite"/>
       </text>
-      <text x="20" y="178" fill="#e17055" font-family="monospace" font-size="10">
-        Target closed. Another session took control.
+      <!-- Show text separately with animation -->
+      <text x="25" y="220" fill="#fff" font-family="monospace" font-size="8" font-weight="bold">
+        <tspan>2.5 GB</tspan>
+        <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;1;1" dur="20s" repeatCount="indefinite"/>
+      </text>
+      <text x="180" y="220" fill="#e17055" font-family="monospace" font-size="8">
+        <tspan>(5 browser processes)</tspan>
+        <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;1;1" dur="20s" repeatCount="indefinite"/>
       </text>
     </g>
 
-    <!-- Blinking cursor -->
-    <rect x="10" y="205" width="8" height="14" fill="#fff">
-      <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
-    </rect>
+    <!-- Elapsed time (counting up) -->
+    <g>
+      <animate attributeName="opacity" values="0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
+      <text x="10" y="260" fill="#636e72" font-family="monospace" font-size="10">Elapsed:</text>
+      <text x="72" y="260" fill="#fdcb6e" font-family="monospace" font-size="10" font-weight="bold">
+        <tspan>still running...</tspan>
+        <animate attributeName="opacity" values="0;0;1;1;1;1;1;1;0.5;1;1;1;1;1;0.5;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
+      </text>
+    </g>
 
-    <!-- Status -->
-    <text x="180" y="255" text-anchor="middle" fill="#e74c3c" font-family="system-ui" font-size="13" font-weight="bold">
-      ❌ Only 1 session at a time
+    <!-- Bottom status -->
+    <text x="185" y="310" text-anchor="middle" fill="#e74c3c" font-family="system-ui" font-size="12" font-weight="bold">
+      Sequential + Login per site
+    </text>
+    <text x="185" y="328" text-anchor="middle" fill="#636e72" font-family="monospace" font-size="10">
+      ~250s for 5 sites (50s auth x 5 + tasks)
+    </text>
+    <text x="185" y="346" text-anchor="middle" fill="#e17055" font-family="monospace" font-size="10">
+      ~500MB RAM per browser instance
     </text>
   </g>
 
-  <!-- VS Divider -->
-  <text x="400" y="190" text-anchor="middle" fill="#636e72" font-family="system-ui" font-size="20" font-weight="bold">VS</text>
-
-  <!-- RIGHT SIDE: Claude Chrome Parallel (Success) -->
-  <g transform="translate(415, 45)">
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- RIGHT SIDE: CCP (Parallel + Zero auth + Light) -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <g transform="translate(410, 65)">
     <!-- Header -->
-    <rect x="0" y="0" width="360" height="26" rx="6" ry="6" fill="#2d3436"/>
-    <circle cx="14" cy="13" r="4" fill="#e74c3c"/>
-    <circle cx="28" cy="13" r="4" fill="#f39c12"/>
-    <circle cx="42" cy="13" r="4" fill="#27ae60"/>
-    <text x="180" y="17" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="11" font-weight="bold">Claude Chrome Parallel</text>
+    <rect x="0" y="0" width="370" height="24" rx="6" fill="#2d3436"/>
+    <circle cx="14" cy="12" r="4" fill="#e74c3c"/>
+    <circle cx="28" cy="12" r="4" fill="#f39c12"/>
+    <circle cx="42" cy="12" r="4" fill="#27ae60"/>
+    <text x="185" y="16" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="10" font-weight="bold">CCP (Claude Chrome Parallel)</text>
 
     <!-- Terminal body -->
-    <rect x="0" y="26" width="360" height="260" fill="#0d1117"/>
-    <rect x="0" y="276" width="360" height="10" rx="0" ry="0" fill="#2d3436"/>
+    <rect x="0" y="24" width="370" height="340" fill="#0d1117"/>
+    <rect x="0" y="354" width="370" height="10" rx="0" ry="6" fill="#2d3436"/>
 
-    <!-- ALL 5 SESSIONS START AT THE SAME TIME -->
+    <!-- Legend -->
+    <text x="10" y="40" fill="#636e72" font-family="monospace" font-size="9">No login needed — already authenticated</text>
 
-    <!-- Session 1 -->
-    <text x="10" y="48" fill="#a29bfe" font-family="monospace" font-size="11">Session 1: github.com</text>
-    <rect x="150" y="38" width="0" height="12" rx="2" fill="url(#successGrad)">
-      <animate attributeName="width" values="0;0;30;60;90;120;120;120;120;120;120" dur="10s" repeatCount="indefinite"/>
+    <!-- ALL 5 start simultaneously -->
+    <text x="10" y="62" fill="#a29bfe" font-family="monospace" font-size="10">AWS Billing</text>
+    <rect x="110" y="53" width="0" height="10" rx="2" fill="url(#successGrad)">
+      <animate attributeName="width" values="0;0;40;80;120;120;120;120;120;120;120;120;120;120;120;120;120;120;120;120" dur="20s" repeatCount="indefinite"/>
     </rect>
-    <text x="280" y="48" fill="#00b894" font-family="monospace" font-size="11">
-      <tspan>✓</tspan>
-      <animate attributeName="opacity" values="0;0;0;0;0;1;1;1;1;1;1" dur="10s" repeatCount="indefinite"/>
+    <text x="235" y="62" fill="#00b894" font-family="monospace" font-size="9">
+      <tspan>done 2.8s</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
     </text>
 
-    <!-- Session 2 - starts same time -->
-    <text x="10" y="70" fill="#a29bfe" font-family="monospace" font-size="11">Session 2: google.com</text>
-    <rect x="150" y="60" width="0" height="12" rx="2" fill="url(#successGrad)">
-      <animate attributeName="width" values="0;0;25;55;85;110;110;110;110;110;110" dur="10s" repeatCount="indefinite"/>
+    <text x="10" y="82" fill="#a29bfe" font-family="monospace" font-size="10">Stripe</text>
+    <rect x="110" y="73" width="0" height="10" rx="2" fill="url(#successGrad)">
+      <animate attributeName="width" values="0;0;35;75;110;110;110;110;110;110;110;110;110;110;110;110;110;110;110;110" dur="20s" repeatCount="indefinite"/>
     </rect>
-    <text x="270" y="70" fill="#00b894" font-family="monospace" font-size="11">
-      <tspan>✓</tspan>
-      <animate attributeName="opacity" values="0;0;0;0;0;1;1;1;1;1;1" dur="10s" repeatCount="indefinite"/>
+    <text x="225" y="82" fill="#00b894" font-family="monospace" font-size="9">
+      <tspan>done 2.5s</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
     </text>
 
-    <!-- Session 3 - starts same time -->
-    <text x="10" y="92" fill="#a29bfe" font-family="monospace" font-size="11">Session 3: amazon.com</text>
-    <rect x="150" y="82" width="0" height="12" rx="2" fill="url(#successGrad)">
-      <animate attributeName="width" values="0;0;35;70;100;130;130;130;130;130;130" dur="10s" repeatCount="indefinite"/>
+    <text x="10" y="102" fill="#a29bfe" font-family="monospace" font-size="10">Vercel</text>
+    <rect x="110" y="93" width="0" height="10" rx="2" fill="url(#successGrad)">
+      <animate attributeName="width" values="0;0;45;90;130;130;130;130;130;130;130;130;130;130;130;130;130;130;130;130" dur="20s" repeatCount="indefinite"/>
     </rect>
-    <text x="290" y="92" fill="#00b894" font-family="monospace" font-size="11">
-      <tspan>✓</tspan>
-      <animate attributeName="opacity" values="0;0;0;0;0;1;1;1;1;1;1" dur="10s" repeatCount="indefinite"/>
+    <text x="245" y="102" fill="#00b894" font-family="monospace" font-size="9">
+      <tspan>done 3.1s</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
     </text>
 
-    <!-- Session 4 - starts same time (replaced naver with linkedin) -->
-    <text x="10" y="114" fill="#a29bfe" font-family="monospace" font-size="11">Session 4: linkedin.com</text>
-    <rect x="150" y="104" width="0" height="12" rx="2" fill="url(#successGrad)">
-      <animate attributeName="width" values="0;0;20;50;80;105;105;105;105;105;105" dur="10s" repeatCount="indefinite"/>
+    <text x="10" y="122" fill="#a29bfe" font-family="monospace" font-size="10">GitHub</text>
+    <rect x="110" y="113" width="0" height="10" rx="2" fill="url(#successGrad)">
+      <animate attributeName="width" values="0;0;30;65;100;100;100;100;100;100;100;100;100;100;100;100;100;100;100;100" dur="20s" repeatCount="indefinite"/>
     </rect>
-    <text x="265" y="114" fill="#00b894" font-family="monospace" font-size="11">
-      <tspan>✓</tspan>
-      <animate attributeName="opacity" values="0;0;0;0;0;1;1;1;1;1;1" dur="10s" repeatCount="indefinite"/>
+    <text x="215" y="122" fill="#00b894" font-family="monospace" font-size="9">
+      <tspan>done 2.3s</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
     </text>
 
-    <!-- Session 5 - starts same time -->
-    <text x="10" y="136" fill="#a29bfe" font-family="monospace" font-size="11">Session 5: twitter.com</text>
-    <rect x="150" y="126" width="0" height="12" rx="2" fill="url(#successGrad)">
-      <animate attributeName="width" values="0;0;28;58;88;115;115;115;115;115;115" dur="10s" repeatCount="indefinite"/>
+    <text x="10" y="142" fill="#a29bfe" font-family="monospace" font-size="10">Slack</text>
+    <rect x="110" y="133" width="0" height="10" rx="2" fill="url(#successGrad)">
+      <animate attributeName="width" values="0;0;38;78;115;115;115;115;115;115;115;115;115;115;115;115;115;115;115;115" dur="20s" repeatCount="indefinite"/>
     </rect>
-    <text x="275" y="136" fill="#00b894" font-family="monospace" font-size="11">
-      <tspan>✓</tspan>
-      <animate attributeName="opacity" values="0;0;0;0;0;1;1;1;1;1;1" dur="10s" repeatCount="indefinite"/>
+    <text x="230" y="142" fill="#00b894" font-family="monospace" font-size="9">
+      <tspan>done 2.6s</tspan>
+      <animate attributeName="opacity" values="0;0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
     </text>
 
-    <!-- Result summary box -->
+    <!-- Result box appears fast -->
     <g>
-      <animate attributeName="opacity" values="0;0;0;0;0;0;1;1;1;1;1" dur="10s" repeatCount="indefinite"/>
-      <rect x="10" y="155" width="340" height="65" rx="6" fill="#1a3a1a"/>
-      <text x="180" y="178" text-anchor="middle" fill="#00b894" font-family="system-ui" font-size="12" font-weight="bold">
-        All 5 sessions completed in parallel!
+      <animate attributeName="opacity" values="0;0;0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="10" y="160" width="350" height="55" rx="6" fill="#0a2e0a" stroke="#00b894" stroke-width="1"/>
+      <text x="185" y="180" text-anchor="middle" fill="#00b894" font-family="system-ui" font-size="13" font-weight="bold">
+        All 5 sites done in 3.1s
       </text>
-      <text x="180" y="198" text-anchor="middle" fill="#55efc4" font-family="monospace" font-size="11">
-        Total: 1.4s (Sequential would take 7.0s)
-      </text>
-      <text x="180" y="214" text-anchor="middle" fill="#81ecec" font-family="system-ui" font-size="11">
-        ⚡ 5x faster
+      <text x="185" y="200" text-anchor="middle" fill="#55efc4" font-family="monospace" font-size="11">
+        Zero logins. Zero waiting. All parallel.
       </text>
     </g>
 
-    <!-- Status -->
-    <text x="180" y="255" text-anchor="middle" fill="#00b894" font-family="system-ui" font-size="13" font-weight="bold">
-      ✅ 20+ concurrent sessions
-    </text>
+    <!-- Memory usage (small and stable) -->
+    <g>
+      <animate attributeName="opacity" values="0;0;0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="10" y="230" width="350" height="48" rx="4" fill="#1a1a1a"/>
+      <text x="20" y="246" fill="#00b894" font-family="monospace" font-size="9" font-weight="bold">Memory Usage</text>
+      <rect x="20" y="255" width="60" height="14" rx="2" fill="#00b894" opacity="0.5"/>
+      <text x="25" y="265" fill="#fff" font-family="monospace" font-size="8" font-weight="bold">~300 MB</text>
+      <text x="100" y="265" fill="#55efc4" font-family="monospace" font-size="8">(1 Chrome + 5 lightweight contexts)</text>
+    </g>
+
+    <!-- Speed comparison callout -->
+    <g>
+      <animate attributeName="opacity" values="0;0;0;0;0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;1" dur="20s" repeatCount="indefinite"/>
+      <rect x="30" y="290" width="310" height="50" rx="8" fill="#0a2e0a" stroke="#00cec9" stroke-width="2"/>
+      <text x="185" y="313" text-anchor="middle" fill="#00cec9" font-family="system-ui" font-size="20" font-weight="bold">
+        80x faster
+      </text>
+      <text x="185" y="332" text-anchor="middle" fill="#81ecec" font-family="monospace" font-size="10">
+        3.1s vs ~250s  |  300MB vs 2.5GB
+      </text>
+    </g>
+  </g>
+
+  <!-- Bottom comparison bar -->
+  <g transform="translate(0, 440)">
+    <rect x="20" y="0" width="760" height="30" rx="6" fill="#161b22" stroke="#2d3436" stroke-width="1"/>
+    <text x="120" y="20" text-anchor="middle" fill="#e74c3c" font-family="monospace" font-size="10">Playwright: ~250s | 2.5GB</text>
+    <text x="400" y="20" text-anchor="middle" fill="#636e72" font-family="system-ui" font-size="11" font-weight="bold">vs</text>
+    <text x="650" y="20" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="10">CCP: ~3s | 300MB | already logged in</text>
   </g>
 </svg>

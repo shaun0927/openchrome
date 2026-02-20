@@ -20,6 +20,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
+import { checkForUpdates } from './update-check';
 
 const program = new Command();
 
@@ -99,16 +100,11 @@ program
       process.exit(1);
     }
 
-    // Build the command arguments
-    const args = ['serve', '--auto-launch'];
+    // Build the serve arguments
+    const serveArgs = ['serve', '--auto-launch'];
     if (options.dashboard) {
-      args.push('--dashboard');
+      serveArgs.push('--dashboard');
     }
-
-    // Find the path to ccp executable
-    const ccpPath = process.argv[1]; // Current executable path
-    const nodeCommand = 'node';
-    const scriptPath = ccpPath.endsWith('.js') ? ccpPath : path.join(__dirname, 'index.js');
 
     // Remove existing configuration first (if any)
     try {
@@ -117,8 +113,8 @@ program
       // Ignore if not exists
     }
 
-    // Add MCP server configuration
-    const fullCommand = `claude mcp add claude-chrome-parallel -s ${scope} -- ${nodeCommand} ${scriptPath} ${args.join(' ')}`;
+    // Use npx for auto-updates: every server start fetches the latest version
+    const fullCommand = `claude mcp add claude-chrome-parallel -s ${scope} -- npx -y claude-chrome-parallel ${serveArgs.join(' ')}`;
 
     console.log(`Running: claude mcp add claude-chrome-parallel (scope: ${scope})...`);
 
@@ -126,6 +122,7 @@ program
       execSync(fullCommand, { stdio: 'inherit' });
       console.log('\n✅ MCP server configured successfully!\n');
       console.log(`Scope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}\n`);
+      console.log('Auto-updates: enabled (via npx)\n');
       console.log('Next steps:');
       console.log('  1. Restart Claude Code');
       console.log('  2. Just say "ccp" — that\'s it.\n');
@@ -139,8 +136,8 @@ program
       console.error('   {');
       console.error('     "mcpServers": {');
       console.error('       "claude-chrome-parallel": {');
-      console.error(`         "command": "${nodeCommand}",`);
-      console.error(`         "args": ["${scriptPath}", ${args.map(a => `"${a}"`).join(', ')}]`);
+      console.error('         "command": "npx",');
+      console.error(`         "args": ["-y", "claude-chrome-parallel", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
       console.error('       }');
       console.error('     }');
       console.error('   }');
@@ -161,6 +158,9 @@ program
     const port = parseInt(options.port, 10);
     const autoLaunch = options.autoLaunch || false;
     const dashboard = options.dashboard || false;
+
+    // Non-blocking update check (fires in background)
+    checkForUpdates(version).catch(() => {});
 
     console.error(`[claude-chrome-parallel] Starting MCP server`);
     console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);

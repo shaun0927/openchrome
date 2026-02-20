@@ -8,39 +8,53 @@
 Automate your **actual Chrome** — with all your logins, cookies, and sessions intact. Run **20+ parallel browser sessions** from Claude Code without logging in to anything, ever again.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                                                              │
-│   "Screenshot my AWS billing, Stripe, and Vercel dashboards" │
-│                                                              │
-│   Playwright MCP ██████████████████████████████████ ~155s    │
-│                  (launch + login×3 + navigate×3)             │
-│                                                              │
-│   CCP            ██ ~5s                                      │
-│                  (already logged in + parallel)               │
-│                                                              │
-│   30x faster. Zero authentication overhead.                  │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+"Screenshot my AWS, Stripe, Vercel, GitHub, and Slack dashboards"
+
+Playwright MCP (sequential, login each site):
+  AWS    🔐━━━━━━━━━━━━━━ login 45s ━━━━ task
+  Stripe              🔐━━━━━━━━━━━━━━ login 40s ━━━━ task
+  Vercel                           🔐━━━━━━━━━━━━━━ login 50s ━━━━ task
+  GitHub                                        🔐━━━━━━━━━━━━ login 35s ━━━━ task
+  Slack                                                      🔐━━━━━━━━━━━━ login 40s ━━━━ task
+  Total: ~250s | Memory: ~2.5 GB (5 browser instances)
+
+CCP (parallel, zero auth):
+  AWS    ━━━━ 3s ✓
+  Stripe ━━━━ 3s ✓
+  Vercel ━━━━ 3s ✓
+  GitHub ━━━━ 3s ✓
+  Slack  ━━━━ 3s ✓
+  Total: ~3s  | Memory: ~300 MB (1 Chrome, shared contexts)
+
+  80x faster. 8x less memory. Zero logins.
 ```
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/shaun0927/claude-chrome-parallel/main/assets/demo.svg" alt="Chrome Extension vs Claude Chrome Parallel - Animated comparison showing parallel execution" width="100%">
+  <img src="https://raw.githubusercontent.com/shaun0927/claude-chrome-parallel/main/assets/demo.svg" alt="Playwright MCP vs CCP — 5 authenticated sites comparison" width="100%">
 </p>
 
 ---
 
-## The Problem
+## Why CCP Is Fast
 
-Every browser automation tool wastes your time before it even starts working.
+The speed advantage **compounds** with every site. Playwright MCP has two bottlenecks that multiply:
 
-| Tool | Before your task even begins... | Overhead |
-|------|--------------------------------|----------|
-| **Playwright MCP** | Launch headless → navigate → type email → type password → solve 2FA → wait for redirect → *repeat for each site* | **30-120s per site** |
-| **Chrome Extension** | Works — until you open a 2nd Claude session. `"Detached"` error. | **Session limit: 1** |
-| **Browserbase** | Cloud browser. Your credentials leave your machine. Paid per minute. | **$0.01+/min + latency** |
-| **CCP** | Connect to your Chrome. Already logged in. Go. | **~0s** |
+| Sites | Playwright MCP | CCP | Speedup |
+|:-----:|:--------------:|:---:|:-------:|
+| 1 | ~50s (login + task) | ~3s | **17x** |
+| 3 | ~155s (sequential) | ~3s (parallel) | **50x** |
+| 5 | ~250s | ~3s | **80x** |
+| 10 | ~500s | ~3s | **160x** |
 
-**CCP eliminates authentication overhead entirely.** Your Chrome is already logged into everything. That 30-120 seconds per site? Gone. Multiply by 5 parallel sites and you're looking at **10-600 seconds saved per task**.
+**Why?** Playwright launches a blank browser per site. Each needs: navigate → type email → type password → solve 2FA → wait for redirect. That's 30-120s **per site**, and it's **sequential**.
+
+CCP connects to your existing Chrome. You're already logged into everything. Workers run in parallel. The task that takes 250s with Playwright takes 3s with CCP.
+
+### Memory
+
+Playwright spawns a **separate browser process** per session (~500MB each). Five sites = 2.5GB.
+
+CCP uses **one Chrome** with lightweight browser contexts (like incognito windows sharing the same process). Five Workers = ~300MB total. That's **8x less memory** — and it stays flat whether you run 5 or 20 Workers.
 
 ---
 
@@ -48,51 +62,40 @@ Every browser automation tool wastes your time before it even starts working.
 
 <table>
 <tr>
-<td width="33%" valign="top">
+<td width="25%" valign="top">
 
-### Authenticated Access
+### Zero Auth
 
-Your actual Chrome profile. Gmail, Slack, Salesforce, LinkedIn, AWS Console — **already logged in**.
+Your actual Chrome profile. Gmail, Slack, AWS, Stripe — **already logged in**.
 
-No credential management.
-No OAuth flows.
-No "please log in" loops.
-
-**If you can see it in Chrome, Claude can automate it.**
+No credentials. No OAuth. No 2FA loops.
 
 </td>
-<td width="33%" valign="top">
+<td width="25%" valign="top">
 
-### True Parallelism
+### 20+ Parallel Workers
 
-**20+ Workers. Simultaneous. Independent.**
+All Workers run simultaneously in isolated browser contexts.
 
-```
-Other tools (sequential + auth):
-  AWS    🔐 login ████ 50s
-  Stripe       🔐 login ████ 50s
-  Vercel             🔐 login ████ 50s
-  Total:                      ~150s
-
-CCP (parallel, zero auth):
-  AWS    ████ 3s
-  Stripe ████ 3s
-  Vercel ████ 3s
-  Total:  ~3s     ← 50x faster
-```
+5 sites in ~3s, not ~250s.
 
 </td>
-<td width="33%" valign="top">
+<td width="25%" valign="top">
+
+### 8x Less Memory
+
+One Chrome process, shared contexts. Not N separate browser instances.
+
+5 Workers ≈ 300MB, not 2.5GB.
+
+</td>
+<td width="25%" valign="top">
 
 ### Worker Isolation
 
-Each Worker gets a **completely isolated browser context**.
+Each Worker gets separate cookies, localStorage, and sessions.
 
-- Separate cookies & sessions
-- Separate localStorage
-- Separate login states
-
-**Log into the same site with 5 different accounts. Simultaneously.**
+**5 accounts on the same site. Simultaneously.**
 
 </td>
 </tr>
@@ -103,14 +106,13 @@ Each Worker gets a **completely isolated browser context**.
 ## Quick Start
 
 ```bash
-# Install globally
-npm install -g claude-chrome-parallel
-
-# Auto-configure Claude Code
-ccp setup
+# One command. That's it.
+npx claude-chrome-parallel setup
 
 # Restart Claude Code — just say "ccp".
 ```
+
+**Updates are automatic.** The MCP server runs via `npx`, so you always get the latest version.
 
 <details>
 <summary>Manual setup</summary>
@@ -119,14 +121,14 @@ ccp setup
 {
   "mcpServers": {
     "chrome-parallel": {
-      "command": "ccp",
-      "args": ["serve", "--auto-launch"]
+      "command": "npx",
+      "args": ["-y", "claude-chrome-parallel", "serve", "--auto-launch"]
     }
   }
 }
 ```
 
-Or: `claude mcp add claude-chrome-parallel -- ccp serve --auto-launch`
+Or: `claude mcp add claude-chrome-parallel -- npx -y claude-chrome-parallel serve --auto-launch`
 
 </details>
 
@@ -134,11 +136,11 @@ Or: `claude mcp add claude-chrome-parallel -- ccp serve --auto-launch`
 <summary>Installation scope</summary>
 
 ```bash
-ccp setup                  # Global — available in all projects (default)
-ccp setup --scope project  # Project — only this directory
+npx claude-chrome-parallel setup                  # Global — all projects (default)
+npx claude-chrome-parallel setup --scope project  # Project — this directory only
 ```
 
-Global install writes to `~/.claude.json`. Project install writes to `.mcp.json` in the current directory.
+Global writes to `~/.claude.json`. Project writes to `.mcp.json` in the current directory.
 
 </details>
 
@@ -221,7 +223,8 @@ claude -p "ccp test form validation on myapp.com"   # Worker 5
 | | Playwright MCP | Browserbase | Chrome Extension | **CCP** |
 |---|:---:|:---:|:---:|:---:|
 | **Auth overhead per site** | ❌ 30-120s | ❌ 30-120s | ✅ 0s | **✅ 0s** |
-| **3-site authenticated task** | ~180s | ~180s + cost | N/A (1 session) | **~5s** |
+| **5-site authenticated task** | ~250s | ~250s + cost | N/A (1 session) | **~3s** |
+| **Memory (5 sessions)** | ~2.5 GB | N/A (cloud) | N/A | **~300 MB** |
 | **Uses your Chrome logins** | ❌ Blank browser | ❌ Cloud browser | ✅ | **✅** |
 | **Concurrent sessions** | ⚠️ Limited | ✅ (paid) | ❌ 1 (crashes) | **✅ 20+** |
 | **Multi-account isolation** | ❌ | ✅ (paid) | ❌ | **✅** |
@@ -353,15 +356,14 @@ navigate → title contains "Login"
 ## CLI
 
 ```bash
-ccp setup                         # Auto-configure (global)
-ccp setup --scope project         # Auto-configure (project only)
-ccp serve --auto-launch           # Start with auto Chrome launch
-ccp serve --headless-shell        # Headless mode (15-30% less memory)
-ccp serve --chrome-binary <path>  # Custom Chrome binary
-ccp serve -p <port>               # Custom debugging port (default: 9222)
-ccp doctor                        # Diagnose installation
-ccp status                        # View sessions
-ccp cleanup                       # Clean up old sessions
+npx claude-chrome-parallel setup                  # Auto-configure (global)
+npx claude-chrome-parallel setup --scope project  # Auto-configure (project only)
+npx claude-chrome-parallel serve --auto-launch    # Start with auto Chrome launch
+npx claude-chrome-parallel serve --headless-shell # Headless mode (15-30% less memory)
+npx claude-chrome-parallel serve -p <port>        # Custom debugging port (default: 9222)
+npx claude-chrome-parallel doctor                 # Diagnose installation
+npx claude-chrome-parallel status                 # View sessions
+npx claude-chrome-parallel cleanup                # Clean up old sessions
 ```
 
 ---
@@ -377,12 +379,6 @@ ccp cleanup                       # Clean up old sessions
 
 </details>
 
-## Update
-
-```bash
-npm update -g claude-chrome-parallel
-```
-
 ---
 
 ## Development
@@ -390,7 +386,7 @@ npm update -g claude-chrome-parallel
 ```bash
 git clone https://github.com/shaun0927/claude-chrome-parallel.git
 cd claude-chrome-parallel
-npm install && npm run build && npm test  # 756 tests
+npm install && npm run build && npm test
 ```
 
 ## License
