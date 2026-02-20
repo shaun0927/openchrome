@@ -3,6 +3,7 @@
  */
 
 import * as readline from 'readline';
+import * as path from 'path';
 import {
   MCPRequest,
   MCPResponse,
@@ -14,8 +15,9 @@ import {
   MCPErrorCodes,
 } from './types/mcp';
 import { SessionManager, getSessionManager } from './session-manager';
-import { Dashboard, getDashboard, ActivityTracker, OperationController } from './dashboard/index.js';
+import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
+import { HintEngine } from './hints';
 
 export interface MCPServerOptions {
   dashboard?: boolean;
@@ -30,6 +32,7 @@ export class MCPServer {
   private dashboard: Dashboard | null = null;
   private activityTracker: ActivityTracker | null = null;
   private operationController: OperationController | null = null;
+  private hintEngine: HintEngine | null = null;
   private options: MCPServerOptions;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
@@ -43,6 +46,17 @@ export class MCPServer {
     if (options.dashboard) {
       this.initDashboard();
     }
+
+    // Always-on activity tracking (uses singleton, shared with dashboard if enabled)
+    if (!this.activityTracker) {
+      this.activityTracker = getActivityTracker();
+    }
+    this.activityTracker.enableFileLogging(
+      path.join(process.cwd(), '.chrome-parallel', 'timeline')
+    );
+
+    // Initialize hint engine
+    this.hintEngine = new HintEngine(this.activityTracker);
   }
 
   /**
@@ -155,6 +169,7 @@ export class MCPServer {
    * Handle incoming MCP request
    */
   async handleRequest(request: MCPRequest): Promise<MCPResponse> {
+    const requestReceivedAt = Date.now();
     const { id, method, params } = request;
 
     try {
@@ -175,7 +190,7 @@ export class MCPServer {
           break;
 
         case 'tools/call':
-          result = await this.handleToolsCall(params);
+          result = await this.handleToolsCall(params, id);
           break;
 
         case 'resources/list':
@@ -292,7 +307,7 @@ export class MCPServer {
   /**
    * Handle tools/call request
    */
-  private async handleToolsCall(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleToolsCall(params?: Record<string, unknown>, requestId?: number | string): Promise<MCPResult> {
     if (!params) {
       throw new Error('Missing params for tools/call');
     }
@@ -317,22 +332,36 @@ export class MCPServer {
     }
 
     // Start activity tracking
-    let callId: string | undefined;
-    if (this.activityTracker) {
-      callId = this.activityTracker.startCall(toolName, sessionId || 'default', toolArgs);
-    }
+    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
 
     try {
       // Wait at gate if paused
-      if (this.operationController && callId) {
+      if (this.operationController) {
         await this.operationController.gate(callId);
       }
 
       const result = await tool.handler(sessionId, toolArgs);
 
       // End activity tracking (success)
-      if (this.activityTracker && callId) {
-        this.activityTracker.endCall(callId, 'success');
+      this.activityTracker!.endCall(callId, 'success');
+
+      if (callId) {
+        const timing = this.activityTracker!.getCall(callId);
+        if (timing?.duration !== undefined) {
+          (result as Record<string, unknown>)._timing = {
+            durationMs: timing.duration,
+            startTime: timing.startTime,
+            endTime: timing.endTime,
+          };
+        }
+      }
+
+      // Inject anti-삽질 hint
+      if (this.hintEngine) {
+        const hint = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false);
+        if (hint) {
+          (result as Record<string, unknown>)._hint = hint;
+        }
       }
 
       return result;
@@ -340,14 +369,33 @@ export class MCPServer {
       const message = error instanceof Error ? error.message : String(error);
 
       // End activity tracking (error)
-      if (this.activityTracker && callId) {
-        this.activityTracker.endCall(callId, 'error', message);
-      }
+      this.activityTracker!.endCall(callId, 'error', message);
 
-      return {
+      const errResult: MCPResult = {
         content: [{ type: 'text', text: `Error: ${message}` }],
         isError: true,
       };
+
+      if (callId) {
+        const timing = this.activityTracker!.getCall(callId);
+        if (timing?.duration !== undefined) {
+          (errResult as Record<string, unknown>)._timing = {
+            durationMs: timing.duration,
+            startTime: timing.startTime,
+            endTime: timing.endTime,
+          };
+        }
+      }
+
+      // Inject anti-삽질 hint for errors
+      if (this.hintEngine) {
+        const hint = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true);
+        if (hint) {
+          (errResult as Record<string, unknown>)._hint = hint;
+        }
+      }
+
+      return errResult;
     }
   }
 
