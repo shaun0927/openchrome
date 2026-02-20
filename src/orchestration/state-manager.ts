@@ -357,7 +357,13 @@ ${stateJson}
   }
 
   /**
-   * Read orchestration state
+   * Read orchestration state from file.
+   *
+   * NOTE: As of the race-condition fix, WorkflowEngine maintains in-memory state as the
+   * authoritative source of truth for completion counting. File reads/writes here are
+   * write-behind (persistence and debugging only) — they are NOT used for correctness by
+   * WorkflowEngine.completeWorker(). Use WorkflowEngine.getOrchestrationStatus() to get
+   * the most current state.
    */
   async readOrchestrationState(): Promise<OrchestrationState | null> {
     const filePath = this.getOrchestrationPath();
@@ -382,7 +388,11 @@ ${stateJson}
   }
 
   /**
-   * Write orchestration state
+   * Write orchestration state to file (write-behind).
+   *
+   * NOTE: This write is for persistence and debugging visibility only.
+   * WorkflowEngine holds the authoritative in-memory state — correctness does NOT
+   * depend on this file being up-to-date.
    */
   async writeOrchestrationState(state: OrchestrationState): Promise<void> {
     const filePath = this.getOrchestrationPath();

@@ -543,10 +543,19 @@ export class SessionManager {
       ? (this.cdpFactory.get(worker.port) || this.cdpClient)
       : this.cdpClient;
 
-    // Close all pages in this worker
+    // Close all pages in this worker (return to pool if available)
     for (const targetId of worker.targets) {
       try {
-        await workerCdpClient.closePage(targetId);
+        if (this.connectionPool && this.config.useConnectionPool) {
+          const page = await workerCdpClient.getPageByTargetId(targetId);
+          if (page && !page.isClosed()) {
+            await this.connectionPool.releasePage(page);
+          } else {
+            await workerCdpClient.closePage(targetId);
+          }
+        } else {
+          await workerCdpClient.closePage(targetId);
+        }
       } catch {
         // Page might already be closed
       }
@@ -594,9 +603,39 @@ export class SessionManager {
 
     const worker = await this.getOrCreateWorker(sessionId, workerId);
 
-    // Create page in the worker's isolated browser context (use worker's CDPClient if on pool)
+    // Create page — try connection pool first for pre-warmed pages, fall back to direct creation
     const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
-    const page = await cdpClient.createPage(url, worker.context);
+    let page: Page;
+
+    if (this.connectionPool && this.config.useConnectionPool) {
+      try {
+        const poolPage = await this.connectionPool.acquirePage();
+        // Navigate the pre-warmed page to the target URL
+        if (url) {
+          await poolPage.goto(url, { waitUntil: 'domcontentloaded' });
+        }
+        // Copy cookies from the worker's browser context if available
+        // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
+        if (worker.context) {
+          try {
+            const cookies = await worker.context.cookies();
+            if (cookies.length > 0) {
+              await poolPage.setCookie(...cookies);
+            }
+          } catch {
+            // Best-effort cookie copy
+          }
+        }
+        page = poolPage;
+        console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);
+      } catch (err) {
+        console.error(`[SessionManager] Pool acquire failed, falling back to direct creation:`, err);
+        page = await cdpClient.createPage(url, worker.context);
+      }
+    } else {
+      page = await cdpClient.createPage(url, worker.context);
+    }
+
     const targetId = getTargetId(page.target());
 
     worker.targets.add(targetId);
@@ -744,8 +783,23 @@ export class SessionManager {
       // Close the page via CDP (use worker's CDPClient if on pool)
       const cdpClient = this.getCDPClientForWorker(sessionId, ownerInfo.workerId);
 
-      // closePage() already triggers GC internally before closing
-      await cdpClient.closePage(targetId);
+      if (this.connectionPool && this.config.useConnectionPool) {
+        // Return the page to the pool for reuse instead of destroying it
+        try {
+          const page = await cdpClient.getPageByTargetId(targetId);
+          if (page && !page.isClosed()) {
+            await this.connectionPool.releasePage(page);
+          } else {
+            await cdpClient.closePage(targetId);
+          }
+        } catch {
+          // If pool release fails, fall back to direct close
+          await cdpClient.closePage(targetId);
+        }
+      } else {
+        // closePage() already triggers GC internally before closing
+        await cdpClient.closePage(targetId);
+      }
 
       // Clean up internal state
       const session = this.sessions.get(sessionId);

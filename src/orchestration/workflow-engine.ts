@@ -44,9 +44,54 @@ export interface WorkflowResult {
   duration: number;
 }
 
+/**
+ * In-memory tracking state for a single workflow.
+ * This is the source of truth for completion counting — file writes are write-behind
+ * (for persistence/debugging only, not for correctness).
+ */
+interface InMemoryWorkflowState {
+  orchestrationId: string;
+  task: string;
+  createdAt: number;
+  totalWorkers: number;
+  completedWorkers: number;
+  failedWorkers: number;
+  /** Status per worker: workerName → { status, resultSummary } */
+  workerStatuses: Map<string, { status: WorkerState['status']; resultSummary: string }>;
+  overallStatus: OrchestrationState['status'];
+  allDone: boolean;
+}
+
 export class WorkflowEngine {
   private sessionManager = getSessionManager();
   private stateManager = getOrchestrationStateManager();
+
+  /**
+   * In-memory workflow state. Keyed by orchestrationId.
+   * This is the source of truth for completion tracking — avoids file-based race conditions.
+   */
+  private workflowStates: Map<string, InMemoryWorkflowState> = new Map();
+
+  /**
+   * Promise-based mutex for serializing completeWorker operations.
+   * Prevents lost-update races when multiple workers complete simultaneously.
+   */
+  private completionLock: Promise<void> = Promise.resolve();
+
+  /**
+   * Acquire the completion lock. Returns a release function.
+   * All completeWorker calls are serialized through this lock.
+   */
+  private async acquireLock(): Promise<() => void> {
+    let release!: () => void;
+    const next = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const prev = this.completionLock;
+    this.completionLock = next;
+    await prev;
+    return release;
+  }
 
   /**
    * Initialize a new workflow
@@ -85,12 +130,31 @@ export class WorkflowEngine {
       })
     );
 
-    // Initialize orchestration state
+    // Initialize file-based orchestration state (for scratchpads / debugging)
     await this.stateManager.initOrchestration(
       orchestrationId,
       workflow.name,
       workers
     );
+
+    // Initialize in-memory state — this is the authoritative source for completion tracking
+    const workerStatuses = new Map<string, { status: WorkerState['status']; resultSummary: string }>();
+    for (const w of workers) {
+      workerStatuses.set(w.workerName, { status: 'INIT', resultSummary: '' });
+    }
+
+    const memState: InMemoryWorkflowState = {
+      orchestrationId,
+      task: workflow.name,
+      createdAt: Date.now(),
+      totalWorkers: workers.length,
+      completedWorkers: 0,
+      failedWorkers: 0,
+      workerStatuses,
+      overallStatus: 'INIT',
+      allDone: false,
+    };
+    this.workflowStates.set(orchestrationId, memState);
 
     console.error(`[WorkflowEngine] Initialized workflow ${orchestrationId} with ${workers.length} workers`);
 
@@ -137,8 +201,11 @@ export class WorkflowEngine {
   }
 
   /**
-   * Mark worker as complete
-   * Note: This method prevents double-counting by checking the previous worker status
+   * Mark worker as complete.
+   *
+   * Race-condition safe: all concurrent calls are serialized via a promise-based mutex.
+   * In-memory state is the source of truth for completion counting; file writes are
+   * write-behind (persistence/debugging only).
    */
   async completeWorker(
     workerName: string,
@@ -146,74 +213,222 @@ export class WorkflowEngine {
     resultSummary: string,
     extractedData: unknown
   ): Promise<void> {
+    // Update the worker scratchpad file (outside the lock — file writes per worker don't conflict)
     await this.stateManager.updateWorkerState(workerName, {
       status,
       extractedData,
     });
 
-    // Update orchestration state
-    const orch = await this.stateManager.readOrchestrationState();
-    if (orch) {
-      const workerIdx = orch.workers.findIndex(w => w.workerName === workerName);
-      if (workerIdx !== -1) {
-        const previousStatus = orch.workers[workerIdx].status;
-        const wasAlreadyCompleted = previousStatus === 'SUCCESS' || previousStatus === 'PARTIAL' || previousStatus === 'FAIL';
-
-        orch.workers[workerIdx].status = status;
-        orch.workers[workerIdx].resultSummary = resultSummary;
-
-        // Only update counters if the worker wasn't already in a completed state
-        // This prevents double-counting when completeWorker is called multiple times
-        if (!wasAlreadyCompleted) {
-          if (status === 'SUCCESS' || status === 'PARTIAL') {
-            orch.completedWorkers++;
-          }
-          if (status === 'FAIL') {
-            orch.failedWorkers++;
-          }
-        } else {
-          // If status changed from one completed state to another, adjust counters
-          const wasCompleted = previousStatus === 'SUCCESS' || previousStatus === 'PARTIAL';
-          const wasFailed = previousStatus === 'FAIL';
-          const isNowCompleted = status === 'SUCCESS' || status === 'PARTIAL';
-          const isNowFailed = status === 'FAIL';
-
-          if (wasCompleted && isNowFailed) {
-            orch.completedWorkers--;
-            orch.failedWorkers++;
-          } else if (wasFailed && isNowCompleted) {
-            orch.failedWorkers--;
-            orch.completedWorkers++;
-          }
-          // If both were completed or both were failed, no change needed
+    // Serialize completion accounting through the lock to prevent lost updates
+    const release = await this.acquireLock();
+    try {
+      // Find the in-memory workflow state that contains this worker
+      let memState: InMemoryWorkflowState | undefined;
+      for (const s of this.workflowStates.values()) {
+        if (s.workerStatuses.has(workerName)) {
+          memState = s;
+          break;
         }
-
-        // Check if all workers are done
-        const allDone = orch.workers.every(
-          w => w.status === 'SUCCESS' || w.status === 'PARTIAL' || w.status === 'FAIL'
-        );
-
-        if (allDone) {
-          if (orch.failedWorkers === orch.workers.length) {
-            orch.status = 'FAILED';
-          } else if (orch.failedWorkers > 0) {
-            orch.status = 'PARTIAL';
-          } else {
-            orch.status = 'COMPLETED';
-          }
-        } else {
-          orch.status = 'RUNNING';
-        }
-
-        await this.stateManager.writeOrchestrationState(orch);
       }
+
+      if (!memState) {
+        // Fallback: no in-memory state (e.g. engine restarted). Fall back to file-based path.
+        console.error(`[WorkflowEngine] No in-memory state for worker "${workerName}", falling back to file read`);
+        await this._completeWorkerFileFallback(workerName, status, resultSummary);
+        return;
+      }
+
+      const prev = memState.workerStatuses.get(workerName)!;
+      const previousStatus = prev.status;
+      const wasAlreadyCompleted =
+        previousStatus === 'SUCCESS' || previousStatus === 'PARTIAL' || previousStatus === 'FAIL';
+
+      // Update worker entry in-memory
+      memState.workerStatuses.set(workerName, { status, resultSummary });
+
+      // Adjust counters — prevent double-counting on repeated calls
+      if (!wasAlreadyCompleted) {
+        if (status === 'SUCCESS' || status === 'PARTIAL') {
+          memState.completedWorkers++;
+        } else if (status === 'FAIL') {
+          memState.failedWorkers++;
+        }
+      } else {
+        // Status transition between completed states — adjust counters accordingly
+        const wasCompleted = previousStatus === 'SUCCESS' || previousStatus === 'PARTIAL';
+        const wasFailed = previousStatus === 'FAIL';
+        const isNowCompleted = status === 'SUCCESS' || status === 'PARTIAL';
+        const isNowFailed = status === 'FAIL';
+
+        if (wasCompleted && isNowFailed) {
+          memState.completedWorkers--;
+          memState.failedWorkers++;
+        } else if (wasFailed && isNowCompleted) {
+          memState.failedWorkers--;
+          memState.completedWorkers++;
+        }
+        // Same category transition (e.g. SUCCESS→PARTIAL): no counter change needed
+      }
+
+      // Check if all workers are done
+      const allDone = Array.from(memState.workerStatuses.values()).every(
+        w => w.status === 'SUCCESS' || w.status === 'PARTIAL' || w.status === 'FAIL'
+      );
+      memState.allDone = allDone;
+
+      if (allDone) {
+        if (memState.failedWorkers === memState.totalWorkers) {
+          memState.overallStatus = 'FAILED';
+        } else if (memState.failedWorkers > 0) {
+          memState.overallStatus = 'PARTIAL';
+        } else {
+          memState.overallStatus = 'COMPLETED';
+        }
+      } else {
+        memState.overallStatus = 'RUNNING';
+      }
+
+      console.error(
+        `[WorkflowEngine] Worker "${workerName}" completed with ${status}. ` +
+        `Progress: ${memState.completedWorkers + memState.failedWorkers}/${memState.totalWorkers} ` +
+        `(${memState.completedWorkers} ok, ${memState.failedWorkers} failed). ` +
+        `Overall: ${memState.overallStatus}`
+      );
+
+      // Write-behind: persist to file for debugging/visibility (not for correctness)
+      await this._writeOrchestrationStateBehind(memState);
+    } finally {
+      release();
     }
   }
 
   /**
-   * Get current orchestration status
+   * Write orchestration state to file from in-memory state (write-behind).
+   * This is for persistence/debugging only — correctness is maintained in memory.
+   */
+  private async _writeOrchestrationStateBehind(memState: InMemoryWorkflowState): Promise<void> {
+    const workers = Array.from(memState.workerStatuses.entries()).map(([workerName, ws]) => ({
+      workerId: workerName, // best-effort: workerId not stored separately in memState
+      workerName,
+      status: ws.status,
+      resultSummary: ws.resultSummary,
+    }));
+
+    const orchState: OrchestrationState = {
+      orchestrationId: memState.orchestrationId,
+      status: memState.overallStatus,
+      createdAt: memState.createdAt,
+      updatedAt: Date.now(),
+      task: memState.task,
+      workers,
+      completedWorkers: memState.completedWorkers,
+      failedWorkers: memState.failedWorkers,
+    };
+
+    try {
+      await this.stateManager.writeOrchestrationState(orchState);
+    } catch (err) {
+      // Write-behind failure is non-fatal — in-memory state remains correct
+      console.error(`[WorkflowEngine] Write-behind failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * Fallback for completeWorker when no in-memory state exists (engine restart scenario).
+   * Uses the original file-based read-modify-write approach.
+   */
+  private async _completeWorkerFileFallback(
+    workerName: string,
+    status: 'SUCCESS' | 'PARTIAL' | 'FAIL',
+    resultSummary: string
+  ): Promise<void> {
+    const orch = await this.stateManager.readOrchestrationState();
+    if (!orch) return;
+
+    const workerIdx = orch.workers.findIndex(w => w.workerName === workerName);
+    if (workerIdx === -1) return;
+
+    const previousStatus = orch.workers[workerIdx].status;
+    const wasAlreadyCompleted =
+      previousStatus === 'SUCCESS' || previousStatus === 'PARTIAL' || previousStatus === 'FAIL';
+
+    orch.workers[workerIdx].status = status;
+    orch.workers[workerIdx].resultSummary = resultSummary;
+
+    if (!wasAlreadyCompleted) {
+      if (status === 'SUCCESS' || status === 'PARTIAL') {
+        orch.completedWorkers++;
+      } else if (status === 'FAIL') {
+        orch.failedWorkers++;
+      }
+    } else {
+      const wasCompleted = previousStatus === 'SUCCESS' || previousStatus === 'PARTIAL';
+      const wasFailed = previousStatus === 'FAIL';
+      const isNowCompleted = status === 'SUCCESS' || status === 'PARTIAL';
+      const isNowFailed = status === 'FAIL';
+
+      if (wasCompleted && isNowFailed) {
+        orch.completedWorkers--;
+        orch.failedWorkers++;
+      } else if (wasFailed && isNowCompleted) {
+        orch.failedWorkers--;
+        orch.completedWorkers++;
+      }
+    }
+
+    const allDone = orch.workers.every(
+      w => w.status === 'SUCCESS' || w.status === 'PARTIAL' || w.status === 'FAIL'
+    );
+
+    if (allDone) {
+      if (orch.failedWorkers === orch.workers.length) {
+        orch.status = 'FAILED';
+      } else if (orch.failedWorkers > 0) {
+        orch.status = 'PARTIAL';
+      } else {
+        orch.status = 'COMPLETED';
+      }
+    } else {
+      orch.status = 'RUNNING';
+    }
+
+    await this.stateManager.writeOrchestrationState(orch);
+  }
+
+  /**
+   * Get current orchestration status.
+   * Returns in-memory state when available (most current); falls back to file.
    */
   async getOrchestrationStatus(): Promise<OrchestrationState | null> {
+    // If there is exactly one active workflow in memory, return it
+    if (this.workflowStates.size > 0) {
+      // Return the most recently created workflow
+      let latest: InMemoryWorkflowState | undefined;
+      for (const s of this.workflowStates.values()) {
+        if (!latest || s.createdAt > latest.createdAt) {
+          latest = s;
+        }
+      }
+      if (latest) {
+        const workers = Array.from(latest.workerStatuses.entries()).map(([workerName, ws]) => ({
+          workerId: workerName,
+          workerName,
+          status: ws.status,
+          resultSummary: ws.resultSummary,
+        }));
+        return {
+          orchestrationId: latest.orchestrationId,
+          status: latest.overallStatus,
+          createdAt: latest.createdAt,
+          updatedAt: Date.now(),
+          task: latest.task,
+          workers,
+          completedWorkers: latest.completedWorkers,
+          failedWorkers: latest.failedWorkers,
+        };
+      }
+    }
+    // Fallback to file-based state (e.g. engine restarted)
     return this.stateManager.readOrchestrationState();
   }
 
@@ -232,10 +447,11 @@ export class WorkflowEngine {
   }
 
   /**
-   * Collect final results from all workers
+   * Collect final results from all workers.
+   * Uses in-memory orchestration status for correctness; reads per-worker detail from files.
    */
   async collectResults(): Promise<WorkflowResult | null> {
-    const orch = await this.stateManager.readOrchestrationState();
+    const orch = await this.getOrchestrationStatus();
     if (!orch) return null;
 
     const workerResults: WorkerResult[] = [];
@@ -277,7 +493,7 @@ export class WorkflowEngine {
    */
   async cleanupWorkflow(sessionId: string): Promise<void> {
     // Get all workers from orchestration state
-    const orch = await this.stateManager.readOrchestrationState();
+    const orch = await this.getOrchestrationStatus();
     if (!orch) return;
 
     // Delete workers (which closes tabs and contexts)
@@ -288,6 +504,9 @@ export class WorkflowEngine {
         // Worker might already be deleted
       }
     }
+
+    // Remove in-memory state for this workflow
+    this.workflowStates.delete(orch.orchestrationId);
 
     // Cleanup state files
     await this.stateManager.cleanup();

@@ -39,8 +39,8 @@ interface PooledPage {
 }
 
 const DEFAULT_CONFIG: Required<PoolConfig> = {
-  minPoolSize: 2,
-  maxPoolSize: 10,
+  minPoolSize: 5,
+  maxPoolSize: 25,
   pageIdleTimeout: 5 * 60 * 1000, // 5 minutes
   preWarm: true,
 };
@@ -135,7 +135,7 @@ export class CDPConnectionPool {
   }
 
   /**
-   * Release a page back to the pool
+   * Release a page back to the pool (non-blocking: cleanup runs async)
    */
   async releasePage(page: Page): Promise<void> {
     const pooledPage = this.inUsePages.get(page);
@@ -151,9 +151,8 @@ export class CDPConnectionPool {
 
     this.inUsePages.delete(page);
 
-    // Check if pool is at max capacity
+    // Check if pool is at max capacity — close immediately, don't queue cleanup
     if (this.availablePages.length >= this.config.maxPoolSize) {
-      // Close the page instead of returning to pool
       try {
         await page.close();
       } catch {
@@ -162,45 +161,52 @@ export class CDPConnectionPool {
       return;
     }
 
-    // Reset the page state before returning to pool
+    // Fire-and-forget: cleanup runs async so the caller isn't blocked
+    this.cleanAndReturnToPool(page, pooledPage).catch((err) => {
+      console.error('[ConnectionPool] Cleanup failed, closing page:', err);
+      page.close().catch(() => {});
+    });
+  }
+
+  /**
+   * Async cleanup and return to pool (called fire-and-forget from releasePage)
+   */
+  private async cleanAndReturnToPool(page: Page, pooledPage: PooledPage): Promise<void> {
+    // Track the current page URL before navigating away (for origin-specific cleanup)
+    let currentOrigin: string | undefined;
     try {
-      // Track the current page URL before navigating away (for origin-specific cleanup)
-      let currentOrigin: string | undefined;
-      try {
-        const currentUrl = page.url();
-        if (currentUrl && currentUrl !== 'about:blank') {
-          currentOrigin = new URL(currentUrl).origin;
-        }
-      } catch {
-        // Ignore URL parsing errors
+      const currentUrl = page.url();
+      if (currentUrl && currentUrl !== 'about:blank') {
+        currentOrigin = new URL(currentUrl).origin;
       }
-
-      // Navigate to blank page to clear state
-      await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
-
-      // Clear cookies and storage
-      const client = await page.createCDPSession();
-      await client.send('Network.clearBrowserCookies');
-
-      // Clear storage for the specific origin (wildcard '*' silently fails)
-      if (currentOrigin) {
-        await client.send('Storage.clearDataForOrigin', {
-          origin: currentOrigin,
-          storageTypes: 'all',
-        }).catch(() => {}); // Ignore if not supported
-      }
-      await client.detach();
-
-      pooledPage.lastUsedAt = Date.now();
-      this.availablePages.push(pooledPage);
     } catch {
-      // Failed to reset, close the page
-      try {
-        await page.close();
-      } catch {
-        // Ignore close errors
-      }
+      // Ignore URL parsing errors
     }
+
+    // Navigate to blank page to clear state
+    await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
+
+    // Clear cookies and storage
+    const client = await page.createCDPSession();
+    await client.send('Network.clearBrowserCookies');
+
+    // Clear storage for the specific origin (wildcard '*' silently fails)
+    if (currentOrigin) {
+      await client.send('Storage.clearDataForOrigin', {
+        origin: currentOrigin,
+        storageTypes: 'all',
+      }).catch(() => {}); // Ignore if not supported
+    }
+    await client.detach();
+
+    // Double-check pool capacity hasn't been exceeded while we were cleaning
+    if (this.availablePages.length >= this.config.maxPoolSize) {
+      await page.close().catch(() => {});
+      return;
+    }
+
+    pooledPage.lastUsedAt = Date.now();
+    this.availablePages.push(pooledPage);
   }
 
   // Default viewport for consistent debugging experience

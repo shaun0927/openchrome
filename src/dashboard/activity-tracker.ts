@@ -19,15 +19,27 @@ export class ActivityTracker extends EventEmitter {
   private callCounter: number = 0;
   private logFilePath: string | null = null;
 
+  // Buffered async write stream
+  private timelineStream: fs.WriteStream | null = null;
+  private timelineBuffer: string[] = [];
+  private timelineFlushTimer: NodeJS.Timeout | null = null;
+  private static readonly TIMELINE_FLUSH_INTERVAL = 200; // ms
+
   constructor(maxHistory: number = 100) {
     super();
     this.maxHistory = maxHistory;
+
+    // Flush remaining buffer on process exit
+    process.on('exit', () => {
+      this.flushTimeline();
+    });
   }
 
   enableFileLogging(dirPath: string): void {
     try {
       fs.mkdirSync(dirPath, { recursive: true });
       this.logFilePath = path.join(dirPath, `timeline-${new Date().toISOString().slice(0, 10)}.jsonl`);
+      this.timelineStream = fs.createWriteStream(this.logFilePath, { flags: 'a' });
     } catch (err) {
       console.error('[ActivityTracker] Failed to enable file logging:', err);
     }
@@ -91,13 +103,7 @@ export class ActivityTracker extends EventEmitter {
 
     this.emit('call:end', event);
 
-    if (this.logFilePath) {
-      try {
-        fs.appendFileSync(this.logFilePath, JSON.stringify(event) + '\n');
-      } catch {
-        // Best-effort logging
-      }
-    }
+    this.writeTimelineEntry(event);
   }
 
   /**
@@ -163,6 +169,46 @@ export class ActivityTracker extends EventEmitter {
     this.calls.clear();
     this.completedCalls = [];
     this.callCounter = 0;
+  }
+
+  /**
+   * Write a timeline entry via buffered async stream (best-effort, non-blocking).
+   */
+  private writeTimelineEntry(entry: object): void {
+    if (!this.timelineStream) return;
+    this.timelineBuffer.push(JSON.stringify(entry) + '\n');
+    if (!this.timelineFlushTimer) {
+      this.timelineFlushTimer = setTimeout(() => {
+        this.flushTimeline();
+      }, ActivityTracker.TIMELINE_FLUSH_INTERVAL);
+    }
+  }
+
+  /**
+   * Flush buffered timeline entries to the write stream.
+   */
+  private flushTimeline(): void {
+    if (this.timelineBuffer.length > 0 && this.timelineStream) {
+      const data = this.timelineBuffer.join('');
+      this.timelineStream.write(data);
+      this.timelineBuffer = [];
+    }
+    this.timelineFlushTimer = null;
+  }
+
+  /**
+   * Flush pending writes and close the timeline stream. Call on shutdown.
+   */
+  destroy(): void {
+    this.flushTimeline();
+    if (this.timelineStream) {
+      this.timelineStream.end();
+      this.timelineStream = null;
+    }
+    if (this.timelineFlushTimer) {
+      clearTimeout(this.timelineFlushTimer);
+      this.timelineFlushTimer = null;
+    }
   }
 }
 

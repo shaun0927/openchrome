@@ -45,6 +45,12 @@ export class HintEngine {
   private learner: PatternLearner;
   private logFilePath: string | null = null;
 
+  // Buffered async write stream
+  private logStream: fs.WriteStream | null = null;
+  private logBuffer: string[] = [];
+  private flushTimer: NodeJS.Timeout | null = null;
+  private static readonly FLUSH_INTERVAL = 200; // ms
+
   constructor(activityTracker: ActivityTracker) {
     this.activityTracker = activityTracker;
     this.learner = new PatternLearner();
@@ -59,6 +65,11 @@ export class HintEngine {
       ...createLearnedRules(this.learner),
       ...successHintRules,
     ].sort((a, b) => a.priority - b.priority);
+
+    // Flush remaining buffer on process exit
+    process.on('exit', () => {
+      this.flushBuffer();
+    });
   }
 
   /**
@@ -68,6 +79,7 @@ export class HintEngine {
     try {
       fs.mkdirSync(dirPath, { recursive: true });
       this.logFilePath = path.join(dirPath, `hints-${new Date().toISOString().slice(0, 10)}.jsonl`);
+      this.logStream = fs.createWriteStream(this.logFilePath, { flags: 'a' });
     } catch {
       // Best-effort logging
     }
@@ -129,14 +141,42 @@ export class HintEngine {
   }
 
   /**
-   * Write a log entry (best-effort, non-blocking).
+   * Write a log entry via buffered async stream (best-effort, non-blocking).
    */
   private log(entry: HintLogEntry): void {
-    if (!this.logFilePath) return;
-    try {
-      fs.appendFileSync(this.logFilePath, JSON.stringify(entry) + '\n');
-    } catch {
-      // Best-effort logging
+    if (!this.logStream) return;
+    this.logBuffer.push(JSON.stringify(entry) + '\n');
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => {
+        this.flushBuffer();
+      }, HintEngine.FLUSH_INTERVAL);
+    }
+  }
+
+  /**
+   * Flush buffered log entries to the write stream.
+   */
+  private flushBuffer(): void {
+    if (this.logBuffer.length > 0 && this.logStream) {
+      const data = this.logBuffer.join('');
+      this.logStream.write(data);
+      this.logBuffer = [];
+    }
+    this.flushTimer = null;
+  }
+
+  /**
+   * Flush pending writes and close the log stream. Call on shutdown.
+   */
+  destroy(): void {
+    this.flushBuffer();
+    if (this.logStream) {
+      this.logStream.end();
+      this.logStream = null;
+    }
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
     }
   }
 

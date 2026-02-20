@@ -188,6 +188,7 @@ const handler: ToolHandler = async (
     // Find elements matching the query
     const results = await page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
       const elements: Omit<FoundElement, 'score'>[] = [];
+      const domElements: Element[] = []; // Parallel array of DOM references for batched node ID resolution
       const maxResults = 30; // Get more candidates for better scoring
 
       function getElementInfo(el: Element): Omit<FoundElement, 'score'> | null {
@@ -281,6 +282,7 @@ const handler: ToolHandler = async (
               if (queryTokens.some(token => combinedText.includes(token)) || combinedText.includes(searchLower)) {
                 seen.add(el);
                 (el as unknown as { __clickIndex: number }).__clickIndex = elements.length;
+                domElements.push(el);
                 elements.push(info);
               }
             }
@@ -302,6 +304,7 @@ const handler: ToolHandler = async (
             if (combinedText.includes(searchLower) || queryTokens.some(token => combinedText.includes(token))) {
               seen.add(el);
               (el as unknown as { __clickIndex: number }).__clickIndex = elements.length;
+              domElements.push(el);
               elements.push(info);
             }
           }
@@ -324,31 +327,60 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get backend DOM node IDs — batch resolve in parallel
+    // Get backend DOM node IDs — batched approach (single DOM walk + parallel DOM.describeNode)
+    // Replaces per-candidate querySelectorAll('*').find() which is O(n) × candidates = O(30n)
     const cdpClient = sessionManager.getCDPClient();
-    await Promise.all(
-      results.map(async (_, i) => {
-        try {
-          const { result } = await cdpClient.send<{
-            result: { objectId?: string };
-          }>(page, 'Runtime.evaluate', {
-            expression: `document.querySelectorAll('*').find(el => el.__clickIndex === ${i})`,
-            returnByValue: false,
-          });
 
-          if (result.objectId) {
-            const { node } = await cdpClient.send<{
-              node: { backendNodeId: number };
-            }>(page, 'DOM.describeNode', {
-              objectId: result.objectId,
-            });
-            results[i].backendDOMNodeId = node.backendNodeId;
+    // Step 1: Single Runtime.evaluate to collect all tagged elements in index order
+    const { result: batchResult } = await cdpClient.send<{
+      result: { objectId?: string };
+    }>(page, 'Runtime.evaluate', {
+      expression: `(() => {
+        const indexedEls = [];
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while (node = walker.nextNode()) {
+          const el = node;
+          if (el.__clickIndex !== undefined) {
+            indexedEls.push({ el, index: el.__clickIndex });
           }
-        } catch {
-          // Skip if we can't get the backend node ID
         }
-      })
-    );
+        indexedEls.sort((a, b) => a.index - b.index);
+        return indexedEls.map(e => e.el);
+      })()`,
+      returnByValue: false,
+    });
+
+    if (batchResult.objectId) {
+      // Step 2: Get array properties to obtain individual element object references
+      const { result: properties } = await cdpClient.send<{
+        result: Array<{ name: string; value: { objectId?: string } }>;
+      }>(page, 'Runtime.getProperties', {
+        objectId: batchResult.objectId,
+        ownProperties: true,
+      });
+
+      // Step 3: Parallel DOM.describeNode for all candidates
+      const describePromises: Promise<void>[] = [];
+      for (const prop of properties) {
+        const index = parseInt(prop.name, 10);
+        if (isNaN(index) || index >= results.length || !prop.value?.objectId) continue;
+
+        describePromises.push(
+          cdpClient.send<{ node: { backendNodeId: number } }>(
+            page,
+            'DOM.describeNode',
+            { objectId: prop.value.objectId }
+          ).then(({ node }) => {
+            results[index].backendDOMNodeId = node.backendNodeId;
+          }).catch(() => {
+            // Skip if we can't get the backend node ID
+          })
+        );
+      }
+
+      await Promise.all(describePromises);
+    }
 
     // Score and sort elements
     const scoredResults: FoundElement[] = results
@@ -383,15 +415,22 @@ const handler: ToolHandler = async (
         // Small delay after scroll
         await new Promise(resolve => setTimeout(resolve, 50));
 
-        // Re-get position after scroll
+        // Re-get position after scroll — use __clickIndex=0 on sorted best match
+        // (best match was index 0 before sorting; use backendDOMNodeId instead to be precise)
         const { result: boxResult } = await cdpClient.send<{
           result: { value: { x: number; y: number; width: number; height: number } | null };
         }>(page, 'Runtime.evaluate', {
           expression: `(() => {
-            const el = document.querySelectorAll('*').find(el => el.__clickIndex === 0);
-            if (!el) return null;
-            const rect = el.getBoundingClientRect();
-            return { x: rect.x + rect.width/2, y: rect.y + rect.height/2, width: rect.width, height: rect.height };
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+            let node;
+            while (node = walker.nextNode()) {
+              const el = node;
+              if (el.__clickIndex === 0) {
+                const rect = el.getBoundingClientRect();
+                return { x: rect.x + rect.width/2, y: rect.y + rect.height/2, width: rect.width, height: rect.height };
+              }
+            }
+            return null;
           })()`,
           returnByValue: true,
         });
@@ -433,26 +472,44 @@ const handler: ToolHandler = async (
     const clickType = doubleClick ? 'Double-clicked' : 'Clicked';
     const resultText = `${clickType} ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}`;
 
-    // Optional verification screenshot
+    // Optional verification screenshot — WebP via CDP for speed and consistency
     if (verify) {
-      const screenshot = await page.screenshot({
-        encoding: 'base64',
-        type: 'png',
-        fullPage: false,
-        clip: {
-          x: 0,
-          y: 0,
-          width: Math.min(page.viewport()?.width || 1920, 1920),
-          height: Math.min(page.viewport()?.height || 1080, 1080),
-        },
-      });
+      try {
+        const cdpSession = await (page as any).target().createCDPSession();
+        const { data } = await cdpSession.send('Page.captureScreenshot', {
+          format: 'webp',
+          quality: 60,
+          optimizeForSpeed: true,
+        });
+        await cdpSession.detach();
 
-      return {
-        content: [
-          { type: 'text', text: resultText },
-          { type: 'image', data: screenshot, mimeType: 'image/png' },
-        ],
-      };
+        return {
+          content: [
+            { type: 'text', text: resultText },
+            { type: 'image', data, mimeType: 'image/webp' },
+          ],
+        };
+      } catch {
+        // Fall back to Puppeteer PNG if CDP session creation fails
+        const screenshot = await page.screenshot({
+          encoding: 'base64',
+          type: 'png',
+          fullPage: false,
+          clip: {
+            x: 0,
+            y: 0,
+            width: Math.min(page.viewport()?.width || 1920, 1920),
+            height: Math.min(page.viewport()?.height || 1080, 1080),
+          },
+        });
+
+        return {
+          content: [
+            { type: 'text', text: resultText },
+            { type: 'image', data: screenshot, mimeType: 'image/png' },
+          ],
+        };
+      }
     }
 
     return {

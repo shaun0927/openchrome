@@ -6,6 +6,18 @@ import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'pu
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 
+// Cookie type shared across methods
+type CookieEntry = {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires: number;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite?: string;
+};
+
 export interface CDPClientOptions {
   port?: number;
   maxReconnectAttempts?: number;
@@ -44,8 +56,9 @@ export class CDPClient {
   private reconnectAttempts = 0;
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
-  private cookieDataCache: Map<string, { cookies: Array<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite?: string }>; timestamp: number }> = new Map();
+  private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
   private targetIdIndex: Map<string, Page> = new Map();
+  private inFlightCookieScans: Map<string, Promise<string | null>> = new Map();
   private static readonly COOKIE_CACHE_TTL = 300000; // 5 minutes
 
   constructor(options: CDPClientOptions = {}) {
@@ -185,6 +198,7 @@ export class CDPClient {
     // Clear existing sessions
     this.sessions.clear();
     this.targetIdIndex.clear();
+    this.inFlightCookieScans.clear();
     this.browser = null;
 
     // Attempt reconnection
@@ -435,8 +449,12 @@ export class CDPClient {
   }
 
   /**
-   * Find an authenticated page with cookies to copy from
-   * Returns the targetId of a page that has cookies in Chrome's default context
+   * Find an authenticated page with cookies to copy from.
+   * Returns the targetId of a page that has cookies in Chrome's default context.
+   *
+   * Promise coalescing: concurrent callers for the same domain share one probe
+   * instead of independently hammering Chrome with 20 simultaneous scans.
+   *
    * @param targetDomain Optional domain to prioritize when selecting cookie source
    */
   async findAuthenticatedPageTargetId(targetDomain?: string): Promise<string | null> {
@@ -448,7 +466,29 @@ export class CDPClient {
       return cached.targetId;
     }
 
-    const WebSocket = require('ws');
+    // Promise coalescing: if a scan for this domain is already in-flight, reuse it
+    const existing = this.inFlightCookieScans.get(cacheKey);
+    if (existing) {
+      console.error(`[CDPClient] Coalescing cookie scan for domain: ${cacheKey}`);
+      return existing;
+    }
+
+    // Start the scan and register it so concurrent callers share this promise
+    const scanPromise = this._doFindAuthenticatedPageTargetId(targetDomain, cacheKey);
+    this.inFlightCookieScans.set(cacheKey, scanPromise);
+    try {
+      return await scanPromise;
+    } finally {
+      this.inFlightCookieScans.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Internal implementation of the authenticated-page probe.
+   * Uses Target.attachToTarget (multiplexed CDP) instead of raw WebSocket connections.
+   * Uses Target.getTargets result directly instead of /json/list HTTP calls.
+   */
+  private async _doFindAuthenticatedPageTargetId(targetDomain: string | undefined, cacheKey: string): Promise<string | null> {
     const browser = this.getBrowser();
     const session = await browser.target().createCDPSession();
 
@@ -492,48 +532,36 @@ export class CDPClient {
         console.error(`[CDPClient] Sorted ${candidates.length} candidates by domain match to ${targetDomain}`);
       }
 
-      // Get target list with WebSocket URLs
-      const listResponse = await fetch(`http://127.0.0.1:${this.port}/json/list`);
-      const targets = await listResponse.json() as Array<{ id: string; webSocketDebuggerUrl: string; url: string }>;
-
-      // Check each candidate to find one with actual cookies (in priority order)
+      // Check each candidate to find one with actual cookies (in priority order).
+      // Uses Target.attachToTarget over the existing multiplexed session — no raw WebSocket,
+      // no /json/list HTTP round-trip.
       for (const candidate of candidates) {
-        const targetInfo = targets.find(t => t.id === candidate.targetId);
-        if (!targetInfo || !targetInfo.webSocketDebuggerUrl) {
-          continue;
-        }
+        let attachedSessionId: string | null = null;
+        try {
+          const { sessionId } = await session.send('Target.attachToTarget', {
+            targetId: candidate.targetId,
+            flatten: true,
+          }) as { sessionId: string };
+          attachedSessionId = sessionId;
 
-        // Check if this page has cookies (pages in Chrome's default context have cookies,
-        // while Puppeteer-created pages have empty cookies)
-        const cookieCount = await new Promise<number>((resolve) => {
-          const ws = new WebSocket(targetInfo.webSocketDebuggerUrl);
-          const timeout = setTimeout(() => { ws.close(); resolve(0); }, 2000);
+          // Send Network.getAllCookies through the flat CDP session
+          const result = await session.send('Network.getAllCookies' as any, undefined, { sessionId } as any) as {
+            cookies: CookieEntry[];
+          };
+          const cookieCount = result?.cookies?.length || 0;
 
-          ws.on('open', () => {
-            ws.send(JSON.stringify({ id: 1, method: 'Network.getAllCookies' }));
-          });
-
-          ws.on('message', (data: Buffer) => {
-            const msg = JSON.parse(data.toString());
-            if (msg.id === 1) {
-              clearTimeout(timeout);
-              ws.close();
-              resolve(msg.result?.cookies?.length || 0);
-            }
-          });
-
-          ws.on('error', () => {
-            clearTimeout(timeout);
-            resolve(0);
-          });
-        });
-
-        if (cookieCount > 0) {
-          const domainScore = targetDomain ? this.domainMatchScore(candidate.url, targetDomain) : 0;
-          console.error(`[CDPClient] Found authenticated page ${candidate.targetId.slice(0, 8)} at ${candidate.url.slice(0, 50)} (${cookieCount} cookies, domain score: ${domainScore})`);
-          // Store in cache
-          this.cookieSourceCache.set(cacheKey, { targetId: candidate.targetId, timestamp: Date.now() });
-          return candidate.targetId;
+          if (cookieCount > 0) {
+            const domainScore = targetDomain ? this.domainMatchScore(candidate.url, targetDomain) : 0;
+            console.error(`[CDPClient] Found authenticated page ${candidate.targetId.slice(0, 8)} at ${candidate.url.slice(0, 50)} (${cookieCount} cookies, domain score: ${domainScore})`);
+            this.cookieSourceCache.set(cacheKey, { targetId: candidate.targetId, timestamp: Date.now() });
+            return candidate.targetId;
+          }
+        } catch {
+          // Target may be unresponsive or already detached — skip
+        } finally {
+          if (attachedSessionId) {
+            await session.send('Target.detachFromTarget', { sessionId: attachedSessionId }).catch(() => {});
+          }
         }
       }
 
@@ -545,19 +573,18 @@ export class CDPClient {
   }
 
   /**
-   * Copy all cookies from authenticated page to destination page
-   * Uses raw WebSocket CDP connection to bypass Puppeteer's context isolation
+   * Copy all cookies from authenticated page to destination page.
+   * Uses Target.attachToTarget (multiplexed CDP) to bypass Puppeteer's context isolation —
+   * no raw WebSocket connections, no /json/list HTTP calls.
    */
   async copyCookiesViaCDP(sourceTargetId: string, destPage: Page): Promise<number> {
-    const WebSocket = require('ws');
-
     console.error(`[CDPClient] copyCookiesViaCDP called with sourceTargetId: ${sourceTargetId.slice(0, 8)}`);
 
     try {
-      // Check cookie data cache first
+      // Check cookie data cache first — avoids re-probing Chrome entirely
       const cachedData = this.cookieDataCache.get(sourceTargetId);
       if (cachedData && Date.now() - cachedData.timestamp < CDPClient.COOKIE_CACHE_TTL) {
-        console.error(`[CDPClient] Cache hit for cookie data (${cachedData.cookies.length} cookies), skipping WebSocket`);
+        console.error(`[CDPClient] Cache hit for cookie data (${cachedData.cookies.length} cookies), skipping CDP attach`);
         const destSession = await destPage.createCDPSession();
         try {
           const cookiesToSet = cachedData.cookies.map(c => ({
@@ -578,80 +605,75 @@ export class CDPClient {
         }
       }
 
-      // Get target's WebSocket URL
-      const listResponse = await fetch(`http://127.0.0.1:${this.port}/json/list`);
-      const targets = await listResponse.json() as Array<{ id: string; webSocketDebuggerUrl: string; url: string }>;
+      // Attach to the source target via the multiplexed browser CDP session
+      const browser = this.getBrowser();
+      const browserSession = await browser.target().createCDPSession();
+      let attachedSessionId: string | null = null;
 
-      const sourceTarget = targets.find(t => t.id === sourceTargetId);
-      if (!sourceTarget || !sourceTarget.webSocketDebuggerUrl) {
-        console.error(`[CDPClient] Source target not found in /json/list. Looking for: ${sourceTargetId}`);
-        console.error(`[CDPClient] Available targets: ${targets.map(t => t.id.slice(0,8) + ' ' + t.url.slice(0,40)).join(', ')}`);
-        return 0;
-      }
-
-      console.error(`[CDPClient] Connecting to source target at ${sourceTarget.url.slice(0, 50)}`);
-
-      // Get cookies via WebSocket
-      const cookies = await new Promise<Array<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite?: string }>>((resolve, reject) => {
-        const ws = new WebSocket(sourceTarget.webSocketDebuggerUrl);
-        const timeout = setTimeout(() => {
-          ws.close();
-          reject(new Error('WebSocket timeout'));
-        }, 5000);
-
-        ws.on('open', () => {
-          ws.send(JSON.stringify({ id: 1, method: 'Network.getAllCookies' }));
-        });
-
-        ws.on('message', (data: Buffer) => {
-          const msg = JSON.parse(data.toString());
-          if (msg.id === 1) {
-            clearTimeout(timeout);
-            ws.close();
-            resolve(msg.result?.cookies || []);
-          }
-        });
-
-        ws.on('error', (err: Error) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
-      });
-
-      // Store in cookie data cache
-      this.cookieDataCache.set(sourceTargetId, { cookies, timestamp: Date.now() });
-
-      if (cookies.length === 0) {
-        console.error(`[CDPClient] No cookies found in source page`);
-        return 0;
-      }
-
-      console.error(`[CDPClient] Found ${cookies.length} cookies, setting on destination page`);
-
-      // Set cookies on destination page
-      const destSession = await destPage.createCDPSession();
       try {
-        const cookiesToSet = cookies.map(c => ({
-          name: c.name,
-          value: c.value,
-          domain: c.domain,
-          path: c.path,
-          expires: c.expires,
-          httpOnly: c.httpOnly,
-          secure: c.secure,
-          sameSite: c.sameSite as 'Strict' | 'Lax' | 'None' | undefined,
-        }));
+        // Verify the target exists before attaching
+        const { targetInfos } = await browserSession.send('Target.getTargets') as {
+          targetInfos: Array<{ targetId: string; url: string }>;
+        };
+        const sourceInfo = targetInfos.find(t => t.targetId === sourceTargetId);
+        if (!sourceInfo) {
+          console.error(`[CDPClient] Source target not found: ${sourceTargetId.slice(0, 8)}`);
+          console.error(`[CDPClient] Available targets: ${targetInfos.map(t => t.targetId.slice(0, 8) + ' ' + t.url.slice(0, 40)).join(', ')}`);
+          return 0;
+        }
 
-        await destSession.send('Network.setCookies', { cookies: cookiesToSet });
-        console.error(`[CDPClient] Successfully copied ${cookies.length} cookies`);
+        console.error(`[CDPClient] Attaching to source target at ${sourceInfo.url.slice(0, 50)}`);
 
-        return cookies.length;
+        const { sessionId } = await browserSession.send('Target.attachToTarget', {
+          targetId: sourceTargetId,
+          flatten: true,
+        }) as { sessionId: string };
+        attachedSessionId = sessionId;
+
+        // Fetch cookies through the flat session (no raw WebSocket, no /json/list)
+        const result = await browserSession.send('Network.getAllCookies' as any, undefined, { sessionId } as any) as {
+          cookies: CookieEntry[];
+        };
+        const cookies: CookieEntry[] = result?.cookies || [];
+
+        // Store in cookie data cache
+        this.cookieDataCache.set(sourceTargetId, { cookies, timestamp: Date.now() });
+
+        if (cookies.length === 0) {
+          console.error('[CDPClient] No cookies found in source page');
+          return 0;
+        }
+
+        console.error(`[CDPClient] Found ${cookies.length} cookies, setting on destination page`);
+
+        // Set cookies on destination page via its own CDPSession
+        const destSession = await destPage.createCDPSession();
+        try {
+          const cookiesToSet = cookies.map(c => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            expires: c.expires,
+            httpOnly: c.httpOnly,
+            secure: c.secure,
+            sameSite: c.sameSite as 'Strict' | 'Lax' | 'None' | undefined,
+          }));
+          await destSession.send('Network.setCookies', { cookies: cookiesToSet });
+          console.error(`[CDPClient] Successfully copied ${cookies.length} cookies`);
+          return cookies.length;
+        } finally {
+          await destSession.detach().catch(() => {});
+        }
       } finally {
-        await destSession.detach().catch(() => {});
+        if (attachedSessionId) {
+          await browserSession.send('Target.detachFromTarget', { sessionId: attachedSessionId }).catch(() => {});
+        }
+        await browserSession.detach().catch(() => {});
       }
 
     } catch (error) {
-      console.error(`[CDPClient] Error in copyCookiesViaCDP:`, error);
+      console.error('[CDPClient] Error in copyCookiesViaCDP:', error);
       return 0;
     }
   }

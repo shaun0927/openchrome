@@ -20,7 +20,7 @@ const definition: MCPToolDefinition = {
       },
       depth: {
         type: 'number',
-        description: 'Maximum depth of the tree to traverse (default: 15)',
+        description: 'Maximum depth of the tree to traverse (default: 8 for "all", 5 for "interactive")',
       },
       filter: {
         type: 'string',
@@ -29,7 +29,7 @@ const definition: MCPToolDefinition = {
       },
       ref_id: {
         type: 'string',
-        description: 'Reference ID of a parent element to read from',
+        description: 'Reference ID of a parent element to read from (uses faster partial tree fetch)',
       },
     },
     required: ['tabId'],
@@ -51,8 +51,8 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
-  const maxDepth = (args.depth as number) || 15;
   const filter = (args.filter as string) || 'all';
+  const refIdParam = args.ref_id as string | undefined;
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -75,14 +75,63 @@ const handler: ToolHandler = async (
 
     const cdpClient = sessionManager.getCDPClient();
 
-    // Get the accessibility tree
-    // Use limited depth for interactive filter (fewer nodes to process)
+    // Determine depth: explicit arg > filter-based default
+    // Reduce default from 15→8 for "all" (15 is excessively deep and very slow on complex pages)
+    const defaultDepth = filter === 'interactive' ? 5 : 8;
+    const maxDepth = (args.depth as number) || defaultDepth;
     const fetchDepth = filter === 'interactive' ? Math.min(maxDepth, 5) : maxDepth;
-    const { nodes } = await cdpClient.send<{ nodes: AXNode[] }>(
-      page,
-      'Accessibility.getFullAXTree',
-      { depth: fetchDepth }
-    );
+
+    let nodes: AXNode[];
+
+    // When ref_id is provided, use getPartialAXTree to scope the fetch to a subtree.
+    // This is significantly faster than getFullAXTree on complex pages (e.g. Twitter).
+    if (refIdParam) {
+      const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refIdParam);
+      if (!backendDOMNodeId) {
+        return {
+          content: [{ type: 'text', text: `Error: ref_id "${refIdParam}" not found or expired` }],
+          isError: true,
+        };
+      }
+
+      // Resolve backendDOMNodeId → DOM nodeId via DOM.describeNode
+      let domNodeId: number | undefined;
+      try {
+        const { node: domNode } = await cdpClient.send<{ node: { nodeId: number } }>(
+          page,
+          'DOM.describeNode',
+          { backendNodeId: backendDOMNodeId }
+        );
+        domNodeId = domNode.nodeId;
+      } catch {
+        // DOM.describeNode may return nodeId=0 for non-document nodes if DOM hasn't been enabled.
+        // Fall back to getFullAXTree in that case.
+      }
+
+      if (domNodeId && domNodeId !== 0) {
+        const result = await cdpClient.send<{ nodes: AXNode[] }>(
+          page,
+          'Accessibility.getPartialAXTree',
+          { nodeId: domNodeId, fetchRelatives: true }
+        );
+        nodes = result.nodes;
+      } else {
+        // Fallback: full tree
+        const result = await cdpClient.send<{ nodes: AXNode[] }>(
+          page,
+          'Accessibility.getFullAXTree',
+          { depth: fetchDepth }
+        );
+        nodes = result.nodes;
+      }
+    } else {
+      const result = await cdpClient.send<{ nodes: AXNode[] }>(
+        page,
+        'Accessibility.getFullAXTree',
+        { depth: fetchDepth }
+      );
+      nodes = result.nodes;
+    }
 
     // Clear previous refs for this target
     refIdManager.clearTargetRefs(sessionId, tabId);
@@ -184,10 +233,17 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Start from root nodes
-    const rootNodes = nodes.filter(
-      (n) => !nodes.some((other) => other.childIds?.includes(n.nodeId))
-    );
+    // Start from root nodes — O(n) Set-based detection (replaces O(n²) nested .some())
+    const childIdSet = new Set<number>();
+    for (const node of nodes) {
+      if (node.childIds) {
+        for (const childId of node.childIds) {
+          childIdSet.add(childId);
+        }
+      }
+    }
+    const rootNodes = nodes.filter((n) => !childIdSet.has(n.nodeId));
+
     for (const root of rootNodes) {
       formatNode(root, 0);
     }
