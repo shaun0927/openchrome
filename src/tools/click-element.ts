@@ -109,9 +109,24 @@ function scoreElement(element: FoundElement, queryLower: string, queryTokens: st
   if (queryLower.includes('input') && (element.tagName === 'input' || element.tagName === 'textarea')) {
     score += 30;
   }
+  if (queryLower.includes('switch') && (element.role === 'switch')) {
+    score += 30;
+  }
+  if (queryLower.includes('toggle') && (element.role === 'switch')) {
+    score += 30;
+  }
+  if (queryLower.includes('dropdown') && (element.role === 'combobox' || element.role === 'listbox')) {
+    score += 30;
+  }
+  if (queryLower.includes('select') && (element.role === 'combobox' || element.role === 'listbox')) {
+    score += 30;
+  }
+  if (queryLower.includes('slider') && (element.role === 'slider')) {
+    score += 30;
+  }
 
   // Interactive element bonus
-  if (['button', 'link', 'checkbox', 'radio', 'menuitem', 'tab', 'option'].includes(element.role)) {
+  if (['button', 'link', 'checkbox', 'radio', 'menuitem', 'tab', 'option', 'switch', 'combobox', 'listbox', 'slider', 'treeitem'].includes(element.role)) {
     score += 20;
   }
 
@@ -241,6 +256,14 @@ const handler: ToolHandler = async (
         '[role="option"]',
         '[onclick]',
         '[tabindex]',
+        '[role="combobox"]',
+        '[role="listbox"]',
+        '[role="switch"]',
+        '[role="slider"]',
+        '[role="treeitem"]',
+        '[role="dialog"] [aria-label]',
+        '[role="alertdialog"] [aria-label]',
+        '[data-testid]',
       ];
 
       const seen = new Set<Element>();
@@ -301,29 +324,31 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get backend DOM node IDs
+    // Get backend DOM node IDs — batch resolve in parallel
     const cdpClient = sessionManager.getCDPClient();
-    for (let i = 0; i < results.length; i++) {
-      try {
-        const { result } = await cdpClient.send<{
-          result: { objectId?: string };
-        }>(page, 'Runtime.evaluate', {
-          expression: `document.querySelectorAll('*').find(el => el.__clickIndex === ${i})`,
-          returnByValue: false,
-        });
-
-        if (result.objectId) {
-          const { node } = await cdpClient.send<{
-            node: { backendNodeId: number };
-          }>(page, 'DOM.describeNode', {
-            objectId: result.objectId,
+    await Promise.all(
+      results.map(async (_, i) => {
+        try {
+          const { result } = await cdpClient.send<{
+            result: { objectId?: string };
+          }>(page, 'Runtime.evaluate', {
+            expression: `document.querySelectorAll('*').find(el => el.__clickIndex === ${i})`,
+            returnByValue: false,
           });
-          results[i].backendDOMNodeId = node.backendNodeId;
+
+          if (result.objectId) {
+            const { node } = await cdpClient.send<{
+              node: { backendNodeId: number };
+            }>(page, 'DOM.describeNode', {
+              objectId: result.objectId,
+            });
+            results[i].backendDOMNodeId = node.backendNodeId;
+          }
+        } catch {
+          // Skip if we can't get the backend node ID
         }
-      } catch {
-        // Skip if we can't get the backend node ID
-      }
-    }
+      })
+    );
 
     // Score and sort elements
     const scoredResults: FoundElement[] = results

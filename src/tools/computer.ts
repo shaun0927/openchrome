@@ -128,20 +128,24 @@ const handler: ToolHandler = async (
           });
         }
 
-        // Take screenshot with clip to ensure we don't exceed limits
-        const screenshot = await page.screenshot({
-          encoding: 'base64',
-          type: 'webp',
-          quality: 80,
-          optimizeForSpeed: true,
-          fullPage: false, // Only capture viewport, not entire page
-          clip: {
-            x: 0,
-            y: 0,
-            width: Math.min(currentWidth, MAX_SCREENSHOT_WIDTH),
-            height: Math.min(currentHeight, MAX_SCREENSHOT_HEIGHT),
-          },
-        });
+        // Use CDP directly for lower overhead
+        const cdpClient = getSessionManager().getCDPClient();
+        const { data: screenshot } = await cdpClient.send<{ data: string }>(
+          page,
+          'Page.captureScreenshot',
+          {
+            format: 'webp',
+            quality: 60,
+            clip: {
+              x: 0,
+              y: 0,
+              width: Math.min(currentWidth, MAX_SCREENSHOT_WIDTH),
+              height: Math.min(currentHeight, MAX_SCREENSHOT_HEIGHT),
+              scale: 1,
+            },
+            optimizeForSpeed: true,
+          }
+        );
 
         // Restore original viewport if we changed it
         if (needsResize && originalViewport) {

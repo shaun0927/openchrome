@@ -337,28 +337,36 @@ describe('ComputerTool', () => {
   describe('Screenshot', () => {
     test('returns base64 WebP image with size limits', async () => {
       const handler = await getComputerHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-      (page.screenshot as jest.Mock).mockResolvedValue('base64-encoded-image-data');
+
+      // Mock CDP send to return screenshot data
+      mockSessionManager.mockCDPClient.send.mockImplementation(async (_page: unknown, method: string) => {
+        if (method === 'Page.captureScreenshot') {
+          return { data: 'base64-encoded-image-data' };
+        }
+        return {};
+      });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
         action: 'screenshot',
       }) as { content: Array<{ type: string; data?: string; mimeType?: string }> };
 
-      // Should call screenshot with clip to ensure size limits
-      expect(page.screenshot).toHaveBeenCalledWith({
-        encoding: 'base64',
-        type: 'webp',
-        quality: 80,
-        optimizeForSpeed: true,
-        fullPage: false,
-        clip: {
-          x: 0,
-          y: 0,
-          width: 1280, // Mock viewport width
-          height: 720, // Mock viewport height
-        },
-      });
+      // Should call CDP captureScreenshot with clip to ensure size limits
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Page.captureScreenshot',
+        expect.objectContaining({
+          format: 'webp',
+          quality: 60,
+          optimizeForSpeed: true,
+          clip: expect.objectContaining({
+            x: 0,
+            y: 0,
+            width: 1280, // Mock viewport width
+            height: 720, // Mock viewport height
+          }),
+        })
+      );
       expect(result.content[0].type).toBe('image');
       expect(result.content[0].data).toBe('base64-encoded-image-data');
     });
@@ -674,8 +682,14 @@ describe('ComputerTool', () => {
 
     test('handles screenshot failure', async () => {
       const handler = await getComputerHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-      (page.screenshot as jest.Mock).mockRejectedValue(new Error('Screenshot failed'));
+
+      // Mock CDP send to throw for screenshot
+      mockSessionManager.mockCDPClient.send.mockImplementation(async (_page: unknown, method: string) => {
+        if (method === 'Page.captureScreenshot') {
+          throw new Error('Screenshot failed');
+        }
+        return {};
+      });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,

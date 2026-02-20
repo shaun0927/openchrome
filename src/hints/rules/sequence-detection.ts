@@ -51,4 +51,28 @@ export const sequenceDetectionRules: HintRule[] = [
       return 'Hint: Page may not be loaded. Add wait_for before screenshot.';
     },
   },
+  {
+    name: 'modal-close-failure',
+    priority: 303,
+    match(ctx) {
+      if (ctx.toolName !== 'find' && ctx.toolName !== 'read_page') return null;
+      if (!lastToolWas(ctx, 'click_element')) return null;
+      if (/modal|overlay|dialog|backdrop|popup|drawer/i.test(ctx.resultText)) {
+        return 'Hint: Modal may still be open. Try Escape key via computer(action:"key", text:"Escape") or javascript_tool to remove overlay.';
+      }
+      return null;
+    },
+  },
+  {
+    name: 'navigate-to-demo',
+    priority: 304,
+    match(ctx) {
+      if (ctx.toolName !== 'navigate') return null;
+      if (ctx.isError) return null;
+      if (/demo\.|staging\.|sandbox\.|test\.|localhost|127\.0\.0\.1/i.test(ctx.resultText)) {
+        return 'Hint: URL appears to be a non-production environment (demo/staging). Verify this is the intended target.';
+      }
+      return null;
+    },
+  },
 ];

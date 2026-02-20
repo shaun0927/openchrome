@@ -179,53 +179,83 @@ Claude: [3 Workers, 3 sites, simultaneously]
 
 ## What You Can Do
 
+### 20-Site Parallel Crawling
+
+```
+You: ccp crawl these 20 competitor sites and extract their pricing
+
+Claude: [20 Workers, 20 sites, simultaneously — all in your logged-in Chrome]
+        site-01:  $49/mo  ✓  (1.2s)
+        site-02:  $59/mo  ✓  (0.9s)
+        ...
+        site-20:  $39/mo  ✓  (1.4s)
+        Total: 2.8s | Sequential: ~60s | Speedup: 21x
+```
+
+Each Worker runs in an isolated browser context. One Chrome process, 20 parallel sessions, ~300MB total. Not 20 separate browsers eating 10GB of RAM.
+
+### Multi-Cloud Dashboard Monitoring
+
+```
+You: ccp screenshot my AWS billing, GCP console, Azure portal, Stripe,
+     and Datadog — all at once
+
+Claude: [5 Workers — already logged into every cloud provider]
+        aws-billing.png      $12,847/mo  ✓
+        gcp-console.png      $8,291/mo   ✓
+        azure-portal.png     $3,104/mo   ✓
+        stripe-revenue.png   $47,230 MRR ✓
+        datadog-metrics.png  99.7% uptime ✓
+        Time: 3.1s (not 10+ minutes of login screens)
+```
+
+No OAuth tokens. No service accounts. No API keys to rotate. You're already logged in.
+
+### Automated Regression Testing
+
+```bash
+# Full regression suite — 10 flows, 10 Workers, one command
+claude -p "ccp test these 10 critical flows on staging.myapp.com:
+  login, signup, checkout, search, profile-edit,
+  password-reset, file-upload, notifications, admin-panel, API-docs"
+
+# Sequential: ~15 minutes.  CCP: ~90 seconds.
+# Run this before every deploy.
+```
+
+Each Worker gets an isolated session — no cookie contamination between test flows. Test multi-user scenarios (admin + regular user) simultaneously.
+
+### Competitive Intelligence at Scale
+
+```
+You: ccp monitor pricing on Amazon, Walmart, Target, Best Buy, and Costco
+     for "Sony WH-1000XM5" — compare and find the lowest
+
+Claude: [5 Workers, 5 retailers, parallel]
+        Amazon:    $278
+        Walmart:   $298
+        Target:    $279
+        Best Buy:  $249 ← lowest (sale)
+        Costco:    $269 (members only)
+        Time: 2.4s | All prices from live pages, not cached APIs
+```
+
+Works on sites with bot detection because it's your real Chrome — real cookies, real fingerprint, real browsing history.
+
 ### Multi-Account Operations
 
 ```
-You: ccp check my personal and work Gmail at the same time
+You: ccp check order status on my personal and business Amazon accounts,
+     plus my eBay seller dashboard — all at the same time
 
-Claude: [Creates 2 isolated Workers]
-        Personal account: 3 unread emails
-        Work account: 7 unread emails
-        Time: 2.1s (parallel)
+Claude: [3 Workers, 3 isolated sessions]
+        Amazon Personal:  2 packages arriving tomorrow
+        Amazon Business:  Purchase order #4521 approved
+        eBay Seller:      3 new orders, $847 revenue today
+        Time: 2.1s
 ```
 
-### Price Comparison Across Sites
-
-```
-You: ccp find the cheapest iPhone 15 on Amazon, eBay, and Walmart
-
-Claude: [3 Workers, 3 sites, simultaneously]
-        Amazon:  $999
-        eBay:    $945  ← lowest
-        Walmart: $979
-        Time: 1.3s total (not 3.9s)
-```
-
-### Authenticated Dashboard Monitoring
-
-```
-You: ccp screenshot my AWS billing, Stripe dashboard, and Vercel usage
-
-Claude: [All 3 require login — but you're already authenticated]
-        aws-billing.png    ✓
-        stripe-revenue.png ✓
-        vercel-usage.png   ✓
-```
-
-### Parallel QA Testing
-
-```bash
-# 5 tests, 5 terminals, all at once
-claude -p "ccp test login flow on myapp.com"       # Worker 1
-claude -p "ccp test checkout on myapp.com"          # Worker 2
-claude -p "ccp test admin panel on myapp.com"       # Worker 3
-claude -p "ccp test mobile view on myapp.com"       # Worker 4
-claude -p "ccp test form validation on myapp.com"   # Worker 5
-
-# Sequential: ~5 minutes.  Parallel with CCP: ~1 minute.
-# That's your entire smoke test suite before lunch.
-```
+Same site, different accounts, simultaneously. Each Worker has its own cookies and session state.
 
 ---
 

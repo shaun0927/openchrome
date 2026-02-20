@@ -65,10 +65,15 @@ const handler: ToolHandler = async (
     }
 
     // Execute the JavaScript
-    const result = await page.evaluate((jsCode: string): { success: boolean; value?: string; error?: string } => {
+    const result = await page.evaluate(async (jsCode: string): Promise<{ success: boolean; value?: string; error?: string }> => {
       try {
         // Use indirect eval to execute in global scope
-        const evalResult = (0, eval)(jsCode);
+        let evalResult = (0, eval)(jsCode);
+
+        // Await Promise results (handles fetch, async functions, etc.)
+        if (evalResult && typeof evalResult === 'object' && typeof evalResult.then === 'function') {
+          evalResult = await evalResult;
+        }
 
         // Serialize the result
         if (evalResult === undefined) {

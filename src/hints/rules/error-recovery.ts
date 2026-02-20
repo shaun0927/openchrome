@@ -34,6 +34,10 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
     test: /coordinate|click at position|x,?\s*y/i,
     hint: 'Hint: Use click_element(query) instead — finds and clicks in one step.',
   },
+  {
+    test: /^\s*\{\s*\}\s*$|"result":\s*\{\s*\}/,
+    hint: 'Hint: Empty object may indicate an async result. Wrap code in async IIFE: (async () => { return await ... })()',
+  },
 ];
 
 export const errorRecoveryRules: HintRule[] = patterns.map((p, i) => ({
