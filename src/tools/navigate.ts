@@ -138,7 +138,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    const page = await sessionManager.getPage(sessionId, tabId);
+    const page = await sessionManager.getPage(sessionId, tabId, undefined, 'navigate');
     if (!page) {
       return {
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],

@@ -5,10 +5,14 @@
 
 import { Page, Target, BrowserContext } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
-import { CDPClient, getCDPClient } from './cdp/client';
+import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
+import { ChromePool, getChromePool } from './chrome/pool';
+import { getGlobalConfig } from './config/global';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
+import { BrowserRouter } from './router';
+import { HybridConfig } from './types/browser-backend';
 
 // Helper to get target ID (internal puppeteer property)
 function getTargetId(target: Target): string {
@@ -28,6 +32,10 @@ export interface SessionManagerConfig {
   maxWorkersPerSession?: number;
   /** Use connection pool for page management (default: false for worker isolation) */
   useConnectionPool?: boolean;
+  /** Use default browser context (shares cookies/sessions with Chrome profile) */
+  useDefaultContext?: boolean;
+  /** Enable Chrome pool for origin-aware instance distribution (default: false) */
+  usePool?: boolean;
 }
 
 export interface SessionManagerStats {
@@ -48,7 +56,9 @@ const DEFAULT_CONFIG: Required<SessionManagerConfig> = {
   autoCleanup: true,
   maxSessions: 100,
   maxWorkersPerSession: 20,
-  useConnectionPool: false,         // Disabled by default for worker isolation
+  useConnectionPool: true,          // Enabled by default for faster page creation
+  useDefaultContext: true,          // Use Chrome profile's cookies/sessions by default
+  usePool: false,                   // Disabled by default; enable for multi-Chrome origin isolation
 };
 
 export class SessionManager {
@@ -56,8 +66,11 @@ export class SessionManager {
   private targetToWorker: Map<string, { sessionId: string; workerId: string }> = new Map();
   private cdpClient: CDPClient;
   private connectionPool: CDPConnectionPool | null = null;
+  private chromePool: ChromePool | null = null;
+  private cdpFactory: CDPClientFactory;
   private queueManager: RequestQueueManager;
   private eventListeners: ((event: SessionEvent) => void)[] = [];
+  private browserRouter: BrowserRouter | null = null;
 
   // TTL & Stats
   private config: Required<SessionManagerConfig>;
@@ -71,9 +84,14 @@ export class SessionManager {
     this.cdpClient = cdpClient || getCDPClient();
     this.queueManager = new RequestQueueManager();
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.cdpFactory = getCDPClientFactory();
 
     if (this.config.useConnectionPool) {
       this.connectionPool = getCDPConnectionPool();
+    }
+
+    if (this.config.usePool) {
+      this.chromePool = getChromePool({ autoLaunch: getGlobalConfig().autoLaunch });
     }
 
     if (this.config.autoCleanup) {
@@ -84,6 +102,18 @@ export class SessionManager {
     this.cdpClient.addTargetDestroyedListener((targetId) => {
       this.onTargetClosed(targetId);
     });
+  }
+
+  /**
+   * Get the CDPClient for a specific worker (may be on a different Chrome instance)
+   */
+  private getCDPClientForWorker(sessionId: string, workerId: string): CDPClient {
+    const worker = this.getWorker(sessionId, workerId);
+    if (worker?.port) {
+      const client = this.cdpFactory.get(worker.port);
+      if (client) return client;
+    }
+    return this.cdpClient;
   }
 
   /**
@@ -210,8 +240,11 @@ export class SessionManager {
     const name = options.name || `Session ${id.slice(0, 8)}`;
     const defaultWorkerId = 'default';
 
-    // Create default worker with isolated browser context
-    const defaultContext = await this.cdpClient.createBrowserContext();
+    // Create default worker - use default context if configured (shares Chrome profile's cookies)
+    // or create isolated browser context for session isolation
+    const defaultContext = this.config.useDefaultContext
+      ? null  // null means use default browser context (shares cookies with Chrome profile)
+      : await this.cdpClient.createBrowserContext();
     const defaultWorker: Worker = {
       id: defaultWorkerId,
       name: 'Default Worker',
@@ -310,6 +343,18 @@ export class SessionManager {
       }
     }
 
+    // Trigger browser-level GC after bulk cleanup
+    if (deletedSessions.length > 0) {
+      try {
+        const pages = await this.cdpClient.getPages();
+        if (pages.length > 0) {
+          await this.cdpClient.triggerGC(pages[0]);
+        }
+      } catch {
+        // Best-effort GC
+      }
+    }
+
     return deletedSessions;
   }
 
@@ -324,6 +369,12 @@ export class SessionManager {
       await this.deleteSession(sessionId);
       this.totalSessionsCleaned++;
     }
+
+    // Clean up Chrome pool and factory connections
+    if (this.chromePool) {
+      await this.chromePool.cleanup();
+    }
+    await this.cdpFactory.disconnectAll();
 
     return count;
   }
@@ -352,8 +403,36 @@ export class SessionManager {
 
     const name = options.name || `Worker ${workerId}`;
 
-    // Create isolated browser context for this worker
-    const context = await this.cdpClient.createBrowserContext();
+    // Create browser context: shared (null = copies cookies from Chrome profile) or isolated
+    const context = options.shareCookies
+      ? null
+      : await this.cdpClient.createBrowserContext();
+
+    // If pool is enabled and targetUrl provided, acquire a separate Chrome instance
+    let workerPort: number | undefined;
+    let workerPoolOrigin: string | undefined;
+    if (this.chromePool && options.targetUrl) {
+      try {
+        const origin = new URL(options.targetUrl).origin;
+        const poolInstance = await this.chromePool.acquireInstance(origin);
+        workerPort = poolInstance.port;
+        workerPoolOrigin = origin;
+
+        // Ensure CDPClient for this port is connected
+        const workerCdpClient = this.cdpFactory.getOrCreate(workerPort, {
+          autoLaunch: getGlobalConfig().autoLaunch,
+        });
+        if (!workerCdpClient.isConnected()) {
+          await workerCdpClient.connect();
+        }
+
+        console.error(`[SessionManager] Worker ${workerId} assigned to Chrome instance on port ${workerPort} for origin ${origin}`);
+      } catch (err) {
+        console.error(`[SessionManager] Pool acquisition failed, falling back to default:`, err);
+        workerPort = undefined;
+        workerPoolOrigin = undefined;
+      }
+    }
 
     const worker: Worker = {
       id: workerId,
@@ -362,6 +441,8 @@ export class SessionManager {
       context,
       createdAt: Date.now(),
       lastActivityAt: Date.now(),
+      port: workerPort,
+      poolOrigin: workerPoolOrigin,
     };
 
     session.workers.set(workerId, worker);
@@ -454,21 +535,34 @@ export class SessionManager {
     const worker = session.workers.get(workerId);
     if (!worker) return;
 
+    // Determine which CDPClient to use for this worker
+    const workerCdpClient = worker.port
+      ? (this.cdpFactory.get(worker.port) || this.cdpClient)
+      : this.cdpClient;
+
     // Close all pages in this worker
     for (const targetId of worker.targets) {
       try {
-        await this.cdpClient.closePage(targetId);
+        await workerCdpClient.closePage(targetId);
       } catch {
         // Page might already be closed
       }
       this.targetToWorker.delete(targetId);
     }
 
-    // Close the browser context
-    try {
-      await this.cdpClient.closeBrowserContext(worker.context);
-    } catch {
-      // Context might already be closed
+    // Close the browser context (only if it's an isolated context, not the default)
+    if (worker.context) {
+      try {
+        await workerCdpClient.closeBrowserContext(worker.context);
+      } catch {
+        // Context might already be closed
+      }
+    }
+
+    // Release Chrome pool instance if worker had one
+    if (worker.port && worker.poolOrigin && this.chromePool) {
+      this.chromePool.releaseInstance(worker.port, worker.poolOrigin);
+      console.error(`[SessionManager] Released pool instance port ${worker.port} for origin ${worker.poolOrigin}`);
     }
 
     // Clean up ref IDs for this worker
@@ -497,8 +591,9 @@ export class SessionManager {
 
     const worker = await this.getOrCreateWorker(sessionId, workerId);
 
-    // Create page in the worker's isolated browser context
-    const page = await this.cdpClient.createPage(url, worker.context);
+    // Create page in the worker's isolated browser context (use worker's CDPClient if on pool)
+    const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
+    const page = await cdpClient.createPage(url, worker.context);
     const targetId = getTargetId(page.target());
 
     worker.targets.add(targetId);
@@ -535,8 +630,9 @@ export class SessionManager {
    * @param sessionId Session ID
    * @param targetId Target/Tab ID
    * @param workerId Optional worker ID for validation
+   * @param toolName Optional MCP tool name for hybrid BrowserRouter routing
    */
-  async getPage(sessionId: string, targetId: string, workerId?: string): Promise<Page | null> {
+  async getPage(sessionId: string, targetId: string, workerId?: string, toolName?: string): Promise<Page | null> {
     const ownerInfo = this.targetToWorker.get(targetId);
 
     if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
@@ -547,13 +643,27 @@ export class SessionManager {
       throw new Error(`Target ${targetId} does not belong to worker ${workerId}`);
     }
 
+    const cdpClient = this.getCDPClientForWorker(sessionId, ownerInfo.workerId);
+
     // Validate target is still valid
-    if (!await this.isTargetValid(targetId)) {
+    try {
+      const page = await cdpClient.getPageByTargetId(targetId);
+      if (!page || page.isClosed()) {
+        this.onTargetClosed(targetId);
+        return null;
+      }
+
+      // Route through BrowserRouter if hybrid mode is active and toolName provided
+      if (this.browserRouter && toolName) {
+        const result = await this.browserRouter.route(toolName, page);
+        return result.page;
+      }
+
+      return page;
+    } catch {
       this.onTargetClosed(targetId);
       return null;
     }
-
-    return this.cdpClient.getPageByTargetId(targetId);
   }
 
   /**
@@ -563,9 +673,10 @@ export class SessionManager {
     const worker = this.getWorker(sessionId, workerId);
     if (!worker) return [];
 
+    const cdpClient = this.getCDPClientForWorker(sessionId, workerId);
     const pages: Page[] = [];
     for (const targetId of worker.targets) {
-      const page = await this.cdpClient.getPageByTargetId(targetId);
+      const page = await cdpClient.getPageByTargetId(targetId);
       if (page) {
         pages.push(page);
       }
@@ -627,8 +738,11 @@ export class SessionManager {
     }
 
     try {
-      // Close the page via CDP
-      await this.cdpClient.closePage(targetId);
+      // Close the page via CDP (use worker's CDPClient if on pool)
+      const cdpClient = this.getCDPClientForWorker(sessionId, ownerInfo.workerId);
+
+      // closePage() already triggers GC internally before closing
+      await cdpClient.closePage(targetId);
 
       // Clean up internal state
       const session = this.sessions.get(sessionId);
@@ -698,12 +812,17 @@ export class SessionManager {
 
     this.touchSession(sessionId);
 
+    const ownerInfo = this.targetToWorker.get(targetId);
+    const cdpClient = ownerInfo
+      ? this.getCDPClientForWorker(sessionId, ownerInfo.workerId)
+      : this.cdpClient;
+
     return this.queueManager.enqueue(sessionId, async () => {
-      const page = await this.cdpClient.getPageByTargetId(targetId);
+      const page = await cdpClient.getPageByTargetId(targetId);
       if (!page) {
         throw new Error(`Page not found for target ${targetId}`);
       }
-      return this.cdpClient.send<T>(page, method, params);
+      return cdpClient.send<T>(page, method, params);
     });
   }
 
@@ -824,6 +943,34 @@ export class SessionManager {
    */
   getCDPClient(): CDPClient {
     return this.cdpClient;
+  }
+
+  /**
+   * Initialize hybrid mode with BrowserRouter
+   */
+  async initHybrid(config: HybridConfig): Promise<void> {
+    if (this.browserRouter) return; // Already initialized
+    this.browserRouter = new BrowserRouter(config);
+    await this.browserRouter.initialize();
+    console.error('[SessionManager] Hybrid mode initialized');
+  }
+
+  /**
+   * Get the BrowserRouter (for stats/escalation)
+   */
+  getBrowserRouter(): BrowserRouter | null {
+    return this.browserRouter;
+  }
+
+  /**
+   * Cleanup hybrid mode
+   */
+  async cleanupHybrid(): Promise<void> {
+    if (this.browserRouter) {
+      await this.browserRouter.cleanup();
+      this.browserRouter = null;
+      console.error('[SessionManager] Hybrid mode cleaned up');
+    }
   }
 }
 

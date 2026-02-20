@@ -65,7 +65,7 @@ const handler: ToolHandler = async (
   }
 
   try {
-    const page = await sessionManager.getPage(sessionId, tabId);
+    const page = await sessionManager.getPage(sessionId, tabId, undefined, 'read_page');
     if (!page) {
       return {
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
@@ -76,10 +76,12 @@ const handler: ToolHandler = async (
     const cdpClient = sessionManager.getCDPClient();
 
     // Get the accessibility tree
+    // Use limited depth for interactive filter (fewer nodes to process)
+    const fetchDepth = filter === 'interactive' ? Math.min(maxDepth, 5) : maxDepth;
     const { nodes } = await cdpClient.send<{ nodes: AXNode[] }>(
       page,
       'Accessibility.getFullAXTree',
-      { depth: maxDepth }
+      { depth: fetchDepth }
     );
 
     // Clear previous refs for this target

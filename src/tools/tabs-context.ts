@@ -55,7 +55,7 @@ const handler: ToolHandler = async (
 
       for (const targetId of targetIds) {
         try {
-          const page = await sessionManager.getPage(sessionId, targetId, workerInfo.id);
+          const page = await sessionManager.getPage(sessionId, targetId, workerInfo.id, 'tabs_context');
           if (page) {
             const tabInfo: TabInfo = {
               tabId: targetId,

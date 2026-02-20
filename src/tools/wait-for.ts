@@ -71,7 +71,7 @@ const handler: ToolHandler = async (
   }
 
   try {
-    const page = await sessionManager.getPage(sessionId, tabId);
+    const page = await sessionManager.getPage(sessionId, tabId, undefined, 'wait_for');
     if (!page) {
       return {
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
