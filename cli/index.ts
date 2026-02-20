@@ -77,7 +77,8 @@ program
   .description('Automatically configure MCP server for Claude Code')
   .option('--dashboard', 'Enable terminal dashboard')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
-  .action(async (options: { dashboard?: boolean; autoLaunch?: boolean }) => {
+  .option('-s, --scope <scope>', 'Installation scope: "user" (global, default) or "project" (current project only)', 'user')
+  .action(async (options: { dashboard?: boolean; autoLaunch?: boolean; scope?: string }) => {
     const { execSync, spawnSync } = require('child_process');
 
     console.log('Setting up Claude Chrome Parallel for Claude Code...\n');
@@ -88,6 +89,13 @@ program
     } catch {
       console.error('❌ Claude Code CLI not found.');
       console.error('   Please install Claude Code first: https://claude.ai/code');
+      process.exit(1);
+    }
+
+    // Validate scope
+    const scope = options.scope || 'user';
+    if (scope !== 'user' && scope !== 'project') {
+      console.error('❌ Invalid scope. Use "user" (global) or "project" (current project only).');
       process.exit(1);
     }
 
@@ -110,13 +118,14 @@ program
     }
 
     // Add MCP server configuration
-    const fullCommand = `claude mcp add claude-chrome-parallel -- ${nodeCommand} ${scriptPath} ${args.join(' ')}`;
+    const fullCommand = `claude mcp add claude-chrome-parallel -s ${scope} -- ${nodeCommand} ${scriptPath} ${args.join(' ')}`;
 
-    console.log('Running: claude mcp add claude-chrome-parallel...');
+    console.log(`Running: claude mcp add claude-chrome-parallel (scope: ${scope})...`);
 
     try {
       execSync(fullCommand, { stdio: 'inherit' });
       console.log('\n✅ MCP server configured successfully!\n');
+      console.log(`Scope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}\n`);
       console.log('Next steps:');
       console.log('  1. Restart Claude Code');
       console.log('  2. Just say "ccp" — that\'s it.\n');

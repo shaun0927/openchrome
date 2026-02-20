@@ -1,7 +1,7 @@
 {
   "name": "claude-chrome-parallel",
   "version": "3.4.0",
-  "description": "MCP server for parallel Claude Code browser sessions - no more 'Detached' errors",
+  "description": "Ultrafast parallel browser MCP. Say 'ccp' and Claude automates your Chrome.",
   "main": "dist/index.js",
   "bin": {
     "claude-chrome-parallel": "./dist/cli/index.js",
@@ -25,12 +25,15 @@
     "claude",
     "claude-code",
     "mcp",
+    "mcp-server",
+    "ccp",
     "browser-automation",
     "parallel-sessions",
-    "puppeteer",
-    "chrome"
+    "cdp",
+    "chrome",
+    "chrome-devtools-protocol"
   ],
-  "author": "",
+  "author": "shaun0927",
   "license": "MIT",
   "repository": {
     "type": "git",

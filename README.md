@@ -103,13 +103,13 @@ Each Worker gets a **completely isolated browser context**.
 ## Quick Start
 
 ```bash
-# Install
-npm install -g github:shaun0927/claude-chrome-parallel
+# Install globally
+npm install -g claude-chrome-parallel
 
 # Auto-configure Claude Code
 ccp setup
 
-# Restart Claude Code — done.
+# Restart Claude Code — just say "ccp".
 ```
 
 <details>
@@ -127,6 +127,18 @@ ccp setup
 ```
 
 Or: `claude mcp add claude-chrome-parallel -- ccp serve --auto-launch`
+
+</details>
+
+<details>
+<summary>Installation scope</summary>
+
+```bash
+ccp setup                  # Global — available in all projects (default)
+ccp setup --scope project  # Project — only this directory
+```
+
+Global install writes to `~/.claude.json`. Project install writes to `.mcp.json` in the current directory.
 
 </details>
 
@@ -341,7 +353,8 @@ navigate → title contains "Login"
 ## CLI
 
 ```bash
-ccp setup                         # Auto-configure for Claude Code
+ccp setup                         # Auto-configure (global)
+ccp setup --scope project         # Auto-configure (project only)
 ccp serve --auto-launch           # Start with auto Chrome launch
 ccp serve --headless-shell        # Headless mode (15-30% less memory)
 ccp serve --chrome-binary <path>  # Custom Chrome binary
@@ -363,6 +376,14 @@ ccp cleanup                       # Clean up old sessions
 - **Headless Shell** — `--headless-shell` for 15-30% less memory
 
 </details>
+
+## Update
+
+```bash
+npm update -g claude-chrome-parallel
+```
+
+---
 
 ## Development
 
