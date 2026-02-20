@@ -3,16 +3,19 @@
  *
  * Rules are sorted by priority (lower = higher priority) and evaluated first-match-wins.
  * Uses ActivityTracker's recent calls for sequence/pattern detection.
+ * Integrates PatternLearner for adaptive error→recovery learning.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ToolCallEvent } from '../dashboard/types';
 import type { ActivityTracker } from '../dashboard/activity-tracker';
+import { PatternLearner } from './pattern-learner';
 import { errorRecoveryRules } from './rules/error-recovery';
 import { compositeSuggestionRules } from './rules/composite-suggestions';
 import { sequenceDetectionRules } from './rules/sequence-detection';
 import { repetitionDetectionRules } from './rules/repetition-detection';
+import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
 
 export interface HintContext {
@@ -39,17 +42,21 @@ export interface HintLogEntry {
 export class HintEngine {
   private rules: HintRule[];
   private activityTracker: ActivityTracker;
+  private learner: PatternLearner;
   private logFilePath: string | null = null;
 
   constructor(activityTracker: ActivityTracker) {
     this.activityTracker = activityTracker;
+    this.learner = new PatternLearner();
 
     // Collect all rules and sort by priority (ascending = highest priority first)
+    // Learned rules (350) sit between repetition (250) and success hints (400)
     this.rules = [
       ...errorRecoveryRules,
       ...compositeSuggestionRules,
       ...sequenceDetectionRules,
       ...repetitionDetectionRules,
+      ...createLearnedRules(this.learner),
       ...successHintRules,
     ].sort((a, b) => a.priority - b.priority);
   }
@@ -67,7 +74,15 @@ export class HintEngine {
   }
 
   /**
+   * Enable adaptive learning — load existing patterns and persist new ones.
+   */
+  enableLearning(dirPath: string): void {
+    this.learner.enablePersistence(dirPath);
+  }
+
+  /**
    * Evaluate rules and return the first matching hint, or null.
+   * Also feeds the learner for adaptive pattern detection.
    */
   getHint(toolName: string, result: Record<string, unknown>, isError: boolean): string | null {
     const resultText = this.extractText(result);
@@ -85,6 +100,14 @@ export class HintEngine {
         hint = h;
         break;
       }
+    }
+
+    // Feed the learner: observe every completion for recovery detection
+    this.learner.onToolComplete(toolName, isError);
+
+    // If no rule matched an error, start learning observation
+    if (hint === null && isError) {
+      this.learner.onMiss(toolName, resultText);
     }
 
     this.log({ timestamp: Date.now(), toolName, isError, matchedRule, hint });
@@ -122,5 +145,12 @@ export class HintEngine {
    */
   getRules(): HintRule[] {
     return this.rules;
+  }
+
+  /**
+   * Get the pattern learner (for testing).
+   */
+  getLearner(): PatternLearner {
+    return this.learner;
   }
 }
