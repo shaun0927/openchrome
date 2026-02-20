@@ -3,4 +3,4 @@
  */
 
 export { HintEngine } from './hint-engine';
-export type { HintContext, HintRule } from './hint-engine';
+export type { HintContext, HintRule, HintLogEntry } from './hint-engine';

@@ -55,8 +55,11 @@ export class MCPServer {
       path.join(process.cwd(), '.chrome-parallel', 'timeline')
     );
 
-    // Initialize hint engine
+    // Initialize hint engine with logging
     this.hintEngine = new HintEngine(this.activityTracker);
+    this.hintEngine.enableLogging(
+      path.join(process.cwd(), '.chrome-parallel', 'hints')
+    );
   }
 
   /**

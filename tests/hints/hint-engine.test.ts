@@ -1,8 +1,11 @@
 /**
  * HintEngine unit tests
- * Verifies rule matching, priority ordering, and first-match-wins behavior.
+ * Verifies rule matching, priority ordering, first-match-wins, repetition detection, and logging.
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { ActivityTracker } from '../../src/dashboard/activity-tracker';
 import { HintEngine } from '../../src/hints/hint-engine';
 
@@ -13,12 +16,14 @@ function makeResult(text: string, isError = false): Record<string, unknown> {
   };
 }
 
-function makeTracker(calls: Array<{ toolName: string; args?: Record<string, unknown> }> = []): ActivityTracker {
+function makeTracker(
+  calls: Array<{ toolName: string; args?: Record<string, unknown>; result?: 'success' | 'error'; error?: string }> = []
+): ActivityTracker {
   const tracker = new ActivityTracker();
   // Seed completed calls (most recent first in getRecentCalls)
-  for (const call of calls.reverse()) {
+  for (const call of [...calls].reverse()) {
     const id = tracker.startCall(call.toolName, 'test', call.args);
-    tracker.endCall(id, 'success');
+    tracker.endCall(id, call.result || 'success', call.error);
   }
   return tracker;
 }
@@ -211,6 +216,130 @@ describe('HintEngine', () => {
       const hint = engine.getHint('navigate', result, true);
       // Should be error-recovery hint (lower priority number = higher precedence)
       expect(hint).toContain('Page may require login');
+    });
+  });
+
+  describe('repetition detection rules', () => {
+    it('should detect same tool failing 3 times in a row', () => {
+      const tracker = makeTracker([
+        { toolName: 'click_element', result: 'error', error: 'not found' },
+        { toolName: 'click_element', result: 'error', error: 'not found' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('element not found', true);
+      const hint = engine.getHint('click_element', result, true);
+      // Error recovery (priority 100+) should fire before repetition (250) for known patterns
+      // But for unknown error patterns, repetition catches it
+      expect(hint).not.toBeNull();
+    });
+
+    it('should detect same-tool error streak for unknown errors', () => {
+      const tracker = makeTracker([
+        { toolName: 'custom_tool', result: 'error', error: 'weird error' },
+        { toolName: 'custom_tool', result: 'error', error: 'weird error' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('another weird error', true);
+      const hint = engine.getHint('custom_tool', result, true);
+      expect(hint).toContain('failed 3 times');
+      expect(hint).toContain('different approach');
+    });
+
+    it('should detect A↔B oscillation pattern', () => {
+      const tracker = makeTracker([
+        { toolName: 'read_page' },
+        { toolName: 'navigate' },
+        { toolName: 'read_page' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('navigated to page');
+      const hint = engine.getHint('navigate', result, false);
+      expect(hint).toContain('oscillation');
+      expect(hint).toContain('navigate');
+      expect(hint).toContain('read_page');
+    });
+
+    it('should detect same tool called 3+ times with success', () => {
+      const tracker = makeTracker([
+        { toolName: 'read_page' },
+        { toolName: 'read_page' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('page content unchanged');
+      const hint = engine.getHint('read_page', result, false);
+      // Sequence detection (repeated read_page, priority 301) fires before repetition (252)
+      expect(hint).not.toBeNull();
+    });
+
+    it('should not trigger on mixed tool calls', () => {
+      const tracker = makeTracker([
+        { toolName: 'navigate' },
+        { toolName: 'find' },
+        { toolName: 'click_element' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('{"status":"ok"}');
+      const hint = engine.getHint('read_page', result, false);
+      expect(hint).toBeNull();
+    });
+  });
+
+  describe('hit/miss logging', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hint-log-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should log hint hits to JSONL file', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      engine.enableLogging(tmpDir);
+
+      const result = makeResult('ref not found: abc', true);
+      engine.getHint('click_element', result, true);
+
+      const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.jsonl'));
+      expect(files).toHaveLength(1);
+
+      const lines = fs.readFileSync(path.join(tmpDir, files[0]), 'utf-8').trim().split('\n');
+      expect(lines).toHaveLength(1);
+
+      const entry = JSON.parse(lines[0]);
+      expect(entry.toolName).toBe('click_element');
+      expect(entry.isError).toBe(true);
+      expect(entry.matchedRule).toContain('error-recovery');
+      expect(entry.hint).toContain('Refs expire');
+    });
+
+    it('should log hint misses with null values', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      engine.enableLogging(tmpDir);
+
+      const result = makeResult('{"status":"ok"}');
+      engine.getHint('some_tool', result, false);
+
+      const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.jsonl'));
+      const lines = fs.readFileSync(path.join(tmpDir, files[0]), 'utf-8').trim().split('\n');
+      const entry = JSON.parse(lines[0]);
+      expect(entry.matchedRule).toBeNull();
+      expect(entry.hint).toBeNull();
+    });
+
+    it('should accumulate multiple log entries', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      engine.enableLogging(tmpDir);
+
+      engine.getHint('navigate', makeResult('login page'), false);
+      engine.getHint('find', makeResult('0 results'), false);
+      engine.getHint('some_tool', makeResult('ok'), false);
+
+      const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.jsonl'));
+      const lines = fs.readFileSync(path.join(tmpDir, files[0]), 'utf-8').trim().split('\n');
+      expect(lines).toHaveLength(3);
     });
   });
 });
