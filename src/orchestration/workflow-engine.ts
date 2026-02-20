@@ -5,6 +5,7 @@
 
 import { getSessionManager } from '../session-manager';
 import { getOrchestrationStateManager, OrchestrationState, WorkerState } from './state-manager';
+import { getCDPConnectionPool } from '../cdp/connection-pool';
 
 export interface WorkflowStep {
   workerId: string;
@@ -22,6 +23,10 @@ export interface WorkflowDefinition {
   parallel: boolean;
   maxRetries: number;
   timeout: number;
+  /** Maximum consecutive stale updates before circuit breaker triggers (default: 5) */
+  maxStaleIterations?: number;
+  /** Maximum total workflow execution time in ms (default: 300000) */
+  globalTimeoutMs?: number;
 }
 
 export interface WorkerResult {
@@ -60,6 +65,22 @@ interface InMemoryWorkflowState {
   workerStatuses: Map<string, { status: WorkerState['status']; resultSummary: string }>;
   overallStatus: OrchestrationState['status'];
   allDone: boolean;
+  /** Per-worker timeout/circuit breaker config */
+  workerTimeoutMs: number;
+  maxStaleIterations: number;
+  globalTimeoutMs: number;
+}
+
+/**
+ * Per-worker runtime state for timeout and circuit breaker tracking
+ */
+interface WorkerRuntimeState {
+  workerName: string;
+  startTime: number;
+  lastDataHash: string;
+  staleCount: number;
+  lastUpdateTime: number;
+  timedOut: boolean;
 }
 
 export class WorkflowEngine {
@@ -71,6 +92,22 @@ export class WorkflowEngine {
    * This is the source of truth for completion tracking — avoids file-based race conditions.
    */
   private workflowStates: Map<string, InMemoryWorkflowState> = new Map();
+
+  /**
+   * Per-worker runtime state for timeout and circuit breaker tracking.
+   * Keyed by workerName.
+   */
+  private workerRuntimeStates: Map<string, WorkerRuntimeState> = new Map();
+
+  /**
+   * Timeout handles for worker absolute timeouts. Keyed by workerName.
+   */
+  private workerTimeoutHandles: Map<string, NodeJS.Timeout> = new Map();
+
+  /**
+   * Global workflow timeout handle. Keyed by orchestrationId.
+   */
+  private globalTimeoutHandles: Map<string, NodeJS.Timeout> = new Map();
 
   /**
    * Promise-based mutex for serializing completeWorker operations.
@@ -106,7 +143,8 @@ export class WorkflowEngine {
   }> {
     const orchestrationId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const workers = await Promise.all(
+    // Phase 1: Create all workers (no pages yet)
+    const createdWorkers = await Promise.all(
       workflow.steps.map(async (step) => {
         const worker = await this.sessionManager.createWorker(sessionId, {
           id: step.workerId,
@@ -114,12 +152,30 @@ export class WorkflowEngine {
           shareCookies: step.shareCookies,
           targetUrl: step.url,
         });
+        return { worker, step };
+      })
+    );
 
-        const { targetId } = await this.sessionManager.createTarget(
-          sessionId,
-          step.url,
-          worker.id
-        );
+    // Phase 2: Batch-acquire pages from the pool to prevent about:blank proliferation.
+    // acquireBatch suppresses per-page replenishment, avoiding 60-80 ghost tabs.
+    const pool = getCDPConnectionPool();
+    const batchPages = await pool.acquireBatch(createdWorkers.length);
+
+    // Phase 3: Assign pages to workers and navigate to target URLs
+    const workers = await Promise.all(
+      createdWorkers.map(async ({ worker, step }, i) => {
+        const page = batchPages[i];
+
+        // Navigate the pre-acquired page to the target URL
+        if (step.url) {
+          await page.goto(step.url, { waitUntil: 'domcontentloaded' }).catch(() => {
+            // Navigation may fail for some URLs; worker will retry
+          });
+        }
+
+        // Register the page as a target in the session manager
+        const targetId = (page.target() as unknown as { _targetId: string })._targetId;
+        this.sessionManager.registerExistingTarget(sessionId, worker.id, targetId);
 
         return {
           workerId: worker.id,
@@ -143,6 +199,9 @@ export class WorkflowEngine {
       workerStatuses.set(w.workerName, { status: 'INIT', resultSummary: '' });
     }
 
+    const workerTimeoutMs = workflow.timeout || 60_000;
+    const maxStaleIterations = workflow.maxStaleIterations ?? 5;
+    const globalTimeoutMs = workflow.globalTimeoutMs ?? 300_000;
     const memState: InMemoryWorkflowState = {
       orchestrationId,
       task: workflow.name,
@@ -153,10 +212,42 @@ export class WorkflowEngine {
       workerStatuses,
       overallStatus: 'INIT',
       allDone: false,
+      workerTimeoutMs,
+      maxStaleIterations,
+      globalTimeoutMs,
     };
     this.workflowStates.set(orchestrationId, memState);
 
-    console.error(`[WorkflowEngine] Initialized workflow ${orchestrationId} with ${workers.length} workers`);
+    // Initialize per-worker runtime state and set up timeouts
+    for (const w of workers) {
+      const runtimeState: WorkerRuntimeState = {
+        workerName: w.workerName,
+        startTime: Date.now(),
+        lastDataHash: '',
+        staleCount: 0,
+        lastUpdateTime: Date.now(),
+        timedOut: false,
+      };
+      this.workerRuntimeStates.set(w.workerName, runtimeState);
+
+      // Set absolute timeout per worker
+      const timeoutHandle = setTimeout(() => {
+        this.forceCompleteWorker(w.workerName, 'timeout',
+          `Worker exceeded max duration of ${workerTimeoutMs}ms`);
+      }, workerTimeoutMs);
+      timeoutHandle.unref();
+      this.workerTimeoutHandles.set(w.workerName, timeoutHandle);
+    }
+
+    // Set global workflow timeout
+    const globalHandle = setTimeout(() => {
+      this.forceCompleteAllRunningWorkers(orchestrationId,
+        `Global workflow timeout of ${memState.globalTimeoutMs}ms exceeded`);
+    }, memState.globalTimeoutMs);
+    globalHandle.unref();
+    this.globalTimeoutHandles.set(orchestrationId, globalHandle);
+
+    console.error(`[WorkflowEngine] Initialized workflow ${orchestrationId} with ${workers.length} workers (timeout: ${workerTimeoutMs}ms/worker, ${memState.globalTimeoutMs}ms global)`);
 
     return {
       orchestrationId,
@@ -169,7 +260,7 @@ export class WorkflowEngine {
   }
 
   /**
-   * Update worker progress
+   * Update worker progress with circuit breaker check
    */
   async updateWorkerProgress(
     workerName: string,
@@ -197,6 +288,108 @@ export class WorkflowEngine {
         update.result,
         update.error
       );
+    }
+
+    // Circuit breaker: check for stale data (no progress)
+    if (update.extractedData !== undefined) {
+      const runtimeState = this.workerRuntimeStates.get(workerName);
+      if (runtimeState && !runtimeState.timedOut) {
+        const newHash = this.hashData(update.extractedData);
+        runtimeState.lastUpdateTime = Date.now();
+
+        if (newHash === runtimeState.lastDataHash) {
+          runtimeState.staleCount++;
+
+          // Find max stale iterations from workflow config
+          let maxStale = 5;
+          for (const ws of this.workflowStates.values()) {
+            if (ws.workerStatuses.has(workerName)) {
+              maxStale = ws.maxStaleIterations;
+              break;
+            }
+          }
+
+          if (runtimeState.staleCount >= maxStale) {
+            console.error(
+              `[WorkflowEngine] Circuit breaker: Worker "${workerName}" data unchanged for ${maxStale} updates`
+            );
+            this.forceCompleteWorker(workerName, 'stale',
+              `No data change for ${maxStale} consecutive updates`);
+          }
+        } else {
+          runtimeState.staleCount = 0;
+          runtimeState.lastDataHash = newHash;
+        }
+      }
+    }
+  }
+
+  /**
+   * Hash extracted data for circuit breaker comparison
+   */
+  private hashData(data: unknown): string {
+    const str = JSON.stringify(data) ?? '';
+    return str.length.toString() + '_' + str.slice(0, 200);
+  }
+
+  /**
+   * Force-complete a single worker due to timeout or circuit breaker
+   */
+  private async forceCompleteWorker(
+    workerName: string,
+    reason: 'timeout' | 'stale',
+    message: string
+  ): Promise<void> {
+    // Prevent double-completion
+    const runtimeState = this.workerRuntimeStates.get(workerName);
+    if (runtimeState) {
+      if (runtimeState.timedOut) return;
+      runtimeState.timedOut = true;
+    }
+
+    // Clear the timeout handle
+    const handle = this.workerTimeoutHandles.get(workerName);
+    if (handle) {
+      clearTimeout(handle);
+      this.workerTimeoutHandles.delete(workerName);
+    }
+
+    console.error(
+      `[WorkflowEngine] Force-completing worker "${workerName}" (${reason}): ${message}`
+    );
+
+    // Complete with PARTIAL status — preserves any data collected so far
+    await this.completeWorker(workerName, 'PARTIAL', `[${reason}] ${message}`, null);
+  }
+
+  /**
+   * Force-complete all running workers in a workflow (global timeout)
+   */
+  private async forceCompleteAllRunningWorkers(
+    orchestrationId: string,
+    message: string
+  ): Promise<void> {
+    const memState = this.workflowStates.get(orchestrationId);
+    if (!memState) return;
+
+    console.error(`[WorkflowEngine] Global timeout for workflow ${orchestrationId}: ${message}`);
+
+    const runningWorkers: string[] = [];
+    for (const [workerName, ws] of memState.workerStatuses) {
+      if (ws.status !== 'SUCCESS' && ws.status !== 'PARTIAL' && ws.status !== 'FAIL') {
+        runningWorkers.push(workerName);
+      }
+    }
+
+    for (const workerName of runningWorkers) {
+      await this.forceCompleteWorker(workerName, 'timeout', message);
+    }
+
+    // Clear global timeout handle
+    const handle = this.globalTimeoutHandles.get(orchestrationId);
+    if (handle) {
+      clearTimeout(handle);
+      this.globalTimeoutHandles.delete(orchestrationId);
     }
   }
 
@@ -503,6 +696,23 @@ export class WorkflowEngine {
       } catch {
         // Worker might already be deleted
       }
+    }
+
+    // Clear all timeout handles for this workflow's workers
+    for (const worker of orch.workers) {
+      const handle = this.workerTimeoutHandles.get(worker.workerName);
+      if (handle) {
+        clearTimeout(handle);
+        this.workerTimeoutHandles.delete(worker.workerName);
+      }
+      this.workerRuntimeStates.delete(worker.workerName);
+    }
+
+    // Clear global timeout
+    const globalHandle = this.globalTimeoutHandles.get(orch.orchestrationId);
+    if (globalHandle) {
+      clearTimeout(globalHandle);
+      this.globalTimeoutHandles.delete(orch.orchestrationId);
     }
 
     // Remove in-memory state for this workflow

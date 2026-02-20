@@ -7,6 +7,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 
 // Maximum screenshot dimensions to avoid API errors (2000px limit)
 const MAX_SCREENSHOT_WIDTH = 1920;
@@ -128,24 +129,21 @@ const handler: ToolHandler = async (
           });
         }
 
-        // Use CDP directly for lower overhead
+        // Use ScreenshotScheduler for concurrency-controlled capture
         const cdpClient = getSessionManager().getCDPClient();
-        const { data: screenshot } = await cdpClient.send<{ data: string }>(
-          page,
-          'Page.captureScreenshot',
-          {
-            format: 'webp',
-            quality: 60,
-            clip: {
-              x: 0,
-              y: 0,
-              width: Math.min(currentWidth, MAX_SCREENSHOT_WIDTH),
-              height: Math.min(currentHeight, MAX_SCREENSHOT_HEIGHT),
-              scale: 1,
-            },
-            optimizeForSpeed: true,
-          }
-        );
+        const scheduler = getScreenshotScheduler();
+        const { data: screenshot } = await scheduler.capture(page, cdpClient, {
+          format: 'webp',
+          quality: 60,
+          clip: {
+            x: 0,
+            y: 0,
+            width: Math.min(currentWidth, MAX_SCREENSHOT_WIDTH),
+            height: Math.min(currentHeight, MAX_SCREENSHOT_HEIGHT),
+            scale: 1,
+          },
+          optimizeForSpeed: true,
+        });
 
         // Restore original viewport if we changed it
         if (needsResize && originalViewport) {

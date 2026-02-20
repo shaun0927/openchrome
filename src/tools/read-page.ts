@@ -31,6 +31,18 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Reference ID of a parent element to read from (uses faster partial tree fetch)',
       },
+      selector: {
+        type: 'string',
+        description: 'CSS selector to extract a single element and its subtree (faster than full AX tree). Returns text content and attributes.',
+      },
+      selectorAll: {
+        type: 'string',
+        description: 'CSS selector to extract multiple matching elements. Returns array of {tag, text, attributes} objects. Use for lists, tables, repeated elements.',
+      },
+      selectorLimit: {
+        type: 'number',
+        description: 'Maximum number of elements to return when using selectorAll (default: 50)',
+      },
     },
     required: ['tabId'],
   },
@@ -74,6 +86,61 @@ const handler: ToolHandler = async (
     }
 
     const cdpClient = sessionManager.getCDPClient();
+
+    // Fast path: CSS selector-based extraction (skips full AX tree)
+    const selectorParam = args.selector as string | undefined;
+    const selectorAllParam = args.selectorAll as string | undefined;
+
+    if (selectorParam || selectorAllParam) {
+      const cssSelector = (selectorParam || selectorAllParam)!;
+      const isAll = !!selectorAllParam;
+      const limit = (args.selectorLimit as number) || 50;
+
+      const extractResult = await page.evaluate(
+        (sel: string, all: boolean, max: number) => {
+          function extractElement(el: Element): Record<string, unknown> {
+            const attrs: Record<string, string> = {};
+            for (const attr of el.attributes) {
+              // Skip very long attributes (e.g. inline styles, data URIs)
+              if (attr.value.length <= 200) {
+                attrs[attr.name] = attr.value;
+              }
+            }
+            return {
+              tag: el.tagName.toLowerCase(),
+              text: (el.textContent || '').trim().slice(0, 500),
+              attributes: attrs,
+              childCount: el.children.length,
+            };
+          }
+
+          if (all) {
+            const elements = document.querySelectorAll(sel);
+            const results: Record<string, unknown>[] = [];
+            for (let i = 0; i < Math.min(elements.length, max); i++) {
+              results.push(extractElement(elements[i]));
+            }
+            return { count: elements.length, elements: results };
+          } else {
+            const el = document.querySelector(sel);
+            if (!el) return { count: 0, elements: [] };
+            return { count: 1, elements: [extractElement(el)] };
+          }
+        },
+        cssSelector,
+        isAll,
+        limit
+      );
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(extractResult, null, 2),
+          },
+        ],
+      };
+    }
 
     // Determine depth: explicit arg > filter-based default
     // Reduce default from 15→8 for "all" (15 is excessively deep and very slow on complex pages)

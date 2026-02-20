@@ -8,6 +8,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getWorkflowEngine, WorkflowDefinition } from '../orchestration/workflow-engine';
 import { getOrchestrationStateManager } from '../orchestration/state-manager';
+import { getCDPConnectionPool } from '../cdp/connection-pool';
 
 const dnsResolve = promisify(dns.resolve);
 
@@ -58,6 +59,18 @@ Use this to prepare parallel browser operations before launching worker agents.`
           required: ['name', 'url', 'task'],
         },
       },
+      workerTimeoutMs: {
+        type: 'number',
+        description: 'Maximum execution time per worker in milliseconds (default: 60000). Workers exceeding this limit are force-completed with PARTIAL status.',
+      },
+      maxStaleIterations: {
+        type: 'number',
+        description: 'Maximum consecutive worker updates with no data change before circuit breaker triggers (default: 5). Prevents runaway workers stuck in retry loops.',
+      },
+      globalTimeoutMs: {
+        type: 'number',
+        description: 'Maximum total workflow execution time in milliseconds (default: 300000). All running workers are force-completed when exceeded.',
+      },
     },
     required: ['name', 'workers'],
   },
@@ -69,6 +82,9 @@ const workflowInitHandler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const engine = getWorkflowEngine();
   const name = args.name as string;
+  const workerTimeoutMs = args.workerTimeoutMs as number | undefined;
+  const maxStaleIterations = args.maxStaleIterations as number | undefined;
+  const globalTimeoutMs = args.globalTimeoutMs as number | undefined;
   const workerDefs = args.workers as Array<{
     name: string;
     url: string;
@@ -95,6 +111,14 @@ const workflowInitHandler: ToolHandler = async (
   }
 
   try {
+    // Pre-warm connection pool in parallel with DNS resolution
+    const pool = getCDPConnectionPool();
+    const preWarmPromise = pool.preWarmForWorkflow(workerDefs.length).catch((err) => {
+      console.error('[Orchestration] Pool pre-warm failed (non-fatal):', err);
+      return { warmed: 0, durationMs: 0 };
+    });
+    await preWarmPromise;
+
     // Create workflow definition
     const workflow: WorkflowDefinition = {
       id: `wf-${Date.now()}`,
@@ -109,7 +133,9 @@ const workflowInitHandler: ToolHandler = async (
       })),
       parallel: true,
       maxRetries: 3,
-      timeout: 300000, // 5 minutes
+      timeout: workerTimeoutMs || 60000,
+      maxStaleIterations: maxStaleIterations || 5,
+      globalTimeoutMs: globalTimeoutMs || 300000,
     };
 
     // Initialize workflow
@@ -512,6 +538,104 @@ const workerCompleteHandler: ToolHandler = async (
 };
 
 // ============================================
+// workflow_collect_partial - Collect completed results without waiting
+// ============================================
+
+const workflowCollectPartialDefinition: MCPToolDefinition = {
+  name: 'workflow_collect_partial',
+  description: `Collect results from completed workers without waiting for all workers to finish.
+Returns only workers that have already reported SUCCESS, PARTIAL, or FAIL status.
+Use this to stream results as they become available instead of waiting for the slowest worker.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      onlySuccessful: {
+        type: 'boolean',
+        description: 'If true, only return workers with SUCCESS or PARTIAL status (default: false)',
+      },
+    },
+    required: [],
+  },
+};
+
+const workflowCollectPartialHandler: ToolHandler = async (
+  _sessionId: string,
+  args: Record<string, unknown>
+): Promise<MCPResult> => {
+  const engine = getWorkflowEngine();
+  const onlySuccessful = args.onlySuccessful as boolean ?? false;
+
+  try {
+    const orch = await engine.getOrchestrationStatus();
+    if (!orch) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ status: 'NO_WORKFLOW', message: 'No active workflow found' }),
+          },
+        ],
+      };
+    }
+
+    // Get all worker states
+    const workerStates = await engine.getAllWorkerStates();
+
+    // Filter to completed workers only
+    const completedStatuses = onlySuccessful
+      ? ['SUCCESS', 'PARTIAL']
+      : ['SUCCESS', 'PARTIAL', 'FAIL'];
+
+    const completedWorkers = workerStates.filter(w =>
+      completedStatuses.includes(w.status)
+    );
+
+    const pendingWorkers = workerStates.filter(w =>
+      !['SUCCESS', 'PARTIAL', 'FAIL'].includes(w.status)
+    );
+
+    const results = {
+      orchestrationId: orch.orchestrationId,
+      overallStatus: orch.status,
+      progress: {
+        total: orch.workers.length,
+        completed: orch.completedWorkers,
+        failed: orch.failedWorkers,
+        pending: orch.workers.length - orch.completedWorkers - orch.failedWorkers,
+      },
+      completedWorkers: completedWorkers.map(w => ({
+        workerName: w.workerName,
+        status: w.status,
+        extractedData: w.extractedData,
+        iterations: w.iteration,
+        errors: w.errors,
+      })),
+      pendingWorkerNames: pendingWorkers.map(w => w.workerName),
+      duration: Date.now() - orch.createdAt,
+    };
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(results, null, 2),
+        },
+      ],
+    };
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Error collecting partial results: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+};
+
+// ============================================
 // Register all orchestration tools
 // ============================================
 
@@ -519,9 +643,10 @@ export function registerOrchestrationTools(server: MCPServer): void {
   server.registerTool('workflow_init', workflowInitHandler, workflowInitDefinition);
   server.registerTool('workflow_status', workflowStatusHandler, workflowStatusDefinition);
   server.registerTool('workflow_collect', workflowCollectHandler, workflowCollectDefinition);
+  server.registerTool('workflow_collect_partial', workflowCollectPartialHandler, workflowCollectPartialDefinition);
   server.registerTool('workflow_cleanup', workflowCleanupHandler, workflowCleanupDefinition);
   server.registerTool('worker_update', workerUpdateHandler, workerUpdateDefinition);
   server.registerTool('worker_complete', workerCompleteHandler, workerCompleteDefinition);
 
-  console.error('[Orchestration] Registered 6 orchestration tools');
+  console.error('[Orchestration] Registered 7 orchestration tools');
 }

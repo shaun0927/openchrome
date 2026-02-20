@@ -88,6 +88,13 @@ export class CDPConnectionPool {
   }
 
   /**
+   * When true, suppresses automatic pool replenishment.
+   * Set during bulk operations (acquireBatch, preWarmForWorkflow) to prevent
+   * about:blank tab proliferation.
+   */
+  private suppressReplenishment = false;
+
+  /**
    * Acquire a page from the pool
    */
   async acquirePage(): Promise<Page> {
@@ -128,10 +135,96 @@ export class CDPConnectionPool {
       this.acquireTimes.shift();
     }
 
-    // Replenish pool in background if needed
-    this.replenishPoolAsync();
+    // Replenish pool in background if needed (suppressed during bulk ops)
+    if (!this.suppressReplenishment) {
+      this.replenishPoolAsync();
+    }
 
     return page;
+  }
+
+  /**
+   * Acquire multiple pages at once without triggering per-page replenishment.
+   * Prevents about:blank tab proliferation during workflow_init.
+   *
+   * Instead of acquiring one-by-one (each triggering replenishPoolAsync),
+   * this method batch-acquires all needed pages, only replenishing once at the end.
+   *
+   * @param count Number of pages to acquire
+   * @returns Array of acquired pages
+   */
+  async acquireBatch(count: number): Promise<Page[]> {
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+
+    // Suppress replenishment during batch acquire
+    this.suppressReplenishment = true;
+    const startTime = Date.now();
+
+    try {
+      const pages: Page[] = [];
+
+      // First, take as many as possible from the pool
+      const fromPool = Math.min(count, this.availablePages.length);
+      for (let i = 0; i < fromPool; i++) {
+        const pooledPage = this.availablePages.pop()!;
+        pooledPage.lastUsedAt = Date.now();
+        this.inUsePages.set(pooledPage.page, pooledPage);
+        this.pagesReused++;
+        pages.push(pooledPage.page);
+      }
+
+      // Create remaining pages on-demand (in parallel with concurrency limit)
+      const remaining = count - fromPool;
+      if (remaining > 0) {
+        const concurrency = 10;
+        let active = 0;
+        const queue: Array<() => void> = [];
+
+        const limiter = async <T>(fn: () => Promise<T>): Promise<T> => {
+          if (active >= concurrency) {
+            await new Promise<void>((resolve) => queue.push(resolve));
+          }
+          active++;
+          try {
+            return await fn();
+          } finally {
+            active--;
+            if (queue.length > 0) queue.shift()!();
+          }
+        };
+
+        const newPages = await Promise.all(
+          Array.from({ length: remaining }, () =>
+            limiter(async () => {
+              const page = await this.createNewPage();
+              const pooledPage: PooledPage = {
+                page,
+                createdAt: Date.now(),
+                lastUsedAt: Date.now(),
+                visitedOrigins: new Set(),
+              };
+              this.inUsePages.set(page, pooledPage);
+              this.pagesCreatedOnDemand++;
+              return page;
+            })
+          )
+        );
+        pages.push(...newPages);
+      }
+
+      const durationMs = Date.now() - startTime;
+      console.error(
+        `[Pool] Batch acquired ${pages.length} pages (${fromPool} from pool, ${remaining} on-demand) in ${durationMs}ms`
+      );
+
+      return pages;
+    } finally {
+      this.suppressReplenishment = false;
+      // Single replenishment check after batch complete
+      this.replenishPoolAsync();
+    }
   }
 
   /**
@@ -296,6 +389,80 @@ export class CDPConnectionPool {
     if (pagesToRemove.length > 0) {
       console.error(`[Pool] Maintenance: closed ${pagesToRemove.length} idle page(s)`);
     }
+  }
+
+  /**
+   * Pre-warm pages for an upcoming workflow.
+   * Call this before creating workers to eliminate page creation delay
+   * during the worker creation loop.
+   *
+   * @param count Number of pages needed for the workflow
+   * @param concurrency Max parallel page creation (default: 10)
+   */
+  async preWarmForWorkflow(count: number, concurrency = 10): Promise<{ warmed: number; durationMs: number }> {
+    const startTime = Date.now();
+
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+
+    const currentAvailable = this.availablePages.length;
+    const needed = Math.max(0, Math.min(
+      count - currentAvailable,
+      this.config.maxPoolSize - currentAvailable - this.inUsePages.size
+    ));
+
+    if (needed === 0) {
+      return { warmed: 0, durationMs: 0 };
+    }
+
+    console.error(`[Pool] Pre-warming ${needed} pages for workflow (${currentAvailable} already available, ${count} needed)`);
+
+    // Create pages with concurrency control
+    let active = 0;
+    const queue: Array<() => void> = [];
+    let created = 0;
+
+    const limiter = async <T>(fn: () => Promise<T>): Promise<T> => {
+      if (active >= concurrency) {
+        await new Promise<void>((resolve) => queue.push(resolve));
+      }
+      active++;
+      try {
+        return await fn();
+      } finally {
+        active--;
+        if (queue.length > 0) {
+          const next = queue.shift()!;
+          next();
+        }
+      }
+    };
+
+    const promises: Promise<void>[] = [];
+    for (let i = 0; i < needed; i++) {
+      promises.push(
+        limiter(async () => {
+          const page = await this.createNewPage();
+          this.availablePages.push({
+            page,
+            createdAt: Date.now(),
+            lastUsedAt: Date.now(),
+            visitedOrigins: new Set(),
+          });
+          created++;
+        }).catch((err) => {
+          console.error('[Pool] Failed to pre-warm page:', err);
+        })
+      );
+    }
+
+    await Promise.all(promises);
+
+    const durationMs = Date.now() - startTime;
+    console.error(`[Pool] Pre-warmed ${created}/${needed} pages in ${durationMs}ms`);
+
+    return { warmed: created, durationMs };
   }
 
   /**

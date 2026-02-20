@@ -46,6 +46,10 @@ import { registerClickElementTool } from './click-element';
 import { registerFillFormTool } from './fill-form';
 import { registerWaitAndClickTool } from './wait-and-click';
 
+// Performance tools (P0)
+import { registerBatchExecuteTool } from './batch-execute';
+import { registerLightweightScrollTool } from './lightweight-scroll';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -96,6 +100,10 @@ export function registerAllTools(server: MCPServer): void {
 
   // Orchestration tools (Chrome-Sisyphus workflow management)
   registerOrchestrationTools(server);
+
+  // Performance tools (P0 - eliminate agent spawn overhead & screenshot bottleneck)
+  registerBatchExecuteTool(server);
+  registerLightweightScrollTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

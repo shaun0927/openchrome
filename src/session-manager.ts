@@ -656,6 +656,37 @@ export class SessionManager {
   }
 
   /**
+   * Register a pre-acquired page as a target for a worker.
+   * Used by workflow engine when pages are batch-acquired from the pool
+   * to avoid per-page replenishment (about:blank proliferation fix).
+   */
+  registerExistingTarget(sessionId: string, workerId: string, targetId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    const worker = session.workers.get(workerId);
+    if (!worker) {
+      throw new Error(`Worker ${workerId} not found in session ${sessionId}`);
+    }
+
+    worker.targets.add(targetId);
+    worker.lastActivityAt = Date.now();
+    this.targetToWorker.set(targetId, { sessionId, workerId });
+
+    this.emitEvent({
+      type: 'session:target-added',
+      sessionId,
+      workerId,
+      targetId,
+      timestamp: Date.now(),
+    });
+
+    this.touchSession(sessionId);
+  }
+
+  /**
    * Check if a target is still valid (page not closed)
    */
   async isTargetValid(targetId: string): Promise<boolean> {
