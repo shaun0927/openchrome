@@ -55,7 +55,7 @@ const DEFAULT_CONFIG: Required<SessionManagerConfig> = {
   cleanupInterval: 60 * 1000,       // 1 minute
   autoCleanup: true,
   maxSessions: 100,
-  maxWorkersPerSession: 20,
+  maxWorkersPerSession: 50,
   useConnectionPool: true,          // Enabled by default for faster page creation
   useDefaultContext: true,          // Use Chrome profile's cookies/sessions by default
   usePool: false,                   // Disabled by default; enable for multi-Chrome origin isolation
