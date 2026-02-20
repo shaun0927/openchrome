@@ -356,15 +356,17 @@ navigate → title contains "Login"
 ## CLI
 
 ```bash
-npx claude-chrome-parallel setup                  # Auto-configure (global)
-npx claude-chrome-parallel setup --scope project  # Auto-configure (project only)
-npx claude-chrome-parallel serve --auto-launch    # Start with auto Chrome launch
-npx claude-chrome-parallel serve --headless-shell # Headless mode (15-30% less memory)
-npx claude-chrome-parallel serve -p <port>        # Custom debugging port (default: 9222)
-npx claude-chrome-parallel doctor                 # Diagnose installation
-npx claude-chrome-parallel status                 # View sessions
-npx claude-chrome-parallel cleanup                # Clean up old sessions
+ccp setup                         # Auto-configure (global)
+ccp setup --scope project         # Auto-configure (project only)
+ccp serve --auto-launch           # Start with auto Chrome launch
+ccp serve --headless-shell        # Headless mode (15-30% less memory)
+ccp serve -p <port>               # Custom debugging port (default: 9222)
+ccp doctor                        # Diagnose installation
+ccp status                        # View sessions
+ccp cleanup                       # Clean up old sessions
 ```
+
+> `ccp` requires global install (`npm i -g claude-chrome-parallel`). All commands also work via `npx claude-chrome-parallel <command>`.
 
 ---
 
