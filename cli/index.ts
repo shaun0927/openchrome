@@ -142,7 +142,9 @@ program
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: false)')
   .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
-  .action(async (options: { port: string; autoLaunch?: boolean; dashboard?: boolean }) => {
+  .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
+  .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
+  .action(async (options: { port: string; autoLaunch?: boolean; dashboard?: boolean; hybrid?: boolean; lpPort?: string }) => {
     const port = parseInt(options.port, 10);
     const autoLaunch = options.autoLaunch || false;
     const dashboard = options.dashboard || false;
@@ -163,11 +165,39 @@ program
     // Set global config before initializing anything
     setGlobalConfig({ port, autoLaunch });
 
+    // Configure hybrid mode if enabled
+    const hybrid = options.hybrid || false;
+    const lpPort = parseInt(options.lpPort || '9223', 10);
+
+    if (hybrid) {
+      setGlobalConfig({
+        hybrid: {
+          enabled: true,
+          lightpandaPort: lpPort,
+        },
+      });
+      console.error(`[claude-chrome-parallel] Hybrid mode: enabled`);
+      console.error(`[claude-chrome-parallel] Lightpanda port: ${lpPort}`);
+    }
+
     // Set MCP server options (including dashboard)
     setMCPServerOptions({ dashboard });
 
     const server = getMCPServer();
     registerAllTools(server);
+
+    // Initialize hybrid routing if enabled
+    if (hybrid) {
+      const { getSessionManager } = require('../session-manager');
+      const sm = getSessionManager();
+      await sm.initHybrid({
+        enabled: true,
+        lightpandaPort: lpPort,
+        circuitBreaker: { maxFailures: 3, cooldownMs: 60000 },
+        cookieSync: { intervalMs: 5000 },
+      });
+    }
+
     server.start();
   });
 
