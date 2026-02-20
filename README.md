@@ -1,6 +1,6 @@
 # Claude Chrome Parallel
 
-> **Your browser. 20 sessions. Zero logins.**
+> **Ultrafast parallel browser MCP.**
 
 [![GitHub release](https://img.shields.io/github/v/release/shaun0927/claude-chrome-parallel)](https://github.com/shaun0927/claude-chrome-parallel/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
