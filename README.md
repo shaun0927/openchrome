@@ -1,18 +1,15 @@
 # Claude Chrome Parallel
 
-> **Automate your actual browser—with all your logins active.**
+> **Browser automation that learns from mistakes.**
 
 [![GitHub release](https://img.shields.io/github/v/release/shaun0927/claude-chrome-parallel)](https://github.com/shaun0927/claude-chrome-parallel/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-No more "Detached" errors. Run **20+ Claude Code sessions in parallel**.
+Most browser MCP tools give the LLM 30+ tools and hope for the best. CCP tells it exactly what to do next — and gets smarter every session.
 
-- ✅ **Authenticated access**: Gmail, Salesforce, LinkedIn—already logged in
-- ✅ **True parallelism**: 5 sites at once, 5x faster
-- ✅ **Multi-account**: Same site, different accounts, isolated sessions
-- ✅ **No bot detection**: Real browser profile, not headless
-
-**This isn't just for developers.** Any web task requiring authentication—previously impossible to automate—is now possible with natural language.
+- **Adaptive Guidance** — Every response includes contextual hints. Error recovery, efficiency suggestions, and patterns learned from your usage.
+- **True Parallelism** — 20+ concurrent sessions with isolated Workers. No "Detached" errors.
+- **Authenticated Access** — Uses your real Chrome profile. Gmail, Salesforce, LinkedIn — already logged in.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/shaun0927/claude-chrome-parallel/main/assets/demo.svg" alt="Chrome Extension vs Claude Chrome Parallel - Animated comparison showing parallel execution" width="100%">
@@ -23,19 +20,13 @@ No more "Detached" errors. Run **20+ Claude Code sessions in parallel**.
 ## Quick Start
 
 ```bash
-# Install from GitHub (recommended)
 npm install -g github:shaun0927/claude-chrome-parallel
-
-# Automatic setup (configures MCP for Claude Code)
 ccp setup
-
 # Restart Claude Code
 ```
 
-That's it! The `setup` command automatically registers the MCP server with Claude Code.
-
 <details>
-<summary>Manual setup (if automatic setup fails)</summary>
+<summary>Manual setup</summary>
 
 Add to `~/.claude.json`:
 
@@ -50,242 +41,119 @@ Add to `~/.claude.json`:
 }
 ```
 
-Or run:
-```bash
-claude mcp add claude-chrome-parallel -- ccp serve --auto-launch
-```
+Or: `claude mcp add claude-chrome-parallel -- ccp serve --auto-launch`
 
-Restart Claude Code.
 </details>
 
-```
-You: Take a screenshot of https://github.com
+---
 
-Claude: [Auto-launches browser, captures screenshot]
+## Adaptive Guidance
+
+Every tool response includes an `_hint` field that guides the LLM's next action. No wasted inference cycles. No blind retry loops.
+
+```
+LLM calls click_element → Error: "ref not found"
+
+Without Adaptive Guidance:          With Adaptive Guidance:
+  → retry click_element (fail)        _hint: "Refs expire after page
+  → retry click_element (fail)               changes. Use read_page
+  → retry click_element (fail)               for fresh refs."
+  → eventually try read_page          → calls read_page (success)
+  ~40 seconds wasted                  ~3 seconds total
+```
+
+### How It Works
+
+```
+tool.handler() → result
+      ↓
+  HintEngine evaluates rules (first-match-wins)
+      │
+      ├─ Error Recovery     (priority 100) — stale refs, timeouts, null elements
+      ├─ Composite Hints    (priority 200) — find+click → click_element
+      ├─ Repetition Detect  (priority 250) — same-tool error streaks, A↔B loops
+      ├─ Sequence Detect    (priority 300) — login pages, repeated reads
+      ├─ Learned Patterns   (priority 350) — adaptive memory (see below)
+      └─ Success Hints      (priority 400) — next-action guidance
+      │
+      ↓
+  _hint injected into response
+```
+
+### Adaptive Memory
+
+The system observes error → recovery sequences and learns from them:
+
+```
+Session 1:  click_element fails → you use read_page → click succeeds
+Session 2:  same pattern observed again
+Session 3:  same pattern — promoted to learned rule
+
+Session 4+: click_element fails → _hint immediately suggests read_page
+```
+
+Learned patterns persist to `.chrome-parallel/hints/learned-patterns.json` across sessions. The more you use it, the fewer mistakes it makes.
+
+### Example Responses
+
+**Error with recovery hint:**
+```json
+{
+  "content": [{"type": "text", "text": "Error: ref not found: a1b2c3"}],
+  "isError": true,
+  "_hint": "Hint: Refs expire after page changes. Use read_page or find for fresh refs."
+}
+```
+
+**Success with next-action hint:**
+```json
+{
+  "content": [{"type": "text", "text": "{\"action\":\"navigate\", \"title\":\"Login - App\"}"}],
+  "_hint": "Hint: Login page detected. Use fill_form({fields:{...}, submit:\"Login\"}) for credentials."
+}
 ```
 
 ---
 
 ## How It Works
 
-The official Chrome extension crashes when running multiple Claude sessions ("Detached" error). We fixed that.
-
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                                                             │
-│   Claude Code 1 ─► Worker A ─► [Tab1] [Tab2] ─┐                            │
-│                    (Google account)            │                            │
-│                                                │                            │
-│   Claude Code 2 ─► Worker B ─► [Tab3] [Tab4] ─┼─► Chrome (single instance) │
-│                    (LinkedIn account)          │     Port 9222              │
-│                                                │                            │
-│   Claude Code 3 ─► Worker C ─► [Tab5] [Tab6] ─┘                            │
-│                    (Amazon account)                                         │
-│                                                                             │
-│   ✓ Each Worker has isolated cookies/session/storage                       │
-│   ✓ No more "Detached" errors with concurrent sessions                     │
-│   ✓ Multiple account logins on same site simultaneously                    │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+Claude Code 1 ─► Worker A ─► [Tab1] [Tab2] ─┐
+                 (Google)                     │
+                                              │
+Claude Code 2 ─► Worker B ─► [Tab3] [Tab4] ─┼─► Chrome (single instance)
+                 (LinkedIn)                   │     Port 9222
+                                              │
+Claude Code 3 ─► Worker C ─► [Tab5] [Tab6] ─┘
+                 (Amazon)
+
+Each Worker: isolated cookies, storage, and login state
 ```
 
-**Independent CDP connections** per session = No shared state = No conflicts.
-
----
-
-## Usage Examples
-
-### Multiple Accounts Simultaneously
-
-```
-You: Create "google-personal" and "google-work" Workers,
-     then check the inbox of each Gmail account
-
-Claude: [Creates 2 Workers → Each accesses Gmail with isolated sessions]
-        google-personal: Personal account - 3 new emails
-        google-work: Work account - 7 new emails
-```
-
-### Price Comparison (Parallel)
-
-```
-You: Search for "iPhone 15" lowest price on Amazon, eBay, and Walmart simultaneously
-
-Claude: [3 sites run in parallel]
-        Amazon: $999 (1.2s)
-        eBay: $945 (1.1s)
-        Walmart: $979 (1.3s)
-        Total time: 1.3s (vs 3.6s sequential)
-```
-
-### Parallel QA Testing
-
-```bash
-# Terminal 1
-claude -p "Test myapp.com/login"
-
-# Terminal 2 (at the same time!)
-claude -p "Test myapp.com/checkout"
-
-# Terminal 3 (at the same time!)
-claude -p "Monitor myapp.com/admin"
-```
-
----
-
-## Core Features
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🔀 Worker Isolation
-
-Each Worker has a **completely isolated browser context**.
-
-- Separate cookies/sessions
-- Separate localStorage
-- Separate login states
-
-**Log into multiple accounts on the same site simultaneously!**
-
-</td>
-<td width="33%" valign="top">
-
-### ⚡ Parallel Execution
-
-Run tasks across multiple tabs/Workers **at the same time**.
-
-```
-Sequential: 1500ms
-  Tab1 ████░░░░ 500ms
-  Tab2     ████░░░░ 500ms
-  Tab3         ████░░░░ 500ms
-
-Parallel: 500ms
-  Tab1 ████░░░░
-  Tab2 ████░░░░
-  Tab3 ████░░░░
-```
-
-</td>
-<td width="33%" valign="top">
-
-### 🔄 Workflow Orchestration
-
-**Automatically distribute** complex multi-site tasks.
-
-```
-workflow_init({
-  workers: [
-    {name: "amazon", ...},
-    {name: "ebay", ...},
-    {name: "walmart", ...}
-  ]
-})
-→ 3 sites run in parallel
-→ Results auto-collected
-```
-
-</td>
-</tr>
-</table>
-
----
-
-## Chrome-Sisyphus: Orchestration Skill
-
-For complex multi-site workflows, use the built-in **Chrome-Sisyphus** skill system.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  /chrome-sisyphus "Compare iPhone prices on Amazon, eBay, Walmart"
-│                              ↓
-│  ┌──────────────────────────────────────────────────────────┐
-│  │            ORCHESTRATOR (Main Session)                   │
-│  │  • Decompose task → 3 workers                           │
-│  │  • Allocate sites → Amazon, eBay, Walmart               │
-│  │  • Context usage: ~500 tokens (lightweight!)            │
-│  └──────────────────────────────────────────────────────────┘
-│                              ↓
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│  │  Worker 1   │  │  Worker 2   │  │  Worker 3   │
-│  │  (Amazon)   │  │  (eBay)     │  │  (Walmart)  │
-│  │  Background │  │  Background │  │  Background │
-│  │  Task       │  │  Task       │  │  Task       │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
-│         ↓                ↓                ↓
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│  │ Scratchpad  │  │ Scratchpad  │  │ Scratchpad  │
-│  │ worker-1.md │  │ worker-2.md │  │ worker-3.md │
-│  └─────────────┘  └─────────────┘  └─────────────┘
-│                              ↓
-│  Results collected → Unified report to user
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Context Isolation
-
-**Without isolation** (traditional approach):
-```
-Main Session Context:
-├── Worker 1 screenshot (500KB)     ─┐
-├── Worker 1 DOM tree (large)        │
-├── Worker 2 screenshot (500KB)      ├─► Context explosion!
-├── Worker 2 DOM tree (large)        │
-└── Worker 3 ... (keeps growing)    ─┘
-```
-
-**With Chrome-Sisyphus**:
-```
-Main Session: ~500 tokens (stays light)
-├── Task plan
-├── Worker IDs
-└── Status summary only
-
-Background Tasks: (isolated, don't pollute main)
-├── Worker 1: own context, own screenshots
-├── Worker 2: own context, own screenshots
-└── Worker 3: own context, own screenshots
-```
-
-### Setup
-
-```bash
-cp -r node_modules/claude-chrome-parallel/.claude ~/.claude/
-```
-
-Then use:
-
-```
-/chrome-sisyphus Compare laptop prices on Amazon, BestBuy, and Newegg
-```
+**Independent CDP connections** per session. No shared state. No conflicts.
 
 ---
 
 ## Comparison
 
-| | Chrome Extension | Claude Chrome Parallel |
-|---|:---:|:---:|
-| **Concurrent Sessions** | ❌ 1 (Detached error) | ✅ **20+** |
-| **Worker Isolation** | ❌ | ✅ Isolated cookies/sessions |
-| **Multi-account Login** | ❌ | ✅ |
-| **Parallel Execution** | ❌ | ✅ |
-| **Device Emulation** | ❌ | ✅ iPhone, iPad, Pixel, etc. |
-| **Geolocation Override** | ❌ | ✅ Preset cities + custom |
-| **Network Simulation** | ❌ | ✅ 3G/4G/offline |
-| **Performance Metrics** | ❌ | ✅ FCP, load time, heap |
-| **Request Interception** | ❌ | ✅ Block ads/images/trackers |
-| **PDF Generation** | ❌ | ✅ A4, Letter, landscape |
-| **Console Capture** | ❌ | ✅ With filtering |
-| **Workflow Orchestration** | ❌ | ✅ |
-| **Auto Chrome Launch** | ❌ | ✅ |
+| | Playwright MCP | Browserbase | Chrome Extension | **CCP** |
+|---|:---:|:---:|:---:|:---:|
+| **Adaptive Guidance** | — | — | — | **21+ rules + learning** |
+| **Concurrent Sessions** | Limited | ✅ | ❌ (1) | **20+** |
+| **Your Chrome Profile** | — | — | ✅ | **✅** |
+| **Multi-Account Isolation** | — | ✅ | — | **✅** |
+| **No Cloud Dependency** | ✅ | — | ✅ | **✅** |
+| **Device Emulation** | ✅ | ✅ | — | **✅** |
+| **Network Simulation** | ✅ | — | — | **✅** |
+| **Workflow Orchestration** | — | — | — | **✅** |
+| **Learning from Usage** | — | — | — | **✅** |
 
 ---
 
-## MCP Tools
+## Tools (36)
 
-### Browser Automation
+<details>
+<summary><b>Browser Automation</b> — Core interaction tools</summary>
 
 | Tool | Description |
 |------|-------------|
@@ -293,50 +161,71 @@ Then use:
 | `computer` | Screenshot, click, keyboard, scroll |
 | `read_page` | Parse page structure (accessibility tree) |
 | `find` | Find elements by natural language |
-| `form_input` | Set form values directly |
+| `click_element` | Find and click in one step |
+| `wait_and_click` | Wait for element, then click |
+| `form_input` | Set individual form values |
+| `fill_form` | Fill multiple fields + submit in one call |
 | `javascript_tool` | Execute JavaScript |
 
-### Browser Environment
+</details>
+
+<details>
+<summary><b>Browser Environment</b> — Device, network, and location</summary>
 
 | Tool | Description |
 |------|-------------|
-| `user_agent` | Set User-Agent (presets: chrome, safari, googlebot, etc.) |
-| `geolocation` | Override geolocation (presets: seoul, tokyo, new-york, etc.) |
+| `user_agent` | Set User-Agent (chrome, safari, googlebot, etc.) |
+| `geolocation` | Override location (seoul, tokyo, new-york, etc.) |
 | `emulate_device` | Device emulation (iphone-14, ipad-pro, pixel-7, etc.) |
 | `network` | Simulate network conditions (3G, 4G, offline) |
 
-### Page Operations
+</details>
+
+<details>
+<summary><b>Page Operations</b> — Content extraction and generation</summary>
 
 | Tool | Description |
 |------|-------------|
 | `page_reload` | Reload page (optional cache bypass) |
 | `page_content` | Get HTML content from page or element |
-| `page_pdf` | Generate PDF from page (A4, Letter, landscape, etc.) |
+| `page_pdf` | Generate PDF (A4, Letter, landscape) |
 | `wait_for` | Wait for selector, navigation, function, or timeout |
 
-### DOM Queries
+</details>
+
+<details>
+<summary><b>DOM Queries</b> — Precise element targeting</summary>
 
 | Tool | Description |
 |------|-------------|
 | `selector_query` | Query elements by CSS selector |
 | `xpath_query` | Query elements by XPath expression |
 
-### Storage & Cookies
+</details>
+
+<details>
+<summary><b>Storage & Cookies</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `cookies` | Get/set/delete browser cookies |
 | `storage` | Manage localStorage/sessionStorage |
 
-### Debugging & Testing
+</details>
+
+<details>
+<summary><b>Debugging & Testing</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `console_capture` | Capture console logs (with type filtering) |
-| `performance_metrics` | Get performance metrics (FCP, load time, JS heap, etc.) |
+| `performance_metrics` | Performance metrics (FCP, load time, JS heap) |
 | `request_intercept` | Intercept/block/log network requests |
 
-### Advanced Interactions
+</details>
+
+<details>
+<summary><b>Advanced Interactions</b></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -344,113 +233,132 @@ Then use:
 | `file_upload` | Upload files to file input elements |
 | `http_auth` | Set HTTP Basic Authentication credentials |
 
-### Worker & Tab Management
+</details>
+
+<details>
+<summary><b>Worker & Tab Management</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `worker_create` | Create isolated browser context |
 | `worker_list` | List Workers and their tabs |
+| `worker_update` | Update worker progress |
+| `worker_complete` | Mark worker as complete |
 | `worker_delete` | Delete Worker |
 | `tabs_create_mcp` | Create new tab |
 | `tabs_context_mcp` | Get tab info |
 | `tabs_close` | Close tabs by ID or worker |
 
-### Workflow Orchestration
+</details>
+
+<details>
+<summary><b>Workflow Orchestration</b></summary>
 
 | Tool | Description |
 |------|-------------|
-| `workflow_init` | Initialize parallel workflow |
-| `workflow_status` | Check progress |
-| `workflow_collect` | Collect results |
-| `workflow_cleanup` | Clean up resources |
-| `worker_update` | Update worker progress |
-| `worker_complete` | Mark worker as complete |
+| `workflow_init` | Initialize parallel workflow with dedicated Workers |
+| `workflow_status` | Check workflow progress |
+| `workflow_collect` | Collect results from all Workers |
+| `workflow_cleanup` | Clean up workflow resources |
+
+</details>
 
 ---
 
-## CLI Commands
+## Usage Examples
+
+### Parallel Price Comparison
+
+```
+You: Search for "iPhone 15" on Amazon, eBay, and Walmart simultaneously
+
+Claude: [3 Workers run in parallel]
+        Amazon:  $999 (1.2s)
+        eBay:    $945 (1.1s)
+        Walmart: $979 (1.3s)
+        Total: 1.3s (vs 3.6s sequential)
+```
+
+### Multi-Account Management
+
+```
+You: Create Workers for my personal and work Gmail,
+     then check both inboxes
+
+Claude: [2 isolated Workers → each accesses Gmail independently]
+        Personal: 3 new emails
+        Work: 7 new emails
+```
+
+### Parallel QA Testing
 
 ```bash
-ccp setup              # Auto-configure MCP for Claude Code (run this first!)
-ccp serve              # Start MCP server (auto-run by Claude Code)
-ccp doctor             # Diagnose installation
-ccp status             # View session status
-ccp cleanup            # Clean up old sessions
+# All three run simultaneously against the same app
+claude -p "Test myapp.com/login"
+claude -p "Test myapp.com/checkout"
+claude -p "Monitor myapp.com/admin"
 ```
 
 ---
 
-## Use Cases
+## CLI
 
-- **Business**: ERP/SaaS data extraction, invoice downloads, repetitive task automation
-- **Research**: Login-required platform data collection, academic DB searches
-- **Social Media**: Multi-account posting, message management, analytics
-- **E-commerce**: Member price monitoring, inventory management, review responses
-- **QA Testing**: Parallel scenario testing, network condition testing
-- **Productivity**: Email organization, calendar management, bookmark management
+```bash
+ccp setup                         # Auto-configure MCP for Claude Code
+ccp serve                         # Start MCP server
+ccp serve --auto-launch           # Auto-launch Chrome if not running
+ccp serve --headless-shell        # Use headless mode (15-30% less memory)
+ccp serve --chrome-binary <path>  # Custom Chrome binary
+ccp serve --user-data-dir <dir>   # Custom Chrome profile
+ccp serve -p <port>               # Custom debugging port (default: 9222)
+ccp doctor                        # Diagnose installation
+ccp status                        # View session status
+ccp cleanup                       # Clean up old sessions
+```
 
 ---
 
-## Recommended CLAUDE.md Configuration
+<details>
+<summary><b>Performance Optimizations</b></summary>
 
-To help Claude choose the right tools, add the following to your project's `CLAUDE.md`:
+- **Memory** — Renderer process limits, JS heap caps, forced GC on tab close
+- **Screenshots** — WebP format (3-5x smaller than PNG)
+- **Cookie Bridge** — 30s TTL cache for auth cookie sharing (~10ms vs 2-6s)
+- **Find Tool** — Batched CDP queries (~100ms vs ~400ms)
+- **Headless Shell** — `--headless-shell` flag for 15-30% less memory
+
+</details>
+
+<details>
+<summary><b>Workflow Orchestration (Chrome-Sisyphus)</b></summary>
+
+For complex multi-site workflows, use the built-in orchestration skill:
+
+```
+/chrome-sisyphus Compare laptop prices on Amazon, BestBuy, and Newegg
+```
+
+Each Worker runs in an isolated background task with its own context, keeping the main session lightweight (~500 tokens).
+
+Setup: `cp -r node_modules/claude-chrome-parallel/.claude ~/.claude/`
+
+</details>
+
+<details>
+<summary><b>Recommended CLAUDE.md Configuration</b></summary>
 
 ```markdown
-## Tool Selection Priority
+## Browser Tool Usage
 
-When solving problems, follow this priority order:
-
-1. **Code Analysis** - Read and understand relevant code first
-2. **Direct DB Operations** - For data issues, use database queries
-3. **API Testing** - For API issues, use curl to test directly
-4. **Browser Automation** - Only when above methods are not possible AND UI interaction is required
-
-### When to Use Browser Tools (chrome-parallel)
-
-Use browser automation ONLY when:
-- User explicitly mentions "browser", "site", "page", "screenshot"
+Use browser tools ONLY when:
+- User explicitly requests browser/UI interaction
 - Visual verification or screenshot is needed
-- UI interaction is required (login flow testing, form submission, etc.)
-- No API/DB alternative exists for the task
+- No API/DB alternative exists
 
-### When NOT to Use Browser Tools
-
-- Simple data lookup/modification → Use database directly
-- API response verification → Use curl
-- Code bug fixing → Modify code directly
-- Configuration changes → Edit config files
-
-### Cost Awareness
-
-| Approach | Time | Reliability |
-|----------|------|-------------|
-| DB Query | ~1s | High |
-| API Call | ~2s | High |
-| Code Fix | ~5s | High |
-| Browser  | ~30s+ | Medium |
-
-Browser automation should be your LAST resort, not your first choice.
+Prefer: Code analysis → DB queries → API calls → Browser (last resort)
 ```
 
-This guide helps Claude make better tool selection decisions and avoid unnecessary browser operations when simpler alternatives exist.
-
----
-
-## Troubleshooting
-
-### Chrome not connecting
-
-```bash
-ccp check
-# Or manually start Chrome
-chrome --remote-debugging-port=9222
-```
-
-### Tools not appearing in Claude Code
-
-1. Check `~/.claude.json` configuration
-2. Restart Claude Code
-3. Run `/mcp` to verify `chrome-parallel` is listed
+</details>
 
 ---
 
@@ -461,25 +369,15 @@ git clone https://github.com/shaun0927/claude-chrome-parallel.git
 cd claude-chrome-parallel
 npm install
 npm run build
-npm test
+npm test              # 756 tests
 ```
 
 ---
 
 ## License
 
-MIT License - [LICENSE](LICENSE)
+MIT — [LICENSE](LICENSE)
 
 ---
 
-## Disclaimer
-
-> **This is an unofficial community project.**
-> Not affiliated with Anthropic.
->
-> "Claude" is a trademark of Anthropic.
-
-## Acknowledgments
-
-- [Anthropic](https://anthropic.com) - Claude and MCP protocol
-- [Puppeteer](https://pptr.dev/) - Browser automation
+> **Disclaimer**: This is an unofficial community project, not affiliated with Anthropic. "Claude" is a trademark of Anthropic.
