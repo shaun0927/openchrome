@@ -1,4 +1,4 @@
-# Claude Chrome Parallel
+# Claude Chrome Parallel (CCP)
 
 > **Ultrafast parallel browser MCP.**
 
