@@ -123,14 +123,19 @@ const workflowInitHandler: ToolHandler = async (
     const workflow: WorkflowDefinition = {
       id: `wf-${Date.now()}`,
       name,
-      steps: workerDefs.map((w, i) => ({
-        workerId: `worker-${w.name}`,
-        workerName: w.name,
-        url: w.url,
-        task: w.task,
-        successCriteria: w.successCriteria || 'Task completed successfully',
-        shareCookies: w.shareCookies ?? false,
-      })),
+      steps: workerDefs.map((w, i) => {
+        if (w.shareCookies === undefined) {
+          console.error(`[Orchestration] Worker "${w.name}": shareCookies not specified, defaulting to true (shared context for faster init)`);
+        }
+        return {
+          workerId: `worker-${w.name}`,
+          workerName: w.name,
+          url: w.url,
+          task: w.task,
+          successCriteria: w.successCriteria || 'Task completed successfully',
+          shareCookies: w.shareCookies ?? true,  // Default to shared cookies for faster context creation
+        };
+      }),
       parallel: true,
       maxRetries: 3,
       timeout: workerTimeoutMs || 60000,

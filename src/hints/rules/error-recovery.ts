@@ -38,6 +38,10 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
     test: /^\s*\{\s*\}\s*$|"result":\s*\{\s*\}/,
     hint: 'Hint: Empty object may indicate an async result. Wrap code in async IIFE: (async () => { return await ... })()',
   },
+  {
+    test: /await is only valid in async/i,
+    hint: 'Hint: Top-level await is not supported in javascript_tool. Use Promise chaining instead: new Promise(r => setTimeout(r, ms)).then(() => yourCode). Or wrap in async IIFE: (async () => { await ...; return result; })()',
+  },
 ];
 
 export const errorRecoveryRules: HintRule[] = patterns.map((p, i) => ({

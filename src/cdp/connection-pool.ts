@@ -222,8 +222,8 @@ export class CDPConnectionPool {
       return pages;
     } finally {
       this.suppressReplenishment = false;
-      // Single replenishment check after batch complete
-      this.replenishPoolAsync();
+      // Do NOT replenish after batch acquire — workflow pages will be released back
+      // to the pool during cleanup. Eager replenishment here creates about:blank ghost tabs.
     }
   }
 
