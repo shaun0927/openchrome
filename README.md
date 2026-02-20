@@ -37,7 +37,16 @@ CCP (parallel, zero auth):
 
 ## Why CCP Is Fast
 
-The speed advantage **compounds** with every site. Playwright MCP has two bottlenecks that multiply:
+This is not a speed optimization. It's a **structural change**.
+
+```
+Playwright MCP:  [blank browser] → login → task → close  (repeat per site)
+CCP:             [your Chrome]   → task                   (already logged in)
+```
+
+Playwright creates a new browser per site. Each one needs: navigate → type email → type password → solve 2FA → wait for redirect. That's 30-120s per site, and it's sequential. **You're spending 95% of the time on authentication, not the actual task.**
+
+CCP connects to your existing Chrome via CDP. You're already logged in to everything. Workers run in parallel. The speed advantage **compounds** with every site:
 
 | Sites | Playwright MCP | CCP | Speedup |
 |:-----:|:--------------:|:---:|:-------:|
@@ -46,15 +55,17 @@ The speed advantage **compounds** with every site. Playwright MCP has two bottle
 | 5 | ~250s | ~3s | **80x** |
 | 10 | ~500s | ~3s | **160x** |
 
-**Why?** Playwright launches a blank browser per site. Each needs: navigate → type email → type password → solve 2FA → wait for redirect. That's 30-120s **per site**, and it's **sequential**.
-
-CCP connects to your existing Chrome. You're already logged into everything. Workers run in parallel. The task that takes 250s with Playwright takes 3s with CCP.
-
 ### Memory
 
 Playwright spawns a **separate browser process** per session (~500MB each). Five sites = 2.5GB.
 
 CCP uses **one Chrome** with lightweight browser contexts (like incognito windows sharing the same process). Five Workers = ~300MB total. That's **8x less memory** — and it stays flat whether you run 5 or 20 Workers.
+
+### Bot Detection Immunity
+
+Playwright runs headless browsers with detectable fingerprints. Cloudflare, reCAPTCHA, and anti-bot systems can flag them.
+
+CCP uses **your actual Chrome** — real fingerprint, real cookies, real browsing history. It's indistinguishable from you clicking around manually, because it literally is your browser.
 
 ---
 
@@ -240,7 +251,9 @@ claude -p "ccp test form validation on myapp.com"   # Worker 5
 
 ## Adaptive Guidance
 
-Every tool response includes contextual hints that prevent the LLM from wasting time on wrong approaches. 21 static rules + an adaptive memory system that learns from your usage patterns.
+The biggest time sink in LLM browser automation isn't execution speed — it's **wrong tool choices, missed page state, and pointless retries**. Each mistake costs 3-10 seconds of LLM inference. Three mistakes and you've wasted 30 seconds before anything useful happens.
+
+CCP injects contextual `_hint` fields into every tool response to prevent this:
 
 ```
 click_element → Error: "ref not found"
@@ -250,9 +263,13 @@ click_element → Error: "ref not found"
 navigate → title contains "Login"
   _hint: "Login page detected. Use fill_form for credentials."
   → LLM skips straight to form filling.
+
+find → computer(click) pattern detected
+  _hint: "Use click_element to find+click in one call."
+  → Eliminates unnecessary intermediate steps.
 ```
 
-**Adaptive Memory**: The system observes which tool resolves each error type. After seeing the same recovery pattern 3 times, it promotes it to a permanent hint — persisted across sessions in `.chrome-parallel/hints/learned-patterns.json`.
+21 static rules across 6 priority tiers + an **adaptive memory** system that learns from your usage. When the same error→recovery pattern appears 3 times, it's promoted to a permanent hint — persisted across sessions in `.chrome-parallel/hints/learned-patterns.json`.
 
 <details>
 <summary>Rule priority tiers</summary>
@@ -390,6 +407,23 @@ git clone https://github.com/shaun0927/claude-chrome-parallel.git
 cd claude-chrome-parallel
 npm install && npm run build && npm test
 ```
+
+## Compatibility
+
+CCP is a standard **MCP server** (stdio JSON-RPC). While optimized for Claude Code, it works with any MCP-compatible client:
+
+```json
+{
+  "mcpServers": {
+    "chrome-parallel": {
+      "command": "npx",
+      "args": ["-y", "claude-chrome-parallel", "serve", "--auto-launch"]
+    }
+  }
+}
+```
+
+Cursor, Windsurf, Codex CLI, or any editor that supports MCP can use CCP with the config above. See [Contributing](CONTRIBUTING.md) for multi-client testing status.
 
 ## License
 
