@@ -127,7 +127,7 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate is required');
+      expect(result.content[0].text).toContain('coordinate or ref is required');
     });
 
     test('rejects right_click without coordinates', async () => {
@@ -139,7 +139,7 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate is required');
+      expect(result.content[0].text).toContain('coordinate or ref is required');
     });
 
     test('rejects double_click without coordinates', async () => {
@@ -151,7 +151,7 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate is required');
+      expect(result.content[0].text).toContain('coordinate or ref is required');
     });
 
     test('handles click at origin (0, 0)', async () => {
@@ -206,7 +206,7 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate is required');
+      expect(result.content[0].text).toContain('coordinate or ref is required');
     });
   });
 
@@ -335,7 +335,7 @@ describe('ComputerTool', () => {
   });
 
   describe('Screenshot', () => {
-    test('returns base64 PNG image with size limits', async () => {
+    test('returns base64 WebP image with size limits', async () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
       (page.screenshot as jest.Mock).mockResolvedValue('base64-encoded-image-data');
@@ -348,7 +348,9 @@ describe('ComputerTool', () => {
       // Should call screenshot with clip to ensure size limits
       expect(page.screenshot).toHaveBeenCalledWith({
         encoding: 'base64',
-        type: 'png',
+        type: 'webp',
+        quality: 80,
+        optimizeForSpeed: true,
         fullPage: false,
         clip: {
           x: 0,
@@ -369,7 +371,7 @@ describe('ComputerTool', () => {
         action: 'screenshot',
       }) as { content: Array<{ type: string; mimeType?: string }> };
 
-      expect(result.content[0].mimeType).toBe('image/png');
+      expect(result.content[0].mimeType).toBe('image/webp');
     });
 
     test('resizes viewport when larger than max allowed', async () => {

@@ -43,6 +43,9 @@ export class CDPClient {
   private targetDestroyedListeners: ((targetId: string) => void)[] = [];
   private reconnectAttempts = 0;
   private autoLaunch: boolean;
+  private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
+  private cookieDataCache: Map<string, { cookies: Array<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite?: string }>; timestamp: number }> = new Map();
+  private static readonly COOKIE_CACHE_TTL = 30000; // 30 seconds
 
   constructor(options: CDPClientOptions = {}) {
     const globalConfig = getGlobalConfig();
@@ -90,6 +93,14 @@ export class CDPClient {
    */
   private onTargetDestroyed(targetId: string): void {
     this.sessions.delete(targetId);
+    // Clean up cookie source cache entries pointing to this target
+    for (const [key, entry] of this.cookieSourceCache) {
+      if (entry.targetId === targetId) {
+        this.cookieSourceCache.delete(key);
+      }
+    }
+    // Clean up cookie data cache for this target
+    this.cookieDataCache.delete(targetId);
     for (const listener of this.targetDestroyedListeners) {
       try {
         listener(targetId);
@@ -354,20 +365,313 @@ export class CDPClient {
   }
 
   /**
+   * Check if a hostname is localhost
+   */
+  private isLocalhost(url: string): boolean {
+    try {
+      const hostname = new URL(url).hostname;
+      return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Calculate domain match score between two URLs
+   * Higher score = better match
+   */
+  private domainMatchScore(candidateUrl: string, targetDomain: string): number {
+    try {
+      const candidateHostname = new URL(candidateUrl).hostname;
+      const candidateParts = candidateHostname.split('.').reverse();
+      const targetParts = targetDomain.split('.').reverse();
+
+      // Exact match
+      if (candidateHostname === targetDomain) {
+        return 100;
+      }
+
+      // Count matching TLD parts from right to left
+      let matchingParts = 0;
+      for (let i = 0; i < Math.min(candidateParts.length, targetParts.length); i++) {
+        if (candidateParts[i] === targetParts[i]) {
+          matchingParts++;
+        } else {
+          break;
+        }
+      }
+
+      // Subdomain match (e.g., api.example.com matches example.com)
+      if (matchingParts >= 2) {
+        return 50 + matchingParts * 10;
+      }
+
+      // Same TLD only (e.g., both .com)
+      if (matchingParts === 1) {
+        return 10;
+      }
+
+      return 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Find an authenticated page with cookies to copy from
+   * Returns the targetId of a page that has cookies in Chrome's default context
+   * @param targetDomain Optional domain to prioritize when selecting cookie source
+   */
+  async findAuthenticatedPageTargetId(targetDomain?: string): Promise<string | null> {
+    // Check cache first (stale targetId is handled gracefully: copyCookiesViaCDP returns 0)
+    const cacheKey = targetDomain || '*';
+    const cached = this.cookieSourceCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CDPClient.COOKIE_CACHE_TTL) {
+      console.error(`[CDPClient] Cache hit for cookie source (domain: ${cacheKey}): ${cached.targetId.slice(0, 8)}`);
+      return cached.targetId;
+    }
+
+    const WebSocket = require('ws');
+    const browser = this.getBrowser();
+    const session = await browser.target().createCDPSession();
+
+    try {
+      const { targetInfos } = await session.send('Target.getTargets') as {
+        targetInfos: Array<{ targetId: string; browserContextId?: string; type: string; url: string }>;
+      };
+
+      // Filter to candidate pages (not chrome://, not login pages, etc.)
+      let candidates = targetInfos.filter(target =>
+        target.type === 'page' &&
+        !target.url.startsWith('chrome://') &&
+        !target.url.startsWith('chrome-extension://') &&
+        target.url !== 'about:blank' &&
+        !target.url.includes('/login') &&
+        !target.url.includes('/signin') &&
+        !target.url.includes('/auth')
+      );
+
+      if (candidates.length === 0) {
+        console.error('[CDPClient] No candidate pages found for cookie source');
+        return null;
+      }
+
+      // If targeting an external domain (not localhost), exclude localhost pages
+      if (targetDomain && !this.isLocalhost(`https://${targetDomain}`)) {
+        const externalCandidates = candidates.filter(c => !this.isLocalhost(c.url));
+        if (externalCandidates.length > 0) {
+          console.error(`[CDPClient] Filtered out ${candidates.length - externalCandidates.length} localhost pages for external domain target`);
+          candidates = externalCandidates;
+        }
+      }
+
+      // Sort candidates by domain match score (highest first)
+      if (targetDomain) {
+        candidates.sort((a, b) => {
+          const scoreA = this.domainMatchScore(a.url, targetDomain);
+          const scoreB = this.domainMatchScore(b.url, targetDomain);
+          return scoreB - scoreA;
+        });
+        console.error(`[CDPClient] Sorted ${candidates.length} candidates by domain match to ${targetDomain}`);
+      }
+
+      // Get target list with WebSocket URLs
+      const listResponse = await fetch(`http://127.0.0.1:${this.port}/json/list`);
+      const targets = await listResponse.json() as Array<{ id: string; webSocketDebuggerUrl: string; url: string }>;
+
+      // Check each candidate to find one with actual cookies (in priority order)
+      for (const candidate of candidates) {
+        const targetInfo = targets.find(t => t.id === candidate.targetId);
+        if (!targetInfo || !targetInfo.webSocketDebuggerUrl) {
+          continue;
+        }
+
+        // Check if this page has cookies (pages in Chrome's default context have cookies,
+        // while Puppeteer-created pages have empty cookies)
+        const cookieCount = await new Promise<number>((resolve) => {
+          const ws = new WebSocket(targetInfo.webSocketDebuggerUrl);
+          const timeout = setTimeout(() => { ws.close(); resolve(0); }, 2000);
+
+          ws.on('open', () => {
+            ws.send(JSON.stringify({ id: 1, method: 'Network.getAllCookies' }));
+          });
+
+          ws.on('message', (data: Buffer) => {
+            const msg = JSON.parse(data.toString());
+            if (msg.id === 1) {
+              clearTimeout(timeout);
+              ws.close();
+              resolve(msg.result?.cookies?.length || 0);
+            }
+          });
+
+          ws.on('error', () => {
+            clearTimeout(timeout);
+            resolve(0);
+          });
+        });
+
+        if (cookieCount > 0) {
+          const domainScore = targetDomain ? this.domainMatchScore(candidate.url, targetDomain) : 0;
+          console.error(`[CDPClient] Found authenticated page ${candidate.targetId.slice(0, 8)} at ${candidate.url.slice(0, 50)} (${cookieCount} cookies, domain score: ${domainScore})`);
+          // Store in cache
+          this.cookieSourceCache.set(cacheKey, { targetId: candidate.targetId, timestamp: Date.now() });
+          return candidate.targetId;
+        }
+      }
+
+      console.error('[CDPClient] No pages with cookies found');
+      return null;
+    } finally {
+      await session.detach().catch(() => {});
+    }
+  }
+
+  /**
+   * Copy all cookies from authenticated page to destination page
+   * Uses raw WebSocket CDP connection to bypass Puppeteer's context isolation
+   */
+  async copyCookiesViaCDP(sourceTargetId: string, destPage: Page): Promise<number> {
+    const WebSocket = require('ws');
+
+    console.error(`[CDPClient] copyCookiesViaCDP called with sourceTargetId: ${sourceTargetId.slice(0, 8)}`);
+
+    try {
+      // Check cookie data cache first
+      const cachedData = this.cookieDataCache.get(sourceTargetId);
+      if (cachedData && Date.now() - cachedData.timestamp < CDPClient.COOKIE_CACHE_TTL) {
+        console.error(`[CDPClient] Cache hit for cookie data (${cachedData.cookies.length} cookies), skipping WebSocket`);
+        const destSession = await destPage.createCDPSession();
+        try {
+          const cookiesToSet = cachedData.cookies.map(c => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            expires: c.expires,
+            httpOnly: c.httpOnly,
+            secure: c.secure,
+            sameSite: c.sameSite as 'Strict' | 'Lax' | 'None' | undefined,
+          }));
+          await destSession.send('Network.setCookies', { cookies: cookiesToSet });
+          console.error(`[CDPClient] Successfully copied ${cachedData.cookies.length} cookies (from cache)`);
+          return cachedData.cookies.length;
+        } finally {
+          await destSession.detach().catch(() => {});
+        }
+      }
+
+      // Get target's WebSocket URL
+      const listResponse = await fetch(`http://127.0.0.1:${this.port}/json/list`);
+      const targets = await listResponse.json() as Array<{ id: string; webSocketDebuggerUrl: string; url: string }>;
+
+      const sourceTarget = targets.find(t => t.id === sourceTargetId);
+      if (!sourceTarget || !sourceTarget.webSocketDebuggerUrl) {
+        console.error(`[CDPClient] Source target not found in /json/list. Looking for: ${sourceTargetId}`);
+        console.error(`[CDPClient] Available targets: ${targets.map(t => t.id.slice(0,8) + ' ' + t.url.slice(0,40)).join(', ')}`);
+        return 0;
+      }
+
+      console.error(`[CDPClient] Connecting to source target at ${sourceTarget.url.slice(0, 50)}`);
+
+      // Get cookies via WebSocket
+      const cookies = await new Promise<Array<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite?: string }>>((resolve, reject) => {
+        const ws = new WebSocket(sourceTarget.webSocketDebuggerUrl);
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error('WebSocket timeout'));
+        }, 5000);
+
+        ws.on('open', () => {
+          ws.send(JSON.stringify({ id: 1, method: 'Network.getAllCookies' }));
+        });
+
+        ws.on('message', (data: Buffer) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.id === 1) {
+            clearTimeout(timeout);
+            ws.close();
+            resolve(msg.result?.cookies || []);
+          }
+        });
+
+        ws.on('error', (err: Error) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+
+      // Store in cookie data cache
+      this.cookieDataCache.set(sourceTargetId, { cookies, timestamp: Date.now() });
+
+      if (cookies.length === 0) {
+        console.error(`[CDPClient] No cookies found in source page`);
+        return 0;
+      }
+
+      console.error(`[CDPClient] Found ${cookies.length} cookies, setting on destination page`);
+
+      // Set cookies on destination page
+      const destSession = await destPage.createCDPSession();
+      try {
+        const cookiesToSet = cookies.map(c => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain,
+          path: c.path,
+          expires: c.expires,
+          httpOnly: c.httpOnly,
+          secure: c.secure,
+          sameSite: c.sameSite as 'Strict' | 'Lax' | 'None' | undefined,
+        }));
+
+        await destSession.send('Network.setCookies', { cookies: cookiesToSet });
+        console.error(`[CDPClient] Successfully copied ${cookies.length} cookies`);
+
+        return cookies.length;
+      } finally {
+        await destSession.detach().catch(() => {});
+      }
+
+    } catch (error) {
+      console.error(`[CDPClient] Error in copyCookiesViaCDP:`, error);
+      return 0;
+    }
+  }
+
+  /**
    * Create a new page with default viewport
    * @param url Optional URL to navigate to
-   * @param context Optional browser context for session isolation
+   * @param context Optional browser context for session isolation (null/undefined = use Chrome's default context with cookies)
    */
-  async createPage(url?: string, context?: BrowserContext): Promise<Page> {
+  async createPage(url?: string, context?: BrowserContext | null): Promise<Page> {
     let page: Page;
+    const browser = this.getBrowser();
+
+    // Extract domain from URL for cookie source prioritization
+    let targetDomain: string | undefined;
+    if (url) {
+      try {
+        targetDomain = new URL(url).hostname;
+        console.error(`[CDPClient] createPage targeting domain: ${targetDomain}`);
+      } catch {
+        // Invalid URL, proceed without domain preference
+      }
+    }
 
     if (context) {
-      // Create page in isolated context
+      // Create page in isolated context (for worker isolation)
       page = await context.newPage();
     } else {
-      // Create page in default context
-      const browser = this.getBrowser();
+      // Create page and copy cookies from an authenticated page
+      // This allows the new page to share the authenticated session
       page = await browser.newPage();
+
+      // Find an authenticated page to copy cookies from (with domain preference)
+      const authPageTargetId = await this.findAuthenticatedPageTargetId(targetDomain);
+      if (authPageTargetId) {
+        await this.copyCookiesViaCDP(authPageTargetId, page);
+      }
     }
 
     // Set default viewport for consistent debugging experience
@@ -448,11 +752,24 @@ export class CDPClient {
   }
 
   /**
+   * Trigger garbage collection on a page (best-effort)
+   */
+  async triggerGC(page: Page): Promise<void> {
+    try {
+      const session = await this.getCDPSession(page);
+      await session.send('HeapProfiler.collectGarbage' as any);
+    } catch {
+      // Best-effort: silently ignore GC failures
+    }
+  }
+
+  /**
    * Close a page by target ID
    */
   async closePage(targetId: string): Promise<void> {
     const page = await this.getPageByTargetId(targetId);
     if (page) {
+      await this.triggerGC(page);
       await page.close();
       this.sessions.delete(targetId);
     }
@@ -464,6 +781,20 @@ export class CDPClient {
   isConnected(): boolean {
     return this.browser !== null && this.browser.isConnected();
   }
+
+  /**
+   * Get the port this client is connected to
+   */
+  getPort(): number {
+    return this.port;
+  }
+
+  /**
+   * Create a CDPClient instance for a specific port
+   */
+  static createForPort(port: number, options?: CDPClientOptions): CDPClient {
+    return new CDPClient({ ...options, port });
+  }
 }
 
 // Singleton instance
@@ -474,4 +805,60 @@ export function getCDPClient(options?: CDPClientOptions): CDPClient {
     clientInstance = new CDPClient(options);
   }
   return clientInstance;
+}
+
+/**
+ * Factory for managing multiple CDPClient instances (one per Chrome port)
+ */
+export class CDPClientFactory {
+  private clients: Map<number, CDPClient> = new Map();
+
+  /**
+   * Get an existing client for the given port, or create a new one
+   */
+  getOrCreate(port: number, options?: CDPClientOptions): CDPClient {
+    let client = this.clients.get(port);
+    if (!client) {
+      client = CDPClient.createForPort(port, options);
+      this.clients.set(port, client);
+    }
+    return client;
+  }
+
+  /**
+   * Get an existing client for the given port, or undefined if not found
+   */
+  get(port: number): CDPClient | undefined {
+    return this.clients.get(port);
+  }
+
+  /**
+   * Get all managed client instances
+   */
+  getAll(): CDPClient[] {
+    return Array.from(this.clients.values());
+  }
+
+  /**
+   * Disconnect all managed clients
+   */
+  async disconnectAll(): Promise<void> {
+    const disconnectPromises = Array.from(this.clients.values()).map(client =>
+      client.disconnect().catch(err =>
+        console.error(`[CDPClientFactory] Error disconnecting client on port ${client.getPort()}:`, err)
+      )
+    );
+    await Promise.all(disconnectPromises);
+    this.clients.clear();
+  }
+}
+
+// Singleton factory instance
+let factoryInstance: CDPClientFactory | null = null;
+
+export function getCDPClientFactory(): CDPClientFactory {
+  if (!factoryInstance) {
+    factoryInstance = new CDPClientFactory();
+  }
+  return factoryInstance;
 }

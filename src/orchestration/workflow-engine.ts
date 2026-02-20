@@ -12,6 +12,7 @@ export interface WorkflowStep {
   url: string;
   task: string;
   successCriteria: string;
+  shareCookies?: boolean;
 }
 
 export interface WorkflowDefinition {
@@ -60,30 +61,29 @@ export class WorkflowEngine {
   }> {
     const orchestrationId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const workers: Array<{ workerId: string; workerName: string; tabId: string; task: string }> = [];
+    const workers = await Promise.all(
+      workflow.steps.map(async (step) => {
+        const worker = await this.sessionManager.createWorker(sessionId, {
+          id: step.workerId,
+          name: step.workerName,
+          shareCookies: step.shareCookies,
+          targetUrl: step.url,
+        });
 
-    // Create workers and tabs for each step
-    for (const step of workflow.steps) {
-      // Create isolated worker
-      const worker = await this.sessionManager.createWorker(sessionId, {
-        id: step.workerId,
-        name: step.workerName,
-      });
+        const { targetId } = await this.sessionManager.createTarget(
+          sessionId,
+          step.url,
+          worker.id
+        );
 
-      // Create tab in worker context
-      const { targetId } = await this.sessionManager.createTarget(
-        sessionId,
-        step.url,
-        worker.id
-      );
-
-      workers.push({
-        workerId: worker.id,
-        workerName: step.workerName,
-        tabId: targetId,
-        task: step.task,
-      });
-    }
+        return {
+          workerId: worker.id,
+          workerName: step.workerName,
+          tabId: targetId,
+          task: step.task,
+        };
+      })
+    );
 
     // Initialize orchestration state
     await this.stateManager.initOrchestration(

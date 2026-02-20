@@ -41,6 +41,11 @@ import { registerFileUploadTool } from './file-upload';
 import { registerHttpAuthTool } from './http-auth';
 import { registerDragDropTool } from './drag-drop';
 
+// UX improvement composite tools
+import { registerClickElementTool } from './click-element';
+import { registerFillFormTool } from './fill-form';
+import { registerWaitAndClickTool } from './wait-and-click';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -73,6 +78,11 @@ export function registerAllTools(server: MCPServer): void {
   registerFileUploadTool(server);
   registerHttpAuthTool(server);
   registerDragDropTool(server);
+
+  // UX improvement composite tools (reduce tool call count)
+  registerClickElementTool(server);
+  registerFillFormTool(server);
+  registerWaitAndClickTool(server);
 
   // Tab management
   registerTabsContextTool(server);

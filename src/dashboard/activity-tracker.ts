@@ -2,6 +2,8 @@
  * Activity Tracker - Tracks tool calls and their execution
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { EventEmitter } from 'events';
 import type { ToolCallEvent, ToolCallResult } from './types.js';
 
@@ -15,10 +17,20 @@ export class ActivityTracker extends EventEmitter {
   private completedCalls: ToolCallEvent[] = [];
   private maxHistory: number;
   private callCounter: number = 0;
+  private logFilePath: string | null = null;
 
   constructor(maxHistory: number = 100) {
     super();
     this.maxHistory = maxHistory;
+  }
+
+  enableFileLogging(dirPath: string): void {
+    try {
+      fs.mkdirSync(dirPath, { recursive: true });
+      this.logFilePath = path.join(dirPath, `timeline-${new Date().toISOString().slice(0, 10)}.jsonl`);
+    } catch (err) {
+      console.error('[ActivityTracker] Failed to enable file logging:', err);
+    }
   }
 
   /**
@@ -28,7 +40,8 @@ export class ActivityTracker extends EventEmitter {
   startCall(
     toolName: string,
     sessionId: string,
-    args?: Record<string, unknown>
+    args?: Record<string, unknown>,
+    requestId?: number | string
   ): string {
     const callId = `call-${Date.now()}-${++this.callCounter}`;
 
@@ -39,6 +52,7 @@ export class ActivityTracker extends EventEmitter {
       args,
       startTime: Date.now(),
       result: 'pending',
+      ...(requestId !== undefined && { requestId }),
     };
 
     this.calls.set(callId, event);
@@ -76,6 +90,14 @@ export class ActivityTracker extends EventEmitter {
     }
 
     this.emit('call:end', event);
+
+    if (this.logFilePath) {
+      try {
+        fs.appendFileSync(this.logFilePath, JSON.stringify(event) + '\n');
+      } catch {
+        // Best-effort logging
+      }
+    }
   }
 
   /**

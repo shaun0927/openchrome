@@ -13,9 +13,11 @@ export interface Worker {
   id: string;
   name: string;
   targets: Set<string>;  // CDP target IDs (page IDs)
-  context: BrowserContext;
+  context: BrowserContext | null;  // null = use default browser context (shares Chrome profile cookies)
   createdAt: number;
   lastActivityAt: number;
+  port?: number;         // Chrome instance port (when using pool)
+  poolOrigin?: string;   // Origin used for pool allocation
 }
 
 export interface WorkerInfo {
@@ -29,6 +31,8 @@ export interface WorkerInfo {
 export interface WorkerCreateOptions {
   id?: string;
   name?: string;
+  shareCookies?: boolean;  // If true, use default browser context (shares Chrome profile cookies) instead of isolated context
+  targetUrl?: string;      // URL for origin-aware Chrome instance selection
 }
 
 export interface Session {
@@ -42,7 +46,7 @@ export interface Session {
   name: string;
   // Legacy: targets directly on session (for backwards compat)
   targets: Set<string>;
-  context?: BrowserContext;
+  context?: BrowserContext | null;  // null = use default browser context (shares Chrome profile cookies)
 }
 
 export interface SessionInfo {

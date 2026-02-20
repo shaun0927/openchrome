@@ -315,7 +315,10 @@ export class SessionManager {
       await this.deleteWorkerInternal(session, workerId);
     }
 
-    // Clean up request queue
+    // Clean up all worker queues
+    for (const workerId of session.workers.keys()) {
+      this.queueManager.deleteQueue(`${sessionId}:${workerId}`);
+    }
     this.queueManager.deleteQueue(sessionId);
 
     // Clean up ref IDs
@@ -817,7 +820,8 @@ export class SessionManager {
       ? this.getCDPClientForWorker(sessionId, ownerInfo.workerId)
       : this.cdpClient;
 
-    return this.queueManager.enqueue(sessionId, async () => {
+    const workerQueueKey = ownerInfo ? `${sessionId}:${ownerInfo.workerId}` : sessionId;
+    return this.queueManager.enqueue(workerQueueKey, async () => {
       const page = await cdpClient.getPageByTargetId(targetId);
       if (!page) {
         throw new Error(`Page not found for target ${targetId}`);

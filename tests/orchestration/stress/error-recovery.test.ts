@@ -4,11 +4,23 @@
  * Tests resilience to various failure scenarios
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import { OrchestrationStateManager } from '../../../src/orchestration/state-manager';
 import { WorkflowEngine, WorkflowDefinition } from '../../../src/orchestration/workflow-engine';
 import { createMockSessionManager, corruptedStateContent, maliciousWorkerNames } from '../../mocks/orchestration-fixtures';
+
+// Mock fs to make functions mockable (non-configurable in newer Node.js)
+jest.mock('fs', () => {
+  const actual = jest.requireActual('fs');
+  return {
+    ...actual,
+    writeFileSync: jest.fn((...args: unknown[]) => actual.writeFileSync(...args)),
+    readFileSync: jest.fn((...args: unknown[]) => actual.readFileSync(...args)),
+    mkdirSync: jest.fn((...args: unknown[]) => actual.mkdirSync(...args)),
+  };
+});
+
+import * as fs from 'fs';
 
 // Mock the session manager
 jest.mock('../../../src/session-manager', () => ({
@@ -16,6 +28,8 @@ jest.mock('../../../src/session-manager', () => ({
 }));
 
 import { getSessionManager } from '../../../src/session-manager';
+
+const actualFs = jest.requireActual('fs');
 
 describe('Error Recovery Stress Tests', () => {
   let stateManager: OrchestrationStateManager;
@@ -39,6 +53,11 @@ describe('Error Recovery Stress Tests', () => {
   });
 
   afterEach(async () => {
+    // Restore mocked fs functions to pass-through
+    (fs.writeFileSync as jest.Mock).mockImplementation((...args: unknown[]) => actualFs.writeFileSync(...args));
+    (fs.readFileSync as jest.Mock).mockImplementation((...args: unknown[]) => actualFs.readFileSync(...args));
+    (fs.mkdirSync as jest.Mock).mockImplementation((...args: unknown[]) => actualFs.mkdirSync(...args));
+
     await stateManager.cleanup();
     const fullPath = path.resolve(testDir);
     if (fs.existsSync(fullPath)) {
@@ -57,14 +76,13 @@ describe('Error Recovery Stress Tests', () => {
       await stateManager.initWorkerState('w1', 'test', 't1', 'Task');
 
       // Mock writeFileSync to fail once
-      const originalWriteFileSync = fs.writeFileSync;
       let failCount = 0;
-      jest.spyOn(fs, 'writeFileSync').mockImplementation((...args: unknown[]) => {
+      (fs.writeFileSync as jest.Mock).mockImplementation((...args: unknown[]) => {
         failCount++;
         if (failCount === 1) {
           throw new Error('ENOSPC: no space left on device');
         }
-        return originalWriteFileSync.apply(fs, args as Parameters<typeof originalWriteFileSync>);
+        return actualFs.writeFileSync(...args);
       });
 
       // First update should fail
@@ -72,7 +90,7 @@ describe('Error Recovery Stress Tests', () => {
       // May return null on failure or succeed if implementation retries
 
       // Subsequent updates should work
-      jest.restoreAllMocks();
+      (fs.writeFileSync as jest.Mock).mockImplementation((...args: unknown[]) => actualFs.writeFileSync(...args));
       const result2 = await stateManager.updateWorkerState('test', { status: 'SUCCESS' });
       expect(result2).not.toBeNull();
     });
@@ -81,7 +99,7 @@ describe('Error Recovery Stress Tests', () => {
       await stateManager.initWorkerState('w1', 'test', 't1', 'Task');
 
       // Mock readFileSync to fail
-      jest.spyOn(fs, 'readFileSync').mockImplementation(() => {
+      (fs.readFileSync as jest.Mock).mockImplementation(() => {
         throw new Error('EACCES: permission denied');
       });
 
@@ -91,7 +109,7 @@ describe('Error Recovery Stress Tests', () => {
 
     test('should handle directory creation errors', async () => {
       // Mock mkdirSync to fail
-      jest.spyOn(fs, 'mkdirSync').mockImplementation(() => {
+      (fs.mkdirSync as jest.Mock).mockImplementation(() => {
         throw new Error('EACCES: permission denied');
       });
 

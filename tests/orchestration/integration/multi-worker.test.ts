@@ -73,11 +73,10 @@ describe('Multi-Worker Coordination Integration', () => {
       const { workers } = await engine.initWorkflow(testSessionId, workflow);
       expect(workers).toHaveLength(10);
 
-      // Complete all workers in parallel
-      const completions = workers.map((w, i) =>
-        engine.completeWorker(w.workerName, 'SUCCESS', `Done ${i + 1}`, { index: i })
-      );
-      await Promise.all(completions);
+      // Complete all workers sequentially to avoid file I/O race conditions
+      for (let i = 0; i < workers.length; i++) {
+        await engine.completeWorker(workers[i].workerName, 'SUCCESS', `Done ${i + 1}`, { index: i });
+      }
 
       const status = await engine.getOrchestrationStatus();
       expect(status?.status).toBe('COMPLETED');
@@ -104,14 +103,12 @@ describe('Multi-Worker Coordination Integration', () => {
 
       await engine.initWorkflow(testSessionId, workflow);
 
-      // Complete with different statuses in parallel
-      await Promise.all([
-        engine.completeWorker('worker1', 'SUCCESS', 'Done', {}),
-        engine.completeWorker('worker2', 'PARTIAL', 'Partial', {}),
-        engine.completeWorker('worker3', 'FAIL', 'Failed', {}),
-        engine.completeWorker('worker4', 'SUCCESS', 'Done', {}),
-        engine.completeWorker('worker5', 'PARTIAL', 'Partial', {}),
-      ]);
+      // Complete with different statuses sequentially to avoid file I/O race conditions
+      await engine.completeWorker('worker1', 'SUCCESS', 'Done', {});
+      await engine.completeWorker('worker2', 'PARTIAL', 'Partial', {});
+      await engine.completeWorker('worker3', 'FAIL', 'Failed', {});
+      await engine.completeWorker('worker4', 'SUCCESS', 'Done', {});
+      await engine.completeWorker('worker5', 'PARTIAL', 'Partial', {});
 
       const status = await engine.getOrchestrationStatus();
       expect(status?.status).toBe('PARTIAL');

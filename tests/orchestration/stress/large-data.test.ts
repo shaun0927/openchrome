@@ -62,7 +62,8 @@ describe('Large Data Handling Stress Tests', () => {
       });
 
       const state = await stateManager.readWorkerState('large-log');
-      expect(state?.progressLog).toHaveLength(1000);
+      // State manager caps progress log at MAX_PROGRESS_LOG_ENTRIES (500)
+      expect(state?.progressLog).toHaveLength(500);
 
       console.log(`1000 progress entries: ${durationMs}ms`);
       // Should complete in reasonable time (< 30 seconds)

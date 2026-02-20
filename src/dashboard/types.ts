@@ -14,6 +14,7 @@ export type ToolCallResult = 'success' | 'error' | 'pending';
 
 export interface ToolCallEvent {
   id: string;
+  requestId?: number | string;
   toolName: string;
   sessionId: string;
   args?: Record<string, unknown>;

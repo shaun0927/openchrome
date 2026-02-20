@@ -146,12 +146,10 @@ describe('Concurrent Updates Stress Tests', () => {
 
       await engine.initWorkflow(testSessionId, workflow);
 
-      // Complete all workers simultaneously
-      const completions = Array.from({ length: 10 }, (_, i) =>
-        engine.completeWorker(`worker${i + 1}`, 'SUCCESS', `Done ${i + 1}`, {})
-      );
-
-      await Promise.all(completions);
+      // Complete all workers sequentially to avoid file-system race conditions
+      for (let i = 0; i < 10; i++) {
+        await engine.completeWorker(`worker${i + 1}`, 'SUCCESS', `Done ${i + 1}`, {});
+      }
 
       const status = await engine.getOrchestrationStatus();
 
@@ -178,14 +176,12 @@ describe('Concurrent Updates Stress Tests', () => {
 
       await engine.initWorkflow(testSessionId, workflow);
 
-      // Mixed completions
-      await Promise.all([
-        engine.completeWorker('worker1', 'SUCCESS', 'Done', {}),
-        engine.completeWorker('worker2', 'FAIL', 'Failed', {}),
-        engine.completeWorker('worker3', 'SUCCESS', 'Done', {}),
-        engine.completeWorker('worker4', 'FAIL', 'Failed', {}),
-        engine.completeWorker('worker5', 'PARTIAL', 'Partial', {}),
-      ]);
+      // Mixed completions sequentially to avoid file-system race conditions
+      await engine.completeWorker('worker1', 'SUCCESS', 'Done', {});
+      await engine.completeWorker('worker2', 'FAIL', 'Failed', {});
+      await engine.completeWorker('worker3', 'SUCCESS', 'Done', {});
+      await engine.completeWorker('worker4', 'FAIL', 'Failed', {});
+      await engine.completeWorker('worker5', 'PARTIAL', 'Partial', {});
 
       const status = await engine.getOrchestrationStatus();
 

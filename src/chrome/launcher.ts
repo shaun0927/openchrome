@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
+import { getGlobalConfig } from '../config/global';
 
 export interface ChromeInstance {
   wsEndpoint: string;
@@ -21,6 +22,8 @@ export interface LaunchOptions {
   headless?: boolean;
   /** If false, don't auto-launch Chrome when not running (default: false) */
   autoLaunch?: boolean;
+  /** If true, force using a temp directory instead of real Chrome profile */
+  useTempProfile?: boolean;
 }
 
 const DEFAULT_PORT = 9222;
@@ -57,6 +60,33 @@ function findChromePath(): string | null {
     } catch {
       return null;
     }
+  }
+
+  return null;
+}
+
+/**
+ * Find chrome-headless-shell binary
+ */
+function findChromeHeadlessShell(): string | null {
+  // Check environment variable first
+  const envPath = process.env['CHROME_HEADLESS_SHELL'];
+  if (envPath && fs.existsSync(envPath)) {
+    return envPath;
+  }
+
+  // Check PATH using which (Linux/Mac) or where (Windows)
+  const platform = os.platform();
+  try {
+    const cmd = platform === 'win32'
+      ? 'where chrome-headless-shell'
+      : 'which chrome-headless-shell';
+    const result = execSync(cmd, { encoding: 'utf8' }).trim();
+    if (result && fs.existsSync(result)) {
+      return result;
+    }
+  } catch {
+    // Not found in PATH
   }
 
   return null;
@@ -119,6 +149,7 @@ async function waitForDebugPort(port: number, timeout = 30000): Promise<string> 
 export class ChromeLauncher {
   private instance: ChromeInstance | null = null;
   private port: number;
+  private usingRealProfile = false;
 
   constructor(port: number = DEFAULT_PORT) {
     this.port = port;
@@ -166,17 +197,57 @@ export class ChromeLauncher {
     // Launch new Chrome instance
     console.error(`[ChromeLauncher] Launching Chrome with debug port ${port}...`);
 
-    const chromePath = findChromePath();
+    const globalConfig = getGlobalConfig();
+
+    // Resolve Chrome binary: explicit override > headless-shell > standard Chrome
+    let chromePath: string | null = null;
+    let usingHeadlessShell = false;
+
+    if (globalConfig.chromeBinary) {
+      chromePath = globalConfig.chromeBinary;
+      console.error(`[ChromeLauncher] Using custom Chrome binary: ${chromePath}`);
+    } else if (globalConfig.useHeadlessShell) {
+      chromePath = findChromeHeadlessShell();
+      if (chromePath) {
+        usingHeadlessShell = true;
+        console.error(`[ChromeLauncher] Using chrome-headless-shell: ${chromePath}`);
+      } else {
+        console.error('[ChromeLauncher] chrome-headless-shell not found, falling back to standard Chrome');
+        chromePath = findChromePath();
+      }
+    } else {
+      chromePath = findChromePath();
+    }
+
     if (!chromePath) {
       throw new Error(
         'Chrome not found. Please install Google Chrome or set CHROME_PATH environment variable.'
       );
     }
 
-    // Create unique user data directory (Chrome 136+ requirement)
-    const userDataDir =
-      options.userDataDir ||
-      path.join(os.tmpdir(), `claude-chrome-parallel-${Date.now()}`);
+    // Determine user data directory:
+    // 1. Explicit option from CLI/config/global
+    // 2. Real Chrome profile (macOS: ~/Library/Application Support/Google/Chrome)
+    //    (skipped when using headless-shell, which doesn't support extensions)
+    // 3. Fallback to temp directory
+    let userDataDir = options.userDataDir || globalConfig.userDataDir;
+    let usingRealProfile = false;
+
+    if (!userDataDir && !options.useTempProfile && !usingHeadlessShell) {
+      const realProfileDir = this.getRealChromeProfileDir();
+      if (realProfileDir && !this.isProfileLocked(realProfileDir)) {
+        userDataDir = realProfileDir;
+        usingRealProfile = true;
+        this.usingRealProfile = true;
+        console.error(`[ChromeLauncher] Using real Chrome profile: ${realProfileDir}`);
+      }
+    }
+
+    if (!userDataDir) {
+      userDataDir = path.join(os.tmpdir(), `claude-chrome-parallel-${Date.now()}`);
+      this.usingRealProfile = false;
+      console.error(`[ChromeLauncher] Using temp profile: ${userDataDir}`);
+    }
 
     fs.mkdirSync(userDataDir, { recursive: true });
 
@@ -185,15 +256,31 @@ export class ChromeLauncher {
       `--user-data-dir=${userDataDir}`,
       '--no-first-run',
       '--no-default-browser-check',
-      '--disable-background-networking',
-      '--disable-sync',
-      '--disable-translate',
-      '--metrics-recording-only',
       // IMPORTANT: Start maximized for proper debugging experience
       '--start-maximized',
       // Fallback window size if maximize doesn't work
       '--window-size=1920,1080',
+      // Memory-saving flags (applies to all profile types)
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--renderer-process-limit=4',
+      '--js-flags=--max-old-space-size=512',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-ipc-flooding-protection',
     ];
+
+    // Only disable background features for temp profiles
+    if (!usingRealProfile) {
+      args.push(
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-translate',
+        '--metrics-recording-only',
+        '--disable-extensions',
+        '--disable-component-extensions-with-background-pages',
+        '--disable-default-apps',
+      );
+    }
 
     if (options.headless) {
       args.push('--headless=new');
@@ -250,8 +337,8 @@ export class ChromeLauncher {
       console.error('[ChromeLauncher] Closing Chrome...');
       this.instance.process.kill();
 
-      // Clean up user data dir
-      if (this.instance.userDataDir) {
+      // Clean up user data dir (only if using temp profile, never delete real profile)
+      if (this.instance.userDataDir && !this.usingRealProfile) {
         try {
           fs.rmSync(this.instance.userDataDir, { recursive: true, force: true });
         } catch {
@@ -267,6 +354,48 @@ export class ChromeLauncher {
    */
   isConnected(): boolean {
     return this.instance !== null;
+  }
+
+  /**
+   * Get the real Chrome profile directory for the current platform
+   */
+  private getRealChromeProfileDir(): string | null {
+    const platform = os.platform();
+    const home = os.homedir();
+
+    if (platform === 'darwin') {
+      const profileDir = path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+      if (fs.existsSync(profileDir)) return profileDir;
+    } else if (platform === 'win32') {
+      const profileDir = path.join(home, 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
+      if (fs.existsSync(profileDir)) return profileDir;
+    } else {
+      const profileDir = path.join(home, '.config', 'google-chrome');
+      if (fs.existsSync(profileDir)) return profileDir;
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if a Chrome profile directory is locked by another Chrome instance
+   */
+  private isProfileLocked(profileDir: string): boolean {
+    // Chrome uses a "SingletonLock" file (Linux) or "lockfile" to prevent concurrent access
+    const lockFiles = [
+      path.join(profileDir, 'SingletonLock'),
+      path.join(profileDir, 'SingletonSocket'),
+      path.join(profileDir, 'SingletonCookie'),
+    ];
+
+    for (const lockFile of lockFiles) {
+      if (fs.existsSync(lockFile)) {
+        console.error(`[ChromeLauncher] Profile locked: ${lockFile} exists`);
+        return true;
+      }
+    }
+
+    return false;
   }
 }
 

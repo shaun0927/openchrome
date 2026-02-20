@@ -35,6 +35,7 @@ interface PooledPage {
   page: Page;
   createdAt: number;
   lastUsedAt: number;
+  visitedOrigins: Set<string>;
 }
 
 const DEFAULT_CONFIG: Required<PoolConfig> = {
@@ -113,6 +114,7 @@ export class CDPConnectionPool {
         page,
         createdAt: Date.now(),
         lastUsedAt: Date.now(),
+        visitedOrigins: new Set(),
       };
       this.pagesCreatedOnDemand++;
     }
@@ -162,16 +164,31 @@ export class CDPConnectionPool {
 
     // Reset the page state before returning to pool
     try {
+      // Track the current page URL before navigating away (for origin-specific cleanup)
+      let currentOrigin: string | undefined;
+      try {
+        const currentUrl = page.url();
+        if (currentUrl && currentUrl !== 'about:blank') {
+          currentOrigin = new URL(currentUrl).origin;
+        }
+      } catch {
+        // Ignore URL parsing errors
+      }
+
       // Navigate to blank page to clear state
       await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
 
       // Clear cookies and storage
       const client = await page.createCDPSession();
       await client.send('Network.clearBrowserCookies');
-      await client.send('Storage.clearDataForOrigin', {
-        origin: '*',
-        storageTypes: 'all',
-      }).catch(() => {}); // Ignore if not supported
+
+      // Clear storage for the specific origin (wildcard '*' silently fails)
+      if (currentOrigin) {
+        await client.send('Storage.clearDataForOrigin', {
+          origin: currentOrigin,
+          storageTypes: 'all',
+        }).catch(() => {}); // Ignore if not supported
+      }
       await client.detach();
 
       pooledPage.lastUsedAt = Date.now();
@@ -217,6 +234,7 @@ export class CDPConnectionPool {
             page,
             createdAt: Date.now(),
             lastUsedAt: Date.now(),
+            visitedOrigins: new Set(),
           });
         }).catch((err) => {
           console.error('[Pool] Failed to pre-warm page:', err);

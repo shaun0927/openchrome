@@ -79,7 +79,10 @@ describe('FindTool', () => {
 
       // Mock CDP response for getting backend node ID
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: { objectId: 'obj-1' } })
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        .mockResolvedValueOnce({ result: [
+          { name: '0', value: { objectId: 'el-obj-0' } },
+        ]})
         .mockResolvedValueOnce({ node: { backendNodeId: 12345 } });
 
       const result = await handler(testSessionId, {
@@ -106,7 +109,10 @@ describe('FindTool', () => {
       ]);
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: { objectId: 'obj-1' } })
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        .mockResolvedValueOnce({ result: [
+          { name: '0', value: { objectId: 'el-obj-0' } },
+        ]})
         .mockResolvedValueOnce({ node: { backendNodeId: 12346 } });
 
       const result = await handler(testSessionId, {
@@ -133,7 +139,10 @@ describe('FindTool', () => {
       ]);
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: { objectId: 'obj-1' } })
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        .mockResolvedValueOnce({ result: [
+          { name: '0', value: { objectId: 'el-obj-0' } },
+        ]})
         .mockResolvedValueOnce({ node: { backendNodeId: 12347 } });
 
       const result = await handler(testSessionId, {
@@ -160,7 +169,10 @@ describe('FindTool', () => {
       ]);
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: { objectId: 'obj-1' } })
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        .mockResolvedValueOnce({ result: [
+          { name: '0', value: { objectId: 'el-obj-0' } },
+        ]})
         .mockResolvedValueOnce({ node: { backendNodeId: 12348 } });
 
       const result = await handler(testSessionId, {
@@ -187,7 +199,10 @@ describe('FindTool', () => {
       ]);
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: { objectId: 'obj-1' } })
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        .mockResolvedValueOnce({ result: [
+          { name: '0', value: { objectId: 'el-obj-0' } },
+        ]})
         .mockResolvedValueOnce({ node: { backendNodeId: 12349 } });
 
       const result = await handler(testSessionId, {
@@ -233,10 +248,19 @@ describe('FindTool', () => {
 
       (page.evaluate as jest.Mock).mockResolvedValue(manyResults.slice(0, 20));
 
-      // Mock CDP responses for each element
+      // Mock CDP responses for batched approach
+      mockSessionManager.mockCDPClient.send
+        // Step 1: Runtime.evaluate returns batch array
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        // Step 2: Runtime.getProperties returns all element references
+        .mockResolvedValueOnce({ result: Array.from({ length: 20 }, (_, i) => ({
+          name: String(i),
+          value: { objectId: `el-obj-${i}` },
+        }))});
+
+      // Step 3: DOM.describeNode for each element
       for (let i = 0; i < 20; i++) {
         mockSessionManager.mockCDPClient.send
-          .mockResolvedValueOnce({ result: { objectId: `obj-${i}` } })
           .mockResolvedValueOnce({ node: { backendNodeId: 12345 + i } });
       }
 
@@ -329,7 +353,10 @@ describe('FindTool', () => {
       ]);
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: { objectId: 'obj-1' } })
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        .mockResolvedValueOnce({ result: [
+          { name: '0', value: { objectId: 'el-obj-0' } },
+        ]})
         .mockResolvedValueOnce({ node: { backendNodeId: 12345 } });
 
       await handler(testSessionId, {

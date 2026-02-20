@@ -46,6 +46,10 @@ Use this to prepare parallel browser operations before launching worker agents.`
               type: 'string',
               description: 'Criteria for task completion',
             },
+            shareCookies: {
+              type: 'boolean',
+              description: 'If true, worker shares cookies from existing Chrome session instead of isolated context (default: false)',
+            },
           },
           required: ['name', 'url', 'task'],
         },
@@ -66,6 +70,7 @@ const workflowInitHandler: ToolHandler = async (
     url: string;
     task: string;
     successCriteria?: string;
+    shareCookies?: boolean;
   }>;
 
   try {
@@ -79,6 +84,7 @@ const workflowInitHandler: ToolHandler = async (
         url: w.url,
         task: w.task,
         successCriteria: w.successCriteria || 'Task completed successfully',
+        shareCookies: w.shareCookies ?? false,
       })),
       parallel: true,
       maxRetries: 3,
