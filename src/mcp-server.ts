@@ -132,13 +132,12 @@ export class MCPServer {
       terminal: false,
     });
 
-    this.rl.on('line', async (line) => {
+    this.rl.on('line', (line) => {
       if (!line.trim()) return;
 
+      let request: MCPRequest;
       try {
-        const request = JSON.parse(line) as MCPRequest;
-        const response = await this.handleRequest(request);
-        this.sendResponse(response);
+        request = JSON.parse(line) as MCPRequest;
       } catch (error) {
         const errorResponse: MCPResponse = {
           jsonrpc: '2.0',
@@ -149,7 +148,23 @@ export class MCPServer {
           },
         };
         this.sendResponse(errorResponse);
+        return;
       }
+
+      // Fire-and-forget: process requests concurrently
+      this.handleRequest(request)
+        .then((response) => this.sendResponse(response))
+        .catch((error) => {
+          const errorResponse: MCPResponse = {
+            jsonrpc: '2.0',
+            id: request.id,
+            error: {
+              code: MCPErrorCodes.INTERNAL_ERROR,
+              message: error instanceof Error ? error.message : 'Internal error',
+            },
+          };
+          this.sendResponse(errorResponse);
+        });
     });
 
     this.rl.on('close', () => {

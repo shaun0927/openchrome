@@ -4,6 +4,7 @@
  */
 
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 
 // Constants for safety limits
@@ -98,9 +99,7 @@ export class OrchestrationStateManager {
    */
   async ensureDirectory(): Promise<void> {
     const fullPath = path.resolve(this.baseDir);
-    if (!fs.existsSync(fullPath)) {
-      fs.mkdirSync(fullPath, { recursive: true });
-    }
+    await fsp.mkdir(fullPath, { recursive: true });
   }
 
   /**
@@ -258,12 +257,8 @@ export class OrchestrationStateManager {
 
     const filePath = this.getWorkerPath(workerName);
 
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
     try {
-      const content = fs.readFileSync(filePath, 'utf-8');
+      const content = await fsp.readFile(filePath, 'utf-8');
       // Try to parse JSON from markdown code block
       // Note: There may be multiple JSON blocks (extracted data + raw state)
       // We need the last one which contains the full state object
@@ -300,7 +295,7 @@ export class OrchestrationStateManager {
 
     try {
       const markdown = this.formatWorkerMarkdown(state);
-      fs.writeFileSync(filePath, markdown, 'utf-8');
+      await fsp.writeFile(filePath, markdown, 'utf-8');
     } catch (error) {
       console.error(`[StateManager] Failed to write worker state for "${workerName}": ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -367,12 +362,8 @@ ${stateJson}
   async readOrchestrationState(): Promise<OrchestrationState | null> {
     const filePath = this.getOrchestrationPath();
 
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
     try {
-      const content = fs.readFileSync(filePath, 'utf-8');
+      const content = await fsp.readFile(filePath, 'utf-8');
       // Get the last JSON code block (the raw state)
       const regex = /```json\n([\s\S]*?)\n```/g;
       let lastMatch: RegExpExecArray | null = null;
@@ -397,7 +388,7 @@ ${stateJson}
     const filePath = this.getOrchestrationPath();
 
     const markdown = this.formatOrchestrationMarkdown(state);
-    fs.writeFileSync(filePath, markdown, 'utf-8');
+    await fsp.writeFile(filePath, markdown, 'utf-8');
   }
 
   /**
@@ -490,11 +481,11 @@ ${stateJson}
    */
   async cleanup(): Promise<void> {
     const fullPath = path.resolve(this.baseDir);
-    if (fs.existsSync(fullPath)) {
-      const files = fs.readdirSync(fullPath);
-      for (const file of files) {
-        fs.unlinkSync(path.join(fullPath, file));
-      }
+    try {
+      const files = await fsp.readdir(fullPath);
+      await Promise.all(files.map(file => fsp.unlink(path.join(fullPath, file))));
+    } catch {
+      // Directory may not exist
     }
   }
 }

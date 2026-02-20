@@ -263,8 +263,8 @@ export class ChromeLauncher {
       // Memory-saving flags (applies to all profile types)
       '--disable-gpu',
       '--disable-dev-shm-usage',
-      '--renderer-process-limit=4',
-      '--js-flags=--max-old-space-size=512',
+      '--renderer-process-limit=16',
+      '--js-flags=--max-old-space-size=1024',
       '--disable-backgrounding-occluded-windows',
       '--disable-ipc-flooding-protection',
     ];

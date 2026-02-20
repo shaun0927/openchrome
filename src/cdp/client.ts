@@ -45,7 +45,8 @@ export class CDPClient {
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: Array<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite?: string }>; timestamp: number }> = new Map();
-  private static readonly COOKIE_CACHE_TTL = 30000; // 30 seconds
+  private targetIdIndex: Map<string, Page> = new Map();
+  private static readonly COOKIE_CACHE_TTL = 300000; // 5 minutes
 
   constructor(options: CDPClientOptions = {}) {
     const globalConfig = getGlobalConfig();
@@ -101,6 +102,7 @@ export class CDPClient {
     }
     // Clean up cookie data cache for this target
     this.cookieDataCache.delete(targetId);
+    this.targetIdIndex.delete(targetId);
     for (const listener of this.targetDestroyedListeners) {
       try {
         listener(targetId);
@@ -182,6 +184,7 @@ export class CDPClient {
 
     // Clear existing sessions
     this.sessions.clear();
+    this.targetIdIndex.clear();
     this.browser = null;
 
     // Attempt reconnection
@@ -244,6 +247,20 @@ export class CDPClient {
       const targetId = getTargetId(target);
       console.error(`[CDPClient] Target destroyed: ${targetId}`);
       this.onTargetDestroyed(targetId);
+    });
+
+    // Maintain target-to-page index for O(1) lookups
+    this.browser.on('targetcreated', async (target) => {
+      if (target.type() === 'page') {
+        try {
+          const page = await target.page();
+          if (page) {
+            this.targetIdIndex.set(getTargetId(target), page);
+          }
+        } catch {
+          // Target may have been destroyed before we could index it
+        }
+      }
     });
 
     this.connectionState = 'connected';
@@ -696,16 +713,29 @@ export class CDPClient {
    * Get page by target ID
    */
   async getPageByTargetId(targetId: string): Promise<Page | null> {
+    // Fast path: check index first (O(1))
+    const indexed = this.targetIdIndex.get(targetId);
+    if (indexed && !indexed.isClosed()) {
+      return indexed;
+    }
+
+    // Fallback: linear scan (for pages created before indexing started)
     const browser = this.getBrowser();
     const targets = browser.targets();
 
     for (const target of targets) {
       if (getTargetId(target) === targetId && target.type() === 'page') {
         const page = await target.page();
+        if (page) {
+          // Populate index for future lookups
+          this.targetIdIndex.set(targetId, page);
+        }
         return page;
       }
     }
 
+    // Clean stale index entry
+    this.targetIdIndex.delete(targetId);
     return null;
   }
 
