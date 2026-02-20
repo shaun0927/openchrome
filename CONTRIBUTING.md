@@ -169,6 +169,88 @@ cli/
 - Large data handling
 - Error recovery under load
 
+## Contribution Areas
+
+Looking for something to work on? Here are the key areas where contributions would make the biggest impact.
+
+### Multi-Client Compatibility
+
+CCP is a standard MCP server, but currently only tested with Claude Code. Help us verify and support other MCP clients.
+
+| Client | Status | What's Needed |
+|--------|--------|---------------|
+| Claude Code | Verified | - |
+| Cursor | Untested | Test all 36 tools, verify `instructions` field |
+| Windsurf | Untested | Test all 36 tools, verify `instructions` field |
+| Codex CLI | Untested | Test all 36 tools, verify `instructions` field |
+| VS Code + MCP | Untested | Test basic tool flow |
+
+**How to contribute**: Pick a client, run the test suite against it, report what works and what doesn't. Adapt `ccp setup` to support the client if needed.
+
+### Cross-Platform Support
+
+Currently developed and tested on macOS. Windows and Linux need attention.
+
+- **Windows**: Chrome path detection, `--remote-debugging-port` launch, named pipes vs Unix sockets
+- **Linux**: Headless Chrome in CI environments, Wayland vs X11 screenshot handling
+- **CI/CD**: GitHub Actions workflow for automated testing across platforms
+
+### Performance Benchmarks
+
+The README claims 80x speedup, but we need reproducible benchmarks.
+
+- **Benchmark suite**: Automated comparison vs Playwright MCP on standard tasks (navigate, screenshot, form fill)
+- **Memory profiling**: Measure actual memory usage with 5, 10, 20 Workers
+- **Latency analysis**: Tool-by-tool latency comparison with other MCP browser tools
+
+### Browser Support
+
+Currently Chrome-only via CDP. Other browsers have similar protocols.
+
+- **Edge**: Shares CDP — should work with minimal changes (needs testing)
+- **Firefox**: Uses its own remote debugging protocol (significant work)
+- **Safari**: Limited Web Inspector protocol (research needed)
+
+### Adaptive Guidance Improvements
+
+The hint engine (`src/hints/`) currently has 21 static rules. Areas to improve:
+
+- **More error patterns**: Catalog common LLM mistakes and add recovery hints
+- **Client-specific hints**: Different LLMs make different mistakes — adapt hints per client
+- **Learned pattern sharing**: Export/import learned patterns across users
+- **Benchmark hint effectiveness**: Measure how hints reduce retry loops and wasted tokens
+
+### Tool Enhancements
+
+- **Accessibility testing**: Tools for WCAG compliance checking
+- **Visual regression**: Screenshot diff between runs
+- **Network HAR export**: Export full network traffic as HAR files
+- **Video recording**: Record browser session as video/GIF
+- **Multi-tab orchestration**: Coordinate actions across tabs within a single Worker
+
+### Developer Experience
+
+- **`ccp setup` for other clients**: Auto-configure for Cursor, Windsurf, etc.
+- **`ccp benchmark`**: Built-in benchmark command
+- **`ccp replay`**: Replay a recorded session for debugging
+- **Plugin system**: Allow users to register custom tools
+
+### Documentation
+
+- **API reference**: Auto-generated docs for all 36 tools with examples
+- **Tutorials**: Step-by-step guides (e.g., "Automate your CI dashboard")
+- **Troubleshooting guide**: Common issues and solutions per platform
+
+### Good First Issues
+
+If you're new to the project, these are good starting points:
+
+- Add a new hint rule to `src/hints/rules/` (follow existing patterns)
+- Test CCP on a non-Claude MCP client and report results
+- Add Windows Chrome path detection in `src/chrome/launcher.ts`
+- Write an example script using CCP tools
+- Improve error messages for common setup failures
+
 ## Questions?
 
 - Open an issue for bugs or feature requests
