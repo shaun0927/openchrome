@@ -248,7 +248,7 @@ export class MCPServer {
       instructions: [
         'CCP (Claude Chrome Parallel) gives you browser automation using the user\'s actual Chrome — already logged in to everything.',
         '',
-        'MAGIC KEYWORD: When the user says "ccp", "use ccp", "ccp로", or any variation, immediately activate browser automation.',
+        'MAGIC KEYWORD: When the user says "ccp", "use ccp", or any variation, immediately activate browser automation.',
         '',
         'KEY RULES:',
         '- The user is ALREADY LOGGED IN to every site. Never attempt login or enter credentials.',
@@ -259,7 +259,7 @@ export class MCPServer {
         'EXAMPLES:',
         '  "ccp screenshot my Gmail" → navigate to Gmail, take screenshot',
         '  "use ccp to check AWS billing and Stripe" → workflow_init with 2 workers, parallel',
-        '  "ccp로 네이버 검색해줘" → navigate to naver.com, perform search',
+        '  "ccp search on naver.com" → navigate to naver.com, perform search',
         '  "ccp compare prices on Amazon, eBay, Walmart" → 3 parallel workers, one per site',
         '',
         'TOOL QUICK REFERENCE:',

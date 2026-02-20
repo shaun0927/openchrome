@@ -140,7 +140,7 @@ After setup, **`ccp` is your magic word.** No flags, no config, no boilerplate. 
 You: ccp screenshot my Gmail inbox
 Claude: [Already logged in. Screenshot taken. Done.]
 
-You: ccp로 AWS 빌링이랑 Stripe 매출 동시에 확인해줘
+You: ccp check my AWS billing and Stripe revenue at the same time
 Claude: [2 Workers, parallel, 2.1s — both dashboards captured]
 
 You: use ccp to compare iPhone prices on Amazon, eBay, and Walmart

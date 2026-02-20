@@ -123,7 +123,7 @@ program
       console.log('Examples:');
       console.log('  "ccp screenshot my Gmail"');
       console.log('  "use ccp to check AWS billing"');
-      console.log('  "ccp로 네이버 검색해줘"\n');
+      console.log('  "ccp search on naver.com"\n');
     } catch (error) {
       console.error('\n❌ Failed to configure MCP server.');
       console.error('   You can manually add to ~/.claude.json:');
