@@ -4,11 +4,14 @@
 
 import * as dns from 'dns';
 import { promisify } from 'util';
-import { MCPServer } from '../mcp-server';
+import { MCPServer, getMCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getWorkflowEngine, WorkflowDefinition } from '../orchestration/workflow-engine';
 import { getOrchestrationStateManager } from '../orchestration/state-manager';
 import { getCDPConnectionPool } from '../cdp/connection-pool';
+import { filterToolsForWorker, WorkerToolConfig } from '../types/tool-manifest';
+import { getPlanRegistry } from '../orchestration/plan-registry';
+import { PlanExecutor } from '../orchestration/plan-executor';
 
 const dnsResolve = promisify(dns.resolve);
 
@@ -146,6 +149,20 @@ const workflowInitHandler: ToolHandler = async (
     // Initialize workflow
     const result = await engine.initWorkflow(sessionId, workflow);
 
+    // Generate tool manifest for worker agents (Shared Tool Registry)
+    // Workers receive pre-loaded tool schemas so they can skip ToolSearch calls
+    let manifestTools;
+    try {
+      const mcpServer = getMCPServer();
+      const manifest = mcpServer.getToolManifest();
+      const workerToolConfig: WorkerToolConfig = { workerType: 'extraction' };
+      manifestTools = filterToolsForWorker(manifest, workerToolConfig);
+      console.error(`[Orchestration] Tool manifest generated: ${manifestTools.length} tools for extraction workers (v${manifest.version})`);
+    } catch (err) {
+      console.error(`[Orchestration] Tool manifest generation failed (non-fatal, using fallback): ${err instanceof Error ? err.message : String(err)}`);
+      manifestTools = undefined;
+    }
+
     // Generate worker prompts for reference
     const workerPrompts = result.workers.map((w, i) => ({
       workerName: w.workerName,
@@ -155,7 +172,8 @@ const workflowInitHandler: ToolHandler = async (
         w.workerName,
         w.tabId,
         workflow.steps[i].task,
-        workflow.steps[i].successCriteria
+        workflow.steps[i].successCriteria,
+        manifestTools
       ),
     }));
 
@@ -641,6 +659,142 @@ const workflowCollectPartialHandler: ToolHandler = async (
 };
 
 // ============================================
+// execute_plan - Execute a cached compiled plan
+// ============================================
+
+const executePlanDefinition: MCPToolDefinition = {
+  name: 'execute_plan',
+  description: `Execute a cached compiled plan by ID, bypassing per-step agent LLM round-trips.
+The plan's tool calls are chained internally on the server side.
+Use this for repeated task patterns (e.g., tweet extraction) where the tool sequence is known.
+Falls back gracefully — returns an error result if the plan fails, allowing the agent to retry manually.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      planId: {
+        type: 'string',
+        description: 'ID of the compiled plan to execute (e.g., "x-tweet-extraction-v1")',
+      },
+      tabId: {
+        type: 'string',
+        description: 'Tab ID to execute the plan against',
+      },
+      params: {
+        type: 'object',
+        description: 'Additional runtime parameters to pass to the plan (merged with plan defaults)',
+      },
+    },
+    required: ['planId', 'tabId'],
+  },
+};
+
+const executePlanHandler: ToolHandler = async (
+  sessionId: string,
+  args: Record<string, unknown>
+): Promise<MCPResult> => {
+  const planId = args.planId as string;
+  const tabId = args.tabId as string;
+  const runtimeParams = (args.params as Record<string, unknown>) || {};
+
+  if (!planId || !tabId) {
+    return {
+      content: [{ type: 'text', text: 'Error: planId and tabId are required' }],
+      isError: true,
+    };
+  }
+
+  try {
+    const registry = getPlanRegistry();
+    const entry = registry.getEntry(planId);
+
+    if (!entry) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            status: 'PLAN_NOT_FOUND',
+            planId,
+            availablePlans: registry.getEntries().map(e => e.id),
+            message: `No plan found with ID "${planId}". Use workflow_init for manual execution.`,
+          }),
+        }],
+        isError: true,
+      };
+    }
+
+    // Check confidence threshold
+    if (entry.confidence < entry.minConfidenceToUse) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            status: 'LOW_CONFIDENCE',
+            planId,
+            confidence: entry.confidence,
+            threshold: entry.minConfidenceToUse,
+            message: `Plan confidence (${entry.confidence.toFixed(2)}) is below threshold (${entry.minConfidenceToUse}). Use manual execution.`,
+          }),
+        }],
+        isError: true,
+      };
+    }
+
+    const plan = registry.loadPlan(entry);
+    if (!plan) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            status: 'PLAN_LOAD_FAILED',
+            planId,
+            message: `Failed to load plan file for "${planId}".`,
+          }),
+        }],
+        isError: true,
+      };
+    }
+
+    // Create executor with MCPServer's tool resolver
+    const mcpServer = getMCPServer();
+    const executor = new PlanExecutor((toolName: string) => mcpServer.getToolHandler(toolName));
+
+    // Execute the plan
+    const mergedParams = { tabId, ...runtimeParams };
+    const result = await executor.execute(plan, sessionId, mergedParams);
+
+    // Update stats
+    registry.updateStats(planId, result.success, result.durationMs);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          status: result.success ? 'SUCCESS' : 'FAILED',
+          planId: result.planId,
+          stepsExecuted: result.stepsExecuted,
+          totalSteps: result.totalSteps,
+          durationMs: result.durationMs,
+          data: result.data,
+          error: result.error,
+          message: result.success
+            ? `Plan "${planId}" executed successfully in ${result.durationMs}ms (${result.stepsExecuted}/${result.totalSteps} steps)`
+            : `Plan "${planId}" failed: ${result.error}. Consider manual execution.`,
+        }, null, 2),
+      }],
+      isError: !result.success,
+    };
+  } catch (error) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Error executing plan "${planId}": ${error instanceof Error ? error.message : String(error)}`,
+      }],
+      isError: true,
+    };
+  }
+};
+
+// ============================================
 // Register all orchestration tools
 // ============================================
 
@@ -652,6 +806,22 @@ export function registerOrchestrationTools(server: MCPServer): void {
   server.registerTool('workflow_cleanup', workflowCleanupHandler, workflowCleanupDefinition);
   server.registerTool('worker_update', workerUpdateHandler, workerUpdateDefinition);
   server.registerTool('worker_complete', workerCompleteHandler, workerCompleteDefinition);
+  server.registerTool('execute_plan', executePlanHandler, executePlanDefinition);
 
-  console.error('[Orchestration] Registered 7 orchestration tools');
+  // Register default plans on startup
+  try {
+    const { PlanRegistry } = require('../orchestration/plan-registry');
+    const registry = getPlanRegistry();
+    const defaults = PlanRegistry.getDefaultPlans();
+    for (const { plan, pattern } of defaults) {
+      if (!registry.getEntry(plan.id)) {
+        registry.registerPlan(plan, pattern);
+        console.error(`[Orchestration] Registered default plan: ${plan.id}`);
+      }
+    }
+  } catch (err) {
+    console.error(`[Orchestration] Default plan registration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  console.error('[Orchestration] Registered 8 orchestration tools (including execute_plan)');
 }

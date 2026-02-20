@@ -21,6 +21,7 @@ import { HintEngine } from './hints';
 import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
+import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 
 export interface MCPServerOptions {
   dashboard?: boolean;
@@ -30,6 +31,7 @@ export interface MCPServerOptions {
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
   private resources: Map<string, MCPResourceDefinition> = new Map();
+  private manifestVersion: number = 1;
   private sessionManager: SessionManager;
   private rl: readline.Interface | null = null;
   private dashboard: Dashboard | null = null;
@@ -111,6 +113,7 @@ export class MCPServer {
     definition: MCPToolDefinition
   ): void {
     this.tools.set(name, { name, handler, definition });
+    this.manifestVersion++;
   }
 
   /**
@@ -542,6 +545,63 @@ export class MCPServer {
    */
   getToolNames(): string[] {
     return Array.from(this.tools.keys());
+  }
+
+  /**
+   * Get a tool handler by name (for internal server-side plan execution).
+   * Returns null if the tool is not registered.
+   */
+  getToolHandler(toolName: string): ToolHandler | null {
+    const registry = this.tools.get(toolName);
+    return registry ? registry.handler : null;
+  }
+
+  /**
+   * Get the full tool manifest with metadata
+   */
+  getToolManifest(): ToolManifest {
+    const tools: ToolEntry[] = [];
+    for (const registry of this.tools.values()) {
+      tools.push({
+        name: registry.definition.name,
+        description: registry.definition.description,
+        inputSchema: registry.definition.inputSchema,
+        category: this.inferToolCategory(registry.definition.name),
+      });
+    }
+    return {
+      version: `${this.manifestVersion}`,
+      generatedAt: Date.now(),
+      tools,
+      toolCount: tools.length,
+    };
+  }
+
+  /**
+   * Increment the manifest version (call when tools are dynamically added/removed)
+   */
+  incrementManifestVersion(): void {
+    this.manifestVersion++;
+  }
+
+  /**
+   * Infer the category of a tool from its name
+   */
+  private inferToolCategory(toolName: string): ToolCategory {
+    if (['navigate', 'page_reload'].includes(toolName)) return 'navigation';
+    if (['computer', 'form_input', 'drag_drop'].includes(toolName)) return 'interaction';
+    if (['read_page', 'find', 'page_content', 'selector_query', 'xpath_query'].includes(toolName)) return 'content';
+    if (toolName === 'javascript_tool') return 'javascript';
+    if (['network', 'cookies', 'storage', 'request_intercept', 'http_auth'].includes(toolName)) return 'network';
+    if (['tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';
+    if (['page_pdf', 'console_capture', 'performance_metrics', 'file_upload'].includes(toolName)) return 'media';
+    if (['user_agent', 'geolocation', 'emulate_device'].includes(toolName)) return 'emulation';
+    if (['workflow_init', 'workflow_status', 'workflow_collect', 'workflow_collect_partial', 'workflow_cleanup', 'execute_plan'].includes(toolName)) return 'orchestration';
+    if (['worker_create', 'worker_list', 'worker_delete', 'worker_update', 'worker_complete'].includes(toolName)) return 'worker';
+    if (['click_element', 'fill_form', 'wait_and_click', 'wait_for'].includes(toolName)) return 'composite';
+    if (['batch_execute', 'lightweight_scroll'].includes(toolName)) return 'performance';
+    if (toolName === 'ccp_stop') return 'lifecycle';
+    return 'interaction';
   }
 
   /**

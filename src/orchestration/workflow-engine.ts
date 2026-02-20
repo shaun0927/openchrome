@@ -6,6 +6,7 @@
 import { getSessionManager } from '../session-manager';
 import { getOrchestrationStateManager, OrchestrationState, WorkerState } from './state-manager';
 import { getCDPConnectionPool } from '../cdp/connection-pool';
+import { ToolEntry } from '../types/tool-manifest';
 
 export interface WorkflowStep {
   workerId: string;
@@ -725,6 +726,62 @@ export class WorkflowEngine {
   }
 
   /**
+   * Generate MCP tool documentation from a ToolEntry array.
+   * Groups tools by category and formats each tool with its parameters.
+   */
+  private generateToolDocs(tools: ToolEntry[], tabId: string): string {
+    const categoryDisplayNames: Record<string, string> = {
+      navigation: 'Navigation',
+      interaction: 'Interaction',
+      content: 'Content Reading',
+      javascript: 'JavaScript Execution',
+      composite: 'Smart Actions',
+      network: 'Network',
+      tabs: 'Tabs',
+      media: 'Media',
+      emulation: 'Emulation',
+      orchestration: 'Orchestration',
+      worker: 'Worker',
+      performance: 'Performance',
+      lifecycle: 'Lifecycle',
+    };
+
+    // Group tools by category
+    const grouped: Record<string, ToolEntry[]> = {};
+    for (const tool of tools) {
+      const cat = tool.category as string;
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(tool);
+    }
+
+    const sections: string[] = [];
+    for (const [category, categoryTools] of Object.entries(grouped)) {
+      const displayName = categoryDisplayNames[category] || category;
+      const toolDocs: string[] = [];
+
+      for (const tool of categoryTools) {
+        const fullName = `mcp__claude-chrome-parallel__${tool.name}`;
+        const props = tool.inputSchema.properties as Record<string, { type?: string; description?: string }>;
+        const paramLines: string[] = [];
+
+        for (const [paramName, paramSchema] of Object.entries(props)) {
+          if (paramName === 'tabId') continue; // handled separately below
+          const paramType = paramSchema.type ?? 'unknown';
+          const paramDesc = paramSchema.description ? ` — ${paramSchema.description}` : '';
+          paramLines.push(`- ${paramName}: ${paramType}${paramDesc}`);
+        }
+        paramLines.push(`- tabId: "${tabId}" (required, always include)`);
+
+        toolDocs.push(`**${fullName}**\n${tool.description}\nParameters:\n${paramLines.join('\n')}`);
+      }
+
+      sections.push(`### ${displayName}\n\n${toolDocs.join('\n\n')}`);
+    }
+
+    return sections.join('\n\n');
+  }
+
+  /**
    * Generate worker agent prompt for Background Task
    */
   generateWorkerPrompt(
@@ -732,7 +789,8 @@ export class WorkflowEngine {
     workerName: string,
     tabId: string,
     task: string,
-    successCriteria: string
+    successCriteria: string,
+    manifestTools?: ToolEntry[]
   ): string {
     return `## Chrome-Sisyphus Worker Agent
 
@@ -761,7 +819,14 @@ ${successCriteria}
 
 ---
 
-## Available MCP Tools
+${manifestTools && manifestTools.length > 0
+  ? `## Pre-loaded MCP Tools (verified — DO NOT call ToolSearch)
+
+The following tools are pre-loaded and ready to use immediately.
+CRITICAL: Do NOT call ToolSearch. These tool schemas are verified and current.
+
+${this.generateToolDocs(manifestTools, tabId)}`
+  : `## Available MCP Tools
 
 ### Navigation
 mcp__chrome-parallel__navigate
@@ -795,7 +860,7 @@ mcp__chrome-parallel__form_input
 mcp__chrome-parallel__javascript_tool
 - action: "javascript_exec"
 - text: string (JS code)
-- tabId: "${tabId}" (required)
+- tabId: "${tabId}" (required)`}
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "claude-chrome-parallel",
-  "version": "3.5.1",
+  "version": "3.6.0",
   "description": "Ultrafast parallel browser MCP. Say 'ccp' and Claude automates your Chrome.",
   "main": "dist/index.js",
   "bin": {
