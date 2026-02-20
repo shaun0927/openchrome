@@ -130,11 +130,25 @@ Or: `claude mcp add claude-chrome-parallel -- ccp serve --auto-launch`
 
 </details>
 
-```
-You: Take a screenshot of my Gmail inbox
+---
 
-Claude: [Uses your Chrome — already logged in. No setup needed.]
+## Just Say `ccp`
+
+After setup, **`ccp` is your magic word.** No flags, no config, no boilerplate. Just tell Claude what you want with "ccp" and it happens.
+
 ```
+You: ccp screenshot my Gmail inbox
+Claude: [Already logged in. Screenshot taken. Done.]
+
+You: ccp로 AWS 빌링이랑 Stripe 매출 동시에 확인해줘
+Claude: [2 Workers, parallel, 2.1s — both dashboards captured]
+
+You: use ccp to compare iPhone prices on Amazon, eBay, and Walmart
+Claude: [3 Workers, 3 sites, simultaneously]
+        Amazon:  $999 | eBay: $945 ← lowest | Walmart: $979
+```
+
+**How it works**: CCP uses the MCP protocol's native `instructions` field to teach Claude the keyword automatically. No CLAUDE.md injection. No hooks. Just install and go.
 
 ---
 
@@ -143,7 +157,7 @@ Claude: [Uses your Chrome — already logged in. No setup needed.]
 ### Multi-Account Operations
 
 ```
-You: Check my personal and work Gmail inboxes at the same time
+You: ccp check my personal and work Gmail at the same time
 
 Claude: [Creates 2 isolated Workers]
         Personal account: 3 unread emails
@@ -154,7 +168,7 @@ Claude: [Creates 2 isolated Workers]
 ### Price Comparison Across Sites
 
 ```
-You: Find the cheapest iPhone 15 on Amazon, eBay, and Walmart
+You: ccp find the cheapest iPhone 15 on Amazon, eBay, and Walmart
 
 Claude: [3 Workers, 3 sites, simultaneously]
         Amazon:  $999
@@ -166,7 +180,7 @@ Claude: [3 Workers, 3 sites, simultaneously]
 ### Authenticated Dashboard Monitoring
 
 ```
-You: Screenshot my AWS billing, Stripe dashboard, and Vercel usage
+You: ccp screenshot my AWS billing, Stripe dashboard, and Vercel usage
 
 Claude: [All 3 require login — but you're already authenticated]
         aws-billing.png    ✓
@@ -178,11 +192,11 @@ Claude: [All 3 require login — but you're already authenticated]
 
 ```bash
 # 5 tests, 5 terminals, all at once
-claude -p "Test login flow on myapp.com"       # Worker 1
-claude -p "Test checkout on myapp.com"          # Worker 2
-claude -p "Test admin panel on myapp.com"       # Worker 3
-claude -p "Test mobile view on myapp.com"       # Worker 4
-claude -p "Test form validation on myapp.com"   # Worker 5
+claude -p "ccp test login flow on myapp.com"       # Worker 1
+claude -p "ccp test checkout on myapp.com"          # Worker 2
+claude -p "ccp test admin panel on myapp.com"       # Worker 3
+claude -p "ccp test mobile view on myapp.com"       # Worker 4
+claude -p "ccp test form validation on myapp.com"   # Worker 5
 
 # Sequential: ~5 minutes.  Parallel with CCP: ~1 minute.
 # That's your entire smoke test suite before lunch.

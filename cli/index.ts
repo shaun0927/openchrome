@@ -119,8 +119,11 @@ program
       console.log('\n✅ MCP server configured successfully!\n');
       console.log('Next steps:');
       console.log('  1. Restart Claude Code');
-      console.log('  2. Run /mcp to verify "claude-chrome-parallel" is listed');
-      console.log('  3. Try: "example.com을 열고 스크린샷 찍어줘"\n');
+      console.log('  2. Just say "ccp" — that\'s it.\n');
+      console.log('Examples:');
+      console.log('  "ccp screenshot my Gmail"');
+      console.log('  "use ccp to check AWS billing"');
+      console.log('  "ccp로 네이버 검색해줘"\n');
     } catch (error) {
       console.error('\n❌ Failed to configure MCP server.');
       console.error('   You can manually add to ~/.claude.json:');
@@ -134,6 +137,7 @@ program
       console.error('   }');
       process.exit(1);
     }
+
   });
 
 program

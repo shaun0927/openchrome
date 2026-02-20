@@ -1,62 +1,34 @@
 # Claude Code Project Instructions
 
-## Browser Tool Usage Guidelines
+## Trinity Project
 
-This project provides browser automation tools (chrome-parallel). Use them appropriately.
+**Repository**: https://github.com/shaun0927/trinity
+**PR Target Branch**: `develop`
 
-### Tool Selection Priority
+Trinity 관련 코드 수정 시 반드시 위 레포지토리의 develop 브랜치로 PR을 생성할 것.
 
-1. **Code Analysis** - Read and understand relevant code first
-2. **Direct DB Operations** - For data issues, use database queries
-3. **API Testing** - For API issues, use curl to test directly
-4. **Browser Automation** - Only when above methods are not possible AND UI interaction is required
+## Browser Tool Usage
 
-### When to Use Browser Tools
+This project provides browser automation tools (chrome-parallel).
 
-Use chrome-parallel browser tools ONLY when:
-- User explicitly mentions "browser", "site", "page", "screenshot"
+**Use browser tools ONLY when:**
+- User explicitly requests browser/UI interaction
 - Visual verification or screenshot is needed
-- UI interaction is required (login flow testing, form submission, etc.)
-- No API/DB alternative exists for the task
+- No API/DB alternative exists
 
-### When NOT to Use Browser Tools
+**Prefer these approaches first:**
+1. Code analysis → Read files directly
+2. Data operations → DB queries
+3. API testing → `curl` command
+4. Config changes → Edit files directly
 
-| Problem Type | Wrong Approach | Correct Approach |
-|--------------|----------------|------------------|
-| Data lookup/modification | Navigate to admin panel | DB query directly |
-| API response verification | Open browser to check | `curl` command |
-| Code bug fixing | Debug via browser | Modify code directly |
-| Configuration changes | Use settings UI | Edit config files |
+Browser automation has high context usage. Use as last resort.
 
-### Cost Awareness
+## Parallel Browser Workflow
 
-| Approach | Time | Reliability | Context Usage |
-|----------|------|-------------|---------------|
-| DB Query | ~1s | High | Low |
-| API Call | ~2s | High | Low |
-| Code Fix | ~5s | High | Low |
-| Browser  | ~30s+ | Medium | High |
+When 2+ independent browser tasks are requested with parallel intent ("동시에", "병렬로", "chrome parallel"):
+1. `workflow_init` → create workers with dedicated tabs
+2. Spawn background Task agents (each gets hardcoded `tabId` to prevent cross-tab contamination)
+3. `workflow_collect` → unify results
 
-Browser automation is powerful but should be your **LAST resort**, not your first choice.
-
-### Decision Flowchart
-
-```
-User Request
-    |
-    v
-Is it about data? --YES--> Use DB query
-    |NO
-    v
-Is it about API? --YES--> Use curl/API client
-    |NO
-    v
-Is it about code? --YES--> Read/fix code directly
-    |NO
-    v
-Did user explicitly --NO--> Ask for clarification
-mention browser/UI?
-    |YES
-    v
-Use browser tools
-```
+MCP responses include `_timing.durationMs` for wall-clock performance measurement.
