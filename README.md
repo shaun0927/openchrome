@@ -28,8 +28,15 @@ Imagine **20+ parallel Playwright sessions** — but already logged in to everyt
 Search across 20 sites simultaneously. Crawl authenticated dashboards in seconds. Debug production UIs with real user sessions. Connect to [OpenClaw](https://github.com/openclaw/openclaw) and give your AI agent browser superpowers across Telegram, Discord, or any chat platform.
 
 ```
-You: oc screenshot my AWS billing and Stripe dashboard
-AI:  [2 parallel workers, 2.1s — both done. Already logged in.]
+You: oc compare "AirPods Pro" prices across Amazon, eBay, Walmart,
+     Best Buy, Target, Costco, B&H, Newegg — find the lowest
+
+AI:  [8 parallel workers, all sites simultaneously]
+     Best Buy:  $179 ← lowest (sale)
+     Amazon:    $189
+     Costco:    $194 (members)
+     ...
+     Time: 2.8s | All prices from live pages, already logged in.
 ```
 
 | | Traditional | OpenChrome |
