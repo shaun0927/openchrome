@@ -404,7 +404,7 @@ export class MCPServer {
         }
       }
 
-      // Inject anti-삽질 hint
+      // Inject proactive hint
       if (this.hintEngine) {
         const hint = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false);
         if (hint) {
@@ -435,7 +435,7 @@ export class MCPServer {
         }
       }
 
-      // Inject anti-삽질 hint for errors
+      // Inject proactive hint for errors
       if (this.hintEngine) {
         const hint = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true);
         if (hint) {

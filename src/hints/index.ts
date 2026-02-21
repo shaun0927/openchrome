@@ -1,5 +1,5 @@
 /**
- * Hints module — Anti-삽질 hint system
+ * Hints module — Proactive hint system
  */
 
 export { HintEngine } from './hint-engine';

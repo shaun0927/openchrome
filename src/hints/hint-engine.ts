@@ -1,5 +1,5 @@
 /**
- * HintEngine — evaluates rules against tool results to produce anti-삽질 hints.
+ * HintEngine — evaluates rules against tool results to produce proactive hints.
  *
  * Rules are sorted by priority (lower = higher priority) and evaluated first-match-wins.
  * Uses ActivityTracker's recent calls for sequence/pattern detection.
