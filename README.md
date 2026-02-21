@@ -1,6 +1,6 @@
 # Claude Chrome Parallel (CCP)
 
-> **Ultrafast parallel browser MCP for Chrome**
+> **Ultrafast parallel browser MCP for Chrome** — v1.0.0 released Feb 21, 2026
 
 [![GitHub release](https://img.shields.io/github/v/release/shaun0927/claude-chrome-parallel)](https://github.com/shaun0927/claude-chrome-parallel/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
