@@ -359,7 +359,18 @@ export class ChromeLauncher {
   async close(): Promise<void> {
     if (this.instance?.process) {
       console.error('[ChromeLauncher] Closing Chrome...');
-      this.instance.process.kill();
+      if (process.platform === 'win32' && this.instance.process.pid) {
+        try {
+          // On Windows, kill the entire process tree to clean up renderer/GPU children
+          execSync(`taskkill /T /F /PID ${this.instance.process.pid}`, { stdio: 'ignore' });
+          console.error(`[ChromeLauncher] Windows: killed process tree for PID ${this.instance.process.pid}`);
+        } catch {
+          // Fallback to regular kill if taskkill fails
+          this.instance.process.kill();
+        }
+      } else {
+        this.instance.process.kill();
+      }
 
       // Clean up user data dir (only if using temp profile, never delete real profile)
       if (this.instance.userDataDir && !this.usingRealProfile) {
