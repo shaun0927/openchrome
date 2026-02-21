@@ -10,7 +10,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/shaun0927/openchrome/releases"><img src="https://img.shields.io/github/v/release/shaun0927/openchrome" alt="release"></a>
   <a href="https://www.npmjs.com/package/openchrome-mcp"><img src="https://img.shields.io/npm/v/openchrome-mcp" alt="npm"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
 </p>
