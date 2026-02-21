@@ -47,9 +47,10 @@ extension-unpacked/
 # AI session/orchestration state
 .omc/
 
-# User-local Claude Code skills (project-agnostic)
-.claude/commands/frontend-design.md
-.claude/skills/frontend-design/
+# User-local Claude Code workflows (personal skills, agents, commands)
+.claude/commands/
+.claude/agents/
+.claude/skills/
 
 # Ad-hoc analysis/planning outputs
 x-crawl-*.json
