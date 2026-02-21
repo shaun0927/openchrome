@@ -57,11 +57,11 @@ export class MCPServer {
       this.activityTracker = getActivityTracker();
     }
     this.activityTracker.enableFileLogging(
-      path.join(process.cwd(), '.chrome-parallel', 'timeline')
+      path.join(process.cwd(), '.openchrome', 'timeline')
     );
 
     // Initialize hint engine with logging and adaptive learning
-    const hintsDir = path.join(process.cwd(), '.chrome-parallel', 'hints');
+    const hintsDir = path.join(process.cwd(), '.openchrome', 'hints');
     this.hintEngine = new HintEngine(this.activityTracker);
     this.hintEngine.enableLogging(hintsDir);
     this.hintEngine.enableLearning(hintsDir);
@@ -263,13 +263,13 @@ export class MCPServer {
         resources: {},
       },
       serverInfo: {
-        name: 'claude-chrome-parallel',
+        name: 'openchrome',
         version: '2.0.0',
       },
       instructions: [
-        'CCP (Claude Chrome Parallel) gives you browser automation using the user\'s actual Chrome — already logged in to everything.',
+        'OpenChrome gives you browser automation using the user\'s actual Chrome — already logged in to everything.',
         '',
-        'MAGIC KEYWORD: When the user says "ccp", "use ccp", or any variation, immediately activate browser automation.',
+        'MAGIC KEYWORD: When the user says "openchrome", "oc", "ccp", or any variation, immediately activate browser automation.',
         '',
         'KEY RULES:',
         '- The user is ALREADY LOGGED IN to every site. Never attempt login or enter credentials.',
@@ -278,10 +278,10 @@ export class MCPServer {
         '- Each Worker gets an isolated browser context (separate cookies, localStorage, sessions).',
         '',
         'EXAMPLES:',
-        '  "ccp screenshot my Gmail" → navigate to Gmail, take screenshot',
-        '  "use ccp to check AWS billing and Stripe" → workflow_init with 2 workers, parallel',
-        '  "ccp search on naver.com" → navigate to naver.com, perform search',
-        '  "ccp compare prices on Amazon, eBay, Walmart" → 3 parallel workers, one per site',
+        '  "oc screenshot my Gmail" → navigate to Gmail, take screenshot',
+        '  "use openchrome to check AWS billing and Stripe" → workflow_init with 2 workers, parallel',
+        '  "oc search on naver.com" → navigate to naver.com, perform search',
+        '  "oc compare prices on Amazon, eBay, Walmart" → 3 parallel workers, one per site',
         '',
         'TOOL QUICK REFERENCE:',
         '  navigate → Go to URL | click_element → Find + click in one step',
@@ -335,7 +335,7 @@ export class MCPServer {
 
     // Get content based on resource type
     let content: string;
-    if (uri === 'chrome-parallel://usage-guide') {
+    if (uri === 'openchrome://usage-guide') {
       content = getUsageGuideContent();
     } else {
       throw new Error(`No content handler for resource: ${uri}`);
@@ -600,7 +600,7 @@ export class MCPServer {
     if (['worker_create', 'worker_list', 'worker_delete', 'worker_update', 'worker_complete'].includes(toolName)) return 'worker';
     if (['click_element', 'fill_form', 'wait_and_click', 'wait_for'].includes(toolName)) return 'composite';
     if (['batch_execute', 'lightweight_scroll'].includes(toolName)) return 'performance';
-    if (toolName === 'ccp_stop') return 'lifecycle';
+    if (toolName === 'oc_stop') return 'lifecycle';
     return 'interaction';
   }
 

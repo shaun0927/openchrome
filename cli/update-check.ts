@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-const PACKAGE_NAME = 'claude-chrome-parallel';
+const PACKAGE_NAME = 'openchrome';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface UpdateCache {
@@ -17,7 +17,7 @@ interface UpdateCache {
 }
 
 function getCachePath(): string {
-  const cacheDir = path.join(os.homedir(), '.claude-chrome-parallel');
+  const cacheDir = path.join(os.homedir(), '.openchrome');
   return path.join(cacheDir, 'update-check.json');
 }
 

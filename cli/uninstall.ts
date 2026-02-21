@@ -11,7 +11,7 @@ import { execSync } from 'child_process';
  * Get the installation directory
  */
 function getInstallDir(): string {
-  return path.join(os.homedir(), '.claude-chrome-parallel');
+  return path.join(os.homedir(), '.openchrome');
 }
 
 /**

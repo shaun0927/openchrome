@@ -35,7 +35,7 @@ export type ToolCategory =
   | 'worker'          // worker_create, worker_list, worker_delete
   | 'composite'       // click_element, fill_form, wait_and_click, wait_for
   | 'performance'     // batch_execute, lightweight_scroll
-  | 'lifecycle';      // ccp_stop
+  | 'lifecycle';      // oc_stop
 
 /** The complete tool manifest exported by the MCP server */
 export interface ToolManifest {

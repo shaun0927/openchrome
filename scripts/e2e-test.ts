@@ -1,6 +1,6 @@
 #!/usr/bin/env ts-node
 /**
- * E2E Test Script for claude-chrome-parallel
+ * E2E Test Script for openchrome
  * Tests parallel session functionality
  */
 
@@ -105,7 +105,7 @@ class MCPClient {
 }
 
 async function runTests() {
-  console.log('=== claude-chrome-parallel E2E Tests ===\n');
+  console.log('=== openchrome E2E Tests ===\n');
 
   const client = new MCPClient();
 

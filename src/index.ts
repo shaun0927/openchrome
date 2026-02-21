@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI Entry Point for claude-chrome-parallel
+ * CLI Entry Point for openchrome
  * MCP Server for parallel Claude Code browser sessions
  *
  * Uses puppeteer-core to directly connect to Chrome DevTools Protocol,
@@ -15,7 +15,7 @@ import { setGlobalConfig } from './config/global';
 const program = new Command();
 
 program
-  .name('claude-chrome-parallel')
+  .name('openchrome')
   .description('MCP server for parallel Claude Code browser sessions')
   .version('2.0.0');
 
@@ -37,23 +37,23 @@ program
     const chromeBinary = options.chromeBinary || process.env.CHROME_BINARY || undefined;
     const useHeadlessShell = options.headlessShell || false;
 
-    console.error(`[claude-chrome-parallel] Starting MCP server`);
-    console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);
-    console.error(`[claude-chrome-parallel] Auto-launch Chrome: ${autoLaunch}`);
+    console.error(`[openchrome] Starting MCP server`);
+    console.error(`[openchrome] Chrome debugging port: ${port}`);
+    console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
     if (userDataDir) {
-      console.error(`[claude-chrome-parallel] User data dir: ${userDataDir}`);
+      console.error(`[openchrome] User data dir: ${userDataDir}`);
     }
     if (chromeBinary) {
-      console.error(`[claude-chrome-parallel] Chrome binary: ${chromeBinary}`);
+      console.error(`[openchrome] Chrome binary: ${chromeBinary}`);
     }
     if (useHeadlessShell) {
-      console.error(`[claude-chrome-parallel] Using headless-shell mode`);
+      console.error(`[openchrome] Using headless-shell mode`);
     }
 
     // Headless by default when auto-launching, unless --visible is specified
     const headless = autoLaunch && !options.visible;
     if (autoLaunch) {
-      console.error(`[claude-chrome-parallel] Headless mode: ${headless}`);
+      console.error(`[openchrome] Headless mode: ${headless}`);
     }
 
     // Set global config before initializing anything
@@ -70,8 +70,8 @@ program
           lightpandaPort: lpPort,
         },
       });
-      console.error(`[claude-chrome-parallel] Hybrid mode: enabled`);
-      console.error(`[claude-chrome-parallel] Lightpanda port: ${lpPort}`);
+      console.error(`[openchrome] Hybrid mode: enabled`);
+      console.error(`[openchrome] Lightpanda port: ${lpPort}`);
     }
 
     const server = getMCPServer();
@@ -106,15 +106,15 @@ program
     if (!chromeConnected) {
       console.log('Start Chrome with debugging enabled:');
       console.log(`  chrome --remote-debugging-port=${port}\n`);
-      console.log('Or let claude-chrome-parallel auto-launch Chrome.\n');
+      console.log('Or let openchrome auto-launch Chrome.\n');
     }
 
     if (chromeConnected) {
       console.log('Chrome is ready! Add to your Claude Code MCP config:\n');
       console.log(JSON.stringify({
         "mcpServers": {
-          "chrome-parallel": {
-            "command": "claude-chrome-parallel",
+          "openchrome": {
+            "command": "openchrome",
             "args": ["serve"]
           }
         }
@@ -276,7 +276,7 @@ TESTED CONCURRENCY:
 USAGE:
 
   # Check Chrome status
-  claude-chrome-parallel check
+  openchrome check
 
   # Start Chrome with debugging enabled (required unless --auto-launch)
   chrome --remote-debugging-port=9222
@@ -284,8 +284,8 @@ USAGE:
   # Add to ~/.claude/.mcp.json
   {
     "mcpServers": {
-      "chrome-parallel": {
-        "command": "claude-chrome-parallel",
+      "openchrome": {
+        "command": "openchrome",
         "args": ["serve"]
       }
     }
@@ -294,8 +294,8 @@ USAGE:
   # Or with auto-launch (Chrome starts automatically)
   {
     "mcpServers": {
-      "chrome-parallel": {
-        "command": "claude-chrome-parallel",
+      "openchrome": {
+        "command": "openchrome",
         "args": ["serve", "--auto-launch"]
       }
     }

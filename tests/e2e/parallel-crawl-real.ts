@@ -90,7 +90,7 @@ async function crawlSite(browser: Browser, url: string): Promise<CrawlResult> {
 }
 
 async function main() {
-  console.log(`\n🚀 CCP Real Parallel Crawl Test — ${SITES.length} sites\n`);
+  console.log(`\n🚀 OpenChrome Real Parallel Crawl Test — ${SITES.length} sites\n`);
   console.log('Connecting to Chrome on localhost:9222...');
 
   const browser = await puppeteer.connect({

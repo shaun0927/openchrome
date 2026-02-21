@@ -544,9 +544,9 @@ describe('WorkflowEngine', () => {
     test('should include MCP tool documentation', () => {
       const prompt = engine.generateWorkerPrompt('w1', 'google', 't1', 'Search', 'Done');
 
-      expect(prompt).toContain('mcp__chrome-parallel__navigate');
-      expect(prompt).toContain('mcp__chrome-parallel__computer');
-      expect(prompt).toContain('mcp__chrome-parallel__read_page');
+      expect(prompt).toContain('mcp__openchrome__navigate');
+      expect(prompt).toContain('mcp__openchrome__computer');
+      expect(prompt).toContain('mcp__openchrome__read_page');
     });
 
     test('should include Ralph Loop algorithm', () => {

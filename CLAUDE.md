@@ -9,7 +9,7 @@ Trinity 관련 코드 수정 시 반드시 위 레포지토리의 develop 브랜
 
 ## Browser Tool Usage
 
-This project provides browser automation tools (chrome-parallel).
+This project provides browser automation tools (openchrome).
 
 **Use browser tools ONLY when:**
 - User explicitly requests browser/UI interaction

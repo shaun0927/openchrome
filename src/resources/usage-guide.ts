@@ -10,7 +10,7 @@ export interface MCPResourceDefinition {
 }
 
 export const usageGuideResource: MCPResourceDefinition = {
-  uri: 'chrome-parallel://usage-guide',
+  uri: 'openchrome://usage-guide',
   name: 'browser-usage-guide',
   description: 'Guidelines on when to use browser automation vs alternatives',
   mimeType: 'text/plain',
@@ -21,7 +21,7 @@ export const usageGuideContent = `
 
 ## When to Use Browser Tools
 
-Use chrome-parallel browser tools ONLY when:
+Use openchrome browser tools ONLY when:
 
 1. **User explicitly requests browser/UI interaction**
    - Keywords: "browser", "site", "page", "screenshot", "click", "UI"

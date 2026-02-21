@@ -16,7 +16,7 @@ interface InstallOptions {
  * Get the installation directory
  */
 function getInstallDir(): string {
-  return path.join(os.homedir(), '.claude-chrome-parallel');
+  return path.join(os.homedir(), '.openchrome');
 }
 
 /**

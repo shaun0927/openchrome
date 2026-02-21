@@ -121,7 +121,7 @@ export async function recoverConfig(): Promise<RecoveryReport> {
   if (backups.length > 0) {
     const backupDir = path.join(
       os.homedir(),
-      '.claude-chrome-parallel',
+      '.openchrome',
       'backups'
     );
 
@@ -167,7 +167,7 @@ export async function recoverFromBackup(
   const configPath = getClaudeConfigPath();
   const backupDir = path.join(
     os.homedir(),
-    '.claude-chrome-parallel',
+    '.openchrome',
     'backups'
   );
   const backups = listBackups('.claude.json');

@@ -175,7 +175,7 @@ Looking for something to work on? Here are the key areas where contributions wou
 
 ### Multi-Client Compatibility
 
-CCP is a standard MCP server, but currently only tested with Claude Code. Help us verify and support other MCP clients.
+OpenChrome is a standard MCP server, but currently only tested with Claude Code. Help us verify and support other MCP clients.
 
 | Client | Status | What's Needed |
 |--------|--------|---------------|
@@ -246,9 +246,9 @@ The hint engine (`src/hints/`) currently has 21 static rules. Areas to improve:
 If you're new to the project, these are good starting points:
 
 - Add a new hint rule to `src/hints/rules/` (follow existing patterns)
-- Test CCP on a non-Claude MCP client and report results
+- Test OpenChrome on a non-Claude MCP client and report results
 - Add Windows Chrome path detection in `src/chrome/launcher.ts`
-- Write an example script using CCP tools
+- Write an example script using OpenChrome tools
 - Improve error messages for common setup failures
 
 ## Questions?

@@ -14,7 +14,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
 
-const BASE_DIR = path.join(os.homedir(), '.claude-chrome-parallel');
+const BASE_DIR = path.join(os.homedir(), '.openchrome');
 const SESSIONS_DIR = path.join(BASE_DIR, 'sessions');
 const BACKUPS_DIR = path.join(BASE_DIR, 'backups');
 

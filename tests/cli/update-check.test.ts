@@ -10,7 +10,7 @@ import * as https from 'https';
 // Mock https before importing module
 jest.mock('https');
 
-const CACHE_PATH = path.join(os.homedir(), '.claude-chrome-parallel', 'update-check.json');
+const CACHE_PATH = path.join(os.homedir(), '.openchrome', 'update-check.json');
 
 describe('update-check', () => {
   let checkForUpdates: typeof import('../../cli/update-check').checkForUpdates;

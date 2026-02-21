@@ -3,7 +3,7 @@
  *
  * MCP-aligned: server stores and retrieves, agent decides what to store.
  * Confidence: +0.1 on success, -0.2 on failure (asymmetric — broken selectors are dangerous).
- * Storage: ~/.claude-chrome-parallel/memory/domain-knowledge.json
+ * Storage: ~/.openchrome/memory/domain-knowledge.json
  */
 
 import * as fs from 'fs';
@@ -203,7 +203,7 @@ export function getDomainMemory(): DomainMemory {
   if (!instance) {
     instance = new DomainMemory();
     const homedir = os.homedir();
-    const memoryDir = path.join(homedir, '.claude-chrome-parallel', 'memory');
+    const memoryDir = path.join(homedir, '.openchrome', 'memory');
     instance.enablePersistence(memoryDir);
   }
   return instance;

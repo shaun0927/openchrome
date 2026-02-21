@@ -365,7 +365,7 @@ async function deepCrawl(browser: Browser, url: string): Promise<CrawlResult> {
 }
 
 async function main() {
-  console.log(`\n🚀 CCP Complex Parallel Crawl — ${SITES.length} sites × 7 extraction phases\n`);
+  console.log(`\n🚀 OpenChrome Complex Parallel Crawl — ${SITES.length} sites × 7 extraction phases\n`);
   console.log('Connecting to Chrome on localhost:9222...');
 
   const browser = await puppeteer.connect({ browserURL: 'http://localhost:9222' });

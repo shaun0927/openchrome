@@ -775,7 +775,7 @@ export class WorkflowEngine {
       const toolDocs: string[] = [];
 
       for (const tool of categoryTools) {
-        const fullName = `mcp__claude-chrome-parallel__${tool.name}`;
+        const fullName = `mcp__openchrome__${tool.name}`;
         const props = tool.inputSchema.properties as Record<string, { type?: string; description?: string }>;
         const paramLines: string[] = [];
 
@@ -858,35 +858,35 @@ ${this.generateToolDocs(manifestTools, tabId)}`
   : `## Available MCP Tools
 
 ### Navigation
-mcp__chrome-parallel__navigate
+mcp__openchrome__navigate
 - url: string (required)
 - tabId: "${tabId}" (required)
 
 ### Interaction
-mcp__chrome-parallel__computer
+mcp__openchrome__computer
 - action: "left_click" | "type" | "screenshot" | "scroll" | "key"
 - tabId: "${tabId}" (required)
 - coordinate: [x, y] (for clicks)
 - text: string (for typing)
 
 ### Page Reading
-mcp__chrome-parallel__read_page
+mcp__openchrome__read_page
 - tabId: "${tabId}" (required)
 - filter: "interactive" | "all"
 
 ### Element Finding
-mcp__chrome-parallel__find
+mcp__openchrome__find
 - query: string (natural language)
 - tabId: "${tabId}" (required)
 
 ### Form Input
-mcp__chrome-parallel__form_input
+mcp__openchrome__form_input
 - ref: string (element reference from find/read_page)
 - value: string | boolean | number
 - tabId: "${tabId}" (required)
 
 ### JavaScript Execution
-mcp__chrome-parallel__javascript_tool
+mcp__openchrome__javascript_tool
 - action: "javascript_exec"
 - text: string (JS code)
 - tabId: "${tabId}" (required)`}

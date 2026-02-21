@@ -268,8 +268,8 @@ export class CDPClient {
     // Note: We intentionally do NOT call target.page() in the targetcreated listener.
     // Eagerly calling target.page() on every new target can materialize Chrome's internal
     // targets (prerender, speculative navigation, new-tab-page) as visible about:blank
-    // ghost tabs. CCP-created pages are indexed directly in createPage() instead.
-    // Non-CCP pages are found via fallback scan in getPageByTargetId().
+    // ghost tabs. OpenChrome-created pages are indexed directly in createPage() instead.
+    // Non-OpenChrome pages are found via fallback scan in getPageByTargetId().
 
     this.connectionState = 'connected';
     this.emitConnectionEvent({

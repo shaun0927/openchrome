@@ -35,7 +35,7 @@ try {
 }
 
 program
-  .name('claude-chrome-parallel')
+  .name('openchrome')
   .description('MCP server for parallel Claude Code browser sessions via CDP')
   .version(version);
 
@@ -54,14 +54,14 @@ program
     console.log('  2. Add to ~/.claude.json:');
     console.log('     {');
     console.log('       "mcpServers": {');
-    console.log('         "chrome-parallel": {');
-    console.log('           "command": "ccp",');
+    console.log('         "openchrome": {');
+    console.log('           "command": "oc",');
     console.log('           "args": ["serve"]');
     console.log('         }');
     console.log('       }');
     console.log('     }\n');
     console.log('  3. Restart Claude Code\n');
-    console.log('Run "ccp doctor" to verify your setup.');
+    console.log('Run "oc doctor" to verify your setup.');
   });
 
 program
@@ -108,15 +108,15 @@ program
 
     // Remove existing configuration first (if any)
     try {
-      execSync('claude mcp remove claude-chrome-parallel 2>/dev/null', { stdio: 'pipe' });
+      execSync('claude mcp remove openchrome 2>/dev/null', { stdio: 'pipe' });
     } catch {
       // Ignore if not exists
     }
 
     // Use npx for auto-updates: every server start fetches the latest version
-    const fullCommand = `claude mcp add claude-chrome-parallel -s ${scope} -- npx -y claude-chrome-parallel ${serveArgs.join(' ')}`;
+    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx -y openchrome ${serveArgs.join(' ')}`;
 
-    console.log(`Running: claude mcp add claude-chrome-parallel (scope: ${scope})...`);
+    console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
 
     try {
       execSync(fullCommand, { stdio: 'inherit' });
@@ -125,19 +125,19 @@ program
       console.log('Auto-updates: enabled (via npx)\n');
       console.log('Next steps:');
       console.log('  1. Restart Claude Code');
-      console.log('  2. Just say "ccp" — that\'s it.\n');
+      console.log('  2. Just say "oc" — that\'s it.\n');
       console.log('Examples:');
-      console.log('  "ccp screenshot my Gmail"');
-      console.log('  "use ccp to check AWS billing"');
-      console.log('  "ccp search on naver.com"\n');
+      console.log('  "oc screenshot my Gmail"');
+      console.log('  "use oc to check AWS billing"');
+      console.log('  "oc search on naver.com"\n');
     } catch (error) {
       console.error('\n❌ Failed to configure MCP server.');
       console.error('   You can manually add to ~/.claude.json:');
       console.error('   {');
       console.error('     "mcpServers": {');
-      console.error('       "claude-chrome-parallel": {');
+      console.error('       "openchrome": {');
       console.error('         "command": "npx",');
-      console.error(`         "args": ["-y", "claude-chrome-parallel", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
+      console.error(`         "args": ["-y", "openchrome", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
       console.error('       }');
       console.error('     }');
       console.error('   }');
@@ -162,10 +162,10 @@ program
     // Non-blocking update check (fires in background)
     checkForUpdates(version).catch(() => {});
 
-    console.error(`[claude-chrome-parallel] Starting MCP server`);
-    console.error(`[claude-chrome-parallel] Chrome debugging port: ${port}`);
-    console.error(`[claude-chrome-parallel] Auto-launch Chrome: ${autoLaunch}`);
-    console.error(`[claude-chrome-parallel] Dashboard: ${dashboard}`);
+    console.error(`[openchrome] Starting MCP server`);
+    console.error(`[openchrome] Chrome debugging port: ${port}`);
+    console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
+    console.error(`[openchrome] Dashboard: ${dashboard}`);
 
     // Import from built dist/ files (relative to dist/cli/)
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -189,8 +189,8 @@ program
           lightpandaPort: lpPort,
         },
       });
-      console.error(`[claude-chrome-parallel] Hybrid mode: enabled`);
-      console.error(`[claude-chrome-parallel] Lightpanda port: ${lpPort}`);
+      console.error(`[openchrome] Hybrid mode: enabled`);
+      console.error(`[openchrome] Lightpanda port: ${lpPort}`);
     }
 
     // Set MCP server options (including dashboard)
@@ -254,7 +254,7 @@ program
       console.log('\nUsage:');
       console.log('  1. Start Chrome with: chrome --remote-debugging-port=9222');
       console.log('  2. Add to ~/.claude.json:');
-      console.log('     "mcpServers": { "chrome-parallel": { "command": "ccp", "args": ["serve"] } }');
+      console.log('     "mcpServers": { "openchrome": { "command": "oc", "args": ["serve"] } }');
       console.log('  3. Restart Claude Code');
     } else {
       if (!coreChecks['Chrome debugging port']) {
@@ -262,7 +262,7 @@ program
         console.log('Start Chrome with: chrome --remote-debugging-port=9222');
       }
       if (!coreChecks['.claude.json health']) {
-        console.log('Run "claude-chrome-parallel recover" to fix .claude.json');
+        console.log('Run "openchrome recover" to fix .claude.json');
       }
     }
   });
@@ -376,7 +376,7 @@ program
   .option('--force-new', 'Create new empty config (loses all data)')
   .action(async (options: { backup?: string; listBackups?: boolean; forceNew?: boolean }) => {
     const configPath = path.join(os.homedir(), '.claude.json');
-    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+    const backupDir = path.join(os.homedir(), '.openchrome', 'backups');
 
     // List backups
     if (options.listBackups) {
@@ -494,7 +494,7 @@ program
   .option('--json', 'Output as JSON')
   .action(async (options: { json?: boolean }) => {
     const sessionsDir = getSessionsDir();
-    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+    const backupDir = path.join(os.homedir(), '.openchrome', 'backups');
     const configPath = path.join(os.homedir(), '.claude.json');
 
     // Gather statistics
@@ -619,7 +619,7 @@ program
       console.log('  ✅ .claude.json is healthy');
     } else {
       console.log(`  ❌ .claude.json: ${configError}`);
-      console.log('     Run: claude-chrome-parallel recover');
+      console.log('     Run: openchrome recover');
     }
     console.log();
 
@@ -680,7 +680,7 @@ program
     console.log(`Removed ${sessionsRemoved} stale session(s)`);
 
     // Clean up backups
-    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+    const backupDir = path.join(os.homedir(), '.openchrome', 'backups');
     let backupsRemoved = 0;
 
     if (fs.existsSync(backupDir)) {
@@ -704,7 +704,7 @@ program
  * Get the extension installation path
  */
 function getExtensionPath(): string {
-  return path.join(os.homedir(), '.claude-chrome-parallel', 'extension');
+  return path.join(os.homedir(), '.openchrome', 'extension');
 }
 
 /**
@@ -800,7 +800,7 @@ async function checkClaudeConfigHealth(): Promise<boolean> {
  * Get sessions directory
  */
 function getSessionsDir(): string {
-  return path.join(os.homedir(), '.claude-chrome-parallel', 'sessions');
+  return path.join(os.homedir(), '.openchrome', 'sessions');
 }
 
 /**
@@ -828,7 +828,7 @@ function isValidJson(content: string): boolean {
  * Create a backup of a file
  */
 async function createBackupFile(filePath: string): Promise<string> {
-  const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+  const backupDir = path.join(os.homedir(), '.openchrome', 'backups');
   fs.mkdirSync(backupDir, { recursive: true });
 
   const basename = path.basename(filePath);

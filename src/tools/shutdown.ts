@@ -1,11 +1,11 @@
 /**
- * Shutdown Tool - Gracefully stop CCP and close Chrome
+ * Shutdown Tool - Gracefully stop OpenChrome and close Chrome
  *
  * Provides "ccp stop" functionality:
  * 1. Clean up all sessions and workers
  * 2. Shutdown connection pool (close all pooled pages)
  * 3. Disconnect CDP client
- * 4. Kill Chrome process if CCP launched it
+ * 4. Kill Chrome process if OpenChrome launched it
  */
 
 import { MCPServer } from '../mcp-server';
@@ -16,19 +16,19 @@ import { getCDPClient } from '../cdp/client';
 import { getChromeLauncher } from '../chrome/launcher';
 
 const definition: MCPToolDefinition = {
-  name: 'ccp_stop',
+  name: 'oc_stop',
   description:
-    'Gracefully shut down CCP: close all browser sessions, tabs, and the Chrome process. ' +
+    'Gracefully shut down OpenChrome: close all browser sessions, tabs, and the Chrome process. ' +
     'Use this when you are done with browser automation. Chrome will be re-launched ' +
-    'automatically on the next CCP tool call.',
+    'automatically on the next OpenChrome tool call.',
   inputSchema: {
     type: 'object',
     properties: {
       keepChrome: {
         type: 'boolean',
         description:
-          'If true, keep Chrome running but disconnect CCP from it (default: false). ' +
-          'When false, Chrome is killed if CCP launched it.',
+          'If true, keep Chrome running but disconnect OpenChrome from it (default: false). ' +
+          'When false, Chrome is killed if OpenChrome launched it.',
       },
     },
     required: [],
@@ -72,7 +72,7 @@ const handler: ToolHandler = async (
       steps.push(`CDP client: ${e instanceof Error ? e.message : 'error'}`);
     }
 
-    // Step 4: Close Chrome process (if CCP launched it and keepChrome is false)
+    // Step 4: Close Chrome process (if OpenChrome launched it and keepChrome is false)
     if (!keepChrome) {
       try {
         const launcher = getChromeLauncher();
@@ -80,7 +80,7 @@ const handler: ToolHandler = async (
           await launcher.close();
           steps.push('Chrome process terminated');
         } else {
-          steps.push('Chrome: no CCP-managed process to terminate');
+          steps.push('Chrome: no OpenChrome-managed process to terminate');
         }
       } catch (e) {
         steps.push(`Chrome: ${e instanceof Error ? e.message : 'error'}`);
@@ -96,14 +96,14 @@ const handler: ToolHandler = async (
         {
           type: 'text',
           text: [
-            'CCP stopped successfully.',
+            'OpenChrome stopped successfully.',
             '',
             'Shutdown steps:',
             ...steps.map((s, i) => `  ${i + 1}. ${s}`),
             '',
             `Total: ${durationMs}ms`,
             '',
-            'Chrome will re-launch automatically on the next CCP tool call.',
+            'Chrome will re-launch automatically on the next OpenChrome tool call.',
           ].join('\n'),
         },
       ],
@@ -122,5 +122,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerShutdownTool(server: MCPServer): void {
-  server.registerTool('ccp_stop', handler, definition);
+  server.registerTool('oc_stop', handler, definition);
 }

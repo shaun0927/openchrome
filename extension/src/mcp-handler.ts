@@ -92,7 +92,7 @@ export class MCPHandler {
         tools: {},
       },
       serverInfo: {
-        name: 'claude-chrome-parallel',
+        name: 'openchrome',
         version: '0.1.0',
       },
     };

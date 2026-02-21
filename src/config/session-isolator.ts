@@ -27,7 +27,7 @@ export interface IsolatedSession {
 }
 
 export interface SessionIsolatorOptions {
-  /** Base directory for sessions (defaults to ~/.claude-chrome-parallel/sessions) */
+  /** Base directory for sessions (defaults to ~/.openchrome/sessions) */
   baseDir?: string;
   /** Whether to copy existing config (defaults to true) */
   copyExistingConfig?: boolean;
@@ -36,7 +36,7 @@ export interface SessionIsolatorOptions {
 }
 
 const DEFAULT_OPTIONS: Required<SessionIsolatorOptions> = {
-  baseDir: path.join(os.homedir(), '.claude-chrome-parallel', 'sessions'),
+  baseDir: path.join(os.homedir(), '.openchrome', 'sessions'),
   copyExistingConfig: true,
   maxSessionAge: 24 * 60 * 60 * 1000, // 24 hours
 };

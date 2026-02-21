@@ -261,7 +261,7 @@ export class ChromeLauncher {
           // Profile is locked by another Chrome instance.
           // Create temp profile but copy essential data (cookies, local state)
           // so the new Chrome session inherits the user's existing authentication.
-          userDataDir = path.join(os.tmpdir(), `claude-chrome-parallel-${Date.now()}`);
+          userDataDir = path.join(os.tmpdir(), `openchrome-${Date.now()}`);
           this.usingRealProfile = false;
           this.copyEssentialProfileData(realProfileDir, userDataDir);
           console.error(`[ChromeLauncher] Profile locked, using temp with copied cookies: ${userDataDir}`);
@@ -270,7 +270,7 @@ export class ChromeLauncher {
     }
 
     if (!userDataDir) {
-      userDataDir = path.join(os.tmpdir(), `claude-chrome-parallel-${Date.now()}`);
+      userDataDir = path.join(os.tmpdir(), `openchrome-${Date.now()}`);
       this.usingRealProfile = false;
       console.error(`[ChromeLauncher] Using temp profile: ${userDataDir}`);
     }
@@ -337,7 +337,7 @@ export class ChromeLauncher {
     chromeProcess.unref();
     // Note: On Windows, detached processes create a new process group.
     // Killing the root process may not clean up child processes (renderers, GPU).
-    // The ccp_stop tool handles this via session/pool cleanup before process kill.
+    // The oc_stop tool handles this via session/pool cleanup before process kill.
 
     // Wait for debug port
     const wsEndpoint = await waitForDebugPort(port);

@@ -1,6 +1,6 @@
 #!/usr/bin/env ts-node
 /**
- * Stress Test Script for claude-chrome-parallel
+ * Stress Test Script for openchrome
  * Tests concurrent sessions under load
  */
 

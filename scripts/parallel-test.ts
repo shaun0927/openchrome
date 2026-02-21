@@ -1,6 +1,6 @@
 #!/usr/bin/env ts-node
 /**
- * Parallel Navigation Test for claude-chrome-parallel
+ * Parallel Navigation Test for openchrome
  * Tests that multiple sessions can navigate simultaneously without interference
  */
 

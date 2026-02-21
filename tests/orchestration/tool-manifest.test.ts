@@ -75,8 +75,8 @@ function createMockManifest(): ToolManifest {
         category: 'tabs',
       },
       {
-        name: 'ccp_stop',
-        description: 'Stop CCP',
+        name: 'oc_stop',
+        description: 'Stop OpenChrome',
         inputSchema: { type: 'object', properties: {} },
         category: 'lifecycle',
       },
@@ -112,7 +112,7 @@ describe('filterToolsForWorker', () => {
     expect(names).not.toContain('worker_create'); // worker
     expect(names).not.toContain('cookies');       // network
     expect(names).not.toContain('tabs_context');  // tabs
-    expect(names).not.toContain('ccp_stop');      // lifecycle
+    expect(names).not.toContain('oc_stop');      // lifecycle
   });
 
   it('should filter tools for interaction worker type', () => {
@@ -131,7 +131,7 @@ describe('filterToolsForWorker', () => {
     expect(names).not.toContain('worker_create'); // worker
     expect(names).not.toContain('cookies');       // network
     expect(names).not.toContain('tabs_context');  // tabs
-    expect(names).not.toContain('ccp_stop');      // lifecycle
+    expect(names).not.toContain('oc_stop');      // lifecycle
   });
 
   it('should filter tools for full worker type', () => {
@@ -151,7 +151,7 @@ describe('filterToolsForWorker', () => {
     // excluded: orchestration, worker, lifecycle
     expect(names).not.toContain('workflow_init'); // orchestration
     expect(names).not.toContain('worker_create'); // worker
-    expect(names).not.toContain('ccp_stop');      // lifecycle
+    expect(names).not.toContain('oc_stop');      // lifecycle
   });
 
   it('should include additional tools regardless of category', () => {

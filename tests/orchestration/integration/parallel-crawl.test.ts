@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 /**
  * Integration tests for 20+ parallel site crawling capability
- * Verifies CCP can handle large-scale parallel worker execution
+ * Verifies OpenChrome can handle large-scale parallel worker execution
  */
 
 import * as fs from 'fs';

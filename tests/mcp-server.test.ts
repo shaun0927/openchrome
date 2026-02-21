@@ -65,7 +65,7 @@ describe('MCPServer', () => {
         expect(response.result!.protocolVersion).toBeDefined();
         expect(response.result!.capabilities).toBeDefined();
         expect(response.result!.serverInfo).toBeDefined();
-        expect(response.result!.serverInfo!.name).toBe('claude-chrome-parallel');
+        expect(response.result!.serverInfo!.name).toBe('openchrome');
       });
 
       test('returns server version', async () => {
@@ -94,7 +94,7 @@ describe('MCPServer', () => {
         expect(response.result!.instructions!.length).toBeGreaterThan(0);
       });
 
-      test('instructions contain "ccp" magic keyword trigger', async () => {
+      test('instructions contain "openchrome" magic keyword trigger', async () => {
         const request: MCPRequest = {
           jsonrpc: '2.0',
           id: 1,
@@ -105,10 +105,10 @@ describe('MCPServer', () => {
         const instructions = response.result!.instructions!;
 
         // Must mention "ccp" as a keyword
-        expect(instructions).toContain('ccp');
+        expect(instructions).toContain('openchrome');
         expect(instructions).toContain('MAGIC KEYWORD');
         // Must mention "use ccp" as a variation
-        expect(instructions).toContain('use ccp');
+        expect(instructions).toContain('oc');
       });
 
       test('instructions contain key behavioral rules', async () => {
@@ -149,7 +149,7 @@ describe('MCPServer', () => {
 
         expect(instructions).toContain('EXAMPLES');
         // At least 3 examples present
-        const exampleLines = instructions.split('\n').filter(l => l.includes('→') && l.includes('"ccp'));
+        const exampleLines = instructions.split('\n').filter(l => l.includes('→') && l.includes('"oc')));
         expect(exampleLines.length).toBeGreaterThanOrEqual(3);
       });
 
