@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/mascot.png" alt="OpenChrome Raptor" width="180">
+  <img src="assets/mascot.png?v=2" alt="OpenChrome Raptor" width="180">
 </p>
 
 <h1 align="center">OpenChrome</h1>
