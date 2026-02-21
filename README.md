@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/shaun0927/openchrome/releases"><img src="https://img.shields.io/github/v/release/shaun0927/openchrome" alt="release"></a>
-  <a href="https://www.npmjs.com/package/openchrome"><img src="https://img.shields.io/npm/v/openchrome" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/openchrome-mcp"><img src="https://img.shields.io/npm/v/openchrome-mcp" alt="npm"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
 </p>
 
@@ -51,7 +51,7 @@ AI:  [8 parallel workers, all sites simultaneously]
 ## Quick Start
 
 ```bash
-npx openchrome setup
+npx openchrome-mcp setup
 ```
 
 That's it. Say `oc` to your AI agent.
@@ -61,7 +61,7 @@ That's it. Say `oc` to your AI agent.
 
 **Claude Code:**
 ```bash
-claude mcp add openchrome -- npx -y openchrome serve --auto-launch
+claude mcp add openchrome -- npx -y openchrome-mcp serve --auto-launch
 ```
 
 **VS Code / Copilot** (`.vscode/mcp.json`):
@@ -71,7 +71,7 @@ claude mcp add openchrome -- npx -y openchrome serve --auto-launch
     "openchrome": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "openchrome", "serve", "--auto-launch"]
+      "args": ["-y", "openchrome-mcp", "serve", "--auto-launch"]
     }
   }
 }
@@ -83,7 +83,7 @@ claude mcp add openchrome -- npx -y openchrome serve --auto-launch
   "mcpServers": {
     "openchrome": {
       "command": "npx",
-      "args": ["-y", "openchrome", "serve", "--auto-launch"]
+      "args": ["-y", "openchrome-mcp", "serve", "--auto-launch"]
     }
   }
 }

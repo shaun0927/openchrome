@@ -1,5 +1,5 @@
 {
-  "name": "openchrome",
+  "name": "openchrome-mcp",
   "version": "1.0.2",
   "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
