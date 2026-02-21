@@ -39,10 +39,10 @@ interface PooledPage {
 }
 
 const DEFAULT_CONFIG: Required<PoolConfig> = {
-  minPoolSize: 2,
+  minPoolSize: 0,
   maxPoolSize: 25,
   pageIdleTimeout: 5 * 60 * 1000, // 5 minutes
-  preWarm: true,
+  preWarm: false,
 };
 
 export class CDPConnectionPool {
