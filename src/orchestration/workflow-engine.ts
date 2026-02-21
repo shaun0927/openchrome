@@ -6,6 +6,7 @@
 import { getSessionManager } from '../session-manager';
 import { getOrchestrationStateManager, OrchestrationState, WorkerState } from './state-manager';
 import { getCDPConnectionPool } from '../cdp/connection-pool';
+import { getCDPClient } from '../cdp/client';
 import { ToolEntry } from '../types/tool-manifest';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 
@@ -163,13 +164,26 @@ export class WorkflowEngine {
     const pool = getCDPConnectionPool();
     const batchPages = await pool.acquireBatch(createdWorkers.length);
 
-    // Phase 3: Assign pages to workers and navigate to target URLs
+    // Phase 3: Bridge cookies, then assign pages to workers and navigate
+    const cdpClient = getCDPClient();
     const workers = await Promise.all(
       createdWorkers.map(async ({ worker, step }, i) => {
         const page = batchPages[i];
 
-        // Navigate the pre-acquired page to the target URL
+        // Bridge cookies from an authenticated page before navigating.
+        // Pool pages are created with skipCookieBridge=true to avoid CDP session
+        // conflicts during bulk creation. We bridge here sequentially after acquisition.
         if (step.url) {
+          try {
+            const targetHost = new URL(step.url).hostname;
+            const authTargetId = await cdpClient.findAuthenticatedPageTargetId(targetHost);
+            if (authTargetId) {
+              await cdpClient.copyCookiesViaCDP(authTargetId, page);
+            }
+          } catch {
+            // Cookie bridging failure is non-fatal — page navigates without cookies
+          }
+
           await page.goto(step.url, { waitUntil: 'domcontentloaded' }).catch(() => {
             // Navigation may fail for some URLs; worker will retry
           });

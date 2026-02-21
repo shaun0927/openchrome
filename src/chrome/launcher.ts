@@ -456,8 +456,8 @@ export class ChromeLauncher {
           }
           fs.writeFileSync(path.join(destDefault, 'Preferences'), JSON.stringify(prefs));
         } catch {
-          // If JSON parse fails, copy raw file as fallback
-          fs.copyFileSync(prefsSrc, path.join(destDefault, 'Preferences'));
+          // JSON parse failed — skip Preferences entirely.
+          // Chrome will create fresh defaults rather than showing a crash recovery prompt.
         }
       }
 

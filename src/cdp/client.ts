@@ -253,7 +253,9 @@ export class CDPClient {
     // Set up disconnect handler
     this.browser.on('disconnected', () => {
       console.error('[CDPClient] Browser disconnected');
-      this.handleDisconnect();
+      this.handleDisconnect().catch((err) => {
+        console.error('[CDPClient] handleDisconnect failed:', err);
+      });
     });
 
     // Set up target destroyed handler
