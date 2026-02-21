@@ -86,7 +86,7 @@ program
   .action(async (options) => {
     const port = parseInt(options.port, 10);
 
-    console.log('=== Claude Chrome Parallel Status ===\n');
+    console.log('=== OpenChrome Status ===\n');
 
     // Check Chrome
     let chromeConnected = false;
@@ -131,7 +131,7 @@ program
   .action(async (options: { port: string }) => {
     const port = parseInt(options.port, 10);
 
-    console.log('=== Claude Chrome Parallel - Optimization Verification ===\n');
+    console.log('=== OpenChrome - Optimization Verification ===\n');
 
     let passed = 0;
     let failed = 0;
@@ -247,7 +247,7 @@ program
   .description('Show how it works')
   .action(() => {
     console.log(`
-=== Claude Chrome Parallel ===
+=== OpenChrome ===
 
 Enables multiple Claude Code sessions to control Chrome simultaneously
 without "Detached" errors.

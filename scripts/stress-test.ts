@@ -223,7 +223,7 @@ async function runSessionOperations(
 }
 
 async function runStressTest(config: StressTestConfig): Promise<void> {
-  console.log('=== Claude Chrome Parallel Stress Test ===\n');
+  console.log('=== OpenChrome Stress Test ===\n');
   console.log(`Configuration:`);
   console.log(`  Sessions: ${config.sessionCount}`);
   console.log(`  Operations per session: ${config.operationsPerSession}`);

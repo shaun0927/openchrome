@@ -1,6 +1,6 @@
 {
-  "name": "com.anthropic.claude_chrome_parallel",
-  "description": "Native messaging host for Claude Chrome Parallel extension",
+  "name": "com.anthropic.openchrome",
+  "description": "Native messaging host for OpenChrome",
   "path": "/home/${USER}/.openchrome/native-host/host.js",
   "type": "stdio",
   "allowed_origins": [

@@ -1,5 +1,5 @@
 /**
- * Uninstallation script for Claude Chrome Parallel
+ * Uninstallation script for OpenChrome
  */
 
 import * as fs from 'fs';
@@ -72,7 +72,7 @@ function removeNativeHost(): void {
         'Chrome',
         'User Data',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
       break;
     case 'darwin':
@@ -83,7 +83,7 @@ function removeNativeHost(): void {
         'Google',
         'Chrome',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
       break;
     default:
@@ -92,7 +92,7 @@ function removeNativeHost(): void {
         '.config',
         'google-chrome',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
   }
 
@@ -106,7 +106,7 @@ function removeNativeHost(): void {
   // On Windows, remove registry entry
   if (platform === 'win32') {
     try {
-      const regKey = 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.anthropic.claude_chrome_parallel';
+      const regKey = 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.anthropic.openchrome';
       execSync(`reg delete "${regKey}" /f`, { stdio: 'ignore' });
       console.log('Registry entry removed.');
     } catch {

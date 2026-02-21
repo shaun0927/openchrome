@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI for Claude Chrome Parallel
+ * CLI for OpenChrome
  *
  * Commands:
  * - install: Install extension and native messaging host
@@ -46,7 +46,7 @@ program
   .option('--extension-id <id>', 'Chrome extension ID (for native host configuration)')
   .action(async () => {
     console.log('⚠️  DEPRECATED: Extension installation is no longer needed.\n');
-    console.log('Claude Chrome Parallel now uses CDP (Chrome DevTools Protocol) mode,');
+    console.log('OpenChrome now uses CDP (Chrome DevTools Protocol) mode,');
     console.log('which does not require a Chrome extension.\n');
     console.log('Quick Start:');
     console.log('  1. Start Chrome with debugging port:');
@@ -69,7 +69,7 @@ program
   .description('[DEPRECATED] No longer needed - CDP mode has no extension to uninstall')
   .action(async () => {
     console.log('⚠️  DEPRECATED: Uninstall is no longer needed.\n');
-    console.log('Claude Chrome Parallel now uses CDP mode, which has no extension to uninstall.');
+    console.log('OpenChrome now uses CDP mode, which has no extension to uninstall.');
     console.log('Simply remove the MCP server config from ~/.claude.json if you want to disable it.');
   });
 
@@ -82,7 +82,7 @@ program
   .action(async (options: { dashboard?: boolean; autoLaunch?: boolean; scope?: string }) => {
     const { execSync, spawnSync } = require('child_process');
 
-    console.log('Setting up Claude Chrome Parallel for Claude Code...\n');
+    console.log('Setting up OpenChrome for Claude Code...\n');
 
     // Check if claude CLI is available
     try {
@@ -588,7 +588,7 @@ program
     }
 
     // Pretty print
-    console.log('Claude Chrome Parallel Status');
+    console.log('OpenChrome Status');
     console.log('═'.repeat(40));
     console.log();
 
@@ -725,7 +725,7 @@ function checkNativeHostManifest(): boolean {
         'Chrome',
         'User Data',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
       break;
     case 'darwin':
@@ -736,7 +736,7 @@ function checkNativeHostManifest(): boolean {
         'Google',
         'Chrome',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
       break;
     default:
@@ -745,7 +745,7 @@ function checkNativeHostManifest(): boolean {
         '.config',
         'google-chrome',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
   }
 

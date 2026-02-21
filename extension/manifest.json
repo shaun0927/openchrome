@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Claude Chrome Parallel",
+  "name": "OpenChrome",
   "version": "0.1.0",
   "description": "Enable parallel Claude Code sessions with independent browser automation - no more 'Detached' errors",
 
@@ -33,7 +33,7 @@
 
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Claude Chrome Parallel"
+    "default_title": "OpenChrome"
   },
 
   "icons": {

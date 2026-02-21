@@ -1,4 +1,4 @@
-# Contributing to Claude Chrome Parallel
+# Contributing to OpenChrome
 
 Thank you for your interest in contributing!
 
