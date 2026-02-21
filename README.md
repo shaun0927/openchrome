@@ -41,6 +41,10 @@ OpenChrome (parallel, zero auth):
   80x faster. 8x less memory. Zero logins.
 ```
 
+<p align="center">
+  <img src="assets/demo.svg" alt="Traditional vs OpenChrome — 5 authenticated sites comparison" width="100%">
+</p>
+
 ---
 
 ## Why OpenChrome Is Fast

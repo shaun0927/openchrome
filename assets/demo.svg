@@ -23,7 +23,7 @@
 
   <!-- Title -->
   <text x="400" y="30" text-anchor="middle" fill="#fff" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="bold">
-    Playwright MCP vs CCP — 5 Authenticated Sites
+    Playwright MCP vs OpenChrome — 5 Authenticated Sites
   </text>
   <text x="400" y="48" text-anchor="middle" fill="#636e72" font-family="system-ui" font-size="11">
     AWS Billing + Stripe Dashboard + Vercel Usage + GitHub Actions + Slack Messages
@@ -170,7 +170,7 @@
   </g>
 
   <!-- ═══════════════════════════════════════════════ -->
-  <!-- RIGHT SIDE: CCP (Parallel + Zero auth + Light) -->
+  <!-- RIGHT SIDE: OpenChrome (Parallel + Zero auth + Light) -->
   <!-- ═══════════════════════════════════════════════ -->
   <g transform="translate(410, 65)">
     <!-- Header -->
@@ -178,7 +178,7 @@
     <circle cx="14" cy="12" r="4" fill="#e74c3c"/>
     <circle cx="28" cy="12" r="4" fill="#f39c12"/>
     <circle cx="42" cy="12" r="4" fill="#27ae60"/>
-    <text x="185" y="16" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="10" font-weight="bold">CCP (Claude Chrome Parallel)</text>
+    <text x="185" y="16" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="10" font-weight="bold">OpenChrome (Claude Chrome Parallel)</text>
 
     <!-- Terminal body -->
     <rect x="0" y="24" width="370" height="340" fill="#0d1117"/>
@@ -273,6 +273,6 @@
     <rect x="20" y="0" width="760" height="30" rx="6" fill="#161b22" stroke="#2d3436" stroke-width="1"/>
     <text x="120" y="20" text-anchor="middle" fill="#e74c3c" font-family="monospace" font-size="10">Playwright: ~250s | 2.5GB</text>
     <text x="400" y="20" text-anchor="middle" fill="#636e72" font-family="system-ui" font-size="11" font-weight="bold">vs</text>
-    <text x="650" y="20" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="10">CCP: ~3s | 300MB | already logged in</text>
+    <text x="650" y="20" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="10">OpenChrome: ~3s | 300MB | already logged in</text>
   </g>
 </svg>
