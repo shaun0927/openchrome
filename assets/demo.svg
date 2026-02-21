@@ -178,7 +178,7 @@
     <circle cx="14" cy="12" r="4" fill="#e74c3c"/>
     <circle cx="28" cy="12" r="4" fill="#f39c12"/>
     <circle cx="42" cy="12" r="4" fill="#27ae60"/>
-    <text x="185" y="16" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="10" font-weight="bold">OpenChrome (Claude Chrome Parallel)</text>
+    <text x="185" y="16" text-anchor="middle" fill="#00b894" font-family="monospace" font-size="10" font-weight="bold">OpenChrome</text>
 
     <!-- Terminal body -->
     <rect x="0" y="24" width="370" height="340" fill="#0d1117"/>
