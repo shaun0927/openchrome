@@ -310,6 +310,7 @@ CCP's core mission is **Chrome parallel automation innovation**. Simple single-s
 | **Network simulation** | ✅ | ❌ | ❌ | **✅** |
 | **Workflow orchestration** | ❌ | ❌ | ❌ | **✅** |
 | **Adaptive Guidance** | ❌ | ❌ | ❌ | **✅** |
+| **Domain Memory** | ❌ | ❌ | ❌ | **✅** |
 
 ---
 
@@ -403,7 +404,7 @@ Three MCP tools — agent decides what to store, server handles persistence:
 
 ---
 
-## Tools (39)
+## Tools (47)
 
 <details>
 <summary><b>Browser Automation</b> — navigate, click, type, find</summary>
@@ -480,10 +481,23 @@ Three MCP tools — agent decides what to store, server handles persistence:
 | `workflow_init` | Initialize parallel workflow |
 | `workflow_status` | Check workflow progress |
 | `workflow_collect` | Collect results from all Workers |
+| `workflow_collect_partial` | Collect results from completed Workers only |
 | `workflow_cleanup` | Clean up workflow resources |
+| `execute_plan` | Execute a cached workflow plan |
 | `memory_record` | Store domain knowledge (selectors, tips) for reuse |
 | `memory_query` | Retrieve learned knowledge for a domain |
 | `memory_validate` | Report success/failure to adjust confidence |
+
+</details>
+
+<details>
+<summary><b>Performance & Lifecycle</b></summary>
+
+| Tool | Description |
+|------|-------------|
+| `batch_execute` | Execute multiple tool calls in a single request |
+| `lightweight_scroll` | Scroll without screenshot overhead |
+| `ccp_stop` | Gracefully shut down the CCP server |
 
 </details>
 
@@ -514,6 +528,7 @@ ccp cleanup                       # Clean up old sessions
 - **Cookie Bridge** — 30s TTL cache for auth cookie sharing (~10ms vs 2-6s)
 - **Find Tool** — Batched CDP queries (~100ms vs ~400ms)
 - **Headless Shell** — `--headless-shell` for 15-30% less memory
+- **Domain Memory** — Persistent selector/strategy knowledge, eliminates 2-3 re-discovery calls per session
 
 </details>
 
