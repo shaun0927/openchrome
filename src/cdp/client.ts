@@ -265,19 +265,11 @@ export class CDPClient {
       this.onTargetDestroyed(targetId);
     });
 
-    // Maintain target-to-page index for O(1) lookups
-    this.browser.on('targetcreated', async (target) => {
-      if (target.type() === 'page') {
-        try {
-          const page = await target.page();
-          if (page) {
-            this.targetIdIndex.set(getTargetId(target), page);
-          }
-        } catch {
-          // Target may have been destroyed before we could index it
-        }
-      }
-    });
+    // Note: We intentionally do NOT call target.page() in the targetcreated listener.
+    // Eagerly calling target.page() on every new target can materialize Chrome's internal
+    // targets (prerender, speculative navigation, new-tab-page) as visible about:blank
+    // ghost tabs. CCP-created pages are indexed directly in createPage() instead.
+    // Non-CCP pages are found via fallback scan in getPageByTargetId().
 
     this.connectionState = 'connected';
     this.emitConnectionEvent({
@@ -718,6 +710,9 @@ export class CDPClient {
       }
     }
 
+    // Index page for O(1) target-to-page lookups (replaces eager targetcreated indexing)
+    this.targetIdIndex.set(getTargetId(page.target()), page);
+
     // Set default viewport for consistent debugging experience
     await page.setViewport(CDPClient.DEFAULT_VIEWPORT);
 
@@ -726,6 +721,8 @@ export class CDPClient {
         await page.goto(url, { waitUntil: 'domcontentloaded' });
       } catch (err) {
         // Close the page to prevent about:blank ghost tabs on navigation failure
+        const targetId = getTargetId(page.target());
+        this.targetIdIndex.delete(targetId);
         await page.close().catch(() => {});
         throw err;
       }
