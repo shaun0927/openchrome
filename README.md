@@ -351,6 +351,58 @@ find → computer(click) pattern detected
 
 ---
 
+## Memory Architecture
+
+Workers waste 2-3 tool calls per session re-discovering selectors. CCP's domain memory system eliminates this by persisting what works across sessions.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    Agent (LLM)                           │
+│                                                          │
+│  "article[data-testid='tweet'] worked → remember this"  │
+│                                                          │
+│         ┌──────────┐  ┌──────────┐  ┌──────────┐        │
+│         │  RECORD   │  │  QUERY   │  │ VALIDATE │        │
+│         └────┬─────┘  └────┬─────┘  └────┬─────┘        │
+└──────────────┼─────────────┼─────────────┼───────────────┘
+               │             │             │
+       ┌───────▼─────────────▼─────────────▼───────┐
+       │           MCP Server (Store)               │
+       │                                            │
+       │  ┌─ x.com ────────────────────────────┐   │
+       │  │ selector:tweet  → article[data-...] │   │
+       │  │ tip:scroll      → scroll first      │   │
+       │  │ avoid:read_page → use JS extraction │   │
+       │  └─────────────────────────────────────┘   │
+       │                                            │
+       │  Confidence: +0.1 success / -0.2 failure   │
+       │  Pruning: <0.2 removed, 30d stale cleaned  │
+       │                                            │
+       │  ~/.claude-chrome-parallel/memory/          │
+       └────────────────────────────────────────────┘
+               │
+       ┌───────▼────────────────────────────────────┐
+       │        Worker Prompt Injection              │
+       │                                             │
+       │  workflow_init("x.com") automatically       │
+       │  injects domain knowledge into each worker: │
+       │                                             │
+       │  ## Domain Knowledge (x.com)                │
+       │  - selector:tweet: article[data-...]  0.8   │
+       │  - tip:scroll: scroll first           0.7   │
+       └─────────────────────────────────────────────┘
+```
+
+Three MCP tools — agent decides what to store, server handles persistence:
+
+| Tool | Purpose | Example |
+|------|---------|---------|
+| `memory_record` | Store knowledge after success | `{domain: "x.com", key: "selector:tweet", value: "article[data-testid='tweet']"}` |
+| `memory_query` | Retrieve before site interaction | `{domain: "x.com"}` → all entries sorted by confidence |
+| `memory_validate` | Feedback after using knowledge | `{id: "dk-...", success: true}` → confidence 0.5 → 0.6 |
+
+---
+
 ## Tools (39)
 
 <details>
