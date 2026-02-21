@@ -211,7 +211,7 @@ Claude: [5 Workers — already logged into every cloud provider]
 
 No OAuth tokens. No service accounts. No API keys to rotate. You're already logged in.
 
-### Automated Regression Testing
+### Automated Regression Testing (QA)
 
 ```bash
 # Full regression suite — 10 flows, 10 Workers, one command
@@ -256,6 +256,40 @@ Claude: [3 Workers, 3 isolated sessions]
 ```
 
 Same site, different accounts, simultaneously. Each Worker has its own cookies and session state.
+
+### OpenClaw Integration
+
+```
+OpenClaw agent (Telegram/Discord/Signal)
+  └─ "Check my AWS billing and Stripe revenue"
+     └─ CCP: 2 Workers, parallel, already logged in
+        ├── AWS:    $12,847/mo  ✓  (1.8s)
+        └── Stripe: $47,230 MRR ✓  (1.5s)
+     └─ Response delivered to your chat in ~3s
+```
+
+[OpenClaw](https://github.com/openclaw/openclaw) is an open-source AI agent that runs locally with 50+ integrations across chat, productivity, and automation tools. CCP gives OpenClaw agents **authenticated browser superpowers** — your agent can browse the web as you, across any site you're already logged into.
+
+- **Chat-driven dashboards**: "Check my billing" via Telegram → CCP screenshots your AWS/Stripe/Vercel in parallel
+- **Scheduled monitoring**: OpenClaw cron + CCP = automated daily reports from authenticated dashboards
+- **Multi-platform actions**: One chat command triggers parallel browser operations across 10+ sites simultaneously
+
+---
+
+## Orchestration
+
+CCP's core mission is **Chrome parallel automation innovation**. Simple single-site tasks work great with basic `ccp` commands. But for complex multi-step workflows, CCP is designed to work with orchestration layers:
+
+| Complexity | Approach | Example |
+|:----------:|:--------:|:--------|
+| **Simple** | `ccp` command | "ccp screenshot my Gmail" |
+| **Multi-site** | `workflow_init` | "Compare prices across 5 retailers" |
+| **Complex** | Orchestrator | Full regression suite, multi-step data pipelines |
+
+**Recommended orchestrators:**
+
+- **[oh-my-claudecode](https://github.com/nicobailon/oh-my-claudecode)** — Multi-agent orchestration for Claude Code. Use `autopilot`, `ralph`, or `ultrawork` modes with CCP for persistent, self-correcting browser workflows.
+- **[superpowers](https://github.com/shaun0927/superpowers)** — Agent coordination framework. Combines CCP's parallel browser capabilities with structured task pipelines and verification loops.
 
 ---
 
@@ -317,7 +351,7 @@ find → computer(click) pattern detected
 
 ---
 
-## Tools (36)
+## Tools (39)
 
 <details>
 <summary><b>Browser Automation</b> — navigate, click, type, find</summary>
@@ -395,6 +429,9 @@ find → computer(click) pattern detected
 | `workflow_status` | Check workflow progress |
 | `workflow_collect` | Collect results from all Workers |
 | `workflow_cleanup` | Clean up workflow resources |
+| `memory_record` | Store domain knowledge (selectors, tips) for reuse |
+| `memory_query` | Retrieve learned knowledge for a domain |
+| `memory_validate` | Report success/failure to adjust confidence |
 
 </details>
 
