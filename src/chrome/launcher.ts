@@ -237,11 +237,21 @@ export class ChromeLauncher {
 
     if (!userDataDir && !options.useTempProfile && !usingHeadlessShell) {
       const realProfileDir = this.getRealChromeProfileDir();
-      if (realProfileDir && !this.isProfileLocked(realProfileDir)) {
-        userDataDir = realProfileDir;
-        usingRealProfile = true;
-        this.usingRealProfile = true;
-        console.error(`[ChromeLauncher] Using real Chrome profile: ${realProfileDir}`);
+      if (realProfileDir) {
+        if (!this.isProfileLocked(realProfileDir)) {
+          userDataDir = realProfileDir;
+          usingRealProfile = true;
+          this.usingRealProfile = true;
+          console.error(`[ChromeLauncher] Using real Chrome profile: ${realProfileDir}`);
+        } else {
+          // Profile is locked by another Chrome instance.
+          // Create temp profile but copy essential data (cookies, local state)
+          // so the new Chrome session inherits the user's existing authentication.
+          userDataDir = path.join(os.tmpdir(), `claude-chrome-parallel-${Date.now()}`);
+          this.usingRealProfile = false;
+          this.copyEssentialProfileData(realProfileDir, userDataDir);
+          console.error(`[ChromeLauncher] Profile locked, using temp with copied cookies: ${userDataDir}`);
+        }
       }
     }
 
@@ -389,6 +399,50 @@ export class ChromeLauncher {
     }
 
     return null;
+  }
+
+  /**
+   * Copy essential profile data (cookies, local state) from a locked real Chrome profile
+   * to a temp profile directory. This allows the new Chrome instance to start with
+   * the user's existing authentication and cookies.
+   *
+   * Chrome on macOS encrypts cookies using a Keychain key ("Chrome Safe Storage").
+   * Since we launch the same Chrome binary as the same user, the new instance
+   * can decrypt the copied cookies using the same Keychain entry.
+   */
+  private copyEssentialProfileData(sourceDir: string, destDir: string): void {
+    try {
+      const destDefault = path.join(destDir, 'Default');
+      fs.mkdirSync(destDefault, { recursive: true });
+
+      // Copy Local State (contains OS crypt config, encryption key references)
+      const localStateSrc = path.join(sourceDir, 'Local State');
+      if (fs.existsSync(localStateSrc)) {
+        fs.copyFileSync(localStateSrc, path.join(destDir, 'Local State'));
+      }
+
+      // Copy cookie database files from Default profile
+      // Includes WAL/SHM files for SQLite consistency
+      const cookieFiles = ['Cookies', 'Cookies-journal', 'Cookies-wal', 'Cookies-shm'];
+      let copiedCount = 0;
+      for (const file of cookieFiles) {
+        const src = path.join(sourceDir, 'Default', file);
+        if (fs.existsSync(src)) {
+          fs.copyFileSync(src, path.join(destDefault, file));
+          copiedCount++;
+        }
+      }
+
+      // Copy Preferences for profile-level settings (login state, etc.)
+      const prefsSrc = path.join(sourceDir, 'Default', 'Preferences');
+      if (fs.existsSync(prefsSrc)) {
+        fs.copyFileSync(prefsSrc, path.join(destDefault, 'Preferences'));
+      }
+
+      console.error(`[ChromeLauncher] Copied essential profile data (${copiedCount} cookie files) from locked profile`);
+    } catch (err) {
+      console.error(`[ChromeLauncher] Failed to copy profile data (non-fatal):`, err);
+    }
   }
 
   /**

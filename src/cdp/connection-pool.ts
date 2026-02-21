@@ -39,7 +39,7 @@ interface PooledPage {
 }
 
 const DEFAULT_CONFIG: Required<PoolConfig> = {
-  minPoolSize: 5,
+  minPoolSize: 2,
   maxPoolSize: 25,
   pageIdleTimeout: 5 * 60 * 1000, // 5 minutes
   preWarm: true,
@@ -306,10 +306,13 @@ export class CDPConnectionPool {
   static readonly DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
 
   /**
-   * Create a new page with default viewport
+   * Create a new page with default viewport.
+   * Pool pages skip cookie bridging to avoid CDP session conflicts
+   * and unnecessary overhead — cookies will be bridged when the page
+   * is actually navigated to a real URL.
    */
   private async createNewPage(): Promise<Page> {
-    const page = await this.cdpClient.createPage();
+    const page = await this.cdpClient.createPage(undefined, undefined, true);
     // Ensure viewport is set (cdpClient.createPage already sets it, but double-check)
     if (!page.viewport()) {
       await page.setViewport(CDPConnectionPool.DEFAULT_VIEWPORT);
