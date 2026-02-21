@@ -722,7 +722,13 @@ export class CDPClient {
     await page.setViewport(CDPClient.DEFAULT_VIEWPORT);
 
     if (url) {
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+      } catch (err) {
+        // Close the page to prevent about:blank ghost tabs on navigation failure
+        await page.close().catch(() => {});
+        throw err;
+      }
     }
 
     return page;

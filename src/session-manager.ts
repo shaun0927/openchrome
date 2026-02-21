@@ -608,8 +608,9 @@ export class SessionManager {
     let page: Page;
 
     if (this.connectionPool && this.config.useConnectionPool) {
+      let poolPage: Page | null = null;
       try {
-        const poolPage = await this.connectionPool.acquirePage();
+        poolPage = await this.connectionPool.acquirePage();
         // Navigate the pre-warmed page to the target URL
         if (url) {
           await poolPage.goto(url, { waitUntil: 'domcontentloaded' });
@@ -629,7 +630,11 @@ export class SessionManager {
         page = poolPage;
         console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);
       } catch (err) {
-        console.error(`[SessionManager] Pool acquire failed, falling back to direct creation:`, err);
+        // Release the acquired pool page to prevent about:blank ghost tabs
+        if (poolPage) {
+          this.connectionPool.releasePage(poolPage).catch(() => {});
+        }
+        console.error(`[SessionManager] Pool acquire/navigate failed, falling back to direct creation:`, err);
         page = await cdpClient.createPage(url, worker.context);
       }
     } else {
