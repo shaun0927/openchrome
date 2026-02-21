@@ -288,8 +288,8 @@ CCP's core mission is **Chrome parallel automation innovation**. Simple single-s
 
 **Recommended orchestrators:**
 
-- **[oh-my-claudecode](https://github.com/nicobailon/oh-my-claudecode)** — Multi-agent orchestration for Claude Code. Use `autopilot`, `ralph`, or `ultrawork` modes with CCP for persistent, self-correcting browser workflows.
-- **[superpowers](https://github.com/shaun0927/superpowers)** — Agent coordination framework. Combines CCP's parallel browser capabilities with structured task pipelines and verification loops.
+- **[oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode)** — Multi-agent orchestration for Claude Code. Use `autopilot`, `ralph`, or `ultrawork` modes with CCP for persistent, self-correcting browser workflows.
+- **[superpowers](https://github.com/obra/superpowers)** — Agent coordination framework. Combines CCP's parallel browser capabilities with structured task pipelines and verification loops.
 
 ---
 
