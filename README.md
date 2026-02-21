@@ -23,7 +23,9 @@
 
 ## What is OpenChrome?
 
-An MCP server that connects to your **actual Chrome** — already logged in to everything. No credentials. No blank browsers. No 2FA loops.
+Imagine **20+ parallel Playwright sessions** — but already logged in to everything, invisible to bot detection, and sharing one Chrome process at 300MB. That's OpenChrome.
+
+Search across 20 sites simultaneously. Crawl authenticated dashboards in seconds. Debug production UIs with real user sessions. Connect to [OpenClaw](https://github.com/openclaw/openclaw) and give your AI agent browser superpowers across Telegram, Discord, or any chat platform.
 
 ```
 You: oc screenshot my AWS billing and Stripe dashboard
