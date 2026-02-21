@@ -282,10 +282,11 @@ export class ChromeLauncher {
       );
     }
 
-    if (options.headless) {
+    // Headless mode: explicit option > global config (default when auto-launch)
+    const headless = options.headless ?? globalConfig.headless ?? false;
+    if (headless) {
       args.push('--headless=new');
-      // For headless, set explicit window size
-      args.push('--window-size=1920,1080');
+      console.error('[ChromeLauncher] Running in headless mode (no visible window)');
     }
 
     const chromeProcess = spawn(chromePath, args, {

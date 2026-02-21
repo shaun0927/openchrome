@@ -13,6 +13,8 @@ export interface GlobalConfig {
   chromeBinary?: string;
   /** Use chrome-headless-shell if available (default: false) */
   useHeadlessShell?: boolean;
+  /** Run Chrome in headless mode (default: true when auto-launch is enabled) */
+  headless?: boolean;
   /** Chrome Pool settings for managing multiple Chrome instances */
   pool?: {
     /** Enable the Chrome pool (default: true) */

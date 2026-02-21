@@ -27,9 +27,10 @@ program
   .option('--user-data-dir <dir>', 'Chrome user data directory (default: real Chrome profile on macOS)')
   .option('--chrome-binary <path>', 'Path to Chrome binary (e.g., chrome-headless-shell)')
   .option('--headless-shell', 'Use chrome-headless-shell if available (default: false)')
+  .option('--visible', 'Show Chrome window (default: headless when auto-launch)')
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; hybrid?: boolean; lpPort?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; hybrid?: boolean; lpPort?: string }) => {
     const port = parseInt(options.port, 10);
     const autoLaunch = options.autoLaunch || false;
     const userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
@@ -49,8 +50,14 @@ program
       console.error(`[claude-chrome-parallel] Using headless-shell mode`);
     }
 
+    // Headless by default when auto-launching, unless --visible is specified
+    const headless = autoLaunch && !options.visible;
+    if (autoLaunch) {
+      console.error(`[claude-chrome-parallel] Headless mode: ${headless}`);
+    }
+
     // Set global config before initializing anything
-    setGlobalConfig({ port, autoLaunch, userDataDir, chromeBinary, useHeadlessShell });
+    setGlobalConfig({ port, autoLaunch, userDataDir, chromeBinary, useHeadlessShell, headless });
 
     // Configure hybrid mode if enabled
     const hybrid = options.hybrid || false;
