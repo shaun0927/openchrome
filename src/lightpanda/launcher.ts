@@ -24,7 +24,7 @@ export class LightpandaLauncher {
 
   constructor(config: LightpandaLauncherConfig) {
     this.port = config.port;
-    this.binaryPath = config.binaryPath ?? 'lightpanda';
+    this.binaryPath = config.binaryPath ?? (process.platform === 'win32' ? 'lightpanda.exe' : 'lightpanda');
     this.startupTimeoutMs = config.startupTimeoutMs ?? 10000;
     this.healthCheckIntervalMs = config.healthCheckIntervalMs ?? 500;
   }
@@ -39,6 +39,7 @@ export class LightpandaLauncher {
 
     this.process = spawn(this.binaryPath, ['--port', String(this.port)], {
       stdio: ['ignore', 'ignore', 'ignore'],
+      shell: process.platform === 'win32',
     });
 
     this.process.on('exit', () => {
@@ -80,9 +81,12 @@ export class LightpandaLauncher {
       });
 
       try {
-        proc.kill('SIGTERM');
-        // Simulate exit for testing: if kill returns true, emit exit
-        // In real usage the process will emit 'exit' after kill
+        // On Windows, SIGTERM is not supported; use default kill which calls TerminateProcess
+        if (process.platform === 'win32') {
+          proc.kill();
+        } else {
+          proc.kill('SIGTERM');
+        }
       } catch {
         clearTimeout(killTimer);
         resolve();
