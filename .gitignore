@@ -41,7 +41,7 @@ yarn-error.log*
 extension-unpacked/
 
 # Runtime directories (written by the tool at runtime)
-.chrome-parallel/
+.openchrome/
 .agent/
 
 # AI session/orchestration state
