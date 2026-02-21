@@ -42,7 +42,11 @@ export class KeyboardHandler extends EventEmitter {
    */
   static isAvailable(): boolean {
     try {
-      // Check if /dev/tty exists and is accessible
+      if (process.platform === 'win32') {
+        // Windows: keyboard shortcuts not supported (stdin used by MCP, no /dev/tty equivalent)
+        return false;
+      }
+      // Unix: check if /dev/tty exists and is accessible
       fs.accessSync('/dev/tty', fs.constants.R_OK);
       return true;
     } catch {
@@ -61,7 +65,19 @@ export class KeyboardHandler extends EventEmitter {
     this.keyHandler = handler;
 
     try {
-      // Open /dev/tty for reading (bypasses stdin which is used for MCP)
+      if (process.platform === 'win32') {
+        // Windows: Cannot use /dev/tty; use process.stderr if it's a TTY
+        // Note: keyboard input is limited on Windows since stdin is used for MCP
+        if (!process.stderr.isTTY) {
+          return false;
+        }
+        // On Windows, we cannot read keyboard input separately from MCP stdin
+        // Dashboard runs in view-only mode without keyboard shortcuts
+        console.error('[KeyboardHandler] Windows: keyboard shortcuts not available (stdin used by MCP)');
+        return false;
+      }
+
+      // Unix: Open /dev/tty for reading (bypasses stdin which is used for MCP)
       this.ttyFd = fs.openSync('/dev/tty', 'r');
       this.ttyStream = fs.createReadStream('', { fd: this.ttyFd });
 

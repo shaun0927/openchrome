@@ -3,6 +3,7 @@
  */
 
 import { promises as fs } from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
@@ -158,7 +159,7 @@ const handler: ToolHandler = async (
       // Resolve path (support ~ for home directory)
       let resolvedPath = filePath;
       if (filePath.startsWith('~')) {
-        resolvedPath = path.join(process.env.HOME || '', filePath.slice(1));
+        resolvedPath = path.join(os.homedir(), filePath.slice(1));
       } else if (!path.isAbsolute(filePath)) {
         resolvedPath = path.resolve(filePath);
       }

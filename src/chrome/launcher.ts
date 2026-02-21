@@ -35,11 +35,13 @@ function findChromePath(): string | null {
   const platform = os.platform();
 
   if (platform === 'win32') {
-    const paths = [
-      process.env['PROGRAMFILES(X86)'] + '\\Google\\Chrome\\Application\\chrome.exe',
-      process.env['PROGRAMFILES'] + '\\Google\\Chrome\\Application\\chrome.exe',
-      process.env['LOCALAPPDATA'] + '\\Google\\Chrome\\Application\\chrome.exe',
-    ];
+    const envProgramFilesX86 = process.env['PROGRAMFILES(X86)'];
+    const envProgramFiles = process.env['PROGRAMFILES'];
+    const envLocalAppData = process.env['LOCALAPPDATA'];
+    const paths: string[] = [];
+    if (envProgramFilesX86) paths.push(path.join(envProgramFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+    if (envProgramFiles) paths.push(path.join(envProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+    if (envLocalAppData) paths.push(path.join(envLocalAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'));
     for (const p of paths) {
       if (fs.existsSync(p)) return p;
     }
@@ -289,12 +291,23 @@ export class ChromeLauncher {
       console.error('[ChromeLauncher] Running in headless mode (no visible window)');
     }
 
+    // Validate chromePath has no shell metacharacters when using shell:true on Windows.
+    // chromePath comes from findChromePath() (filesystem-verified) or globalConfig.chromeBinary
+    // (user-controlled via CLI --chrome-binary or CHROME_BINARY env var).
+    if (process.platform === 'win32' && /[&|;<>"`^]/.test(chromePath)) {
+      throw new Error(`Invalid characters in Chrome path (possible injection): ${chromePath}`);
+    }
+
     const chromeProcess = spawn(chromePath, args, {
       detached: true,
       stdio: ['ignore', 'ignore', 'ignore'],
+      shell: process.platform === 'win32',
     });
 
     chromeProcess.unref();
+    // Note: On Windows, detached processes create a new process group.
+    // Killing the root process may not clean up child processes (renderers, GPU).
+    // The ccp_stop tool handles this via session/pool cleanup before process kill.
 
     // Wait for debug port
     const wsEndpoint = await waitForDebugPort(port);
@@ -382,7 +395,17 @@ export class ChromeLauncher {
    * Check if a Chrome profile directory is locked by another Chrome instance
    */
   private isProfileLocked(profileDir: string): boolean {
-    // Chrome uses a "SingletonLock" file (Linux) or "lockfile" to prevent concurrent access
+    if (os.platform() === 'win32') {
+      // Windows Chrome uses a 'lockfile' in the user data directory
+      const lockFile = path.join(profileDir, 'lockfile');
+      if (fs.existsSync(lockFile)) {
+        console.error(`[ChromeLauncher] Profile locked: ${lockFile} exists`);
+        return true;
+      }
+      return false;
+    }
+
+    // Unix: Chrome uses SingletonLock symlinks
     const lockFiles = [
       path.join(profileDir, 'SingletonLock'),
       path.join(profileDir, 'SingletonSocket'),

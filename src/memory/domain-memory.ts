@@ -7,6 +7,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 export interface DomainKnowledge {
@@ -201,7 +202,7 @@ let instance: DomainMemory | null = null;
 export function getDomainMemory(): DomainMemory {
   if (!instance) {
     instance = new DomainMemory();
-    const homedir = process.env.HOME || process.env.USERPROFILE || '';
+    const homedir = os.homedir();
     const memoryDir = path.join(homedir, '.claude-chrome-parallel', 'memory');
     instance.enablePersistence(memoryDir);
   }
