@@ -264,7 +264,7 @@ export class MCPServer {
       },
       serverInfo: {
         name: 'openchrome',
-        version: '2.0.0',
+        version: '1.0.2',
       },
       instructions: [
         'OpenChrome gives you browser automation using the user\'s actual Chrome — already logged in to everything.',
