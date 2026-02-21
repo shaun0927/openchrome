@@ -114,7 +114,7 @@ program
     }
 
     // Use npx for auto-updates: every server start fetches the latest version
-    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx -y openchrome ${serveArgs.join(' ')}`;
+    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx -y openchrome-mcp ${serveArgs.join(' ')}`;
 
     console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
 
@@ -137,7 +137,7 @@ program
       console.error('     "mcpServers": {');
       console.error('       "openchrome": {');
       console.error('         "command": "npx",');
-      console.error(`         "args": ["-y", "openchrome", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
+      console.error(`         "args": ["-y", "openchrome-mcp", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
       console.error('       }');
       console.error('     }');
       console.error('   }');
