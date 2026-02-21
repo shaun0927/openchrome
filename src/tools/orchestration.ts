@@ -173,7 +173,8 @@ const workflowInitHandler: ToolHandler = async (
         w.tabId,
         workflow.steps[i].task,
         workflow.steps[i].successCriteria,
-        manifestTools
+        manifestTools,
+        workflow.steps[i].url
       ),
     }));
 

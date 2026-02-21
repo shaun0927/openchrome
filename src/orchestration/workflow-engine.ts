@@ -7,6 +7,7 @@ import { getSessionManager } from '../session-manager';
 import { getOrchestrationStateManager, OrchestrationState, WorkerState } from './state-manager';
 import { getCDPConnectionPool } from '../cdp/connection-pool';
 import { ToolEntry } from '../types/tool-manifest';
+import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 
 export interface WorkflowStep {
   workerId: string;
@@ -790,8 +791,22 @@ export class WorkflowEngine {
     tabId: string,
     task: string,
     successCriteria: string,
-    manifestTools?: ToolEntry[]
+    manifestTools?: ToolEntry[],
+    targetUrl?: string
   ): string {
+    // CE: Isolate — inject only target domain's knowledge
+    let domainKnowledgeSection = '';
+    if (targetUrl) {
+      const domain = extractDomainFromUrl(targetUrl);
+      if (domain) {
+        const entries = getDomainMemory().query(domain);
+        if (entries.length > 0) {
+          const lines = entries.map((e) => `- **${e.key}**: ${e.value} (confidence: ${e.confidence.toFixed(1)})`);
+          domainKnowledgeSection = `\n\n## Domain Knowledge (${domain})\n\nPreviously learned knowledge for this domain. Validate after use with memory_validate.\n\n${lines.join('\n')}`;
+        }
+      }
+    }
+
     return `## Chrome-Sisyphus Worker Agent
 
 You are an autonomous browser automation worker. Execute your assigned task completely before returning.
@@ -905,7 +920,7 @@ When done, your LAST message MUST contain:
 | Captcha | Report FAIL |
 | Network error | Wait 2s, retry |
 
-Now begin your task. Navigate to the target site and complete the assigned work.`;
+Now begin your task. Navigate to the target site and complete the assigned work.${domainKnowledgeSection}`;
   }
 }
 
