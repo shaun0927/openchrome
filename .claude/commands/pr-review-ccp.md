@@ -117,13 +117,19 @@ For each PR, output:
 - [ ] ...
 ```
 
-### Phase 5: Post Review Comments (if requested)
+### Phase 5: Post Review to GitHub (MANDATORY)
+
+ALWAYS post the review as a GitHub PR comment. Do NOT skip this step.
 
 ```bash
-gh pr review <N> --comment --body "<review>"
-# or
-gh pr review <N> --request-changes --body "<review>"
+# If any CRITICAL or HIGH issues found:
+gh pr review <N> --request-changes --body "<full Phase 4 review markdown>"
+
+# If only MEDIUM/LOW or clean:
+gh pr review <N> --approve --body "<full Phase 4 review markdown>"
 ```
+
+If reviewing multiple PRs, post a separate review comment on EACH PR.
 
 ## CCP Domain Knowledge
 
