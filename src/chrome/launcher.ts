@@ -406,9 +406,12 @@ export class ChromeLauncher {
    * to a temp profile directory. This allows the new Chrome instance to start with
    * the user's existing authentication and cookies.
    *
-   * Chrome on macOS encrypts cookies using a Keychain key ("Chrome Safe Storage").
-   * Since we launch the same Chrome binary as the same user, the new instance
-   * can decrypt the copied cookies using the same Keychain entry.
+   * Cookie decryption by platform:
+   * - macOS: Chrome uses Keychain key "Chrome Safe Storage". Same binary + same user = works.
+   * - Linux: Chrome uses gnome-keyring or kwallet. Same user session = works.
+   * - Windows: Chrome uses DPAPI tied to user account. Same user = works.
+   * In all cases, launching the same Chrome binary as the same OS user allows
+   * the new instance to decrypt the copied cookies.
    */
   private copyEssentialProfileData(sourceDir: string, destDir: string): void {
     try {
@@ -421,22 +424,41 @@ export class ChromeLauncher {
         fs.copyFileSync(localStateSrc, path.join(destDir, 'Local State'));
       }
 
-      // Copy cookie database files from Default profile
-      // Includes WAL/SHM files for SQLite consistency
-      const cookieFiles = ['Cookies', 'Cookies-journal', 'Cookies-wal', 'Cookies-shm'];
+      // Copy cookie database files from Default profile.
+      // Chrome uses SQLite WAL mode, so we copy in order: main DB → WAL → SHM → journal.
+      // If the main DB copy races with a Chrome write, the WAL file provides recovery.
+      // This is safe for read-only consumption by the new Chrome instance.
+      const cookieFiles = ['Cookies', 'Cookies-wal', 'Cookies-shm', 'Cookies-journal'];
       let copiedCount = 0;
       for (const file of cookieFiles) {
         const src = path.join(sourceDir, 'Default', file);
         if (fs.existsSync(src)) {
-          fs.copyFileSync(src, path.join(destDefault, file));
-          copiedCount++;
+          try {
+            fs.copyFileSync(src, path.join(destDefault, file));
+            copiedCount++;
+          } catch {
+            // Individual file copy failure is non-fatal (e.g., WAL may not exist)
+          }
         }
       }
 
-      // Copy Preferences for profile-level settings (login state, etc.)
+      // Copy and patch Preferences to prevent "Chrome didn't shut down correctly" prompt.
+      // The source Preferences has exit_type:"Crashed" while Chrome is running.
       const prefsSrc = path.join(sourceDir, 'Default', 'Preferences');
       if (fs.existsSync(prefsSrc)) {
-        fs.copyFileSync(prefsSrc, path.join(destDefault, 'Preferences'));
+        try {
+          const prefsContent = fs.readFileSync(prefsSrc, 'utf8');
+          const prefs = JSON.parse(prefsContent);
+          // Patch exit_type to Normal so Chrome doesn't show recovery prompt
+          if (prefs.profile) {
+            prefs.profile.exit_type = 'Normal';
+            prefs.profile.exited_cleanly = true;
+          }
+          fs.writeFileSync(path.join(destDefault, 'Preferences'), JSON.stringify(prefs));
+        } catch {
+          // If JSON parse fails, copy raw file as fallback
+          fs.copyFileSync(prefsSrc, path.join(destDefault, 'Preferences'));
+        }
       }
 
       console.error(`[ChromeLauncher] Copied essential profile data (${copiedCount} cookie files) from locked profile`);
