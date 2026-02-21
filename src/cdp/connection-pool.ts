@@ -6,13 +6,13 @@ import { Page } from 'puppeteer-core';
 import { CDPClient, getCDPClient } from './client';
 
 export interface PoolConfig {
-  /** Minimum number of pre-allocated pages to keep ready (default: 2) */
+  /** Minimum number of pre-allocated pages to keep ready (default: 0) */
   minPoolSize?: number;
-  /** Maximum number of pre-allocated pages (default: 10) */
+  /** Maximum number of recycled pages to keep in pool (default: 0 — disabled to prevent about:blank ghost tabs) */
   maxPoolSize?: number;
   /** Page idle timeout in ms before returning to pool (default: 5 minutes) */
   pageIdleTimeout?: number;
-  /** Whether to pre-warm pages on startup (default: true) */
+  /** Whether to pre-warm pages on startup (default: false) */
   preWarm?: boolean;
 }
 
@@ -39,10 +39,10 @@ interface PooledPage {
 }
 
 const DEFAULT_CONFIG: Required<PoolConfig> = {
-  minPoolSize: 2,
-  maxPoolSize: 25,
+  minPoolSize: 0,
+  maxPoolSize: 0, // Disabled: recycled pages appear as about:blank ghost tabs in Chrome
   pageIdleTimeout: 5 * 60 * 1000, // 5 minutes
-  preWarm: true,
+  preWarm: false,
 };
 
 export class CDPConnectionPool {

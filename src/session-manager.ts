@@ -607,9 +607,19 @@ export class SessionManager {
     const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
     let page: Page;
 
+    // Snapshot existing target IDs before page creation.
+    // Chrome's Site Isolation can create orphan about:blank targets during cross-origin
+    // navigation (renderer process swap). We detect and close these after navigation.
+    const existingTargetIds = new Set(
+      cdpClient.getBrowser().targets()
+        .filter(t => t.type() === 'page')
+        .map(t => getTargetId(t))
+    );
+
     if (this.connectionPool && this.config.useConnectionPool) {
+      let poolPage: Page | null = null;
       try {
-        const poolPage = await this.connectionPool.acquirePage();
+        poolPage = await this.connectionPool.acquirePage();
         // Navigate the pre-warmed page to the target URL
         if (url) {
           await poolPage.goto(url, { waitUntil: 'domcontentloaded' });
@@ -629,7 +639,14 @@ export class SessionManager {
         page = poolPage;
         console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);
       } catch (err) {
-        console.error(`[SessionManager] Pool acquire failed, falling back to direct creation:`, err);
+        // Close the acquired pool page to prevent about:blank ghost tabs.
+        // Close first (removes from Chrome), then release (cleans pool tracking).
+        // Do NOT just releasePage — that returns it to pool as about:blank.
+        if (poolPage) {
+          await poolPage.close().catch(() => {});
+          this.connectionPool.releasePage(poolPage).catch(() => {});
+        }
+        console.error(`[SessionManager] Pool acquire/navigate failed, falling back to direct creation:`, err);
         page = await cdpClient.createPage(url, worker.context);
       }
     } else {
@@ -637,6 +654,34 @@ export class SessionManager {
     }
 
     const targetId = getTargetId(page.target());
+
+    // Clean up orphan about:blank targets created by Chrome during navigation.
+    // Chrome's Site Isolation creates temporary renderer targets during cross-origin
+    // navigation (about:blank → real URL) that can persist as ghost tabs.
+    // Runs after a brief delay to catch async target creation by Chrome.
+    const cleanupExistingIds = existingTargetIds;
+    const cleanupTargetId = targetId;
+    const cleanupBrowser = cdpClient.getBrowser();
+    setTimeout(async () => {
+      try {
+        const orphans = cleanupBrowser.targets().filter(t =>
+          t.type() === 'page' &&
+          t.url() === 'about:blank' &&
+          !cleanupExistingIds.has(getTargetId(t)) &&
+          getTargetId(t) !== cleanupTargetId &&
+          !this.targetToWorker.has(getTargetId(t))
+        );
+        for (const t of orphans) {
+          try {
+            const orphanPage = await t.page();
+            if (orphanPage && !orphanPage.isClosed()) {
+              await orphanPage.close();
+              console.error(`[SessionManager] Closed orphan about:blank ghost tab: ${getTargetId(t)}`);
+            }
+          } catch { /* target may already be destroyed */ }
+        }
+      } catch { /* best-effort cleanup */ }
+    }, 500);
 
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
