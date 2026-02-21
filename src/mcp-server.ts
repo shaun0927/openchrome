@@ -269,7 +269,7 @@ export class MCPServer {
       instructions: [
         'OpenChrome gives you browser automation using the user\'s actual Chrome — already logged in to everything.',
         '',
-        'MAGIC KEYWORD: When the user says "openchrome", "oc", "ccp", or any variation, immediately activate browser automation.',
+        'MAGIC KEYWORD: When the user says "openchrome" or uses "oc" as a standalone command prefix (e.g., "oc screenshot", "oc check"), immediately activate browser automation. Do not trigger on words that merely contain "oc" (e.g., "document", "octopus").',
         '',
         'KEY RULES:',
         '- The user is ALREADY LOGGED IN to every site. Never attempt login or enter credentials.',
