@@ -68,7 +68,12 @@ export class LightpandaLauncher {
     await new Promise<void>((resolve) => {
       const killTimer = setTimeout(() => {
         try {
-          proc.kill('SIGKILL');
+          // On Windows, SIGKILL is not supported; use default kill (TerminateProcess)
+          if (process.platform === 'win32') {
+            proc.kill();
+          } else {
+            proc.kill('SIGKILL');
+          }
         } catch {
           // ignore
         }
