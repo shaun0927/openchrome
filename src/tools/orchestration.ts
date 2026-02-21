@@ -8,7 +8,6 @@ import { MCPServer, getMCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getWorkflowEngine, WorkflowDefinition } from '../orchestration/workflow-engine';
 import { getOrchestrationStateManager } from '../orchestration/state-manager';
-import { getCDPConnectionPool } from '../cdp/connection-pool';
 import { filterToolsForWorker, WorkerToolConfig } from '../types/tool-manifest';
 import { getPlanRegistry } from '../orchestration/plan-registry';
 import { PlanExecutor } from '../orchestration/plan-executor';
@@ -114,13 +113,9 @@ const workflowInitHandler: ToolHandler = async (
   }
 
   try {
-    // Pre-warm connection pool in parallel with DNS resolution
-    const pool = getCDPConnectionPool();
-    const preWarmPromise = pool.preWarmForWorkflow(workerDefs.length).catch((err) => {
-      console.error('[Orchestration] Pool pre-warm failed (non-fatal):', err);
-      return { warmed: 0, durationMs: 0 };
-    });
-    await preWarmPromise;
+    // Note: preWarmForWorkflow removed — acquireBatch() in workflow-engine already
+    // handles on-demand page creation. Pre-warming was redundant and caused
+    // about:blank ghost tabs via pool replenishment.
 
     // Create workflow definition
     const workflow: WorkflowDefinition = {

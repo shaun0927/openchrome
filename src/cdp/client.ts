@@ -253,7 +253,9 @@ export class CDPClient {
     // Set up disconnect handler
     this.browser.on('disconnected', () => {
       console.error('[CDPClient] Browser disconnected');
-      this.handleDisconnect();
+      this.handleDisconnect().catch((err) => {
+        console.error('[CDPClient] handleDisconnect failed:', err);
+      });
     });
 
     // Set up target destroyed handler
@@ -682,8 +684,9 @@ export class CDPClient {
    * Create a new page with default viewport
    * @param url Optional URL to navigate to
    * @param context Optional browser context for session isolation (null/undefined = use Chrome's default context with cookies)
+   * @param skipCookieBridge If true, skip cookie bridging from authenticated pages (used for pool pre-warming)
    */
-  async createPage(url?: string, context?: BrowserContext | null): Promise<Page> {
+  async createPage(url?: string, context?: BrowserContext | null, skipCookieBridge?: boolean): Promise<Page> {
     let page: Page;
     const browser = this.getBrowser();
 
@@ -702,14 +705,16 @@ export class CDPClient {
       // Create page in isolated context (for worker isolation)
       page = await context.newPage();
     } else {
-      // Create page and copy cookies from an authenticated page
-      // This allows the new page to share the authenticated session
+      // Create page in Chrome's default context
       page = await browser.newPage();
 
-      // Find an authenticated page to copy cookies from (with domain preference)
-      const authPageTargetId = await this.findAuthenticatedPageTargetId(targetDomain);
-      if (authPageTargetId) {
-        await this.copyCookiesViaCDP(authPageTargetId, page);
+      // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
+      // CDP session conflicts and unnecessary overhead on about:blank pages)
+      if (!skipCookieBridge) {
+        const authPageTargetId = await this.findAuthenticatedPageTargetId(targetDomain);
+        if (authPageTargetId) {
+          await this.copyCookiesViaCDP(authPageTargetId, page);
+        }
       }
     }
 

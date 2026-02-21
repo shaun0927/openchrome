@@ -237,11 +237,21 @@ export class ChromeLauncher {
 
     if (!userDataDir && !options.useTempProfile && !usingHeadlessShell) {
       const realProfileDir = this.getRealChromeProfileDir();
-      if (realProfileDir && !this.isProfileLocked(realProfileDir)) {
-        userDataDir = realProfileDir;
-        usingRealProfile = true;
-        this.usingRealProfile = true;
-        console.error(`[ChromeLauncher] Using real Chrome profile: ${realProfileDir}`);
+      if (realProfileDir) {
+        if (!this.isProfileLocked(realProfileDir)) {
+          userDataDir = realProfileDir;
+          usingRealProfile = true;
+          this.usingRealProfile = true;
+          console.error(`[ChromeLauncher] Using real Chrome profile: ${realProfileDir}`);
+        } else {
+          // Profile is locked by another Chrome instance.
+          // Create temp profile but copy essential data (cookies, local state)
+          // so the new Chrome session inherits the user's existing authentication.
+          userDataDir = path.join(os.tmpdir(), `claude-chrome-parallel-${Date.now()}`);
+          this.usingRealProfile = false;
+          this.copyEssentialProfileData(realProfileDir, userDataDir);
+          console.error(`[ChromeLauncher] Profile locked, using temp with copied cookies: ${userDataDir}`);
+        }
       }
     }
 
@@ -389,6 +399,72 @@ export class ChromeLauncher {
     }
 
     return null;
+  }
+
+  /**
+   * Copy essential profile data (cookies, local state) from a locked real Chrome profile
+   * to a temp profile directory. This allows the new Chrome instance to start with
+   * the user's existing authentication and cookies.
+   *
+   * Cookie decryption by platform:
+   * - macOS: Chrome uses Keychain key "Chrome Safe Storage". Same binary + same user = works.
+   * - Linux: Chrome uses gnome-keyring or kwallet. Same user session = works.
+   * - Windows: Chrome uses DPAPI tied to user account. Same user = works.
+   * In all cases, launching the same Chrome binary as the same OS user allows
+   * the new instance to decrypt the copied cookies.
+   */
+  private copyEssentialProfileData(sourceDir: string, destDir: string): void {
+    try {
+      const destDefault = path.join(destDir, 'Default');
+      fs.mkdirSync(destDefault, { recursive: true });
+
+      // Copy Local State (contains OS crypt config, encryption key references)
+      const localStateSrc = path.join(sourceDir, 'Local State');
+      if (fs.existsSync(localStateSrc)) {
+        fs.copyFileSync(localStateSrc, path.join(destDir, 'Local State'));
+      }
+
+      // Copy cookie database files from Default profile.
+      // Chrome uses SQLite WAL mode, so we copy in order: main DB → WAL → SHM → journal.
+      // If the main DB copy races with a Chrome write, the WAL file provides recovery.
+      // This is safe for read-only consumption by the new Chrome instance.
+      const cookieFiles = ['Cookies', 'Cookies-wal', 'Cookies-shm', 'Cookies-journal'];
+      let copiedCount = 0;
+      for (const file of cookieFiles) {
+        const src = path.join(sourceDir, 'Default', file);
+        if (fs.existsSync(src)) {
+          try {
+            fs.copyFileSync(src, path.join(destDefault, file));
+            copiedCount++;
+          } catch {
+            // Individual file copy failure is non-fatal (e.g., WAL may not exist)
+          }
+        }
+      }
+
+      // Copy and patch Preferences to prevent "Chrome didn't shut down correctly" prompt.
+      // The source Preferences has exit_type:"Crashed" while Chrome is running.
+      const prefsSrc = path.join(sourceDir, 'Default', 'Preferences');
+      if (fs.existsSync(prefsSrc)) {
+        try {
+          const prefsContent = fs.readFileSync(prefsSrc, 'utf8');
+          const prefs = JSON.parse(prefsContent);
+          // Patch exit_type to Normal so Chrome doesn't show recovery prompt
+          if (prefs.profile) {
+            prefs.profile.exit_type = 'Normal';
+            prefs.profile.exited_cleanly = true;
+          }
+          fs.writeFileSync(path.join(destDefault, 'Preferences'), JSON.stringify(prefs));
+        } catch {
+          // JSON parse failed — skip Preferences entirely.
+          // Chrome will create fresh defaults rather than showing a crash recovery prompt.
+        }
+      }
+
+      console.error(`[ChromeLauncher] Copied essential profile data (${copiedCount} cookie files) from locked profile`);
+    } catch (err) {
+      console.error(`[ChromeLauncher] Failed to copy profile data (non-fatal):`, err);
+    }
   }
 
   /**

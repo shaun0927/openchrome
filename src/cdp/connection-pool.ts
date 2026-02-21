@@ -39,7 +39,7 @@ interface PooledPage {
 }
 
 const DEFAULT_CONFIG: Required<PoolConfig> = {
-  minPoolSize: 5,
+  minPoolSize: 2,
   maxPoolSize: 25,
   pageIdleTimeout: 5 * 60 * 1000, // 5 minutes
   preWarm: true,
@@ -79,7 +79,9 @@ export class CDPConnectionPool {
 
     // Start maintenance timer
     this.maintenanceTimer = setInterval(() => {
-      this.performMaintenance();
+      this.performMaintenance().catch((err) => {
+        console.error('[Pool] Maintenance error:', err);
+      });
     }, 30000); // Every 30 seconds
     this.maintenanceTimer.unref();
 
@@ -279,18 +281,21 @@ export class CDPConnectionPool {
     // Navigate to blank page to clear state
     await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
 
-    // Clear cookies and storage
+    // Clear cookies and storage via CDP session (with proper cleanup in finally)
     const client = await page.createCDPSession();
-    await client.send('Network.clearBrowserCookies');
+    try {
+      await client.send('Network.clearBrowserCookies');
 
-    // Clear storage for the specific origin (wildcard '*' silently fails)
-    if (currentOrigin) {
-      await client.send('Storage.clearDataForOrigin', {
-        origin: currentOrigin,
-        storageTypes: 'all',
-      }).catch(() => {}); // Ignore if not supported
+      // Clear storage for the specific origin (wildcard '*' silently fails)
+      if (currentOrigin) {
+        await client.send('Storage.clearDataForOrigin', {
+          origin: currentOrigin,
+          storageTypes: 'all',
+        }).catch(() => {}); // Ignore if not supported
+      }
+    } finally {
+      await client.detach().catch(() => {});
     }
-    await client.detach();
 
     // Double-check pool capacity hasn't been exceeded while we were cleaning
     if (this.availablePages.length >= this.config.maxPoolSize) {
@@ -306,10 +311,13 @@ export class CDPConnectionPool {
   static readonly DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
 
   /**
-   * Create a new page with default viewport
+   * Create a new page with default viewport.
+   * Pool pages skip cookie bridging to avoid CDP session conflicts
+   * and unnecessary overhead — cookies will be bridged when the page
+   * is actually navigated to a real URL.
    */
   private async createNewPage(): Promise<Page> {
-    const page = await this.cdpClient.createPage();
+    const page = await this.cdpClient.createPage(undefined, undefined, true);
     // Ensure viewport is set (cdpClient.createPage already sets it, but double-check)
     if (!page.viewport()) {
       await page.setViewport(CDPConnectionPool.DEFAULT_VIEWPORT);
@@ -389,80 +397,6 @@ export class CDPConnectionPool {
     if (pagesToRemove.length > 0) {
       console.error(`[Pool] Maintenance: closed ${pagesToRemove.length} idle page(s)`);
     }
-  }
-
-  /**
-   * Pre-warm pages for an upcoming workflow.
-   * Call this before creating workers to eliminate page creation delay
-   * during the worker creation loop.
-   *
-   * @param count Number of pages needed for the workflow
-   * @param concurrency Max parallel page creation (default: 10)
-   */
-  async preWarmForWorkflow(count: number, concurrency = 10): Promise<{ warmed: number; durationMs: number }> {
-    const startTime = Date.now();
-
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
-
-    const currentAvailable = this.availablePages.length;
-    const needed = Math.max(0, Math.min(
-      count - currentAvailable,
-      this.config.maxPoolSize - currentAvailable - this.inUsePages.size
-    ));
-
-    if (needed === 0) {
-      return { warmed: 0, durationMs: 0 };
-    }
-
-    console.error(`[Pool] Pre-warming ${needed} pages for workflow (${currentAvailable} already available, ${count} needed)`);
-
-    // Create pages with concurrency control
-    let active = 0;
-    const queue: Array<() => void> = [];
-    let created = 0;
-
-    const limiter = async <T>(fn: () => Promise<T>): Promise<T> => {
-      if (active >= concurrency) {
-        await new Promise<void>((resolve) => queue.push(resolve));
-      }
-      active++;
-      try {
-        return await fn();
-      } finally {
-        active--;
-        if (queue.length > 0) {
-          const next = queue.shift()!;
-          next();
-        }
-      }
-    };
-
-    const promises: Promise<void>[] = [];
-    for (let i = 0; i < needed; i++) {
-      promises.push(
-        limiter(async () => {
-          const page = await this.createNewPage();
-          this.availablePages.push({
-            page,
-            createdAt: Date.now(),
-            lastUsedAt: Date.now(),
-            visitedOrigins: new Set(),
-          });
-          created++;
-        }).catch((err) => {
-          console.error('[Pool] Failed to pre-warm page:', err);
-        })
-      );
-    }
-
-    await Promise.all(promises);
-
-    const durationMs = Date.now() - startTime;
-    console.error(`[Pool] Pre-warmed ${created}/${needed} pages in ${durationMs}ms`);
-
-    return { warmed: created, durationMs };
   }
 
   /**
