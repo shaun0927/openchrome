@@ -3,93 +3,71 @@ name: pr-review-ccp
 description: Review PRs in claude-chrome-parallel repo with CCP-specific quality gates
 ---
 
-You are a critical code reviewer for the **claude-chrome-parallel (CCP)** repository — a Puppeteer-based MCP server for browser automation.
+# CCP PR Review
 
-## Target
+**Target**: $ARGUMENTS
 
-$ARGUMENTS
+- No argument → review ALL open PRs (`gh pr list --state open`)
+- PR number → review that PR
+- "latest" → most recent open PR
 
-If no argument is given, review ALL open PRs: `gh pr list --state open`
-If a PR number is given, review that specific PR: `gh pr view <number>`
-If "latest" is given, review the most recent open PR.
+---
 
-## Review Protocol
+## STEP 1: Gather Context
 
-### Phase 1: Context Gathering
+For EACH PR, run:
 
-For each PR, gather:
 ```bash
-gh pr view <N> --json title,body,additions,deletions,files,commits,headRefName,baseRefName,reviews
+gh pr view <N> --json title,body,additions,deletions,files,commits,headRefName,baseRefName
 gh pr diff <N>
 ```
 
-Also check for merge conflicts between open PRs:
+If multiple open PRs exist, also check file overlap:
 ```bash
 gh pr list --state open --json number,headRefName,files
 ```
 
-### Phase 2: Apply CCP-Specific Review Axes
+Read every changed file in full. Do NOT review from the diff alone.
 
-Score each axis 0-10. **Overall must be >= 7 to approve.**
+## STEP 2: Score on 6 Axes
 
-#### Axis 1: Chrome/CDP Safety (weight: 2x)
-- Does the change handle CDP session lifecycle correctly? (attach/detach, error cleanup)
-- Are there concurrent `Target.attachToTarget` calls that could conflict?
-- Does pool page creation skip unnecessary cookie bridging?
-- Are `about:blank` ghost tabs prevented? (check replenishment logic)
-- Is `browser.newPage()` called with proper context handling?
+Score each axis 0-10. Compute the weighted average.
 
-#### Axis 2: Cross-Platform Correctness (weight: 1.5x)
-- Does the change work on macOS, Linux, AND Windows?
-- Are file paths constructed with `path.join()` not string concatenation?
-- Are platform-specific APIs (`/dev/tty`, `SingletonLock`, Keychain) properly guarded?
-- Is `process.env.HOME` replaced with `os.homedir()`?
-- Does `spawn()` use `shell: true` only when necessary (and documented why)?
+| # | Axis | Weight | What to Check |
+|---|------|--------|---------------|
+| 1 | Chrome/CDP Safety | 2x | Session lifecycle (attach/detach), concurrent `Target.attachToTarget` conflicts, ghost tab prevention, cookie bridging timing |
+| 2 | Cross-Platform | 1.5x | `path.join()` not concat, `os.homedir()` not `env.HOME`, platform guards for `/dev/tty`/`SingletonLock`/`SIGKILL`, Windows spawn `shell:true` |
+| 3 | Security | 2x | No `shell:true` without justification, no credentials logged, no secrets committed, safe SQLite copy under WAL |
+| 4 | Pool/Session Mgmt | 1.5x | `minPoolSize` ≤ 5, `suppressReplenishment` correctly toggled, pool cleanup on shutdown, clear error messages |
+| 5 | Architecture | 1x | Dead code removed, focused PR (single concern), TypeScript types (no untyped `any`), comments explain "why" |
+| 6 | Test/Verification | 1x | Tests for new paths, edge cases covered, verifiable without all platforms |
 
-#### Axis 3: Security (weight: 2x)
-- No `shell: true` in `spawn` without justification (command injection risk)
-- No credential/cookie data logged to stderr
-- No secrets in committed files
-- Cookie handling follows secure practices (httpOnly, sameSite)
-- `fs.copyFileSync` on sensitive files (Cookies DB) — is it safe while Chrome writes?
+**Formula**: `(A1×2 + A2×1.5 + A3×2 + A4×1.5 + A5×1 + A6×1) / 9`
 
-#### Axis 4: Pool & Session Management (weight: 1.5x)
-- Is `minPoolSize` reasonable? (>5 causes ghost tabs)
-- Does `acquireBatch` suppress replenishment correctly?
-- Are pool pages cleaned up on workflow_cleanup?
-- Is `suppressReplenishment` flag properly set/unset?
-- Do session ownership checks produce clear error messages (not just "Tab not found")?
+- Score ≥ 7.0 → eligible for APPROVE
+- Score < 7.0 → REQUEST_CHANGES
 
-#### Axis 5: Architecture & Code Quality (weight: 1x)
-- Is dead code removed? (unused imports, unreachable methods)
-- Are error handlers specific (not generic catch-all)?
-- Do comments explain "why" not "what"?
-- Is the PR focused (single concern) or does it bundle unrelated changes?
-- Are TypeScript types used (no `any` without justification)?
+## STEP 3: List Issues
 
-#### Axis 6: Test Coverage & Verification (weight: 1x)
-- Are there tests for new logic paths?
-- Is the test plan in the PR description realistic and verifiable?
-- Are edge cases addressed? (locked files, network timeouts, permission errors)
-- Can the changes be verified without a Windows/Linux machine?
+For EACH issue found, write one row:
 
-### Phase 3: Conflict Analysis
+| Severity | Issue | File:Line | Confidence | Fix |
+|----------|-------|-----------|------------|-----|
+| CRITICAL/HIGH/MEDIUM/LOW | One-line description | `path:line` | XX/100 | Suggested fix |
 
-Check if any open PRs modify the same files:
-```bash
-# For each pair of open PRs, check file overlap
+Only report findings with confidence ≥ 60/100.
+
+Severity definitions:
+- **CRITICAL**: Data loss, security hole, Chrome crash, cookie leak
+- **HIGH**: Silent failure, ghost tabs, session corruption, auth bypass
+- **MEDIUM**: Performance, unclear errors, cross-platform gap
+- **LOW**: Style, docs, minor improvement
+
+## STEP 4: Write Verdict
+
+Use this exact format:
+
 ```
-
-Report:
-- Which files conflict
-- Recommended merge order
-- Whether rebasing is needed
-
-### Phase 4: Generate Review
-
-For each PR, output:
-
-```markdown
 ## PR #<N>: <title>
 
 ### Scores
@@ -100,50 +78,46 @@ For each PR, output:
 | Security | X/10 | ... |
 | Pool/Session Mgmt | X/10 | ... |
 | Architecture | X/10 | ... |
-| Test Coverage | X/10 | ... |
-| **Weighted Total** | **X/10** | |
+| Test/Verification | X/10 | ... |
+| **Weighted Avg** | **X.X/10** | |
 
-### Issues Found
-| Severity | Issue | File:Line | Suggested Fix |
-|----------|-------|-----------|---------------|
-| CRITICAL | ... | ... | ... |
-| HIGH | ... | ... | ... |
-| MEDIUM | ... | ... | ... |
-| LOW | ... | ... | ... |
+### Issues
+| Severity | Issue | File:Line | Confidence | Fix |
+|----------|-------|-----------|------------|-----|
+| ... | ... | ... | ... | ... |
 
-### Verdict: APPROVE / REQUEST_CHANGES / NEEDS_DISCUSSION
+### Verdict: APPROVE / REQUEST_CHANGES
 
-### Action Items
-- [ ] ...
+### Merge Notes
+- Conflict files with other PRs (if any)
+- Recommended merge order (if multiple PRs)
 ```
 
-### Phase 5: Post Review to GitHub (MANDATORY)
+## STEP 5: Post to GitHub — MANDATORY
 
-ALWAYS post the review as a GitHub PR comment. Do NOT skip this step.
+Do NOT skip this step. Post the review on EVERY reviewed PR.
 
 ```bash
-# If any CRITICAL or HIGH issues found:
-gh pr review <N> --request-changes --body "<full Phase 4 review markdown>"
+# If ANY CRITICAL or HIGH issue exists:
+gh pr review <N> --request-changes --body "<Step 4 output>"
 
-# If only MEDIUM/LOW or clean:
-gh pr review <N> --approve --body "<full Phase 4 review markdown>"
+# If only MEDIUM/LOW or no issues:
+gh pr review <N> --approve --body "<Step 4 output>"
 ```
 
-If reviewing multiple PRs, post a separate review comment on EACH PR.
+---
 
 ## CCP Domain Knowledge
 
-Key files and their roles:
-- `src/chrome/launcher.ts` — Chrome process management, profile detection, cookie copying
-- `src/cdp/client.ts` — Puppeteer wrapper, cookie bridging, target indexing
-- `src/cdp/connection-pool.ts` — Page pool with pre-warming, batch acquire, maintenance
-- `src/session-manager.ts` — Session/worker/target ownership, `getPage()` access control
-- `src/tools/orchestration.ts` — workflow_init, worker lifecycle
-- `src/orchestration/workflow-engine.ts` — Workflow execution, acquireBatch usage
+Key files:
+- `src/chrome/launcher.ts` — Chrome process, profile detection, cookie copy
+- `src/cdp/client.ts` — Puppeteer wrapper, cookie bridging, target index
+- `src/cdp/connection-pool.ts` — Page pool, batch acquire, maintenance
+- `src/session-manager.ts` — Session/worker ownership, `getPage()`
+- `src/orchestration/workflow-engine.ts` — Workflow execution, `acquireBatch`
 
-Common bug patterns in CCP:
-1. `about:blank` ghost tabs from pool replenishment during bulk operations
-2. "Tab not found" from session ownership mismatch or stale targetIdIndex
-3. Cookie bridging CDP session conflicts during concurrent page creation
-4. Profile lock detection failing → empty temp profile → no authentication
-5. `preWarmForWorkflow` + `acquireBatch` double page creation
+Common bugs:
+1. Ghost `about:blank` tabs from pool replenishment during bulk ops
+2. "Tab not found" from session ownership mismatch
+3. Cookie bridging CDP conflicts during concurrent page creation
+4. Profile lock miss → empty temp profile → no authentication
