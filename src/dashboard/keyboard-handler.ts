@@ -43,8 +43,8 @@ export class KeyboardHandler extends EventEmitter {
   static isAvailable(): boolean {
     try {
       if (process.platform === 'win32') {
-        // On Windows, check if stderr is a TTY (since stdin is used for MCP)
-        return process.stderr.isTTY === true;
+        // Windows: keyboard shortcuts not supported (stdin used by MCP, no /dev/tty equivalent)
+        return false;
       }
       // Unix: check if /dev/tty exists and is accessible
       fs.accessSync('/dev/tty', fs.constants.R_OK);

@@ -291,6 +291,13 @@ export class ChromeLauncher {
       console.error('[ChromeLauncher] Running in headless mode (no visible window)');
     }
 
+    // Validate chromePath has no shell metacharacters when using shell:true on Windows.
+    // chromePath comes from findChromePath() (filesystem-verified) or globalConfig.chromeBinary
+    // (user-controlled via CLI --chrome-binary or CHROME_BINARY env var).
+    if (process.platform === 'win32' && /[&|;<>"`^]/.test(chromePath)) {
+      throw new Error(`Invalid characters in Chrome path (possible injection): ${chromePath}`);
+    }
+
     const chromeProcess = spawn(chromePath, args, {
       detached: true,
       stdio: ['ignore', 'ignore', 'ignore'],
