@@ -32,6 +32,10 @@ const DEFAULT_PORT = 9222;
  * Find Chrome executable path based on platform
  */
 function findChromePath(): string | null {
+  // Check environment variable first
+  const envChromePath = process.env.CHROME_PATH;
+  if (envChromePath && fs.existsSync(envChromePath)) return envChromePath;
+
   const platform = os.platform();
 
   if (platform === 'win32') {
@@ -54,7 +58,17 @@ function findChromePath(): string | null {
       if (fs.existsSync(p)) return p;
     }
   } else {
-    // Linux
+    // Linux - check explicit paths first (Snap, etc.)
+    const linuxPaths = [
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/google-chrome',
+      '/snap/bin/chromium',
+      '/snap/bin/google-chrome',
+    ];
+    for (const p of linuxPaths) {
+      if (fs.existsSync(p)) return p;
+    }
+    // Fallback to which
     try {
       return execSync('which google-chrome || which chromium-browser || which chromium', {
         encoding: 'utf8',
@@ -301,6 +315,12 @@ export class ChromeLauncher {
       console.error('[ChromeLauncher] Running in headless mode (no visible window)');
     }
 
+    // CI/Docker environments require --no-sandbox (Chrome won't start otherwise)
+    if (process.env.CI || process.env.DOCKER) {
+      args.push('--no-sandbox', '--disable-setuid-sandbox');
+      console.error('[ChromeLauncher] CI/Docker detected: sandbox disabled');
+    }
+
     // Validate chromePath has no shell metacharacters when using shell:true on Windows.
     // chromePath comes from findChromePath() (filesystem-verified) or globalConfig.chromeBinary
     // (user-controlled via CLI --chrome-binary or CHROME_BINARY env var).
@@ -405,8 +425,15 @@ export class ChromeLauncher {
       const profileDir = path.join(home, 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
       if (fs.existsSync(profileDir)) return profileDir;
     } else {
-      const profileDir = path.join(home, '.config', 'google-chrome');
-      if (fs.existsSync(profileDir)) return profileDir;
+      // Linux
+      const candidates = [
+        path.join(home, '.config', 'google-chrome'),
+        path.join(home, '.config', 'chromium'),
+        path.join(home, 'snap', 'chromium', 'current', '.config', 'chromium'),
+      ];
+      for (const profileDir of candidates) {
+        if (fs.existsSync(profileDir)) return profileDir;
+      }
     }
 
     return null;
