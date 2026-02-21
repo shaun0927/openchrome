@@ -317,49 +317,6 @@ describe('PlanRegistry', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // getDefaultPlans
-  // -------------------------------------------------------------------------
-
-  describe('getDefaultPlans', () => {
-    test('returns at least one plan', () => {
-      const defaults = PlanRegistry.getDefaultPlans();
-      expect(defaults.length).toBeGreaterThanOrEqual(1);
-    });
-
-    test('includes X tweet extraction plan', () => {
-      const defaults = PlanRegistry.getDefaultPlans();
-      const tweetPlan = defaults.find(d => d.plan.id === 'x-tweet-extraction-v1');
-      expect(tweetPlan).toBeDefined();
-    });
-
-    test('X tweet extraction plan has correct URL pattern', () => {
-      const defaults = PlanRegistry.getDefaultPlans();
-      const tweetEntry = defaults.find(d => d.plan.id === 'x-tweet-extraction-v1')!;
-      expect(tweetEntry.pattern.urlPattern).toMatch(/x|twitter/);
-    });
-
-    test('X tweet extraction plan has tweet and extract keywords', () => {
-      const defaults = PlanRegistry.getDefaultPlans();
-      const tweetEntry = defaults.find(d => d.plan.id === 'x-tweet-extraction-v1')!;
-      const kw = tweetEntry.pattern.taskKeywords.map(k => k.toLowerCase());
-      expect(kw).toContain('tweet');
-      expect(kw).toContain('extract');
-    });
-
-    test('X tweet extraction plan steps include javascript_tool', () => {
-      const defaults = PlanRegistry.getDefaultPlans();
-      const tweetEntry = defaults.find(d => d.plan.id === 'x-tweet-extraction-v1')!;
-      const tools = tweetEntry.plan.steps.map(s => s.tool);
-      expect(tools).toContain('javascript_tool');
-    });
-
-    test('X tweet extraction plan success criteria requires minDataItems >= 1', () => {
-      const defaults = PlanRegistry.getDefaultPlans();
-      const tweetEntry = defaults.find(d => d.plan.id === 'x-tweet-extraction-v1')!;
-      expect(tweetEntry.plan.successCriteria.minDataItems).toBeGreaterThanOrEqual(1);
-    });
-  });
 
   // -------------------------------------------------------------------------
   // load / save round-trip
@@ -755,71 +712,72 @@ describeIntegration('Integration: PlanRegistry + PlanExecutor', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('register default X tweet plan → match task → execute → verify result structure', async () => {
-    // 1. Register default plans into this registry instance
-    const defaults = PlanRegistry.getDefaultPlans();
-    for (const { plan, pattern } of defaults) {
-      registry.registerPlan(plan, pattern);
-    }
+  test('register plan → match task → execute → verify result structure', async () => {
+    // 1. Register a generic plan
+    const plan = buildPlan({
+      id: 'generic-extract-v1',
+      steps: [
+        buildStep({ order: 1, tool: 'wait_tool', args: { ms: 100 }, timeout: 5000 }),
+        buildStep({
+          order: 2,
+          tool: 'scrape_tool',
+          args: { selector: '.content' },
+          timeout: 10000,
+          parseResult: { format: 'json', storeAs: 'extractedData' },
+        }),
+      ],
+      successCriteria: { requiredFields: ['extractedData'] },
+    });
+    const pattern = buildPattern({
+      urlPattern: 'https://example\\.com/.*',
+      taskKeywords: ['extract', 'content'],
+    });
+    registry.registerPlan(plan, pattern);
 
     // 2. Match the task
     const entry = registry.matchTask(
-      'extract tweet from page',
-      'https://x.com/user/status/123'
+      'extract content from page',
+      'https://example.com/page/123'
     );
     expect(entry).not.toBeNull();
-    expect(entry!.id).toBe('x-tweet-extraction-v1');
+    expect(entry!.id).toBe('generic-extract-v1');
 
     // 3. Load the compiled plan
     const compiledPlan = registry.loadPlan(entry!);
     expect(compiledPlan).not.toBeNull();
 
     // 4. Execute with mocked tool handlers
-    const tweetJson = JSON.stringify({
-      tweetCount: 2,
-      tweets: [
-        { text: 'Hello world', time: '2024-01-01T00:00:00Z' },
-        { text: 'Another tweet', time: '2024-01-02T00:00:00Z' },
-      ],
-    });
-
     const mockHandlers: Record<string, ToolHandler> = {
-      wait_for: jest.fn(async () => makeMCPResult('waited')),
-      javascript_tool: jest.fn(async () => makeMCPResult(tweetJson)),
+      wait_tool: jest.fn(async () => makeMCPResult('waited')),
+      scrape_tool: jest.fn(async () => makeMCPResult(JSON.stringify({ items: [1, 2, 3] }))),
     };
 
     const executor = new PlanExecutor(
       (toolName: string) => mockHandlers[toolName] ?? null
     );
 
-    const result = await executor.execute(compiledPlan!, 'integration-session', {
-      tabId: 'tab-001',
-    });
+    const result = await executor.execute(compiledPlan!, 'integration-session', {});
 
     // 5. Verify result structure
     expect(result).toBeDefined();
-    expect(result.planId).toBe('x-tweet-extraction-v1');
-    expect(typeof result.success).toBe('boolean');
+    expect(result.planId).toBe('generic-extract-v1');
+    expect(result.success).toBe(true);
     expect(typeof result.durationMs).toBe('number');
-    expect(typeof result.stepsExecuted).toBe('number');
-    expect(result.totalSteps).toBe(compiledPlan!.steps.length);
-
-    // The javascript_tool mock should have been called
-    expect(mockHandlers['javascript_tool']).toHaveBeenCalled();
+    expect(result.stepsExecuted).toBe(2);
+    expect(result.totalSteps).toBe(2);
+    expect(mockHandlers['scrape_tool']).toHaveBeenCalled();
   });
 
   test('updateStats after execution updates confidence', async () => {
-    const defaults = PlanRegistry.getDefaultPlans();
-    for (const { plan, pattern } of defaults) {
-      registry.registerPlan(plan, pattern);
-    }
+    const plan = buildPlan({ id: 'stats-plan' });
+    registry.registerPlan(plan, buildPattern({ taskKeywords: ['stats'] }));
 
-    const before = registry.getEntry('x-tweet-extraction-v1')!.confidence;
+    const before = registry.getEntry('stats-plan')!.confidence;
 
-    registry.updateStats('x-tweet-extraction-v1', true, 500);
-    registry.updateStats('x-tweet-extraction-v1', true, 300);
+    registry.updateStats('stats-plan', true, 500);
+    registry.updateStats('stats-plan', true, 300);
 
-    const after = registry.getEntry('x-tweet-extraction-v1')!.confidence;
+    const after = registry.getEntry('stats-plan')!.confidence;
 
     // Two successes should drive confidence up from the initial 0.5
     expect(after).toBeGreaterThan(before);

@@ -808,20 +808,5 @@ export function registerOrchestrationTools(server: MCPServer): void {
   server.registerTool('worker_complete', workerCompleteHandler, workerCompleteDefinition);
   server.registerTool('execute_plan', executePlanHandler, executePlanDefinition);
 
-  // Register default plans on startup
-  try {
-    const { PlanRegistry } = require('../orchestration/plan-registry');
-    const registry = getPlanRegistry();
-    const defaults = PlanRegistry.getDefaultPlans();
-    for (const { plan, pattern } of defaults) {
-      if (!registry.getEntry(plan.id)) {
-        registry.registerPlan(plan, pattern);
-        console.error(`[Orchestration] Registered default plan: ${plan.id}`);
-      }
-    }
-  } catch (err) {
-    console.error(`[Orchestration] Default plan registration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-  }
-
   console.error('[Orchestration] Registered 8 orchestration tools (including execute_plan)');
 }

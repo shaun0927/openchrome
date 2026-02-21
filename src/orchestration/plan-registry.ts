@@ -9,7 +9,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type {
   CompiledPlan,
-  CompiledStep,
   PlanEntry,
   PlanRegistryData,
   TaskPattern,
@@ -229,72 +228,6 @@ export class PlanRegistry {
     return this.data.plans.find(p => p.id === planId) ?? null;
   }
 
-  /**
-   * Returns the default compiled plans (e.g. X/Twitter tweet extraction).
-   */
-  static getDefaultPlans(): Array<{ plan: CompiledPlan; pattern: TaskPattern }> {
-    const tweetExtractionScript = `
-(function() {
-  const articles = document.querySelectorAll('article[data-testid="tweet"]');
-  const tweets = [];
-  for (let i = 0; i < Math.min(5, articles.length); i++) {
-    const article = articles[i];
-    const textEl = article.querySelector('[data-testid="tweetText"]');
-    const timeEl = article.querySelector('time');
-    tweets.push({
-      text: textEl ? textEl.innerText : '',
-      time: timeEl ? timeEl.getAttribute('datetime') : null,
-    });
-  }
-  return JSON.stringify({ tweetCount: tweets.length, tweets });
-})();
-`.trim();
-
-    const steps: CompiledStep[] = [
-      {
-        order: 1,
-        tool: 'wait_for',
-        args: { ms: 2000 },
-        timeout: 5000,
-      },
-      {
-        order: 2,
-        tool: 'javascript_tool',
-        args: { script: tweetExtractionScript },
-        timeout: 10000,
-        retryOnFail: false,
-        parseResult: {
-          format: 'json',
-          storeAs: 'extractionResult',
-        },
-      },
-    ];
-
-    const plan: CompiledPlan = {
-      id: 'x-tweet-extraction-v1',
-      version: '1.0.0',
-      description: 'Extract tweets from an X/Twitter page via DOM',
-      parameters: {
-        tabId: {
-          source: 'worker_config',
-          default: undefined,
-        },
-      },
-      steps,
-      errorHandlers: [],
-      successCriteria: {
-        minDataItems: 1,
-        requiredFields: ['extractionResult'],
-      },
-    };
-
-    const pattern: TaskPattern = {
-      urlPattern: 'https://(x|twitter)\\.com/.*',
-      taskKeywords: ['tweet', 'extract'],
-    };
-
-    return [{ plan, pattern }];
-  }
 }
 
 // Singleton instance cache
