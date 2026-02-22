@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { smartGoto } from '../utils/smart-goto';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -148,7 +149,7 @@ const handler: ToolHandler = async (
 
     // Handle history navigation
     if (url === 'back') {
-      await page.goBack({ waitUntil: 'domcontentloaded' });
+      await page.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 });
       return {
         content: [
           {
@@ -164,7 +165,7 @@ const handler: ToolHandler = async (
     }
 
     if (url === 'forward') {
-      await page.goForward({ waitUntil: 'domcontentloaded' });
+      await page.goForward({ waitUntil: 'domcontentloaded', timeout: 30000 });
       return {
         content: [
           {
@@ -226,8 +227,8 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Navigate with proper wait
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Navigate with smart auth redirect detection
+    const { authRedirect } = await smartGoto(page, targetUrl, { timeout: 30000 });
 
     return {
       content: [
@@ -237,6 +238,7 @@ const handler: ToolHandler = async (
             action: 'navigate',
             url: page.url(),
             title: await page.title(),
+            ...(authRedirect && { redirectedFrom: authRedirect.from, authRedirect: true }),
           }),
         },
       ],

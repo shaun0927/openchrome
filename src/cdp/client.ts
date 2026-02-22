@@ -5,6 +5,7 @@
 import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'puppeteer-core';
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
+import { smartGoto } from '../utils/smart-goto';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -718,7 +719,7 @@ export class CDPClient {
 
     if (url) {
       try {
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        await smartGoto(page, url, { timeout: 30000 });
       } catch (err) {
         // Close the page to prevent about:blank ghost tabs on navigation failure
         const targetId = getTargetId(page.target());

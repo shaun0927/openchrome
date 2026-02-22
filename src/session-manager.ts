@@ -11,6 +11,7 @@ import { ChromePool, getChromePool } from './chrome/pool';
 import { getGlobalConfig } from './config/global';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
+import { smartGoto } from './utils/smart-goto';
 import { BrowserRouter } from './router';
 import { HybridConfig } from './types/browser-backend';
 
@@ -622,7 +623,7 @@ export class SessionManager {
         poolPage = await this.connectionPool.acquirePage();
         // Navigate the pre-warmed page to the target URL
         if (url) {
-          await poolPage.goto(url, { waitUntil: 'domcontentloaded' });
+          await smartGoto(poolPage, url, { timeout: 30000 });
         }
         // Copy cookies from the worker's browser context if available
         // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
