@@ -438,7 +438,7 @@ describe('DOM Serializer', () => {
     const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, maxOutputChars: 500 });
 
     expect(result.truncated).toBe(true);
-    expect(result.content).toContain('[Output truncated at 50000 chars. Use depth parameter to limit scope.]');
+    expect(result.content).toContain('[Output truncated at 500 chars. Use depth parameter to limit scope.]');
   });
 
   test('sets truncated to false when output fits', async () => {

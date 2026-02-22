@@ -9,6 +9,12 @@ export interface DOMSerializerOptions {
   maxOutputChars?: number;     // default: 50000
   includePageStats?: boolean;  // default: true
   pierceIframes?: boolean;     // default: true
+  /**
+   * When true, only interactive elements (inputs, buttons, links, elements with
+   * interactive ARIA roles) are emitted. Indentation reflects true DOM depth
+   * even when non-interactive parent containers are omitted, so depth can be
+   * used to infer element nesting in the original document.
+   */
   interactiveOnly?: boolean;   // default: false
   filter?: string;             // 'interactive' | 'all', default: 'all'
 }
@@ -123,7 +129,8 @@ function formatElement(
   const attrParts: string[] = [];
   for (const [k, v] of attrMap) {
     if (KEEP_ATTRS.has(k)) {
-      attrParts.push(`${k}="${v}"`);
+      const escaped = v.replace(/"/g, '&quot;');
+      attrParts.push(`${k}="${escaped}"`);
     }
   }
   const attrStr = attrParts.length > 0 ? ' ' + attrParts.join(' ') : '';
@@ -186,7 +193,7 @@ function serializeNode(
     const lineWithNewline = line + '\n';
 
     if (ctx.totalChars + lineWithNewline.length > ctx.maxOutputChars) {
-      const truncationMsg = '\n\n[Output truncated at 50000 chars. Use depth parameter to limit scope.]';
+      const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
       ctx.lines.push(truncationMsg);
       ctx.truncated = true;
       return;
@@ -233,23 +240,33 @@ export async function serializeDOM(
   const interactiveOnly = (options?.interactiveOnly ?? false) || options?.filter === 'interactive';
 
   // Get page stats via page.evaluate
-  const pageStats = await page.evaluate(() => ({
-    url: window.location.href,
-    title: document.title,
-    scrollX: window.scrollX,
-    scrollY: window.scrollY,
-    scrollWidth: document.documentElement.scrollWidth,
-    scrollHeight: document.documentElement.scrollHeight,
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight,
-  })) as PageStats;
+  let pageStats: PageStats;
+  try {
+    pageStats = await page.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    })) as PageStats;
+  } catch (err) {
+    throw new Error(`serializeDOM: failed to retrieve page stats via page.evaluate(): ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // Get full DOM tree via CDP
-  const { root } = await cdpClient.send<{ root: DOMNode }>(
-    page,
-    'DOM.getDocument',
-    { depth: -1, pierce: true },
-  );
+  let root: DOMNode;
+  try {
+    ({ root } = await cdpClient.send<{ root: DOMNode }>(
+      page,
+      'DOM.getDocument',
+      { depth: -1, pierce: true },
+    ));
+  } catch (err) {
+    throw new Error(`serializeDOM: failed to retrieve DOM tree via CDP DOM.getDocument: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   const lines: string[] = [];
 
