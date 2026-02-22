@@ -29,6 +29,7 @@ export interface TaskResult {
   toolCallCount: number;
   wallTimeMs: number;
   error?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TaskStats {
