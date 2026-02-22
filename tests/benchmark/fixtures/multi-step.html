@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Benchmark Interactive Page</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 0.95rem;
+      color: #333;
+      background: #f4f4f4;
+      line-height: 1.6;
+      padding: 32px 16px 64px;
+    }
+    .page {
+      max-width: 780px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 40px;
+    }
+    h1 {
+      font-size: 1.7rem;
+      color: #1a1a2e;
+      text-align: center;
+    }
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #4a90e2;
+    }
+
+    /* ========== TABS ========== */
+    #tabs { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); overflow: hidden; }
+    .tab-buttons {
+      display: flex;
+      border-bottom: 2px solid #e0e0e0;
+      background: #fafafa;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 12px 16px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #777;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .tab-btn:hover { color: #4a90e2; }
+    .tab-btn.active { color: #4a90e2; border-bottom-color: #4a90e2; background: #fff; }
+    .tab-panel {
+      display: none;
+      padding: 24px;
+    }
+    .tab-panel.active { display: block; }
+    .tab-panel h3 { font-size: 1rem; margin-bottom: 12px; color: #1a1a2e; }
+    .stats-list { list-style: none; padding: 0; margin-top: 10px; }
+    .stats-list li {
+      padding: 6px 0;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 0.875rem;
+      color: #555;
+      display: flex;
+      justify-content: space-between;
+    }
+    .stats-list li:last-child { border-bottom: none; }
+    .stats-list li strong { color: #1a1a2e; }
+    .kv-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .kv-table th {
+      text-align: left;
+      padding: 9px 14px;
+      background: #1a1a2e;
+      color: #fff;
+    }
+    .kv-table td {
+      padding: 9px 14px;
+      border-bottom: 1px solid #eee;
+      color: #444;
+    }
+    .kv-table tr:nth-child(even) td { background: #f9f9fb; }
+    .toggle-group { display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px; }
+    .toggle-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.9rem;
+      color: #444;
+      cursor: pointer;
+    }
+    .toggle-item input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+    .save-btn {
+      padding: 10px 24px;
+      background: #4a90e2;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .save-btn:hover { background: #357abd; }
+    .save-msg { margin-top: 10px; font-size: 0.85rem; color: #2e7d32; display: none; }
+
+    /* ========== DROPDOWN ========== */
+    #dropdown { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); padding: 24px; position: relative; }
+    .dropdown-wrapper { position: relative; display: inline-block; }
+    .dropdown-trigger {
+      padding: 10px 20px;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.2s;
+    }
+    .dropdown-trigger:hover { background: #2d2d5a; }
+    .dropdown-trigger::after { content: "▾"; font-size: 0.75rem; }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+    .dropdown-menu.open { display: block; }
+    .dropdown-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 10px 16px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 0.875rem;
+      color: #333;
+      transition: background 0.15s;
+    }
+    .dropdown-menu button:hover { background: #f0f5ff; color: #4a90e2; }
+    .dropdown-result {
+      margin-top: 16px;
+      font-size: 0.875rem;
+      color: #555;
+      min-height: 22px;
+    }
+    #selected-action {
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+
+    /* ========== ACCORDION ========== */
+    #accordion { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); overflow: hidden; }
+    .accordion-item { border-bottom: 1px solid #e8e8e8; }
+    .accordion-item:last-child { border-bottom: none; }
+    .accordion-header {
+      width: 100%;
+      text-align: left;
+      padding: 16px 20px;
+      background: #fafafa;
+      border: none;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #1a1a2e;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
+    }
+    .accordion-header:hover { background: #f0f5ff; }
+    .accordion-header.open { background: #eef3ff; color: #4a90e2; }
+    .accordion-icon {
+      font-size: 1rem;
+      transition: transform 0.25s;
+      color: #999;
+    }
+    .accordion-header.open .accordion-icon { transform: rotate(180deg); color: #4a90e2; }
+    .accordion-body {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+      padding: 0 20px;
+    }
+    .accordion-body.open {
+      max-height: 300px;
+      padding: 16px 20px;
+    }
+    .accordion-body p { font-size: 0.875rem; color: #555; }
+
+    /* ========== MODAL ========== */
+    #modal-section { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); padding: 24px; }
+    .open-modal-btn {
+      padding: 10px 24px;
+      background: #4a90e2;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .open-modal-btn:hover { background: #357abd; }
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    #modal-overlay.open { display: flex; }
+    .modal-box {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.22);
+      padding: 36px 32px 28px;
+      max-width: 480px;
+      width: 90%;
+      position: relative;
+    }
+    .modal-box h2 { font-size: 1.2rem; color: #1a1a2e; margin-bottom: 14px; }
+    .modal-box p { font-size: 0.875rem; color: #555; margin-bottom: 24px; line-height: 1.7; }
+    .modal-close {
+      padding: 9px 22px;
+      background: #e0e0e0;
+      color: #333;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .modal-close:hover { background: #c8c8c8; }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <h1>Benchmark Interactive Page</h1>
+
+    <!-- TABS -->
+    <div id="tabs">
+      <div class="tab-buttons" role="tablist">
+        <button class="tab-btn active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+        <button class="tab-btn" data-tab="details" role="tab" aria-selected="false">Details</button>
+        <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+      </div>
+
+      <div id="tab-overview" class="tab-panel active" role="tabpanel">
+        <h3>Overview</h3>
+        <p>This benchmark suite measures browser automation performance across a range of interactive UI patterns. Results are collected across multiple runs and aggregated to produce stable P50, P95, and P99 latency estimates.</p>
+        <ul class="stats-list">
+          <li><span>Total Tests</span><strong>128</strong></li>
+          <li><span>Passing</span><strong>124</strong></li>
+          <li><span>Failing</span><strong>4</strong></li>
+          <li><span>Avg Duration</span><strong>342 ms</strong></li>
+          <li><span>Last Run</span><strong>2026-02-23 09:41 UTC</strong></li>
+        </ul>
+      </div>
+
+      <div id="tab-details" class="tab-panel" role="tabpanel">
+        <h3>Details</h3>
+        <table class="kv-table">
+          <thead>
+            <tr><th>Key</th><th>Value</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Engine Version</td><td>3.2.1</td></tr>
+            <tr><td>Browser</td><td>Chromium 122</td></tr>
+            <tr><td>Platform</td><td>darwin arm64</td></tr>
+            <tr><td>Concurrency</td><td>4 workers</td></tr>
+            <tr><td>Timeout</td><td>30 000 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="tab-settings" class="tab-panel" role="tabpanel">
+        <h3>Settings</h3>
+        <div class="toggle-group">
+          <label class="toggle-item">
+            <input type="checkbox" id="setting-verbose" checked>
+            Enable verbose logging
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="setting-screenshots">
+            Capture screenshots on failure
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="setting-parallel" checked>
+            Run tests in parallel
+          </label>
+        </div>
+        <button class="save-btn" id="save-settings-btn">Save Settings</button>
+        <div class="save-msg" id="save-msg">Settings saved successfully.</div>
+      </div>
+    </div>
+
+    <!-- DROPDOWN -->
+    <div id="dropdown">
+      <p class="section-title">Dropdown Menu</p>
+      <div class="dropdown-wrapper">
+        <button class="dropdown-trigger" id="dropdown-trigger">Select Action</button>
+        <div class="dropdown-menu" id="dropdown-menu" role="menu">
+          <button role="menuitem" data-action="Edit">Edit</button>
+          <button role="menuitem" data-action="Delete">Delete</button>
+          <button role="menuitem" data-action="Archive">Archive</button>
+          <button role="menuitem" data-action="Export">Export</button>
+        </div>
+      </div>
+      <div class="dropdown-result">
+        Selected: <span id="selected-action">—</span>
+      </div>
+    </div>
+
+    <!-- ACCORDION -->
+    <div id="accordion">
+      <div class="accordion-item">
+        <button class="accordion-header" data-accordion="acc1">
+          Section 1 <span class="accordion-icon">&#9660;</span>
+        </button>
+        <div class="accordion-body" id="acc1">
+          <p>This is the content for Section 1. It contains details about the first topic in the accordion. The panel expands smoothly when the header is clicked and collapses when another section is opened.</p>
+        </div>
+      </div>
+      <div class="accordion-item">
+        <button class="accordion-header" data-accordion="acc2">
+          Section 2 <span class="accordion-icon">&#9660;</span>
+        </button>
+        <div class="accordion-body" id="acc2">
+          <p>Section 2 covers additional configuration options and advanced settings. Only one accordion section is open at a time, ensuring a clean and focused reading experience.</p>
+        </div>
+      </div>
+      <div class="accordion-item">
+        <button class="accordion-header" data-accordion="acc3">
+          Section 3 <span class="accordion-icon">&#9660;</span>
+        </button>
+        <div class="accordion-body" id="acc3">
+          <p>The third section provides troubleshooting tips and frequently asked questions. Refer to this section whenever you encounter unexpected behavior during benchmark execution.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL -->
+    <div id="modal-section">
+      <p class="section-title">Modal Dialog</p>
+      <button class="open-modal-btn" id="open-modal-btn">Open Modal</button>
+    </div>
+
+  </div><!-- /.page -->
+
+  <!-- MODAL OVERLAY -->
+  <div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-box">
+      <h2 id="modal-title">Benchmark Modal</h2>
+      <p>This modal demonstrates a standard overlay pattern. Click "Close" or anywhere outside the dialog to dismiss it. Modals are commonly used for confirmations, alerts, and secondary workflows in web applications.</p>
+      <button class="modal-close" id="modal-close-btn">Close</button>
+    </div>
+  </div>
+
+  <script>
+    // ---- TABS ----
+    (function () {
+      var tabBtns = document.querySelectorAll('.tab-btn');
+      var tabPanels = document.querySelectorAll('.tab-panel');
+
+      tabBtns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var target = btn.getAttribute('data-tab');
+
+          tabBtns.forEach(function (b) {
+            b.classList.remove('active');
+            b.setAttribute('aria-selected', 'false');
+          });
+          tabPanels.forEach(function (p) { p.classList.remove('active'); });
+
+          btn.classList.add('active');
+          btn.setAttribute('aria-selected', 'true');
+          var panel = document.getElementById('tab-' + target);
+          if (panel) panel.classList.add('active');
+        });
+      });
+
+      // Save settings button
+      document.getElementById('save-settings-btn').addEventListener('click', function () {
+        var msg = document.getElementById('save-msg');
+        msg.style.display = 'block';
+        setTimeout(function () { msg.style.display = 'none'; }, 2500);
+      });
+    })();
+
+    // ---- DROPDOWN ----
+    (function () {
+      var trigger = document.getElementById('dropdown-trigger');
+      var menu = document.getElementById('dropdown-menu');
+      var selectedSpan = document.getElementById('selected-action');
+
+      trigger.addEventListener('click', function (e) {
+        e.stopPropagation();
+        menu.classList.toggle('open');
+      });
+
+      menu.addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        selectedSpan.textContent = btn.getAttribute('data-action');
+        menu.classList.remove('open');
+      });
+
+      document.addEventListener('click', function () {
+        menu.classList.remove('open');
+      });
+    })();
+
+    // ---- ACCORDION ----
+    (function () {
+      var headers = document.querySelectorAll('.accordion-header');
+
+      headers.forEach(function (header) {
+        header.addEventListener('click', function () {
+          var targetId = header.getAttribute('data-accordion');
+          var targetBody = document.getElementById(targetId);
+          var isOpen = header.classList.contains('open');
+
+          // Close all
+          headers.forEach(function (h) {
+            h.classList.remove('open');
+            var bodyId = h.getAttribute('data-accordion');
+            var body = document.getElementById(bodyId);
+            if (body) body.classList.remove('open');
+          });
+
+          // Toggle clicked (open if was closed)
+          if (!isOpen) {
+            header.classList.add('open');
+            if (targetBody) targetBody.classList.add('open');
+          }
+        });
+      });
+    })();
+
+    // ---- MODAL ----
+    (function () {
+      var overlay = document.getElementById('modal-overlay');
+      var openBtn = document.getElementById('open-modal-btn');
+      var closeBtn = document.getElementById('modal-close-btn');
+
+      function openModal() { overlay.classList.add('open'); }
+      function closeModal() { overlay.classList.remove('open'); }
+
+      openBtn.addEventListener('click', openModal);
+      closeBtn.addEventListener('click', closeModal);
+
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) closeModal();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeModal();
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Benchmark Complex Page</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 0.95rem;
+      color: #333;
+      background: #f4f4f4;
+      line-height: 1.6;
+    }
+
+    /* NAV */
+    nav {
+      background: #1a1a2e;
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+    nav a {
+      display: inline-block;
+      padding: 16px 20px;
+      color: #ccc;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s, background 0.2s;
+    }
+    nav a:hover { color: #fff; background: rgba(255,255,255,0.08); }
+
+    /* LAYOUT */
+    .page-wrapper {
+      max-width: 1100px;
+      margin: 32px auto;
+      padding: 0 16px;
+      display: grid;
+      grid-template-columns: 1fr 260px;
+      gap: 28px;
+    }
+
+    /* MAIN */
+    main { min-width: 0; }
+    main h1 {
+      font-size: 1.8rem;
+      margin-bottom: 20px;
+      color: #1a1a2e;
+    }
+    article {
+      background: #fff;
+      border-radius: 8px;
+      padding: 28px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin-bottom: 28px;
+    }
+    article p { margin-bottom: 14px; color: #555; }
+    article p:last-child { margin-bottom: 0; }
+
+    /* TABLE */
+    .table-section {
+      background: #fff;
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin-bottom: 28px;
+      overflow-x: auto;
+    }
+    .table-section h2 { font-size: 1.1rem; margin-bottom: 16px; color: #1a1a2e; }
+    #data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    #data-table th {
+      background: #1a1a2e;
+      color: #fff;
+      text-align: left;
+      padding: 10px 14px;
+      font-weight: 600;
+    }
+    #data-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #eee;
+      color: #444;
+    }
+    #data-table tr:nth-child(even) td { background: #f9f9fb; }
+    #data-table tr:hover td { background: #eef4ff; }
+
+    /* FEATURES LIST */
+    .features-section {
+      background: #fff;
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin-bottom: 28px;
+    }
+    .features-section h2 { font-size: 1.1rem; margin-bottom: 14px; color: #1a1a2e; }
+    #features-list {
+      list-style: none;
+      padding: 0;
+    }
+    #features-list li {
+      padding: 8px 0;
+      border-bottom: 1px solid #f0f0f0;
+      color: #555;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #features-list li::before {
+      content: "✓";
+      color: #4a90e2;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    #features-list li:last-child { border-bottom: none; }
+
+    /* CARDS */
+    .cards-section {
+      margin-bottom: 28px;
+    }
+    .cards-section h2 { font-size: 1.1rem; margin-bottom: 16px; color: #1a1a2e; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 18px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .card h3 { font-size: 1rem; color: #1a1a2e; }
+    .card p { font-size: 0.875rem; color: #666; flex: 1; }
+    .card a {
+      font-size: 0.85rem;
+      color: #4a90e2;
+      text-decoration: none;
+      font-weight: 600;
+      align-self: flex-start;
+    }
+    .card a:hover { text-decoration: underline; }
+
+    /* ASIDE */
+    aside { min-width: 0; }
+    .widget {
+      background: #fff;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+    }
+    .widget h3 { font-size: 0.95rem; font-weight: 700; color: #1a1a2e; margin-bottom: 14px; }
+    .widget input[type="search"] {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      background: #fafafa;
+    }
+    .widget ul { list-style: none; padding: 0; }
+    .widget ul li { border-bottom: 1px solid #f0f0f0; }
+    .widget ul li:last-child { border-bottom: none; }
+    .widget ul li a {
+      display: block;
+      padding: 8px 0;
+      color: #4a90e2;
+      text-decoration: none;
+      font-size: 0.875rem;
+    }
+    .widget ul li a:hover { text-decoration: underline; color: #357abd; }
+
+    /* FOOTER */
+    footer {
+      background: #1a1a2e;
+      color: #aaa;
+      text-align: center;
+      padding: 20px 32px;
+      font-size: 0.85rem;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="#">Home</a>
+    <a href="#">Products</a>
+    <a href="#">About</a>
+    <a href="#">Blog</a>
+    <a href="#">Contact</a>
+  </nav>
+
+  <div class="page-wrapper">
+    <main>
+      <h1>Benchmark Complex Page</h1>
+
+      <article>
+        <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+        <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus.</p>
+        <p>Nulla gravida orci a odio. Nullam varius, turpis molestie dictum semper, quam quam aliquet purus, egetas lorem odio eget purus. Viverra aliquet eget sit amet tellus cras adipiscing enim. Amet luctus venenatis lectus magna fringilla urna porttitor.</p>
+      </article>
+
+      <div class="table-section">
+        <h2>Product Inventory</h2>
+        <table id="data-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Price</th>
+              <th>Stock</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>1001</td><td>Wireless Headphones</td><td>Electronics</td><td>$89.99</td><td>142</td></tr>
+            <tr><td>1002</td><td>Ergonomic Chair</td><td>Furniture</td><td>$349.00</td><td>27</td></tr>
+            <tr><td>1003</td><td>USB-C Hub 7-in-1</td><td>Electronics</td><td>$44.50</td><td>310</td></tr>
+            <tr><td>1004</td><td>Stainless Water Bottle</td><td>Kitchen</td><td>$24.99</td><td>89</td></tr>
+            <tr><td>1005</td><td>Mechanical Keyboard</td><td>Electronics</td><td>$129.00</td><td>56</td></tr>
+            <tr><td>1006</td><td>Standing Desk Mat</td><td>Furniture</td><td>$59.95</td><td>204</td></tr>
+            <tr><td>1007</td><td>Portable Charger 20000mAh</td><td>Electronics</td><td>$39.99</td><td>178</td></tr>
+            <tr><td>1008</td><td>Noise-Cancelling Earplugs</td><td>Health</td><td>$18.00</td><td>415</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="features-section">
+        <h2>Key Features</h2>
+        <ul id="features-list">
+          <li>High-performance benchmark engine with sub-millisecond timing</li>
+          <li>Cross-browser compatibility tested on Chrome, Firefox, Safari, and Edge</li>
+          <li>Automatic retry logic with configurable thresholds</li>
+          <li>Detailed HTML and JSON report generation</li>
+          <li>Parallel test execution with worker thread support</li>
+          <li>Extensible plugin architecture for custom metrics</li>
+        </ul>
+      </div>
+
+      <div class="cards-section">
+        <h2>Latest Articles</h2>
+        <div class="cards">
+          <div class="card">
+            <h3>Getting Started with Benchmarking</h3>
+            <p>Learn how to set up your first benchmark suite and interpret the results effectively.</p>
+            <a href="#">Read more</a>
+          </div>
+          <div class="card">
+            <h3>Advanced Metrics Guide</h3>
+            <p>Deep dive into P95, P99 latency percentiles and what they mean for your application.</p>
+            <a href="#">Read more</a>
+          </div>
+          <div class="card">
+            <h3>CI/CD Integration</h3>
+            <p>Automate performance regression detection by embedding benchmarks in your pipeline.</p>
+            <a href="#">Read more</a>
+          </div>
+          <div class="card">
+            <h3>Interpreting Flamegraphs</h3>
+            <p>Understand CPU flamegraph output to pinpoint hotspots and optimize critical paths.</p>
+            <a href="#">Read more</a>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <aside>
+      <div class="widget">
+        <h3>Search</h3>
+        <input type="search" placeholder="Search...">
+      </div>
+
+      <div class="widget">
+        <h3>Recent Posts</h3>
+        <ul>
+          <li><a href="#">Benchmark Results Q1 2026</a></li>
+          <li><a href="#">Node.js vs Bun Performance</a></li>
+          <li><a href="#">HTTP/3 Latency Deep Dive</a></li>
+          <li><a href="#">Memory Profiling Best Practices</a></li>
+          <li><a href="#">WebSocket Throughput Testing</a></li>
+        </ul>
+      </div>
+
+      <div class="widget">
+        <h3>Categories</h3>
+        <ul>
+          <li><a href="#">Performance (18)</a></li>
+          <li><a href="#">Tooling (12)</a></li>
+          <li><a href="#">Case Studies (9)</a></li>
+          <li><a href="#">Tutorials (24)</a></li>
+          <li><a href="#">Releases (7)</a></li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    <p>&copy; 2026 OpenChrome Benchmark. All rights reserved.</p>
+  </footer>
+
+</body>
+</html>
