@@ -19,7 +19,7 @@ const definition: MCPToolDefinition = {
       },
       ref: {
         type: 'string',
-        description: 'Element reference ID (e.g., "ref_1", "ref_2")',
+        description: 'Element reference ID (ref_N from read_page) or backendNodeId (number from DOM mode)',
       },
       value: {
         oneOf: [{ type: 'string' }, { type: 'boolean' }, { type: 'number' }],
@@ -72,14 +72,14 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get the ref entry
-    const refEntry = refIdManager.getRef(sessionId, tabId, ref);
-    if (!refEntry) {
+    // Get the backend node ID
+    const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+    if (backendNodeId === undefined) {
       return {
         content: [
           {
             type: 'text',
-            text: `Error: Reference ${ref} not found. Use read_page or find first to get element references.`,
+            text: `Error: Reference '${ref}' not found. Use read_page first to get element references (ref_N or backendNodeId).`,
           },
         ],
         isError: true,
@@ -92,7 +92,7 @@ const handler: ToolHandler = async (
     const { object } = await cdpClient.send<{ object: { objectId: string } }>(
       page,
       'DOM.resolveNode',
-      { backendNodeId: refEntry.backendDOMNodeId }
+      { backendNodeId }
     );
 
     if (!object?.objectId) {

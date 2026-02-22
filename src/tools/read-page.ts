@@ -6,11 +6,12 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { serializeDOM } from '../dom';
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
   description:
-    'Get an accessibility tree representation of elements on the page. Returns element references that can be used with other tools.',
+    'Get page content. Default mode "ax" returns accessibility tree with ref_N identifiers. Mode "dom" returns compact DOM with backendNodeId identifiers (~5-10x fewer tokens).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -42,6 +43,11 @@ const definition: MCPToolDefinition = {
       selectorLimit: {
         type: 'number',
         description: 'Maximum number of elements to return when using selectorAll (default: 50)',
+      },
+      mode: {
+        type: 'string',
+        enum: ['ax', 'dom'],
+        description: 'Output mode: "ax" for accessibility tree (default), "dom" for compact DOM representation with ~5-10x fewer tokens',
       },
     },
     required: ['tabId'],
@@ -86,6 +92,33 @@ const handler: ToolHandler = async (
     }
 
     const cdpClient = sessionManager.getCDPClient();
+
+    // DOM serialization mode
+    const mode = (args.mode as string) || 'ax';
+    if (mode !== 'ax' && mode !== 'dom') {
+      return {
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax" or "dom".` }],
+        isError: true,
+      };
+    }
+    if (mode === 'dom') {
+      const refId = args.ref_id as string | undefined;
+      const depth = args.depth as number | undefined;
+      const result = await serializeDOM(page, cdpClient, {
+        maxDepth: depth ?? -1,
+        filter: filter,
+        interactiveOnly: filter === 'interactive',
+      });
+
+      let outputText = result.content;
+      if (refId) {
+        outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
+      }
+
+      return {
+        content: [{ type: 'text', text: outputText }],
+      };
+    }
 
     // Fast path: CSS selector-based extraction (skips full AX tree)
     const selectorParam = args.selector as string | undefined;

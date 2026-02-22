@@ -553,7 +553,7 @@ describe('ComputerTool', () => {
         ref: refId,
       }) as { content: Array<{ type: string; text: string }> };
 
-      expect(mockRefIdManager.getRef).toHaveBeenCalledWith(testSessionId, testTargetId, refId);
+      expect(mockRefIdManager.resolveToBackendNodeId).toHaveBeenCalledWith(testSessionId, testTargetId, refId);
       expect(result.content[0].text).toContain('Scrolled to');
     });
 

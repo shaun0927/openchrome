@@ -154,7 +154,9 @@ program
   .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
-  .action(async (options: { port: string; autoLaunch?: boolean; dashboard?: boolean; hybrid?: boolean; lpPort?: string }) => {
+  .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
+  .option('--storage-dir <path>', 'Directory for storage state files (default: .openchrome/storage-state/)')
+  .action(async (options: { port: string; autoLaunch?: boolean; dashboard?: boolean; hybrid?: boolean; lpPort?: string; persistStorage?: boolean; storageDir?: string }) => {
     const port = parseInt(options.port, 10);
     const autoLaunch = options.autoLaunch || false;
     const dashboard = options.dashboard || false;
@@ -166,6 +168,16 @@ program
     console.error(`[openchrome] Chrome debugging port: ${port}`);
     console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
     console.error(`[openchrome] Dashboard: ${dashboard}`);
+
+    // Set environment variables for storage state persistence
+    if (options.persistStorage) {
+      process.env.OC_PERSIST_STORAGE = '1';
+      console.error(`[openchrome] Storage state persistence: enabled`);
+    }
+    if (options.storageDir) {
+      process.env.OC_STORAGE_DIR = options.storageDir;
+      console.error(`[openchrome] Storage state directory: ${options.storageDir}`);
+    }
 
     // Import from built dist/ files (relative to dist/cli/)
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -272,8 +284,9 @@ program
   .description('Start Claude Code with isolated config (prevents corruption)')
   .option('--sync-back', 'Sync config changes back to original after session')
   .option('--keep-session', 'Keep session directory after exit (for debugging)')
+  .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
   .argument('[args...]', 'Arguments to pass to claude')
-  .action(async (args: string[], options: { syncBack?: boolean; keepSession?: boolean }) => {
+  .action(async (args: string[], options: { syncBack?: boolean; keepSession?: boolean; persistStorage?: boolean }) => {
     const sessionId = generateSessionId();
     const sessionDir = path.join(getSessionsDir(), sessionId);
 
@@ -314,12 +327,16 @@ program
     console.log('Starting Claude Code with isolated config...\n');
 
     // Set up environment with isolated HOME
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...process.env,
       HOME: sessionDir,
       USERPROFILE: sessionDir,
       CLAUDE_CONFIG_DIR: sessionDir,
     };
+
+    if (options.persistStorage) {
+      env.OC_PERSIST_STORAGE = '1';
+    }
 
     // Find claude command
     const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';

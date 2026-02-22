@@ -92,6 +92,33 @@ export class RefIdManager {
     }
     return Array.from(targetRefs.values());
   }
+
+  /**
+   * Unified resolver: accepts "ref_N", raw integer string "142", or "node_142"
+   * Returns the backendDOMNodeId for use with CDP DOM.resolveNode
+   */
+  resolveToBackendNodeId(
+    sessionId: string,
+    targetId: string,
+    refOrNodeId: string
+  ): number | undefined {
+    // 1. Try as ref_N (existing lookup — preserves backward compat)
+    const entry = this.getRef(sessionId, targetId, refOrNodeId);
+    if (entry) return entry.backendDOMNodeId;
+
+    // 2. Try as raw integer (from DOM serialization output)
+    const asNum = parseInt(refOrNodeId, 10);
+    if (!isNaN(asNum) && asNum > 0 && String(asNum) === refOrNodeId && asNum <= 2147483647) return asNum;
+
+    // 3. Try as "node_N" format (explicit prefix for clarity)
+    if (refOrNodeId.startsWith('node_')) {
+      const suffix = refOrNodeId.slice(5);
+      const n = parseInt(suffix, 10);
+      if (!isNaN(n) && n > 0 && String(n) === suffix && n <= 2147483647) return n;
+    }
+
+    return undefined;
+  }
 }
 
 let refIdManagerInstance: RefIdManager | null = null;
