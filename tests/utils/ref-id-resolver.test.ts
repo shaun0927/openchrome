@@ -109,4 +109,29 @@ describe('RefIdManager.resolveToBackendNodeId', () => {
     const SESSION_C = 'session-C';
     expect(manager.resolveToBackendNodeId(SESSION_C, TARGET, 'ref_1')).toBeUndefined();
   });
+
+  // 10. Strict integer validation: reject floats and oversized values
+  it('rejects float "3.5" as raw integer (returns undefined)', () => {
+    expect(manager.resolveToBackendNodeId(SESSION, TARGET, '3.5')).toBeUndefined();
+  });
+
+  it('rejects oversized integer beyond 32-bit range', () => {
+    expect(manager.resolveToBackendNodeId(SESSION, TARGET, '99999999999999999999')).toBeUndefined();
+  });
+
+  it('rejects "node_3.5" (float in node_ prefix)', () => {
+    expect(manager.resolveToBackendNodeId(SESSION, TARGET, 'node_3.5')).toBeUndefined();
+  });
+
+  it('rejects "node_99999999999999999999" (oversized node_ prefix)', () => {
+    expect(manager.resolveToBackendNodeId(SESSION, TARGET, 'node_99999999999999999999')).toBeUndefined();
+  });
+
+  it('still resolves valid raw integer "42"', () => {
+    expect(manager.resolveToBackendNodeId(SESSION, TARGET, '42')).toBe(42);
+  });
+
+  it('still resolves valid "node_42"', () => {
+    expect(manager.resolveToBackendNodeId(SESSION, TARGET, 'node_42')).toBe(42);
+  });
 });

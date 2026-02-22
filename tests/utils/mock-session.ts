@@ -245,12 +245,13 @@ export function createMockRefIdManager() {
 
       // 2. Try as raw integer
       const asNum = parseInt(refOrNodeId, 10);
-      if (!isNaN(asNum) && asNum > 0) return asNum;
+      if (!isNaN(asNum) && asNum > 0 && String(asNum) === refOrNodeId && asNum <= 2147483647) return asNum;
 
       // 3. Try as node_N
       if (refOrNodeId.startsWith('node_')) {
-        const n = parseInt(refOrNodeId.slice(5), 10);
-        if (!isNaN(n) && n > 0) return n;
+        const suffix = refOrNodeId.slice(5);
+        const n = parseInt(suffix, 10);
+        if (!isNaN(n) && n > 0 && String(n) === suffix && n <= 2147483647) return n;
       }
 
       return undefined;
