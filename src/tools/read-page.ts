@@ -6,11 +6,12 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { serializeDOM } from '../dom';
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
   description:
-    'Get an accessibility tree representation of elements on the page. Returns element references that can be used with other tools.',
+    'Get page content. Default mode "ax" returns accessibility tree with ref_N identifiers. Mode "dom" returns compact DOM with backendNodeId identifiers (~5-10x fewer tokens).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -30,6 +31,11 @@ const definition: MCPToolDefinition = {
       ref_id: {
         type: 'string',
         description: 'Reference ID of a parent element to read from',
+      },
+      mode: {
+        type: 'string',
+        enum: ['ax', 'dom'],
+        description: 'Output mode: "ax" for accessibility tree (default), "dom" for compact DOM representation with ~5-10x fewer tokens',
       },
     },
     required: ['tabId'],
@@ -74,6 +80,21 @@ const handler: ToolHandler = async (
     }
 
     const cdpClient = sessionManager.getCDPClient();
+
+    // DOM serialization mode
+    const mode = (args.mode as string) || 'ax';
+    if (mode === 'dom') {
+      const depth = args.depth as number | undefined;
+      const result = await serializeDOM(page, cdpClient, {
+        maxDepth: depth ?? -1,
+        filter: filter,
+        interactiveOnly: filter === 'interactive',
+      });
+
+      return {
+        content: [{ type: 'text', text: result.content }],
+      };
+    }
 
     // Get the accessibility tree
     const { nodes } = await cdpClient.send<{ nodes: AXNode[] }>(
