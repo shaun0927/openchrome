@@ -83,7 +83,14 @@ const handler: ToolHandler = async (
 
     // DOM serialization mode
     const mode = (args.mode as string) || 'ax';
+    if (mode !== 'ax' && mode !== 'dom') {
+      return {
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax" or "dom".` }],
+        isError: true,
+      };
+    }
     if (mode === 'dom') {
+      const refId = args.ref_id as string | undefined;
       const depth = args.depth as number | undefined;
       const result = await serializeDOM(page, cdpClient, {
         maxDepth: depth ?? -1,
@@ -91,8 +98,13 @@ const handler: ToolHandler = async (
         interactiveOnly: filter === 'interactive',
       });
 
+      let outputText = result.content;
+      if (refId) {
+        outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
+      }
+
       return {
-        content: [{ type: 'text', text: result.content }],
+        content: [{ type: 'text', text: outputText }],
       };
     }
 
