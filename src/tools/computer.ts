@@ -117,6 +117,27 @@ const handler: ToolHandler = async (
       }
 
       case 'left_click': {
+        if (ref) {
+          const refIdManager = getRefIdManager();
+          const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+
+          if (backendNodeId === undefined) {
+            return {
+              content: [{ type: 'text', text: `Error: Element ref or node ID '${ref}' not found` }],
+              isError: true,
+            };
+          }
+
+          const cdpClient = sessionManager.getCDPClient();
+          const { model } = await cdpClient.send<{ model: { content: number[] } }>(page, 'DOM.getBoxModel', { backendNodeId });
+          const cx = Math.round((model.content[0] + model.content[2] + model.content[4] + model.content[6]) / 4);
+          const cy = Math.round((model.content[1] + model.content[3] + model.content[5] + model.content[7]) / 4);
+          await page.mouse.click(cx, cy);
+          return {
+            content: [{ type: 'text', text: `Clicked element ${ref} at (${cx}, ${cy})` }],
+          };
+        }
+
         if (!coordinate) {
           return {
             content: [{ type: 'text', text: 'Error: coordinate is required for left_click' }],
@@ -144,6 +165,27 @@ const handler: ToolHandler = async (
       }
 
       case 'right_click': {
+        if (ref) {
+          const refIdManager = getRefIdManager();
+          const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+
+          if (backendNodeId === undefined) {
+            return {
+              content: [{ type: 'text', text: `Error: Element ref or node ID '${ref}' not found` }],
+              isError: true,
+            };
+          }
+
+          const cdpClient = sessionManager.getCDPClient();
+          const { model } = await cdpClient.send<{ model: { content: number[] } }>(page, 'DOM.getBoxModel', { backendNodeId });
+          const cx = Math.round((model.content[0] + model.content[2] + model.content[4] + model.content[6]) / 4);
+          const cy = Math.round((model.content[1] + model.content[3] + model.content[5] + model.content[7]) / 4);
+          await page.mouse.click(cx, cy, { button: 'right' });
+          return {
+            content: [{ type: 'text', text: `Right-clicked element ${ref} at (${cx}, ${cy})` }],
+          };
+        }
+
         if (!coordinate) {
           return {
             content: [{ type: 'text', text: 'Error: coordinate is required for right_click' }],
@@ -171,6 +213,27 @@ const handler: ToolHandler = async (
       }
 
       case 'double_click': {
+        if (ref) {
+          const refIdManager = getRefIdManager();
+          const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+
+          if (backendNodeId === undefined) {
+            return {
+              content: [{ type: 'text', text: `Error: Element ref or node ID '${ref}' not found` }],
+              isError: true,
+            };
+          }
+
+          const cdpClient = sessionManager.getCDPClient();
+          const { model } = await cdpClient.send<{ model: { content: number[] } }>(page, 'DOM.getBoxModel', { backendNodeId });
+          const cx = Math.round((model.content[0] + model.content[2] + model.content[4] + model.content[6]) / 4);
+          const cy = Math.round((model.content[1] + model.content[3] + model.content[5] + model.content[7]) / 4);
+          await page.mouse.click(cx, cy, { clickCount: 2 });
+          return {
+            content: [{ type: 'text', text: `Double-clicked element ${ref} at (${cx}, ${cy})` }],
+          };
+        }
+
         if (!coordinate) {
           return {
             content: [
@@ -200,6 +263,27 @@ const handler: ToolHandler = async (
       }
 
       case 'triple_click': {
+        if (ref) {
+          const refIdManager = getRefIdManager();
+          const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+
+          if (backendNodeId === undefined) {
+            return {
+              content: [{ type: 'text', text: `Error: Element ref or node ID '${ref}' not found` }],
+              isError: true,
+            };
+          }
+
+          const cdpClient = sessionManager.getCDPClient();
+          const { model } = await cdpClient.send<{ model: { content: number[] } }>(page, 'DOM.getBoxModel', { backendNodeId });
+          const cx = Math.round((model.content[0] + model.content[2] + model.content[4] + model.content[6]) / 4);
+          const cy = Math.round((model.content[1] + model.content[3] + model.content[5] + model.content[7]) / 4);
+          await page.mouse.click(cx, cy, { clickCount: 3 });
+          return {
+            content: [{ type: 'text', text: `Triple-clicked element ${ref} at (${cx}, ${cy})` }],
+          };
+        }
+
         if (!coordinate) {
           return {
             content: [
@@ -229,6 +313,27 @@ const handler: ToolHandler = async (
       }
 
       case 'hover': {
+        if (ref) {
+          const refIdManager = getRefIdManager();
+          const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+
+          if (backendNodeId === undefined) {
+            return {
+              content: [{ type: 'text', text: `Error: Element ref or node ID '${ref}' not found` }],
+              isError: true,
+            };
+          }
+
+          const cdpClient = sessionManager.getCDPClient();
+          const { model } = await cdpClient.send<{ model: { content: number[] } }>(page, 'DOM.getBoxModel', { backendNodeId });
+          const cx = Math.round((model.content[0] + model.content[2] + model.content[4] + model.content[6]) / 4);
+          const cy = Math.round((model.content[1] + model.content[3] + model.content[5] + model.content[7]) / 4);
+          await page.mouse.move(cx, cy);
+          return {
+            content: [{ type: 'text', text: `Hovered element ${ref} at (${cx}, ${cy})` }],
+          };
+        }
+
         if (!coordinate) {
           return {
             content: [{ type: 'text', text: 'Error: coordinate is required for hover' }],
