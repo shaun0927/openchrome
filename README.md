@@ -140,17 +140,6 @@ claude mcp add openchrome -- npx -y openchrome-mcp serve --auto-launch
 
 ---
 
-## How It Works
-
-```
-Traditional:  [blank browser] → login → 2FA → wait → task → close  (per site)
-OpenChrome:   [your Chrome]   → task                                 (done)
-```
-
-OpenChrome connects to your running Chrome via CDP. You're already logged in. Workers run in parallel with isolated contexts (separate cookies, sessions). One Chrome process, 20+ simultaneous sessions, ~300MB total.
-
----
-
 ## Examples
 
 **Parallel monitoring:**
