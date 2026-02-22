@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Benchmark Form</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      padding: 40px 16px;
+    }
+    .container {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      padding: 36px 40px;
+      width: 100%;
+      max-width: 560px;
+    }
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 28px;
+      color: #222;
+    }
+    .field {
+      margin-bottom: 18px;
+    }
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 6px;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.95rem;
+      color: #333;
+      background: #fafafa;
+      transition: border-color 0.2s;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: #4a90e2;
+      background: #fff;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 90px;
+    }
+    .radio-group, .checkbox-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    .radio-item, .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.9rem;
+      color: #555;
+      cursor: pointer;
+    }
+    input[type="radio"],
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+    button[type="submit"] {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      background: #4a90e2;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.2s;
+    }
+    button[type="submit"]:hover { background: #357abd; }
+    #result {
+      margin-top: 24px;
+      padding: 16px;
+      background: #e8f5e9;
+      border: 1px solid #a5d6a7;
+      border-radius: 4px;
+      color: #2e7d32;
+    }
+    #result h2 {
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+    #result pre {
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Benchmark Form</h1>
+    <form id="benchmark-form" novalidate>
+
+      <div class="field">
+        <label for="name">Full Name</label>
+        <input type="text" id="name" name="name" placeholder="Full Name" required>
+      </div>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" placeholder="Email">
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password">
+      </div>
+
+      <div class="field">
+        <label for="country">Country</label>
+        <select id="country" name="country">
+          <option value="">-- Select Country --</option>
+          <option value="usa">USA</option>
+          <option value="uk">UK</option>
+          <option value="japan">Japan</option>
+          <option value="korea">Korea</option>
+          <option value="germany">Germany</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="bio">Bio</label>
+        <textarea id="bio" name="bio" placeholder="Tell us about yourself"></textarea>
+      </div>
+
+      <div class="field">
+        <label>Gender</label>
+        <div class="radio-group">
+          <label class="radio-item">
+            <input type="radio" name="gender" value="male"> Male
+          </label>
+          <label class="radio-item">
+            <input type="radio" name="gender" value="female"> Female
+          </label>
+          <label class="radio-item">
+            <input type="radio" name="gender" value="other"> Other
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="age">Age</label>
+        <input type="number" id="age" name="age" min="0" max="150">
+      </div>
+
+      <div class="field">
+        <div class="checkbox-group">
+          <label class="checkbox-item">
+            <input type="checkbox" id="terms" name="terms">
+            I agree to terms
+          </label>
+        </div>
+      </div>
+
+      <button type="submit" id="submit-btn">Submit</button>
+    </form>
+
+    <div id="result" style="display:none">
+      <h2>Form submitted successfully!</h2>
+      <pre id="result-data"></pre>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('benchmark-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+
+      var form = e.target;
+      var data = {};
+
+      // Text / email / password / number / textarea / select
+      ['name', 'email', 'password', 'country', 'bio', 'age'].forEach(function(field) {
+        var el = form.elements[field];
+        if (el) data[field] = el.value;
+      });
+
+      // Radio
+      var genderEl = form.elements['gender'];
+      if (genderEl) {
+        var checked = Array.from(genderEl).find(function(r) { return r.checked; });
+        data['gender'] = checked ? checked.value : '';
+      }
+
+      // Checkbox
+      var termsEl = form.elements['terms'];
+      if (termsEl) data['terms'] = termsEl.checked;
+
+      var resultDiv = document.getElementById('result');
+      var resultData = document.getElementById('result-data');
+      resultData.textContent = JSON.stringify(data, null, 2);
+      resultDiv.style.display = 'block';
+      resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  </script>
+</body>
+</html>
