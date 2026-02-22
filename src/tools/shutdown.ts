@@ -1,7 +1,7 @@
 /**
  * Shutdown Tool - Gracefully stop OpenChrome and close Chrome
  *
- * Provides "ccp stop" functionality:
+ * Provides "oc stop" functionality:
  * 1. Clean up all sessions and workers
  * 2. Shutdown connection pool (close all pooled pages)
  * 3. Disconnect CDP client

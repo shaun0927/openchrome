@@ -5,8 +5,7 @@
   "main": "dist/index.js",
   "bin": {
     "openchrome": "./dist/cli/index.js",
-    "oc": "./dist/cli/index.js",
-    "ccp": "./dist/cli/index.js"
+    "oc": "./dist/cli/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.cli.json && tsc -p tsconfig.json",

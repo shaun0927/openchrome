@@ -104,10 +104,10 @@ describe('MCPServer', () => {
         const response = (await server.handleRequest(request)) as MCPResultResponse;
         const instructions = response.result!.instructions!;
 
-        // Must mention "ccp" as a keyword
+        // Must mention "oc" as a keyword
         expect(instructions).toContain('openchrome');
         expect(instructions).toContain('MAGIC KEYWORD');
-        // Must mention "use ccp" as a variation
+        // Must mention "use oc" as a variation
         expect(instructions).toContain('oc');
       });
 

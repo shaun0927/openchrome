@@ -185,7 +185,7 @@ OpenChrome is a standard MCP server, but currently only tested with Claude Code.
 | Codex CLI | Untested | Test all 36 tools, verify `instructions` field |
 | VS Code + MCP | Untested | Test basic tool flow |
 
-**How to contribute**: Pick a client, run the test suite against it, report what works and what doesn't. Adapt `ccp setup` to support the client if needed.
+**How to contribute**: Pick a client, run the test suite against it, report what works and what doesn't. Adapt `oc setup` to support the client if needed.
 
 ### Cross-Platform Support
 
@@ -230,9 +230,9 @@ The hint engine (`src/hints/`) currently has 21 static rules. Areas to improve:
 
 ### Developer Experience
 
-- **`ccp setup` for other clients**: Auto-configure for Cursor, Windsurf, etc.
-- **`ccp benchmark`**: Built-in benchmark command
-- **`ccp replay`**: Replay a recorded session for debugging
+- **`oc setup` for other clients**: Auto-configure for Cursor, Windsurf, etc.
+- **`oc benchmark`**: Built-in benchmark command
+- **`oc replay`**: Replay a recorded session for debugging
 - **Plugin system**: Allow users to register custom tools
 
 ### Documentation
