@@ -80,9 +80,19 @@ program
 program
   .command('serve')
   .description('Start MCP server for Claude Code')
-  .action(() => {
-    // This would start the native messaging host
-    // For now, just show info
+  .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
+  .option('--storage-dir <path>', 'Directory for storage state files (default: .openchrome/storage-state/)')
+  .action((options: { persistStorage?: boolean; storageDir?: string }) => {
+    // Set environment variables for the MCP server to pick up
+    if (options.persistStorage) {
+      process.env.OC_PERSIST_STORAGE = '1';
+      console.log('Storage state persistence enabled');
+    }
+    if (options.storageDir) {
+      process.env.OC_STORAGE_DIR = options.storageDir;
+      console.log(`Storage state directory: ${options.storageDir}`);
+    }
+
     console.log('MCP server mode is handled by the native messaging host.');
     console.log('Configure in Claude Code settings.json:');
     console.log(`
@@ -90,7 +100,7 @@ program
   "mcpServers": {
     "chrome-parallel": {
       "command": "claude-chrome-parallel",
-      "args": ["serve"]
+      "args": ["serve"${options.persistStorage ? ', "--persist-storage"' : ''}]
     }
   }
 }
@@ -146,8 +156,9 @@ program
   .description('Start Claude Code with isolated config (prevents corruption)')
   .option('--sync-back', 'Sync config changes back to original after session')
   .option('--keep-session', 'Keep session directory after exit (for debugging)')
+  .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
   .argument('[args...]', 'Arguments to pass to claude')
-  .action(async (args: string[], options: { syncBack?: boolean; keepSession?: boolean }) => {
+  .action(async (args: string[], options: { syncBack?: boolean; keepSession?: boolean; persistStorage?: boolean }) => {
     const sessionId = generateSessionId();
     const sessionDir = path.join(getSessionsDir(), sessionId);
 
@@ -188,12 +199,16 @@ program
     console.log('Starting Claude Code with isolated config...\n');
 
     // Set up environment with isolated HOME
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...process.env,
       HOME: sessionDir,
       USERPROFILE: sessionDir,
       CLAUDE_CONFIG_DIR: sessionDir,
     };
+
+    if (options.persistStorage) {
+      env.OC_PERSIST_STORAGE = '1';
+    }
 
     // Find claude command
     const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
