@@ -26,7 +26,7 @@ Browser automation has high context usage. Use as last resort.
 
 ## Parallel Browser Workflow
 
-When 2+ independent browser tasks are requested with parallel intent ("동시에", "병렬로", "chrome parallel"):
+When 2+ independent browser tasks are requested with parallel intent ("동시에", "병렬로", "parallel"):
 1. `workflow_init` → create workers with dedicated tabs
 2. Spawn background Task agents (each gets hardcoded `tabId` to prevent cross-tab contamination)
 3. `workflow_collect` → unify results

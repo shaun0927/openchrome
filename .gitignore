@@ -48,6 +48,7 @@ extension-unpacked/
 .omc/
 
 # User-local Claude Code workflows (personal skills, agents, commands)
+CLAUDE.md
 .claude/commands/
 .claude/agents/
 .claude/skills/
