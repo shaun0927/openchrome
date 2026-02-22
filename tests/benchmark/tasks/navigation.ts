@@ -1,14 +1,5 @@
 import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
-
-function measureCall(
-  result: unknown,
-  args: Record<string, unknown>,
-  counters: { inputChars: number; outputChars: number; toolCallCount: number },
-): void {
-  counters.inputChars += JSON.stringify(args).length;
-  counters.outputChars += JSON.stringify(result).length;
-  counters.toolCallCount += 1;
-}
+import { measureCall } from '../utils';
 
 export function createNavigationTask(): BenchmarkTask {
   return {
@@ -63,7 +54,7 @@ export function createNavigationTask(): BenchmarkTask {
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
-          error: String(error),
+          error: error instanceof Error ? error.message : String(error),
         };
       }
     },

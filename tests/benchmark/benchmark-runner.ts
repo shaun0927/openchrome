@@ -155,7 +155,7 @@ export class BenchmarkRunner {
     return { runs, stats };
   }
 
-  static bootstrapCI(values: number[], iterations: number = 1000): [number, number] {
+  static bootstrapCI(values: number[], iterations: number = 1000, rng: () => number = Math.random): [number, number] {
     if (values.length === 0) return [0, 0];
 
     const bootstrapMeans: number[] = [];
@@ -163,7 +163,7 @@ export class BenchmarkRunner {
     for (let i = 0; i < iterations; i++) {
       const sample: number[] = [];
       for (let j = 0; j < values.length; j++) {
-        const idx = Math.floor(Math.random() * values.length);
+        const idx = Math.floor(rng() * values.length);
         sample.push(values[idx]);
       }
       bootstrapMeans.push(mean(sample));

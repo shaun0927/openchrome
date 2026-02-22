@@ -13,16 +13,7 @@
  */
 
 import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
-
-function measureCall(
-  result: unknown,
-  args: Record<string, unknown>,
-  counters: { inputChars: number; outputChars: number; toolCallCount: number },
-): void {
-  counters.inputChars += JSON.stringify(args).length;
-  counters.outputChars += JSON.stringify(result).length;
-  counters.toolCallCount += 1;
-}
+import { measureCall } from '../utils';
 
 const FIXTURE_URLS = [
   'file://fixtures/complex-page.html',
@@ -93,7 +84,7 @@ export function createSequentialBaselineTask(concurrency: number): BenchmarkTask
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
-          error: String(error),
+          error: error instanceof Error ? error.message : String(error),
         };
       }
     },
@@ -177,7 +168,7 @@ export function createParallelTask(concurrency: number): BenchmarkTask {
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
-          error: String(error),
+          error: error instanceof Error ? error.message : String(error),
         };
       }
     },
