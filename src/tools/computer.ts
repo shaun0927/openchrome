@@ -60,7 +60,7 @@ const definition: MCPToolDefinition = {
       },
       ref: {
         type: 'string',
-        description: 'Element reference ID for scroll_to',
+        description: 'Element reference ID (ref_N from read_page) or backendNodeId (number from DOM mode)',
       },
     },
     required: ['action', 'tabId'],
@@ -382,11 +382,11 @@ const handler: ToolHandler = async (
         }
 
         const refIdManager = getRefIdManager();
-        const refEntry = refIdManager.getRef(sessionId, tabId, ref);
+        const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
 
-        if (!refEntry) {
+        if (backendNodeId === undefined) {
           return {
-            content: [{ type: 'text', text: `Error: Element ${ref} not found` }],
+            content: [{ type: 'text', text: `Error: Element ref or node ID '${ref}' not found` }],
             isError: true,
           };
         }
@@ -394,7 +394,7 @@ const handler: ToolHandler = async (
         // Use CDP to scroll element into view
         const cdpClient = sessionManager.getCDPClient();
         await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
-          backendNodeId: refEntry.backendDOMNodeId,
+          backendNodeId,
         });
 
         return {

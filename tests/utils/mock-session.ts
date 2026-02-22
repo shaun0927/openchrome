@@ -238,6 +238,25 @@ export function createMockRefIdManager() {
       return refs.get(sessionId)?.get(targetId)?.get(refId)?.backendDOMNodeId;
     }),
 
+    resolveToBackendNodeId: jest.fn().mockImplementation((sessionId: string, targetId: string, refOrNodeId: string) => {
+      // 1. Try as ref_N
+      const entry = refs.get(sessionId)?.get(targetId)?.get(refOrNodeId);
+      if (entry) return entry.backendDOMNodeId;
+
+      // 2. Try as raw integer
+      const asNum = parseInt(refOrNodeId, 10);
+      if (!isNaN(asNum) && asNum > 0 && String(asNum) === refOrNodeId && asNum <= 2147483647) return asNum;
+
+      // 3. Try as node_N
+      if (refOrNodeId.startsWith('node_')) {
+        const suffix = refOrNodeId.slice(5);
+        const n = parseInt(suffix, 10);
+        if (!isNaN(n) && n > 0 && String(n) === suffix && n <= 2147483647) return n;
+      }
+
+      return undefined;
+    }),
+
     clearTargetRefs: jest.fn().mockImplementation((sessionId: string, targetId: string) => {
       refs.get(sessionId)?.delete(targetId);
       counters.get(sessionId)?.set(targetId, 0);
