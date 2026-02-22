@@ -16,7 +16,7 @@ export interface StorageState {
     session: boolean;
     sameSite?: string;
   }>;
-  localStorage: Record<string, Record<string, string>>; // origin → key → value
+  localStorage: Record<string, string>;
 }
 
 export interface CDPClientLike {
@@ -41,7 +41,7 @@ export class StorageStateManager {
       );
 
       // Get localStorage via page.evaluate
-      let localStorage: Record<string, Record<string, string>> = {};
+      let localStorage: Record<string, string> = {};
       try {
         localStorage = await page.evaluate(() => {
           const result: Record<string, string> = {};
@@ -51,8 +51,8 @@ export class StorageStateManager {
               result[key] = window.localStorage.getItem(key) || '';
             }
           }
-          return { [window.location.origin]: result };
-        });
+          return result;
+        }) as Record<string, string>;
       } catch {
         // localStorage may not be available (about:blank, chrome://)
         localStorage = {};
@@ -102,18 +102,16 @@ export class StorageStateManager {
       }
     }
 
-    // Restore localStorage per origin
-    if (state.localStorage) {
-      for (const [, entries] of Object.entries(state.localStorage)) {
-        try {
-          await page.evaluate((data: Record<string, string>) => {
-            for (const [key, value] of Object.entries(data)) {
-              window.localStorage.setItem(key, value);
-            }
-          }, entries);
-        } catch {
-          // Skip origins that can't be accessed (cross-origin restriction)
-        }
+    // Restore localStorage
+    if (state.localStorage && Object.keys(state.localStorage).length > 0) {
+      try {
+        await page.evaluate((data: Record<string, string>) => {
+          for (const [key, value] of Object.entries(data)) {
+            window.localStorage.setItem(key, value);
+          }
+        }, state.localStorage);
+      } catch {
+        // Skip if localStorage can't be accessed (about:blank, chrome://)
       }
     }
 

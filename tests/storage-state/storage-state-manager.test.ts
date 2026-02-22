@@ -67,7 +67,7 @@ describe('StorageStateManager', () => {
 
   describe('save', () => {
     test('1. captures cookies and localStorage', async () => {
-      const localStorageData = { 'https://example.com': { theme: 'dark', lang: 'en' } };
+      const localStorageData = { theme: 'dark', lang: 'en' };
       const page = makeMockPage(localStorageData);
       const cdpClient = makeMockCdpClient({ cookies: SAMPLE_COOKIES });
 
@@ -143,7 +143,7 @@ describe('StorageStateManager', () => {
 
   describe('restore', () => {
     test('5. restores cookies and localStorage', async () => {
-      const localStorageData = { 'https://example.com': { theme: 'dark' } };
+      const localStorageData = { theme: 'dark' };
       const state: StorageState = {
         version: 1,
         timestamp: Date.now(),

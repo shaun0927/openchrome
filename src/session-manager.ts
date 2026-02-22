@@ -2,6 +2,7 @@
  * Session Manager - Manages lifecycle of parallel Claude Code sessions
  */
 
+import path from 'path';
 import { Page, Target } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent } from './types/session';
 import { CDPClient, getCDPClient } from './cdp/client';
@@ -58,7 +59,7 @@ export class SessionManager {
   private connectionPool: CDPConnectionPool | null = null;
   private queueManager: RequestQueueManager;
   private eventListeners: ((event: SessionEvent) => void)[] = [];
-  private storageStateManager: StorageStateManager | null = null;
+  private storageStateManagers = new Map<string, StorageStateManager>();
   private storageStateConfig: StorageStateConfig | null = null;
 
   // TTL & Stats
@@ -82,9 +83,8 @@ export class SessionManager {
       this.startAutoCleanup();
     }
 
-    // Initialize storage state if configured
+    // Store storage state config if enabled
     if (this.config.storageState?.enabled) {
-      this.storageStateManager = new StorageStateManager();
       this.storageStateConfig = this.config.storageState;
     }
   }
@@ -255,21 +255,23 @@ export class SessionManager {
       return;
     }
 
-    // Save storage state before cleanup
-    if (this.storageStateManager) {
-      this.storageStateManager.stopWatchdog();
+    // Save storage state before cleanup (save first, then stop watchdog)
+    const manager = this.storageStateManagers.get(sessionId);
+    if (manager) {
       try {
-        // Find first available page in session for final save
+        // Final save before stopping watchdog
         for (const tid of session.targets) {
           const p = await this.cdpClient.getPageByTargetId(tid);
           if (p) {
-            await this.storageStateManager.save(p, this.cdpClient, this.getStorageStatePath(sessionId));
+            await manager.save(p, this.cdpClient, this.getStorageStatePath(sessionId));
             break;
           }
         }
       } catch {
         // Best-effort: don't block deletion on storage state errors
       }
+      manager.stopWatchdog();
+      this.storageStateManagers.delete(sessionId);
     }
 
     // Release or close all pages for this session
@@ -367,14 +369,16 @@ export class SessionManager {
     this.touchSession(sessionId);
 
     // Restore storage state on first target for this session
-    if (this.storageStateManager && session.targets.size === 1) {
+    if (this.storageStateConfig?.enabled && session.targets.size === 1) {
       try {
+        const manager = new StorageStateManager();
+        this.storageStateManagers.set(sessionId, manager);
         const filePath = this.getStorageStatePath(sessionId);
-        await this.storageStateManager.restore(page, this.cdpClient, filePath);
+        await manager.restore(page, this.cdpClient, filePath);
 
         // Start watchdog for periodic auto-save
         const intervalMs = this.storageStateConfig?.watchdogIntervalMs || 30000;
-        this.storageStateManager.startWatchdog(page, this.cdpClient, {
+        manager.startWatchdog(page, this.cdpClient, {
           intervalMs,
           filePath,
         });
@@ -586,8 +590,11 @@ export class SessionManager {
    * Get the storage state file path for a session
    */
   private getStorageStatePath(sessionId: string): string {
+    if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+      throw new Error(`Invalid sessionId for storage path: ${sessionId}`);
+    }
     const dir = this.storageStateConfig?.dir || '.openchrome/storage-state';
-    return `${dir}/${sessionId}.json`;
+    return path.join(dir, `${sessionId}.json`);
   }
 
   /**
