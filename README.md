@@ -47,6 +47,37 @@ AI:  [8 parallel workers, all sites simultaneously]
 
 ---
 
+## Guided, Not Guessing
+
+**Ultrafast, token-friendly MCP server.**
+
+AI agents using Playwright spend most of their time **wandering** — retrying failed selectors, fighting bot detection, recovering from stale refs. Every retry is an LLM inference call. Every wrong turn burns tokens.
+
+OpenChrome's hint engine watches every tool call and injects real-time guidance:
+
+```
+AI calls click_element → fails (ref expired)
+  └─ Hint: "Refs expire after page changes. Use read_page for fresh refs."
+
+AI calls find → find → find (3x same tool)
+  └─ Hint: "find called 3+ times. Try javascript_tool for a targeted approach."
+
+AI calls navigate → lands on login page
+  └─ Hint: "Login page detected. Use fill_form for credentials."
+
+AI calls form_input → form_input → form_input
+  └─ Hint: "Use fill_form({fields:{...}}) for multiple fields in one call."
+```
+
+The engine learns, too. When it sees an error resolved by a specific tool 3+ times, it promotes that into a permanent rule — across sessions.
+
+```
+Playwright:    agent guesses → fails → retries → guesses again    (~20 LLM calls)
+OpenChrome:    agent acts  → hint  → correct action               (~3 LLM calls)
+```
+
+---
+
 ## Quick Start
 
 ```bash
