@@ -2,12 +2,15 @@
  * Session Manager - Manages lifecycle of parallel Claude Code sessions
  */
 
+import path from 'path';
 import { Page, Target } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent } from './types/session';
 import { CDPClient, getCDPClient } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
+import { StorageStateManager } from './storage-state';
+import { StorageStateConfig } from './config';
 
 // Helper to get target ID (internal puppeteer property)
 function getTargetId(target: Target): string {
@@ -25,6 +28,8 @@ export interface SessionManagerConfig {
   maxSessions?: number;
   /** Use connection pool for page management (default: true) */
   useConnectionPool?: boolean;
+  /** Storage state persistence config (default: disabled) */
+  storageState?: StorageStateConfig;
 }
 
 export interface SessionManagerStats {
@@ -44,6 +49,7 @@ const DEFAULT_CONFIG: Required<SessionManagerConfig> = {
   autoCleanup: true,
   maxSessions: 100,
   useConnectionPool: true,
+  storageState: { enabled: false },
 };
 
 export class SessionManager {
@@ -53,6 +59,8 @@ export class SessionManager {
   private connectionPool: CDPConnectionPool | null = null;
   private queueManager: RequestQueueManager;
   private eventListeners: ((event: SessionEvent) => void)[] = [];
+  private storageStateManagers = new Map<string, StorageStateManager>();
+  private storageStateConfig: StorageStateConfig | null = null;
 
   // TTL & Stats
   private config: Required<SessionManagerConfig>;
@@ -73,6 +81,11 @@ export class SessionManager {
 
     if (this.config.autoCleanup) {
       this.startAutoCleanup();
+    }
+
+    // Store storage state config if enabled
+    if (this.config.storageState?.enabled) {
+      this.storageStateConfig = this.config.storageState;
     }
   }
 
@@ -242,6 +255,25 @@ export class SessionManager {
       return;
     }
 
+    // Save storage state before cleanup (save first, then stop watchdog)
+    const manager = this.storageStateManagers.get(sessionId);
+    if (manager) {
+      try {
+        // Final save before stopping watchdog
+        for (const tid of session.targets) {
+          const p = await this.cdpClient.getPageByTargetId(tid);
+          if (p) {
+            await manager.save(p, this.cdpClient, this.getStorageStatePath(sessionId));
+            break;
+          }
+        }
+      } catch {
+        // Best-effort: don't block deletion on storage state errors
+      }
+      manager.stopWatchdog();
+      this.storageStateManagers.delete(sessionId);
+    }
+
     // Release or close all pages for this session
     for (const targetId of session.targets) {
       try {
@@ -335,6 +367,26 @@ export class SessionManager {
     });
 
     this.touchSession(sessionId);
+
+    // Restore storage state on first target for this session
+    if (this.storageStateConfig?.enabled && session.targets.size === 1) {
+      try {
+        const manager = new StorageStateManager();
+        this.storageStateManagers.set(sessionId, manager);
+        const filePath = this.getStorageStatePath(sessionId);
+        await manager.restore(page, this.cdpClient, filePath);
+
+        // Start watchdog for periodic auto-save
+        const intervalMs = this.storageStateConfig?.watchdogIntervalMs || 30000;
+        manager.startWatchdog(page, this.cdpClient, {
+          intervalMs,
+          filePath,
+        });
+      } catch {
+        // Best-effort: don't block session creation on storage state errors
+      }
+    }
+
     return { targetId, page };
   }
 
@@ -532,6 +584,17 @@ export class SessionManager {
    */
   get sessionCount(): number {
     return this.sessions.size;
+  }
+
+  /**
+   * Get the storage state file path for a session
+   */
+  private getStorageStatePath(sessionId: string): string {
+    if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+      throw new Error(`Invalid sessionId for storage path: ${sessionId}`);
+    }
+    const dir = this.storageStateConfig?.dir || '.openchrome/storage-state';
+    return path.join(dir, `${sessionId}.json`);
   }
 
   /**
