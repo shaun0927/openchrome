@@ -205,6 +205,81 @@ oc doctor                   # Diagnose issues
 
 ---
 
+## DOM Mode (Token Efficient)
+
+`read_page` supports two output modes:
+
+| Mode | Output | Tokens | Use Case |
+|------|--------|--------|----------|
+| `ax` (default) | Accessibility tree with `ref_N` IDs | Baseline | Screen readers, semantic analysis |
+| `dom` | Compact DOM with `backendNodeId` | **~5-10x fewer** | Click, fill, extract — most tasks |
+
+**DOM mode example:**
+```
+read_page tabId="tab1" mode="dom"
+
+[page_stats] url: https://example.com | title: Example | scroll: 0,0 | viewport: 1920x1080
+
+[142]<input type="search" placeholder="Search..." aria-label="Search"/>
+[156]<button type="submit"/>Search
+[289]<a href="/home"/>Home
+[352]<h1/>Welcome to Example
+```
+
+DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` IDs which are cleared on each AX-mode `read_page` call.
+
+---
+
+## Stable Selectors
+
+Action tools that accept a `ref` parameter (`form_input`, `computer`, etc.) support three identifier formats:
+
+| Format | Example | Source |
+|--------|---------|--------|
+| `ref_N` | `ref_5` | From `read_page` AX mode (ephemeral) |
+| Raw integer | `142` | From `read_page` DOM mode (stable) |
+| `node_N` | `node_142` | Explicit prefix form (stable) |
+
+**Backward compatible** — existing `ref_N` workflows work unchanged. DOM mode's `backendNodeId` eliminates "ref not found" errors caused by stale references.
+
+---
+
+## Session Persistence
+
+Headless mode (`--headless-shell`) doesn't persist cookies across restarts. Enable storage state persistence to maintain authenticated sessions:
+
+```bash
+oc serve --persist-storage                         # Enable persistence
+oc serve --persist-storage --storage-dir ./state    # Custom directory
+```
+
+Cookies and localStorage are saved atomically every 30 seconds and restored on session creation.
+
+---
+
+## Benchmarks
+
+Measure token efficiency and parallel performance:
+
+```bash
+npm run benchmark                                    # AX vs DOM token efficiency (interactive)
+npm run benchmark:ci                                 # AX vs DOM with JSON + regression detection
+npx ts-node tests/benchmark/run-parallel.ts          # 7 parallel benchmark categories
+```
+
+**Parallel benchmark categories:**
+
+| Category | What It Measures |
+|----------|-----------------|
+| Multi-step interaction | Form fill + click sequences across N parallel pages |
+| Batch JS execution | N × `javascript_tool` vs 1 × `batch_execute` |
+| Streaming collection | Blocking vs `workflow_collect_partial` |
+| Init overhead | Sequential `tabs_create` vs batch `workflow_init` |
+| Fault tolerance | Circuit breaker recovery speed |
+| Scalability curve | Speedup efficiency at 1–50x concurrency |
+
+---
+
 ## Development
 
 ```bash
