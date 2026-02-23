@@ -259,7 +259,7 @@ const handler: ToolHandler = async (
             type: 'text',
             text:
               output +
-              '\n\n[Output truncated. Use smaller depth or ref_id to focus on specific element.]',
+              '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]',
           },
         ],
       };
