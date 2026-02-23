@@ -11,7 +11,7 @@ import { serializeDOM } from '../dom';
 const definition: MCPToolDefinition = {
   name: 'read_page',
   description:
-    'Get page content. Default mode "ax" returns accessibility tree with ref_N identifiers. Mode "dom" returns compact DOM with backendNodeId identifiers (~5-10x fewer tokens).',
+    'Get page content. Default mode "ax" returns accessibility tree with ref_N identifiers. Mode "dom" returns compact DOM (~5-10x fewer tokens). Mode "css" returns CSS diagnostic info (variables, computed styles, framework detection) — use this BEFORE javascript_tool for style inspection or visual debugging.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -32,10 +32,14 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Reference ID of a parent element to read from',
       },
+      selector: {
+        type: 'string',
+        description: '(css mode only) CSS selector to inspect specific elements. If omitted, inspects all elements with visual properties.',
+      },
       mode: {
         type: 'string',
-        enum: ['ax', 'dom'],
-        description: 'Output mode: "ax" for accessibility tree (default), "dom" for compact DOM representation with ~5-10x fewer tokens',
+        enum: ['ax', 'dom', 'css'],
+        description: 'Output mode: "ax" for accessibility tree (default), "dom" for compact DOM, "css" for CSS diagnostics (variables, computed styles, framework detection)',
       },
     },
     required: ['tabId'],
@@ -76,21 +80,178 @@ const handler: ToolHandler = async (
     const page = await sessionManager.getPage(sessionId, tabId);
     if (!page) {
       return {
-        content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
+        content: [{ type: 'text', text: `Error: Tab ${tabId} not found. Hint: The tab may have been closed or the session expired. Use navigate() to open a new tab.` }],
         isError: true,
       };
     }
 
     const cdpClient = sessionManager.getCDPClient();
 
-    // DOM serialization mode
+    // Mode dispatch
     const mode = (args.mode as string) || 'ax';
-    if (mode !== 'ax' && mode !== 'dom') {
+    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
       return {
-        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax" or "dom".` }],
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
         isError: true,
       };
     }
+
+    // CSS diagnostic mode — extracts computed styles, CSS variables, and framework info
+    if (mode === 'css') {
+      const targetSelector = args.selector as string | undefined;
+      const cssResult = await page.evaluate((sel: string | undefined) => {
+        const output: {
+          cssVariables: Record<string, string>;
+          framework: { css: string; js: string };
+          elements: Array<{
+            selector: string;
+            count: number;
+            sample: Record<string, string>;
+            pseudoBefore: boolean;
+            pseudoAfter: boolean;
+          }>;
+        } = { cssVariables: {}, framework: { css: 'unknown', js: 'unknown' }, elements: [] };
+
+        // 1. Extract CSS custom properties from :root
+        try {
+          const rootStyles = getComputedStyle(document.documentElement);
+          for (const sheet of document.styleSheets) {
+            try {
+              for (const rule of sheet.cssRules) {
+                if (rule instanceof CSSStyleRule && (rule.selectorText === ':root' || rule.selectorText === ':root, :host')) {
+                  for (let i = 0; i < rule.style.length; i++) {
+                    const prop = rule.style[i];
+                    if (prop.startsWith('--')) {
+                      output.cssVariables[prop] = rootStyles.getPropertyValue(prop).trim();
+                    }
+                  }
+                }
+              }
+            } catch { /* cross-origin stylesheet */ }
+          }
+        } catch { /* no stylesheets */ }
+
+        // 2. Framework detection
+        const html = document.documentElement;
+        // CSS framework
+        if (document.querySelector('[class*="tw-"]') || document.querySelector('style[data-precedence]') ||
+            html.className.match(/dark|light/) && document.querySelector('[class*="flex"]')) {
+          const hasTwV4 = !!document.querySelector('style[data-precedence]');
+          output.framework.css = hasTwV4 ? 'tailwind-v4' : 'tailwind';
+        } else if (document.querySelector('[class*="css-"]')) {
+          output.framework.css = 'css-in-js (emotion/styled-components)';
+        } else if (document.querySelector('[class*="MuiBox"]')) {
+          output.framework.css = 'material-ui';
+        }
+        // JS framework
+        if ((document as any).__next_f || document.getElementById('__next')) {
+          output.framework.js = 'next.js';
+        } else if ((window as any).__NUXT__) {
+          output.framework.js = 'nuxt';
+        } else if (document.querySelector('[data-reactroot]') || (window as any).__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+          output.framework.js = 'react';
+        } else if ((window as any).__VUE__) {
+          output.framework.js = 'vue';
+        }
+
+        // 3. Inspect elements with visual properties
+        const VISUAL_PROPS = [
+          'borderRadius', 'boxShadow', 'clipPath', 'overflow', 'opacity',
+          'backdropFilter', 'outline', 'border', 'background',
+        ] as const;
+        const DEFAULT_VALUES: Record<string, string[]> = {
+          borderRadius: ['0px'],
+          boxShadow: ['none'],
+          clipPath: ['none'],
+          overflow: ['visible'],
+          opacity: ['1'],
+          backdropFilter: ['none'],
+          outline: ['none', 'rgb(0, 0, 0) none 0px'],
+          border: ['0px none rgb(0, 0, 0)', '0px'],
+          background: ['rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box border-box', 'rgba(0, 0, 0, 0)'],
+        };
+
+        const elements = sel ? document.querySelectorAll(sel) : document.querySelectorAll('*');
+        const seen = new Map<string, { count: number; sample: Record<string, string>; pseudoBefore: boolean; pseudoAfter: boolean }>();
+
+        for (const el of elements) {
+          if (!(el instanceof HTMLElement) || el.offsetWidth === 0) continue;
+          const s = getComputedStyle(el);
+          const interesting: Record<string, string> = {};
+          for (const prop of VISUAL_PROPS) {
+            const val = s[prop as any] as string;
+            const defaults = DEFAULT_VALUES[prop] || [];
+            if (val && !defaults.includes(val)) {
+              interesting[prop] = val.length > 80 ? val.substring(0, 80) + '...' : val;
+            }
+          }
+          if (Object.keys(interesting).length === 0) continue;
+
+          // Build a representative selector
+          const tag = el.tagName.toLowerCase();
+          const classes = Array.from(el.classList).slice(0, 3).join('.');
+          const key = classes ? `${tag}.${classes}` : tag;
+
+          const before = getComputedStyle(el, '::before');
+          const after = getComputedStyle(el, '::after');
+          const hasBefore = before.content !== 'none' && before.content !== '""' && before.content !== '';
+          const hasAfter = after.content !== 'none' && after.content !== '""' && after.content !== '';
+
+          if (seen.has(key)) {
+            seen.get(key)!.count++;
+          } else {
+            seen.set(key, { count: 1, sample: interesting, pseudoBefore: hasBefore, pseudoAfter: hasAfter });
+          }
+        }
+
+        // Sort by count descending and limit to top 30
+        const sorted = [...seen.entries()]
+          .sort((a, b) => b[1].count - a[1].count)
+          .slice(0, 30);
+        for (const [selector, data] of sorted) {
+          output.elements.push({
+            selector, count: data.count, sample: data.sample,
+            pseudoBefore: data.pseudoBefore, pseudoAfter: data.pseudoAfter,
+          });
+        }
+
+        return output;
+      }, targetSelector);
+
+      // Format output
+      const lines: string[] = ['[CSS Diagnostic Report]', ''];
+
+      lines.push(`Framework: CSS=${cssResult.framework.css}, JS=${cssResult.framework.js}`);
+      lines.push('');
+
+      const varEntries = Object.entries(cssResult.cssVariables);
+      if (varEntries.length > 0) {
+        lines.push(`CSS Variables (${varEntries.length}):`);
+        for (const [k, v] of varEntries.slice(0, 40)) {
+          lines.push(`  ${k}: ${v}`);
+        }
+        if (varEntries.length > 40) lines.push(`  ... and ${varEntries.length - 40} more`);
+        lines.push('');
+      }
+
+      if (cssResult.elements.length > 0) {
+        lines.push(`Elements with visual styles (${cssResult.elements.length}):`);
+        for (const el of cssResult.elements) {
+          const pseudo = [el.pseudoBefore && '::before', el.pseudoAfter && '::after'].filter(Boolean).join(', ');
+          lines.push(`  ${el.selector} (x${el.count})${pseudo ? ` [${pseudo}]` : ''}`);
+          for (const [prop, val] of Object.entries(el.sample)) {
+            lines.push(`    ${prop}: ${val}`);
+          }
+        }
+      } else {
+        lines.push('No elements with notable visual styles found.');
+      }
+
+      return {
+        content: [{ type: 'text', text: lines.join('\n') }],
+      };
+    }
+
     if (mode === 'dom') {
       const refId = args.ref_id as string | undefined;
       const depth = args.depth as number | undefined;
