@@ -108,6 +108,19 @@ const handler: ToolHandler = async (
       };
     }
 
+    // Resolve ref_id to backendDOMNodeId if provided (AX mode subtree scoping)
+    const refIdParam = args.ref_id as string | undefined;
+    let scopedBackendNodeId: number | undefined;
+    if (refIdParam) {
+      scopedBackendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, refIdParam);
+      if (scopedBackendNodeId === undefined) {
+        return {
+          content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
+          isError: true,
+        };
+      }
+    }
+
     // Get the accessibility tree
     const { nodes } = await cdpClient.send<{ nodes: AXNode[] }>(
       page,
@@ -215,11 +228,23 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Start from root nodes
-    const rootNodes = nodes.filter(
-      (n) => !nodes.some((other) => other.childIds?.includes(n.nodeId))
-    );
-    for (const root of rootNodes) {
+    // Start from root nodes (or scoped subtree if ref_id provided)
+    let startNodes: AXNode[];
+    if (scopedBackendNodeId !== undefined) {
+      const scopedNode = nodes.find((n) => n.backendDOMNodeId === scopedBackendNodeId);
+      if (!scopedNode) {
+        return {
+          content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
+          isError: true,
+        };
+      }
+      startNodes = [scopedNode];
+    } else {
+      startNodes = nodes.filter(
+        (n) => !nodes.some((other) => other.childIds?.includes(n.nodeId))
+      );
+    }
+    for (const root of startNodes) {
       formatNode(root, 0);
     }
 

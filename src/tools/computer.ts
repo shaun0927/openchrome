@@ -117,14 +117,31 @@ const handler: ToolHandler = async (
       }
 
       case 'left_click': {
-        if (!coordinate) {
+        let clickCoord: [number, number] | undefined = coordinate;
+        let refInfo = '';
+
+        if (ref && !coordinate) {
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          clickCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
+        }
+
+        if (!clickCoord) {
           return {
             content: [{ type: 'text', text: 'Error: coordinate is required for left_click' }],
             isError: true,
           };
         }
 
-        const leftClickValidation = await validateCoordinates(page, coordinate[0], coordinate[1]);
+        if (refInfo) {
+          await page.mouse.click(clickCoord[0], clickCoord[1]);
+          return {
+            content: [{ type: 'text', text: `Clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
+          };
+        }
+
+        const leftClickValidation = await validateCoordinates(page, clickCoord[0], clickCoord[1]);
         if (!leftClickValidation.valid) {
           return {
             content: [{ type: 'text', text: `Error: ${leftClickValidation.warning}` }],
@@ -132,11 +149,11 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.mouse.click(coordinate[0], coordinate[1]);
+        await page.mouse.click(clickCoord[0], clickCoord[1]);
 
         const resultText = leftClickValidation.warning
-          ? `Clicked at (${coordinate[0]}, ${coordinate[1]}). Warning: ${leftClickValidation.warning}`
-          : `Clicked at (${coordinate[0]}, ${coordinate[1]})`;
+          ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${leftClickValidation.warning}`
+          : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: resultText }],
@@ -144,14 +161,31 @@ const handler: ToolHandler = async (
       }
 
       case 'right_click': {
-        if (!coordinate) {
+        let clickCoord: [number, number] | undefined = coordinate;
+        let refInfo = '';
+
+        if (ref && !coordinate) {
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          clickCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
+        }
+
+        if (!clickCoord) {
           return {
             content: [{ type: 'text', text: 'Error: coordinate is required for right_click' }],
             isError: true,
           };
         }
 
-        const rightClickValidation = await validateCoordinates(page, coordinate[0], coordinate[1]);
+        if (refInfo) {
+          await page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' });
+          return {
+            content: [{ type: 'text', text: `Right-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
+          };
+        }
+
+        const rightClickValidation = await validateCoordinates(page, clickCoord[0], clickCoord[1]);
         if (!rightClickValidation.valid) {
           return {
             content: [{ type: 'text', text: `Error: ${rightClickValidation.warning}` }],
@@ -159,11 +193,11 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.mouse.click(coordinate[0], coordinate[1], { button: 'right' });
+        await page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' });
 
         const rightClickText = rightClickValidation.warning
-          ? `Right-clicked at (${coordinate[0]}, ${coordinate[1]}). Warning: ${rightClickValidation.warning}`
-          : `Right-clicked at (${coordinate[0]}, ${coordinate[1]})`;
+          ? `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${rightClickValidation.warning}`
+          : `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: rightClickText }],
@@ -171,7 +205,17 @@ const handler: ToolHandler = async (
       }
 
       case 'double_click': {
-        if (!coordinate) {
+        let clickCoord: [number, number] | undefined = coordinate;
+        let refInfo = '';
+
+        if (ref && !coordinate) {
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          clickCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
+        }
+
+        if (!clickCoord) {
           return {
             content: [
               { type: 'text', text: 'Error: coordinate is required for double_click' },
@@ -180,7 +224,14 @@ const handler: ToolHandler = async (
           };
         }
 
-        const doubleClickValidation = await validateCoordinates(page, coordinate[0], coordinate[1]);
+        if (refInfo) {
+          await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 });
+          return {
+            content: [{ type: 'text', text: `Double-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
+          };
+        }
+
+        const doubleClickValidation = await validateCoordinates(page, clickCoord[0], clickCoord[1]);
         if (!doubleClickValidation.valid) {
           return {
             content: [{ type: 'text', text: `Error: ${doubleClickValidation.warning}` }],
@@ -188,11 +239,11 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.mouse.click(coordinate[0], coordinate[1], { clickCount: 2 });
+        await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 });
 
         const doubleClickText = doubleClickValidation.warning
-          ? `Double-clicked at (${coordinate[0]}, ${coordinate[1]}). Warning: ${doubleClickValidation.warning}`
-          : `Double-clicked at (${coordinate[0]}, ${coordinate[1]})`;
+          ? `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${doubleClickValidation.warning}`
+          : `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: doubleClickText }],
@@ -200,7 +251,17 @@ const handler: ToolHandler = async (
       }
 
       case 'triple_click': {
-        if (!coordinate) {
+        let clickCoord: [number, number] | undefined = coordinate;
+        let refInfo = '';
+
+        if (ref && !coordinate) {
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          clickCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
+        }
+
+        if (!clickCoord) {
           return {
             content: [
               { type: 'text', text: 'Error: coordinate is required for triple_click' },
@@ -209,7 +270,14 @@ const handler: ToolHandler = async (
           };
         }
 
-        const tripleClickValidation = await validateCoordinates(page, coordinate[0], coordinate[1]);
+        if (refInfo) {
+          await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 });
+          return {
+            content: [{ type: 'text', text: `Triple-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
+          };
+        }
+
+        const tripleClickValidation = await validateCoordinates(page, clickCoord[0], clickCoord[1]);
         if (!tripleClickValidation.valid) {
           return {
             content: [{ type: 'text', text: `Error: ${tripleClickValidation.warning}` }],
@@ -217,11 +285,11 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.mouse.click(coordinate[0], coordinate[1], { clickCount: 3 });
+        await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 });
 
         const tripleClickText = tripleClickValidation.warning
-          ? `Triple-clicked at (${coordinate[0]}, ${coordinate[1]}). Warning: ${tripleClickValidation.warning}`
-          : `Triple-clicked at (${coordinate[0]}, ${coordinate[1]})`;
+          ? `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${tripleClickValidation.warning}`
+          : `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: tripleClickText }],
@@ -229,14 +297,31 @@ const handler: ToolHandler = async (
       }
 
       case 'hover': {
-        if (!coordinate) {
+        let hoverCoord: [number, number] | undefined = coordinate;
+        let refInfo = '';
+
+        if (ref && !coordinate) {
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          hoverCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
+        }
+
+        if (!hoverCoord) {
           return {
             content: [{ type: 'text', text: 'Error: coordinate is required for hover' }],
             isError: true,
           };
         }
 
-        const hoverValidation = await validateCoordinates(page, coordinate[0], coordinate[1]);
+        if (refInfo) {
+          await page.mouse.move(hoverCoord[0], hoverCoord[1]);
+          return {
+            content: [{ type: 'text', text: `Hovered element ${ref} at (${hoverCoord[0]}, ${hoverCoord[1]})` }],
+          };
+        }
+
+        const hoverValidation = await validateCoordinates(page, hoverCoord[0], hoverCoord[1]);
         if (!hoverValidation.valid) {
           return {
             content: [{ type: 'text', text: `Error: ${hoverValidation.warning}` }],
@@ -244,11 +329,11 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.mouse.move(coordinate[0], coordinate[1]);
+        await page.mouse.move(hoverCoord[0], hoverCoord[1]);
 
         const hoverText = hoverValidation.warning
-          ? `Hovered at (${coordinate[0]}, ${coordinate[1]}). Warning: ${hoverValidation.warning}`
-          : `Hovered at (${coordinate[0]}, ${coordinate[1]})`;
+          ? `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]}). Warning: ${hoverValidation.warning}`
+          : `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: hoverText }],
@@ -420,6 +505,54 @@ const handler: ToolHandler = async (
     };
   }
 };
+
+/**
+ * Resolve a ref to screen coordinates, scrolling the element into view first.
+ * Returns either { coord } on success or { error } on failure.
+ */
+async function resolveRefToCoordinates(
+  sessionId: string,
+  tabId: string,
+  ref: string,
+  page: import('puppeteer-core').Page,
+  sessionManager: ReturnType<typeof getSessionManager>
+): Promise<{ coord: [number, number]; error?: never } | { coord?: never; error: MCPResult }> {
+  const refIdManager = getRefIdManager();
+  const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+
+  if (backendNodeId === undefined) {
+    return {
+      error: {
+        content: [{ type: 'text', text: `Error: Element ref or node ID '${ref}' not found` }],
+        isError: true,
+      },
+    };
+  }
+
+  const cdpClient = sessionManager.getCDPClient();
+  try {
+    await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
+      backendNodeId,
+    });
+
+    const { model } = await cdpClient.send<{
+      model: { content: number[] };
+    }>(page, 'DOM.getBoxModel', {
+      backendNodeId,
+    });
+
+    const x = (model.content[0] + model.content[2]) / 2;
+    const y = (model.content[1] + model.content[5]) / 2;
+    return { coord: [Math.round(x), Math.round(y)] };
+  } catch (e) {
+    return {
+      error: {
+        content: [{ type: 'text', text: `Error: Could not get position for ${ref}: ${e instanceof Error ? e.message : String(e)}` }],
+        isError: true,
+      },
+    };
+  }
+}
 
 /**
  * Validate and check coordinates against viewport bounds
