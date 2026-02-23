@@ -10,8 +10,8 @@
  *     acquisition, cookie bridging, and parallel navigation)
  */
 
-import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
-import { measureCall } from '../utils';
+import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
+import { measureCall, createCounters } from '../utils';
 
 const FIXTURE_URLS = [
   'file://fixtures/complex-page.html',
@@ -85,12 +85,13 @@ export function createBatchInitTask(concurrency: number): BenchmarkTask {
     description: `Create ${concurrency} workers with single workflow_init (DNS + batch + cookies)`,
     async run(adapter: MCPAdapter): Promise<TaskResult> {
       const startTime = Date.now();
-      const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
+      const counters = createCounters();
 
       try {
         const urls = generateUrls(concurrency);
 
         // Single workflow_init does everything
+        const initStart = Date.now();
         const initArgs = {
           name: `init-benchmark-${concurrency}x`,
           workers: urls.map((url, i) => ({
@@ -100,19 +101,29 @@ export function createBatchInitTask(concurrency: number): BenchmarkTask {
           })),
         };
         measureCall(await adapter.callTool('workflow_init', initArgs), initArgs, counters);
+        const initDuration = Date.now() - initStart;
 
-        return {
+        const wallTimeMs = Date.now() - startTime;
+        const result: ParallelTaskResult = {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
-          wallTimeMs: Date.now() - startTime,
+          wallTimeMs,
+          serverTimingMs: counters.serverTimingMs,
+          speedupFactor: 0, // computed by report layer
+          initOverheadMs: initDuration,
+          parallelEfficiency: 0, // computed by report layer
+          timeToFirstResult: 0,
+          toolCallsPerWorker: counters.toolCallCount / concurrency,
+          phaseTimings: { initMs: initDuration, executionMs: 0, collectMs: 0 },
           metadata: {
             concurrency,
             mode: 'parallel',
             initMethod: 'workflow_init (DNS + acquireBatch + cookieBridge)',
           },
         };
+        return result;
       } catch (error) {
         return {
           success: false,
