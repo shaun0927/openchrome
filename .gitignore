@@ -47,6 +47,9 @@ extension-unpacked/
 # AI session/orchestration state
 .omc/
 
+# Claude Code ephemeral worktrees
+.claude/worktrees/
+
 # User-local Claude Code workflows (personal skills, agents, commands)
 CLAUDE.md
 

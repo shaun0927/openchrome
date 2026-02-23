@@ -50,18 +50,18 @@ Chrome-Parallel MCP 서버를 활용한 브라우저 오케스트레이션 스�
 
 | Tool | Purpose |
 |------|---------|
-| `mcp__chrome-parallel__navigate` | URL 이동 |
-| `mcp__chrome-parallel__computer` | 클릭, 타이핑, 스크린샷 |
-| `mcp__chrome-parallel__read_page` | 페이지 구조 읽기 |
-| `mcp__chrome-parallel__find` | 요소 검색 |
-| `mcp__chrome-parallel__form_input` | 폼 입력 |
-| `mcp__chrome-parallel__javascript_tool` | JS 실행 |
-| `mcp__chrome-parallel__tabs_create_mcp` | 새 탭 생성 |
-| `mcp__chrome-parallel__tabs_context_mcp` | 탭 컨텍스트 조회 |
-| `mcp__chrome-parallel__worker_create` | 워커 생성 |
-| `mcp__chrome-parallel__worker_list` | 워커 목록 |
-| `mcp__chrome-parallel__worker_delete` | 워커 삭제 |
-| `mcp__chrome-parallel__network` | 네트워크 조건 설정 |
+| `mcp__openchrome__navigate` | URL 이동 |
+| `mcp__openchrome__computer` | 클릭, 타이핑, 스크린샷 |
+| `mcp__openchrome__read_page` | 페이지 구조 읽기 |
+| `mcp__openchrome__find` | 요소 검색 |
+| `mcp__openchrome__form_input` | 폼 입력 |
+| `mcp__openchrome__javascript_tool` | JS 실행 |
+| `mcp__openchrome__tabs_create_mcp` | 새 탭 생성 |
+| `mcp__openchrome__tabs_context_mcp` | 탭 컨텍스트 조회 |
+| `mcp__openchrome__worker_create` | 워커 생성 |
+| `mcp__openchrome__worker_list` | 워커 목록 |
+| `mcp__openchrome__worker_delete` | 워커 삭제 |
+| `mcp__openchrome__network` | 네트워크 조건 설정 |
 
 ---
 

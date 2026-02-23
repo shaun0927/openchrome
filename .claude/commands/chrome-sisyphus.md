@@ -43,7 +43,7 @@ When `/chrome-sisyphus` is invoked, follow this orchestration protocol:
 ```markdown
 3. **Create Browser Tabs**
    For each worker:
-   - Call `mcp__chrome-parallel__tabs_create_mcp` to create a new tab
+   - Call `mcp__openchrome__tabs_create_mcp` to create a new tab
    - Store the tabId for the worker
 
 4. **Initialize Worker Scratchpads**
@@ -107,7 +107,7 @@ Decomposition result:
 
 For each worker, create a tab:
 ```
-mcp__chrome-parallel__tabs_create_mcp
+mcp__openchrome__tabs_create_mcp
 → Returns: { tabId: "target-xxx" }
 ```
 

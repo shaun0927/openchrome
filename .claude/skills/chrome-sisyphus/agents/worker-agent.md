@@ -36,12 +36,12 @@ You are an autonomous browser automation worker.
 
 ## Available MCP Tools
 
-- mcp__chrome-parallel__navigate (url, tabId)
-- mcp__chrome-parallel__computer (action, tabId, coordinate, text)
-- mcp__chrome-parallel__read_page (tabId, filter)
-- mcp__chrome-parallel__find (query, tabId)
-- mcp__chrome-parallel__form_input (ref, value, tabId)
-- mcp__chrome-parallel__javascript_tool (action, text, tabId)
+- mcp__openchrome__navigate (url, tabId)
+- mcp__openchrome__computer (action, tabId, coordinate, text)
+- mcp__openchrome__read_page (tabId, filter)
+- mcp__openchrome__find (query, tabId)
+- mcp__openchrome__form_input (ref, value, tabId)
+- mcp__openchrome__javascript_tool (action, text, tabId)
 
 ---
 
