@@ -1180,7 +1180,23 @@ let sessionManagerInstance: SessionManager | null = null;
 
 export function getSessionManager(): SessionManager {
   if (!sessionManagerInstance) {
-    sessionManagerInstance = new SessionManager();
+    // Read storage state config from environment variables
+    // These are set by CLI (cli/index.ts) before server startup
+    const storageState = process.env.OC_PERSIST_STORAGE === '1'
+      ? {
+          enabled: true as const,
+          dir: process.env.OC_STORAGE_DIR || undefined,
+        }
+      : undefined;
+
+    sessionManagerInstance = new SessionManager(undefined, {
+      storageState,
+    });
   }
   return sessionManagerInstance;
+}
+
+/** Reset singleton for testing. Do not use in production code. */
+export function _resetSessionManagerForTesting(): void {
+  sessionManagerInstance = null;
 }
