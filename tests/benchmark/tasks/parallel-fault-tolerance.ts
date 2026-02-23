@@ -1,6 +1,13 @@
 import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
 import { measureCall } from '../utils';
 
+/**
+ * Number of retries a stale worker performs without circuit breaker.
+ * Shared between createNoFaultToleranceTask and createCircuitBreakerTask
+ * to calculate savedCalls accurately.
+ */
+export const STALE_RETRIES_WITHOUT_CIRCUIT_BREAKER = 7;
+
 const FIXTURE_URLS = [
   'file://fixtures/complex-page.html',
   'file://fixtures/form-page.html',
@@ -22,7 +29,7 @@ const FIXTURE_URLS = [
  */
 export function createNoFaultToleranceTask(concurrency: number): BenchmarkTask {
   const staleWorkerIndex = 0; // First worker is stale
-  const staleRetries = 7; // Stale worker sends 7 identical updates
+  const staleRetries = STALE_RETRIES_WITHOUT_CIRCUIT_BREAKER;
 
   return {
     name: `sequential-fault-${concurrency}x`,
@@ -191,7 +198,7 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
             mode: 'circuit-breaker',
             staleWorkers: 1,
             maxStaleIterations,
-            savedCalls: 7 - maxStaleIterations, // calls saved by early termination
+            savedCalls: STALE_RETRIES_WITHOUT_CIRCUIT_BREAKER - maxStaleIterations,
             normalWorkersPreserved: concurrency - 1,
           },
         };

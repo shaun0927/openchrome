@@ -58,8 +58,11 @@ function parseArgs(argv: string[]): {
 }
 
 async function main(): Promise<void> {
-  const { category, runs, json } = parseArgs(process.argv);
+  const { category, mode, runs, json } = parseArgs(process.argv);
 
+  if (mode === 'real') {
+    console.error('Warning: --mode real is not yet supported. Using stub adapter.');
+  }
   const adapter = new OpenChromeStubAdapter({ mode: 'ax' });
   const runner = new BenchmarkRunner({ runsPerTask: runs });
 

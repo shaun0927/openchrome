@@ -120,9 +120,10 @@ export class OpenChromeRealAdapter implements MCPAdapter {
         if (!ready) reject(new Error(`MCP server exited with code ${code}`));
       });
 
-      setTimeout(() => {
+      const startupTimer = setTimeout(() => {
         if (!ready) reject(new Error(`MCP server startup timeout (${this.options.startupTimeoutMs}ms)`));
       }, this.options.startupTimeoutMs);
+      startupTimer.unref();
     });
   }
 
@@ -190,12 +191,13 @@ export class OpenChromeRealAdapter implements MCPAdapter {
       this.pending.set(id, { resolve, reject });
       this.process!.stdin!.write(JSON.stringify(request) + '\n');
 
-      setTimeout(() => {
+      const callTimer = setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
           reject(new Error(`Tool call "${method}" timed out after ${this.options.callTimeoutMs}ms`));
         }
       }, this.options.callTimeoutMs);
+      callTimer.unref();
     });
   }
 }

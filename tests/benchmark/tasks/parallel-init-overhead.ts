@@ -111,7 +111,6 @@ export function createBatchInitTask(concurrency: number): BenchmarkTask {
             concurrency,
             mode: 'parallel',
             initMethod: 'workflow_init (DNS + acquireBatch + cookieBridge)',
-            initOverheadMs: Date.now() - startTime,
           },
         };
       } catch (error) {

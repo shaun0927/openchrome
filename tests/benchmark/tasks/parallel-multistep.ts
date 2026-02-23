@@ -7,6 +7,11 @@
  * Sequential baseline: each page goes through the full 9-step interaction sequence one at a time.
  * Parallel (OpenChrome): workflow_init + N workers each perform the full sequence + workflow_collect.
  *
+ * NOTE: In stub mode, worker execution is sequential (single-threaded JS).
+ * The benchmark measures MCP tool-call overhead and protocol efficiency,
+ * not true wall-clock parallelism. The speedupFactor reflects call-count
+ * savings from the parallel protocol. Use --mode real for actual concurrency.
+ *
  * Key metrics:
  *   - toolCallCount: sequential = 9N, parallel = 9N + 2 (init + collect overhead)
  *   - wallTimeMs: parallel workers run concurrently, so should approach single-page latency
