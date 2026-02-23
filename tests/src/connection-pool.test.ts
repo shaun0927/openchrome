@@ -184,6 +184,8 @@ describe('CDPConnectionPool', () => {
       const inUseBefore = statsBeforeRelease.inUsePages;
 
       await pool.releasePage(page);
+      // releasePage is fire-and-forget — flush multi-step async cleanup
+      for (let i = 0; i < 10; i++) await Promise.resolve();
 
       const statsAfterRelease = pool.getStats();
       expect(statsAfterRelease.inUsePages).toBe(inUseBefore - 1);
@@ -197,6 +199,8 @@ describe('CDPConnectionPool', () => {
       await pool.initialize();
       const page = await pool.acquirePage();
       await pool.releasePage(page);
+      // releasePage is fire-and-forget — flush multi-step async cleanup
+      for (let i = 0; i < 10; i++) await Promise.resolve();
 
       expect(mockPage.goto).toHaveBeenCalledWith('about:blank', expect.any(Object));
       expect(mockPage.createCDPSession).toHaveBeenCalled();
@@ -220,7 +224,9 @@ describe('CDPConnectionPool', () => {
       const page3 = await smallPool.acquirePage();
 
       await smallPool.releasePage(page1);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
       await smallPool.releasePage(page2);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
 
       // Pool is now at max (2), third page should be closed
       await smallPool.releasePage(page3);
@@ -349,6 +355,8 @@ describe('CDPConnectionPool', () => {
       await pool.initialize();
       const page = await pool.acquirePage();
       await pool.releasePage(page);
+      // releasePage is fire-and-forget — flush multi-step async cleanup
+      for (let i = 0; i < 10; i++) await Promise.resolve();
 
       expect(mockCdpSession.send).toHaveBeenCalledWith('Network.clearBrowserCookies');
       expect(mockCdpSession.send).toHaveBeenCalledWith('Storage.clearDataForOrigin', {
@@ -369,6 +377,8 @@ describe('CDPConnectionPool', () => {
       await pool.initialize();
       const page = await pool.acquirePage();
       await pool.releasePage(page);
+      // releasePage is fire-and-forget — flush multi-step async cleanup
+      for (let i = 0; i < 10; i++) await Promise.resolve();
 
       // Should still clear cookies but NOT call Storage.clearDataForOrigin (no valid origin)
       expect(mockCdpSession.send).toHaveBeenCalledWith('Network.clearBrowserCookies');

@@ -15,6 +15,37 @@ jest.mock('../../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
+// Mock CDP singletons used by WorkflowEngine.initWorkflow()
+let batchPageCounter = 0;
+jest.mock('../../../src/cdp/connection-pool', () => ({
+  getCDPConnectionPool: jest.fn().mockReturnValue({
+    acquireBatch: jest.fn().mockImplementation((count: number) => {
+      return Promise.resolve(
+        Array.from({ length: count }, () => {
+          const id = `batch-target-${++batchPageCounter}`;
+          return {
+            target: () => ({ _targetId: id }),
+            goto: jest.fn().mockResolvedValue(null),
+            close: jest.fn().mockResolvedValue(undefined),
+            url: jest.fn().mockReturnValue('about:blank'),
+            on: jest.fn(),
+            off: jest.fn(),
+          };
+        })
+      );
+    }),
+    releasePage: jest.fn().mockResolvedValue(undefined),
+    initialize: jest.fn().mockResolvedValue(undefined),
+  }),
+}));
+
+jest.mock('../../../src/cdp/client', () => ({
+  getCDPClient: jest.fn().mockReturnValue({
+    findAuthenticatedPageTargetId: jest.fn().mockResolvedValue(null),
+    copyCookiesViaCDP: jest.fn().mockResolvedValue(0),
+  }),
+}));
+
 import { getSessionManager } from '../../../src/session-manager';
 
 describe('20+ Parallel Crawl Capability', () => {
@@ -390,11 +421,11 @@ describe('20+ Parallel Crawl Capability', () => {
         expect(call[0]).toBe(testSessionId);
       }
 
-      // All createTarget calls should use the same sessionId
-      const createTargetCalls = mockSessionManager.createTarget.mock.calls;
-      expect(createTargetCalls).toHaveLength(20);
+      // All registerExistingTarget calls should use the same sessionId
+      const registerCalls = mockSessionManager.registerExistingTarget.mock.calls;
+      expect(registerCalls).toHaveLength(20);
 
-      for (const call of createTargetCalls) {
+      for (const call of registerCalls) {
         expect(call[0]).toBe(testSessionId);
       }
     });
@@ -420,7 +451,7 @@ describe('20+ Parallel Crawl Capability', () => {
       // Verify the session manager was called exactly 20 times for workers
       // and 20 times for targets — not more (no duplication)
       expect(mockSessionManager.createWorker).toHaveBeenCalledTimes(20);
-      expect(mockSessionManager.createTarget).toHaveBeenCalledTimes(20);
+      expect(mockSessionManager.registerExistingTarget).toHaveBeenCalledTimes(20);
 
       // Verify all workers are stored in the single mock instance
       const workerStore = mockSessionManager.getWorkers();

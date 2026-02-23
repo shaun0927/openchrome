@@ -127,7 +127,7 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate or ref is required');
+      expect(result.content[0].text).toContain('coordinate is required');
     });
 
     test('rejects right_click without coordinates', async () => {
@@ -139,7 +139,7 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate or ref is required');
+      expect(result.content[0].text).toContain('coordinate is required');
     });
 
     test('rejects double_click without coordinates', async () => {
@@ -151,7 +151,7 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate or ref is required');
+      expect(result.content[0].text).toContain('coordinate is required');
     });
 
     test('handles click at origin (0, 0)', async () => {
@@ -206,7 +206,7 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate or ref is required');
+      expect(result.content[0].text).toContain('coordinate is required');
     });
   });
 
@@ -335,40 +335,17 @@ describe('ComputerTool', () => {
   });
 
   describe('Screenshot', () => {
-    test('returns base64 WebP image with size limits', async () => {
+    test('returns base64 PNG image', async () => {
       const handler = await getComputerHandler();
-
-      // Mock CDP send to return screenshot data
-      mockSessionManager.mockCDPClient.send.mockImplementation(async (_page: unknown, method: string) => {
-        if (method === 'Page.captureScreenshot') {
-          return { data: 'base64-encoded-image-data' };
-        }
-        return {};
-      });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
         action: 'screenshot',
       }) as { content: Array<{ type: string; data?: string; mimeType?: string }> };
 
-      // Should call CDP captureScreenshot with clip to ensure size limits
-      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
-        expect.anything(),
-        'Page.captureScreenshot',
-        expect.objectContaining({
-          format: 'webp',
-          quality: 60,
-          optimizeForSpeed: true,
-          clip: expect.objectContaining({
-            x: 0,
-            y: 0,
-            width: 1280, // Mock viewport width
-            height: 720, // Mock viewport height
-          }),
-        })
-      );
+      // Source uses page.screenshot({ encoding: 'base64', type: 'png' })
       expect(result.content[0].type).toBe('image');
-      expect(result.content[0].data).toBe('base64-encoded-image-data');
+      expect(result.content[0].data).toBe('base64-screenshot-data');
     });
 
     test('returns correct mime type', async () => {
@@ -379,26 +356,21 @@ describe('ComputerTool', () => {
         action: 'screenshot',
       }) as { content: Array<{ type: string; mimeType?: string }> };
 
-      expect(result.content[0].mimeType).toBe('image/webp');
+      expect(result.content[0].mimeType).toBe('image/png');
     });
 
-    test('resizes viewport when larger than max allowed', async () => {
+    test('calls page.screenshot with correct options', async () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      // Mock a large viewport (e.g., 4K display)
-      (page.viewport as jest.Mock).mockReturnValue({ width: 3840, height: 2160 });
 
       await handler(testSessionId, {
         tabId: testTargetId,
         action: 'screenshot',
       });
 
-      // Should have called setViewport to resize
-      expect(page.setViewport).toHaveBeenCalledWith({
-        width: 1920, // MAX_SCREENSHOT_WIDTH
-        height: 1080, // MAX_SCREENSHOT_HEIGHT
-        deviceScaleFactor: 1,
+      expect(page.screenshot).toHaveBeenCalledWith({
+        encoding: 'base64',
+        type: 'png',
       });
     });
   });
@@ -439,7 +411,7 @@ describe('ComputerTool', () => {
       });
     });
 
-    test('scroll falls back to JavaScript when mouse.wheel times out', async () => {
+    test('scroll propagates error when mouse.wheel fails', async () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
@@ -453,12 +425,11 @@ describe('ComputerTool', () => {
         action: 'scroll',
         coordinate: [500, 500],
         scroll_direction: 'down',
-      }) as { content: Array<{ type: string; text: string }> };
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      // Should have called evaluate as fallback
-      expect(page.evaluate).toHaveBeenCalled();
-      // Should indicate fallback was used
-      expect(result.content[0].text).toContain('JavaScript fallback');
+      // Error should be propagated
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('error');
     });
 
     test('scroll left', async () => {
@@ -682,14 +653,10 @@ describe('ComputerTool', () => {
 
     test('handles screenshot failure', async () => {
       const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      // Mock CDP send to throw for screenshot
-      mockSessionManager.mockCDPClient.send.mockImplementation(async (_page: unknown, method: string) => {
-        if (method === 'Page.captureScreenshot') {
-          throw new Error('Screenshot failed');
-        }
-        return {};
-      });
+      // Mock page.screenshot to throw
+      (page.screenshot as jest.Mock).mockRejectedValueOnce(new Error('Screenshot failed'));
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,

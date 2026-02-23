@@ -5,6 +5,64 @@
 
 /// <reference types="jest" />
 
+// ============================================================================
+// GLOBAL SAFETY NET: Prevent real Chrome connections during tests
+// These mocks are overridden by individual test files that provide their own.
+// Without this, singleton leakage between test files in the same Jest worker
+// can cause getCDPClient() or getSessionManager() to connect to a real Chrome
+// instance on port 9222, spawning hundreds of about:blank tabs.
+// ============================================================================
+
+// Block puppeteer-core from connecting to real Chrome
+jest.mock('puppeteer-core', () => {
+  const mockBrowser = {
+    isConnected: jest.fn().mockReturnValue(false),
+    disconnect: jest.fn().mockResolvedValue(undefined),
+    close: jest.fn().mockResolvedValue(undefined),
+    targets: jest.fn().mockReturnValue([]),
+    pages: jest.fn().mockResolvedValue([]),
+    newPage: jest.fn().mockRejectedValue(new Error('[TEST SAFETY] Real browser not available in tests')),
+    on: jest.fn(),
+    removeAllListeners: jest.fn(),
+    target: jest.fn().mockReturnValue({
+      createCDPSession: jest.fn().mockRejectedValue(new Error('[TEST SAFETY] Real CDP session not available')),
+    }),
+    wsEndpoint: jest.fn().mockReturnValue('ws://mock:9222'),
+  };
+
+  return {
+    __esModule: true,
+    default: {
+      connect: jest.fn().mockResolvedValue(mockBrowser),
+      launch: jest.fn().mockResolvedValue(mockBrowser),
+    },
+    connect: jest.fn().mockResolvedValue(mockBrowser),
+    launch: jest.fn().mockResolvedValue(mockBrowser),
+  };
+});
+
+// Block ChromeLauncher from launching real Chrome
+jest.mock('../src/chrome/launcher', () => ({
+  ChromeLauncher: jest.fn().mockImplementation(() => ({
+    ensureChrome: jest.fn().mockResolvedValue({
+      wsEndpoint: 'ws://mock:9222',
+      httpEndpoint: 'http://mock:9222',
+    }),
+    close: jest.fn().mockResolvedValue(undefined),
+    isConnected: jest.fn().mockReturnValue(false),
+  })),
+  getChromeLauncher: jest.fn().mockReturnValue({
+    ensureChrome: jest.fn().mockResolvedValue({
+      wsEndpoint: 'ws://mock:9222',
+      httpEndpoint: 'http://mock:9222',
+    }),
+    close: jest.fn().mockResolvedValue(undefined),
+    isConnected: jest.fn().mockReturnValue(false),
+  }),
+}));
+
+// ============================================================================
+
 // Mock Chrome API (for extension tests)
 const chromeMock = {
   tabs: {

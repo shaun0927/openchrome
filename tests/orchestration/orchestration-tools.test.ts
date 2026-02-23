@@ -19,6 +19,37 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
+// Mock CDP singletons used by WorkflowEngine.initWorkflow()
+let orchToolsBatchCounter = 0;
+jest.mock('../../src/cdp/connection-pool', () => ({
+  getCDPConnectionPool: jest.fn().mockReturnValue({
+    acquireBatch: jest.fn().mockImplementation((count: number) => {
+      return Promise.resolve(
+        Array.from({ length: count }, () => {
+          const id = `batch-target-${++orchToolsBatchCounter}`;
+          return {
+            target: () => ({ _targetId: id }),
+            goto: jest.fn().mockResolvedValue(null),
+            close: jest.fn().mockResolvedValue(undefined),
+            url: jest.fn().mockReturnValue('about:blank'),
+            on: jest.fn(),
+            off: jest.fn(),
+          };
+        })
+      );
+    }),
+    releasePage: jest.fn().mockResolvedValue(undefined),
+    initialize: jest.fn().mockResolvedValue(undefined),
+  }),
+}));
+
+jest.mock('../../src/cdp/client', () => ({
+  getCDPClient: jest.fn().mockReturnValue({
+    findAuthenticatedPageTargetId: jest.fn().mockResolvedValue(null),
+    copyCookiesViaCDP: jest.fn().mockResolvedValue(0),
+  }),
+}));
+
 // Mock the state manager to use test directory
 jest.mock('../../src/orchestration/state-manager', () => {
   const actual = jest.requireActual('../../src/orchestration/state-manager');
@@ -97,7 +128,7 @@ describe('Orchestration MCP Tools', () => {
 
   describe('Tool Registration', () => {
     test('should register all 6 orchestration tools', () => {
-      expect(mockServer.registerTool).toHaveBeenCalledTimes(6);
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(8);
       expect(toolHandlers.has('workflow_init')).toBe(true);
       expect(toolHandlers.has('workflow_status')).toBe(true);
       expect(toolHandlers.has('workflow_collect')).toBe(true);

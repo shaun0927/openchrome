@@ -281,6 +281,10 @@ export function createMockSessionManager() {
       workers.delete(workerId);
     }),
 
+    registerExistingTarget: jest.fn(async (sessionId: string, workerId: string, targetId: string) => {
+      targets.set(targetId, 'registered');
+    }),
+
     getWorkers: () => workers,
     getTargets: () => targets,
     reset: () => {

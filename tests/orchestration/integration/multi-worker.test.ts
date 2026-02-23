@@ -15,6 +15,37 @@ jest.mock('../../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
+// Mock CDP singletons used by WorkflowEngine.initWorkflow()
+let batchPageCounter = 0;
+jest.mock('../../../src/cdp/connection-pool', () => ({
+  getCDPConnectionPool: jest.fn().mockReturnValue({
+    acquireBatch: jest.fn().mockImplementation((count: number) => {
+      return Promise.resolve(
+        Array.from({ length: count }, () => {
+          const id = `batch-target-${++batchPageCounter}`;
+          return {
+            target: () => ({ _targetId: id }),
+            goto: jest.fn().mockResolvedValue(null),
+            close: jest.fn().mockResolvedValue(undefined),
+            url: jest.fn().mockReturnValue('about:blank'),
+            on: jest.fn(),
+            off: jest.fn(),
+          };
+        })
+      );
+    }),
+    releasePage: jest.fn().mockResolvedValue(undefined),
+    initialize: jest.fn().mockResolvedValue(undefined),
+  }),
+}));
+
+jest.mock('../../../src/cdp/client', () => ({
+  getCDPClient: jest.fn().mockReturnValue({
+    findAuthenticatedPageTargetId: jest.fn().mockResolvedValue(null),
+    copyCookiesViaCDP: jest.fn().mockResolvedValue(0),
+  }),
+}));
+
 import { getSessionManager } from '../../../src/session-manager';
 
 describe('Multi-Worker Coordination Integration', () => {
