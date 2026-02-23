@@ -264,7 +264,7 @@ Measure token efficiency and parallel performance:
 ```bash
 npm run benchmark                                    # AX vs DOM token efficiency (interactive)
 npm run benchmark:ci                                 # AX vs DOM with JSON + regression detection
-npx ts-node tests/benchmark/run-parallel.ts          # 7 parallel benchmark categories
+npx ts-node tests/benchmark/run-parallel.ts          # All parallel benchmark categories
 ```
 
 **Parallel benchmark categories:**
@@ -273,6 +273,7 @@ npx ts-node tests/benchmark/run-parallel.ts          # 7 parallel benchmark cate
 |----------|-----------------|
 | Multi-step interaction | Form fill + click sequences across N parallel pages |
 | Batch JS execution | N × `javascript_tool` vs 1 × `batch_execute` |
+| Compiled plan execution | Sequential agent tool calls vs single `execute_plan` |
 | Streaming collection | Blocking vs `workflow_collect_partial` |
 | Init overhead | Sequential `tabs_create` vs batch `workflow_init` |
 | Fault tolerance | Circuit breaker recovery speed |

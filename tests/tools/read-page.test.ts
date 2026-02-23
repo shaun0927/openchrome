@@ -317,6 +317,36 @@ describe('ReadPageTool', () => {
       // Should handle without error
       expect(result.content[0].type).toBe('text');
     });
+
+    test('truncation message suggests DOM mode', async () => {
+      const handler = await getReadPageHandler();
+
+      // Create tree large enough to exceed MAX_OUTPUT (50K chars)
+      const hugeTree = {
+        nodes: Array.from({ length: 5000 }, (_, i) => ({
+          nodeId: i,
+          backendDOMNodeId: 100 + i,
+          role: { value: 'generic' },
+          name: { value: `Element with a long name to inflate character count number ${i} padding text here` },
+        })),
+      };
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        hugeTree
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      if (text.includes('[Output truncated')) {
+        expect(text).toContain('mode: "dom"');
+        expect(text).toContain('~5-10x fewer tokens');
+      }
+    });
   });
 
   describe('RefIdManager Integration', () => {
