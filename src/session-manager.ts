@@ -1178,9 +1178,22 @@ export class SessionManager {
 // Singleton instance
 let sessionManagerInstance: SessionManager | null = null;
 
-export function getSessionManager(): SessionManager {
+export function getSessionManager(config?: SessionManagerConfig): SessionManager {
   if (!sessionManagerInstance) {
-    sessionManagerInstance = new SessionManager();
+    // Read storage state from environment if not explicitly configured
+    const storageConfig = config?.storageState ?? (
+      process.env.OC_PERSIST_STORAGE === '1'
+        ? {
+            enabled: true,
+            dir: process.env.OC_STORAGE_DIR || undefined,
+          }
+        : undefined
+    );
+
+    sessionManagerInstance = new SessionManager(undefined, {
+      ...config,
+      storageState: storageConfig,
+    });
   }
   return sessionManagerInstance;
 }
