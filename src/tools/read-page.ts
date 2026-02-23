@@ -21,7 +21,7 @@ const definition: MCPToolDefinition = {
       },
       depth: {
         type: 'number',
-        description: 'Maximum depth of the tree to traverse (default: 15)',
+        description: 'Maximum depth of the tree to traverse (default: 8 for "all", 5 for "interactive")',
       },
       filter: {
         type: 'string',
@@ -57,8 +57,10 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
-  const maxDepth = (args.depth as number) || 15;
   const filter = (args.filter as string) || 'all';
+  const defaultDepth = filter === 'interactive' ? 5 : 8;
+  const maxDepth = (args.depth as number) || defaultDepth;
+  const fetchDepth = filter === 'interactive' ? Math.min(maxDepth, 5) : maxDepth;
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -112,7 +114,7 @@ const handler: ToolHandler = async (
     const { nodes } = await cdpClient.send<{ nodes: AXNode[] }>(
       page,
       'Accessibility.getFullAXTree',
-      { depth: maxDepth }
+      { depth: fetchDepth }
     );
 
     // Clear previous refs for this target

@@ -58,7 +58,7 @@ describe('ReadPageTool', () => {
     // Set up default CDP response for accessibility tree
     mockSessionManager.mockCDPClient.setCDPResponse(
       'Accessibility.getFullAXTree',
-      { depth: 15 },
+      { depth: 8 },
       sampleAccessibilityTree
     );
   });
@@ -78,7 +78,7 @@ describe('ReadPageTool', () => {
       expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
         expect.anything(),
         'Accessibility.getFullAXTree',
-        { depth: 15 }
+        { depth: 8 }
       );
     });
 
@@ -129,7 +129,7 @@ describe('ReadPageTool', () => {
 
       mockSessionManager.mockCDPClient.setCDPResponse(
         'Accessibility.getFullAXTree',
-        { depth: 15 },
+        { depth: 8 },
         { nodes: [] }
       );
 
@@ -237,7 +237,7 @@ describe('ReadPageTool', () => {
 
       mockSessionManager.mockCDPClient.setCDPResponse(
         'Accessibility.getFullAXTree',
-        { depth: 15 },
+        { depth: 8 },
         largeTree
       );
 

@@ -96,7 +96,7 @@ describe('ReadPageTool - DOM Mode', () => {
     // Set up default CDP responses for AX tree (for backward compat tests)
     mockSessionManager.mockCDPClient.setCDPResponse(
       'Accessibility.getFullAXTree',
-      { depth: 15 },
+      { depth: 8 },
       sampleAccessibilityTree
     );
 
