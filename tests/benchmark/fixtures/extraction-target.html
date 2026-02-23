@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Benchmark Product Catalog</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f4f4f4; color: #222; padding: 32px 16px; }
+    .container {
+      background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      padding: 32px 36px; max-width: 1000px; margin: 0 auto;
+    }
+    h1 { font-size: 1.6rem; color: #222; margin-bottom: 24px; }
+    .filter-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+    .filter-bar input, .filter-bar select {
+      padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px;
+      font-size: 0.9rem; background: #fafafa;
+    }
+    .filter-bar input { width: 220px; }
+    .filter-bar input:focus, .filter-bar select:focus { outline: none; border-color: #4a90e2; background: #fff; }
+    .filter-bar button {
+      padding: 8px 18px; background: #4a90e2; color: #fff; border: none;
+      border-radius: 4px; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    }
+    .filter-bar button:hover { background: #357abd; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    thead th { background: #4a90e2; color: #fff; text-align: left; padding: 10px 14px; font-weight: 600; }
+    tbody td { padding: 10px 14px; border-bottom: 1px solid #eee; color: #444; }
+    tbody tr:nth-child(even) td { background: #f9f9fb; }
+    tbody tr:hover td { background: #eef4ff; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 12px;
+      font-size: 0.78rem; font-weight: 600;
+    }
+    .rating { color: #f59e0b; font-weight: 600; }
+    .stock-low { color: #e53e3e; font-weight: 600; }
+    .stock-ok { color: #2e7d32; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Benchmark Product Catalog</h1>
+    <div class="filter-bar">
+      <input type="text" id="search-input" placeholder="Search products...">
+      <select id="category-filter">
+        <option value="">All Categories</option>
+        <option value="electronics">Electronics</option>
+        <option value="furniture">Furniture</option>
+        <option value="kitchen">Kitchen</option>
+        <option value="health">Health</option>
+        <option value="sports">Sports</option>
+      </select>
+      <select id="stock-filter">
+        <option value="">All Stock</option>
+        <option value="low">Low Stock (&lt;50)</option>
+        <option value="available">Available</option>
+      </select>
+      <button type="button">Filter</button>
+    </div>
+    <div class="table-wrap">
+      <table id="product-table">
+        <thead>
+          <tr>
+            <th>Product Name</th><th>Price</th><th>Category</th><th>Stock</th><th>Rating</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-product-id="P001" data-category="electronics">
+            <td>Wireless Noise-Cancelling Headphones</td><td>$89.99</td>
+            <td><span class="badge" style="background:#e3f2fd;color:#1565c0">Electronics</span></td>
+            <td class="stock-ok">142</td><td class="rating">4.5</td>
+          </tr>
+          <tr data-product-id="P002" data-category="furniture">
+            <td>Ergonomic Office Chair</td><td>$349.00</td>
+            <td><span class="badge" style="background:#f3e5f5;color:#6a1b9a">Furniture</span></td>
+            <td class="stock-low">27</td><td class="rating">4.7</td>
+          </tr>
+          <tr data-product-id="P003" data-category="electronics">
+            <td>USB-C Hub 7-in-1</td><td>$44.50</td>
+            <td><span class="badge" style="background:#e3f2fd;color:#1565c0">Electronics</span></td>
+            <td class="stock-ok">310</td><td class="rating">4.2</td>
+          </tr>
+          <tr data-product-id="P004" data-category="kitchen">
+            <td>Stainless Steel Water Bottle 1L</td><td>$24.99</td>
+            <td><span class="badge" style="background:#e8f5e9;color:#2e7d32">Kitchen</span></td>
+            <td class="stock-ok">89</td><td class="rating">4.6</td>
+          </tr>
+          <tr data-product-id="P005" data-category="electronics">
+            <td>Mechanical Keyboard TKL</td><td>$129.00</td>
+            <td><span class="badge" style="background:#e3f2fd;color:#1565c0">Electronics</span></td>
+            <td class="stock-ok">56</td><td class="rating">4.8</td>
+          </tr>
+          <tr data-product-id="P006" data-category="furniture">
+            <td>Anti-Fatigue Standing Desk Mat</td><td>$59.95</td>
+            <td><span class="badge" style="background:#f3e5f5;color:#6a1b9a">Furniture</span></td>
+            <td class="stock-ok">204</td><td class="rating">4.3</td>
+          </tr>
+          <tr data-product-id="P007" data-category="electronics">
+            <td>Portable Charger 20000mAh</td><td>$39.99</td>
+            <td><span class="badge" style="background:#e3f2fd;color:#1565c0">Electronics</span></td>
+            <td class="stock-ok">178</td><td class="rating">4.4</td>
+          </tr>
+          <tr data-product-id="P008" data-category="health">
+            <td>Foam Roller Deep Tissue</td><td>$28.00</td>
+            <td><span class="badge" style="background:#fff3e0;color:#e65100">Health</span></td>
+            <td class="stock-ok">415</td><td class="rating">4.1</td>
+          </tr>
+          <tr data-product-id="P009" data-category="sports">
+            <td>Resistance Band Set (5-pack)</td><td>$19.95</td>
+            <td><span class="badge" style="background:#fce4ec;color:#c62828">Sports</span></td>
+            <td class="stock-ok">320</td><td class="rating">4.5</td>
+          </tr>
+          <tr data-product-id="P010" data-category="kitchen">
+            <td>Pour Over Coffee Dripper</td><td>$34.00</td>
+            <td><span class="badge" style="background:#e8f5e9;color:#2e7d32">Kitchen</span></td>
+            <td class="stock-low">43</td><td class="rating">4.9</td>
+          </tr>
+          <tr data-product-id="P011" data-category="electronics">
+            <td>4K Webcam with Ring Light</td><td>$75.00</td>
+            <td><span class="badge" style="background:#e3f2fd;color:#1565c0">Electronics</span></td>
+            <td class="stock-ok">92</td><td class="rating">4.3</td>
+          </tr>
+          <tr data-product-id="P012" data-category="health">
+            <td>Digital Posture Corrector</td><td>$49.99</td>
+            <td><span class="badge" style="background:#fff3e0;color:#e65100">Health</span></td>
+            <td class="stock-low">18</td><td class="rating">3.9</td>
+          </tr>
+          <tr data-product-id="P013" data-category="furniture">
+            <td>Monitor Arm Dual Mount</td><td>$79.00</td>
+            <td><span class="badge" style="background:#f3e5f5;color:#6a1b9a">Furniture</span></td>
+            <td class="stock-ok">67</td><td class="rating">4.6</td>
+          </tr>
+          <tr data-product-id="P014" data-category="sports">
+            <td>Adjustable Dumbbell 20kg</td><td>$149.00</td>
+            <td><span class="badge" style="background:#fce4ec;color:#c62828">Sports</span></td>
+            <td class="stock-low">12</td><td class="rating">4.7</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

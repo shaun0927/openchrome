@@ -5,7 +5,12 @@ export interface OpenChromeAdapterOptions {
   serverUrl?: string; // for future remote server support
 }
 
-export class OpenChromeAdapter implements MCPAdapter {
+/**
+ * Stub MCP Adapter for benchmark CI mode.
+ * Returns mock responses without connecting to a real MCP server.
+ * Use for deterministic tool call count and regression testing.
+ */
+export class OpenChromeStubAdapter implements MCPAdapter {
   name = 'OpenChrome';
   mode: string;
   private options: OpenChromeAdapterOptions;
@@ -24,14 +29,14 @@ export class OpenChromeAdapter implements MCPAdapter {
   }
 
   async teardown(): Promise<void> {
-    // No-op for now
+    // No-op for stub
   }
 
   async callTool(toolName: string, args: Record<string, unknown>): Promise<MCPToolResult> {
     const inputJson = JSON.stringify({ tool: toolName, args });
     this._totalInputChars += inputJson.length;
 
-    // TODO: Wire to actual MCP server
+    // Stub response - no actual MCP server connection
     const result: MCPToolResult = {
       content: [{ type: 'text', text: 'stub response' }],
     };
@@ -61,3 +66,10 @@ export class OpenChromeAdapter implements MCPAdapter {
     this._toolCallCount = 0;
   }
 }
+
+/**
+ * @deprecated Use OpenChromeStubAdapter instead.
+ * Kept for backward compatibility.
+ */
+export const OpenChromeAdapter = OpenChromeStubAdapter;
+export type OpenChromeAdapter = OpenChromeStubAdapter;

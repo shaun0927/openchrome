@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Benchmark Slow Page</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      color: #222;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 40px 16px;
+    }
+    .container {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      padding: 36px 40px;
+      width: 100%;
+      max-width: 600px;
+    }
+    h1 {
+      font-size: 1.6rem;
+      color: #222;
+      margin-bottom: 24px;
+    }
+    #loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 40px 0;
+      color: #666;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #e0e0e0;
+      border-top-color: #4a90e2;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    #loading p {
+      font-size: 1rem;
+      color: #888;
+    }
+    #content {
+      display: none;
+    }
+    .product-card {
+      background: #fafafa;
+      border: 1px solid #e8e8e8;
+      border-radius: 6px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    .product-card:last-child { margin-bottom: 0; }
+    .product-card h2 {
+      font-size: 1.05rem;
+      color: #222;
+      margin-bottom: 8px;
+    }
+    .product-card .meta {
+      display: flex;
+      gap: 20px;
+      font-size: 0.875rem;
+      color: #666;
+    }
+    .product-card .price {
+      color: #4a90e2;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .product-card .category {
+      display: inline-block;
+      background: #e3f2fd;
+      color: #1565c0;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .loaded-badge {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 6px 14px;
+      background: #e8f5e9;
+      border: 1px solid #a5d6a7;
+      border-radius: 4px;
+      color: #2e7d32;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .delay-info {
+      font-size: 0.8rem;
+      color: #aaa;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Benchmark Slow Page</h1>
+
+    <div id="loading">
+      <div class="spinner"></div>
+      <p>Loading...</p>
+    </div>
+
+    <div id="content">
+      <div class="product-card">
+        <h2>Wireless Noise-Cancelling Headphones</h2>
+        <div class="meta">
+          <span class="price">$89.99</span>
+          <span class="category">Electronics</span>
+          <span>Stock: 142</span>
+          <span>Rating: 4.5</span>
+        </div>
+      </div>
+
+      <div class="product-card">
+        <h2>Ergonomic Office Chair</h2>
+        <div class="meta">
+          <span class="price">$349.00</span>
+          <span class="category">Furniture</span>
+          <span>Stock: 27</span>
+          <span>Rating: 4.7</span>
+        </div>
+      </div>
+
+      <div class="product-card">
+        <h2>Pour Over Coffee Dripper</h2>
+        <div class="meta">
+          <span class="price">$34.00</span>
+          <span class="category">Kitchen</span>
+          <span>Stock: 43</span>
+          <span>Rating: 4.9</span>
+        </div>
+      </div>
+
+      <div class="loaded-badge">Content loaded successfully</div>
+      <div class="delay-info" id="delay-info"></div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var delay = parseInt(params.get('delay'), 10);
+      if (isNaN(delay) || delay < 0) delay = 2000;
+
+      document.getElementById('delay-info').textContent =
+        'Simulated delay: ' + delay + 'ms';
+
+      setTimeout(function () {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('content').style.display = 'block';
+        document.body.setAttribute('data-loaded', 'true');
+      }, delay);
+    })();
+  </script>
+</body>
+</html>
