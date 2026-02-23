@@ -49,9 +49,6 @@ extension-unpacked/
 
 # User-local Claude Code workflows (personal skills, agents, commands)
 CLAUDE.md
-.claude/commands/
-.claude/agents/
-.claude/skills/
 
 # Ad-hoc analysis/planning outputs
 x-crawl-*.json
