@@ -10,7 +10,7 @@
  */
 
 import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
-import { measureCall } from '../utils';
+import { measureCall, createCounters } from '../utils';
 
 const FIXTURE_URLS = [
   'file://fixtures/complex-page.html',
@@ -94,7 +94,7 @@ export function createStreamingCollectTask(concurrency: number): BenchmarkTask {
     description: `Navigate ${concurrency} pages and stream results with workflow_collect_partial`,
     async run(adapter: MCPAdapter): Promise<TaskResult> {
       const startTime = Date.now();
-      const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
+      const counters = createCounters();
 
       try {
         const urls = generateUrls(concurrency);
@@ -104,12 +104,14 @@ export function createStreamingCollectTask(concurrency: number): BenchmarkTask {
         measureCall(await adapter.callTool('workflow_init', initArgs), initArgs, counters);
 
         // Navigate + read each
+        const execStart = Date.now();
         for (let i = 0; i < urls.length; i++) {
           const navArgs = { url: urls[i], tabId: `tab-${i}` };
           measureCall(await adapter.callTool('navigate', navArgs), navArgs, counters);
           const readArgs = { tabId: `tab-${i}` };
           measureCall(await adapter.callTool('read_page', readArgs), readArgs, counters);
         }
+        const execDuration = Date.now() - execStart;
 
         // Streaming: collect partial results (first available workers)
         const partialArgs = { onlySuccessful: false };
@@ -121,27 +123,27 @@ export function createStreamingCollectTask(concurrency: number): BenchmarkTask {
         const collectArgs = {};
         measureCall(await adapter.callTool('workflow_collect', collectArgs), collectArgs, counters);
 
-        return {
+        const result: ParallelTaskResult = {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
-          // ParallelTaskResult fields:
-          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          serverTimingMs: counters.serverTimingMs,
           speedupFactor: 0, // computed by report layer
           initOverheadMs: 0,
           parallelEfficiency: 0, // computed by report layer
           timeToFirstResult,
           toolCallsPerWorker: counters.toolCallCount / concurrency,
-          phaseTimings: { initMs: 0, executionMs: timeToFirstResult, collectMs: Date.now() - startTime - timeToFirstResult },
+          phaseTimings: { initMs: 0, executionMs: execDuration, collectMs: Date.now() - startTime - execDuration },
           metadata: {
             concurrency,
             mode: 'streaming',
             collectMethod: 'workflow_collect_partial + workflow_collect',
             timeToFirstResult,
           },
-        } as ParallelTaskResult;
+        };
+        return result;
       } catch (error) {
         return {
           success: false,

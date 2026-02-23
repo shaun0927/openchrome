@@ -14,7 +14,7 @@
  */
 
 import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
-import { measureCall } from '../utils';
+import { measureCall, createCounters } from '../utils';
 
 const FIXTURE_URL = 'file://fixtures/complex-page.html';
 
@@ -87,7 +87,7 @@ export function createExecutePlanTask(): BenchmarkTask {
     description: 'Execute same 6-step extraction via single execute_plan call (0 LLM round-trips)',
     async run(adapter: MCPAdapter): Promise<TaskResult> {
       const startTime = Date.now();
-      const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
+      const counters = createCounters();
 
       try {
         const planArgs = {
@@ -98,14 +98,13 @@ export function createExecutePlanTask(): BenchmarkTask {
         measureCall(await adapter.callTool('execute_plan', planArgs), planArgs, counters);
 
         const wallTimeMs = Date.now() - startTime;
-        return {
+        const result: ParallelTaskResult = {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs,
-          // ParallelTaskResult fields:
-          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          serverTimingMs: counters.serverTimingMs,
           speedupFactor: 0, // computed by report layer
           initOverheadMs: 0,
           parallelEfficiency: 0, // computed by report layer
@@ -113,7 +112,8 @@ export function createExecutePlanTask(): BenchmarkTask {
           toolCallsPerWorker: counters.toolCallCount,
           phaseTimings: { initMs: 0, executionMs: wallTimeMs, collectMs: 0 },
           metadata: { mode: 'compiled-plan', steps: 6, llmRoundTrips: 0 },
-        } as ParallelTaskResult;
+        };
+        return result;
       } catch (error) {
         return {
           success: false,

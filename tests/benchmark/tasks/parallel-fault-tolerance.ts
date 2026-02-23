@@ -1,5 +1,5 @@
 import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
-import { measureCall } from '../utils';
+import { measureCall, createCounters } from '../utils';
 
 /**
  * Number of retries a stale worker performs without circuit breaker.
@@ -125,7 +125,7 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
     description: `${concurrency} workers (1 stale) with circuit breaker (maxStale=${maxStaleIterations})`,
     async run(adapter: MCPAdapter): Promise<TaskResult> {
       const startTime = Date.now();
-      const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
+      const counters = createCounters();
 
       try {
         const urls = Array.from({ length: concurrency }, (_, i) => FIXTURE_URLS[i % FIXTURE_URLS.length]);
@@ -146,6 +146,7 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
         const initDuration = Date.now() - initStart;
 
         // Workers execute
+        const execStart = Date.now();
         for (let i = 0; i < concurrency; i++) {
           const url = urls[i];
 
@@ -180,30 +181,32 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
             measureCall(await adapter.callTool('worker_update', updateArgs), updateArgs, counters);
           }
         }
+        const execDuration = Date.now() - execStart;
 
         // Collect partial results from completed workers
+        const collectStart = Date.now();
         const partialArgs = { onlySuccessful: true };
         measureCall(await adapter.callTool('workflow_collect_partial', partialArgs), partialArgs, counters);
 
         // Final collect
         const collectArgs = {};
         measureCall(await adapter.callTool('workflow_collect', collectArgs), collectArgs, counters);
+        const collectDuration = Date.now() - collectStart;
 
         const wallTimeMs = Date.now() - startTime;
-        return {
+        const result: ParallelTaskResult = {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs,
-          // ParallelTaskResult fields:
-          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          serverTimingMs: counters.serverTimingMs,
           speedupFactor: 0, // computed by report layer
           initOverheadMs: initDuration,
           parallelEfficiency: 0, // computed by report layer
           timeToFirstResult: 0,
           toolCallsPerWorker: counters.toolCallCount / concurrency,
-          phaseTimings: { initMs: initDuration, executionMs: wallTimeMs - initDuration, collectMs: 0 },
+          phaseTimings: { initMs: initDuration, executionMs: execDuration, collectMs: collectDuration },
           metadata: {
             concurrency,
             mode: 'circuit-breaker',
@@ -212,7 +215,8 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
             savedCalls: STALE_RETRIES_WITHOUT_CIRCUIT_BREAKER - maxStaleIterations,
             normalWorkersPreserved: concurrency - 1,
           },
-        } as ParallelTaskResult;
+        };
+        return result;
       } catch (error) {
         return {
           success: false,

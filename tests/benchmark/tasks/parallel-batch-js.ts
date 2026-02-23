@@ -14,7 +14,7 @@
  */
 
 import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
-import { measureCall } from '../utils';
+import { measureCall, createCounters } from '../utils';
 
 const EXTRACTION_SCRIPT = `
   Array.from(document.querySelectorAll('tr[data-product-id]')).map(row => ({
@@ -82,7 +82,7 @@ export function createBatchJSTask(concurrency: number): BenchmarkTask {
     description: `Extract data from ${concurrency} tabs with single batch_execute`,
     async run(adapter: MCPAdapter): Promise<TaskResult> {
       const startTime = Date.now();
-      const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
+      const counters = createCounters();
 
       try {
         // Navigate all tabs
@@ -103,14 +103,13 @@ export function createBatchJSTask(concurrency: number): BenchmarkTask {
         measureCall(await adapter.callTool('batch_execute', batchArgs), batchArgs, counters);
 
         const wallTimeMs = Date.now() - startTime;
-        return {
+        const result: ParallelTaskResult = {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs,
-          // ParallelTaskResult fields:
-          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          serverTimingMs: counters.serverTimingMs,
           speedupFactor: 0, // computed by report layer
           initOverheadMs: 0,
           parallelEfficiency: 0, // computed by report layer
@@ -124,7 +123,8 @@ export function createBatchJSTask(concurrency: number): BenchmarkTask {
             // JS execution calls: N vs 1
             jsCallReduction: `${concurrency} → 1`,
           },
-        } as ParallelTaskResult;
+        };
+        return result;
       } catch (error) {
         return {
           success: false,

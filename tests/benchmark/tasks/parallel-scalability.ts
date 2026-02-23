@@ -1,5 +1,5 @@
 import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
-import { measureCall } from '../utils';
+import { measureCall, createCounters } from '../utils';
 
 const FIXTURE_URLS = [
   'file://fixtures/complex-page.html',
@@ -70,7 +70,7 @@ export function createScalabilityParallelTask(n: number): BenchmarkTask {
     description: `Navigate and read ${n} pages in parallel via workflow`,
     async run(adapter: MCPAdapter): Promise<TaskResult> {
       const startTime = Date.now();
-      const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
+      const counters = createCounters();
 
       try {
         const urls = generateUrls(n);
@@ -101,14 +101,13 @@ export function createScalabilityParallelTask(n: number): BenchmarkTask {
         measureCall(await adapter.callTool('workflow_collect', collectArgs), collectArgs, counters);
         const collectDuration = Date.now() - collectStart;
 
-        return {
+        const result: ParallelTaskResult = {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
-          // ParallelTaskResult fields:
-          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          serverTimingMs: counters.serverTimingMs,
           speedupFactor: 0, // computed by report layer
           initOverheadMs: initDuration,
           parallelEfficiency: 0, // computed by report layer
@@ -124,7 +123,8 @@ export function createScalabilityParallelTask(n: number): BenchmarkTask {
             mode: 'parallel',
             overheadToolCalls: 2,
           },
-        } as ParallelTaskResult;
+        };
+        return result;
       } catch (error) {
         return {
           success: false,

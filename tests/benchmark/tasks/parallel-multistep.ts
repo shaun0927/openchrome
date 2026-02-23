@@ -19,7 +19,7 @@
  */
 
 import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
-import { measureCall } from '../utils';
+import { measureCall, createCounters } from '../utils';
 
 const FIXTURE_URLS = [
   'file://fixtures/form-page.html',
@@ -107,7 +107,7 @@ export function createMultistepParallelTask(concurrency: number): BenchmarkTask 
     description: `Multi-step interaction on ${concurrency} pages in parallel`,
     async run(adapter: MCPAdapter): Promise<TaskResult> {
       const startTime = Date.now();
-      const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
+      const counters = createCounters();
 
       try {
         const urls = generateUrls(concurrency);
@@ -152,26 +152,23 @@ export function createMultistepParallelTask(concurrency: number): BenchmarkTask 
         measureCall(await adapter.callTool('workflow_collect', collectArgs), collectArgs, counters);
         const collectDuration = Date.now() - collectTime;
 
-        return {
+        const phaseTimings = { initMs: initDuration, executionMs: execDuration, collectMs: collectDuration };
+        const result: ParallelTaskResult = {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
-          // ParallelTaskResult fields:
-          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
-          speedupFactor: 0, // computed by report layer
+          serverTimingMs: counters.serverTimingMs,
+          speedupFactor: 0,
           initOverheadMs: initDuration,
-          parallelEfficiency: 0, // computed by report layer
+          parallelEfficiency: 0,
           timeToFirstResult: 0,
           toolCallsPerWorker: counters.toolCallCount / concurrency,
-          phaseTimings: {
-            initMs: initDuration,
-            executionMs: execDuration,
-            collectMs: collectDuration,
-          },
-          metadata: { concurrency, mode: 'parallel', stepsPerPage: 9, overheadToolCalls: 2 },
-        } as ParallelTaskResult;
+          phaseTimings,
+          metadata: { concurrency, mode: 'parallel', stepsPerPage: 9, overheadToolCalls: 2, phaseTimings },
+        };
+        return result;
       } catch (error) {
         return {
           success: false,
