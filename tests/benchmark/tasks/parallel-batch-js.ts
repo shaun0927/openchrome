@@ -13,7 +13,7 @@
  *   - wallTimeMs: batch_execute runs all scripts concurrently server-side
  */
 
-import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
+import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
 import { measureCall } from '../utils';
 
 const EXTRACTION_SCRIPT = `
@@ -102,12 +102,21 @@ export function createBatchJSTask(concurrency: number): BenchmarkTask {
         };
         measureCall(await adapter.callTool('batch_execute', batchArgs), batchArgs, counters);
 
+        const wallTimeMs = Date.now() - startTime;
         return {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
-          wallTimeMs: Date.now() - startTime,
+          wallTimeMs,
+          // ParallelTaskResult fields:
+          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          speedupFactor: 0, // computed by report layer
+          initOverheadMs: 0,
+          parallelEfficiency: 0, // computed by report layer
+          timeToFirstResult: 0,
+          toolCallsPerWorker: counters.toolCallCount / concurrency,
+          phaseTimings: { initMs: 0, executionMs: wallTimeMs, collectMs: 0 },
           metadata: {
             concurrency,
             mode: 'parallel',
@@ -115,7 +124,7 @@ export function createBatchJSTask(concurrency: number): BenchmarkTask {
             // JS execution calls: N vs 1
             jsCallReduction: `${concurrency} → 1`,
           },
-        };
+        } as ParallelTaskResult;
       } catch (error) {
         return {
           success: false,

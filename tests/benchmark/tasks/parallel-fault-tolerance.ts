@@ -1,4 +1,4 @@
-import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
+import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
 import { measureCall } from '../utils';
 
 /**
@@ -131,6 +131,7 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
         const urls = Array.from({ length: concurrency }, (_, i) => FIXTURE_URLS[i % FIXTURE_URLS.length]);
 
         // workflow_init with circuit breaker config
+        const initStart = Date.now();
         const initArgs = {
           name: `fault-benchmark-${concurrency}x`,
           workers: urls.map((url, i) => ({
@@ -142,6 +143,7 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
           workerTimeoutMs: 10000,
         };
         measureCall(await adapter.callTool('workflow_init', initArgs), initArgs, counters);
+        const initDuration = Date.now() - initStart;
 
         // Workers execute
         for (let i = 0; i < concurrency; i++) {
@@ -187,12 +189,21 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
         const collectArgs = {};
         measureCall(await adapter.callTool('workflow_collect', collectArgs), collectArgs, counters);
 
+        const wallTimeMs = Date.now() - startTime;
         return {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
-          wallTimeMs: Date.now() - startTime,
+          wallTimeMs,
+          // ParallelTaskResult fields:
+          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          speedupFactor: 0, // computed by report layer
+          initOverheadMs: initDuration,
+          parallelEfficiency: 0, // computed by report layer
+          timeToFirstResult: 0,
+          toolCallsPerWorker: counters.toolCallCount / concurrency,
+          phaseTimings: { initMs: initDuration, executionMs: wallTimeMs - initDuration, collectMs: 0 },
           metadata: {
             concurrency,
             mode: 'circuit-breaker',
@@ -201,7 +212,7 @@ export function createCircuitBreakerTask(concurrency: number): BenchmarkTask {
             savedCalls: STALE_RETRIES_WITHOUT_CIRCUIT_BREAKER - maxStaleIterations,
             normalWorkersPreserved: concurrency - 1,
           },
-        };
+        } as ParallelTaskResult;
       } catch (error) {
         return {
           success: false,

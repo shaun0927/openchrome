@@ -13,7 +13,7 @@
  *   - llmRoundTrips: 6 → 0 (the core reduction)
  */
 
-import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
+import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
 import { measureCall } from '../utils';
 
 const FIXTURE_URL = 'file://fixtures/complex-page.html';
@@ -97,14 +97,23 @@ export function createExecutePlanTask(): BenchmarkTask {
         };
         measureCall(await adapter.callTool('execute_plan', planArgs), planArgs, counters);
 
+        const wallTimeMs = Date.now() - startTime;
         return {
           success: true,
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
-          wallTimeMs: Date.now() - startTime,
+          wallTimeMs,
+          // ParallelTaskResult fields:
+          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          speedupFactor: 0, // computed by report layer
+          initOverheadMs: 0,
+          parallelEfficiency: 0, // computed by report layer
+          timeToFirstResult: 0,
+          toolCallsPerWorker: counters.toolCallCount,
+          phaseTimings: { initMs: 0, executionMs: wallTimeMs, collectMs: 0 },
           metadata: { mode: 'compiled-plan', steps: 6, llmRoundTrips: 0 },
-        };
+        } as ParallelTaskResult;
       } catch (error) {
         return {
           success: false,

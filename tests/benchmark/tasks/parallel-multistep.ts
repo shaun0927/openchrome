@@ -18,7 +18,7 @@
  *   - phaseTimings: breakdown of init / execution / collect phases
  */
 
-import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
+import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
 import { measureCall } from '../utils';
 
 const FIXTURE_URLS = [
@@ -158,18 +158,20 @@ export function createMultistepParallelTask(concurrency: number): BenchmarkTask 
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
-          metadata: {
-            concurrency,
-            mode: 'parallel',
-            stepsPerPage: 9,
-            overheadToolCalls: 2,
-            phaseTimings: {
-              initMs: initDuration,
-              executionMs: execDuration,
-              collectMs: collectDuration,
-            },
+          // ParallelTaskResult fields:
+          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          speedupFactor: 0, // computed by report layer
+          initOverheadMs: initDuration,
+          parallelEfficiency: 0, // computed by report layer
+          timeToFirstResult: 0,
+          toolCallsPerWorker: counters.toolCallCount / concurrency,
+          phaseTimings: {
+            initMs: initDuration,
+            executionMs: execDuration,
+            collectMs: collectDuration,
           },
-        };
+          metadata: { concurrency, mode: 'parallel', stepsPerPage: 9, overheadToolCalls: 2 },
+        } as ParallelTaskResult;
       } catch (error) {
         return {
           success: false,

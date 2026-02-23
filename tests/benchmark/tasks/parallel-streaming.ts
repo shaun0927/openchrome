@@ -9,7 +9,7 @@
  *   - Streaming: get results as soon as each worker finishes (no waiting for slowest)
  */
 
-import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
+import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
 import { measureCall } from '../utils';
 
 const FIXTURE_URLS = [
@@ -127,13 +127,21 @@ export function createStreamingCollectTask(concurrency: number): BenchmarkTask {
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
+          // ParallelTaskResult fields:
+          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          speedupFactor: 0, // computed by report layer
+          initOverheadMs: 0,
+          parallelEfficiency: 0, // computed by report layer
+          timeToFirstResult,
+          toolCallsPerWorker: counters.toolCallCount / concurrency,
+          phaseTimings: { initMs: 0, executionMs: timeToFirstResult, collectMs: Date.now() - startTime - timeToFirstResult },
           metadata: {
             concurrency,
             mode: 'streaming',
             collectMethod: 'workflow_collect_partial + workflow_collect',
             timeToFirstResult,
           },
-        };
+        } as ParallelTaskResult;
       } catch (error) {
         return {
           success: false,

@@ -1,4 +1,4 @@
-import { BenchmarkTask, TaskResult, MCPAdapter } from '../benchmark-runner';
+import { BenchmarkTask, TaskResult, ParallelTaskResult, MCPAdapter } from '../benchmark-runner';
 import { measureCall } from '../utils';
 
 const FIXTURE_URLS = [
@@ -76,13 +76,16 @@ export function createScalabilityParallelTask(n: number): BenchmarkTask {
         const urls = generateUrls(n);
 
         // Init
+        const initStart = Date.now();
         const initArgs = {
           workerCount: n,
           urls: urls.map((url, i) => ({ tabId: `tab-${i}`, url })),
         };
         measureCall(await adapter.callTool('workflow_init', initArgs), initArgs, counters);
+        const initDuration = Date.now() - initStart;
 
         // Navigate + read each tab
+        const execStart = Date.now();
         for (let i = 0; i < urls.length; i++) {
           const navArgs = { url: urls[i], tabId: `tab-${i}` };
           measureCall(await adapter.callTool('navigate', navArgs), navArgs, counters);
@@ -90,10 +93,13 @@ export function createScalabilityParallelTask(n: number): BenchmarkTask {
           const readArgs = { tabId: `tab-${i}` };
           measureCall(await adapter.callTool('read_page', readArgs), readArgs, counters);
         }
+        const execDuration = Date.now() - execStart;
 
         // Collect
+        const collectStart = Date.now();
         const collectArgs = { workerCount: n };
         measureCall(await adapter.callTool('workflow_collect', collectArgs), collectArgs, counters);
+        const collectDuration = Date.now() - collectStart;
 
         return {
           success: true,
@@ -101,12 +107,24 @@ export function createScalabilityParallelTask(n: number): BenchmarkTask {
           outputChars: counters.outputChars,
           toolCallCount: counters.toolCallCount,
           wallTimeMs: Date.now() - startTime,
+          // ParallelTaskResult fields:
+          serverTimingMs: (counters as { serverTimingMs?: number }).serverTimingMs || 0,
+          speedupFactor: 0, // computed by report layer
+          initOverheadMs: initDuration,
+          parallelEfficiency: 0, // computed by report layer
+          timeToFirstResult: 0,
+          toolCallsPerWorker: counters.toolCallCount / n,
+          phaseTimings: {
+            initMs: initDuration,
+            executionMs: execDuration,
+            collectMs: collectDuration,
+          },
           metadata: {
             n,
             mode: 'parallel',
             overheadToolCalls: 2,
           },
-        };
+        } as ParallelTaskResult;
       } catch (error) {
         return {
           success: false,
