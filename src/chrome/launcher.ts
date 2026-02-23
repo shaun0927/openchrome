@@ -210,6 +210,24 @@ export class ChromeLauncher {
       );
     }
 
+    // Graceful restart: if Chrome is running without debug port and profile is locked,
+    // quit Chrome gracefully so it saves session state, then let the existing launch
+    // logic detect the unlocked real profile and relaunch with --remote-debugging-port.
+    if (!options.useTempProfile) {
+      const realProfileDir = this.getRealChromeProfileDir();
+      if (realProfileDir && this.isProfileLocked(realProfileDir) && this.isChromeRunning()) {
+        console.error('[ChromeLauncher] Chrome running without debug port — attempting graceful restart...');
+        const unlocked = await this.quitAndUnlockProfile(realProfileDir);
+        if (unlocked) {
+          console.error('[ChromeLauncher] Chrome quit successfully, profile unlocked. Relaunching with debug port...');
+        } else {
+          console.error('[ChromeLauncher] Graceful restart failed, falling back to temp profile...');
+        }
+        // On success: existing launch logic below detects unlocked profile
+        // On failure: falls through to existing temp-profile path
+      }
+    }
+
     // Launch new Chrome instance
     console.error(`[ChromeLauncher] Launching Chrome with debug port ${port}...`);
 
@@ -533,6 +551,97 @@ export class ChromeLauncher {
       }
     }
 
+    return false;
+  }
+
+  /**
+   * Check if Chrome is currently running (regardless of debug port)
+   */
+  private isChromeRunning(): boolean {
+    const platform = os.platform();
+    try {
+      if (platform === 'darwin') {
+        execSync('pgrep -x "Google Chrome"', { stdio: 'ignore' });
+        return true;
+      } else if (platform === 'win32') {
+        const output = execSync('tasklist /FI "IMAGENAME eq chrome.exe" /NH', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        return output.toLowerCase().includes('chrome.exe');
+      } else {
+        // Linux: try chrome first, then google-chrome
+        try {
+          execSync('pgrep -x chrome', { stdio: 'ignore' });
+          return true;
+        } catch {
+          execSync('pgrep -x google-chrome', { stdio: 'ignore' });
+          return true;
+        }
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Gracefully quit running Chrome using platform-specific commands.
+   * Returns true if Chrome exited within the timeout.
+   */
+  private async quitRunningChrome(timeout = 10000): Promise<boolean> {
+    const platform = os.platform();
+    try {
+      if (platform === 'darwin') {
+        execSync('osascript -e \'tell application "Google Chrome" to quit\'', { stdio: 'ignore' });
+      } else if (platform === 'win32') {
+        // taskkill without /F sends WM_CLOSE for graceful shutdown
+        execSync('taskkill /IM chrome.exe', { stdio: 'ignore' });
+      } else {
+        // Linux: try both process names
+        try {
+          execSync('pkill -TERM chrome', { stdio: 'ignore' });
+        } catch {
+          execSync('pkill -TERM google-chrome', { stdio: 'ignore' });
+        }
+      }
+    } catch {
+      // Quit command failed — Chrome may have already exited or command not available
+      console.error('[ChromeLauncher] Quit command failed, checking if Chrome exited...');
+    }
+
+    // Poll until Chrome exits
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeout) {
+      if (!this.isChromeRunning()) {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    console.error(`[ChromeLauncher] Chrome did not exit within ${timeout}ms`);
+    return false;
+  }
+
+  /**
+   * Quit Chrome and wait for the profile lock to be released.
+   * Returns true if the profile was successfully unlocked.
+   */
+  private async quitAndUnlockProfile(profileDir: string, quitTimeout = 10000, unlockTimeout = 5000): Promise<boolean> {
+    const chromeExited = await this.quitRunningChrome(quitTimeout);
+    if (!chromeExited) {
+      return false;
+    }
+
+    // Poll until profile lock is released
+    const startTime = Date.now();
+    while (Date.now() - startTime < unlockTimeout) {
+      if (!this.isProfileLocked(profileDir)) {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    console.error(`[ChromeLauncher] Profile lock not released within ${unlockTimeout}ms`);
     return false;
   }
 }
