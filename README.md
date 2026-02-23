@@ -226,13 +226,13 @@ read_page tabId="tab1" mode="dom"
 [352]<h1/>Welcome to Example
 ```
 
-DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` which resets on each `read_page` call.
+DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` IDs which are cleared on each AX-mode `read_page` call.
 
 ---
 
 ## Stable Selectors
 
-All action tools (`click_element`, `form_input`, `computer`, etc.) accept three identifier formats:
+Action tools that accept a `ref` parameter (`form_input`, `computer`, etc.) support three identifier formats:
 
 | Format | Example | Source |
 |--------|---------|--------|
@@ -262,17 +262,17 @@ Cookies and localStorage are saved atomically every 30 seconds and restored on s
 Measure token efficiency and parallel performance:
 
 ```bash
-npm run benchmark          # Interactive report (AX vs DOM mode)
-npm run benchmark:ci       # JSON output with regression detection
+npm run benchmark                                    # AX vs DOM token efficiency (interactive)
+npm run benchmark:ci                                 # AX vs DOM with JSON + regression detection
+npx ts-node tests/benchmark/run-parallel.ts          # 7 parallel benchmark categories
 ```
 
-**7 parallel benchmark categories** test OpenChrome's orchestration advantages:
+**Parallel benchmark categories:**
 
 | Category | What It Measures |
 |----------|-----------------|
 | Multi-step interaction | Form fill + click sequences across N parallel pages |
 | Batch JS execution | N × `javascript_tool` vs 1 × `batch_execute` |
-| Compiled plans | Agent-driven (6 calls) vs `execute_plan` (1 call) |
 | Streaming collection | Blocking vs `workflow_collect_partial` |
 | Init overhead | Sequential `tabs_create` vs batch `workflow_init` |
 | Fault tolerance | Circuit breaker recovery speed |
