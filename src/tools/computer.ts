@@ -93,7 +93,7 @@ const handler: ToolHandler = async (
     const page = await sessionManager.getPage(sessionId, tabId);
     if (!page) {
       return {
-        content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
+        content: [{ type: 'text', text: `Error: Tab ${tabId} not found. Hint: The tab may have been closed or the session expired. Use navigate() to open a new tab.` }],
         isError: true,
       };
     }
@@ -498,7 +498,11 @@ const handler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Computer action error: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Computer action error: ${error instanceof Error ? error.message : String(error)}${
+            (error instanceof Error && error.message.includes('timed out'))
+              ? '. Hint: Page may still be loading. Use wait_for with type "selector" to wait for specific content, or increase timeout.'
+              : ''
+          }`,
         },
       ],
       isError: true,

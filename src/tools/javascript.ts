@@ -9,7 +9,7 @@ import { getSessionManager } from '../session-manager';
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
   description:
-    'Execute JavaScript code in the context of the current page. Returns the result of the last expression.',
+    'Execute JavaScript code in the context of the current page. Returns the result of the last expression. For CSS/style inspection, prefer read_page with mode="css" which extracts computed styles without writing custom JS.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -59,7 +59,7 @@ const handler: ToolHandler = async (
     const page = await sessionManager.getPage(sessionId, tabId, undefined, 'javascript_tool');
     if (!page) {
       return {
-        content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
+        content: [{ type: 'text', text: `Error: Tab ${tabId} not found. Hint: The tab may have been closed or the session expired. Use navigate() to open a new tab.` }],
         isError: true,
       };
     }
@@ -119,7 +119,7 @@ const handler: ToolHandler = async (
         content: [
           {
             type: 'text',
-            text: `JavaScript error: ${result.error}`,
+            text: `JavaScript error: ${result.error}` + (/style|css|color|font|margin|padding|display|background/i.test(code + (result.error || '')) ? '. Hint: For CSS/style inspection, use read_page with mode="css" instead of custom JS.' : ''),
           },
         ],
         isError: true,
