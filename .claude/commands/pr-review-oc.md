@@ -116,6 +116,10 @@ Key files:
 - `src/cdp/connection-pool.ts` — Page pool, batch acquire, maintenance
 - `src/session-manager.ts` — Session/worker ownership, `getPage()`
 - `src/orchestration/workflow-engine.ts` — Workflow execution, `acquireBatch`
+- `src/dom/dom-serializer.ts` — DOM serialization for page content
+- `src/utils/ref-id-manager.ts` — Stable element reference IDs (selector stability)
+- `src/tools/read-page.ts` — Read page content tool
+- `src/mcp-server.ts` — MCP tool registration and JSON-RPC handling
 
 Common P0/P1 patterns:
 1. Ghost `about:blank` tabs from pool replenishment during bulk ops (P1)

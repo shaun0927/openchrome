@@ -124,7 +124,10 @@ End with a summary:
 - `src/mcp-server.ts` — MCP tool registration and JSON-RPC handling
 - `src/dashboard/keyboard-handler.ts` — TTY keyboard input (Unix-only)
 - `src/tools/computer.ts` — Screenshot, click, scroll, keyboard actions
-- `src/tools/navigation.ts` — Page navigation, history management
+- `src/tools/navigate.ts` — Page navigation, history management
+- `src/tools/read-page.ts` — Read page content, AX tree, DOM snapshot
+- `src/dom/dom-serializer.ts` — DOM serialization for structured page content
+- `src/utils/ref-id-manager.ts` — Stable element reference IDs for selector stability
 
 ### Common Bug Patterns
 1. `about:blank` ghost tabs from pool replenishment during bulk operations

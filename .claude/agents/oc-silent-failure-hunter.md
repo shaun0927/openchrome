@@ -173,7 +173,7 @@ End with: `## Summary: X findings (P0: X, P1: X, P2: X)`
 - `spawn()` Chrome process — can fail with ENOENT, EACCES, already-in-use port
 
 ### stdout is Sacred
-In CCP, `stdout` carries MCP JSON-RPC messages. Any `console.log()` (which writes to stdout) corrupts the protocol. Only `console.error()` (stderr) is safe for logging. This is a CRITICAL silent failure if found.
+In OpenChrome, `stdout` carries MCP JSON-RPC messages. Any `console.log()` (which writes to stdout) corrupts the protocol. Only `console.error()` (stderr) is safe for logging. This is a CRITICAL silent failure if found.
 
 ### Pool Invariants
 - Pool size should never exceed `maxPoolSize`

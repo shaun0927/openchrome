@@ -126,8 +126,16 @@ For each MY PR:
 
 ```bash
 gh pr merge <N> --merge --delete-branch
-git checkout main && git pull origin main
+git checkout develop && git pull origin develop
 npm run build                                          # verify after each merge
+```
+
+**Note**: All PRs target the `develop` branch (per CLAUDE.md). To cut a release, merge `develop` into `main` after all PRs are merged and the build is green:
+
+```bash
+git checkout main && git pull origin main
+git merge develop --no-ff -m "chore: merge develop into main for release"
+git push origin main
 ```
 
 Do NOT merge OTHER's PRs unless the user explicitly says to.
@@ -135,7 +143,7 @@ Do NOT merge OTHER's PRs unless the user explicitly says to.
 ## STEP 7: Cleanup
 
 ```bash
-git branch --merged main | grep -v 'main' | xargs -r git branch -d
+git branch --merged develop | grep -v 'develop\|main' | xargs -r git branch -d
 git branch -a
 gh pr list --state open
 npm run build
@@ -160,6 +168,6 @@ Skip this step entirely unless the user explicitly asks for a version bump or pu
 - [ ] Every open PR has a GitHub review comment posted
 - [ ] All MY PRs: P0 = 0, P1 = 0, merged
 - [ ] All OTHER's PRs: reviewed and commented (NOT merged)
-- [ ] `npm run build` passes on main
+- [ ] `npm run build` passes on develop (and main after release merge)
 - [ ] No unnecessary branches remain
 - [ ] Working tree is clean
