@@ -207,12 +207,13 @@ oc doctor                   # Diagnose issues
 
 ## DOM Mode (Token Efficient)
 
-`read_page` supports two output modes:
+`read_page` supports three output modes:
 
 | Mode | Output | Tokens | Use Case |
 |------|--------|--------|----------|
 | `ax` (default) | Accessibility tree with `ref_N` IDs | Baseline | Screen readers, semantic analysis |
 | `dom` | Compact DOM with `backendNodeId` | **~5-10x fewer** | Click, fill, extract — most tasks |
+| `css` | CSS diagnostic info (variables, computed styles, framework detection) | Minimal | Debugging styles, Tailwind detection |
 
 **DOM mode example:**
 ```
