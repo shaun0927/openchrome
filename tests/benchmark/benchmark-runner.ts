@@ -32,6 +32,41 @@ export interface TaskResult {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Extended result for parallel benchmark tasks.
+ * Includes parallel-specific metrics like speedup factor and phase timings.
+ */
+export interface ParallelTaskResult extends TaskResult {
+  /** Sum of _timing.durationMs from all MCP responses (server-side execution time) */
+  serverTimingMs: number;
+  /** Wall time speedup: sequentialWallTime / parallelWallTime */
+  speedupFactor: number;
+  /** Time spent in workflow_init alone (ms) */
+  initOverheadMs: number;
+  /** Speedup efficiency: speedupFactor / concurrency (1.0 = perfect scaling) */
+  parallelEfficiency: number;
+  /** Time to first worker result via workflow_collect_partial (ms) */
+  timeToFirstResult: number;
+  /** Average tool calls per worker: totalToolCalls / workerCount */
+  toolCallsPerWorker: number;
+  /** Breakdown of wall time by phase */
+  phaseTimings: {
+    /** workflow_init duration (ms) */
+    initMs: number;
+    /** Worker execution duration (ms) */
+    executionMs: number;
+    /** workflow_collect duration (ms) */
+    collectMs: number;
+  };
+}
+
+/**
+ * Type guard to check if a TaskResult is a ParallelTaskResult
+ */
+export function isParallelTaskResult(result: TaskResult): result is ParallelTaskResult {
+  return 'speedupFactor' in result && 'phaseTimings' in result;
+}
+
 export interface TaskStats {
   meanInputChars: number;
   meanOutputChars: number;

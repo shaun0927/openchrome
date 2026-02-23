@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Benchmark Interactive Page</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f4f4f4; color: #222; padding: 32px 16px; }
+    .container {
+      background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      padding: 32px 36px; max-width: 760px; margin: 0 auto;
+    }
+    h1 { font-size: 1.6rem; color: #222; margin-bottom: 28px; }
+    .section { margin-bottom: 28px; }
+    .section-title { font-size: 1rem; font-weight: 700; color: #222; margin-bottom: 10px; }
+    /* TABS */
+    .tab-bar { display: flex; border-bottom: 2px solid #e0e0e0; margin-bottom: 20px; gap: 4px; }
+    .tab-btn {
+      padding: 10px 22px; background: none; border: none;
+      border-bottom: 2px solid transparent; margin-bottom: -2px;
+      font-size: 0.95rem; font-weight: 600; color: #888; cursor: pointer;
+    }
+    .tab-btn:hover { color: #4a90e2; }
+    .tab-btn.active { color: #4a90e2; border-bottom-color: #4a90e2; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .tab-panel p { color: #555; line-height: 1.7; margin-bottom: 10px; }
+    .tab-panel ul { padding-left: 20px; color: #555; line-height: 1.8; }
+    /* DROPDOWN */
+    .dropdown-wrap { display: flex; align-items: center; gap: 12px; }
+    select#category-select {
+      padding: 9px 14px; border: 1px solid #ccc; border-radius: 4px;
+      font-size: 0.9rem; background: #fafafa; min-width: 200px; cursor: pointer;
+    }
+    select#category-select:focus { outline: none; border-color: #4a90e2; }
+    .selected-label { font-size: 0.875rem; color: #4a90e2; font-weight: 600; }
+    /* ACCORDION */
+    .accordion-item { border: 1px solid #e0e0e0; border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+    .accordion-header {
+      width: 100%; background: #fafafa; border: none; text-align: left;
+      padding: 14px 18px; font-size: 0.95rem; font-weight: 600; color: #333;
+      cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+    }
+    .accordion-header:hover, .accordion-header.open { background: #eef4ff; color: #4a90e2; }
+    .accordion-icon { font-size: 1.1rem; transition: transform 0.2s; }
+    .accordion-header.open .accordion-icon { transform: rotate(45deg); }
+    .accordion-body { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; }
+    .accordion-body.open { max-height: 200px; }
+    .accordion-body p { padding: 14px 18px; color: #555; font-size: 0.9rem; line-height: 1.7; }
+    /* HIDDEN DATA */
+    #hidden-data {
+      display: none; background: #e8f5e9; border: 1px solid #a5d6a7;
+      border-radius: 6px; padding: 16px 20px; margin-top: 20px;
+    }
+    #hidden-data h3 { font-size: 1rem; color: #2e7d32; margin-bottom: 8px; }
+    #hidden-data p { font-size: 0.875rem; color: #388e3c; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Benchmark Interactive Page</h1>
+
+    <div class="section">
+      <div class="tab-bar" role="tablist">
+        <button class="tab-btn active" data-tab="overview" role="tab">Overview</button>
+        <button class="tab-btn" data-tab="details" role="tab">Details</button>
+        <button class="tab-btn" data-tab="reviews" role="tab">Reviews</button>
+      </div>
+      <div id="tab-overview" class="tab-panel active">
+        <p>This page benchmarks multi-step interactions: tab switching, dropdown selection, and accordion toggling. Each interaction updates DOM attributes for automated testing.</p>
+        <p>Use the controls below to navigate and verify state propagation.</p>
+      </div>
+      <div id="tab-details" class="tab-panel">
+        <p>Product details for the selected category. Technical specifications below.</p>
+        <ul>
+          <li>Specification A: High-performance grade</li>
+          <li>Specification B: Cross-platform compatible</li>
+          <li>Specification C: ISO 9001 certified</li>
+          <li>Warranty: 2-year limited coverage</li>
+        </ul>
+      </div>
+      <div id="tab-reviews" class="tab-panel">
+        <p><strong>Average rating: 4.6 / 5</strong> based on 284 reviews.</p>
+        <p>"Excellent build quality and fast delivery. Would recommend to anyone."</p>
+        <p>"Solid product. Setup was straightforward and documentation is thorough."</p>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Select Category</div>
+      <div class="dropdown-wrap">
+        <select id="category-select">
+          <option value="">-- Choose Category --</option>
+          <option value="electronics">Electronics</option>
+          <option value="furniture">Furniture</option>
+          <option value="kitchen">Kitchen</option>
+          <option value="health">Health</option>
+          <option value="sports">Sports</option>
+        </select>
+        <span class="selected-label" id="selected-label"></span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Frequently Asked Questions</div>
+      <div id="faq-accordion">
+        <div class="accordion-item">
+          <button class="accordion-header">What is the return policy?<span class="accordion-icon">+</span></button>
+          <div class="accordion-body">
+            <p>All items can be returned within 30 days in original condition. Refunds processed within 5-7 business days.</p>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <button class="accordion-header">How long does shipping take?<span class="accordion-icon">+</span></button>
+          <div class="accordion-body">
+            <p>Standard shipping takes 3-5 business days. Express (1-2 days) available at checkout. Free shipping on orders over $75.</p>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <button class="accordion-header">Is international shipping available?<span class="accordion-icon">+</span></button>
+          <div class="accordion-body">
+            <p>Yes, we ship to over 50 countries. International delivery takes 7-21 business days depending on destination.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="hidden-data">
+      <h3>Exclusive Electronics Details</h3>
+      <p>Visible only when "Details" tab is active and "Electronics" category is selected. SKU-EL-2026, Batch: Q1-PRIME.</p>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var activeTab = 'overview';
+      var selectedCategory = '';
+
+      function updateHiddenData() {
+        var hidden = document.getElementById('hidden-data');
+        hidden.style.display = (activeTab === 'details' && selectedCategory === 'electronics') ? 'block' : 'none';
+      }
+
+      document.querySelectorAll('.tab-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+          document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
+          btn.classList.add('active');
+          activeTab = btn.getAttribute('data-tab');
+          document.getElementById('tab-' + activeTab).classList.add('active');
+          document.body.setAttribute('data-active-tab', activeTab);
+          updateHiddenData();
+        });
+      });
+
+      document.getElementById('category-select').addEventListener('change', function () {
+        selectedCategory = this.value;
+        var cap = selectedCategory ? selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1) : '';
+        document.getElementById('selected-label').textContent = cap;
+        document.body.setAttribute('data-selected-category', selectedCategory);
+        updateHiddenData();
+      });
+
+      document.querySelectorAll('.accordion-header').forEach(function (header) {
+        header.addEventListener('click', function () {
+          var body = header.nextElementSibling;
+          var isOpen = header.classList.contains('open');
+          document.querySelectorAll('.accordion-header').forEach(function (h) {
+            h.classList.remove('open'); h.nextElementSibling.classList.remove('open');
+          });
+          if (!isOpen) { header.classList.add('open'); body.classList.add('open'); }
+        });
+      });
+
+      document.body.setAttribute('data-active-tab', activeTab);
+      document.body.setAttribute('data-selected-category', selectedCategory);
+    })();
+  </script>
+</body>
+</html>
