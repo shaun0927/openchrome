@@ -557,7 +557,7 @@ export class ChromeLauncher {
   /**
    * Check if Chrome is currently running (regardless of debug port)
    */
-  isChromeRunning(): boolean {
+  private isChromeRunning(): boolean {
     const platform = os.platform();
     try {
       if (platform === 'darwin') {
@@ -588,7 +588,7 @@ export class ChromeLauncher {
    * Gracefully quit running Chrome using platform-specific commands.
    * Returns true if Chrome exited within the timeout.
    */
-  async quitRunningChrome(timeout = 10000): Promise<boolean> {
+  private async quitRunningChrome(timeout = 10000): Promise<boolean> {
     const platform = os.platform();
     try {
       if (platform === 'darwin') {
@@ -626,7 +626,7 @@ export class ChromeLauncher {
    * Quit Chrome and wait for the profile lock to be released.
    * Returns true if the profile was successfully unlocked.
    */
-  async quitAndUnlockProfile(profileDir: string, quitTimeout = 10000, unlockTimeout = 5000): Promise<boolean> {
+  private async quitAndUnlockProfile(profileDir: string, quitTimeout = 10000, unlockTimeout = 5000): Promise<boolean> {
     const chromeExited = await this.quitRunningChrome(quitTimeout);
     if (!chromeExited) {
       return false;

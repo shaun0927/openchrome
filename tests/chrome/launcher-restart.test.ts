@@ -55,7 +55,7 @@ describe('ChromeLauncher graceful restart', () => {
       // pgrep exits 0 → Chrome is running
       mockExecSync.mockReturnValue(Buffer.from('12345'));
 
-      expect(launcher.isChromeRunning()).toBe(true);
+      expect((launcher as any).isChromeRunning()).toBe(true);
       expect(mockExecSync).toHaveBeenCalledWith(
         'pgrep -x "Google Chrome"',
         { stdio: 'ignore' }
@@ -68,7 +68,7 @@ describe('ChromeLauncher graceful restart', () => {
         throw new Error('No matching processes');
       });
 
-      expect(launcher.isChromeRunning()).toBe(false);
+      expect((launcher as any).isChromeRunning()).toBe(false);
     });
 
     it('should return false on unexpected errors', () => {
@@ -76,7 +76,7 @@ describe('ChromeLauncher graceful restart', () => {
         throw new Error('Command not found');
       });
 
-      expect(launcher.isChromeRunning()).toBe(false);
+      expect((launcher as any).isChromeRunning()).toBe(false);
     });
   });
 
@@ -99,7 +99,7 @@ describe('ChromeLauncher graceful restart', () => {
         return Buffer.from('');
       });
 
-      const result = await launcher.quitRunningChrome(5000);
+      const result = await (launcher as any).quitRunningChrome(5000);
 
       expect(result).toBe(true);
       expect(quitCalled).toBe(true);
@@ -115,7 +115,7 @@ describe('ChromeLauncher graceful restart', () => {
         return Buffer.from('12345');
       });
 
-      const result = await launcher.quitRunningChrome(1000);
+      const result = await (launcher as any).quitRunningChrome(1000);
       expect(result).toBe(false);
     });
 
@@ -129,7 +129,7 @@ describe('ChromeLauncher graceful restart', () => {
         throw new Error('No matching processes');
       });
 
-      const result = await launcher.quitRunningChrome(2000);
+      const result = await (launcher as any).quitRunningChrome(2000);
       // Chrome ended up not running, so returns true
       expect(result).toBe(true);
     });
@@ -156,7 +156,7 @@ describe('ChromeLauncher graceful restart', () => {
         return Buffer.from('');
       });
 
-      const result = await launcher.quitAndUnlockProfile(tmpDir, 5000, 5000);
+      const result = await (launcher as any).quitAndUnlockProfile(tmpDir, 5000, 5000);
       expect(result).toBe(true);
 
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -169,7 +169,7 @@ describe('ChromeLauncher graceful restart', () => {
       // pgrep always succeeds → Chrome never quits
       mockExecSync.mockReturnValue(Buffer.from('12345'));
 
-      const result = await launcher.quitAndUnlockProfile(tmpDir, 1000, 1000);
+      const result = await (launcher as any).quitAndUnlockProfile(tmpDir, 1000, 1000);
       expect(result).toBe(false);
 
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -194,7 +194,7 @@ describe('ChromeLauncher graceful restart', () => {
         return Buffer.from('');
       });
 
-      const result = await launcher.quitAndUnlockProfile(tmpDir, 5000, 1000);
+      const result = await (launcher as any).quitAndUnlockProfile(tmpDir, 5000, 1000);
       expect(result).toBe(false);
 
       fs.rmSync(tmpDir, { recursive: true, force: true });
