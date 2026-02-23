@@ -81,6 +81,8 @@ Do NOT proceed until all 3 agents return results.
 
 ## STEP 5: Output Report
 
+**Language Rule**: ALL output (report, findings, suggestions) MUST be written in English.
+
 Use this exact format:
 
 ```

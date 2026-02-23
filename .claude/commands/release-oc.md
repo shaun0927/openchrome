@@ -53,7 +53,7 @@ For each local change, classify:
 
 | Change Type | Action |
 |-------------|--------|
-| Source code (`.ts`) changes | Create PR by category (feat/fix/refactor/chore) |
+| Source code (`.ts`) changes | Create PR by category (feat/fix/refactor/chore). **All PR titles, descriptions, and commit messages MUST be in English.** |
 | `.claude/` agents/commands | Validate YAML frontmatter, bundle into chore PR |
 | Temp/experiment files | Delete if not needed |
 | Stashed changes | Pop, resolve conflicts, commit or drop |

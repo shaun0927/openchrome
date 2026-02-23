@@ -93,6 +93,8 @@ Use this exact format:
 
 Do NOT skip this step. Post the review on EVERY reviewed PR.
 
+**Language Rule**: ALL review comments MUST be written in English. Do NOT use any other language.
+
 ```bash
 # P0 > 0:
 gh pr review <N> --request-changes --body "<Step 4 output>"
