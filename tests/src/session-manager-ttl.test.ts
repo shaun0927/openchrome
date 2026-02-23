@@ -36,6 +36,11 @@ const mockCdpClientInstance = {
   addTargetDestroyedListener: jest.fn(),
   createBrowserContext: jest.fn().mockResolvedValue(mockBrowserContext),
   closeBrowserContext: jest.fn().mockResolvedValue(undefined),
+  getBrowser: jest.fn().mockReturnValue({
+    targets: jest.fn().mockReturnValue([]),
+    on: jest.fn(),
+    removeAllListeners: jest.fn(),
+  }),
 };
 
 // Mock dependencies
@@ -51,9 +56,15 @@ jest.mock('../../src/cdp/client', () => ({
 }));
 
 const mockPoolInstance = {
-  acquirePage: jest.fn().mockResolvedValue({
-    target: () => ({ _targetId: 'pool-target-id' }),
-    goto: jest.fn().mockResolvedValue(undefined),
+  acquirePage: jest.fn().mockImplementation(() => {
+    const poolTargetId = `pool-target-id-${++targetIdCounter}`;
+    return Promise.resolve({
+      target: () => ({ _targetId: poolTargetId }),
+      goto: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+      isClosed: jest.fn().mockReturnValue(false),
+      setCookie: jest.fn().mockResolvedValue(undefined),
+    });
   }),
   releasePage: jest.fn().mockResolvedValue(undefined),
   getStats: jest.fn().mockReturnValue({
@@ -329,17 +340,14 @@ describe('SessionManager Pool + Cookie Bridge', () => {
     const session = await sessionManager.createSession({ id: 'pool-cookie-session' });
     expect(session.id).toBe('pool-cookie-session');
 
-    // Create a target — cdpClient.createPage is used for page creation
-    // (the connection pool manages pre-warmed pages separately from target creation)
+    // Create a target — with useConnectionPool: true, pool.acquirePage is used first
     const { targetId, page, workerId } = await sessionManager.createTarget('pool-cookie-session');
     expect(targetId).toBeDefined();
     expect(page).toBeDefined();
     expect(workerId).toBe('default');
 
-    // Verify cdpClient.createPage was called (not bypassed by pool)
-    const { getCDPClient } = require('../../src/cdp/client');
-    const cdpClient = getCDPClient();
-    expect(cdpClient.createPage).toHaveBeenCalled();
+    // Verify pool was used for page acquisition (acquirePage called, not createPage)
+    expect(mockPoolInstance.acquirePage).toHaveBeenCalled();
 
     // Verify pool stats remain accessible (pool doesn't conflict with page creation)
     const statsAfter = sessionManager.getStats();

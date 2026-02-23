@@ -45,6 +45,11 @@ const mockCdpClientInstance = {
   closeBrowserContext: jest.fn().mockResolvedValue(undefined),
   getPages: jest.fn().mockResolvedValue([]),
   triggerGC: jest.fn().mockResolvedValue(undefined),
+  getBrowser: jest.fn().mockReturnValue({
+    targets: jest.fn().mockReturnValue([]),
+    on: jest.fn(),
+    removeAllListeners: jest.fn(),
+  }),
 };
 
 // ─── Mock BrowserRouter ────────────────────────────────────────────────────

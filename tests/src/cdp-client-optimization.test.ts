@@ -135,34 +135,42 @@ describe('CDPClient – cookieSourceCache', () => {
     jest.useRealTimers();
   });
 
-  test('cache miss: queries WebSocket when cache is empty', async () => {
-    // Provide target list via Target.getTargets (CDP session)
+  test('cache miss: queries CDP when cache is empty', async () => {
+    // Provide target list and cookies via CDP session (Target.getTargets + Target.attachToTarget + Network.getAllCookies)
     const mockSession = {
-      send: jest.fn().mockResolvedValue({
-        targetInfos: [
-          { targetId: 'tgt-1', type: 'page', url: 'https://example.com', browserContextId: 'default' },
-        ],
+      send: jest.fn().mockImplementation((method: string, params?: any) => {
+        if (method === 'Target.getTargets') {
+          return Promise.resolve({
+            targetInfos: [
+              { targetId: 'tgt-1', type: 'page', url: 'https://example.com', browserContextId: 'default' },
+            ],
+          });
+        }
+        if (method === 'Target.attachToTarget') {
+          return Promise.resolve({ sessionId: 'attached-session-1' });
+        }
+        if (method === 'Network.getAllCookies') {
+          return Promise.resolve({
+            cookies: [
+              { name: 'session', value: 'abc', domain: 'example.com', path: '/', expires: -1, httpOnly: true, secure: true },
+              { name: 'user', value: '123', domain: 'example.com', path: '/', expires: -1, httpOnly: false, secure: false },
+            ],
+          });
+        }
+        if (method === 'Target.detachFromTarget') {
+          return Promise.resolve(undefined);
+        }
+        return Promise.resolve(undefined);
       }),
       detach: jest.fn().mockResolvedValue(undefined),
     };
     (client as any).browser.target().createCDPSession = jest.fn().mockResolvedValue(mockSession);
 
-    // /json/list returns the target with a WS URL
-    mockFetch.mockResolvedValue({
-      json: async () => [{ id: 'tgt-1', webSocketDebuggerUrl: 'ws://localhost:9222/devtools/page/tgt-1', url: 'https://example.com' }],
-    });
-
-    // WS returns 2 cookies so the page counts as "authenticated"
-    setupWsWithCookies([
-      { name: 'session', value: 'abc', domain: 'example.com', path: '/', expires: -1, httpOnly: true, secure: true },
-      { name: 'user', value: '123', domain: 'example.com', path: '/', expires: -1, httpOnly: false, secure: false },
-    ]);
-
     const result = await client.findAuthenticatedPageTargetId();
 
     expect(result).toBe('tgt-1');
-    // fetch must have been called (WebSocket path triggered)
-    expect(mockFetch).toHaveBeenCalled();
+    // CDP session must have been used (Target.getTargets called)
+    expect(mockSession.send).toHaveBeenCalledWith('Target.getTargets');
   });
 
   test('cache hit: returns cached targetId without re-querying WebSocket', async () => {
@@ -245,18 +253,35 @@ describe('CDPClient – cookieDataCache', () => {
     jest.useRealTimers();
   });
 
-  test('cache miss: fetches cookies via WebSocket and stores in cache', async () => {
+  test('cache miss: fetches cookies via CDP session and stores in cache', async () => {
     const sampleCookies = [
       { name: 'session', value: 'abc', domain: 'example.com', path: '/', expires: -1, httpOnly: true, secure: true },
     ];
 
-    mockFetch.mockResolvedValue({
-      json: async () => [
-        { id: 'src-target', webSocketDebuggerUrl: 'ws://localhost:9222/devtools/page/src-target', url: 'https://example.com' },
-      ],
-    });
-
-    setupWsWithCookies(sampleCookies);
+    // Set up browser CDP session mock for Target.getTargets, Target.attachToTarget, Network.getAllCookies
+    const mockBrowserSession = {
+      send: jest.fn().mockImplementation((method: string, params?: any) => {
+        if (method === 'Target.getTargets') {
+          return Promise.resolve({
+            targetInfos: [
+              { targetId: 'src-target', type: 'page', url: 'https://example.com' },
+            ],
+          });
+        }
+        if (method === 'Target.attachToTarget') {
+          return Promise.resolve({ sessionId: 'attached-session-1' });
+        }
+        if (method === 'Network.getAllCookies') {
+          return Promise.resolve({ cookies: sampleCookies });
+        }
+        if (method === 'Target.detachFromTarget') {
+          return Promise.resolve(undefined);
+        }
+        return Promise.resolve(undefined);
+      }),
+      detach: jest.fn().mockResolvedValue(undefined),
+    };
+    (client as any).browser.target().createCDPSession = jest.fn().mockResolvedValue(mockBrowserSession);
 
     const mockPage = createMockPage('dest-target');
     const count = await client.copyCookiesViaCDP('src-target', mockPage as any);
@@ -303,17 +328,24 @@ describe('CDPClient – cookieDataCache', () => {
 
     jest.advanceTimersByTime(30001);
 
-    // Mock /json/list – target not found → returns 0
-    mockFetch.mockResolvedValue({
-      json: async () => [],
-    });
+    // Mock browser CDP session – target not found → returns 0
+    const mockBrowserSession = {
+      send: jest.fn().mockImplementation((method: string) => {
+        if (method === 'Target.getTargets') {
+          return Promise.resolve({ targetInfos: [] });
+        }
+        return Promise.resolve(undefined);
+      }),
+      detach: jest.fn().mockResolvedValue(undefined),
+    };
+    (client as any).browser.target().createCDPSession = jest.fn().mockResolvedValue(mockBrowserSession);
 
     const mockPage = createMockPage('dest-target');
     const count = await client.copyCookiesViaCDP('src-target', mockPage as any);
 
-    // Cache miss path triggered; target not found in list → 0
+    // Cache miss path triggered; target not found → 0
     expect(count).toBe(0);
-    expect(mockFetch).toHaveBeenCalled();
+    expect(mockBrowserSession.send).toHaveBeenCalledWith('Target.getTargets');
   });
 
   test('onTargetDestroyed clears cookie data cache for that target', () => {
