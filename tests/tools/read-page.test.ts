@@ -55,10 +55,17 @@ describe('ReadPageTool', () => {
     const { targetId } = await mockSessionManager.createTarget(testSessionId, 'about:blank');
     testTargetId = targetId;
 
-    // Set up default CDP response for accessibility tree
+    // Set up default CDP response for accessibility tree (default depth for 'all' filter)
     mockSessionManager.mockCDPClient.setCDPResponse(
       'Accessibility.getFullAXTree',
-      { depth: 15 },
+      { depth: 8 },
+      sampleAccessibilityTree
+    );
+
+    // Set up CDP response for depth 5 (used with interactive filter)
+    mockSessionManager.mockCDPClient.setCDPResponse(
+      'Accessibility.getFullAXTree',
+      { depth: 5 },
       sampleAccessibilityTree
     );
 
@@ -85,7 +92,7 @@ describe('ReadPageTool', () => {
       expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
         expect.anything(),
         'Accessibility.getFullAXTree',
-        { depth: 15 }
+        { depth: 8 }
       );
     });
 
@@ -179,7 +186,7 @@ describe('ReadPageTool', () => {
 
       mockSessionManager.mockCDPClient.setCDPResponse(
         'Accessibility.getFullAXTree',
-        { depth: 15 },
+        { depth: 8 },
         { nodes: [] }
       );
 
@@ -299,7 +306,7 @@ describe('ReadPageTool', () => {
 
       mockSessionManager.mockCDPClient.setCDPResponse(
         'Accessibility.getFullAXTree',
-        { depth: 15 },
+        { depth: 8 },
         largeTree
       );
 

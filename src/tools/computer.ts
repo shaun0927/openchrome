@@ -7,11 +7,6 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
-
-// Maximum screenshot dimensions to avoid API errors (2000px limit)
-const MAX_SCREENSHOT_WIDTH = 1920;
-const MAX_SCREENSHOT_HEIGHT = 1080;
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -65,7 +60,7 @@ const definition: MCPToolDefinition = {
       },
       ref: {
         type: 'string',
-        description: 'Element reference ID (ref_N from read_page) or backendNodeId (number from DOM mode). Can be used for scroll_to or as an alternative to coordinate for click actions.',
+        description: 'Element reference ID (ref_N from read_page) or backendNodeId (number from DOM mode)',
       },
     },
     required: ['action', 'tabId'],
@@ -95,7 +90,7 @@ const handler: ToolHandler = async (
   }
 
   try {
-    const page = await sessionManager.getPage(sessionId, tabId, undefined, 'computer');
+    const page = await sessionManager.getPage(sessionId, tabId);
     if (!page) {
       return {
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
@@ -105,108 +100,44 @@ const handler: ToolHandler = async (
 
     switch (action) {
       case 'screenshot': {
-        // Save original viewport to restore later
-        const originalViewport = page.viewport();
-
-        // ALWAYS ensure viewport is within limits before screenshot
-        // This prevents the 2000px API error regardless of current state
-        const currentWidth = originalViewport?.width ?? 1920;
-        const currentHeight = originalViewport?.height ?? 1080;
-
-        const needsResize = !originalViewport ||
-          currentWidth > MAX_SCREENSHOT_WIDTH ||
-          currentHeight > MAX_SCREENSHOT_HEIGHT;
-
-        if (needsResize) {
-          // Set viewport to max allowed size
-          const newWidth = Math.min(currentWidth, MAX_SCREENSHOT_WIDTH);
-          const newHeight = Math.min(currentHeight, MAX_SCREENSHOT_HEIGHT);
-
-          await page.setViewport({
-            width: newWidth,
-            height: newHeight,
-            deviceScaleFactor: 1, // Ensure 1:1 pixel ratio
-          });
-        }
-
-        // Use ScreenshotScheduler for concurrency-controlled capture
-        const cdpClient = getSessionManager().getCDPClient();
-        const scheduler = getScreenshotScheduler();
-        const { data: screenshot } = await scheduler.capture(page, cdpClient, {
-          format: 'webp',
-          quality: 60,
-          clip: {
-            x: 0,
-            y: 0,
-            width: Math.min(currentWidth, MAX_SCREENSHOT_WIDTH),
-            height: Math.min(currentHeight, MAX_SCREENSHOT_HEIGHT),
-            scale: 1,
-          },
-          optimizeForSpeed: true,
+        const screenshot = await page.screenshot({
+          encoding: 'base64',
+          type: 'png',
         });
-
-        // Restore original viewport if we changed it
-        if (needsResize && originalViewport) {
-          await page.setViewport(originalViewport);
-        }
 
         return {
           content: [
             {
               type: 'image',
               data: screenshot,
-              mimeType: 'image/webp',
+              mimeType: 'image/png',
             },
           ],
         };
       }
 
       case 'left_click': {
-        // Support ref-based clicking
-        let clickCoord: [number, number] | null = coordinate || null;
+        let clickCoord: [number, number] | undefined = coordinate;
         let refInfo = '';
 
         if (ref && !coordinate) {
-          const refIdManager = getRefIdManager();
-          const refEntry = refIdManager.getRef(sessionId, tabId, ref);
-
-          if (!refEntry) {
-            return {
-              content: [{ type: 'text', text: `Error: Element ${ref} not found` }],
-              isError: true,
-            };
-          }
-
-          // Scroll into view and get coordinates
-          const cdpClient = sessionManager.getCDPClient();
-          try {
-            await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const { model } = await cdpClient.send<{
-              model: { content: number[] };
-            }>(page, 'DOM.getBoxModel', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            // content is [x1,y1, x2,y1, x2,y2, x1,y2] - get center
-            const x = (model.content[0] + model.content[2]) / 2;
-            const y = (model.content[1] + model.content[5]) / 2;
-            clickCoord = [Math.round(x), Math.round(y)];
-            refInfo = ` [${ref}]`;
-          } catch (e) {
-            return {
-              content: [{ type: 'text', text: `Error: Could not get position for ${ref}: ${e instanceof Error ? e.message : String(e)}` }],
-              isError: true,
-            };
-          }
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          clickCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
         }
 
         if (!clickCoord) {
           return {
-            content: [{ type: 'text', text: 'Error: coordinate or ref is required for left_click' }],
+            content: [{ type: 'text', text: 'Error: coordinate is required for left_click' }],
             isError: true,
+          };
+        }
+
+        if (refInfo) {
+          await page.mouse.click(clickCoord[0], clickCoord[1]);
+          return {
+            content: [{ type: 'text', text: `Clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
           };
         }
 
@@ -221,8 +152,8 @@ const handler: ToolHandler = async (
         await page.mouse.click(clickCoord[0], clickCoord[1]);
 
         const resultText = leftClickValidation.warning
-          ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]})${refInfo}. Warning: ${leftClickValidation.warning}`
-          : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})${refInfo}`;
+          ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${leftClickValidation.warning}`
+          : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: resultText }],
@@ -230,49 +161,27 @@ const handler: ToolHandler = async (
       }
 
       case 'right_click': {
-        // Support ref-based clicking
-        let clickCoord: [number, number] | null = coordinate || null;
+        let clickCoord: [number, number] | undefined = coordinate;
         let refInfo = '';
 
         if (ref && !coordinate) {
-          const refIdManager = getRefIdManager();
-          const refEntry = refIdManager.getRef(sessionId, tabId, ref);
-
-          if (!refEntry) {
-            return {
-              content: [{ type: 'text', text: `Error: Element ${ref} not found` }],
-              isError: true,
-            };
-          }
-
-          const cdpClient = sessionManager.getCDPClient();
-          try {
-            await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const { model } = await cdpClient.send<{
-              model: { content: number[] };
-            }>(page, 'DOM.getBoxModel', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const x = (model.content[0] + model.content[2]) / 2;
-            const y = (model.content[1] + model.content[5]) / 2;
-            clickCoord = [Math.round(x), Math.round(y)];
-            refInfo = ` [${ref}]`;
-          } catch (e) {
-            return {
-              content: [{ type: 'text', text: `Error: Could not get position for ${ref}: ${e instanceof Error ? e.message : String(e)}` }],
-              isError: true,
-            };
-          }
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          clickCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
         }
 
         if (!clickCoord) {
           return {
-            content: [{ type: 'text', text: 'Error: coordinate or ref is required for right_click' }],
+            content: [{ type: 'text', text: 'Error: coordinate is required for right_click' }],
             isError: true,
+          };
+        }
+
+        if (refInfo) {
+          await page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' });
+          return {
+            content: [{ type: 'text', text: `Right-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
           };
         }
 
@@ -287,8 +196,8 @@ const handler: ToolHandler = async (
         await page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' });
 
         const rightClickText = rightClickValidation.warning
-          ? `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})${refInfo}. Warning: ${rightClickValidation.warning}`
-          : `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})${refInfo}`;
+          ? `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${rightClickValidation.warning}`
+          : `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: rightClickText }],
@@ -296,51 +205,29 @@ const handler: ToolHandler = async (
       }
 
       case 'double_click': {
-        // Support ref-based clicking
-        let clickCoord: [number, number] | null = coordinate || null;
+        let clickCoord: [number, number] | undefined = coordinate;
         let refInfo = '';
 
         if (ref && !coordinate) {
-          const refIdManager = getRefIdManager();
-          const refEntry = refIdManager.getRef(sessionId, tabId, ref);
-
-          if (!refEntry) {
-            return {
-              content: [{ type: 'text', text: `Error: Element ${ref} not found` }],
-              isError: true,
-            };
-          }
-
-          const cdpClient = sessionManager.getCDPClient();
-          try {
-            await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const { model } = await cdpClient.send<{
-              model: { content: number[] };
-            }>(page, 'DOM.getBoxModel', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const x = (model.content[0] + model.content[2]) / 2;
-            const y = (model.content[1] + model.content[5]) / 2;
-            clickCoord = [Math.round(x), Math.round(y)];
-            refInfo = ` [${ref}]`;
-          } catch (e) {
-            return {
-              content: [{ type: 'text', text: `Error: Could not get position for ${ref}: ${e instanceof Error ? e.message : String(e)}` }],
-              isError: true,
-            };
-          }
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          clickCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
         }
 
         if (!clickCoord) {
           return {
             content: [
-              { type: 'text', text: 'Error: coordinate or ref is required for double_click' },
+              { type: 'text', text: 'Error: coordinate is required for double_click' },
             ],
             isError: true,
+          };
+        }
+
+        if (refInfo) {
+          await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 });
+          return {
+            content: [{ type: 'text', text: `Double-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
           };
         }
 
@@ -355,8 +242,8 @@ const handler: ToolHandler = async (
         await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 });
 
         const doubleClickText = doubleClickValidation.warning
-          ? `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})${refInfo}. Warning: ${doubleClickValidation.warning}`
-          : `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})${refInfo}`;
+          ? `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${doubleClickValidation.warning}`
+          : `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: doubleClickText }],
@@ -364,51 +251,29 @@ const handler: ToolHandler = async (
       }
 
       case 'triple_click': {
-        // Support ref-based clicking
-        let clickCoord: [number, number] | null = coordinate || null;
+        let clickCoord: [number, number] | undefined = coordinate;
         let refInfo = '';
 
         if (ref && !coordinate) {
-          const refIdManager = getRefIdManager();
-          const refEntry = refIdManager.getRef(sessionId, tabId, ref);
-
-          if (!refEntry) {
-            return {
-              content: [{ type: 'text', text: `Error: Element ${ref} not found` }],
-              isError: true,
-            };
-          }
-
-          const cdpClient = sessionManager.getCDPClient();
-          try {
-            await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const { model } = await cdpClient.send<{
-              model: { content: number[] };
-            }>(page, 'DOM.getBoxModel', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const x = (model.content[0] + model.content[2]) / 2;
-            const y = (model.content[1] + model.content[5]) / 2;
-            clickCoord = [Math.round(x), Math.round(y)];
-            refInfo = ` [${ref}]`;
-          } catch (e) {
-            return {
-              content: [{ type: 'text', text: `Error: Could not get position for ${ref}: ${e instanceof Error ? e.message : String(e)}` }],
-              isError: true,
-            };
-          }
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          clickCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
         }
 
         if (!clickCoord) {
           return {
             content: [
-              { type: 'text', text: 'Error: coordinate or ref is required for triple_click' },
+              { type: 'text', text: 'Error: coordinate is required for triple_click' },
             ],
             isError: true,
+          };
+        }
+
+        if (refInfo) {
+          await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 });
+          return {
+            content: [{ type: 'text', text: `Triple-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
           };
         }
 
@@ -423,8 +288,8 @@ const handler: ToolHandler = async (
         await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 });
 
         const tripleClickText = tripleClickValidation.warning
-          ? `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})${refInfo}. Warning: ${tripleClickValidation.warning}`
-          : `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})${refInfo}`;
+          ? `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${tripleClickValidation.warning}`
+          : `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: tripleClickText }],
@@ -432,49 +297,27 @@ const handler: ToolHandler = async (
       }
 
       case 'hover': {
-        // Support ref-based hovering
-        let hoverCoord: [number, number] | null = coordinate || null;
+        let hoverCoord: [number, number] | undefined = coordinate;
         let refInfo = '';
 
         if (ref && !coordinate) {
-          const refIdManager = getRefIdManager();
-          const refEntry = refIdManager.getRef(sessionId, tabId, ref);
-
-          if (!refEntry) {
-            return {
-              content: [{ type: 'text', text: `Error: Element ${ref} not found` }],
-              isError: true,
-            };
-          }
-
-          const cdpClient = sessionManager.getCDPClient();
-          try {
-            await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const { model } = await cdpClient.send<{
-              model: { content: number[] };
-            }>(page, 'DOM.getBoxModel', {
-              backendNodeId: refEntry.backendDOMNodeId,
-            });
-
-            const x = (model.content[0] + model.content[2]) / 2;
-            const y = (model.content[1] + model.content[5]) / 2;
-            hoverCoord = [Math.round(x), Math.round(y)];
-            refInfo = ` [${ref}]`;
-          } catch (e) {
-            return {
-              content: [{ type: 'text', text: `Error: Could not get position for ${ref}: ${e instanceof Error ? e.message : String(e)}` }],
-              isError: true,
-            };
-          }
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          hoverCoord = resolved.coord;
+          refInfo = ` [${ref}]`;
         }
 
         if (!hoverCoord) {
           return {
-            content: [{ type: 'text', text: 'Error: coordinate or ref is required for hover' }],
+            content: [{ type: 'text', text: 'Error: coordinate is required for hover' }],
             isError: true,
+          };
+        }
+
+        if (refInfo) {
+          await page.mouse.move(hoverCoord[0], hoverCoord[1]);
+          return {
+            content: [{ type: 'text', text: `Hovered element ${ref} at (${hoverCoord[0]}, ${hoverCoord[1]})` }],
           };
         }
 
@@ -489,8 +332,8 @@ const handler: ToolHandler = async (
         await page.mouse.move(hoverCoord[0], hoverCoord[1]);
 
         const hoverText = hoverValidation.warning
-          ? `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]})${refInfo}. Warning: ${hoverValidation.warning}`
-          : `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]})${refInfo}`;
+          ? `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]}). Warning: ${hoverValidation.warning}`
+          : `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]})`;
 
         return {
           content: [{ type: 'text', text: hoverText }],
@@ -582,6 +425,8 @@ const handler: ToolHandler = async (
           };
         }
 
+        await page.mouse.move(coordinate[0], coordinate[1]);
+
         const deltaMultiplier = 100;
         let deltaX = 0;
         let deltaY = 0;
@@ -601,29 +446,13 @@ const handler: ToolHandler = async (
             break;
         }
 
-        // Try CDP mouse wheel first, fallback to JavaScript scroll if it times out
-        let usedFallback = false;
-        try {
-          await page.mouse.move(coordinate[0], coordinate[1]);
-          await page.mouse.wheel({ deltaX, deltaY });
-        } catch (scrollError) {
-          // Fallback to JavaScript scroll if mouse.wheel fails (timeout, etc.)
-          usedFallback = true;
-          await page.evaluate(
-            (dx: number, dy: number) => {
-              window.scrollBy(dx, dy);
-            },
-            deltaX,
-            deltaY
-          );
-        }
+        await page.mouse.wheel({ deltaX, deltaY });
 
-        const scrollMethod = usedFallback ? ' (via JavaScript fallback)' : '';
         return {
           content: [
             {
               type: 'text',
-              text: `Scrolled ${scrollDirection} at (${coordinate[0]}, ${coordinate[1]})${scrollMethod}`,
+              text: `Scrolled ${scrollDirection} at (${coordinate[0]}, ${coordinate[1]})`,
             },
           ],
         };
@@ -676,6 +505,54 @@ const handler: ToolHandler = async (
     };
   }
 };
+
+/**
+ * Resolve a ref to screen coordinates, scrolling the element into view first.
+ * Returns either { coord } on success or { error } on failure.
+ */
+async function resolveRefToCoordinates(
+  sessionId: string,
+  tabId: string,
+  ref: string,
+  page: import('puppeteer-core').Page,
+  sessionManager: ReturnType<typeof getSessionManager>
+): Promise<{ coord: [number, number]; error?: never } | { coord?: never; error: MCPResult }> {
+  const refIdManager = getRefIdManager();
+  const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+
+  if (backendNodeId === undefined) {
+    return {
+      error: {
+        content: [{ type: 'text', text: `Error: Element ref or node ID '${ref}' not found` }],
+        isError: true,
+      },
+    };
+  }
+
+  const cdpClient = sessionManager.getCDPClient();
+  try {
+    await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
+      backendNodeId,
+    });
+
+    const { model } = await cdpClient.send<{
+      model: { content: number[] };
+    }>(page, 'DOM.getBoxModel', {
+      backendNodeId,
+    });
+
+    const x = (model.content[0] + model.content[2]) / 2;
+    const y = (model.content[1] + model.content[5]) / 2;
+    return { coord: [Math.round(x), Math.round(y)] };
+  } catch (e) {
+    return {
+      error: {
+        content: [{ type: 'text', text: `Error: Could not get position for ${ref}: ${e instanceof Error ? e.message : String(e)}` }],
+        isError: true,
+      },
+    };
+  }
+}
 
 /**
  * Validate and check coordinates against viewport bounds

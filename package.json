@@ -14,6 +14,8 @@
     "dev": "tsc -p tsconfig.cli.json --watch",
     "start": "node dist/cli/index.js serve",
     "check": "node dist/cli/index.js check",
+    "benchmark": "ts-node tests/benchmark/run.ts",
+    "benchmark:ci": "ts-node tests/benchmark/run.ts --ci",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",

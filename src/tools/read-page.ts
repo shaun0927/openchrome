@@ -30,19 +30,7 @@ const definition: MCPToolDefinition = {
       },
       ref_id: {
         type: 'string',
-        description: 'Reference ID of a parent element to read from (uses faster partial tree fetch)',
-      },
-      selector: {
-        type: 'string',
-        description: 'CSS selector to extract a single element and its subtree (faster than full AX tree). Returns text content and attributes.',
-      },
-      selectorAll: {
-        type: 'string',
-        description: 'CSS selector to extract multiple matching elements. Returns array of {tag, text, attributes} objects. Use for lists, tables, repeated elements.',
-      },
-      selectorLimit: {
-        type: 'number',
-        description: 'Maximum number of elements to return when using selectorAll (default: 50)',
+        description: 'Reference ID of a parent element to read from',
       },
       mode: {
         type: 'string',
@@ -70,7 +58,9 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const filter = (args.filter as string) || 'all';
-  const refIdParam = args.ref_id as string | undefined;
+  const defaultDepth = filter === 'interactive' ? 5 : 8;
+  const maxDepth = (args.depth as number) || defaultDepth;
+  const fetchDepth = filter === 'interactive' ? Math.min(maxDepth, 5) : maxDepth;
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -83,7 +73,7 @@ const handler: ToolHandler = async (
   }
 
   try {
-    const page = await sessionManager.getPage(sessionId, tabId, undefined, 'read_page');
+    const page = await sessionManager.getPage(sessionId, tabId);
     if (!page) {
       return {
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
@@ -120,118 +110,25 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Fast path: CSS selector-based extraction (skips full AX tree)
-    const selectorParam = args.selector as string | undefined;
-    const selectorAllParam = args.selectorAll as string | undefined;
-
-    if (selectorParam || selectorAllParam) {
-      const cssSelector = (selectorParam || selectorAllParam)!;
-      const isAll = !!selectorAllParam;
-      const limit = (args.selectorLimit as number) || 50;
-
-      const extractResult = await page.evaluate(
-        (sel: string, all: boolean, max: number) => {
-          function extractElement(el: Element): Record<string, unknown> {
-            const attrs: Record<string, string> = {};
-            for (const attr of el.attributes) {
-              // Skip very long attributes (e.g. inline styles, data URIs)
-              if (attr.value.length <= 200) {
-                attrs[attr.name] = attr.value;
-              }
-            }
-            return {
-              tag: el.tagName.toLowerCase(),
-              text: (el.textContent || '').trim().slice(0, 500),
-              attributes: attrs,
-              childCount: el.children.length,
-            };
-          }
-
-          if (all) {
-            const elements = document.querySelectorAll(sel);
-            const results: Record<string, unknown>[] = [];
-            for (let i = 0; i < Math.min(elements.length, max); i++) {
-              results.push(extractElement(elements[i]));
-            }
-            return { count: elements.length, elements: results };
-          } else {
-            const el = document.querySelector(sel);
-            if (!el) return { count: 0, elements: [] };
-            return { count: 1, elements: [extractElement(el)] };
-          }
-        },
-        cssSelector,
-        isAll,
-        limit
-      );
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(extractResult, null, 2),
-          },
-        ],
-      };
-    }
-
-    // Determine depth: explicit arg > filter-based default
-    // Reduce default from 15→8 for "all" (15 is excessively deep and very slow on complex pages)
-    const defaultDepth = filter === 'interactive' ? 5 : 8;
-    const maxDepth = (args.depth as number) || defaultDepth;
-    const fetchDepth = filter === 'interactive' ? Math.min(maxDepth, 5) : maxDepth;
-
-    let nodes: AXNode[];
-
-    // When ref_id is provided, use getPartialAXTree to scope the fetch to a subtree.
-    // This is significantly faster than getFullAXTree on complex pages (e.g. Twitter).
+    // Resolve ref_id to backendDOMNodeId if provided (AX mode subtree scoping)
+    const refIdParam = args.ref_id as string | undefined;
+    let scopedBackendNodeId: number | undefined;
     if (refIdParam) {
-      const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refIdParam);
-      if (!backendDOMNodeId) {
+      scopedBackendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, refIdParam);
+      if (scopedBackendNodeId === undefined) {
         return {
-          content: [{ type: 'text', text: `Error: ref_id "${refIdParam}" not found or expired` }],
+          content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
           isError: true,
         };
       }
-
-      // Resolve backendDOMNodeId → DOM nodeId via DOM.describeNode
-      let domNodeId: number | undefined;
-      try {
-        const { node: domNode } = await cdpClient.send<{ node: { nodeId: number } }>(
-          page,
-          'DOM.describeNode',
-          { backendNodeId: backendDOMNodeId }
-        );
-        domNodeId = domNode.nodeId;
-      } catch {
-        // DOM.describeNode may return nodeId=0 for non-document nodes if DOM hasn't been enabled.
-        // Fall back to getFullAXTree in that case.
-      }
-
-      if (domNodeId && domNodeId !== 0) {
-        const result = await cdpClient.send<{ nodes: AXNode[] }>(
-          page,
-          'Accessibility.getPartialAXTree',
-          { nodeId: domNodeId, fetchRelatives: true }
-        );
-        nodes = result.nodes;
-      } else {
-        // Fallback: full tree
-        const result = await cdpClient.send<{ nodes: AXNode[] }>(
-          page,
-          'Accessibility.getFullAXTree',
-          { depth: fetchDepth }
-        );
-        nodes = result.nodes;
-      }
-    } else {
-      const result = await cdpClient.send<{ nodes: AXNode[] }>(
-        page,
-        'Accessibility.getFullAXTree',
-        { depth: fetchDepth }
-      );
-      nodes = result.nodes;
     }
+
+    // Get the accessibility tree
+    const { nodes } = await cdpClient.send<{ nodes: AXNode[] }>(
+      page,
+      'Accessibility.getFullAXTree',
+      { depth: fetchDepth }
+    );
 
     // Clear previous refs for this target
     refIdManager.clearTargetRefs(sessionId, tabId);
@@ -333,18 +230,23 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Start from root nodes — O(n) Set-based detection (replaces O(n²) nested .some())
-    const childIdSet = new Set<number>();
-    for (const node of nodes) {
-      if (node.childIds) {
-        for (const childId of node.childIds) {
-          childIdSet.add(childId);
-        }
+    // Start from root nodes (or scoped subtree if ref_id provided)
+    let startNodes: AXNode[];
+    if (scopedBackendNodeId !== undefined) {
+      const scopedNode = nodes.find((n) => n.backendDOMNodeId === scopedBackendNodeId);
+      if (!scopedNode) {
+        return {
+          content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
+          isError: true,
+        };
       }
+      startNodes = [scopedNode];
+    } else {
+      startNodes = nodes.filter(
+        (n) => !nodes.some((other) => other.childIds?.includes(n.nodeId))
+      );
     }
-    const rootNodes = nodes.filter((n) => !childIdSet.has(n.nodeId));
-
-    for (const root of rootNodes) {
+    for (const root of startNodes) {
       formatNode(root, 0);
     }
 
