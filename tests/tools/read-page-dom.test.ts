@@ -100,6 +100,13 @@ describe('ReadPageTool - DOM Mode', () => {
       sampleAccessibilityTree
     );
 
+    // Set up CDP response for depth 5 (used with interactive filter)
+    mockSessionManager.mockCDPClient.setCDPResponse(
+      'Accessibility.getFullAXTree',
+      { depth: 5 },
+      sampleAccessibilityTree
+    );
+
     // Set up DOM.getDocument response for DOM mode
     mockSessionManager.mockCDPClient.setCDPResponse(
       'DOM.getDocument',
