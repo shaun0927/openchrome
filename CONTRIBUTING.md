@@ -1,6 +1,6 @@
-# Contributing to Claude Chrome Parallel
+# Contributing to OpenChrome
 
-Thank you for your interest in contributing! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing!
 
 ## Getting Started
 
@@ -16,7 +16,6 @@ Thank you for your interest in contributing! This document provides guidelines a
 
 - Node.js 18+
 - Google Chrome
-- A code editor (VS Code recommended)
 
 ### Building
 
@@ -24,11 +23,11 @@ Thank you for your interest in contributing! This document provides guidelines a
 # Build everything
 npm run build
 
-# Build extension only (with watch mode)
+# Build CLI only (with watch mode)
 npm run dev
 
-# Build CLI only
-npm run build:cli
+# Build source only
+npm run build:src
 ```
 
 ### Testing
@@ -41,16 +40,18 @@ npm test
 npm run test:coverage
 
 # Run specific test file
-npm test -- request-queue.test.ts
+npm test -- session-manager.test.ts
 ```
 
-### Loading the Extension
+### Local Testing
 
-1. Build the extension: `npm run build`
-2. Open `chrome://extensions/` in Chrome
-3. Enable "Developer mode"
-4. Click "Load unpacked"
-5. Select the `dist/extension` directory
+```bash
+# Start MCP server locally
+node dist/cli/index.js serve --auto-launch
+
+# Run doctor check
+node dist/cli/index.js doctor
+```
 
 ## Code Style
 
@@ -92,62 +93,167 @@ Examples:
 2. Make your changes
 3. Add tests if applicable
 4. Update documentation if needed
-5. Ensure all tests pass
+5. Ensure all tests pass: `npm test`
 6. Submit a pull request
 
 ### PR Checklist
 
 - [ ] Tests added/updated
 - [ ] Documentation updated
-- [ ] Builds successfully
-- [ ] No linting errors
+- [ ] Builds successfully (`npm run build`)
+- [ ] All tests pass (`npm test`)
 - [ ] Commit messages follow convention
 
 ## Architecture Overview
 
-### Extension Structure
-
 ```
-extension/
-├── src/
-│   ├── service-worker.ts    # Main background script
-│   ├── session-manager.ts   # Session lifecycle management
-│   ├── tab-group-manager.ts # Chrome tab group handling
-│   ├── cdp-pool.ts          # CDP connection management
-│   ├── request-queue.ts     # Per-session request queuing
-│   ├── mcp-handler.ts       # MCP protocol handling
-│   └── tools/               # MCP tool implementations
-├── content/
-│   └── content-script.ts    # Page-injected script
-└── popup/
-    └── popup.ts             # Extension popup UI
+src/
+├── mcp-server.ts          # MCP protocol server (stdio JSON-RPC)
+├── session-manager.ts     # Browser session lifecycle
+├── index.ts               # Main entry point
+├── cdp/                   # Chrome DevTools Protocol layer
+│   ├── client.ts          # CDP client wrapper
+│   └── connection-pool.ts # Connection pooling
+├── chrome/                # Chrome process management
+│   ├── launcher.ts        # Auto-launch Chrome with debugging port
+│   └── pool.ts            # Browser context pool
+├── tools/                 # MCP tool implementations (36 tools)
+│   ├── index.ts           # Tool registration
+│   ├── navigation.ts      # navigate, page_reload
+│   ├── computer.ts        # screenshot, click, keyboard, scroll
+│   ├── read-page.ts       # Accessibility tree parsing
+│   ├── find.ts            # Natural language element search
+│   ├── form.ts            # form_input, fill_form
+│   ├── orchestration.ts   # workflow_init, worker_create, etc.
+│   └── ...                # Other tool modules
+├── orchestration/         # Parallel workflow engine
+├── hints/                 # Adaptive Guidance system
+│   ├── hint-engine.ts     # Rule evaluation engine
+│   └── rules/             # Error recovery, sequence detection, etc.
+├── dashboard/             # Terminal dashboard (optional)
+├── resources/             # MCP resources (usage guide)
+├── config/                # Global configuration
+├── types/                 # TypeScript type definitions
+└── utils/                 # Shared utilities
+
+cli/
+├── index.ts               # CLI entry point (setup, serve, doctor, etc.)
+└── update-check.ts        # Version update checker
 ```
 
 ### Key Concepts
 
-1. **Session Isolation**: Each Claude Code instance gets its own session with isolated resources
-2. **Tab Groups**: Sessions are visually organized using Chrome tab groups
-3. **Request Queuing**: Per-session FIFO queues prevent race conditions
-4. **CDP Connections**: Each session maintains its own debugger connections
+1. **CDP-based**: Connects to Chrome via Chrome DevTools Protocol (port 9222)
+2. **Session Isolation**: Each Worker gets an isolated browser context (separate cookies, localStorage)
+3. **MCP Protocol**: Communicates with Claude Code via JSON-RPC over stdio
+4. **Adaptive Guidance**: Hint engine injects `_hint` fields into tool responses to prevent LLM mistakes
+5. **Parallel Workflows**: Orchestration engine manages multiple Workers for concurrent tasks
 
 ## Testing Guidelines
 
 ### Unit Tests
 
 - Test individual functions and classes
-- Mock Chrome APIs using the setup file
+- Mock CDP connections and Chrome APIs
 - Focus on business logic
 
 ### Integration Tests
 
-- Test component interactions
+- Test component interactions (e.g., multi-worker workflows)
 - Use realistic scenarios
-- Verify error handling
+- Verify error handling and recovery
+
+### Stress Tests
+
+- Concurrent operations and race conditions
+- Large data handling
+- Error recovery under load
+
+## Contribution Areas
+
+Looking for something to work on? Here are the key areas where contributions would make the biggest impact.
+
+### Multi-Client Compatibility
+
+OpenChrome is a standard MCP server, but currently only tested with Claude Code. Help us verify and support other MCP clients.
+
+| Client | Status | What's Needed |
+|--------|--------|---------------|
+| Claude Code | Verified | - |
+| Cursor | Untested | Test all 36 tools, verify `instructions` field |
+| Windsurf | Untested | Test all 36 tools, verify `instructions` field |
+| Codex CLI | Untested | Test all 36 tools, verify `instructions` field |
+| VS Code + MCP | Untested | Test basic tool flow |
+
+**How to contribute**: Pick a client, run the test suite against it, report what works and what doesn't. Adapt `oc setup` to support the client if needed.
+
+### Cross-Platform Support
+
+Currently developed and tested on macOS. Windows and Linux need attention.
+
+- **Windows**: Chrome path detection, `--remote-debugging-port` launch, named pipes vs Unix sockets
+- **Linux**: Headless Chrome in CI environments, Wayland vs X11 screenshot handling
+- **CI/CD**: GitHub Actions workflow for automated testing across platforms
+
+### Performance Benchmarks
+
+The README claims 80x speedup, but we need reproducible benchmarks.
+
+- **Benchmark suite**: Automated comparison vs Playwright MCP on standard tasks (navigate, screenshot, form fill)
+- **Memory profiling**: Measure actual memory usage with 5, 10, 20 Workers
+- **Latency analysis**: Tool-by-tool latency comparison with other MCP browser tools
+
+### Browser Support
+
+Currently Chrome-only via CDP. Other browsers have similar protocols.
+
+- **Edge**: Shares CDP — should work with minimal changes (needs testing)
+- **Firefox**: Uses its own remote debugging protocol (significant work)
+- **Safari**: Limited Web Inspector protocol (research needed)
+
+### Adaptive Guidance Improvements
+
+The hint engine (`src/hints/`) currently has 21 static rules. Areas to improve:
+
+- **More error patterns**: Catalog common LLM mistakes and add recovery hints
+- **Client-specific hints**: Different LLMs make different mistakes — adapt hints per client
+- **Learned pattern sharing**: Export/import learned patterns across users
+- **Benchmark hint effectiveness**: Measure how hints reduce retry loops and wasted tokens
+
+### Tool Enhancements
+
+- **Accessibility testing**: Tools for WCAG compliance checking
+- **Visual regression**: Screenshot diff between runs
+- **Network HAR export**: Export full network traffic as HAR files
+- **Video recording**: Record browser session as video/GIF
+- **Multi-tab orchestration**: Coordinate actions across tabs within a single Worker
+
+### Developer Experience
+
+- **`oc setup` for other clients**: Auto-configure for Cursor, Windsurf, etc.
+- **`oc benchmark`**: Built-in benchmark command
+- **`oc replay`**: Replay a recorded session for debugging
+- **Plugin system**: Allow users to register custom tools
+
+### Documentation
+
+- **API reference**: Auto-generated docs for all 36 tools with examples
+- **Tutorials**: Step-by-step guides (e.g., "Automate your CI dashboard")
+- **Troubleshooting guide**: Common issues and solutions per platform
+
+### Good First Issues
+
+If you're new to the project, these are good starting points:
+
+- Add a new hint rule to `src/hints/rules/` (follow existing patterns)
+- Test OpenChrome on a non-Claude MCP client and report results
+- Add Windows Chrome path detection in `src/chrome/launcher.ts`
+- Write an example script using OpenChrome tools
+- Improve error messages for common setup failures
 
 ## Questions?
 
 - Open an issue for bugs or feature requests
-- Start a discussion for questions
 - Check existing issues before creating new ones
 
 ## License

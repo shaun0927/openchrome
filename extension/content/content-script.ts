@@ -191,4 +191,4 @@ if (document.readyState === 'loading') {
 // Periodic cleanup
 setInterval(cleanupRefs, 60000);
 
-console.log('[Claude Chrome Parallel] Content script loaded');
+console.log('[OpenChrome] Content script loaded');

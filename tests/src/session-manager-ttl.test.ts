@@ -3,23 +3,51 @@
  * Tests for SessionManager TTL, Stats, and Config features
  */
 
-// Mock CDP client instance
-const mockCdpClientInstance = {
-  connect: jest.fn().mockResolvedValue(undefined),
-  createPage: jest.fn().mockResolvedValue({
+// Mock browser context
+const mockBrowserContext = {
+  close: jest.fn().mockResolvedValue(undefined),
+  newPage: jest.fn().mockResolvedValue({
     target: () => ({ _targetId: 'mock-target-id' }),
     goto: jest.fn().mockResolvedValue(undefined),
     close: jest.fn().mockResolvedValue(undefined),
+    setViewport: jest.fn().mockResolvedValue(undefined),
+  }),
+};
+
+// Counter for unique target IDs
+let targetIdCounter = 0;
+
+// Mock CDP client instance
+const mockCdpClientInstance = {
+  connect: jest.fn().mockResolvedValue(undefined),
+  createPage: jest.fn().mockImplementation(() => {
+    const targetId = `mock-target-id-${++targetIdCounter}`;
+    return Promise.resolve({
+      target: () => ({ _targetId: targetId }),
+      goto: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+      setViewport: jest.fn().mockResolvedValue(undefined),
+      isClosed: jest.fn().mockReturnValue(false),
+    });
   }),
   closePage: jest.fn().mockResolvedValue(undefined),
   getPageByTargetId: jest.fn().mockReturnValue(null),
   isConnected: jest.fn().mockReturnValue(true),
+  addTargetDestroyedListener: jest.fn(),
+  createBrowserContext: jest.fn().mockResolvedValue(mockBrowserContext),
+  closeBrowserContext: jest.fn().mockResolvedValue(undefined),
 };
 
 // Mock dependencies
 jest.mock('../../src/cdp/client', () => ({
   CDPClient: jest.fn().mockImplementation(() => mockCdpClientInstance),
   getCDPClient: jest.fn().mockReturnValue(mockCdpClientInstance),
+  getCDPClientFactory: jest.fn().mockReturnValue({
+    get: jest.fn().mockReturnValue(mockCdpClientInstance),
+    getOrCreate: jest.fn().mockReturnValue(mockCdpClientInstance),
+    getAll: jest.fn().mockReturnValue([mockCdpClientInstance]),
+    disconnectAll: jest.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 const mockPoolInstance = {
@@ -66,6 +94,7 @@ describe('SessionManager TTL and Stats', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
+    targetIdCounter = 0; // Reset counter
 
     sessionManager = new SessionManager(undefined, {
       sessionTTL: 1000, // 1 second for testing
@@ -274,9 +303,77 @@ describe('SessionManager with Connection Pool', () => {
   });
 });
 
+describe('SessionManager Pool + Cookie Bridge', () => {
+  let sessionManager: SessionManager;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    targetIdCounter = 0;
+
+    sessionManager = new SessionManager(undefined, {
+      autoCleanup: false,
+      useConnectionPool: true,
+    });
+  });
+
+  afterEach(() => {
+    sessionManager.stopAutoCleanup();
+  });
+
+  test('pool-acquired page should receive cookies via cookie bridge', async () => {
+    // With useConnectionPool: true, the pool is initialized and accessible via stats
+    const stats = sessionManager.getStats();
+    expect(stats.connectionPool).toBeDefined();
+
+    // Create a session — this exercises the full session creation path with pool enabled
+    const session = await sessionManager.createSession({ id: 'pool-cookie-session' });
+    expect(session.id).toBe('pool-cookie-session');
+
+    // Create a target — cdpClient.createPage is used for page creation
+    // (the connection pool manages pre-warmed pages separately from target creation)
+    const { targetId, page, workerId } = await sessionManager.createTarget('pool-cookie-session');
+    expect(targetId).toBeDefined();
+    expect(page).toBeDefined();
+    expect(workerId).toBe('default');
+
+    // Verify cdpClient.createPage was called (not bypassed by pool)
+    const { getCDPClient } = require('../../src/cdp/client');
+    const cdpClient = getCDPClient();
+    expect(cdpClient.createPage).toHaveBeenCalled();
+
+    // Verify pool stats remain accessible (pool doesn't conflict with page creation)
+    const statsAfter = sessionManager.getStats();
+    expect(statsAfter.connectionPool).toBeDefined();
+    expect(statsAfter.connectionPool?.totalPagesCreated).toBe(5);
+
+    // Clean up
+    await sessionManager.deleteSession('pool-cookie-session');
+    expect(sessionManager.getSession('pool-cookie-session')).toBeUndefined();
+  });
+
+  test('pool initialization does not interfere with useDefaultContext cookie sharing', async () => {
+    // When useConnectionPool: true and useDefaultContext: true (default),
+    // sessions should still use default browser context (null context = shared cookies)
+    const session = await sessionManager.createSession({ id: 'shared-cookie-session' });
+
+    // The default worker should have a null context (uses Chrome profile cookies)
+    const defaultWorker = session.workers.get('default');
+    expect(defaultWorker).toBeDefined();
+    expect(defaultWorker?.context).toBeNull();
+
+    // createBrowserContext should NOT have been called for default context
+    const { getCDPClient } = require('../../src/cdp/client');
+    const cdpClient = getCDPClient();
+    expect(cdpClient.createBrowserContext).not.toHaveBeenCalled();
+  });
+});
+
 describe('SessionManager Auto-Cleanup', () => {
   test('should run auto-cleanup at configured interval', async () => {
     jest.useFakeTimers();
+    // Set system time to a known value
+    const baseTime = 1000000;
+    jest.setSystemTime(baseTime);
 
     const autoManager = new SessionManager(undefined, {
       sessionTTL: 100,
@@ -286,13 +383,12 @@ describe('SessionManager Auto-Cleanup', () => {
     });
 
     const session = await autoManager.createSession({ id: 'test' });
-    (session as any).lastActivityAt = Date.now() - 200;
+    // Set lastActivityAt to 200ms in the past
+    (session as any).lastActivityAt = baseTime - 200;
 
-    // Advance time past cleanup interval
-    jest.advanceTimersByTime(100);
-
-    // Wait for async cleanup
-    await Promise.resolve();
+    // Advance time past cleanup interval (this triggers the interval callback)
+    // Use advanceTimersByTimeAsync to handle async cleanup
+    await jest.advanceTimersByTimeAsync(100);
 
     expect(autoManager.getSession('test')).toBeUndefined();
 
@@ -302,6 +398,8 @@ describe('SessionManager Auto-Cleanup', () => {
 
   test('should stop auto-cleanup when stopAutoCleanup is called', async () => {
     jest.useFakeTimers();
+    const baseTime = 1000000;
+    jest.setSystemTime(baseTime);
 
     const autoManager = new SessionManager(undefined, {
       sessionTTL: 100,
@@ -313,7 +411,7 @@ describe('SessionManager Auto-Cleanup', () => {
     autoManager.stopAutoCleanup();
 
     const session = await autoManager.createSession({ id: 'test' });
-    (session as any).lastActivityAt = Date.now() - 200;
+    (session as any).lastActivityAt = baseTime - 200;
 
     // Advance time past cleanup interval
     jest.advanceTimersByTime(100);

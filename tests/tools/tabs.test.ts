@@ -52,8 +52,8 @@ describe('TabsContextTool', () => {
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.sessionId).toBe(testSessionId);
-      expect(parsed.tabs).toEqual([]);
       expect(parsed.tabCount).toBe(0);
+      expect(parsed.workerCount).toBeGreaterThanOrEqual(1); // At least default worker
     });
 
     test('returns all tabs for session with tabs', async () => {
@@ -67,61 +67,66 @@ describe('TabsContextTool', () => {
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.tabCount).toBe(2);
-      expect(parsed.tabs.length).toBe(2);
+      // Tabs are now grouped by worker
+      const totalTabs = parsed.workers.reduce((sum: number, w: { tabs: unknown[] }) => sum + w.tabs.length, 0);
+      expect(totalTabs).toBe(2);
     });
 
-    test('includes tab info with tabId, url, title', async () => {
+    test('includes tab info with tabId, url, title, workerId', async () => {
       const handler = await getTabsContextHandler();
 
-      const { targetId, page } = await mockSessionManager.createTarget(testSessionId, 'https://example.com');
+      const { page } = await mockSessionManager.createTarget(testSessionId, 'https://example.com');
       (page.url as jest.Mock).mockReturnValue('https://example.com');
       (page.title as jest.Mock).mockResolvedValue('Example Domain');
 
       const result = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }> };
 
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.tabs[0]).toHaveProperty('tabId');
-      expect(parsed.tabs[0]).toHaveProperty('url');
-      expect(parsed.tabs[0]).toHaveProperty('title');
+      // Find the default worker and its tabs
+      const defaultWorker = parsed.workers.find((w: { id: string }) => w.id === 'default');
+      expect(defaultWorker).toBeDefined();
+      expect(defaultWorker.tabs[0]).toHaveProperty('tabId');
+      expect(defaultWorker.tabs[0]).toHaveProperty('url');
+      expect(defaultWorker.tabs[0]).toHaveProperty('title');
+      expect(defaultWorker.tabs[0]).toHaveProperty('workerId');
     });
   });
 
-  describe('createIfEmpty Option', () => {
-    test('creates new tab when createIfEmpty=true and no tabs', async () => {
+  describe('No createIfEmpty Option (removed to prevent about:blank accumulation)', () => {
+    test('never auto-creates tabs, returns empty when no tabs exist', async () => {
       const handler = await getTabsContextHandler();
 
-      const result = await handler(testSessionId, {
-        createIfEmpty: true,
-      }) as { content: Array<{ type: string; text: string }> };
+      const result = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }> };
 
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.tabCount).toBe(1);
-      expect(parsed.tabs.length).toBe(1);
+      expect(parsed.tabCount).toBe(0);
+      // Workers exist but have no tabs
+      expect(parsed.workers[0].tabs.length).toBe(0);
     });
 
-    test('does not create tab when createIfEmpty=true and tabs exist', async () => {
+    test('returns existing tabs when they exist', async () => {
       const handler = await getTabsContextHandler();
 
       // Create a tab first
       await mockSessionManager.createTarget(testSessionId, 'https://existing.com');
 
+      const result = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }> };
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tabCount).toBe(1);
+    });
+
+    test('ignores any createIfEmpty argument (deprecated)', async () => {
+      const handler = await getTabsContextHandler();
+
+      // Even with createIfEmpty, should not create tabs
       const result = await handler(testSessionId, {
         createIfEmpty: true,
       }) as { content: Array<{ type: string; text: string }> };
 
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.tabCount).toBe(1); // Still just the one we created
-    });
-
-    test('does not create tab when createIfEmpty=false', async () => {
-      const handler = await getTabsContextHandler();
-
-      const result = await handler(testSessionId, {
-        createIfEmpty: false,
-      }) as { content: Array<{ type: string; text: string }> };
-
-      const parsed = JSON.parse(result.content[0].text);
       expect(parsed.tabCount).toBe(0);
+      expect(parsed.workers[0].tabs.length).toBe(0);
     });
   });
 
@@ -185,13 +190,14 @@ describe('TabsCreateTool', () => {
   });
 
   describe('Create New Tab', () => {
-    test('creates a new empty tab', async () => {
+    test('creates a new tab with URL', async () => {
       const handler = await getTabsCreateHandler();
 
-      const result = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }> };
+      const result = await handler(testSessionId, { url: 'https://example.com' }) as { content: Array<{ type: string; text: string }> };
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed).toHaveProperty('tabId');
+      expect(parsed).toHaveProperty('workerId');
       expect(parsed).toHaveProperty('url');
       expect(parsed).toHaveProperty('title');
     });
@@ -200,25 +206,36 @@ describe('TabsCreateTool', () => {
       const handler = await getTabsCreateHandler();
 
       // Mock the page properties
-      mockSessionManager.createTarget.mockImplementationOnce(async (sessionId, url) => {
-        const { targetId, page } = await (createMockSessionManager().createTarget as jest.Mock)(sessionId, url);
-        (page.url as jest.Mock).mockReturnValue('about:blank');
-        (page.title as jest.Mock).mockResolvedValue('');
-        return { targetId, page };
+      mockSessionManager.createTarget.mockImplementationOnce(async (sessionId, url, workerId) => {
+        const { targetId, page, workerId: assignedWorkerId } = await (createMockSessionManager().createTarget as jest.Mock)(sessionId, url, workerId);
+        (page.url as jest.Mock).mockReturnValue('https://example.com');
+        (page.title as jest.Mock).mockResolvedValue('Example');
+        return { targetId, page, workerId: assignedWorkerId };
       });
 
-      const result = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }> };
+      const result = await handler(testSessionId, { url: 'https://example.com' }) as { content: Array<{ type: string; text: string }> };
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.tabId).toBeDefined();
+      expect(parsed.workerId).toBeDefined();
     });
 
-    test('creates tab with about:blank URL', async () => {
+    test('creates tab with specified URL (not about:blank)', async () => {
       const handler = await getTabsCreateHandler();
 
-      await handler(testSessionId, {});
+      await handler(testSessionId, { url: 'https://google.com' });
 
-      expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'about:blank');
+      // Now includes optional workerId parameter
+      expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'https://google.com', undefined);
+    });
+
+    test('returns error when URL is not provided', async () => {
+      const handler = await getTabsCreateHandler();
+
+      const result = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('url is required');
     });
   });
 
@@ -226,10 +243,10 @@ describe('TabsCreateTool', () => {
     test('creates or uses existing session', async () => {
       const handler = await getTabsCreateHandler();
 
-      await handler(testSessionId, {});
+      await handler(testSessionId, { url: 'https://example.com' });
 
-      // createTarget implicitly creates/uses session
-      expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'about:blank');
+      // createTarget implicitly creates/uses session, now with optional workerId
+      expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'https://example.com', undefined);
     });
   });
 
@@ -237,9 +254,9 @@ describe('TabsCreateTool', () => {
     test('can create multiple tabs in same session', async () => {
       const handler = await getTabsCreateHandler();
 
-      await handler(testSessionId, {});
-      await handler(testSessionId, {});
-      await handler(testSessionId, {});
+      await handler(testSessionId, { url: 'https://example1.com' });
+      await handler(testSessionId, { url: 'https://example2.com' });
+      await handler(testSessionId, { url: 'https://example3.com' });
 
       expect(mockSessionManager.createTarget).toHaveBeenCalledTimes(3);
     });
@@ -247,8 +264,8 @@ describe('TabsCreateTool', () => {
     test('each tab has unique tabId', async () => {
       const handler = await getTabsCreateHandler();
 
-      const result1 = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }> };
-      const result2 = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }> };
+      const result1 = await handler(testSessionId, { url: 'https://example1.com' }) as { content: Array<{ type: string; text: string }> };
+      const result2 = await handler(testSessionId, { url: 'https://example2.com' }) as { content: Array<{ type: string; text: string }> };
 
       const parsed1 = JSON.parse(result1.content[0].text);
       const parsed2 = JSON.parse(result2.content[0].text);
@@ -263,7 +280,7 @@ describe('TabsCreateTool', () => {
 
       mockSessionManager.createTarget.mockRejectedValueOnce(new Error('Failed to create tab'));
 
-      const result = await handler(testSessionId, {}) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+      const result = await handler(testSessionId, { url: 'https://example.com' }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Error creating tab');
@@ -318,8 +335,8 @@ describe('Tabs Tools Integration', () => {
     const initialParsed = JSON.parse(initial.content[0].text);
     expect(initialParsed.tabCount).toBe(0);
 
-    // Create a tab
-    await tabsCreate(testSessionId, {});
+    // Create a tab with URL
+    await tabsCreate(testSessionId, { url: 'https://example.com' });
 
     // Check updated state
     const updated = await tabsContext(testSessionId, {}) as { content: Array<{ type: string; text: string }> };
@@ -334,11 +351,11 @@ describe('Tabs Tools Integration', () => {
     const session2 = 'session-2';
 
     // Create tabs in session 1
-    await tabsCreate(session1, {});
-    await tabsCreate(session1, {});
+    await tabsCreate(session1, { url: 'https://example1.com' });
+    await tabsCreate(session1, { url: 'https://example2.com' });
 
     // Create tab in session 2
-    await tabsCreate(session2, {});
+    await tabsCreate(session2, { url: 'https://example3.com' });
 
     // Check session 1
     const result1 = await tabsContext(session1, {}) as { content: Array<{ type: string; text: string }> };

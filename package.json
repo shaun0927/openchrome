@@ -1,11 +1,11 @@
 {
-  "name": "claude-chrome-parallel",
-  "version": "2.2.1",
-  "description": "MCP server for parallel Claude Code browser sessions - no more 'Detached' errors",
+  "name": "openchrome-mcp",
+  "version": "1.1.0",
+  "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
   "bin": {
-    "claude-chrome-parallel": "./dist/cli/index.js",
-    "claude-session": "./dist/cli/claude-session.js"
+    "openchrome": "./dist/cli/index.js",
+    "oc": "./dist/cli/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.cli.json && tsc -p tsconfig.json",
@@ -23,24 +23,27 @@
     "prepare": "npm run build"
   },
   "keywords": [
-    "claude",
-    "claude-code",
+    "openchrome",
     "mcp",
+    "mcp-server",
     "browser-automation",
     "parallel-sessions",
-    "puppeteer",
-    "chrome"
+    "cdp",
+    "chrome",
+    "chrome-devtools-protocol",
+    "ai-agent",
+    "puppeteer"
   ],
-  "author": "",
+  "author": "shaun0927",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/shaun0927/claude-chrome-parallel.git"
+    "url": "git+https://github.com/shaun0927/openchrome.git"
   },
   "bugs": {
-    "url": "https://github.com/shaun0927/claude-chrome-parallel/issues"
+    "url": "https://github.com/shaun0927/openchrome/issues"
   },
-  "homepage": "https://github.com/shaun0927/claude-chrome-parallel#readme",
+  "homepage": "https://github.com/shaun0927/openchrome#readme",
   "devDependencies": {
     "@types/chrome": "^0.1.36",
     "@types/jest": "^29.5.0",
@@ -69,6 +72,7 @@
   },
   "files": [
     "dist",
+    "assets",
     "README.md",
     "LICENSE"
   ]

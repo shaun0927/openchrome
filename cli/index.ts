@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI for Claude Chrome Parallel
+ * CLI for OpenChrome
  *
  * Commands:
  * - install: Install extension and native messaging host
@@ -13,12 +13,14 @@
  */
 
 import { Command } from 'commander';
-import { install, installNativeHost } from './install';
-import { uninstall } from './uninstall';
+// Legacy imports - kept for backward compatibility but deprecated
+// import { install, installNativeHost } from './install';
+// import { uninstall } from './uninstall';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
+import { checkForUpdates } from './update-check';
 
 const program = new Command();
 
@@ -33,78 +35,195 @@ try {
 }
 
 program
-  .name('claude-chrome-parallel')
-  .description('Chrome extension for parallel Claude Code sessions')
+  .name('openchrome')
+  .description('MCP server for parallel Claude Code browser sessions via CDP')
   .version(version);
 
 program
   .command('install')
-  .description('Install extension and native messaging host')
+  .description('[DEPRECATED] Extension install is no longer needed. Use CDP mode instead.')
   .option('-f, --force', 'Force reinstall even if already installed')
   .option('--extension-id <id>', 'Chrome extension ID (for native host configuration)')
-  .action(async (options) => {
-    console.log('Installing Claude Chrome Parallel...\n');
-
-    try {
-      await install(options);
-      console.log('\n✅ Installation complete!\n');
-      console.log('Next steps:');
-      console.log('1. Open chrome://extensions/ in Chrome');
-      console.log('2. Enable "Developer mode" (top right)');
-      console.log('3. Click "Load unpacked"');
-      console.log(`4. Select: ${getExtensionPath()}`);
-      console.log('\n5. Note the Extension ID and run:');
-      console.log('   claude-chrome-parallel install --extension-id <YOUR_ID>');
-    } catch (error) {
-      console.error('❌ Installation failed:', error);
-      process.exit(1);
-    }
+  .action(async () => {
+    console.log('⚠️  DEPRECATED: Extension installation is no longer needed.\n');
+    console.log('OpenChrome now uses CDP (Chrome DevTools Protocol) mode,');
+    console.log('which does not require a Chrome extension.\n');
+    console.log('Quick Start:');
+    console.log('  1. Start Chrome with debugging port:');
+    console.log('     chrome --remote-debugging-port=9222\n');
+    console.log('  2. Add to ~/.claude.json:');
+    console.log('     {');
+    console.log('       "mcpServers": {');
+    console.log('         "openchrome": {');
+    console.log('           "command": "oc",');
+    console.log('           "args": ["serve"]');
+    console.log('         }');
+    console.log('       }');
+    console.log('     }\n');
+    console.log('  3. Restart Claude Code\n');
+    console.log('Run "oc doctor" to verify your setup.');
   });
 
 program
   .command('uninstall')
-  .description('Remove extension and native messaging host')
+  .description('[DEPRECATED] No longer needed - CDP mode has no extension to uninstall')
   .action(async () => {
-    console.log('Uninstalling Claude Chrome Parallel...\n');
+    console.log('⚠️  DEPRECATED: Uninstall is no longer needed.\n');
+    console.log('OpenChrome now uses CDP mode, which has no extension to uninstall.');
+    console.log('Simply remove the MCP server config from ~/.claude.json if you want to disable it.');
+  });
 
+program
+  .command('setup')
+  .description('Automatically configure MCP server for Claude Code')
+  .option('--dashboard', 'Enable terminal dashboard')
+  .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
+  .option('-s, --scope <scope>', 'Installation scope: "user" (global, default) or "project" (current project only)', 'user')
+  .action(async (options: { dashboard?: boolean; autoLaunch?: boolean; scope?: string }) => {
+    const { execSync, spawnSync } = require('child_process');
+
+    console.log('Setting up OpenChrome for Claude Code...\n');
+
+    // Check if claude CLI is available
     try {
-      await uninstall();
-      console.log('\n✅ Uninstallation complete!');
-      console.log('Note: You still need to manually remove the extension from chrome://extensions/');
-    } catch (error) {
-      console.error('❌ Uninstallation failed:', error);
+      execSync('claude --version', { stdio: 'pipe' });
+    } catch {
+      console.error('❌ Claude Code CLI not found.');
+      console.error('   Please install Claude Code first: https://claude.ai/code');
       process.exit(1);
     }
+
+    // Validate scope
+    const scope = options.scope || 'user';
+    if (scope !== 'user' && scope !== 'project') {
+      console.error('❌ Invalid scope. Use "user" (global) or "project" (current project only).');
+      process.exit(1);
+    }
+
+    // Build the serve arguments
+    const serveArgs = ['serve', '--auto-launch'];
+    if (options.dashboard) {
+      serveArgs.push('--dashboard');
+    }
+
+    // Remove existing configuration first (if any)
+    try {
+      execSync('claude mcp remove openchrome 2>/dev/null', { stdio: 'pipe' });
+    } catch {
+      // Ignore if not exists
+    }
+
+    // Use npx for auto-updates: every server start fetches the latest version
+    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx -y openchrome-mcp ${serveArgs.join(' ')}`;
+
+    console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
+
+    try {
+      execSync(fullCommand, { stdio: 'inherit' });
+      console.log('\n✅ MCP server configured successfully!\n');
+      console.log(`Scope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}\n`);
+      console.log('Auto-updates: enabled (via npx)\n');
+      console.log('Next steps:');
+      console.log('  1. Restart Claude Code');
+      console.log('  2. Just say "oc" — that\'s it.\n');
+      console.log('Examples:');
+      console.log('  "oc screenshot my Gmail"');
+      console.log('  "use oc to check AWS billing"');
+      console.log('  "oc search on naver.com"\n');
+    } catch (error) {
+      console.error('\n❌ Failed to configure MCP server.');
+      console.error('   You can manually add to ~/.claude.json:');
+      console.error('   {');
+      console.error('     "mcpServers": {');
+      console.error('       "openchrome": {');
+      console.error('         "command": "npx",');
+      console.error(`         "args": ["-y", "openchrome-mcp", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
+      console.error('       }');
+      console.error('     }');
+      console.error('   }');
+      process.exit(1);
+    }
+
   });
 
 program
   .command('serve')
   .description('Start MCP server for Claude Code')
+  .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
+  .option('--auto-launch', 'Auto-launch Chrome if not running (default: false)')
+  .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
+  .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
+  .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
   .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
   .option('--storage-dir <path>', 'Directory for storage state files (default: .openchrome/storage-state/)')
-  .action((options: { persistStorage?: boolean; storageDir?: string }) => {
-    // Set environment variables for the MCP server to pick up
+  .action(async (options: { port: string; autoLaunch?: boolean; dashboard?: boolean; hybrid?: boolean; lpPort?: string; persistStorage?: boolean; storageDir?: string }) => {
+    const port = parseInt(options.port, 10);
+    const autoLaunch = options.autoLaunch || false;
+    const dashboard = options.dashboard || false;
+
+    // Non-blocking update check (fires in background)
+    checkForUpdates(version).catch(() => {});
+
+    console.error(`[openchrome] Starting MCP server`);
+    console.error(`[openchrome] Chrome debugging port: ${port}`);
+    console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
+    console.error(`[openchrome] Dashboard: ${dashboard}`);
+
+    // Set environment variables for storage state persistence
     if (options.persistStorage) {
       process.env.OC_PERSIST_STORAGE = '1';
-      console.log('Storage state persistence enabled');
+      console.error(`[openchrome] Storage state persistence: enabled`);
     }
     if (options.storageDir) {
       process.env.OC_STORAGE_DIR = options.storageDir;
-      console.log(`Storage state directory: ${options.storageDir}`);
+      console.error(`[openchrome] Storage state directory: ${options.storageDir}`);
     }
 
-    console.log('MCP server mode is handled by the native messaging host.');
-    console.log('Configure in Claude Code settings.json:');
-    console.log(`
-{
-  "mcpServers": {
-    "chrome-parallel": {
-      "command": "claude-chrome-parallel",
-      "args": ["serve"${options.persistStorage ? ', "--persist-storage"' : ''}]
+    // Import from built dist/ files (relative to dist/cli/)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { setGlobalConfig } = require('../config/global');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getMCPServer, setMCPServerOptions } = require('../mcp-server');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerAllTools } = require('../tools');
+
+    // Set global config before initializing anything
+    setGlobalConfig({ port, autoLaunch });
+
+    // Configure hybrid mode if enabled
+    const hybrid = options.hybrid || false;
+    const lpPort = parseInt(options.lpPort || '9223', 10);
+
+    if (hybrid) {
+      setGlobalConfig({
+        hybrid: {
+          enabled: true,
+          lightpandaPort: lpPort,
+        },
+      });
+      console.error(`[openchrome] Hybrid mode: enabled`);
+      console.error(`[openchrome] Lightpanda port: ${lpPort}`);
     }
-  }
-}
-`);
+
+    // Set MCP server options (including dashboard)
+    setMCPServerOptions({ dashboard });
+
+    const server = getMCPServer();
+    registerAllTools(server);
+
+    // Initialize hybrid routing if enabled
+    if (hybrid) {
+      const { getSessionManager } = require('../session-manager');
+      const sm = getSessionManager();
+      await sm.initHybrid({
+        enabled: true,
+        lightpandaPort: lpPort,
+        circuitBreaker: { maxFailures: 3, cooldownMs: 60000 },
+        cookieSync: { intervalMs: 5000 },
+      });
+    }
+
+    server.start();
   });
 
 program
@@ -126,27 +245,36 @@ program
   .action(async () => {
     console.log('Checking installation status...\n');
 
-    const checks = {
-      'Extension files': fs.existsSync(getExtensionPath()),
-      'Native host manifest': checkNativeHostManifest(),
-      'Node.js version': checkNodeVersion(),
+    // Core checks (required for CDP mode)
+    const coreChecks = {
+      'Node.js version (>=18)': checkNodeVersion(),
       '.claude.json health': await checkClaudeConfigHealth(),
+      'Chrome debugging port': await checkChromeDebugPort(),
     };
 
-    for (const [name, passed] of Object.entries(checks)) {
+    console.log('Core Requirements:');
+    for (const [name, passed] of Object.entries(coreChecks)) {
       const status = passed ? '✅' : '❌';
-      console.log(`${status} ${name}`);
+      console.log(`  ${status} ${name}`);
     }
 
-    const allPassed = Object.values(checks).every(Boolean);
+    const allPassed = Object.values(coreChecks).every(Boolean);
     console.log();
 
     if (allPassed) {
-      console.log('All checks passed! Extension should be ready to use.');
+      console.log('All checks passed! Ready to use with Claude Code.');
+      console.log('\nUsage:');
+      console.log('  1. Start Chrome with: chrome --remote-debugging-port=9222');
+      console.log('  2. Add to ~/.claude.json:');
+      console.log('     "mcpServers": { "openchrome": { "command": "oc", "args": ["serve"] } }');
+      console.log('  3. Restart Claude Code');
     } else {
-      console.log('Some checks failed. Run "claude-chrome-parallel install" to fix.');
-      if (!checks['.claude.json health']) {
-        console.log('Run "claude-chrome-parallel recover" to fix .claude.json');
+      if (!coreChecks['Chrome debugging port']) {
+        console.log('Chrome is not running with debugging port.');
+        console.log('Start Chrome with: chrome --remote-debugging-port=9222');
+      }
+      if (!coreChecks['.claude.json health']) {
+        console.log('Run "openchrome recover" to fix .claude.json');
       }
     }
   });
@@ -265,7 +393,7 @@ program
   .option('--force-new', 'Create new empty config (loses all data)')
   .action(async (options: { backup?: string; listBackups?: boolean; forceNew?: boolean }) => {
     const configPath = path.join(os.homedir(), '.claude.json');
-    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+    const backupDir = path.join(os.homedir(), '.openchrome', 'backups');
 
     // List backups
     if (options.listBackups) {
@@ -383,7 +511,7 @@ program
   .option('--json', 'Output as JSON')
   .action(async (options: { json?: boolean }) => {
     const sessionsDir = getSessionsDir();
-    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+    const backupDir = path.join(os.homedir(), '.openchrome', 'backups');
     const configPath = path.join(os.homedir(), '.claude.json');
 
     // Gather statistics
@@ -477,7 +605,7 @@ program
     }
 
     // Pretty print
-    console.log('Claude Chrome Parallel Status');
+    console.log('OpenChrome Status');
     console.log('═'.repeat(40));
     console.log();
 
@@ -508,7 +636,7 @@ program
       console.log('  ✅ .claude.json is healthy');
     } else {
       console.log(`  ❌ .claude.json: ${configError}`);
-      console.log('     Run: claude-chrome-parallel recover');
+      console.log('     Run: openchrome recover');
     }
     console.log();
 
@@ -569,7 +697,7 @@ program
     console.log(`Removed ${sessionsRemoved} stale session(s)`);
 
     // Clean up backups
-    const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+    const backupDir = path.join(os.homedir(), '.openchrome', 'backups');
     let backupsRemoved = 0;
 
     if (fs.existsSync(backupDir)) {
@@ -593,7 +721,7 @@ program
  * Get the extension installation path
  */
 function getExtensionPath(): string {
-  return path.join(os.homedir(), '.claude-chrome-parallel', 'extension');
+  return path.join(os.homedir(), '.openchrome', 'extension');
 }
 
 /**
@@ -614,7 +742,7 @@ function checkNativeHostManifest(): boolean {
         'Chrome',
         'User Data',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
       break;
     case 'darwin':
@@ -625,7 +753,7 @@ function checkNativeHostManifest(): boolean {
         'Google',
         'Chrome',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
       break;
     default:
@@ -634,7 +762,7 @@ function checkNativeHostManifest(): boolean {
         '.config',
         'google-chrome',
         'NativeMessagingHosts',
-        'com.anthropic.claude_chrome_parallel.json'
+        'com.anthropic.openchrome.json'
       );
   }
 
@@ -648,6 +776,27 @@ function checkNodeVersion(): boolean {
   const version = process.version;
   const major = parseInt(version.slice(1).split('.')[0], 10);
   return major >= 18;
+}
+
+/**
+ * Check if Chrome is running with debugging port
+ */
+async function checkChromeDebugPort(port: number = 9222): Promise<boolean> {
+  try {
+    const http = await import('http');
+    return new Promise((resolve) => {
+      const req = http.get(`http://localhost:${port}/json/version`, (res) => {
+        resolve(res.statusCode === 200);
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(2000, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -668,7 +817,7 @@ async function checkClaudeConfigHealth(): Promise<boolean> {
  * Get sessions directory
  */
 function getSessionsDir(): string {
-  return path.join(os.homedir(), '.claude-chrome-parallel', 'sessions');
+  return path.join(os.homedir(), '.openchrome', 'sessions');
 }
 
 /**
@@ -696,7 +845,7 @@ function isValidJson(content: string): boolean {
  * Create a backup of a file
  */
 async function createBackupFile(filePath: string): Promise<string> {
-  const backupDir = path.join(os.homedir(), '.claude-chrome-parallel', 'backups');
+  const backupDir = path.join(os.homedir(), '.openchrome', 'backups');
   fs.mkdirSync(backupDir, { recursive: true });
 
   const basename = path.basename(filePath);

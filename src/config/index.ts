@@ -4,6 +4,7 @@
 
 export * from './session-isolator';
 export * from './config-recovery';
+export * from './global';
 
 /**
  * Storage state configuration for headless session persistence

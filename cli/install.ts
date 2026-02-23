@@ -1,5 +1,5 @@
 /**
- * Installation script for Claude Chrome Parallel
+ * Installation script for OpenChrome
  */
 
 import * as fs from 'fs';
@@ -16,7 +16,7 @@ interface InstallOptions {
  * Get the installation directory
  */
 function getInstallDir(): string {
-  return path.join(os.homedir(), '.claude-chrome-parallel');
+  return path.join(os.homedir(), '.openchrome');
 }
 
 /**
@@ -103,8 +103,8 @@ export function installNativeHost(extensionId?: string): void {
 
   // Create manifest
   const manifest = {
-    name: 'com.anthropic.claude_chrome_parallel',
-    description: 'Native messaging host for Claude Chrome Parallel extension',
+    name: 'com.anthropic.openchrome',
+    description: 'Native messaging host for OpenChrome',
     path: platform === 'win32'
       ? path.join(nativeHostDir, 'host.bat')
       : path.join(nativeHostDir, 'host.js'),
@@ -165,7 +165,7 @@ export function installNativeHost(extensionId?: string): void {
   fs.mkdirSync(manifestDir, { recursive: true });
 
   // Write manifest
-  const manifestPath = path.join(manifestDir, 'com.anthropic.claude_chrome_parallel.json');
+  const manifestPath = path.join(manifestDir, 'com.anthropic.openchrome.json');
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
   console.log(`Native host manifest installed to: ${manifestPath}`);
@@ -173,7 +173,7 @@ export function installNativeHost(extensionId?: string): void {
   // On Windows, also register in registry
   if (platform === 'win32') {
     try {
-      const regKey = 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.anthropic.claude_chrome_parallel';
+      const regKey = 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.anthropic.openchrome';
       execSync(`reg add "${regKey}" /ve /t REG_SZ /d "${manifestPath}" /f`, {
         stdio: 'ignore',
       });

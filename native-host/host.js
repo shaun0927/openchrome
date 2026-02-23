@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Native Messaging Host for Claude Chrome Parallel
+ * Native Messaging Host for OpenChrome
  *
  * This script acts as a bridge between Claude Code CLI and the Chrome extension.
  * It uses the Native Messaging protocol (32-bit length prefix + JSON).
@@ -10,7 +10,7 @@ const net = require('net');
 const crypto = require('crypto');
 
 // Configuration
-const EXTENSION_ID = process.env.CLAUDE_CHROME_PARALLEL_EXTENSION_ID || '';
+const EXTENSION_ID = process.env.OPENCHROME_EXTENSION_ID || '';
 const WEBSOCKET_PORT = 9222; // Chrome DevTools Protocol port
 
 /**
@@ -138,7 +138,7 @@ function handleInitialize(request) {
         tools: {},
       },
       serverInfo: {
-        name: 'claude-chrome-parallel-native',
+        name: 'openchrome-native',
         version: '0.1.0',
       },
     },

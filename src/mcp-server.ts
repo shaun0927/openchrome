@@ -3,6 +3,7 @@
  */
 
 import * as readline from 'readline';
+import * as path from 'path';
 import {
   MCPRequest,
   MCPResponse,
@@ -14,14 +15,93 @@ import {
   MCPErrorCodes,
 } from './types/mcp';
 import { SessionManager, getSessionManager } from './session-manager';
+import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
+import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
+import { HintEngine } from './hints';
+import { getCDPConnectionPool } from './cdp/connection-pool';
+import { getCDPClient } from './cdp/client';
+import { getChromeLauncher } from './chrome/launcher';
+import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
+
+export interface MCPServerOptions {
+  dashboard?: boolean;
+  dashboardRefreshInterval?: number;
+}
 
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
+  private resources: Map<string, MCPResourceDefinition> = new Map();
+  private manifestVersion: number = 1;
   private sessionManager: SessionManager;
   private rl: readline.Interface | null = null;
+  private dashboard: Dashboard | null = null;
+  private activityTracker: ActivityTracker | null = null;
+  private operationController: OperationController | null = null;
+  private hintEngine: HintEngine | null = null;
+  private options: MCPServerOptions;
 
-  constructor(sessionManager?: SessionManager) {
+  constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
+    this.options = options;
+
+    // Register built-in resources
+    this.registerResource(usageGuideResource);
+
+    // Initialize dashboard if enabled
+    if (options.dashboard) {
+      this.initDashboard();
+    }
+
+    // Always-on activity tracking (uses singleton, shared with dashboard if enabled)
+    if (!this.activityTracker) {
+      this.activityTracker = getActivityTracker();
+    }
+    this.activityTracker.enableFileLogging(
+      path.join(process.cwd(), '.openchrome', 'timeline')
+    );
+
+    // Initialize hint engine with logging and adaptive learning
+    const hintsDir = path.join(process.cwd(), '.openchrome', 'hints');
+    this.hintEngine = new HintEngine(this.activityTracker);
+    this.hintEngine.enableLogging(hintsDir);
+    this.hintEngine.enableLearning(hintsDir);
+  }
+
+  /**
+   * Register a resource
+   */
+  registerResource(resource: MCPResourceDefinition): void {
+    this.resources.set(resource.uri, resource);
+  }
+
+  /**
+   * Initialize the dashboard
+   */
+  private initDashboard(): void {
+    this.dashboard = getDashboard({
+      enabled: true,
+      refreshInterval: this.options.dashboardRefreshInterval || 100,
+    });
+    this.dashboard.setSessionManager(this.sessionManager);
+    this.activityTracker = this.dashboard.getActivityTracker();
+    this.operationController = this.dashboard.getOperationController();
+
+    // Handle quit event
+    this.dashboard.on('quit', () => {
+      console.error('[MCPServer] Dashboard quit requested');
+      this.stop();
+      process.exit(0);
+    });
+
+    // Handle delete session event
+    this.dashboard.on('delete-session', async (sessionId: string) => {
+      try {
+        await this.sessionManager.deleteSession(sessionId);
+        console.error(`[MCPServer] Session ${sessionId} deleted via dashboard`);
+      } catch (error) {
+        console.error(`[MCPServer] Failed to delete session: ${error}`);
+      }
+    });
   }
 
   /**
@@ -33,6 +113,7 @@ export class MCPServer {
     definition: MCPToolDefinition
   ): void {
     this.tools.set(name, { name, handler, definition });
+    this.manifestVersion++;
   }
 
   /**
@@ -41,19 +122,28 @@ export class MCPServer {
   start(): void {
     console.error('[MCPServer] Starting stdio server...');
 
+    // Start dashboard if enabled
+    if (this.dashboard) {
+      const started = this.dashboard.start();
+      if (started) {
+        console.error('[MCPServer] Dashboard started');
+      } else {
+        console.error('[MCPServer] Dashboard could not start (non-TTY environment)');
+      }
+    }
+
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       terminal: false,
     });
 
-    this.rl.on('line', async (line) => {
+    this.rl.on('line', (line) => {
       if (!line.trim()) return;
 
+      let request: MCPRequest;
       try {
-        const request = JSON.parse(line) as MCPRequest;
-        const response = await this.handleRequest(request);
-        this.sendResponse(response);
+        request = JSON.parse(line) as MCPRequest;
       } catch (error) {
         const errorResponse: MCPResponse = {
           jsonrpc: '2.0',
@@ -64,11 +154,28 @@ export class MCPServer {
           },
         };
         this.sendResponse(errorResponse);
+        return;
       }
+
+      // Fire-and-forget: process requests concurrently
+      this.handleRequest(request)
+        .then((response) => this.sendResponse(response))
+        .catch((error) => {
+          const errorResponse: MCPResponse = {
+            jsonrpc: '2.0',
+            id: request.id,
+            error: {
+              code: MCPErrorCodes.INTERNAL_ERROR,
+              message: error instanceof Error ? error.message : 'Internal error',
+            },
+          };
+          this.sendResponse(errorResponse);
+        });
     });
 
     this.rl.on('close', () => {
       console.error('[MCPServer] stdin closed, shutting down...');
+      this.stop();
       process.exit(0);
     });
 
@@ -86,6 +193,7 @@ export class MCPServer {
    * Handle incoming MCP request
    */
   async handleRequest(request: MCPRequest): Promise<MCPResponse> {
+    const requestReceivedAt = Date.now();
     const { id, method, params } = request;
 
     try {
@@ -106,7 +214,15 @@ export class MCPServer {
           break;
 
         case 'tools/call':
-          result = await this.handleToolsCall(params);
+          result = await this.handleToolsCall(params, id);
+          break;
+
+        case 'resources/list':
+          result = await this.handleResourcesList();
+          break;
+
+        case 'resources/read':
+          result = await this.handleResourcesRead(params);
           break;
 
         case 'sessions/list':
@@ -144,11 +260,36 @@ export class MCPServer {
       protocolVersion: '2024-11-05',
       capabilities: {
         tools: {},
+        resources: {},
       },
       serverInfo: {
-        name: 'claude-chrome-parallel',
-        version: '2.0.0',
+        name: 'openchrome',
+        version: '1.0.2',
       },
+      instructions: [
+        'OpenChrome gives you browser automation using the user\'s actual Chrome — already logged in to everything.',
+        '',
+        'MAGIC KEYWORD: When the user says "openchrome" or uses "oc" as a standalone command prefix (e.g., "oc screenshot", "oc check"), immediately activate browser automation. Do not trigger on words that merely contain "oc" (e.g., "document", "octopus").',
+        '',
+        'KEY RULES:',
+        '- The user is ALREADY LOGGED IN to every site. Never attempt login or enter credentials.',
+        '- For multi-site tasks, use workflow_init → create parallel workers → workflow_collect.',
+        '- Prefer click_element over computer(click), fill_form over multiple form_input calls.',
+        '- Each Worker gets an isolated browser context (separate cookies, localStorage, sessions).',
+        '',
+        'EXAMPLES:',
+        '  "oc screenshot my Gmail" → navigate to Gmail, take screenshot',
+        '  "use openchrome to check AWS billing and Stripe" → workflow_init with 2 workers, parallel',
+        '  "oc search on naver.com" → navigate to naver.com, perform search',
+        '  "oc compare prices on Amazon, eBay, Walmart" → 3 parallel workers, one per site',
+        '',
+        'TOOL QUICK REFERENCE:',
+        '  navigate → Go to URL | click_element → Find + click in one step',
+        '  find → Find elements by natural language | fill_form → Fill multiple fields + submit',
+        '  read_page → Parse page structure | computer → Screenshot, scroll, keyboard',
+        '  wait_and_click → Wait for element, then click | wait_for → Wait for condition',
+        '  workflow_init → Start parallel workflow | workflow_collect → Gather all results',
+      ].join('\n'),
     };
   }
 
@@ -164,16 +305,65 @@ export class MCPServer {
   }
 
   /**
+   * Handle resources/list request
+   */
+  private async handleResourcesList(): Promise<MCPResult> {
+    const resources: MCPResourceDefinition[] = [];
+    for (const resource of this.resources.values()) {
+      resources.push(resource);
+    }
+    return { resources };
+  }
+
+  /**
+   * Handle resources/read request
+   */
+  private async handleResourcesRead(params?: Record<string, unknown>): Promise<MCPResult> {
+    if (!params) {
+      throw new Error('Missing params for resources/read');
+    }
+
+    const uri = params.uri as string;
+    if (!uri) {
+      throw new Error('Missing resource uri');
+    }
+
+    const resource = this.resources.get(uri);
+    if (!resource) {
+      throw new Error(`Unknown resource: ${uri}`);
+    }
+
+    // Get content based on resource type
+    let content: string;
+    if (uri === 'openchrome://usage-guide') {
+      content = getUsageGuideContent();
+    } else {
+      throw new Error(`No content handler for resource: ${uri}`);
+    }
+
+    return {
+      contents: [
+        {
+          uri: resource.uri,
+          mimeType: resource.mimeType,
+          text: content,
+        },
+      ],
+    };
+  }
+
+  /**
    * Handle tools/call request
    */
-  private async handleToolsCall(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleToolsCall(params?: Record<string, unknown>, requestId?: number | string): Promise<MCPResult> {
     if (!params) {
       throw new Error('Missing params for tools/call');
     }
 
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
-    const sessionId = (toolArgs.sessionId || params.sessionId) as string;
+    // Use 'default' session if no sessionId is provided
+    const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
 
     if (!toolName) {
       throw new Error('Missing tool name');
@@ -189,15 +379,71 @@ export class MCPServer {
       await this.sessionManager.getOrCreateSession(sessionId);
     }
 
+    // Start activity tracking
+    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
+
     try {
+      // Wait at gate if paused
+      if (this.operationController) {
+        await this.operationController.gate(callId);
+      }
+
       const result = await tool.handler(sessionId, toolArgs);
+
+      // End activity tracking (success)
+      this.activityTracker!.endCall(callId, 'success');
+
+      if (callId) {
+        const timing = this.activityTracker!.getCall(callId);
+        if (timing?.duration !== undefined) {
+          (result as Record<string, unknown>)._timing = {
+            durationMs: timing.duration,
+            startTime: timing.startTime,
+            endTime: timing.endTime,
+          };
+        }
+      }
+
+      // Inject proactive hint
+      if (this.hintEngine) {
+        const hint = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false);
+        if (hint) {
+          (result as Record<string, unknown>)._hint = hint;
+        }
+      }
+
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return {
+
+      // End activity tracking (error)
+      this.activityTracker!.endCall(callId, 'error', message);
+
+      const errResult: MCPResult = {
         content: [{ type: 'text', text: `Error: ${message}` }],
         isError: true,
       };
+
+      if (callId) {
+        const timing = this.activityTracker!.getCall(callId);
+        if (timing?.duration !== undefined) {
+          (errResult as Record<string, unknown>)._timing = {
+            durationMs: timing.duration,
+            startTime: timing.startTime,
+            endTime: timing.endTime,
+          };
+        }
+      }
+
+      // Inject proactive hint for errors
+      if (this.hintEngine) {
+        const hint = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true);
+        if (hint) {
+          (errResult as Record<string, unknown>)._hint = hint;
+        }
+      }
+
+      return errResult;
     }
   }
 
@@ -302,22 +548,145 @@ export class MCPServer {
   }
 
   /**
-   * Stop the server
+   * Get a tool handler by name (for internal server-side plan execution).
+   * Returns null if the tool is not registered.
+   */
+  getToolHandler(toolName: string): ToolHandler | null {
+    const registry = this.tools.get(toolName);
+    return registry ? registry.handler : null;
+  }
+
+  /**
+   * Get the full tool manifest with metadata
+   */
+  getToolManifest(): ToolManifest {
+    const tools: ToolEntry[] = [];
+    for (const registry of this.tools.values()) {
+      tools.push({
+        name: registry.definition.name,
+        description: registry.definition.description,
+        inputSchema: registry.definition.inputSchema,
+        category: this.inferToolCategory(registry.definition.name),
+      });
+    }
+    return {
+      version: `${this.manifestVersion}`,
+      generatedAt: Date.now(),
+      tools,
+      toolCount: tools.length,
+    };
+  }
+
+  /**
+   * Increment the manifest version (call when tools are dynamically added/removed)
+   */
+  incrementManifestVersion(): void {
+    this.manifestVersion++;
+  }
+
+  /**
+   * Infer the category of a tool from its name
+   */
+  private inferToolCategory(toolName: string): ToolCategory {
+    if (['navigate', 'page_reload'].includes(toolName)) return 'navigation';
+    if (['computer', 'form_input', 'drag_drop'].includes(toolName)) return 'interaction';
+    if (['read_page', 'find', 'page_content', 'selector_query', 'xpath_query'].includes(toolName)) return 'content';
+    if (toolName === 'javascript_tool') return 'javascript';
+    if (['network', 'cookies', 'storage', 'request_intercept', 'http_auth'].includes(toolName)) return 'network';
+    if (['tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';
+    if (['page_pdf', 'console_capture', 'performance_metrics', 'file_upload'].includes(toolName)) return 'media';
+    if (['user_agent', 'geolocation', 'emulate_device'].includes(toolName)) return 'emulation';
+    if (['workflow_init', 'workflow_status', 'workflow_collect', 'workflow_collect_partial', 'workflow_cleanup', 'execute_plan'].includes(toolName)) return 'orchestration';
+    if (['worker_create', 'worker_list', 'worker_delete', 'worker_update', 'worker_complete'].includes(toolName)) return 'worker';
+    if (['click_element', 'fill_form', 'wait_and_click', 'wait_for'].includes(toolName)) return 'composite';
+    if (['batch_execute', 'lightweight_scroll'].includes(toolName)) return 'performance';
+    if (toolName === 'oc_stop') return 'lifecycle';
+    return 'interaction';
+  }
+
+  /**
+   * Stop the server and clean up all Chrome resources
    */
   stop(): void {
+    // Stop dashboard
+    if (this.dashboard) {
+      this.dashboard.stop();
+    }
+
     if (this.rl) {
       this.rl.close();
       this.rl = null;
     }
+
+    // Clean up Chrome resources (async, best-effort on exit)
+    this.cleanup().catch((err) => {
+      console.error('[MCPServer] Cleanup error:', err);
+    });
+  }
+
+  /**
+   * Clean up all Chrome resources: sessions, connection pool, CDP, and Chrome process
+   */
+  private async cleanup(): Promise<void> {
+    try {
+      await this.sessionManager.cleanupAllSessions();
+    } catch (e) {
+      console.error('[MCPServer] Session cleanup error:', e);
+    }
+
+    try {
+      const pool = getCDPConnectionPool();
+      await pool.shutdown();
+    } catch {
+      // Pool may not have been initialized
+    }
+
+    try {
+      const cdpClient = getCDPClient();
+      if (cdpClient.isConnected()) {
+        await cdpClient.disconnect();
+      }
+    } catch {
+      // Client may not have been initialized
+    }
+
+    try {
+      const launcher = getChromeLauncher();
+      if (launcher.isConnected()) {
+        await launcher.close();
+        console.error('[MCPServer] Chrome process terminated');
+      }
+    } catch {
+      // Launcher may not have been initialized
+    }
+  }
+
+  /**
+   * Check if dashboard is enabled
+   */
+  isDashboardEnabled(): boolean {
+    return this.dashboard !== null && this.dashboard.running;
+  }
+
+  /**
+   * Get the dashboard instance
+   */
+  getDashboard(): Dashboard | null {
+    return this.dashboard;
   }
 }
 
 // Singleton instance
 let mcpServerInstance: MCPServer | null = null;
+let mcpServerOptions: MCPServerOptions = {};
+
+export function setMCPServerOptions(options: MCPServerOptions): void {
+  mcpServerOptions = options;
+}
 
 export function getMCPServer(): MCPServer {
   if (!mcpServerInstance) {
-    mcpServerInstance = new MCPServer();
+    mcpServerInstance = new MCPServer(undefined, mcpServerOptions);
   }
   return mcpServerInstance;
 }

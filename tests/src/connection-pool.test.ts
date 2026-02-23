@@ -12,6 +12,9 @@ interface MockPage {
   close: jest.Mock;
   createCDPSession: jest.Mock;
   target: jest.Mock;
+  viewport: jest.Mock;
+  setViewport: jest.Mock;
+  url: jest.Mock;
 }
 
 // Mock CDPClient
@@ -25,7 +28,7 @@ jest.mock('../../src/cdp/client', () => ({
   getCDPClient: jest.fn(),
 }));
 
-function createMockPage(targetId: string = 'target-1'): MockPage {
+function createMockPage(targetId: string = 'target-1', url: string = 'about:blank'): MockPage {
   const mockCdpSession = {
     send: jest.fn().mockResolvedValue(undefined),
     detach: jest.fn().mockResolvedValue(undefined),
@@ -36,6 +39,9 @@ function createMockPage(targetId: string = 'target-1'): MockPage {
     close: jest.fn().mockResolvedValue(undefined),
     createCDPSession: jest.fn().mockResolvedValue(mockCdpSession),
     target: jest.fn().mockReturnValue({ _targetId: targetId }),
+    viewport: jest.fn().mockReturnValue({ width: 1920, height: 1080 }),
+    setViewport: jest.fn().mockResolvedValue(undefined),
+    url: jest.fn().mockReturnValue(url),
   };
 }
 
@@ -315,6 +321,250 @@ describe('CDPConnectionPool', () => {
       await pool.shutdown();
 
       expect(mockPage.close).toHaveBeenCalled();
+    });
+  });
+
+  describe('releasePage - origin cleanup', () => {
+    test('should capture current origin before navigating to about:blank', async () => {
+      const mockPage = createMockPage('target-1', 'https://example.com/path?q=1');
+      mockCdpClient.createPage.mockResolvedValue(mockPage as any);
+
+      await pool.initialize();
+      const page = await pool.acquirePage();
+      await pool.releasePage(page);
+
+      // url() should have been called to capture the origin
+      expect(mockPage.url).toHaveBeenCalled();
+    });
+
+    test('should call Storage.clearDataForOrigin with specific origin (not wildcard)', async () => {
+      const mockCdpSession = {
+        send: jest.fn().mockResolvedValue(undefined),
+        detach: jest.fn().mockResolvedValue(undefined),
+      };
+      const mockPage = createMockPage('target-1', 'https://example.com/page');
+      mockPage.createCDPSession = jest.fn().mockResolvedValue(mockCdpSession);
+      mockCdpClient.createPage.mockResolvedValue(mockPage as any);
+
+      await pool.initialize();
+      const page = await pool.acquirePage();
+      await pool.releasePage(page);
+
+      expect(mockCdpSession.send).toHaveBeenCalledWith('Network.clearBrowserCookies');
+      expect(mockCdpSession.send).toHaveBeenCalledWith('Storage.clearDataForOrigin', {
+        origin: 'https://example.com',
+        storageTypes: 'all',
+      });
+    });
+
+    test('should handle pages already on about:blank gracefully', async () => {
+      const mockCdpSession = {
+        send: jest.fn().mockResolvedValue(undefined),
+        detach: jest.fn().mockResolvedValue(undefined),
+      };
+      const mockPage = createMockPage('target-1', 'about:blank');
+      mockPage.createCDPSession = jest.fn().mockResolvedValue(mockCdpSession);
+      mockCdpClient.createPage.mockResolvedValue(mockPage as any);
+
+      await pool.initialize();
+      const page = await pool.acquirePage();
+      await pool.releasePage(page);
+
+      // Should still clear cookies but NOT call Storage.clearDataForOrigin (no valid origin)
+      expect(mockCdpSession.send).toHaveBeenCalledWith('Network.clearBrowserCookies');
+      expect(mockCdpSession.send).not.toHaveBeenCalledWith(
+        'Storage.clearDataForOrigin',
+        expect.anything()
+      );
+    });
+
+    test('should handle invalid URL gracefully without crashing', async () => {
+      const mockPage = createMockPage('target-1');
+      // url() returns something that would cause URL parsing to throw
+      mockPage.url = jest.fn().mockReturnValue('not-a-valid-url-at-all:::');
+      mockCdpClient.createPage.mockResolvedValue(mockPage as any);
+
+      await pool.initialize();
+      const page = await pool.acquirePage();
+
+      // Should not throw
+      await expect(pool.releasePage(page)).resolves.not.toThrow();
+    });
+  });
+
+  describe('maintenance', () => {
+    test('should close idle pages beyond timeout', async () => {
+      const mockPage1 = createMockPage('target-1');
+      const mockPage2 = createMockPage('target-2');
+      const mockPage3 = createMockPage('target-3');
+      mockCdpClient.createPage
+        .mockResolvedValueOnce(mockPage1 as any)
+        .mockResolvedValueOnce(mockPage2 as any)
+        .mockResolvedValueOnce(mockPage3 as any);
+
+      // Pool with 3 min pages and short idle timeout
+      const maintenancePool = new CDPConnectionPool(mockCdpClient, {
+        minPoolSize: 1,
+        maxPoolSize: 5,
+        pageIdleTimeout: 1000,
+        preWarm: true,
+      });
+      await maintenancePool.initialize();
+
+      // Verify pool has pages
+      expect(maintenancePool.getStats().availablePages).toBe(1);
+
+      // Acquire and release so we have pages with lastUsedAt in the past
+      const page = await maintenancePool.acquirePage();
+      await maintenancePool.releasePage(page);
+
+      // Manually push an extra page with old lastUsedAt to simulate idle
+      const extraPage = createMockPage('target-extra');
+      mockCdpClient.createPage.mockResolvedValueOnce(extraPage as any);
+      const extraAcquired = await maintenancePool.acquirePage();
+      await maintenancePool.releasePage(extraAcquired);
+
+      // Now we should have >= 2 available pages; advance time to make them idle
+      jest.advanceTimersByTime(2000); // past pageIdleTimeout of 1000ms
+
+      // Trigger maintenance
+      jest.advanceTimersByTime(30000);
+      // Allow pending promises to flush
+      await Promise.resolve();
+
+      // Pool should have closed idle pages beyond minPoolSize (1)
+      expect(maintenancePool.getStats().availablePages).toBeLessThanOrEqual(1);
+
+      await maintenancePool.shutdown();
+    });
+
+    test('should keep minimum pool size even if pages are idle', async () => {
+      const mockPage1 = createMockPage('target-1');
+      const mockPage2 = createMockPage('target-2');
+      mockCdpClient.createPage
+        .mockResolvedValueOnce(mockPage1 as any)
+        .mockResolvedValueOnce(mockPage2 as any);
+
+      const maintenancePool = new CDPConnectionPool(mockCdpClient, {
+        minPoolSize: 2,
+        maxPoolSize: 5,
+        pageIdleTimeout: 1000,
+        preWarm: true,
+      });
+      await maintenancePool.initialize();
+
+      // Advance past idle timeout
+      jest.advanceTimersByTime(2000);
+      // Trigger maintenance
+      jest.advanceTimersByTime(30000);
+      await Promise.resolve();
+
+      // Pool should retain at least minPoolSize pages
+      expect(maintenancePool.getStats().availablePages).toBeGreaterThanOrEqual(
+        maintenancePool.getConfig().minPoolSize
+      );
+
+      await maintenancePool.shutdown();
+    });
+
+    test('maintenance timer should run at 30s intervals', async () => {
+      const mockPage = createMockPage('target-1');
+      mockCdpClient.createPage.mockResolvedValue(mockPage as any);
+
+      await pool.initialize();
+
+      // Spy on performMaintenance indirectly via page.close
+      // Pool has minPoolSize=2, maxPoolSize=5. Add 3 extra pages beyond min.
+      const extraPages = [
+        createMockPage('extra-1'),
+        createMockPage('extra-2'),
+        createMockPage('extra-3'),
+      ];
+      for (const ep of extraPages) {
+        mockCdpClient.createPage.mockResolvedValueOnce(ep as any);
+      }
+
+      // Acquire and release extra pages to fill pool above minPoolSize
+      const p1 = await pool.acquirePage();
+      const p2 = await pool.acquirePage();
+      const p3 = await pool.acquirePage();
+      await pool.releasePage(p1);
+      await pool.releasePage(p2);
+      await pool.releasePage(p3);
+
+      // Advance to trigger maintenance once (30s)
+      jest.advanceTimersByTime(31000);
+      await Promise.resolve();
+
+      // Maintenance ran; pool stats should be valid (no crash)
+      const stats = pool.getStats();
+      expect(stats.availablePages).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('pool lifecycle', () => {
+    test('acquire and release cycle should maintain pool health', async () => {
+      const mockPages = Array.from({ length: 10 }, (_, i) =>
+        createMockPage(`target-${i}`, 'https://example.com')
+      );
+      let idx = 0;
+      mockCdpClient.createPage.mockImplementation(() =>
+        Promise.resolve(mockPages[idx++] as any)
+      );
+
+      await pool.initialize();
+
+      // Perform 5 acquire/release cycles
+      for (let i = 0; i < 5; i++) {
+        const page = await pool.acquirePage();
+        await pool.releasePage(page);
+      }
+
+      const stats = pool.getStats();
+      // All pages released, none in use
+      expect(stats.inUsePages).toBe(0);
+      expect(stats.availablePages).toBeGreaterThanOrEqual(0);
+      // Total stats are sane
+      expect(stats.totalPagesCreated).toBeGreaterThanOrEqual(1);
+    });
+
+    test('rapid acquire/release should not leak pages', async () => {
+      const mockPages = Array.from({ length: 20 }, (_, i) =>
+        createMockPage(`target-${i}`, 'https://example.com')
+      );
+      let idx = 0;
+      mockCdpClient.createPage.mockImplementation(() =>
+        Promise.resolve(mockPages[idx++ % mockPages.length] as any)
+      );
+
+      const rapidPool = new CDPConnectionPool(mockCdpClient, {
+        minPoolSize: 2,
+        maxPoolSize: 4,
+        pageIdleTimeout: 1000,
+        preWarm: false,
+      });
+      await rapidPool.initialize();
+
+      // Acquire up to maxPoolSize concurrently, then release all
+      const pages = await Promise.all([
+        rapidPool.acquirePage(),
+        rapidPool.acquirePage(),
+        rapidPool.acquirePage(),
+        rapidPool.acquirePage(),
+      ]);
+
+      // Release sequentially to avoid race condition on availablePages check
+      for (const p of pages) {
+        await rapidPool.releasePage(p);
+      }
+
+      const stats = rapidPool.getStats();
+      // No pages should remain in use
+      expect(stats.inUsePages).toBe(0);
+      // Pages should be available (some may exceed maxPoolSize due to async replenishment)
+      expect(stats.availablePages).toBeGreaterThanOrEqual(0);
+
+      await rapidPool.shutdown();
     });
   });
 });

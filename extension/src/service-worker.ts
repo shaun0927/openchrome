@@ -1,5 +1,5 @@
 /**
- * Service Worker - Main background script for Claude Chrome Parallel
+ * Service Worker - Main background script for OpenChrome
  *
  * This is the entry point for the extension. It:
  * 1. Initializes the session manager and MCP handler
@@ -17,7 +17,7 @@ import { registerAllTools } from './tools';
 import type { MCPRequest, MCPResponse } from './types/mcp';
 
 // Constants
-const NATIVE_HOST_NAME = 'com.anthropic.claude_chrome_parallel';
+const NATIVE_HOST_NAME = 'com.anthropic.openchrome';
 const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const SESSION_MAX_INACTIVE_AGE = 30 * 60 * 1000; // 30 minutes
 
@@ -33,7 +33,7 @@ let nativePort: chrome.runtime.Port | null = null;
  * Initialize all managers
  */
 function initialize(): void {
-  console.log('[Claude Chrome Parallel] Initializing...');
+  console.log('[OpenChrome] Initializing...');
 
   tabGroupManager = new TabGroupManager();
   cdpPool = new CDPConnectionPool();
@@ -44,18 +44,18 @@ function initialize(): void {
   // Register all tools
   registerAllTools(mcpHandler, sessionManager);
 
-  console.log('[Claude Chrome Parallel] Registered tools:', mcpHandler.getToolNames());
+  console.log('[OpenChrome] Registered tools:', mcpHandler.getToolNames());
 
   // Set up periodic cleanup
   setInterval(() => {
     sessionManager.cleanupInactiveSessions(SESSION_MAX_INACTIVE_AGE).then((deleted) => {
       if (deleted.length > 0) {
-        console.log('[Claude Chrome Parallel] Cleaned up inactive sessions:', deleted);
+        console.log('[OpenChrome] Cleaned up inactive sessions:', deleted);
       }
     });
   }, SESSION_CLEANUP_INTERVAL);
 
-  console.log('[Claude Chrome Parallel] Initialized successfully');
+  console.log('[OpenChrome] Initialized successfully');
 }
 
 /**
@@ -65,7 +65,7 @@ async function handleMCPRequest(request: MCPRequest): Promise<MCPResponse> {
   try {
     return await mcpHandler.handleRequest(request);
   } catch (error) {
-    console.error('[Claude Chrome Parallel] MCP request error:', error);
+    console.error('[OpenChrome] MCP request error:', error);
     return {
       jsonrpc: '2.0',
       id: request.id,
@@ -83,7 +83,7 @@ async function handleMCPRequest(request: MCPRequest): Promise<MCPResponse> {
 function setupNativeMessaging(): void {
   // Listen for connections from native host
   chrome.runtime.onConnectExternal.addListener((port) => {
-    console.log('[Claude Chrome Parallel] External connection from:', port.name);
+    console.log('[OpenChrome] External connection from:', port.name);
 
     port.onMessage.addListener(async (message: MCPRequest) => {
       const response = await handleMCPRequest(message);
@@ -91,14 +91,14 @@ function setupNativeMessaging(): void {
     });
 
     port.onDisconnect.addListener(() => {
-      console.log('[Claude Chrome Parallel] External port disconnected');
+      console.log('[OpenChrome] External port disconnected');
     });
   });
 
   // Also listen for internal connections (from content scripts, popup)
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name === 'mcp') {
-      console.log('[Claude Chrome Parallel] MCP port connected');
+      console.log('[OpenChrome] MCP port connected');
 
       port.onMessage.addListener(async (message: MCPRequest) => {
         const response = await handleMCPRequest(message);
@@ -106,7 +106,7 @@ function setupNativeMessaging(): void {
       });
 
       port.onDisconnect.addListener(() => {
-        console.log('[Claude Chrome Parallel] MCP port disconnected');
+        console.log('[OpenChrome] MCP port disconnected');
       });
     }
   });
@@ -123,14 +123,14 @@ function connectNativeHost(): void {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
 
     nativePort.onMessage.addListener(async (message: MCPRequest) => {
-      console.log('[Claude Chrome Parallel] Native message received:', message.method);
+      console.log('[OpenChrome] Native message received:', message.method);
       const response = await handleMCPRequest(message);
       nativePort?.postMessage(response);
     });
 
     nativePort.onDisconnect.addListener(() => {
       console.log(
-        '[Claude Chrome Parallel] Native port disconnected:',
+        '[OpenChrome] Native port disconnected:',
         chrome.runtime.lastError?.message
       );
       nativePort = null;
@@ -139,9 +139,9 @@ function connectNativeHost(): void {
       setTimeout(connectNativeHost, 5000);
     });
 
-    console.log('[Claude Chrome Parallel] Connected to native host');
+    console.log('[OpenChrome] Connected to native host');
   } catch (error) {
-    console.log('[Claude Chrome Parallel] Native host not available:', error);
+    console.log('[OpenChrome] Native host not available:', error);
     // Native host not installed, that's OK - we can still work via message passing
   }
 }
@@ -185,13 +185,13 @@ function setupEventListeners(): void {
  * Extension install/update handler
  */
 chrome.runtime.onInstalled.addListener((details) => {
-  console.log('[Claude Chrome Parallel] Extension installed/updated:', details.reason);
+  console.log('[OpenChrome] Extension installed/updated:', details.reason);
 
   if (details.reason === 'install') {
     // First install - could show welcome page
-    console.log('[Claude Chrome Parallel] First install - ready to use!');
+    console.log('[OpenChrome] First install - ready to use!');
   } else if (details.reason === 'update') {
-    console.log('[Claude Chrome Parallel] Updated from version:', details.previousVersion);
+    console.log('[OpenChrome] Updated from version:', details.previousVersion);
   }
 });
 
@@ -199,7 +199,7 @@ chrome.runtime.onInstalled.addListener((details) => {
  * Extension startup handler
  */
 chrome.runtime.onStartup.addListener(() => {
-  console.log('[Claude Chrome Parallel] Browser started');
+  console.log('[OpenChrome] Browser started');
   initialize();
   setupEventListeners();
   setupNativeMessaging();

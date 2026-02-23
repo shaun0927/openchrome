@@ -68,6 +68,13 @@ describe('ReadPageTool', () => {
       { depth: 5 },
       sampleAccessibilityTree
     );
+
+    // Set up CDP response for depth 5 (used with interactive filter)
+    mockSessionManager.mockCDPClient.setCDPResponse(
+      'Accessibility.getFullAXTree',
+      { depth: 5 },
+      sampleAccessibilityTree
+    );
   });
 
   afterEach(() => {
@@ -107,6 +114,49 @@ describe('ReadPageTool', () => {
         expect.anything(),
         'Accessibility.getFullAXTree',
         { depth: 5 }
+      );
+    });
+
+    test('uses capped depth for interactive filter', async () => {
+      const handler = await getReadPageHandler();
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 5 },
+        sampleAccessibilityTree
+      );
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        filter: 'interactive',
+      });
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        { depth: 5 }
+      );
+    });
+
+    test('uses custom depth when smaller than cap for interactive filter', async () => {
+      const handler = await getReadPageHandler();
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 3 },
+        sampleAccessibilityTree
+      );
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        filter: 'interactive',
+        depth: 3,
+      });
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        { depth: 3 }
       );
     });
 
@@ -174,6 +224,12 @@ describe('ReadPageTool', () => {
       const text = result.content[0].text;
       // Check that interactive elements are present
       // Note: exact behavior depends on implementation
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        { depth: 5 }
+      );
     });
 
     test('interactive elements include correct roles', async () => {
@@ -188,6 +244,12 @@ describe('ReadPageTool', () => {
       // These roles should pass through the interactive filter
       const interactiveRoles = ['button', 'link', 'textbox'];
       // Implementation-specific check
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        { depth: 5 }
+      );
     });
   });
 

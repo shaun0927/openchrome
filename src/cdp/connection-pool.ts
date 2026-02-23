@@ -6,13 +6,13 @@ import { Page } from 'puppeteer-core';
 import { CDPClient, getCDPClient } from './client';
 
 export interface PoolConfig {
-  /** Minimum number of pre-allocated pages to keep ready (default: 2) */
+  /** Minimum number of pre-allocated pages to keep ready (default: 0) */
   minPoolSize?: number;
-  /** Maximum number of pre-allocated pages (default: 10) */
+  /** Maximum number of recycled pages to keep in pool (default: 0 — disabled to prevent about:blank ghost tabs) */
   maxPoolSize?: number;
   /** Page idle timeout in ms before returning to pool (default: 5 minutes) */
   pageIdleTimeout?: number;
-  /** Whether to pre-warm pages on startup (default: true) */
+  /** Whether to pre-warm pages on startup (default: false) */
   preWarm?: boolean;
 }
 
@@ -35,13 +35,14 @@ interface PooledPage {
   page: Page;
   createdAt: number;
   lastUsedAt: number;
+  visitedOrigins: Set<string>;
 }
 
 const DEFAULT_CONFIG: Required<PoolConfig> = {
-  minPoolSize: 2,
-  maxPoolSize: 10,
+  minPoolSize: 0,
+  maxPoolSize: 0, // Disabled: recycled pages appear as about:blank ghost tabs in Chrome
   pageIdleTimeout: 5 * 60 * 1000, // 5 minutes
-  preWarm: true,
+  preWarm: false,
 };
 
 export class CDPConnectionPool {
@@ -78,13 +79,22 @@ export class CDPConnectionPool {
 
     // Start maintenance timer
     this.maintenanceTimer = setInterval(() => {
-      this.performMaintenance();
+      this.performMaintenance().catch((err) => {
+        console.error('[Pool] Maintenance error:', err);
+      });
     }, 30000); // Every 30 seconds
     this.maintenanceTimer.unref();
 
     this.isInitialized = true;
     console.error('[Pool] Connection pool initialized');
   }
+
+  /**
+   * When true, suppresses automatic pool replenishment.
+   * Set during bulk operations (acquireBatch, preWarmForWorkflow) to prevent
+   * about:blank tab proliferation.
+   */
+  private suppressReplenishment = false;
 
   /**
    * Acquire a page from the pool
@@ -113,6 +123,7 @@ export class CDPConnectionPool {
         page,
         createdAt: Date.now(),
         lastUsedAt: Date.now(),
+        visitedOrigins: new Set(),
       };
       this.pagesCreatedOnDemand++;
     }
@@ -126,14 +137,100 @@ export class CDPConnectionPool {
       this.acquireTimes.shift();
     }
 
-    // Replenish pool in background if needed
-    this.replenishPoolAsync();
+    // Replenish pool in background if needed (suppressed during bulk ops)
+    if (!this.suppressReplenishment) {
+      this.replenishPoolAsync();
+    }
 
     return page;
   }
 
   /**
-   * Release a page back to the pool
+   * Acquire multiple pages at once without triggering per-page replenishment.
+   * Prevents about:blank tab proliferation during workflow_init.
+   *
+   * Instead of acquiring one-by-one (each triggering replenishPoolAsync),
+   * this method batch-acquires all needed pages, only replenishing once at the end.
+   *
+   * @param count Number of pages to acquire
+   * @returns Array of acquired pages
+   */
+  async acquireBatch(count: number): Promise<Page[]> {
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+
+    // Suppress replenishment during batch acquire
+    this.suppressReplenishment = true;
+    const startTime = Date.now();
+
+    try {
+      const pages: Page[] = [];
+
+      // First, take as many as possible from the pool
+      const fromPool = Math.min(count, this.availablePages.length);
+      for (let i = 0; i < fromPool; i++) {
+        const pooledPage = this.availablePages.pop()!;
+        pooledPage.lastUsedAt = Date.now();
+        this.inUsePages.set(pooledPage.page, pooledPage);
+        this.pagesReused++;
+        pages.push(pooledPage.page);
+      }
+
+      // Create remaining pages on-demand (in parallel with concurrency limit)
+      const remaining = count - fromPool;
+      if (remaining > 0) {
+        const concurrency = 10;
+        let active = 0;
+        const queue: Array<() => void> = [];
+
+        const limiter = async <T>(fn: () => Promise<T>): Promise<T> => {
+          if (active >= concurrency) {
+            await new Promise<void>((resolve) => queue.push(resolve));
+          }
+          active++;
+          try {
+            return await fn();
+          } finally {
+            active--;
+            if (queue.length > 0) queue.shift()!();
+          }
+        };
+
+        const newPages = await Promise.all(
+          Array.from({ length: remaining }, () =>
+            limiter(async () => {
+              const page = await this.createNewPage();
+              const pooledPage: PooledPage = {
+                page,
+                createdAt: Date.now(),
+                lastUsedAt: Date.now(),
+                visitedOrigins: new Set(),
+              };
+              this.inUsePages.set(page, pooledPage);
+              this.pagesCreatedOnDemand++;
+              return page;
+            })
+          )
+        );
+        pages.push(...newPages);
+      }
+
+      const durationMs = Date.now() - startTime;
+      console.error(
+        `[Pool] Batch acquired ${pages.length} pages (${fromPool} from pool, ${remaining} on-demand) in ${durationMs}ms`
+      );
+
+      return pages;
+    } finally {
+      this.suppressReplenishment = false;
+      // Do NOT replenish after batch acquire — workflow pages will be released back
+      // to the pool during cleanup. Eager replenishment here creates about:blank ghost tabs.
+    }
+  }
+
+  /**
+   * Release a page back to the pool (non-blocking: cleanup runs async)
    */
   async releasePage(page: Page): Promise<void> {
     const pooledPage = this.inUsePages.get(page);
@@ -149,9 +246,8 @@ export class CDPConnectionPool {
 
     this.inUsePages.delete(page);
 
-    // Check if pool is at max capacity
+    // Check if pool is at max capacity — close immediately, don't queue cleanup
     if (this.availablePages.length >= this.config.maxPoolSize) {
-      // Close the page instead of returning to pool
       try {
         await page.close();
       } catch {
@@ -160,37 +256,72 @@ export class CDPConnectionPool {
       return;
     }
 
-    // Reset the page state before returning to pool
-    try {
-      // Navigate to blank page to clear state
-      await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
-
-      // Clear cookies and storage
-      const client = await page.createCDPSession();
-      await client.send('Network.clearBrowserCookies');
-      await client.send('Storage.clearDataForOrigin', {
-        origin: '*',
-        storageTypes: 'all',
-      }).catch(() => {}); // Ignore if not supported
-      await client.detach();
-
-      pooledPage.lastUsedAt = Date.now();
-      this.availablePages.push(pooledPage);
-    } catch {
-      // Failed to reset, close the page
-      try {
-        await page.close();
-      } catch {
-        // Ignore close errors
-      }
-    }
+    // Fire-and-forget: cleanup runs async so the caller isn't blocked
+    this.cleanAndReturnToPool(page, pooledPage).catch((err) => {
+      console.error('[ConnectionPool] Cleanup failed, closing page:', err);
+      page.close().catch(() => {});
+    });
   }
 
   /**
-   * Create a new page
+   * Async cleanup and return to pool (called fire-and-forget from releasePage)
+   */
+  private async cleanAndReturnToPool(page: Page, pooledPage: PooledPage): Promise<void> {
+    // Track the current page URL before navigating away (for origin-specific cleanup)
+    let currentOrigin: string | undefined;
+    try {
+      const currentUrl = page.url();
+      if (currentUrl && currentUrl !== 'about:blank') {
+        currentOrigin = new URL(currentUrl).origin;
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+
+    // Navigate to blank page to clear state
+    await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
+
+    // Clear cookies and storage via CDP session (with proper cleanup in finally)
+    const client = await page.createCDPSession();
+    try {
+      await client.send('Network.clearBrowserCookies');
+
+      // Clear storage for the specific origin (wildcard '*' silently fails)
+      if (currentOrigin) {
+        await client.send('Storage.clearDataForOrigin', {
+          origin: currentOrigin,
+          storageTypes: 'all',
+        }).catch(() => {}); // Ignore if not supported
+      }
+    } finally {
+      await client.detach().catch(() => {});
+    }
+
+    // Double-check pool capacity hasn't been exceeded while we were cleaning
+    if (this.availablePages.length >= this.config.maxPoolSize) {
+      await page.close().catch(() => {});
+      return;
+    }
+
+    pooledPage.lastUsedAt = Date.now();
+    this.availablePages.push(pooledPage);
+  }
+
+  // Default viewport for consistent debugging experience
+  static readonly DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
+
+  /**
+   * Create a new page with default viewport.
+   * Pool pages skip cookie bridging to avoid CDP session conflicts
+   * and unnecessary overhead — cookies will be bridged when the page
+   * is actually navigated to a real URL.
    */
   private async createNewPage(): Promise<Page> {
-    const page = await this.cdpClient.createPage();
+    const page = await this.cdpClient.createPage(undefined, undefined, true);
+    // Ensure viewport is set (cdpClient.createPage already sets it, but double-check)
+    if (!page.viewport()) {
+      await page.setViewport(CDPConnectionPool.DEFAULT_VIEWPORT);
+    }
     this.totalPagesCreated++;
     return page;
   }
@@ -210,6 +341,7 @@ export class CDPConnectionPool {
             page,
             createdAt: Date.now(),
             lastUsedAt: Date.now(),
+            visitedOrigins: new Set(),
           });
         }).catch((err) => {
           console.error('[Pool] Failed to pre-warm page:', err);

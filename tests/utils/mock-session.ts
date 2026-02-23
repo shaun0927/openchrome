@@ -1,14 +1,33 @@
 /// <reference types="jest" />
 /**
  * Mock Session Manager for testing
+ * Updated to support Worker architecture (v3.0)
  */
 
 import { Page } from 'puppeteer-core';
 import { createMockPage, createMockCDPClient } from './mock-cdp';
 
+export interface MockWorker {
+  id: string;
+  name: string;
+  targets: Set<string>;
+  createdAt: number;
+  lastActivityAt: number;
+}
+
+export interface MockWorkerInfo {
+  id: string;
+  name: string;
+  targetCount: number;
+  createdAt: number;
+  lastActivityAt: number;
+}
+
 export interface MockSession {
   id: string;
-  targets: Set<string>;
+  workers: Map<string, MockWorker>;
+  defaultWorkerId: string;
+  targets: Set<string>;  // Legacy
   createdAt: number;
   lastActivityAt: number;
   name: string;
@@ -23,7 +42,7 @@ export interface MockSessionManagerOptions {
  */
 export function createMockSessionManager(options: MockSessionManagerOptions = {}) {
   const sessions: Map<string, MockSession> = new Map();
-  const targetToSession: Map<string, string> = new Map();
+  const targetToWorker: Map<string, { sessionId: string; workerId: string }> = new Map();
   const pages: Map<string, Page> = new Map();
   const mockCDPClient = createMockCDPClient();
 
@@ -31,8 +50,10 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
   if (options.initialSessions) {
     for (const session of options.initialSessions) {
       sessions.set(session.id, session);
-      for (const targetId of session.targets) {
-        targetToSession.set(targetId, session.id);
+      for (const worker of session.workers.values()) {
+        for (const targetId of worker.targets) {
+          targetToWorker.set(targetId, { sessionId: session.id, workerId: worker.id });
+        }
       }
     }
   }
@@ -46,8 +67,21 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
 
     createSession: jest.fn().mockImplementation(async (opts: { id?: string; name?: string } = {}) => {
       const id = opts.id || `session-${Date.now()}`;
+      const defaultWorkerId = 'default';
+
+      // Create default worker
+      const defaultWorker: MockWorker = {
+        id: defaultWorkerId,
+        name: 'Default Worker',
+        targets: new Set(),
+        createdAt: Date.now(),
+        lastActivityAt: Date.now(),
+      };
+
       const session: MockSession = {
         id,
+        workers: new Map([[defaultWorkerId, defaultWorker]]),
+        defaultWorkerId,
         targets: new Set(),
         createdAt: Date.now(),
         lastActivityAt: Date.now(),
@@ -72,9 +106,11 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     deleteSession: jest.fn().mockImplementation(async (sessionId: string) => {
       const session = sessions.get(sessionId);
       if (session) {
-        for (const targetId of session.targets) {
-          pages.delete(targetId);
-          targetToSession.delete(targetId);
+        for (const worker of session.workers.values()) {
+          for (const targetId of worker.targets) {
+            pages.delete(targetId);
+            targetToWorker.delete(targetId);
+          }
         }
         sessions.delete(sessionId);
       }
@@ -87,26 +123,101 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       }
     }),
 
-    createTarget: jest.fn().mockImplementation(async (sessionId: string, url?: string) => {
-      await manager.getOrCreateSession(sessionId);
+    // Worker management
+    createWorker: jest.fn().mockImplementation(async (sessionId: string, opts: { id?: string; name?: string } = {}) => {
+      const session = await manager.getOrCreateSession(sessionId);
+      const workerId = opts.id || `worker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      const worker: MockWorker = {
+        id: workerId,
+        name: opts.name || `Worker ${workerId}`,
+        targets: new Set(),
+        createdAt: Date.now(),
+        lastActivityAt: Date.now(),
+      };
+
+      session.workers.set(workerId, worker);
+      return worker;
+    }),
+
+    getWorker: jest.fn().mockImplementation((sessionId: string, workerId: string) => {
+      const session = sessions.get(sessionId);
+      if (!session) return undefined;
+      return session.workers.get(workerId);
+    }),
+
+    getOrCreateWorker: jest.fn().mockImplementation(async (sessionId: string, workerId?: string) => {
+      const session = await manager.getOrCreateSession(sessionId);
+      const targetWorkerId = workerId || session.defaultWorkerId;
+
+      let worker = session.workers.get(targetWorkerId);
+      if (!worker) {
+        worker = await manager.createWorker(sessionId, { id: targetWorkerId });
+      }
+      return worker;
+    }),
+
+    getWorkers: jest.fn().mockImplementation((sessionId: string): MockWorkerInfo[] => {
+      const session = sessions.get(sessionId);
+      if (!session) return [];
+
+      return Array.from(session.workers.values()).map((w) => ({
+        id: w.id,
+        name: w.name,
+        targetCount: w.targets.size,
+        createdAt: w.createdAt,
+        lastActivityAt: w.lastActivityAt,
+      }));
+    }),
+
+    deleteWorker: jest.fn().mockImplementation(async (sessionId: string, workerId: string) => {
+      const session = sessions.get(sessionId);
+      if (!session) return;
+
+      if (workerId === session.defaultWorkerId) {
+        throw new Error('Cannot delete the default worker. Delete the session instead.');
+      }
+
+      const worker = session.workers.get(workerId);
+      if (worker) {
+        for (const targetId of worker.targets) {
+          pages.delete(targetId);
+          targetToWorker.delete(targetId);
+        }
+        session.workers.delete(workerId);
+      }
+    }),
+
+    getWorkerTargetIds: jest.fn().mockImplementation((sessionId: string, workerId: string) => {
+      const session = sessions.get(sessionId);
+      if (!session) return [];
+      const worker = session.workers.get(workerId);
+      if (!worker) return [];
+      return Array.from(worker.targets);
+    }),
+
+    // Target management (updated for workers)
+    createTarget: jest.fn().mockImplementation(async (sessionId: string, url?: string, workerId?: string) => {
+      const worker = await manager.getOrCreateWorker(sessionId, workerId);
       const targetId = `target-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const page = createMockPage({ url: url || 'about:blank', targetId });
 
-      const session = sessions.get(sessionId);
-      if (session) {
-        session.targets.add(targetId);
-      }
-      targetToSession.set(targetId, sessionId);
+      worker.targets.add(targetId);
+      worker.lastActivityAt = Date.now();
+      targetToWorker.set(targetId, { sessionId, workerId: worker.id });
       pages.set(targetId, page);
 
-      return { targetId, page };
+      return { targetId, page, workerId: worker.id };
     }),
 
-    getPage: jest.fn().mockImplementation(async (sessionId: string, targetId: string) => {
+    getPage: jest.fn().mockImplementation(async (sessionId: string, targetId: string, workerId?: string) => {
       // Validate ownership
-      const owner = targetToSession.get(targetId);
-      if (owner !== sessionId) {
+      const owner = targetToWorker.get(targetId);
+      if (!owner || owner.sessionId !== sessionId) {
         throw new Error(`Target ${targetId} does not belong to session ${sessionId}`);
+      }
+      if (workerId && owner.workerId !== workerId) {
+        throw new Error(`Target ${targetId} does not belong to worker ${workerId}`);
       }
       return pages.get(targetId) || null;
     }),
@@ -116,10 +227,12 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       if (!session) return [];
 
       const sessionPages: Page[] = [];
-      for (const targetId of session.targets) {
-        const page = pages.get(targetId);
-        if (page) {
-          sessionPages.push(page);
+      for (const worker of session.workers.values()) {
+        for (const targetId of worker.targets) {
+          const page = pages.get(targetId);
+          if (page) {
+            sessionPages.push(page);
+          }
         }
       }
       return sessionPages;
@@ -127,18 +240,40 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
 
     getSessionTargetIds: jest.fn().mockImplementation((sessionId: string) => {
       const session = sessions.get(sessionId);
-      return session ? Array.from(session.targets) : [];
+      if (!session) return [];
+
+      const allTargets: string[] = [];
+      for (const worker of session.workers.values()) {
+        allTargets.push(...worker.targets);
+      }
+      return allTargets;
     }),
 
     validateTargetOwnership: jest.fn().mockImplementation((sessionId: string, targetId: string) => {
-      return targetToSession.get(targetId) === sessionId;
+      const owner = targetToWorker.get(targetId);
+      return owner?.sessionId === sessionId;
+    }),
+
+    getTargetWorkerId: jest.fn().mockImplementation((targetId: string) => {
+      return targetToWorker.get(targetId)?.workerId;
+    }),
+
+    isTargetValid: jest.fn().mockImplementation(async (targetId: string) => {
+      const page = pages.get(targetId);
+      return page !== null && page !== undefined;
     }),
 
     removeTarget: jest.fn().mockImplementation(async (sessionId: string, targetId: string) => {
-      const session = sessions.get(sessionId);
-      if (session) {
-        session.targets.delete(targetId);
-        targetToSession.delete(targetId);
+      const owner = targetToWorker.get(targetId);
+      if (owner && owner.sessionId === sessionId) {
+        const session = sessions.get(sessionId);
+        if (session) {
+          const worker = session.workers.get(owner.workerId);
+          if (worker) {
+            worker.targets.delete(targetId);
+          }
+        }
+        targetToWorker.delete(targetId);
         pages.delete(targetId);
       }
     }),
@@ -148,9 +283,26 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     getSessionInfo: jest.fn().mockImplementation((sessionId: string) => {
       const session = sessions.get(sessionId);
       if (!session) return undefined;
+
+      let totalTargets = 0;
+      const workers: MockWorkerInfo[] = [];
+
+      for (const worker of session.workers.values()) {
+        totalTargets += worker.targets.size;
+        workers.push({
+          id: worker.id,
+          name: worker.name,
+          targetCount: worker.targets.size,
+          createdAt: worker.createdAt,
+          lastActivityAt: worker.lastActivityAt,
+        });
+      }
+
       return {
         id: session.id,
-        targetCount: session.targets.size,
+        targetCount: totalTargets,
+        workerCount: session.workers.size,
+        workers,
         createdAt: session.createdAt,
         lastActivityAt: session.lastActivityAt,
         name: session.name,
@@ -158,13 +310,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     }),
 
     getAllSessionInfos: jest.fn().mockImplementation(() => {
-      return Array.from(sessions.values()).map((s) => ({
-        id: s.id,
-        targetCount: s.targets.size,
-        createdAt: s.createdAt,
-        lastActivityAt: s.lastActivityAt,
-        name: s.name,
-      }));
+      return Array.from(sessions.keys()).map((id) => manager.getSessionInfo(id));
     }),
 
     get sessionCount() {
@@ -175,12 +321,16 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     removeEventListener: jest.fn(),
 
     // Helper methods for testing
-    _addPage: (sessionId: string, targetId: string, page: Page) => {
+    _addPage: (sessionId: string, targetId: string, page: Page, workerId?: string) => {
       const session = sessions.get(sessionId);
       if (session) {
-        session.targets.add(targetId);
-        targetToSession.set(targetId, sessionId);
-        pages.set(targetId, page);
+        const targetWorkerId = workerId || session.defaultWorkerId;
+        const worker = session.workers.get(targetWorkerId);
+        if (worker) {
+          worker.targets.add(targetId);
+          targetToWorker.set(targetId, { sessionId, workerId: targetWorkerId });
+          pages.set(targetId, page);
+        }
       }
     },
 

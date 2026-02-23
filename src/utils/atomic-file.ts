@@ -103,7 +103,7 @@ export async function backupFile(
   // Default backup directory
   const defaultBackupDir = path.join(
     os.homedir(),
-    '.claude-chrome-parallel',
+    '.openchrome',
     'backups'
   );
   const targetDir = backupDir || defaultBackupDir;
@@ -156,7 +156,7 @@ export function listBackups(
 ): string[] {
   const defaultBackupDir = path.join(
     os.homedir(),
-    '.claude-chrome-parallel',
+    '.openchrome',
     'backups'
   );
   const targetDir = backupDir || defaultBackupDir;
@@ -188,7 +188,7 @@ export function cleanupBackups(
 
   const defaultBackupDir = path.join(
     os.homedir(),
-    '.claude-chrome-parallel',
+    '.openchrome',
     'backups'
   );
   const targetDir = backupDir || defaultBackupDir;

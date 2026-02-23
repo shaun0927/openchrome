@@ -1,342 +1,216 @@
-# Claude Chrome Parallel
+<p align="center">
+  <img src="assets/mascot.png?v=4" alt="OpenChrome Raptor" width="180">
+</p>
 
-> **Run multiple Claude Code browser sessions in parallel - no more "Detached" errors.**
+<h1 align="center">OpenChrome</h1>
 
-[![npm version](https://badge.fury.io/js/claude-chrome-parallel.svg)](https://www.npmjs.com/package/claude-chrome-parallel)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <b>Smart. Fast. Parallel.</b><br>
+  Browser automation MCP server that uses your real Chrome.
+</p>
 
-## Why This Exists
+<p align="center">
+  <a href="https://www.npmjs.com/package/openchrome-mcp"><img src="https://img.shields.io/npm/v/openchrome-mcp" alt="npm"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
+</p>
 
-[Claude Chrome](https://claude.ai/chrome) is a powerful tool that lets you debug **production environments while logged in** - no need to replicate auth states or mock sessions. But when you try to run multiple Claude Code sessions with browser automation simultaneously, you get:
-
-```
-Error: Detached while handling command
-```
-
-This happens because the Chrome extension uses **shared internal state**. When Session A takes a screenshot, Session B's connection gets "detached."
-
-**Claude Chrome Parallel** solves this by creating **independent CDP connections** for each session:
-
-```
-Claude Code 1 ──► Process 1 ──► CDP Connection 1 ──┐
-                                                    ├──► Chrome (port 9222)
-Claude Code 2 ──► Process 2 ──► CDP Connection 2 ──┘
-```
-
-Each session gets isolated browser control. No shared state = No conflicts.
+<p align="center">
+  <img src="assets/demo.svg" alt="Traditional vs OpenChrome" width="100%">
+</p>
 
 ---
 
-## Use Cases
+## What is OpenChrome?
 
-### Multi-Session QA Testing
+Imagine **20+ parallel Playwright sessions** — but already logged in to everything, invisible to bot detection, and sharing one Chrome process at 300MB. That's OpenChrome.
 
-Run parallel test scenarios against your production or staging environment:
+Search across 20 sites simultaneously. Crawl authenticated dashboards in seconds. Debug production UIs with real user sessions. Connect to [OpenClaw](https://github.com/openclaw/openclaw) and give your AI agent browser superpowers across Telegram, Discord, or any chat platform.
 
-```bash
-# Terminal 1: Test user login flow
-claude -p "Test the login flow on https://myapp.com/login"
+```
+You: oc compare "AirPods Pro" prices across Amazon, eBay, Walmart,
+     Best Buy, Target, Costco, B&H, Newegg — find the lowest
 
-# Terminal 2: Test checkout process (simultaneously!)
-claude -p "Test the checkout flow on https://myapp.com/cart"
-
-# Terminal 3: Monitor admin dashboard
-claude -p "Take screenshots of https://myapp.com/admin every 30 seconds"
+AI:  [8 parallel workers, all sites simultaneously]
+     Best Buy:  $179 ← lowest (sale)
+     Amazon:    $189
+     Costco:    $194 (members)
+     ...
+     Time: 2.8s | All prices from live pages, already logged in.
 ```
 
-### Parallel Debugging
-
-Debug multiple pages or user journeys at the same time:
-
-```bash
-# Debug as different users
-Terminal 1: "Log in as admin and check permissions on /settings"
-Terminal 2: "Log in as regular user and verify they can't access /settings"
-```
-
-### Automated Regression Testing
-
-Run comprehensive browser tests across multiple sessions:
-
-```bash
-# Run 5 parallel test sessions
-for i in {1..5}; do
-  claude -p "Run test suite $i on https://staging.myapp.com" &
-done
-```
-
-### Tested Concurrency
-
-| Sessions | Success Rate |
-|----------|-------------|
-| 5 | 100% |
-| 10 | 100% |
-| 15 | 100% |
-| 20 | 100% |
+| | Traditional | OpenChrome |
+|---|:---:|:---:|
+| **5-site task** | ~250s (login each) | **~3s** (parallel) |
+| **Memory** | ~2.5 GB (5 browsers) | **~300 MB** (1 Chrome) |
+| **Auth** | Every time | **Never** |
+| **Bot detection** | Flagged | **Invisible** |
 
 ---
 
-## Installation
+## Guided, Not Guessing
 
-```bash
-# From npm
-npm install -g claude-chrome-parallel
+The bottleneck in browser automation isn't the browser — it's the **LLM thinking between each step**. Every tool call costs 5–15 seconds of inference time. When an AI agent guesses wrong, it doesn't just fail — it spends another 10 seconds thinking about why, then another 10 seconds trying something else.
 
-# Or from GitHub
-npm install -g github:shaun0927/claude-chrome-parallel
+```
+Playwright agent checking prices on 5 sites:
+
+  Site 1:  launch browser           3s
+           navigate                  2s
+           ⚡ bot detection          LLM thinks... 12s → retry with UA
+           ⚡ CAPTCHA                LLM thinks... 10s → stuck, skip
+           navigate to login         2s
+           ⚡ no session             LLM thinks... 12s → fill credentials
+           2FA prompt               LLM thinks... 10s → stuck
+           ...
+           finally reaches product   after ~20 LLM calls, ~4 minutes
+
+  × 5 sites, sequential  =  ~100 LLM calls,  ~20 minutes,  ~$2.00
+
+  Actual work: 5 calls.  Wasted on wandering: 95 calls.
 ```
 
-### Configure Claude Code
+OpenChrome eliminates this entirely — your Chrome is already logged in, and the hint engine corrects mistakes before they cascade:
 
-Add to your Claude Code MCP settings (`~/.claude.json`):
+```
+OpenChrome agent checking prices on 5 sites:
 
+  All 5 sites in parallel:
+    navigate (already authenticated)     1s
+    read prices                          2s
+    ⚡ stale ref on one site
+      └─ Hint: "Use read_page for fresh refs"    ← no guessing
+    read_page → done                     1s
+
+  = ~20 LLM calls,  ~15 seconds,  ~$0.40
+```
+
+The hint engine watches every tool call across 6 layers — error recovery, composite suggestions, repetition detection, sequence detection, learned patterns, and success guidance. When it sees the same error→recovery pattern 3+ times, it promotes it to a permanent rule across sessions.
+
+| | Playwright | OpenChrome | Savings |
+|---|---|---|---|
+| **LLM calls** | ~100 | ~20 | **80% fewer** |
+| **Wall time** | ~20 min | ~15 sec | **80x faster** |
+| **Token cost** | ~$2.00 | ~$0.40 | **5x cheaper** |
+| **Wasted calls** | ~95% | ~0% | |
+
+---
+
+## Quick Start
+
+```bash
+npx openchrome-mcp setup
+```
+
+That's it. Say `oc` to your AI agent.
+
+<details>
+<summary>Manual config</summary>
+
+**Claude Code:**
+```bash
+claude mcp add openchrome -- npx -y openchrome-mcp serve --auto-launch
+```
+
+**VS Code / Copilot** (`.vscode/mcp.json`):
 ```json
 {
-  "mcpServers": {
-    "chrome-parallel": {
-      "command": "claude-chrome-parallel",
-      "args": ["serve"]
+  "servers": {
+    "openchrome": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "openchrome-mcp", "serve", "--auto-launch"]
     }
   }
 }
 ```
 
-Restart Claude Code for changes to take effect.
+**Cursor / Windsurf / Other MCP clients:**
+```json
+{
+  "mcpServers": {
+    "openchrome": {
+      "command": "npx",
+      "args": ["-y", "openchrome-mcp", "serve", "--auto-launch"]
+    }
+  }
+}
+```
+
+</details>
 
 ---
 
-## Usage
+## Examples
 
-### Basic Usage
-
-Once configured, browser automation works in any Claude Code session:
-
+**Parallel monitoring:**
 ```
-You: Take a screenshot of https://github.com
-
-Claude: [Uses chrome-parallel tools automatically]
+oc screenshot AWS billing, GCP console, Stripe, and Datadog — all at once
+→ 4 workers, 3.1s, already authenticated everywhere
 ```
 
-### Multiple Parallel Sessions
+**Multi-account:**
+```
+oc check orders on personal and business Amazon accounts simultaneously
+→ 2 workers, isolated sessions, same site different accounts
+```
 
-Run multiple Claude Code terminals simultaneously:
+**Competitive intelligence:**
+```
+oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
+→ 4 workers, 4 sites, 2.4s, works past bot detection
+```
+
+---
+
+## 47 Tools
+
+| Category | Tools |
+|----------|-------|
+| **Navigate & Interact** | `navigate`, `click_element`, `fill_form`, `wait_and_click`, `find`, `computer` |
+| **Read & Extract** | `read_page`, `page_content`, `javascript_tool`, `selector_query`, `xpath_query` |
+| **Environment** | `emulate_device`, `geolocation`, `user_agent`, `network` |
+| **Storage & Debug** | `cookies`, `storage`, `console_capture`, `performance_metrics`, `request_intercept` |
+| **Parallel Workflows** | `workflow_init`, `workflow_collect`, `worker_create`, `batch_execute` |
+| **Memory** | `memory_record`, `memory_query`, `memory_validate` |
+
+<details>
+<summary>Full tool list (47)</summary>
+
+`navigate` `computer` `read_page` `find` `click_element` `wait_and_click` `form_input` `fill_form` `javascript_tool` `page_reload` `page_content` `page_pdf` `wait_for` `user_agent` `geolocation` `emulate_device` `network` `selector_query` `xpath_query` `cookies` `storage` `console_capture` `performance_metrics` `request_intercept` `drag_drop` `file_upload` `http_auth` `worker_create` `worker_list` `worker_update` `worker_complete` `worker_delete` `tabs_create_mcp` `tabs_context_mcp` `tabs_close` `workflow_init` `workflow_status` `workflow_collect` `workflow_collect_partial` `workflow_cleanup` `execute_plan` `batch_execute` `lightweight_scroll` `memory_record` `memory_query` `memory_validate` `oc_stop`
+
+</details>
+
+---
+
+## CLI
 
 ```bash
-# Terminal 1
-claude
-> Navigate to myapp.com/dashboard and take a screenshot
-
-# Terminal 2 (at the same time!)
-claude
-> Fill out the form on myapp.com/contact and submit
-
-# Terminal 3 (also at the same time!)
-claude
-> Monitor network requests on myapp.com/api
-```
-
-All sessions work without conflicts!
-
-### Available Browser Tools
-
-| Tool | Description |
-|------|-------------|
-| `navigate` | Navigate to URL or use history |
-| `computer` | Screenshots, mouse clicks, keyboard input, scrolling |
-| `read_page` | Read page content via accessibility tree |
-| `find` | Find elements by description |
-| `form_input` | Fill form fields |
-| `javascript_tool` | Execute JavaScript |
-| `tabs_context_mcp` | Get available tabs |
-| `tabs_create_mcp` | Create new tab |
-| `network` | Simulate network conditions (3G, 4G, offline, custom) |
-
-### Network Simulation
-
-Test how your app behaves under different network conditions:
-
-```
-You: Simulate 3G network and navigate to myapp.com
-
-Claude: [Applies 3G throttling: 1.5Mbps down, 750Kbps up, 100ms latency]
-```
-
-Available presets: `offline`, `slow-2g`, `2g`, `3g`, `4g`, `fast-wifi`, `custom`, `clear`
-
----
-
-## How It Works
-
-### The Problem: Shared Extension State
-
-The official Chrome extension maintains a single shared state:
-
-```
-Claude Code 1 ─┐
-               ├─► Chrome Extension (shared state) ─► Chrome
-Claude Code 2 ─┘
-                    ↑
-              State conflicts here!
-```
-
-### The Solution: Independent CDP Connections
-
-Chrome's DevTools Protocol natively supports multiple simultaneous connections:
-
-```
-Claude Code 1 ─► Process 1 ─► CDP Connection 1 ─┐
-                                                 ├─► Chrome (port 9222)
-Claude Code 2 ─► Process 2 ─► CDP Connection 2 ─┘
-
-Independent connections, no shared state!
-```
-
-Each Claude Code session spawns its own MCP server process with a dedicated CDP connection.
-
----
-
-## CLI Commands
-
-```bash
-# Start MCP server (used by Claude Code automatically)
-claude-chrome-parallel serve
-
-# Check Chrome connection status
-claude-chrome-parallel check
-
-# Use custom Chrome debugging port
-claude-chrome-parallel serve --port 9223
-
-# Check installation health
-claude-chrome-parallel doctor
-
-# View session status and statistics
-claude-chrome-parallel status
-
-# View status as JSON (for automation)
-claude-chrome-parallel status --json
-
-# Clean up stale sessions and old backups
-claude-chrome-parallel cleanup --max-age 24 --keep-backups 10
+oc setup                    # Auto-configure
+oc serve --auto-launch      # Start server
+oc serve --headless-shell   # Headless mode
+oc doctor                   # Diagnose issues
 ```
 
 ---
 
-## Chrome Configuration
+## Cross-Platform
 
-By default, connects to Chrome on port 9222.
-
-**Auto-launch**: If Chrome isn't running with debugging enabled, the package will start it automatically.
-
-**Manual start** (if needed):
-
-```bash
-# Windows
-chrome.exe --remote-debugging-port=9222
-
-# macOS
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-
-# Linux
-google-chrome --remote-debugging-port=9222
-```
-
----
-
-## Additional Features
-
-### Session Isolation (Bonus)
-
-When running multiple Claude Code instances, they can corrupt `~/.claude.json` due to race conditions. Use the `launch` command to run Claude with isolated config:
-
-```bash
-# Run Claude Code with isolated config directory
-claude-chrome-parallel launch
-
-# Pass any claude flags
-claude-chrome-parallel launch --dangerously-skip-permissions
-claude-chrome-parallel launch -p "Your prompt"
-```
-
-### Config Recovery
-
-If your `.claude.json` gets corrupted:
-
-```bash
-# Auto-recover corrupted config
-claude-chrome-parallel recover
-
-# List available backups
-claude-chrome-parallel recover --list-backups
-```
-
----
-
-## Comparison
-
-| Feature | Claude in Chrome (Extension) | Claude Chrome Parallel |
-|---------|------------------------------|----------------------|
-| Multiple sessions | ❌ Detached errors | ✅ Works perfectly |
-| Parallel QA testing | ❌ | ✅ |
-| Connection type | Shared extension state | Independent CDP |
-| Max concurrent sessions | 1 | 20+ tested |
-| Auto Chrome launch | ❌ | ✅ |
-| Network simulation | ❌ | ✅ 3G/4G/offline presets |
-| Session auto-cleanup | ❌ | ✅ TTL-based |
-| Connection pooling | ❌ | ✅ Pre-warmed pages |
-
----
-
-## Troubleshooting
-
-### Chrome not connecting
-
-```bash
-# Check status
-claude-chrome-parallel check
-
-# Manually start Chrome with debugging
-chrome --remote-debugging-port=9222
-```
-
-### Tools not appearing in Claude Code
-
-1. Check MCP config in `~/.claude.json`
-2. Restart Claude Code
-3. Run `/mcp` to verify `chrome-parallel` is listed
+| Platform | Status |
+|----------|--------|
+| **macOS** | Full support |
+| **Windows** | Full support (taskkill process cleanup) |
+| **Linux** | Full support (Snap paths, `CHROME_PATH` env, `--no-sandbox` for CI) |
 
 ---
 
 ## Development
 
 ```bash
-git clone https://github.com/shaun0927/claude-chrome-parallel.git
-cd claude-chrome-parallel
-
-npm install
-npm run build
-
-# Test locally
-npm install -g .
+git clone https://github.com/shaun0927/openchrome.git
+cd openchrome
+npm install && npm run build && npm test
 ```
-
----
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Disclaimer
-
-> **This is an unofficial, community-maintained project.**
-> Not affiliated with or endorsed by Anthropic.
->
-> "Claude" is a trademark of Anthropic. This project provides
-> tooling to enhance the Claude Code experience but is not
-> an official Anthropic product.
-
-## Acknowledgments
-
-- [Anthropic](https://anthropic.com) for Claude and the MCP protocol
-- [Claude Code](https://github.com/anthropics/claude-code) for the CLI
-- [Puppeteer](https://pptr.dev/) for browser automation
+MIT

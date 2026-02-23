@@ -39,3 +39,24 @@ yarn-error.log*
 
 # Chrome extension unpacked (when loaded for development)
 extension-unpacked/
+
+# Runtime directories (written by the tool at runtime)
+.openchrome/
+.agent/
+
+# AI session/orchestration state
+.omc/
+
+# Claude Code ephemeral worktrees
+.claude/worktrees/
+
+# User-local Claude Code workflows (personal skills, agents, commands)
+CLAUDE.md
+
+# Ad-hoc analysis/planning outputs
+x-crawl-*.json
+x-crawl-*.md
+TQS_*.md
+IMPROVEMENT_PLAN.md
+MISSING_FEATURES.md
+PERFORMANCE_IMPROVEMENT_PLAN.md

@@ -22,6 +22,7 @@ interface MCPResultResponse {
     protocolVersion?: string;
     capabilities?: unknown;
     serverInfo?: { name: string; version: string };
+    instructions?: string;
     tools?: Array<{ name: string }>;
     content?: Array<{ type: string; text: string }>;
     isError?: boolean;
@@ -64,7 +65,7 @@ describe('MCPServer', () => {
         expect(response.result!.protocolVersion).toBeDefined();
         expect(response.result!.capabilities).toBeDefined();
         expect(response.result!.serverInfo).toBeDefined();
-        expect(response.result!.serverInfo!.name).toBe('claude-chrome-parallel');
+        expect(response.result!.serverInfo!.name).toBe('openchrome');
       });
 
       test('returns server version', async () => {
@@ -77,6 +78,112 @@ describe('MCPServer', () => {
         const response = (await server.handleRequest(request)) as MCPResultResponse;
 
         expect(response.result!.serverInfo!.version).toBeDefined();
+      });
+
+      test('returns instructions field as a string', async () => {
+        const request: MCPRequest = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+        };
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+
+        expect(response.result!.instructions).toBeDefined();
+        expect(typeof response.result!.instructions).toBe('string');
+        expect(response.result!.instructions!.length).toBeGreaterThan(0);
+      });
+
+      test('instructions contain "openchrome" magic keyword trigger', async () => {
+        const request: MCPRequest = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+        };
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+        const instructions = response.result!.instructions!;
+
+        // Must mention "oc" as a keyword
+        expect(instructions).toContain('openchrome');
+        expect(instructions).toContain('MAGIC KEYWORD');
+        // Must mention "use oc" as a variation
+        expect(instructions).toContain('oc');
+      });
+
+      test('instructions contain key behavioral rules', async () => {
+        const request: MCPRequest = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+        };
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+        const instructions = response.result!.instructions!;
+
+        // Must tell LLM not to attempt login
+        expect(instructions).toMatch(/already logged in/i);
+        expect(instructions).toMatch(/never attempt login/i);
+
+        // Must mention parallel workflow
+        expect(instructions).toContain('workflow_init');
+        expect(instructions).toContain('workflow_collect');
+
+        // Must mention tool preferences
+        expect(instructions).toContain('click_element');
+        expect(instructions).toContain('fill_form');
+
+        // Must mention worker isolation
+        expect(instructions).toMatch(/isolated browser context/i);
+      });
+
+      test('instructions contain usage examples', async () => {
+        const request: MCPRequest = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+        };
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+        const instructions = response.result!.instructions!;
+
+        expect(instructions).toContain('EXAMPLES');
+        // At least 3 examples present
+        const exampleLines = instructions.split('\n').filter(l => l.includes('→') && l.includes('"oc')));
+        expect(exampleLines.length).toBeGreaterThanOrEqual(3);
+      });
+
+      test('instructions contain tool quick reference', async () => {
+        const request: MCPRequest = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+        };
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+        const instructions = response.result!.instructions!;
+
+        expect(instructions).toContain('TOOL QUICK REFERENCE');
+        // Must reference essential tools
+        const essentialTools = ['navigate', 'click_element', 'find', 'fill_form', 'read_page', 'computer', 'wait_for', 'workflow_init'];
+        for (const tool of essentialTools) {
+          expect(instructions).toContain(tool);
+        }
+      });
+
+      test('instructions do not contain Korean text', async () => {
+        const request: MCPRequest = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+        };
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+        const instructions = response.result!.instructions!;
+
+        // No Hangul characters (Unicode range AC00-D7AF for syllables, 1100-11FF for jamo)
+        const koreanRegex = /[\uAC00-\uD7AF\u1100-\u11FF]/;
+        expect(koreanRegex.test(instructions)).toBe(false);
       });
     });
 
