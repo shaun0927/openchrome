@@ -295,12 +295,16 @@ describe('HintEngine', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('should log hint hits to JSONL file', () => {
+    it('should log hint hits to JSONL file', async () => {
       const engine = new HintEngine(new ActivityTracker());
       engine.enableLogging(tmpDir);
 
       const result = makeResult('ref not found: abc', true);
       engine.getHint('click_element', result, true);
+
+      // Flush buffered writes before reading
+      engine.destroy();
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.jsonl'));
       expect(files).toHaveLength(1);
@@ -315,12 +319,16 @@ describe('HintEngine', () => {
       expect(entry.hint).toContain('Refs expire');
     });
 
-    it('should log hint misses with null values', () => {
+    it('should log hint misses with null values', async () => {
       const engine = new HintEngine(new ActivityTracker());
       engine.enableLogging(tmpDir);
 
       const result = makeResult('{"status":"ok"}');
       engine.getHint('some_tool', result, false);
+
+      // Flush buffered writes before reading
+      engine.destroy();
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.jsonl'));
       const lines = fs.readFileSync(path.join(tmpDir, files[0]), 'utf-8').trim().split('\n');
@@ -329,13 +337,17 @@ describe('HintEngine', () => {
       expect(entry.hint).toBeNull();
     });
 
-    it('should accumulate multiple log entries', () => {
+    it('should accumulate multiple log entries', async () => {
       const engine = new HintEngine(new ActivityTracker());
       engine.enableLogging(tmpDir);
 
       engine.getHint('navigate', makeResult('login page'), false);
       engine.getHint('find', makeResult('0 results'), false);
       engine.getHint('some_tool', makeResult('ok'), false);
+
+      // Flush buffered writes before reading
+      engine.destroy();
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.jsonl'));
       const lines = fs.readFileSync(path.join(tmpDir, files[0]), 'utf-8').trim().split('\n');

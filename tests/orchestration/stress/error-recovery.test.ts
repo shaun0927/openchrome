@@ -27,6 +27,37 @@ jest.mock('../../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
+// Mock CDP singletons used by WorkflowEngine.initWorkflow()
+let batchPageCounter = 0;
+jest.mock('../../../src/cdp/connection-pool', () => ({
+  getCDPConnectionPool: jest.fn().mockReturnValue({
+    acquireBatch: jest.fn().mockImplementation((count: number) => {
+      return Promise.resolve(
+        Array.from({ length: count }, () => {
+          const id = `batch-target-${++batchPageCounter}`;
+          return {
+            target: () => ({ _targetId: id }),
+            goto: jest.fn().mockResolvedValue(null),
+            close: jest.fn().mockResolvedValue(undefined),
+            url: jest.fn().mockReturnValue('about:blank'),
+            on: jest.fn(),
+            off: jest.fn(),
+          };
+        })
+      );
+    }),
+    releasePage: jest.fn().mockResolvedValue(undefined),
+    initialize: jest.fn().mockResolvedValue(undefined),
+  }),
+}));
+
+jest.mock('../../../src/cdp/client', () => ({
+  getCDPClient: jest.fn().mockReturnValue({
+    findAuthenticatedPageTargetId: jest.fn().mockResolvedValue(null),
+    copyCookiesViaCDP: jest.fn().mockResolvedValue(0),
+  }),
+}));
+
 import { getSessionManager } from '../../../src/session-manager';
 
 const actualFs = jest.requireActual('fs');
@@ -98,10 +129,11 @@ describe('Error Recovery Stress Tests', () => {
     test('should handle read errors gracefully', async () => {
       await stateManager.initWorkerState('w1', 'test', 't1', 'Task');
 
-      // Mock readFileSync to fail
-      (fs.readFileSync as jest.Mock).mockImplementation(() => {
-        throw new Error('EACCES: permission denied');
-      });
+      // Delete the worker file to simulate read failure
+      const workerFile = path.resolve(testDir, 'worker-test.md');
+      if (actualFs.existsSync(workerFile)) {
+        actualFs.unlinkSync(workerFile);
+      }
 
       const state = await stateManager.readWorkerState('test');
       expect(state).toBeNull();
@@ -239,7 +271,15 @@ describe('Error Recovery Stress Tests', () => {
     });
 
     test('should handle target creation failure', async () => {
-      mockSessionManager.createTarget.mockRejectedValue(new Error('Worker not found'));
+      // initWorkflow now uses acquireBatch from CDP connection pool, not createTarget
+      // Temporarily override to reject, then restore
+      const { getCDPConnectionPool } = require('../../../src/cdp/connection-pool');
+      const failingPool = {
+        acquireBatch: jest.fn().mockRejectedValue(new Error('Failed to acquire pages')),
+        releasePage: jest.fn().mockResolvedValue(undefined),
+        initialize: jest.fn().mockResolvedValue(undefined),
+      };
+      (getCDPConnectionPool as jest.Mock).mockReturnValueOnce(failingPool);
 
       const workflow: WorkflowDefinition = {
         id: 'wf-fail-target',

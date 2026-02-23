@@ -204,7 +204,7 @@ describe('NavigateTool', () => {
         url: 'back',
       }) as { content: Array<{ type: string; text: string }> };
 
-      expect(page.goBack).toHaveBeenCalledWith({ waitUntil: 'domcontentloaded' });
+      expect(page.goBack).toHaveBeenCalledWith({ waitUntil: 'domcontentloaded', timeout: 30000 });
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.action).toBe('back');
@@ -221,7 +221,7 @@ describe('NavigateTool', () => {
         url: 'forward',
       }) as { content: Array<{ type: string; text: string }> };
 
-      expect(page.goForward).toHaveBeenCalledWith({ waitUntil: 'domcontentloaded' });
+      expect(page.goForward).toHaveBeenCalledWith({ waitUntil: 'domcontentloaded', timeout: 30000 });
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.action).toBe('forward');

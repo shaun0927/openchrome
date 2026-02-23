@@ -149,7 +149,7 @@ describe('MCPServer', () => {
 
         expect(instructions).toContain('EXAMPLES');
         // At least 3 examples present
-        const exampleLines = instructions.split('\n').filter(l => l.includes('→') && l.includes('"oc')));
+        const exampleLines = instructions.split('\n').filter(l => l.includes('→') && l.includes('"oc'));
         expect(exampleLines.length).toBeGreaterThanOrEqual(3);
       });
 
