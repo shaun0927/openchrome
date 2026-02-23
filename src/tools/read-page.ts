@@ -96,6 +96,14 @@ const handler: ToolHandler = async (
       };
     }
 
+    // Validate selector is only used with CSS mode
+    if (mode !== 'css' && args.selector) {
+      return {
+        content: [{ type: 'text', text: 'Error: "selector" parameter is only supported in mode="css". Use ref_id for subtree scoping in "ax" mode.' }],
+        isError: true,
+      };
+    }
+
     // CSS diagnostic mode — extracts computed styles, CSS variables, and framework info
     if (mode === 'css') {
       const targetSelector = args.selector as string | undefined;
@@ -134,10 +142,11 @@ const handler: ToolHandler = async (
         // 2. Framework detection
         const html = document.documentElement;
         // CSS framework
-        if (document.querySelector('[class*="tw-"]') || document.querySelector('style[data-precedence]') ||
-            html.className.match(/dark|light/) && document.querySelector('[class*="flex"]')) {
-          const hasTwV4 = !!document.querySelector('style[data-precedence]');
-          output.framework.css = hasTwV4 ? 'tailwind-v4' : 'tailwind';
+        const hasTwPrefix = !!document.querySelector('[class*="tw-"]');
+        const hasTwV4Indicator = !!document.querySelector('style[data-precedence]') && hasTwPrefix;
+        const hasTwUtilities = !!(html.className.match(/dark|light/) && document.querySelector('[class*="flex"]') && document.querySelector('[class*="px-"]'));
+        if (hasTwPrefix || hasTwV4Indicator || hasTwUtilities) {
+          output.framework.css = hasTwV4Indicator ? 'tailwind-v4' : 'tailwind';
         } else if (document.querySelector('[class*="css-"]')) {
           output.framework.css = 'css-in-js (emotion/styled-components)';
         } else if (document.querySelector('[class*="MuiBox"]')) {
@@ -148,7 +157,7 @@ const handler: ToolHandler = async (
           output.framework.js = 'next.js';
         } else if ((window as any).__NUXT__) {
           output.framework.js = 'nuxt';
-        } else if (document.querySelector('[data-reactroot]') || (window as any).__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+        } else if (document.querySelector('[data-reactroot]') || document.querySelector('#__next') || (document.querySelector('[id]') as any)?._reactRootContainer) {
           output.framework.js = 'react';
         } else if ((window as any).__VUE__) {
           output.framework.js = 'vue';
@@ -171,7 +180,9 @@ const handler: ToolHandler = async (
           background: ['rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box border-box', 'rgba(0, 0, 0, 0)'],
         };
 
-        const elements = sel ? document.querySelectorAll(sel) : document.querySelectorAll('*');
+        const MAX_ELEMENTS = 2000;
+        const rawElements = sel ? document.querySelectorAll(sel) : document.querySelectorAll('body *');
+        const elements = Array.from(rawElements).slice(0, MAX_ELEMENTS);
         const seen = new Map<string, { count: number; sample: Record<string, string>; pseudoBefore: boolean; pseudoAfter: boolean }>();
 
         for (const el of elements) {

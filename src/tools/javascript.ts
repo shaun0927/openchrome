@@ -119,7 +119,7 @@ const handler: ToolHandler = async (
         content: [
           {
             type: 'text',
-            text: `JavaScript error: ${result.error}. Hint: For CSS/style inspection, use read_page with mode="css" instead of custom JS. For DOM queries, use read_page or find tool.`,
+            text: `JavaScript error: ${result.error}` + (/style|css|color|font|margin|padding|display|background/i.test(code + (result.error || '')) ? '. Hint: For CSS/style inspection, use read_page with mode="css" instead of custom JS.' : ''),
           },
         ],
         isError: true,
