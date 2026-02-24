@@ -49,6 +49,7 @@ import { registerWaitAndClickTool } from './wait-and-click';
 // Performance tools (P0)
 import { registerBatchExecuteTool } from './batch-execute';
 import { registerLightweightScrollTool } from './lightweight-scroll';
+import { registerBatchPaginateTool } from './batch-paginate';
 
 // Memory tools (domain knowledge persistence)
 import { registerMemoryTools } from './memory';
@@ -110,6 +111,7 @@ export function registerAllTools(server: MCPServer): void {
   // Performance tools (P0 - eliminate agent spawn overhead & screenshot bottleneck)
   registerBatchExecuteTool(server);
   registerLightweightScrollTool(server);
+  registerBatchPaginateTool(server);
 
   // Memory tools (domain knowledge persistence)
   registerMemoryTools(server);

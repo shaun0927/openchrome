@@ -11,7 +11,10 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 const definition: MCPToolDefinition = {
   name: 'computer',
   description:
-    'Use mouse and keyboard to interact with a web browser, and take screenshots.',
+    'Use mouse and keyboard to interact with a web browser, and take screenshots. ' +
+    '⚠️ PAGINATION WARNING: If you need to capture more than 3 pages of a document (PDF viewer, slides, article), ' +
+    'do NOT use repeated key+screenshot cycles. Instead: (1) call read_page to detect pagination type and total pages, ' +
+    '(2) use batch_paginate for server-side bulk extraction. Manual key/screenshot is fine for 1-3 pages.',
   inputSchema: {
     type: 'object',
     properties: {

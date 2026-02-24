@@ -77,4 +77,64 @@ export const repetitionDetectionRules: HintRule[] = [
       return `Hint: ${ctx.toolName} called 3+ times. Consider find or javascript_tool for a targeted approach.`;
     },
   },
+  {
+    name: 'url-pagination-pattern',
+    priority: 245,
+    match(ctx) {
+      if (ctx.toolName !== 'navigate') return null;
+
+      const navigateCalls = ctx.recentCalls.filter(c => c.toolName === 'navigate');
+      if (navigateCalls.length < 2) return null;
+
+      const urls: string[] = navigateCalls
+        .map(c => (c.args?.url as string) || '')
+        .filter(Boolean);
+
+      if (urls.length < 2) return null;
+
+      // Try query param pattern: ?page=N or &page=N
+      const queryPattern = /([?&]page=)(\d+)/i;
+      // Try path segment pattern: /page/N or /p/N
+      const pathPattern = /(\/(page|p)\/)(\d+)/i;
+
+      for (const regex of [queryPattern, pathPattern]) {
+        const pageNums: number[] = [];
+        let template: string | null = null;
+
+        let allMatch = true;
+        for (const url of urls) {
+          const m = url.match(regex);
+          if (!m) { allMatch = false; break; }
+
+          const numStr = regex === queryPattern ? m[2] : m[3];
+          pageNums.push(parseInt(numStr, 10));
+
+          if (!template) {
+            template = url.replace(regex, (match) => match.replace(/\d+$/, '{N}'));
+          }
+        }
+
+        if (!allMatch || pageNums.length < 2 || !template) continue;
+
+        // Verify incrementing sequence
+        const sorted = [...pageNums].sort((a, b) => a - b);
+        let isIncrementing = true;
+        for (let i = 1; i < sorted.length; i++) {
+          if (sorted[i] - sorted[i - 1] !== 1) { isIncrementing = false; break; }
+        }
+
+        if (isIncrementing) {
+          const startPage = sorted[0];
+          const endPage = sorted[sorted.length - 1];
+          return (
+            `Hint: URL pagination pattern detected (${template}). ` +
+            `Use batch_paginate(strategy='url', urlTemplate='${template}', startPage=${startPage}, endPage=${endPage}) ` +
+            `for parallel extraction instead of sequential navigate calls.`
+          );
+        }
+      }
+
+      return null;
+    },
+  },
 ];

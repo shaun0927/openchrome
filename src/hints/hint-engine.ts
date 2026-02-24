@@ -15,6 +15,7 @@ import { errorRecoveryRules } from './rules/error-recovery';
 import { compositeSuggestionRules } from './rules/composite-suggestions';
 import { sequenceDetectionRules } from './rules/sequence-detection';
 import { repetitionDetectionRules } from './rules/repetition-detection';
+import { paginationDetectionRules } from './rules/pagination-detection';
 import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
 
@@ -44,6 +45,7 @@ export class HintEngine {
   private activityTracker: ActivityTracker;
   private learner: PatternLearner;
   private logFilePath: string | null = null;
+  private hintEscalation: Map<string, number> = new Map(); // ruleName -> consecutive count
 
   // Buffered async write stream
   private logStream: fs.WriteStream | null = null;
@@ -58,12 +60,13 @@ export class HintEngine {
     // Collect all rules and sort by priority (ascending = highest priority first)
     // Learned rules (350) sit between repetition (250) and success hints (400)
     this.rules = [
-      ...errorRecoveryRules,
-      ...compositeSuggestionRules,
-      ...sequenceDetectionRules,
-      ...repetitionDetectionRules,
-      ...createLearnedRules(this.learner),
-      ...successHintRules,
+      ...errorRecoveryRules,        // priority 100-108
+      ...paginationDetectionRules,   // priority 190-192
+      ...compositeSuggestionRules,   // priority 200-203
+      ...repetitionDetectionRules,   // priority 245-252
+      ...sequenceDetectionRules,     // priority 300-304
+      ...createLearnedRules(this.learner), // priority 350
+      ...successHintRules,           // priority 400-403
     ].sort((a, b) => a.priority - b.priority);
 
     // Flush remaining buffer on process exit
@@ -112,6 +115,27 @@ export class HintEngine {
         hint = h;
         break;
       }
+    }
+
+    // Escalation tracking: repeat matches of the same rule get increasing urgency
+    if (hint) {
+      const prevCount = this.hintEscalation.get(matchedRule!) || 0;
+      const newCount = prevCount + 1;
+      this.hintEscalation.set(matchedRule!, newCount);
+
+      if (newCount >= 3) {
+        hint = `🚨 CRITICAL (repeated ${newCount}x): ${hint}`;
+      } else if (newCount >= 2) {
+        hint = `⚠️ REPEATED: ${hint}`;
+      }
+
+      // Reset escalation counters for all other rules
+      for (const [key] of this.hintEscalation) {
+        if (key !== matchedRule) this.hintEscalation.set(key, 0);
+      }
+    } else {
+      // No rule matched — reset all escalation state
+      this.hintEscalation.clear();
     }
 
     // Feed the learner: observe every completion for recovery detection
