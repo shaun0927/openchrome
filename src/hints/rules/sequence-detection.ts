@@ -19,13 +19,39 @@ function consecutiveCount(ctx: HintContext, name: string): number {
 
 export const sequenceDetectionRules: HintRule[] = [
   {
+    name: 'post-scroll-click',
+    priority: 299, // Just before existing sequence rules (300-304)
+    match(ctx) {
+      if (ctx.toolName !== 'computer') return null;
+
+      // Check if current call is a coordinate click
+      if (!/Clicked at/.test(ctx.resultText)) return null;
+
+      // Only check the most recent call for explicit scroll actions
+      if (ctx.recentCalls.length === 0) return null;
+      const prev = ctx.recentCalls[0];
+
+      if (
+        prev.toolName === 'computer' &&
+        (prev.args?.action === 'scroll' || prev.args?.action === 'scroll_to')
+      ) {
+        return (
+          'Hint: Previous action caused scroll — coordinates from before the scroll may be stale. ' +
+          'Use read_page to get fresh element positions, or use ref-based click.'
+        );
+      }
+
+      return null;
+    },
+  },
+  {
     name: 'navigate-to-login',
     priority: 300,
     match(ctx) {
       if (ctx.toolName !== 'navigate') return null;
       if (ctx.isError) return null;
       if (/login|sign.?in|log.?in|auth/i.test(ctx.resultText)) {
-        return 'Hint: Login page detected. Use fill_form({fields:{...}, submit:"Login"}) for credentials.';
+        return 'Hint: Login page detected. The user should already be logged in via their Chrome profile. If not, check that the correct Chrome profile is connected.';
       }
       return null;
     },
@@ -35,7 +61,7 @@ export const sequenceDetectionRules: HintRule[] = [
     priority: 301,
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
-      if (consecutiveCount(ctx, 'read_page') >= 1) {
+      if (consecutiveCount(ctx, 'read_page') >= 2) {
         return 'Hint: Use find(query) or javascript_tool for specific elements.';
       }
       return null;

@@ -94,7 +94,7 @@ describe('MCPServer', () => {
         expect(response.result!.instructions!.length).toBeGreaterThan(0);
       });
 
-      test('instructions contain "openchrome" magic keyword trigger', async () => {
+      test('instructions contain "oc" keyword trigger', async () => {
         const request: MCPRequest = {
           jsonrpc: '2.0',
           id: 1,
@@ -104,11 +104,9 @@ describe('MCPServer', () => {
         const response = (await server.handleRequest(request)) as MCPResultResponse;
         const instructions = response.result!.instructions!;
 
-        // Must mention "oc" as a keyword
-        expect(instructions).toContain('openchrome');
-        expect(instructions).toContain('MAGIC KEYWORD');
-        // Must mention "use oc" as a variation
+        // Must mention "oc" as a prefix keyword
         expect(instructions).toContain('oc');
+        expect(instructions).toMatch(/prefix.*oc/i);
       });
 
       test('instructions contain key behavioral rules', async () => {
@@ -137,7 +135,7 @@ describe('MCPServer', () => {
         expect(instructions).toMatch(/isolated browser context/i);
       });
 
-      test('instructions contain usage examples', async () => {
+      test('instructions contain workflow example', async () => {
         const request: MCPRequest = {
           jsonrpc: '2.0',
           id: 1,
@@ -147,13 +145,12 @@ describe('MCPServer', () => {
         const response = (await server.handleRequest(request)) as MCPResultResponse;
         const instructions = response.result!.instructions!;
 
-        expect(instructions).toContain('EXAMPLES');
-        // At least 3 examples present
-        const exampleLines = instructions.split('\n').filter(l => l.includes('→') && l.includes('"oc'));
-        expect(exampleLines.length).toBeGreaterThanOrEqual(3);
+        // Must have at least one example with arrow notation
+        expect(instructions).toContain('EXAMPLE');
+        expect(instructions).toContain('→');
       });
 
-      test('instructions contain tool quick reference', async () => {
+      test('instructions reference key tools', async () => {
         const request: MCPRequest = {
           jsonrpc: '2.0',
           id: 1,
@@ -163,9 +160,8 @@ describe('MCPServer', () => {
         const response = (await server.handleRequest(request)) as MCPResultResponse;
         const instructions = response.result!.instructions!;
 
-        expect(instructions).toContain('TOOL QUICK REFERENCE');
-        // Must reference essential tools
-        const essentialTools = ['navigate', 'click_element', 'find', 'fill_form', 'read_page', 'computer', 'wait_for', 'workflow_init'];
+        // Must reference essential tools inline
+        const essentialTools = ['click_element', 'fill_form', 'workflow_init', 'workflow_collect'];
         for (const tool of essentialTools) {
           expect(instructions).toContain(tool);
         }

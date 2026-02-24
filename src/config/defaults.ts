@@ -1,0 +1,21 @@
+/**
+ * Shared default constants used across the codebase.
+ *
+ * Any value that appears in 2+ files belongs here.
+ * Update this single file instead of hunting across tools/cdp/chrome.
+ */
+
+/** WebP screenshot quality (0-100). Directly affects LLM token consumption via base64 size. */
+export const DEFAULT_SCREENSHOT_QUALITY = 60;
+
+/** Maximum characters returned in page content output (read_page, DOM serializer, batch_paginate). */
+export const MAX_OUTPUT_CHARS = 50000;
+
+/** Default browser viewport dimensions. */
+export const DEFAULT_VIEWPORT = { width: 1920, height: 1080 } as const;
+
+/** Default navigation timeout in milliseconds. */
+export const DEFAULT_NAVIGATION_TIMEOUT_MS = 30000;
+
+/** Maximum number of candidate elements returned by element-finding queries. */
+export const MAX_SEARCH_CANDIDATES = 30;

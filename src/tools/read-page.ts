@@ -8,6 +8,7 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
+import { MAX_OUTPUT_CHARS } from '../config/defaults';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -312,6 +313,19 @@ const handler: ToolHandler = async (
       }
     }
 
+    // Add page stats header for AX mode (matching DOM mode format)
+    const axPageStats = await page.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      scrollX: Math.round(window.scrollX),
+      scrollY: Math.round(window.scrollY),
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    }));
+    const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
+
     // Get the accessibility tree
     const { nodes } = await cdpClient.send<{ nodes: AXNode[] }>(
       page,
@@ -353,7 +367,7 @@ const handler: ToolHandler = async (
     // Format nodes
     const lines: string[] = [];
     let charCount = 0;
-    const MAX_OUTPUT = 50000;
+    const MAX_OUTPUT = MAX_OUTPUT_CHARS;
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
@@ -449,6 +463,7 @@ const handler: ToolHandler = async (
           {
             type: 'text',
             text:
+              pageStatsLine +
               output +
               '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]' +
               axPaginationSection,
@@ -458,7 +473,7 @@ const handler: ToolHandler = async (
     }
 
     return {
-      content: [{ type: 'text', text: output + axPaginationSection }],
+      content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
     };
   } catch (error) {
     return {

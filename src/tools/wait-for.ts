@@ -8,13 +8,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'wait_for',
-  description: `Wait for various conditions before continuing.
-Types:
-- "selector": Wait for an element matching CSS selector to appear
-- "selector_hidden": Wait for an element to be hidden or removed
-- "function": Wait for a JavaScript function to return truthy value
-- "navigation": Wait for page navigation to complete
-- "timeout": Simple delay in milliseconds`,
+  description: 'Wait for a condition to be met before proceeding. Supports waiting for selectors, text, functions, URL changes, and network idle.',
   inputSchema: {
     type: 'object',
     properties: {

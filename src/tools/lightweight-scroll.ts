@@ -14,11 +14,7 @@ import { getSessionManager } from '../session-manager';
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',
   description:
-    'Scroll a page using JavaScript without taking a screenshot. ' +
-    'Much faster than computer(scroll) in high-concurrency scenarios because it ' +
-    'avoids CDP screenshot capture. Use this when you need to scroll to load content ' +
-    '(infinite scroll, lazy loading) but do not need a visual screenshot of the result. ' +
-    'Returns the new scroll position.',
+    'Scroll a page using JavaScript without taking a screenshot. Returns the new scroll position and metrics. Suitable for infinite scroll and lazy loading scenarios.',
   inputSchema: {
     type: 'object',
     properties: {

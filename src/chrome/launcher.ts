@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
 import { getGlobalConfig } from '../config/global';
+import { DEFAULT_VIEWPORT } from '../config/defaults';
 
 export interface ChromeInstance {
   wsEndpoint: string;
@@ -303,7 +304,7 @@ export class ChromeLauncher {
       // IMPORTANT: Start maximized for proper debugging experience
       '--start-maximized',
       // Fallback window size if maximize doesn't work
-      '--window-size=1920,1080',
+      `--window-size=${DEFAULT_VIEWPORT.width},${DEFAULT_VIEWPORT.height}`,
       // Memory-saving flags (applies to all profile types)
       '--disable-gpu',
       '--disable-dev-shm-usage',

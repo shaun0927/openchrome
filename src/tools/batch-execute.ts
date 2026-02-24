@@ -15,8 +15,6 @@ const definition: MCPToolDefinition = {
   name: 'batch_execute',
   description:
     'Execute JavaScript code across multiple tabs in parallel. Returns results from all tabs. ' +
-    'Use this instead of spawning separate agents when you need to run the same or similar ' +
-    'data extraction scripts across many tabs simultaneously. ' +
     'Each task specifies a tabId and a JavaScript snippet to execute.',
   inputSchema: {
     type: 'object',

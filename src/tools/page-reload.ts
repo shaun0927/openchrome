@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'page_reload',
@@ -59,11 +60,11 @@ const handler: ToolHandler = async (
       await client.send('Page.reload', { ignoreCache: true });
       await client.detach();
       // Wait for navigation to complete
-      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {
+      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }).catch(() => {
         // Navigation may have already completed
       });
     } else {
-      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
     }
 
     return {

@@ -10,16 +10,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
-  description: `Fill multiple form fields at once and optionally submit the form.
-This is more efficient than calling form_input multiple times.
-
-The fields parameter is an object where keys are field identifiers (label, name, placeholder, or aria-label)
-and values are the values to enter.
-
-Examples:
-- fill_form({ fields: { "email": "user@example.com", "password": "secret" } })
-- fill_form({ fields: { "username": "john" }, submit: "Login" })
-- fill_form({ fields: { "First Name": "John", "Last Name": "Doe" }, submit: "Save" })`,
+  description: 'Fill multiple form fields at once and optionally submit the form. The fields parameter maps field identifiers (label, name, placeholder, or aria-label) to values.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -142,7 +133,7 @@ const handler: ToolHandler = async (
             if (rect.width === 0 || rect.height === 0) continue;
 
             const style = window.getComputedStyle(el);
-            if (style.visibility === 'hidden' || style.display === 'none') continue;
+            if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') continue;
 
             const inputEl = el as HTMLInputElement;
 

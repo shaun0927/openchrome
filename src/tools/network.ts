@@ -45,10 +45,7 @@ const NETWORK_PRESETS: Record<
 
 const definition: MCPToolDefinition = {
   name: 'network',
-  description: `Simulate network conditions for testing.
-Presets: offline, slow-2g, 2g, 3g, 4g, fast-wifi
-Use "clear" to remove throttling.
-Use "custom" with downloadKbps, uploadKbps, and latencyMs for custom conditions.`,
+  description: 'Simulate network conditions like throttling, latency, and offline mode. Use a preset or provide custom settings.',
   inputSchema: {
     type: 'object',
     properties: {

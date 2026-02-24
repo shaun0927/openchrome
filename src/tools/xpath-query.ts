@@ -23,12 +23,7 @@ interface ElementInfo {
 
 const definition: MCPToolDefinition = {
   name: 'xpath_query',
-  description: `Query elements on the page using XPath expressions.
-Returns element information including tag, attributes, text, and position.
-Examples:
-- //button[contains(text(), 'Submit')]
-- //div[@class='product']//span[@class='price']
-- //input[@type='text'][@name='email']`,
+  description: `Query elements on the page using XPath expressions. Returns element information including tag, attributes, text, and position.`,
   inputSchema: {
     type: 'object',
     properties: {

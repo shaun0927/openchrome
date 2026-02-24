@@ -702,4 +702,265 @@ describe('ComputerTool', () => {
       expect(result.content[0].text).toContain('does not belong to session');
     });
   });
+
+  describe('Hit Element Detection', () => {
+    // Helper to set up CDP responses for a button element hit
+    function setupButtonHit() {
+      const cdpClient = mockSessionManager.mockCDPClient;
+      cdpClient.cdpResponses.set(
+        `DOM.getNodeForLocation:${JSON.stringify({ x: 100, y: 200, includeUserAgentShadowDOM: false })}`,
+        { backendNodeId: 42, nodeId: 10 }
+      );
+      cdpClient.cdpResponses.set(
+        `DOM.describeNode:${JSON.stringify({ backendNodeId: 42 })}`,
+        {
+          node: {
+            localName: 'button',
+            attributes: ['id', 'submit-btn', 'class', 'btn-primary'],
+            nodeType: 1,
+          },
+        }
+      );
+    }
+
+    // Helper to set up CDP responses for a non-interactive div element hit
+    function setupDivHit(x: number, y: number) {
+      const cdpClient = mockSessionManager.mockCDPClient;
+      cdpClient.cdpResponses.set(
+        `DOM.getNodeForLocation:${JSON.stringify({ x, y, includeUserAgentShadowDOM: false })}`,
+        { backendNodeId: 99, nodeId: 20 }
+      );
+      cdpClient.cdpResponses.set(
+        `DOM.describeNode:${JSON.stringify({ backendNodeId: 99 })}`,
+        {
+          node: {
+            localName: 'div',
+            attributes: ['class', 'container'],
+            nodeType: 1,
+          },
+        }
+      );
+    }
+
+    test('left_click includes hit element info for interactive element', async () => {
+      setupButtonHit();
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Mock evaluate to return empty textContent
+      (page.evaluate as jest.Mock).mockResolvedValueOnce('');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'left_click',
+        coordinate: [100, 200],
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('Clicked at (100, 200)');
+      expect(result.content[0].text).toContain('Hit:');
+      expect(result.content[0].text).toContain('<button');
+      expect(result.content[0].text).toContain('[interactive]');
+    });
+
+    test('hit element shows [not interactive] flag for non-interactive element', async () => {
+      setupDivHit(100, 200);
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // First evaluate: textContent fetch, second: nearest interactive search
+      (page.evaluate as jest.Mock)
+        .mockResolvedValueOnce('')    // textContent
+        .mockResolvedValueOnce(null); // nearest interactive (none found)
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'left_click',
+        coordinate: [100, 200],
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('[not interactive]');
+      expect(result.content[0].text).not.toContain('[interactive]');
+    });
+
+    test('nearest interactive element reported when clicking empty space', async () => {
+      setupDivHit(300, 400);
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // First evaluate: textContent fetch
+      // Second evaluate: nearest interactive found
+      (page.evaluate as jest.Mock)
+        .mockResolvedValueOnce('')
+        .mockResolvedValueOnce({
+          tag: 'button',
+          text: 'Submit',
+          x: 300,
+          y: 380,
+          dx: 0,
+          dy: -20,
+        });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'left_click',
+        coordinate: [300, 400],
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('Nearest interactive:');
+      expect(result.content[0].text).toContain('<button>');
+      expect(result.content[0].text).toContain('"Submit"');
+      expect(result.content[0].text).toContain('above');
+    });
+
+    test('graceful fallback when CDP getNodeForLocation fails', async () => {
+      // Make CDP throw on getNodeForLocation to simulate CDP failure
+      const cdpClient = mockSessionManager.mockCDPClient;
+      const originalSend = cdpClient.send as jest.Mock;
+      originalSend.mockImplementationOnce(async (_page: unknown, method: string) => {
+        if (method === 'DOM.getNodeForLocation') {
+          throw new Error('CDP connection lost');
+        }
+        return {};
+      });
+
+      const handler = await getComputerHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'left_click',
+        coordinate: [500, 600],
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      // Should still succeed (not an error) and return basic click message
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Clicked at (500, 600)');
+      // No hit info since CDP threw
+      expect(result.content[0].text).not.toContain('Hit:');
+    });
+
+    test('ref-based left_click does NOT include hit detection', async () => {
+      setupButtonHit();
+      const handler = await getComputerHandler();
+
+      // Generate a ref and set up box model response
+      const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 42, 'button', 'Submit');
+      mockSessionManager.mockCDPClient.cdpResponses.set(
+        `DOM.scrollIntoViewIfNeeded:${JSON.stringify({ backendNodeId: 42 })}`,
+        {}
+      );
+      mockSessionManager.mockCDPClient.cdpResponses.set(
+        `DOM.getBoxModel:${JSON.stringify({ backendNodeId: 42 })}`,
+        { model: { content: [90, 190, 110, 190, 110, 210, 90, 210] } }
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'left_click',
+        ref: refId,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      // Ref-based click returns early before hit detection
+      expect(result.content[0].text).toContain(`Clicked element ${refId}`);
+      expect(result.content[0].text).not.toContain('Hit:');
+    });
+
+    test('double_click includes hit element info', async () => {
+      const cdpClient = mockSessionManager.mockCDPClient;
+      cdpClient.cdpResponses.set(
+        `DOM.getNodeForLocation:${JSON.stringify({ x: 200, y: 300, includeUserAgentShadowDOM: false })}`,
+        { backendNodeId: 55, nodeId: 15 }
+      );
+      cdpClient.cdpResponses.set(
+        `DOM.describeNode:${JSON.stringify({ backendNodeId: 55 })}`,
+        {
+          node: {
+            localName: 'input',
+            attributes: ['type', 'text', 'id', 'search'],
+            nodeType: 1,
+          },
+        }
+      );
+
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.evaluate as jest.Mock).mockResolvedValueOnce('');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'double_click',
+        coordinate: [200, 300],
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('Double-clicked at (200, 300)');
+      expect(result.content[0].text).toContain('Hit:');
+      expect(result.content[0].text).toContain('<input');
+      expect(result.content[0].text).toContain('[interactive]');
+    });
+
+    test('triple_click includes hit element info', async () => {
+      const cdpClient = mockSessionManager.mockCDPClient;
+      cdpClient.cdpResponses.set(
+        `DOM.getNodeForLocation:${JSON.stringify({ x: 250, y: 350, includeUserAgentShadowDOM: false })}`,
+        { backendNodeId: 77, nodeId: 25 }
+      );
+      cdpClient.cdpResponses.set(
+        `DOM.describeNode:${JSON.stringify({ backendNodeId: 77 })}`,
+        {
+          node: {
+            localName: 'a',
+            attributes: ['href', '/page', 'class', 'nav-link'],
+            nodeType: 1,
+          },
+        }
+      );
+
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.evaluate as jest.Mock).mockResolvedValueOnce('Page Link');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'triple_click',
+        coordinate: [250, 350],
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('Triple-clicked at (250, 350)');
+      expect(result.content[0].text).toContain('Hit:');
+      expect(result.content[0].text).toContain('<a');
+      expect(result.content[0].text).toContain('[interactive]');
+    });
+
+    test('right_click includes hit element info', async () => {
+      const cdpClient = mockSessionManager.mockCDPClient;
+      cdpClient.cdpResponses.set(
+        `DOM.getNodeForLocation:${JSON.stringify({ x: 150, y: 250, includeUserAgentShadowDOM: false })}`,
+        { backendNodeId: 33, nodeId: 11 }
+      );
+      cdpClient.cdpResponses.set(
+        `DOM.describeNode:${JSON.stringify({ backendNodeId: 33 })}`,
+        {
+          node: {
+            localName: 'span',
+            attributes: ['role', 'button', 'aria-label', 'Close'],
+            nodeType: 1,
+          },
+        }
+      );
+
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.evaluate as jest.Mock).mockResolvedValueOnce('');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'right_click',
+        coordinate: [150, 250],
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('Right-clicked at (150, 250)');
+      expect(result.content[0].text).toContain('Hit:');
+      expect(result.content[0].text).toContain('role="button"');
+      expect(result.content[0].text).toContain('[interactive]');
+    });
+  });
 });

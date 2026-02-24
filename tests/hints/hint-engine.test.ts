@@ -157,8 +157,8 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('{"action":"navigate","url":"https://app.com/login","title":"Login - App"}');
       const hint = engine.getHint('navigate', result, false);
-      expect(hint).toContain('fill_form');
       expect(hint).toContain('Login');
+      expect(hint).toContain('Chrome profile');
     });
 
     it('should detect repeated read_page', () => {
@@ -193,9 +193,9 @@ describe('HintEngine', () => {
       expect(hint).toContain('broader query');
     });
 
-    it('should hint after successful click_element', () => {
+    it('should hint after click_element with navigation', () => {
       const engine = new HintEngine(new ActivityTracker());
-      const result = makeResult('Clicked "Submit" button successfully');
+      const result = makeResult('Clicked "Submit" button [Page navigated to /dashboard]');
       const hint = engine.getHint('click_element', result, false);
       expect(hint).toContain('wait_for');
     });
@@ -281,6 +281,89 @@ describe('HintEngine', () => {
       const result = makeResult('{"status":"ok"}');
       const hint = engine.getHint('read_page', result, false);
       expect(hint).toBeNull();
+    });
+  });
+
+  describe('anti-wandering rules', () => {
+    it('coordinate-click-stall: triggers on 3+ recent computer clicks', () => {
+      const tracker = makeTracker([
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked at (100, 200)');
+      const hint = engine.getHint('computer', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('CLICK STALL');
+    });
+
+    it('coordinate-click-stall: does NOT trigger on only 2 recent clicks', () => {
+      const tracker = makeTracker([
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked at (100, 200)');
+      const hint = engine.getHint('computer', result, false);
+      // Another rule (same-tool-same-result) may match, but CLICK STALL should not
+      if (hint) {
+        expect(hint).not.toContain('CLICK STALL');
+      }
+    });
+
+    it('screenshot-verification-loop: triggers on click+screenshot pattern', () => {
+      const tracker = makeTracker([
+        { toolName: 'computer', args: { action: 'screenshot' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'screenshot' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked at (200, 300)');
+      const hint = engine.getHint('computer', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('Multiple screenshots after clicks');
+    });
+
+    it('js-escalation-ladder: triggers on 3+ javascript_tool calls', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('undefined');
+      const hint = engine.getHint('javascript_tool', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('escalation ladder');
+    });
+
+    it('post-scroll-click: triggers when scroll action precedes coordinate click', () => {
+      const tracker = makeTracker([
+        { toolName: 'computer', args: { action: 'scroll' } },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked at (300, 400)');
+      const hint = engine.getHint('computer', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('scroll');
+    });
+
+    it('contenteditable-click-hint: triggers when click hits a rich text editor', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('Clicked at (50, 50) — Hit: div[contenteditable="true"]');
+      const hint = engine.getHint('computer', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('rich text editor');
+    });
+
+    it('coordinate-click-after-read: triggers when clicking a non-interactive element', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('Clicked at (200, 300) — Hit: span [not interactive]');
+      const hint = engine.getHint('computer', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('non-interactive');
     });
   });
 
