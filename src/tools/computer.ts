@@ -175,14 +175,12 @@ const handler: ToolHandler = async (
 
         await page.mouse.click(clickCoord[0], clickCoord[1]);
 
-        const cdpClient = sessionManager.getCDPClient();
-        const leftHitInfo = await getHitElementInfo(page, cdpClient, clickCoord[0], clickCoord[1]);
-        const leftBase = leftClickValidation.warning
+        const resultText = leftClickValidation.warning
           ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${leftClickValidation.warning}`
           : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
-          content: [{ type: 'text', text: leftBase + leftHitInfo }],
+          content: [{ type: 'text', text: resultText }],
         };
       }
 
@@ -221,14 +219,12 @@ const handler: ToolHandler = async (
 
         await page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' });
 
-        const rightCdpClient = sessionManager.getCDPClient();
-        const rightHitInfo = await getHitElementInfo(page, rightCdpClient, clickCoord[0], clickCoord[1]);
         const rightClickText = rightClickValidation.warning
           ? `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${rightClickValidation.warning}`
           : `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
-          content: [{ type: 'text', text: rightClickText + rightHitInfo }],
+          content: [{ type: 'text', text: rightClickText }],
         };
       }
 
@@ -269,14 +265,12 @@ const handler: ToolHandler = async (
 
         await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 });
 
-        const doubleCdpClient = sessionManager.getCDPClient();
-        const doubleHitInfo = await getHitElementInfo(page, doubleCdpClient, clickCoord[0], clickCoord[1]);
         const doubleClickText = doubleClickValidation.warning
           ? `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${doubleClickValidation.warning}`
           : `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
-          content: [{ type: 'text', text: doubleClickText + doubleHitInfo }],
+          content: [{ type: 'text', text: doubleClickText }],
         };
       }
 
@@ -317,14 +311,12 @@ const handler: ToolHandler = async (
 
         await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 });
 
-        const tripleCdpClient = sessionManager.getCDPClient();
-        const tripleHitInfo = await getHitElementInfo(page, tripleCdpClient, clickCoord[0], clickCoord[1]);
         const tripleClickText = tripleClickValidation.warning
           ? `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${tripleClickValidation.warning}`
           : `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
-          content: [{ type: 'text', text: tripleClickText + tripleHitInfo }],
+          content: [{ type: 'text', text: tripleClickText }],
         };
       }
 
