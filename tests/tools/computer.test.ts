@@ -335,7 +335,7 @@ describe('ComputerTool', () => {
   });
 
   describe('Screenshot', () => {
-    test('returns base64 PNG image', async () => {
+    test('returns base64 WebP image via CDP', async () => {
       const handler = await getComputerHandler();
 
       const result = await handler(testSessionId, {
@@ -343,7 +343,6 @@ describe('ComputerTool', () => {
         action: 'screenshot',
       }) as { content: Array<{ type: string; data?: string; mimeType?: string }> };
 
-      // Source uses page.screenshot({ encoding: 'base64', type: 'png' })
       expect(result.content[0].type).toBe('image');
       expect(result.content[0].data).toBe('base64-screenshot-data');
     });
@@ -356,10 +355,10 @@ describe('ComputerTool', () => {
         action: 'screenshot',
       }) as { content: Array<{ type: string; mimeType?: string }> };
 
-      expect(result.content[0].mimeType).toBe('image/png');
+      expect(result.content[0].mimeType).toBe('image/webp');
     });
 
-    test('calls page.screenshot with correct options', async () => {
+    test('uses CDP Page.captureScreenshot', async () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
@@ -368,10 +367,11 @@ describe('ComputerTool', () => {
         action: 'screenshot',
       });
 
-      expect(page.screenshot).toHaveBeenCalledWith({
-        encoding: 'base64',
-        type: 'png',
-      });
+      const cdpSession = await (page as any).createCDPSession();
+      expect(cdpSession.send).toHaveBeenCalledWith('Page.captureScreenshot', expect.objectContaining({
+        format: 'webp',
+        optimizeForSpeed: true,
+      }));
     });
   });
 
@@ -651,20 +651,31 @@ describe('ComputerTool', () => {
       expect(result.content[0].text).toContain('not found');
     });
 
-    test('handles screenshot failure', async () => {
+    test('handles screenshot failure with DOM fallback when page is responsive', async () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      // Mock page.screenshot to throw
-      (page.screenshot as jest.Mock).mockRejectedValueOnce(new Error('Screenshot failed'));
+      // Make CDP session fail both attempts (via target.createCDPSession)
+      const target = (page as any).target();
+      (target.createCDPSession as jest.Mock).mockRejectedValue(new Error('CDP unavailable'));
+      // But page.evaluate works (page is responsive) — first call is readyState, second is DOM fallback
+      (page.evaluate as jest.Mock)
+        .mockResolvedValueOnce('complete')
+        .mockResolvedValueOnce({
+          url: 'https://example.com',
+          title: 'Test',
+          readyState: 'complete',
+          textPreview: 'page content',
+        });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
         action: 'screenshot',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(true);
+      expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain('Screenshot failed');
+      expect(result.content[0].text).toContain('DOM fallback');
     });
 
     test('handles click failure', async () => {
@@ -700,6 +711,127 @@ describe('ComputerTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('does not belong to session');
+    });
+  });
+
+  describe('Screenshot Resilience', () => {
+    test('screenshot retries once on CDP failure', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Access the target mock (page.target().createCDPSession is the actual code path)
+      const target = (page as any).target();
+      (target.createCDPSession as jest.Mock)
+        .mockRejectedValueOnce(new Error('CDP timeout'))
+        .mockResolvedValueOnce({
+          send: jest.fn().mockResolvedValue({ data: 'retry-screenshot-data' }),
+          detach: jest.fn().mockResolvedValue(undefined),
+        });
+
+      // readyState check
+      (page.evaluate as jest.Mock).mockResolvedValueOnce('complete');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; data?: string; mimeType?: string }> };
+
+      expect(result.content[0].type).toBe('image');
+      expect(result.content[0].data).toBe('retry-screenshot-data');
+      expect(result.content[0].mimeType).toBe('image/webp');
+    });
+
+    test('screenshot returns DOM fallback when both attempts fail', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Both CDP attempts fail (via target.createCDPSession)
+      const target = (page as any).target();
+      (target.createCDPSession as jest.Mock).mockRejectedValue(new Error('CDP unavailable'));
+
+      // readyState check + DOM fallback evaluate
+      (page.evaluate as jest.Mock)
+        .mockResolvedValueOnce('complete')
+        .mockResolvedValueOnce({
+          url: 'https://example.com',
+          title: 'Example',
+          readyState: 'complete',
+          textPreview: 'Hello world content',
+        });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; text?: string }>; isError?: boolean };
+
+      expect(result.content[0].type).toBe('text');
+      expect(result.content[0].text).toContain('Screenshot failed');
+      expect(result.content[0].text).toContain('DOM fallback');
+    });
+
+    test('screenshot checks page readiness before capture', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // readyState returns 'complete' immediately
+      (page.evaluate as jest.Mock).mockResolvedValueOnce('complete');
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      });
+
+      // evaluate should have been called for readyState check
+      expect(page.evaluate).toHaveBeenCalled();
+    });
+
+    test('DOM fallback does not set isError', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Both CDP attempts fail (via target.createCDPSession)
+      const target = (page as any).target();
+      (target.createCDPSession as jest.Mock).mockRejectedValue(new Error('CDP unavailable'));
+
+      // readyState + DOM fallback succeed
+      (page.evaluate as jest.Mock)
+        .mockResolvedValueOnce('complete')
+        .mockResolvedValueOnce({
+          url: 'https://example.com',
+          title: 'Test Page',
+          readyState: 'complete',
+          textPreview: 'Some content',
+        });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; text?: string }>; isError?: boolean };
+
+      // DOM fallback is usable content — NOT an error
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Screenshot failed');
+    });
+
+    test('completely unresponsive page sets isError', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Both CDP attempts fail (via target.createCDPSession)
+      const target = (page as any).target();
+      (target.createCDPSession as jest.Mock).mockRejectedValue(new Error('CDP unavailable'));
+
+      // All page.evaluate calls fail (page is completely unresponsive)
+      (page.evaluate as jest.Mock).mockRejectedValue(new Error('Execution context was destroyed'));
+      (page.waitForFunction as jest.Mock).mockRejectedValue(new Error('Execution context was destroyed'));
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; text?: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('unresponsive');
     });
   });
 

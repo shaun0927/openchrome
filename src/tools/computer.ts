@@ -101,42 +101,84 @@ const handler: ToolHandler = async (
 
     switch (action) {
       case 'screenshot': {
+        // Phase 1: Page readiness guard
         try {
-          const cdpSession = await (page as any).target().createCDPSession();
-          try {
-            const { data } = await cdpSession.send('Page.captureScreenshot', {
-              format: 'webp',
-              quality: DEFAULT_SCREENSHOT_QUALITY,
-              optimizeForSpeed: true,
-            });
-
-            return {
-              content: [
-                {
-                  type: 'image',
-                  data,
-                  mimeType: 'image/webp',
-                },
-              ],
-            };
-          } finally {
-            await cdpSession.detach().catch(() => {});
+          const readyState = await page.evaluate(() => document.readyState);
+          if (readyState !== 'complete') {
+            await page.waitForFunction(() => document.readyState === 'complete', { timeout: 5000 }).catch(() => {});
           }
         } catch {
-          // Fallback to Puppeteer PNG if CDP fails
-          const screenshot = await page.screenshot({
-            encoding: 'base64',
-            type: 'png',
+          // Page may be navigating — proceed anyway
+        }
+
+        // Phase 2: Screenshot with retry
+        const attemptScreenshot = async (): Promise<{ data: string; mimeType: string } | null> => {
+          try {
+            const cdpSession = await (page as any).target().createCDPSession();
+            try {
+              const { data } = await cdpSession.send('Page.captureScreenshot', {
+                format: 'webp',
+                quality: DEFAULT_SCREENSHOT_QUALITY,
+                optimizeForSpeed: true,
+              });
+              return { data, mimeType: 'image/webp' };
+            } finally {
+              await cdpSession.detach().catch(() => {});
+            }
+          } catch {
+            return null;
+          }
+        };
+
+        // First attempt
+        let screenshot = await attemptScreenshot();
+
+        // Retry once after 2s if failed
+        if (!screenshot) {
+          await new Promise(r => setTimeout(r, 2000));
+          screenshot = await attemptScreenshot();
+        }
+
+        if (screenshot) {
+          return {
+            content: [{ type: 'image', data: screenshot.data, mimeType: screenshot.mimeType }],
+          };
+        }
+
+        // Phase 3: DOM fallback — always give the LLM page state
+        try {
+          const pageInfo = await page.evaluate(() => {
+            const body = document.body;
+            const text = body ? body.innerText.substring(0, 2000) : '';
+            return {
+              url: window.location.href,
+              title: document.title,
+              readyState: document.readyState,
+              textPreview: text,
+            };
           });
 
           return {
-            content: [
-              {
-                type: 'image',
-                data: screenshot,
-                mimeType: 'image/png',
-              },
-            ],
+            content: [{
+              type: 'text',
+              text: [
+                `Screenshot failed (timeout). DOM fallback provided:`,
+                `[page_info] url: ${pageInfo.url} | title: ${pageInfo.title} | readyState: ${pageInfo.readyState}`,
+                `[text_preview]`,
+                pageInfo.textPreview || '(empty page)',
+                ``,
+                `Tip: Use read_page mode="dom" for structured page state, or wait_for to wait for page load.`,
+              ].join('\n'),
+            }],
+          };
+        } catch {
+          // Even DOM fallback failed — page is completely unresponsive
+          return {
+            content: [{
+              type: 'text',
+              text: 'Screenshot failed and page is unresponsive. The page may still be loading. Use wait_for with type "selector" to wait for specific content, then retry.',
+            }],
+            isError: true,
           };
         }
       }
