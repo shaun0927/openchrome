@@ -103,20 +103,41 @@ const handler: ToolHandler = async (
 
     switch (action) {
       case 'screenshot': {
-        const screenshot = await page.screenshot({
-          encoding: 'base64',
-          type: 'png',
-        });
+        try {
+          const cdpSession = await (page as any).target().createCDPSession();
+          const { data } = await cdpSession.send('Page.captureScreenshot', {
+            format: 'webp',
+            quality: 60,
+            optimizeForSpeed: true,
+          });
+          await cdpSession.detach();
 
-        return {
-          content: [
-            {
-              type: 'image',
-              data: screenshot,
-              mimeType: 'image/png',
-            },
-          ],
-        };
+          return {
+            content: [
+              {
+                type: 'image',
+                data,
+                mimeType: 'image/webp',
+              },
+            ],
+          };
+        } catch {
+          // Fallback to Puppeteer PNG if CDP fails
+          const screenshot = await page.screenshot({
+            encoding: 'base64',
+            type: 'png',
+          });
+
+          return {
+            content: [
+              {
+                type: 'image',
+                data: screenshot,
+                mimeType: 'image/png',
+              },
+            ],
+          };
+        }
       }
 
       case 'left_click': {

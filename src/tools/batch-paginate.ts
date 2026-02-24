@@ -188,8 +188,20 @@ const handler: ToolHandler = async (
 
     try {
       if (captureMode === 'screenshot' || captureMode === 'both') {
-        const screenshotData = await page.screenshot({ encoding: 'base64', type: 'png' });
-        result.screenshot = screenshotData as string;
+        try {
+          const cdpSession = await (page as any).target().createCDPSession();
+          const { data } = await cdpSession.send('Page.captureScreenshot', {
+            format: 'webp',
+            quality: 60,
+            optimizeForSpeed: true,
+          });
+          await cdpSession.detach();
+          result.screenshot = data;
+        } catch {
+          // Fallback to Puppeteer PNG
+          const screenshotData = await page.screenshot({ encoding: 'base64', type: 'png' });
+          result.screenshot = screenshotData as string;
+        }
       }
 
       if (captureMode === 'text' || captureMode === 'both') {
@@ -452,7 +464,7 @@ const handler: ToolHandler = async (
           content.push({
             type: 'image',
             data: p.screenshot,
-            mimeType: 'image/png',
+            mimeType: 'image/webp',
           });
         }
       }
