@@ -80,9 +80,24 @@ describe('HintEngine', () => {
       expect(hint).toContain('find(query)');
     });
 
-    it('should hint on click_element no match', () => {
+    it('should hint on click_element "no clickable elements found"', () => {
       const engine = new HintEngine(new ActivityTracker());
-      const result = makeResult('click_element could not find matching element', true);
+      const result = makeResult('No clickable elements found matching "Submit"', true);
+      const hint = engine.getHint('click_element', result, true);
+      expect(hint).toContain('wait_and_click');
+      expect(hint).toContain('read_page');
+    });
+
+    it('should hint on click_element "no good match found"', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('No good match found for "Login". Best candidate was "Log Out" with low confidence.', true);
+      const hint = engine.getHint('click_element', result, true);
+      expect(hint).toContain('wait_and_click');
+    });
+
+    it('should hint on click_element generic error', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('Click element error: Cannot read properties of null', true);
       const hint = engine.getHint('click_element', result, true);
       expect(hint).toContain('wait_and_click');
     });
