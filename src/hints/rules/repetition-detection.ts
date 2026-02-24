@@ -49,6 +49,29 @@ function sameToolSameResult(ctx: HintContext): boolean {
 
 export const repetitionDetectionRules: HintRule[] = [
   {
+    name: 'slow-page-warning',
+    priority: 93,
+    match(ctx: HintContext): string | null {
+      // Fire when current tool is 'computer' (screenshot) and a recent call was slow
+      if (ctx.toolName !== 'computer') return null;
+
+      // Check if any recent call took > 5000ms (slow page indicator)
+      const slowCall = ctx.recentCalls.find(
+        (c) => c.duration && c.duration > 5000 && (c.toolName === 'navigate' || c.toolName === 'computer')
+      );
+      if (!slowCall) return null;
+
+      // Only fire if current call result mentions screenshot or is a screenshot action
+      // We check args for action=screenshot since resultText may be an image
+      const isScreenshot = ctx.recentCalls.length > 0 &&
+        ctx.recentCalls[0]?.toolName === 'computer' &&
+        ctx.recentCalls[0]?.args?.action === 'screenshot';
+      if (!isScreenshot && ctx.toolName !== 'computer') return null;
+
+      return `Hint: Slow page detected (${slowCall.toolName} took ${Math.round(slowCall.duration! / 1000)}s). Prefer read_page mode="dom" over screenshot for faster page reads. Use wait_for before screenshot on heavy pages.`;
+    },
+  },
+  {
     name: 'coordinate-click-stall',
     priority: 90, // HIGHEST priority — catches wandering before other rules
     match(ctx) {

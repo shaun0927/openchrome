@@ -22,18 +22,19 @@ export interface MockCDPResponse {
 export function createMockPage(options: MockPageOptions = {}): jest.Mocked<Page> {
   const { url = 'about:blank', title = 'Test Page', targetId = 'mock-target-id' } = options;
 
+  const mockCDPSession = {
+    send: jest.fn().mockResolvedValue({ data: 'base64-screenshot-data' }),
+    detach: jest.fn().mockResolvedValue(undefined),
+    on: jest.fn(),
+    off: jest.fn(),
+  } as unknown as jest.Mocked<CDPSession>;
+
   const mockTarget = {
     _targetId: targetId,
     type: () => 'page',
     page: jest.fn(),
+    createCDPSession: jest.fn().mockResolvedValue(mockCDPSession),
   } as unknown as Target;
-
-  const mockCDPSession = {
-    send: jest.fn(),
-    detach: jest.fn(),
-    on: jest.fn(),
-    off: jest.fn(),
-  } as unknown as jest.Mocked<CDPSession>;
 
   const mockPage = {
     url: jest.fn().mockReturnValue(url),
@@ -70,6 +71,7 @@ export function createMockPage(options: MockPageOptions = {}): jest.Mocked<Page>
     $$: jest.fn(),
     waitForSelector: jest.fn(),
     waitForNavigation: jest.fn(),
+    waitForFunction: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<Page>;
 
   (mockTarget as any).page = jest.fn().mockResolvedValue(mockPage);

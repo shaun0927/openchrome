@@ -19,3 +19,9 @@ export const DEFAULT_NAVIGATION_TIMEOUT_MS = 30000;
 
 /** Maximum number of candidate elements returned by element-finding queries. */
 export const MAX_SEARCH_CANDIDATES = 30;
+
+/** CDP protocol timeout in milliseconds. Prevents 180s default hangs. */
+export const DEFAULT_PROTOCOL_TIMEOUT_MS = 30000;
+
+/** Screenshot-specific timeout. Shorter than protocol timeout for fast fallback. */
+export const DEFAULT_SCREENSHOT_TIMEOUT_MS = 15000;

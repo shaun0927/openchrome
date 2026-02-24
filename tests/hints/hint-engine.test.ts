@@ -46,7 +46,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('Navigation timeout exceeded', true);
       const hint = engine.getHint('navigate', result, true);
-      expect(hint).toContain('Page may require login');
+      expect(hint).toContain('wait_for');
     });
 
     it('should return null when no rules match', () => {
@@ -106,7 +106,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Operation timed out after 30000ms', true);
       const hint = engine.getHint('navigate', result, true);
-      expect(hint).toContain('login');
+      expect(hint).toContain('wait_for');
     });
 
     it('should hint on null reference errors', () => {
@@ -230,7 +230,7 @@ describe('HintEngine', () => {
       const result = makeResult('timeout waiting for navigation', true);
       const hint = engine.getHint('navigate', result, true);
       // Should be error-recovery hint (lower priority number = higher precedence)
-      expect(hint).toContain('Page may require login');
+      expect(hint).toContain('wait_for');
     });
   });
 
@@ -379,6 +379,74 @@ describe('HintEngine', () => {
       const hint = engine.getHint('computer', result, false);
       expect(hint).not.toBeNull();
       expect(hint).toContain('non-interactive');
+    });
+  });
+
+  describe('timeout and slow-page hints', () => {
+    it('screenshot timeout gets specific hint', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('Page.captureScreenshot timed out', true);
+      const hint = engine.getHint('computer', result, true);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('read_page mode="dom"');
+      expect(hint).toContain('Screenshot timed out');
+    });
+
+    it('generic timeout gets updated hint', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('Navigation timeout', true);
+      const hint = engine.getHint('navigate', result, true);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('wait_for');
+      expect(hint).not.toContain('may require login');
+    });
+
+    it('slow-page-warning fires after slow navigate', () => {
+      const tracker = new ActivityTracker();
+      // Seed a completed navigate call with duration > 5000ms using mocked Date.now
+      // startCall calls Date.now() twice (callId + startTime), endCall once
+      const startMs = 1000000;
+      const endMs = startMs + 8000;
+      let callCount = 0;
+      const dateSpy = jest.spyOn(Date, 'now').mockImplementation(() => {
+        callCount++;
+        return callCount <= 2 ? startMs : endMs;
+      });
+      const callId = tracker.startCall('navigate', 'test', { url: 'http://example.com' });
+      tracker.endCall(callId, 'success');
+      dateSpy.mockRestore();
+
+      const engine = new HintEngine(tracker);
+      // Current tool is computer (screenshot)
+      const result = makeResult('screenshot captured');
+      const hint = engine.getHint('computer', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('Slow page detected');
+    });
+
+    it('slow-page-warning does not fire for fast pages', () => {
+      const tracker = new ActivityTracker();
+      // Seed a completed navigate call with duration 1000ms (fast)
+      // startCall calls Date.now() twice (callId + startTime), endCall once
+      const startMs = 1000000;
+      const endMs = startMs + 1000;
+      let callCount = 0;
+      const dateSpy = jest.spyOn(Date, 'now').mockImplementation(() => {
+        callCount++;
+        return callCount <= 2 ? startMs : endMs;
+      });
+      const callId = tracker.startCall('navigate', 'test', { url: 'http://example.com' });
+      tracker.endCall(callId, 'success');
+      dateSpy.mockRestore();
+
+      const engine = new HintEngine(tracker);
+      const result = makeResult('screenshot captured');
+      // Use a result that won't match other rules
+      const hint = engine.getHint('computer', result, false);
+      // Should NOT contain slow-page-warning
+      if (hint) {
+        expect(hint).not.toContain('Slow page detected');
+      }
     });
   });
 
