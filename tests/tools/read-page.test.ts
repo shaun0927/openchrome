@@ -75,6 +75,21 @@ describe('ReadPageTool', () => {
       { depth: 5 },
       sampleAccessibilityTree
     );
+
+    // Set up page.evaluate for page stats (AX mode now calls evaluate for page metadata)
+    const page = mockSessionManager.pages.get(testTargetId);
+    if (page) {
+      (page.evaluate as jest.Mock).mockResolvedValue({
+        url: 'https://example.com',
+        title: 'Test Page',
+        scrollX: 0,
+        scrollY: 0,
+        scrollWidth: 1920,
+        scrollHeight: 3000,
+        viewportWidth: 1920,
+        viewportHeight: 1080,
+      });
+    }
   });
 
   afterEach(() => {
@@ -400,6 +415,54 @@ describe('ReadPageTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Read page error');
+    });
+  });
+
+  describe('AX Mode Page Stats', () => {
+    test('AX mode output starts with [page_stats] line', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      expect(text).toMatch(/^\[page_stats\]/);
+    });
+
+    test('AX mode page_stats includes url and title', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      expect(text).toContain('url: https://example.com');
+      expect(text).toContain('title: Test Page');
+    });
+
+    test('AX mode page_stats includes docSize', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      expect(text).toContain('docSize: 1920x3000');
+    });
+
+    test('AX mode page_stats includes scroll and viewport', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      expect(text).toContain('scroll: 0,0');
+      expect(text).toContain('viewport: 1920x1080');
     });
   });
 
