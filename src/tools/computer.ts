@@ -105,22 +105,25 @@ const handler: ToolHandler = async (
       case 'screenshot': {
         try {
           const cdpSession = await (page as any).target().createCDPSession();
-          const { data } = await cdpSession.send('Page.captureScreenshot', {
-            format: 'webp',
-            quality: 60,
-            optimizeForSpeed: true,
-          });
-          await cdpSession.detach();
+          try {
+            const { data } = await cdpSession.send('Page.captureScreenshot', {
+              format: 'webp',
+              quality: 60,
+              optimizeForSpeed: true,
+            });
 
-          return {
-            content: [
-              {
-                type: 'image',
-                data,
-                mimeType: 'image/webp',
-              },
-            ],
-          };
+            return {
+              content: [
+                {
+                  type: 'image',
+                  data,
+                  mimeType: 'image/webp',
+                },
+              ],
+            };
+          } finally {
+            await cdpSession.detach().catch(() => {});
+          }
         } catch {
           // Fallback to Puppeteer PNG if CDP fails
           const screenshot = await page.screenshot({
@@ -175,12 +178,14 @@ const handler: ToolHandler = async (
 
         await page.mouse.click(clickCoord[0], clickCoord[1]);
 
-        const resultText = leftClickValidation.warning
+        const cdpClient = sessionManager.getCDPClient();
+        const leftHitInfo = await getHitElementInfo(page, cdpClient, clickCoord[0], clickCoord[1]);
+        const leftBase = leftClickValidation.warning
           ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${leftClickValidation.warning}`
           : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
-          content: [{ type: 'text', text: resultText }],
+          content: [{ type: 'text', text: leftBase + leftHitInfo }],
         };
       }
 
@@ -219,12 +224,14 @@ const handler: ToolHandler = async (
 
         await page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' });
 
+        const rightCdpClient = sessionManager.getCDPClient();
+        const rightHitInfo = await getHitElementInfo(page, rightCdpClient, clickCoord[0], clickCoord[1]);
         const rightClickText = rightClickValidation.warning
           ? `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${rightClickValidation.warning}`
           : `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
-          content: [{ type: 'text', text: rightClickText }],
+          content: [{ type: 'text', text: rightClickText + rightHitInfo }],
         };
       }
 
@@ -265,12 +272,14 @@ const handler: ToolHandler = async (
 
         await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 });
 
+        const doubleCdpClient = sessionManager.getCDPClient();
+        const doubleHitInfo = await getHitElementInfo(page, doubleCdpClient, clickCoord[0], clickCoord[1]);
         const doubleClickText = doubleClickValidation.warning
           ? `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${doubleClickValidation.warning}`
           : `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
-          content: [{ type: 'text', text: doubleClickText }],
+          content: [{ type: 'text', text: doubleClickText + doubleHitInfo }],
         };
       }
 
@@ -311,12 +320,14 @@ const handler: ToolHandler = async (
 
         await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 });
 
+        const tripleCdpClient = sessionManager.getCDPClient();
+        const tripleHitInfo = await getHitElementInfo(page, tripleCdpClient, clickCoord[0], clickCoord[1]);
         const tripleClickText = tripleClickValidation.warning
           ? `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${tripleClickValidation.warning}`
           : `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
         return {
-          content: [{ type: 'text', text: tripleClickText }],
+          content: [{ type: 'text', text: tripleClickText + tripleHitInfo }],
         };
       }
 
@@ -579,6 +590,127 @@ async function resolveRefToCoordinates(
         isError: true,
       },
     };
+  }
+}
+
+/**
+ * Get hit element info via CDP after a coordinate-based click.
+ * Returns a string like '\nHit: <button id="submit"> "Submit" [interactive]'
+ * or empty string if CDP fails.
+ */
+async function getHitElementInfo(
+  page: import('puppeteer-core').Page,
+  cdpClient: ReturnType<ReturnType<typeof getSessionManager>['getCDPClient']>,
+  x: number,
+  y: number
+): Promise<string> {
+  try {
+    const locationResult = await cdpClient.send<{ backendNodeId: number; nodeId: number }>(
+      page,
+      'DOM.getNodeForLocation',
+      { x, y, includeUserAgentShadowDOM: false }
+    );
+
+    const backendNodeId = locationResult?.backendNodeId;
+    if (!backendNodeId) return '';
+
+    const { node: hitNode } = await cdpClient.send<{
+      node: { localName: string; attributes: string[]; nodeType: number };
+    }>(page, 'DOM.describeNode', { backendNodeId });
+
+    const localName = hitNode.localName || '';
+    const attrs = hitNode.attributes || [];
+
+    // attrs is a flat array: [name0, val0, name1, val1, ...]
+    const attrMap: Record<string, string> = {};
+    for (let i = 0; i + 1 < attrs.length; i += 2) {
+      attrMap[attrs[i]] = attrs[i + 1];
+    }
+
+    const interactiveTags = new Set(['input', 'button', 'select', 'textarea', 'a']);
+    const interactiveRoles = new Set([
+      'button', 'link', 'textbox', 'checkbox', 'radio',
+      'combobox', 'listbox', 'menu', 'menuitem', 'tab', 'switch', 'slider',
+    ]);
+
+    const isHitInteractive =
+      interactiveTags.has(localName) ||
+      interactiveRoles.has((attrMap['role'] || '').toLowerCase());
+
+    // Build attribute string with key attrs only
+    const keyAttrs = ['id', 'class', 'role', 'aria-label', 'data-testid', 'type', 'href', 'data-issue-id'];
+    const attrStr = keyAttrs
+      .filter((k) => attrMap[k] !== undefined)
+      .map((k) => `${k}="${attrMap[k]}"`)
+      .join(' ');
+
+    // Get textContent from page by querying the element at the click coordinates
+    let textContent = '';
+    try {
+      textContent = await page.evaluate(
+        (px: number, py: number) => {
+          const el = document.elementFromPoint(px, py);
+          return el ? (el.textContent || '').trim().substring(0, 50) : '';
+        },
+        x,
+        y
+      );
+    } catch { /* skip */ }
+
+    // Build hit tag representation
+    const openTag = attrStr ? `<${localName} ${attrStr}>` : `<${localName}>`;
+    const textPart = textContent ? ` "${textContent.substring(0, 50)}"` : '';
+    const interactiveFlag = isHitInteractive ? '[interactive]' : '[not interactive]';
+
+    let hitInfo = `\nHit: ${openTag}${textPart} ${interactiveFlag}`;
+
+    // If hit element is not interactive, find nearest interactive element
+    if (!isHitInteractive) {
+      try {
+        const nearestInfo = await page.evaluate(
+          (px: number, py: number) => {
+            const offsets: [number, number][] = [
+              [0, -20], [0, 20], [-20, 0], [20, 0],
+              [0, -40], [0, 40], [-40, 0], [40, 0],
+            ];
+            for (const [dx, dy] of offsets) {
+              const el = document.elementFromPoint(px + dx, py + dy);
+              if (
+                el &&
+                el.matches(
+                  'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"],mark[data-issue-id]'
+                )
+              ) {
+                const rect = el.getBoundingClientRect();
+                const cx = Math.round(rect.x + rect.width / 2);
+                const cy = Math.round(rect.y + rect.height / 2);
+                return {
+                  tag: el.tagName.toLowerCase(),
+                  text: el.textContent?.substring(0, 40) || '',
+                  x: cx,
+                  y: cy,
+                  dx: Math.round(cx - px),
+                  dy: Math.round(cy - py),
+                };
+              }
+            }
+            return null;
+          },
+          x,
+          y
+        );
+
+        if (nearestInfo) {
+          const direction = nearestInfo.dy > 0 ? 'below' : 'above';
+          hitInfo += `\nNearest interactive: <${nearestInfo.tag}> "${nearestInfo.text}" at (${nearestInfo.x}, ${nearestInfo.y}), ${Math.abs(nearestInfo.dy)}px ${direction}`;
+        }
+      } catch { /* silently skip */ }
+    }
+
+    return hitInfo;
+  } catch {
+    // CDP failed — fall back to no hit info
+    return '';
   }
 }
 

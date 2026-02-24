@@ -190,13 +190,16 @@ const handler: ToolHandler = async (
       if (captureMode === 'screenshot' || captureMode === 'both') {
         try {
           const cdpSession = await (page as any).target().createCDPSession();
-          const { data } = await cdpSession.send('Page.captureScreenshot', {
-            format: 'webp',
-            quality: 60,
-            optimizeForSpeed: true,
-          });
-          await cdpSession.detach();
-          result.screenshot = data;
+          try {
+            const { data } = await cdpSession.send('Page.captureScreenshot', {
+              format: 'webp',
+              quality: 60,
+              optimizeForSpeed: true,
+            });
+            result.screenshot = data;
+          } finally {
+            await cdpSession.detach().catch(() => {});
+          }
         } catch {
           // Fallback to Puppeteer PNG
           const screenshotData = await page.screenshot({ encoding: 'base64', type: 'png' });
