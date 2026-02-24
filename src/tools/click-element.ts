@@ -9,6 +9,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_VIEWPORT } from '../config/defaults';
+import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'click_element',
@@ -441,15 +442,14 @@ const handler: ToolHandler = async (
     const finalX = Math.round(bestMatch.rect.x);
     const finalY = Math.round(bestMatch.rect.y);
 
-    // Perform the click
-    if (doubleClick) {
-      await page.mouse.click(finalX, finalY, { clickCount: 2 });
-    } else {
-      await page.mouse.click(finalX, finalY);
-    }
-
-    // Wait after click
-    await new Promise(resolve => setTimeout(resolve, waitAfter));
+    // Perform the click with DOM delta capture (settleMs includes waitAfter)
+    const { delta } = await withDomDelta(page, async () => {
+      if (doubleClick) {
+        await page.mouse.click(finalX, finalY, { clickCount: 2 });
+      } else {
+        await page.mouse.click(finalX, finalY);
+      }
+    }, { settleMs: Math.max(150, waitAfter) });
 
     // Generate ref for the clicked element
     let refId = '';
@@ -464,7 +464,7 @@ const handler: ToolHandler = async (
     }
 
     const clickType = doubleClick ? 'Double-clicked' : 'Clicked';
-    const resultText = `${clickType} ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}`;
+    const resultText = `${clickType} ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}${delta}`;
 
     // Optional verification screenshot — WebP via CDP for speed and consistency
     if (verify) {

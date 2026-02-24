@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
@@ -107,72 +108,74 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Set the value based on element type
-    const result = await cdpClient.send<{
-      result: { value: { success: boolean; message?: string; error?: string } };
-    }>(page, 'Runtime.callFunctionOn', {
-      objectId: object.objectId,
-      functionDeclaration: `
-        function(newValue) {
-          try {
-            const el = this;
-            const tagName = el.tagName.toLowerCase();
-            const type = el.type?.toLowerCase();
+    // Set the value based on element type with DOM delta capture
+    const { result, delta } = await withDomDelta(page, () =>
+      cdpClient.send<{
+        result: { value: { success: boolean; message?: string; error?: string } };
+      }>(page, 'Runtime.callFunctionOn', {
+        objectId: object.objectId,
+        functionDeclaration: `
+          function(newValue) {
+            try {
+              const el = this;
+              const tagName = el.tagName.toLowerCase();
+              const type = el.type?.toLowerCase();
 
-            if (tagName === 'input' || tagName === 'textarea') {
-              if (type === 'checkbox' || type === 'radio') {
-                // For checkboxes and radios
-                const shouldCheck = typeof newValue === 'boolean' ? newValue : newValue === 'true' || newValue === true;
-                if (el.checked !== shouldCheck) {
-                  el.checked = shouldCheck;
+              if (tagName === 'input' || tagName === 'textarea') {
+                if (type === 'checkbox' || type === 'radio') {
+                  // For checkboxes and radios
+                  const shouldCheck = typeof newValue === 'boolean' ? newValue : newValue === 'true' || newValue === true;
+                  if (el.checked !== shouldCheck) {
+                    el.checked = shouldCheck;
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                  }
+                  return { success: true, message: 'Set to ' + shouldCheck };
+                } else {
+                  // For text inputs
+                  el.focus();
+                  el.value = String(newValue);
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
                   el.dispatchEvent(new Event('change', { bubbles: true }));
+                  return { success: true, message: 'Set value to "' + newValue + '"' };
                 }
-                return { success: true, message: 'Set to ' + shouldCheck };
-              } else {
-                // For text inputs
+              } else if (tagName === 'select') {
+                // For select elements
+                const options = Array.from(el.options);
+                const option = options.find(o =>
+                  o.value === String(newValue) ||
+                  o.textContent?.trim() === String(newValue)
+                );
+                if (option) {
+                  el.value = option.value;
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  return { success: true, message: 'Selected "' + option.textContent + '"' };
+                } else {
+                  return { success: false, error: 'Option not found: ' + newValue };
+                }
+              } else if (el.contentEditable === 'true') {
+                // For contenteditable elements
                 el.focus();
-                el.value = String(newValue);
+                el.textContent = String(newValue);
                 el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                return { success: true, message: 'Set value to "' + newValue + '"' };
-              }
-            } else if (tagName === 'select') {
-              // For select elements
-              const options = Array.from(el.options);
-              const option = options.find(o =>
-                o.value === String(newValue) ||
-                o.textContent?.trim() === String(newValue)
-              );
-              if (option) {
-                el.value = option.value;
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                return { success: true, message: 'Selected "' + option.textContent + '"' };
+                return { success: true, message: 'Set content to "' + newValue + '"' };
               } else {
-                return { success: false, error: 'Option not found: ' + newValue };
+                return { success: false, error: 'Element is not editable: ' + tagName };
               }
-            } else if (el.contentEditable === 'true') {
-              // For contenteditable elements
-              el.focus();
-              el.textContent = String(newValue);
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              return { success: true, message: 'Set content to "' + newValue + '"' };
-            } else {
-              return { success: false, error: 'Element is not editable: ' + tagName };
+            } catch (e) {
+              return { success: false, error: e.message };
             }
-          } catch (e) {
-            return { success: false, error: e.message };
           }
-        }
-      `,
-      arguments: [{ value }],
-      returnByValue: true,
-    });
+        `,
+        arguments: [{ value }],
+        returnByValue: true,
+      })
+    );
 
     const response = result.result.value;
 
     if (response.success) {
       return {
-        content: [{ type: 'text', text: response.message || 'Value set successfully' }],
+        content: [{ type: 'text', text: (response.message || 'Value set successfully') + delta }],
       };
     } else {
       return {
