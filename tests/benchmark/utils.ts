@@ -50,52 +50,6 @@ export function extractServerTiming(result: unknown): number {
 }
 
 /**
- * Parse the first content[0].text as JSON from an MCP tool result.
- * Returns null if not parseable (e.g., stub adapter returns 'stub response').
- */
-function parseResultJson(result: unknown): Record<string, unknown> | null {
-  try {
-    if (result && typeof result === 'object') {
-      const obj = result as Record<string, unknown>;
-      if (Array.isArray(obj.content) && obj.content.length > 0) {
-        const first = obj.content[0];
-        if (first && typeof first === 'object' && 'text' in first) {
-          return JSON.parse((first as { text: string }).text);
-        }
-      }
-    }
-  } catch { /* stub mode or non-JSON */ }
-  return null;
-}
-
-/**
- * Extract tabId from a navigate response.
- * Real adapter returns JSON with tabId; stub adapter returns plain text.
- * Falls back to the provided default (used in stub mode).
- */
-export function extractTabId(result: unknown, fallback: string): string {
-  const parsed = parseResultJson(result);
-  if (parsed && typeof parsed.tabId === 'string') return parsed.tabId;
-  return fallback;
-}
-
-/**
- * Extract worker tabIds from a workflow_init response.
- * Real adapter returns { workers: [{ tabId, workerName, ... }] }.
- * Falls back to ['tab-0', 'tab-1', ...] in stub mode.
- */
-export function extractWorkerTabIds(result: unknown, count: number): string[] {
-  const parsed = parseResultJson(result);
-  if (parsed && Array.isArray(parsed.workers)) {
-    const ids = parsed.workers.map((w: Record<string, unknown>) => w.tabId as string);
-    if (ids.length >= count && ids.every((id: string) => typeof id === 'string')) {
-      return ids.slice(0, count);
-    }
-  }
-  return Array.from({ length: count }, (_, i) => `tab-${i}`);
-}
-
-/**
  * Measure a single MCP tool call and accumulate metrics.
  * Extracts _timing.durationMs from the result if present.
  *

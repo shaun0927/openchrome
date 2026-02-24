@@ -312,17 +312,19 @@ const handler: ToolHandler = async (
       pages.push(initialResult);
 
       for (let step = 1; step <= maxScrolls; step++) {
-        // Scroll down by scrollAmount viewport heights
-        await page.evaluate((amount: number) => {
+        // Scroll and measure in a single CDP round-trip
+        const { newScrollHeight, atBottom } = await page.evaluate((amount: number) => {
           window.scrollBy(0, window.innerHeight * amount);
+          const scrollHeight = document.documentElement.scrollHeight;
+          const scrollTop = window.scrollY;
+          const viewportHeight = window.innerHeight;
+          return {
+            newScrollHeight: scrollHeight,
+            atBottom: scrollTop + viewportHeight >= scrollHeight - 10,
+          };
         }, scrollAmount);
 
         await new Promise((r) => setTimeout(r, waitBetweenPages));
-
-        const newScrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-        const scrollTop = await page.evaluate(() => window.scrollY);
-        const viewportHeight = await page.evaluate(() => window.innerHeight);
-        const atBottom = scrollTop + viewportHeight >= newScrollHeight - 10;
 
         stepNumber++;
         const stepResult = await capturePageContent(page, stepNumber);

@@ -8,7 +8,6 @@
 
 import { BenchmarkRunner, BenchmarkReport } from './benchmark-runner';
 import { OpenChromeAdapter } from './adapters/openchrome-adapter';
-import { OpenChromeRealAdapter } from './adapters';
 import { createNavigationTask } from './tasks/navigation';
 import { createReadingTask } from './tasks/reading';
 import { createFormFillTask } from './tasks/form-fill';
@@ -18,10 +17,6 @@ import { createAllParallelTasks } from './tasks/parallel';
 
 async function main(): Promise<void> {
   const ciMode = process.argv.includes('--ci');
-  const modeIndex = process.argv.indexOf('--mode');
-  const mode = modeIndex !== -1 && modeIndex + 1 < process.argv.length
-    ? process.argv[modeIndex + 1]
-    : 'stub';
 
   const runner = new BenchmarkRunner({
     runsPerTask: ciMode ? 3 : 5,
@@ -39,22 +34,13 @@ async function main(): Promise<void> {
   }
 
   // Run with both AX and DOM adapters
-  const axAdapter = mode === 'real'
-    ? new OpenChromeRealAdapter({ mode: 'ax' })
-    : new OpenChromeAdapter({ mode: 'ax' });
-  const domAdapter = mode === 'real'
-    ? new OpenChromeRealAdapter({ mode: 'dom' })
-    : new OpenChromeAdapter({ mode: 'dom' });
+  const axAdapter = new OpenChromeAdapter({ mode: 'ax' });
+  const domAdapter = new OpenChromeAdapter({ mode: 'dom' });
 
-  if (mode === 'real') {
-    await (axAdapter as OpenChromeRealAdapter).setup();
-    await (domAdapter as OpenChromeRealAdapter).setup();
-  }
-
-  console.log(`Running benchmarks in AX mode (${mode})...`);
+  console.log('Running benchmarks in AX mode...');
   const axReport = await runner.run(axAdapter);
 
-  console.log(`Running benchmarks in DOM mode (${mode})...`);
+  console.log('Running benchmarks in DOM mode...');
   const domReport = await runner.run(domAdapter);
 
   const reports: BenchmarkReport[] = [axReport, domReport];
@@ -77,11 +63,6 @@ async function main(): Promise<void> {
   } else {
     // Interactive mode: formatted report
     console.log(BenchmarkRunner.formatReport(reports));
-  }
-
-  if (mode === 'real') {
-    await (axAdapter as OpenChromeRealAdapter).teardown();
-    await (domAdapter as OpenChromeRealAdapter).teardown();
   }
 }
 
