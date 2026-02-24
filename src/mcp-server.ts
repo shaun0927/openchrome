@@ -276,6 +276,8 @@ export class MCPServer {
         '- Each Worker gets an isolated browser context (separate cookies, localStorage, sessions).',
         '- The user may prefix requests with "oc" to indicate browser automation (e.g., "oc screenshot my Gmail").',
         '',
+        'DOM DELTA: Action tools return [DOM Delta] showing what changed — prefer reading delta over screenshots.',
+        '',
         'PARALLEL WORKFLOW EXAMPLE:',
         '  "compare prices on Amazon, eBay, Walmart" → workflow_init with 3 workers, one per site',
       ].join('\n'),

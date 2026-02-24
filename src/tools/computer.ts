@@ -8,6 +8,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_QUALITY } from '../config/defaults';
+import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -159,9 +160,9 @@ const handler: ToolHandler = async (
         }
 
         if (refInfo) {
-          await page.mouse.click(clickCoord[0], clickCoord[1]);
+          const { delta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
           return {
-            content: [{ type: 'text', text: `Clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
+            content: [{ type: 'text', text: `Clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})${delta}` }],
           };
         }
 
@@ -174,11 +175,11 @@ const handler: ToolHandler = async (
         }
 
         const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
-        await page.mouse.click(clickCoord[0], clickCoord[1]);
+        const { delta: leftDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
 
         const resultText = leftClickValidation.warning
-          ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${leftClickValidation.warning}`
-          : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
+          ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${leftClickValidation.warning}${leftDelta}`
+          : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})${leftDelta}`;
         return {
           content: [{ type: 'text', text: resultText + leftClickHitInfo }],
         };
@@ -203,9 +204,9 @@ const handler: ToolHandler = async (
         }
 
         if (refInfo) {
-          await page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' });
+          const { delta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' }));
           return {
-            content: [{ type: 'text', text: `Right-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
+            content: [{ type: 'text', text: `Right-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})${delta}` }],
           };
         }
 
@@ -218,11 +219,11 @@ const handler: ToolHandler = async (
         }
 
         const rightClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
-        await page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' });
+        const { delta: rightDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' }));
 
         const rightClickText = rightClickValidation.warning
-          ? `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${rightClickValidation.warning}`
-          : `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
+          ? `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${rightClickValidation.warning}${rightDelta}`
+          : `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})${rightDelta}`;
         return {
           content: [{ type: 'text', text: rightClickText + rightClickHitInfo }],
         };
@@ -249,9 +250,9 @@ const handler: ToolHandler = async (
         }
 
         if (refInfo) {
-          await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 });
+          const { delta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 }));
           return {
-            content: [{ type: 'text', text: `Double-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
+            content: [{ type: 'text', text: `Double-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})${delta}` }],
           };
         }
 
@@ -264,11 +265,11 @@ const handler: ToolHandler = async (
         }
 
         const doubleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
-        await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 });
+        const { delta: doubleDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 }));
 
         const doubleClickText = doubleClickValidation.warning
-          ? `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${doubleClickValidation.warning}`
-          : `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
+          ? `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${doubleClickValidation.warning}${doubleDelta}`
+          : `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})${doubleDelta}`;
         return {
           content: [{ type: 'text', text: doubleClickText + doubleClickHitInfo }],
         };
@@ -295,9 +296,9 @@ const handler: ToolHandler = async (
         }
 
         if (refInfo) {
-          await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 });
+          const { delta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 }));
           return {
-            content: [{ type: 'text', text: `Triple-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})` }],
+            content: [{ type: 'text', text: `Triple-clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})${delta}` }],
           };
         }
 
@@ -310,11 +311,11 @@ const handler: ToolHandler = async (
         }
 
         const tripleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
-        await page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 });
+        const { delta: tripleDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 }));
 
         const tripleClickText = tripleClickValidation.warning
-          ? `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${tripleClickValidation.warning}`
-          : `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
+          ? `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${tripleClickValidation.warning}${tripleDelta}`
+          : `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})${tripleDelta}`;
         return {
           content: [{ type: 'text', text: tripleClickText + tripleClickHitInfo }],
         };
@@ -339,9 +340,9 @@ const handler: ToolHandler = async (
         }
 
         if (refInfo) {
-          await page.mouse.move(hoverCoord[0], hoverCoord[1]);
+          const { delta } = await withDomDelta(page, () => page.mouse.move(hoverCoord[0], hoverCoord[1]));
           return {
-            content: [{ type: 'text', text: `Hovered element ${ref} at (${hoverCoord[0]}, ${hoverCoord[1]})` }],
+            content: [{ type: 'text', text: `Hovered element ${ref} at (${hoverCoord[0]}, ${hoverCoord[1]})${delta}` }],
           };
         }
 
@@ -353,11 +354,11 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.mouse.move(hoverCoord[0], hoverCoord[1]);
+        const { delta: hoverDelta } = await withDomDelta(page, () => page.mouse.move(hoverCoord[0], hoverCoord[1]));
 
         const hoverText = hoverValidation.warning
-          ? `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]}). Warning: ${hoverValidation.warning}`
-          : `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]})`;
+          ? `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]}). Warning: ${hoverValidation.warning}${hoverDelta}`
+          : `Hovered at (${hoverCoord[0]}, ${hoverCoord[1]})${hoverDelta}`;
 
         return {
           content: [{ type: 'text', text: hoverText }],
@@ -371,9 +372,9 @@ const handler: ToolHandler = async (
             isError: true,
           };
         }
-        await page.keyboard.type(text);
+        const { delta: typeDelta } = await withDomDelta(page, () => page.keyboard.type(text));
         return {
-          content: [{ type: 'text', text: `Typed: ${text}` }],
+          content: [{ type: 'text', text: `Typed: ${text}${typeDelta}` }],
         };
       }
 
@@ -384,28 +385,30 @@ const handler: ToolHandler = async (
             isError: true,
           };
         }
-        // Handle multiple keys separated by space
-        const keys = text.split(' ');
-        for (const key of keys) {
-          if (key.includes('+')) {
-            // Handle modifier keys like ctrl+a
-            const parts = key.split('+');
-            const modifiers = parts.slice(0, -1);
-            const mainKey = parts[parts.length - 1];
+        const { delta: keyDelta } = await withDomDelta(page, async () => {
+          // Handle multiple keys separated by space
+          const keys = text.split(' ');
+          for (const key of keys) {
+            if (key.includes('+')) {
+              // Handle modifier keys like ctrl+a
+              const parts = key.split('+');
+              const modifiers = parts.slice(0, -1);
+              const mainKey = parts[parts.length - 1];
 
-            for (const mod of modifiers) {
-              await page.keyboard.down(normalizeKey(mod));
+              for (const mod of modifiers) {
+                await page.keyboard.down(normalizeKey(mod));
+              }
+              await page.keyboard.press(normalizeKey(mainKey));
+              for (const mod of modifiers.reverse()) {
+                await page.keyboard.up(normalizeKey(mod));
+              }
+            } else {
+              await page.keyboard.press(normalizeKey(key));
             }
-            await page.keyboard.press(normalizeKey(mainKey));
-            for (const mod of modifiers.reverse()) {
-              await page.keyboard.up(normalizeKey(mod));
-            }
-          } else {
-            await page.keyboard.press(normalizeKey(key));
           }
-        }
+        });
         return {
-          content: [{ type: 'text', text: `Pressed: ${text}` }],
+          content: [{ type: 'text', text: `Pressed: ${text}${keyDelta}` }],
         };
       }
 
