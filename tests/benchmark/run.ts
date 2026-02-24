@@ -8,6 +8,7 @@
 
 import { BenchmarkRunner, BenchmarkReport } from './benchmark-runner';
 import { OpenChromeAdapter } from './adapters/openchrome-adapter';
+import { OpenChromeRealAdapter } from './adapters';
 import { createNavigationTask } from './tasks/navigation';
 import { createReadingTask } from './tasks/reading';
 import { createFormFillTask } from './tasks/form-fill';
@@ -17,6 +18,10 @@ import { createAllParallelTasks } from './tasks/parallel';
 
 async function main(): Promise<void> {
   const ciMode = process.argv.includes('--ci');
+  const modeIndex = process.argv.indexOf('--mode');
+  const mode = modeIndex !== -1 && modeIndex + 1 < process.argv.length
+    ? process.argv[modeIndex + 1]
+    : 'stub';
 
   const runner = new BenchmarkRunner({
     runsPerTask: ciMode ? 3 : 5,
@@ -34,13 +39,17 @@ async function main(): Promise<void> {
   }
 
   // Run with both AX and DOM adapters
-  const axAdapter = new OpenChromeAdapter({ mode: 'ax' });
-  const domAdapter = new OpenChromeAdapter({ mode: 'dom' });
+  const axAdapter = mode === 'real'
+    ? new OpenChromeRealAdapter({ mode: 'ax' })
+    : new OpenChromeAdapter({ mode: 'ax' });
+  const domAdapter = mode === 'real'
+    ? new OpenChromeRealAdapter({ mode: 'dom' })
+    : new OpenChromeAdapter({ mode: 'dom' });
 
-  console.log('Running benchmarks in AX mode...');
+  console.log(`Running benchmarks in AX mode (${mode})...`);
   const axReport = await runner.run(axAdapter);
 
-  console.log('Running benchmarks in DOM mode...');
+  console.log(`Running benchmarks in DOM mode (${mode})...`);
   const domReport = await runner.run(domAdapter);
 
   const reports: BenchmarkReport[] = [axReport, domReport];
@@ -64,6 +73,7 @@ async function main(): Promise<void> {
     // Interactive mode: formatted report
     console.log(BenchmarkRunner.formatReport(reports));
   }
+
 }
 
 main().catch((err) => {
