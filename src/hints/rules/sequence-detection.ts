@@ -19,6 +19,40 @@ function consecutiveCount(ctx: HintContext, name: string): number {
 
 export const sequenceDetectionRules: HintRule[] = [
   {
+    name: 'post-scroll-click',
+    priority: 299, // Just before existing sequence rules (300-304)
+    match(ctx) {
+      if (ctx.toolName !== 'computer') return null;
+
+      // Check if current call is a coordinate click
+      if (!/Clicked at/.test(ctx.resultText)) return null;
+
+      // Check if any recent call caused a scroll
+      for (const call of ctx.recentCalls) {
+        if (call.toolName === 'computer') {
+          // Check if previous click result mentioned scroll
+          if (call.args?.action === 'scroll' || call.args?.action === 'scroll_to') {
+            return (
+              'Hint: Previous action caused scroll — coordinates from before the scroll may be stale. ' +
+              'Use read_page to get fresh element positions, or use ref-based click.'
+            );
+          }
+        }
+        // Also check if a click_element or navigate caused implicit scroll
+        if (call.toolName === 'click_element' || call.toolName === 'navigate') {
+          // Navigation/click_element may have scrolled the page
+          return (
+            'Hint: Previous navigation or click may have scrolled the page. ' +
+            'Verify coordinates are still valid with read_page, or use ref-based click.'
+          );
+        }
+        break; // Only check the most recent call
+      }
+
+      return null;
+    },
+  },
+  {
     name: 'navigate-to-login',
     priority: 300,
     match(ctx) {

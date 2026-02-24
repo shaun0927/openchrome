@@ -56,4 +56,42 @@ export const compositeSuggestionRules: HintRule[] = [
       return null;
     },
   },
+  {
+    name: 'contenteditable-click-hint',
+    priority: 204, // After existing composite rules (200-203)
+    match(ctx) {
+      if (ctx.toolName !== 'computer') return null;
+      if (ctx.isError) return null;
+
+      // Check if the hit info mentions contenteditable
+      if (/contenteditable|lexical|prosemirror|tiptap|slate|editor/i.test(ctx.resultText)) {
+        return (
+          'Hint: Click inside a rich text editor (contenteditable). ' +
+          'Editor frameworks may intercept click events. ' +
+          'Prefer: (1) click_element with text query, (2) javascript_tool for direct element.click(), ' +
+          '(3) read_page mode="dom" to get backendNodeId then use computer ref parameter.'
+        );
+      }
+
+      return null;
+    },
+  },
+  {
+    name: 'coordinate-click-after-read',
+    priority: 205,
+    match(ctx) {
+      if (ctx.toolName !== 'computer') return null;
+      if (ctx.isError) return null;
+      // Check if this is a coordinate click (not ref-based)
+      if (!/Clicked at \(\d/.test(ctx.resultText)) return null;
+      // Check if the hit was not interactive
+      if (/\[not interactive\]/.test(ctx.resultText)) {
+        return (
+          'Hint: Clicked a non-interactive element. Use click_element with a text query ' +
+          'or read_page mode="dom" to find the correct target.'
+        );
+      }
+      return null;
+    },
+  },
 ];
