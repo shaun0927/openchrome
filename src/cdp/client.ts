@@ -6,7 +6,7 @@ import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'pu
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
-import { DEFAULT_VIEWPORT, DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
+import { DEFAULT_VIEWPORT, DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_PROTOCOL_TIMEOUT_MS } from '../config/defaults';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -250,6 +250,7 @@ export class CDPClient {
     this.browser = await puppeteer.connect({
       browserWSEndpoint: instance.wsEndpoint,
       defaultViewport: null,
+      protocolTimeout: DEFAULT_PROTOCOL_TIMEOUT_MS,
     });
 
     // Set up disconnect handler

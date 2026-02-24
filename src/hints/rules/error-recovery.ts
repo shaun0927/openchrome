@@ -23,8 +23,12 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
     hint: 'Hint: Element may not be loaded. Try wait_and_click or read_page mode="dom" to verify.',
   },
   {
+    test: /captureScreenshot.*timed?\s*out|screenshot.*timed?\s*out|screenshot failed/i,
+    hint: 'Hint: Screenshot timed out on a slow page. Use read_page mode="dom" for instant page state without rendering. For heavy pages (Next.js dev, SPAs), always prefer read_page over screenshot.',
+  },
+  {
     test: /timeout|timed?\s*out|navigation timeout/i,
-    hint: 'Hint: Page may require login or different navigation.',
+    hint: 'Hint: Page timed out. Try wait_for with type "selector" to wait for specific content, or navigate to a simpler URL first.',
   },
   {
     test: /cannot read propert|null is not|undefined is not|is null|is undefined/i,
