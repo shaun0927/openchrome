@@ -8,17 +8,11 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_VIEWPORT } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'click_element',
-  description: `Find an element by natural language query and click it in one operation.
-This is more efficient than calling find + computer(click) separately.
-Returns the clicked element's info and optionally a verification screenshot.
-
-Examples:
-- click_element(query: "Login button")
-- click_element(query: "Submit", wait_after: 1000)
-- click_element(query: "Admin radio button", verify: true)`,
+  description: 'Find an element by natural language query and click it in one operation. Returns the clicked element info and optionally a verification screenshot.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -478,7 +472,7 @@ const handler: ToolHandler = async (
         const cdpSession = await (page as any).target().createCDPSession();
         const { data } = await cdpSession.send('Page.captureScreenshot', {
           format: 'webp',
-          quality: 60,
+          quality: DEFAULT_SCREENSHOT_QUALITY,
           optimizeForSpeed: true,
         });
         await cdpSession.detach();
@@ -498,8 +492,8 @@ const handler: ToolHandler = async (
           clip: {
             x: 0,
             y: 0,
-            width: Math.min(page.viewport()?.width || 1920, 1920),
-            height: Math.min(page.viewport()?.height || 1080, 1080),
+            width: Math.min(page.viewport()?.width || DEFAULT_VIEWPORT.width, DEFAULT_VIEWPORT.width),
+            height: Math.min(page.viewport()?.height || DEFAULT_VIEWPORT.height, DEFAULT_VIEWPORT.height),
           },
         });
 

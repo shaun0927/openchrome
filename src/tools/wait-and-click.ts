@@ -11,13 +11,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 
 const definition: MCPToolDefinition = {
   name: 'wait_and_click',
-  description: `Wait for an element matching the query to appear, then click it.
-Useful for clicking elements that appear after page load or after other interactions.
-
-Examples:
-- wait_and_click(query: "Save Changes", timeout: 5000)
-- wait_and_click(query: "Modal close button", timeout: 3000)
-- wait_and_click(query: "Loading complete message")`,
+  description: 'Wait for an element matching the query to appear, then click it. Useful for clicking elements that appear after page load or after other interactions.',
   inputSchema: {
     type: 'object',
     properties: {

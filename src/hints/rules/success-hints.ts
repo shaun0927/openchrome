@@ -35,7 +35,11 @@ export const successHintRules: HintRule[] = [
     match(ctx) {
       if (ctx.toolName !== 'click_element') return null;
       if (ctx.isError) return null;
-      return 'Hint: Click may trigger navigation. Use wait_for to verify.';
+      // Only hint if the delta suggests navigation or URL change
+      if (/\[Page navigated|URL:/.test(ctx.resultText)) {
+        return 'Hint: Navigation detected after click. Use wait_for to verify page loaded.';
+      }
+      return null;
     },
   },
   {

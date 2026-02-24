@@ -8,13 +8,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'storage',
-  description: `Manage browser localStorage and sessionStorage.
-Actions:
-- "get": Get a value by key, or all values if no key specified
-- "set": Set a key-value pair
-- "remove": Remove a specific key
-- "clear": Clear all storage
-- "keys": Get all keys`,
+  description: 'Manage browser localStorage and sessionStorage (get, set, delete, clear, keys).',
   inputSchema: {
     type: 'object',
     properties: {

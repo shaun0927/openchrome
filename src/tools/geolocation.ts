@@ -25,9 +25,7 @@ const LOCATION_PRESETS: Record<
 
 const definition: MCPToolDefinition = {
   name: 'geolocation',
-  description: `Override browser geolocation.
-Presets: ${Object.keys(LOCATION_PRESETS).join(', ')}
-Use "preset" for predefined locations or provide custom latitude/longitude.`,
+  description: 'Set or clear geolocation coordinates. Use a preset city or provide custom latitude/longitude.',
   inputSchema: {
     type: 'object',
     properties: {

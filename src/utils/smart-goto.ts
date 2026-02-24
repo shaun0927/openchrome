@@ -7,6 +7,7 @@
  */
 
 import { Page, Frame, HTTPResponse } from 'puppeteer-core';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 const AUTH_DOMAINS = [
   'accounts.google.com',
@@ -28,7 +29,7 @@ export async function smartGoto(
   url: string,
   options?: { timeout?: number },
 ): Promise<SmartGotoResult> {
-  const timeout = options?.timeout ?? 30000;
+  const timeout = options?.timeout ?? DEFAULT_NAVIGATION_TIMEOUT_MS;
   let authRedirect: SmartGotoResult['authRedirect'] = undefined;
   let resolveRedirect: (() => void) | null = null;
 

@@ -8,11 +8,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'http_auth',
-  description: `Set or clear HTTP Basic Authentication credentials.
-Use this before navigating to pages that require HTTP authentication.
-Actions:
-- "set": Set credentials for HTTP authentication
-- "clear": Clear previously set credentials`,
+  description: 'Manage HTTP Basic/Digest authentication credentials (set, clear, status).',
   inputSchema: {
     type: 'object',
     properties: {

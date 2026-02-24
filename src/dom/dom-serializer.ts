@@ -3,6 +3,7 @@
  */
 
 import type { Page } from 'puppeteer-core';
+import { MAX_OUTPUT_CHARS } from '../config/defaults';
 
 export interface DOMSerializerOptions {
   maxDepth?: number;           // default: -1 (unlimited)
@@ -227,7 +228,7 @@ export async function serializeDOM(
   options?: DOMSerializerOptions,
 ): Promise<{ content: string; pageStats: PageStats; truncated: boolean }> {
   const maxDepth = options?.maxDepth ?? -1;
-  const maxOutputChars = options?.maxOutputChars ?? 50000;
+  const maxOutputChars = options?.maxOutputChars ?? MAX_OUTPUT_CHARS;
   const includePageStats = options?.includePageStats ?? true;
   const pierceIframes = options?.pierceIframes ?? true;
   const interactiveOnly = (options?.interactiveOnly ?? false) || options?.filter === 'interactive';

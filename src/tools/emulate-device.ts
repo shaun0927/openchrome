@@ -83,9 +83,7 @@ const DEVICE_PRESETS: Record<string, DevicePreset> = {
 
 const definition: MCPToolDefinition = {
   name: 'emulate_device',
-  description: `Emulate a device with specific viewport and user agent.
-Presets: ${Object.keys(DEVICE_PRESETS).join(', ')}
-Use "preset" for predefined devices or provide custom viewport settings.`,
+  description: 'Emulate a device with specific viewport and user agent settings. Use a preset or provide custom dimensions.',
   inputSchema: {
     type: 'object',
     properties: {

@@ -6,13 +6,11 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
-  description: `Navigate to a URL, or go forward/back in browser history. If tabId is not provided, creates a new tab with the URL. Use workerId to specify which worker context to use for parallel operations.
-
-WHEN TO USE: User explicitly requested browser/UI interaction, visual verification needed, or no API/DB alternative exists.
-PREFER ALTERNATIVES: DB query for data issues, curl/API for API testing, code fix for bugs.`,
+  description: 'Navigate to a URL, or go forward/back in browser history. If tabId is not provided, creates a new tab with the URL. Use workerId to specify which worker context to use for parallel operations.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -149,7 +147,7 @@ const handler: ToolHandler = async (
 
     // Handle history navigation
     if (url === 'back') {
-      await page.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.goBack({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       return {
         content: [
           {
@@ -165,7 +163,7 @@ const handler: ToolHandler = async (
     }
 
     if (url === 'forward') {
-      await page.goForward({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.goForward({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       return {
         content: [
           {
@@ -228,7 +226,7 @@ const handler: ToolHandler = async (
     }
 
     // Navigate with smart auth redirect detection
-    const { authRedirect } = await smartGoto(page, targetUrl, { timeout: 30000 });
+    const { authRedirect } = await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
 
     return {
       content: [

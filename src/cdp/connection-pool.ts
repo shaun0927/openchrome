@@ -4,6 +4,7 @@
 
 import { Page } from 'puppeteer-core';
 import { CDPClient, getCDPClient } from './client';
+import { DEFAULT_VIEWPORT } from '../config/defaults';
 
 export interface PoolConfig {
   /** Minimum number of pre-allocated pages to keep ready (default: 0) */
@@ -308,7 +309,7 @@ export class CDPConnectionPool {
   }
 
   // Default viewport for consistent debugging experience
-  static readonly DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
+  static readonly DEFAULT_VIEWPORT = DEFAULT_VIEWPORT;
 
   /**
    * Create a new page with default viewport.

@@ -6,6 +6,7 @@ import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'pu
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
+import { DEFAULT_VIEWPORT, DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -364,7 +365,7 @@ export class CDPClient {
   }
 
   // Default viewport for consistent debugging experience
-  static readonly DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
+  static readonly DEFAULT_VIEWPORT = DEFAULT_VIEWPORT;
 
   /**
    * Create a new isolated browser context for session isolation
@@ -719,7 +720,7 @@ export class CDPClient {
 
     if (url) {
       try {
-        await smartGoto(page, url, { timeout: 30000 });
+        await smartGoto(page, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       } catch (err) {
         // Close the page to prevent about:blank ghost tabs on navigation failure
         const targetId = getTargetId(page.target());

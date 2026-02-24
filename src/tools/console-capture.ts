@@ -34,12 +34,7 @@ const captureStates: Map<string, CaptureState> = new Map();
 
 const definition: MCPToolDefinition = {
   name: 'console_capture',
-  description: `Capture and manage browser console logs.
-Actions:
-- "start": Start capturing console logs
-- "stop": Stop capturing and remove listener
-- "get": Get captured logs
-- "clear": Clear captured logs without stopping`,
+  description: 'Capture and retrieve browser console output (start, stop, get, clear).',
   inputSchema: {
     type: 'object',
     properties: {
