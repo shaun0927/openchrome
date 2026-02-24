@@ -400,6 +400,7 @@ export class MCPServer {
           (result as Record<string, unknown>)._hint = hint;
           const content = (result as Record<string, unknown>).content;
           if (Array.isArray(content)) {
+            // Hint appended after tool result (may follow image blobs for verify:true tools)
             content.push({ type: 'text', text: `\n${hint}` });
           }
         }
