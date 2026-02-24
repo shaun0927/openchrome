@@ -276,6 +276,8 @@ export class MCPServer {
         '- Each Worker gets an isolated browser context (separate cookies, localStorage, sessions).',
         '- The user may prefix requests with "oc" to indicate browser automation (e.g., "oc screenshot my Gmail").',
         '',
+        'DOM DELTA: Action tools return [DOM Delta] showing what changed — prefer reading delta over screenshots.',
+        '',
         'PARALLEL WORKFLOW EXAMPLE:',
         '  "compare prices on Amazon, eBay, Walmart" → workflow_init with 3 workers, one per site',
       ].join('\n'),
@@ -393,11 +395,16 @@ export class MCPServer {
         }
       }
 
-      // Inject proactive hint
+      // Inject proactive hint into both _hint (backward compat) and content[] (guaranteed MCP delivery)
       if (this.hintEngine) {
         const hint = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false);
         if (hint) {
           (result as Record<string, unknown>)._hint = hint;
+          const content = (result as Record<string, unknown>).content;
+          if (Array.isArray(content)) {
+            // Hint appended after tool result (may follow image blobs for verify:true tools)
+            content.push({ type: 'text', text: `\n${hint}` });
+          }
         }
       }
 
@@ -424,11 +431,14 @@ export class MCPServer {
         }
       }
 
-      // Inject proactive hint for errors
+      // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
         const hint = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true);
         if (hint) {
           (errResult as Record<string, unknown>)._hint = hint;
+          if (Array.isArray(errResult.content)) {
+            errResult.content.push({ type: 'text', text: `\n${hint}` });
+          }
         }
       }
 

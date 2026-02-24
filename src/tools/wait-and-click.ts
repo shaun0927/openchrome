@@ -8,6 +8,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'wait_and_click',
@@ -281,10 +282,10 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Click the element
+    // Click the element with DOM delta capture
     const clickX = Math.round(bestMatch.rect.x);
     const clickY = Math.round(bestMatch.rect.y);
-    await page.mouse.click(clickX, clickY);
+    const { delta } = await withDomDelta(page, () => page.mouse.click(clickX, clickY));
 
     // Clean up marker
     await page.evaluate(() => {
@@ -308,7 +309,7 @@ const handler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Waited ${waitTime}ms, then clicked ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${clickX}, ${clickY})${refId ? ` [${refId}]` : ''}`,
+          text: `Waited ${waitTime}ms, then clicked ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${clickX}, ${clickY})${refId ? ` [${refId}]` : ''}${delta}`,
         },
       ],
     };

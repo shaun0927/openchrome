@@ -104,9 +104,9 @@ describe('MCPServer', () => {
         const response = (await server.handleRequest(request)) as MCPResultResponse;
         const instructions = response.result!.instructions!;
 
-        // Must mention "oc" as a prefix keyword
-        expect(instructions).toContain('oc');
-        expect(instructions).toMatch(/prefix.*oc/i);
+        // Must mention "oc" as a trigger keyword
+        expect(instructions).toContain('"oc"');
+        expect(instructions).toMatch(/oc.*browser automation|browser automation.*oc/i);
       });
 
       test('instructions contain key behavioral rules', async () => {

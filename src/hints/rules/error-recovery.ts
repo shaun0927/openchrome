@@ -19,8 +19,8 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
     hint: 'Hint: Try find(query) with natural language instead.',
   },
   {
-    test: /click_element[^a-z]*(no match|not found|could not find)/i,
-    hint: 'Hint: Element may not be loaded. Try wait_and_click.',
+    test: /no clickable elements found|no good match found|click element error/i,
+    hint: 'Hint: Element may not be loaded. Try wait_and_click or read_page mode="dom" to verify.',
   },
   {
     test: /timeout|timed?\s*out|navigation timeout/i,

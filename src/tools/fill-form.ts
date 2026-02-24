@@ -7,6 +7,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -192,143 +193,146 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Match and fill each requested field
-    for (const [fieldKey, fieldValue] of Object.entries(fields)) {
-      const keyLower = fieldKey.toLowerCase();
+    const { delta, result: formResult } = await withDomDelta(page, async () => {
+      let submitted = false;
+      // Match and fill each requested field
+      for (const [fieldKey, fieldValue] of Object.entries(fields)) {
+        const keyLower = fieldKey.toLowerCase();
 
-      // Find best matching form field
-      let bestMatch: FormField | null = null;
-      let bestScore = 0;
+        // Find best matching form field
+        let bestMatch: FormField | null = null;
+        let bestScore = 0;
 
-      for (const field of formFields) {
-        let score = 0;
-        const labelLower = field.label?.toLowerCase() || '';
-        const nameLower = field.name?.toLowerCase() || '';
-        const placeholderLower = field.placeholder?.toLowerCase() || '';
-        const ariaLower = field.ariaLabel?.toLowerCase() || '';
+        for (const field of formFields) {
+          let score = 0;
+          const labelLower = field.label?.toLowerCase() || '';
+          const nameLower = field.name?.toLowerCase() || '';
+          const placeholderLower = field.placeholder?.toLowerCase() || '';
+          const ariaLower = field.ariaLabel?.toLowerCase() || '';
 
-        // Exact matches
-        if (labelLower === keyLower) score += 100;
-        if (nameLower === keyLower) score += 90;
-        if (placeholderLower === keyLower) score += 80;
-        if (ariaLower === keyLower) score += 80;
+          // Exact matches
+          if (labelLower === keyLower) score += 100;
+          if (nameLower === keyLower) score += 90;
+          if (placeholderLower === keyLower) score += 80;
+          if (ariaLower === keyLower) score += 80;
 
-        // Contains matches
-        if (labelLower.includes(keyLower)) score += 50;
-        if (nameLower.includes(keyLower)) score += 45;
-        if (placeholderLower.includes(keyLower)) score += 40;
-        if (ariaLower.includes(keyLower)) score += 40;
+          // Contains matches
+          if (labelLower.includes(keyLower)) score += 50;
+          if (nameLower.includes(keyLower)) score += 45;
+          if (placeholderLower.includes(keyLower)) score += 40;
+          if (ariaLower.includes(keyLower)) score += 40;
 
-        // Reverse contains (field name in key)
-        if (keyLower.includes(labelLower) && labelLower.length > 2) score += 30;
-        if (keyLower.includes(nameLower) && nameLower.length > 2) score += 25;
+          // Reverse contains (field name in key)
+          if (keyLower.includes(labelLower) && labelLower.length > 2) score += 30;
+          if (keyLower.includes(nameLower) && nameLower.length > 2) score += 25;
 
-        if (score > bestScore) {
-          bestScore = score;
-          bestMatch = field;
-        }
-      }
-
-      if (!bestMatch || bestScore < 20) {
-        errors.push(`Could not find field matching "${fieldKey}"`);
-        continue;
-      }
-
-      try {
-        // Scroll into view
-        if (bestMatch.backendDOMNodeId) {
-          await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
-            backendNodeId: bestMatch.backendDOMNodeId,
-          });
-        }
-
-        // Click to focus
-        await page.mouse.click(Math.round(bestMatch.rect.x), Math.round(bestMatch.rect.y));
-        await new Promise(resolve => setTimeout(resolve, 50));
-
-        // Handle different field types
-        if (bestMatch.type === 'checkbox' || bestMatch.type === 'radio') {
-          // For checkbox/radio, only click if needed to match desired state
-          const isChecked = await page.evaluate((idx: number) => {
-            const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLInputElement;
-            return el?.checked;
-          }, formFields.indexOf(bestMatch));
-
-          const shouldBeChecked = fieldValue === true || fieldValue === 'true' || fieldValue === '1';
-          if (isChecked !== shouldBeChecked) {
-            await page.mouse.click(Math.round(bestMatch.rect.x), Math.round(bestMatch.rect.y));
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = field;
           }
-        } else if (bestMatch.tagName === 'select') {
-          // For select, use CDP to set value
-          await page.evaluate((idx: number, val: string) => {
-            const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLSelectElement;
-            if (el) {
-              el.value = val;
-              el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        if (!bestMatch || bestScore < 20) {
+          errors.push(`Could not find field matching "${fieldKey}"`);
+          continue;
+        }
+
+        try {
+          // Scroll into view
+          if (bestMatch.backendDOMNodeId) {
+            await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
+              backendNodeId: bestMatch.backendDOMNodeId,
+            });
+          }
+
+          // Click to focus
+          await page.mouse.click(Math.round(bestMatch.rect.x), Math.round(bestMatch.rect.y));
+          await new Promise(resolve => setTimeout(resolve, 50));
+
+          // Handle different field types
+          if (bestMatch.type === 'checkbox' || bestMatch.type === 'radio') {
+            // For checkbox/radio, only click if needed to match desired state
+            const isChecked = await page.evaluate((idx: number) => {
+              const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLInputElement;
+              return el?.checked;
+            }, formFields.indexOf(bestMatch));
+
+            const shouldBeChecked = fieldValue === true || fieldValue === 'true' || fieldValue === '1';
+            if (isChecked !== shouldBeChecked) {
+              await page.mouse.click(Math.round(bestMatch.rect.x), Math.round(bestMatch.rect.y));
             }
-          }, formFields.indexOf(bestMatch), String(fieldValue));
-        } else {
-          // For text inputs/textareas
-          if (clearFirst) {
-            await page.keyboard.down('Control');
-            await page.keyboard.press('KeyA');
-            await page.keyboard.up('Control');
-            await page.keyboard.press('Backspace');
+          } else if (bestMatch.tagName === 'select') {
+            // For select, use CDP to set value
+            await page.evaluate((idx: number, val: string) => {
+              const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLSelectElement;
+              if (el) {
+                el.value = val;
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }, formFields.indexOf(bestMatch), String(fieldValue));
+          } else {
+            // For text inputs/textareas
+            if (clearFirst) {
+              await page.keyboard.down('Control');
+              await page.keyboard.press('KeyA');
+              await page.keyboard.up('Control');
+              await page.keyboard.press('Backspace');
+            }
+            await page.keyboard.type(String(fieldValue));
           }
-          await page.keyboard.type(String(fieldValue));
+
+          filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
+        } catch (e) {
+          errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
         }
-
-        filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
-      } catch (e) {
-        errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
       }
-    }
 
-    // Optional: Click submit button
-    let submitted = false;
-    if (submit && filledFields.length > 0) {
-      try {
-        const submitLower = submit.toLowerCase();
+      // Optional: Click submit button
+      if (submit && filledFields.length > 0) {
+        try {
+          const submitLower = submit.toLowerCase();
 
-        // Find submit button
-        const submitButton = await page.evaluate((query: string): { x: number; y: number } | null => {
-          const queryLower = query.toLowerCase();
-          const selectors = [
-            'button[type="submit"]',
-            'input[type="submit"]',
-            'button',
-            '[role="button"]',
-            'a',
-          ];
+          // Find submit button
+          const submitButton = await page.evaluate((query: string): { x: number; y: number } | null => {
+            const queryLower = query.toLowerCase();
+            const selectors = [
+              'button[type="submit"]',
+              'input[type="submit"]',
+              'button',
+              '[role="button"]',
+              'a',
+            ];
 
-          for (const selector of selectors) {
-            for (const el of document.querySelectorAll(selector)) {
-              const text = (el.textContent?.toLowerCase() || '') +
-                (el.getAttribute('aria-label')?.toLowerCase() || '') +
-                ((el as HTMLInputElement).value?.toLowerCase() || '');
+            for (const selector of selectors) {
+              for (const el of document.querySelectorAll(selector)) {
+                const text = (el.textContent?.toLowerCase() || '') +
+                  (el.getAttribute('aria-label')?.toLowerCase() || '') +
+                  ((el as HTMLInputElement).value?.toLowerCase() || '');
 
-              if (text.includes(queryLower) || queryLower.includes(text.trim())) {
-                const rect = el.getBoundingClientRect();
-                if (rect.width > 0 && rect.height > 0) {
-                  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+                if (text.includes(queryLower) || queryLower.includes(text.trim())) {
+                  const rect = el.getBoundingClientRect();
+                  if (rect.width > 0 && rect.height > 0) {
+                    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+                  }
                 }
               }
             }
-          }
-          return null;
-        }, submitLower);
+            return null;
+          }, submitLower);
 
-        if (submitButton) {
-          await page.mouse.click(Math.round(submitButton.x), Math.round(submitButton.y));
-          submitted = true;
-          await new Promise(resolve => setTimeout(resolve, 100));
-        } else {
-          errors.push(`Could not find submit button matching "${submit}"`);
+          if (submitButton) {
+            await page.mouse.click(Math.round(submitButton.x), Math.round(submitButton.y));
+            submitted = true;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          } else {
+            errors.push(`Could not find submit button matching "${submit}"`);
+          }
+        } catch (e) {
+          errors.push(`Failed to submit: ${e instanceof Error ? e.message : String(e)}`);
         }
-      } catch (e) {
-        errors.push(`Failed to submit: ${e instanceof Error ? e.message : String(e)}`);
       }
-    }
+      return { submitted };
+    }, { settleMs: 200 });
 
     // Build result message
     const resultParts: string[] = [];
@@ -337,7 +341,7 @@ const handler: ToolHandler = async (
       resultParts.push(`Filled ${filledFields.length} field(s): ${filledFields.join(', ')}`);
     }
 
-    if (submitted) {
+    if (formResult.submitted) {
       resultParts.push(`Submitted form via "${submit}"`);
     }
 
@@ -349,7 +353,7 @@ const handler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: resultParts.join('\n'),
+          text: resultParts.join('\n') + delta,
         },
       ],
       isError: errors.length > 0 && filledFields.length === 0,
