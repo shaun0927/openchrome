@@ -49,6 +49,91 @@ function sameToolSameResult(ctx: HintContext): boolean {
 
 export const repetitionDetectionRules: HintRule[] = [
   {
+    name: 'coordinate-click-stall',
+    priority: 90, // HIGHEST priority — catches wandering before other rules
+    match(ctx) {
+      if (ctx.toolName !== 'computer') return null;
+      if (ctx.isError) return null;
+
+      // Count recent computer clicks (coordinate-based, not screenshot)
+      const recentClicks = ctx.recentCalls.filter(c =>
+        c.toolName === 'computer' &&
+        c.result === 'success' &&
+        c.args?.action !== 'screenshot' &&
+        c.args?.action !== 'wait' &&
+        c.args?.action !== 'key' &&
+        c.args?.action !== 'type' &&
+        c.args?.action !== 'scroll'
+      );
+
+      if (recentClicks.length < 3) return null;
+
+      // Check if current action is also a click
+      const currentIsClick = /^(left_click|right_click|double_click|triple_click)/.test(
+        ctx.resultText
+      ) || /Clicked at/.test(ctx.resultText);
+
+      if (!currentIsClick) return null;
+
+      // 3+ coordinate clicks in recent 5 calls = potential stall
+      return (
+        'CLICK STALL: Multiple coordinate clicks without apparent progress. ' +
+        'Try: (1) click_element with a text/semantic query, ' +
+        '(2) read_page mode="dom" to get exact backendNodeIds, then use ref parameter, ' +
+        '(3) javascript_tool with document.querySelector().click() for programmatic click.'
+      );
+    },
+  },
+  {
+    name: 'screenshot-verification-loop',
+    priority: 91,
+    match(ctx) {
+      // Detect click-screenshot alternation pattern from recentCalls
+      if (ctx.toolName !== 'computer') return null;
+      if (ctx.isError) return null;
+
+      const recent = ctx.recentCalls;
+      if (recent.length < 3) return null;
+
+      let screenshotCount = 0;
+      let clickCount = 0;
+      for (const call of recent) {
+        if (call.toolName === 'computer') {
+          if (call.args?.action === 'screenshot') screenshotCount++;
+          else if (['left_click', 'right_click', 'double_click'].includes(call.args?.action as string)) clickCount++;
+        }
+      }
+
+      if (screenshotCount >= 2 && clickCount >= 1) {
+        return (
+          'Hint: Multiple screenshots after clicks detected. ' +
+          'The click response now includes hit element info — check the "Hit:" line instead of taking a screenshot. ' +
+          'Use read_page only when you need the full page state.'
+        );
+      }
+
+      return null;
+    },
+  },
+  {
+    name: 'js-escalation-ladder',
+    priority: 92,
+    match(ctx) {
+      if (ctx.toolName !== 'javascript_tool') return null;
+
+      // Count recent javascript_tool calls
+      const jsCallCount = ctx.recentCalls.filter(c => c.toolName === 'javascript_tool').length;
+      if (jsCallCount < 2) return null;
+
+      // 3+ JS calls in recent 5 = escalation ladder
+      return (
+        'Hint: Multiple javascript_tool calls detected — possible escalation ladder. ' +
+        'If trying to interact with an element: use click_element or computer with ref parameter instead. ' +
+        'If debugging state: use read_page mode="dom" for a structured view.'
+      );
+    },
+  },
+  {
     name: 'same-tool-error-streak',
     priority: 250,
     match(ctx) {
