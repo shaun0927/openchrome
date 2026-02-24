@@ -179,8 +179,9 @@ const handler: ToolHandler = async (
           ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${leftClickValidation.warning}`
           : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
+        const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
         return {
-          content: [{ type: 'text', text: resultText }],
+          content: [{ type: 'text', text: resultText + leftClickHitInfo }],
         };
       }
 
@@ -223,8 +224,9 @@ const handler: ToolHandler = async (
           ? `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${rightClickValidation.warning}`
           : `Right-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
+        const rightClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
         return {
-          content: [{ type: 'text', text: rightClickText }],
+          content: [{ type: 'text', text: rightClickText + rightClickHitInfo }],
         };
       }
 
@@ -269,8 +271,9 @@ const handler: ToolHandler = async (
           ? `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${doubleClickValidation.warning}`
           : `Double-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
+        const doubleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
         return {
-          content: [{ type: 'text', text: doubleClickText }],
+          content: [{ type: 'text', text: doubleClickText + doubleClickHitInfo }],
         };
       }
 
@@ -315,8 +318,9 @@ const handler: ToolHandler = async (
           ? `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${tripleClickValidation.warning}`
           : `Triple-clicked at (${clickCoord[0]}, ${clickCoord[1]})`;
 
+        const tripleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
         return {
-          content: [{ type: 'text', text: tripleClickText }],
+          content: [{ type: 'text', text: tripleClickText + tripleClickHitInfo }],
         };
       }
 
