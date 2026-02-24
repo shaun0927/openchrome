@@ -27,26 +27,18 @@ export const sequenceDetectionRules: HintRule[] = [
       // Check if current call is a coordinate click
       if (!/Clicked at/.test(ctx.resultText)) return null;
 
-      // Check if any recent call caused a scroll
-      for (const call of ctx.recentCalls) {
-        if (call.toolName === 'computer') {
-          // Check if previous click result mentioned scroll
-          if (call.args?.action === 'scroll' || call.args?.action === 'scroll_to') {
-            return (
-              'Hint: Previous action caused scroll — coordinates from before the scroll may be stale. ' +
-              'Use read_page to get fresh element positions, or use ref-based click.'
-            );
-          }
-        }
-        // Also check if a click_element or navigate caused implicit scroll
-        if (call.toolName === 'click_element' || call.toolName === 'navigate') {
-          // Navigation/click_element may have scrolled the page
-          return (
-            'Hint: Previous navigation or click may have scrolled the page. ' +
-            'Verify coordinates are still valid with read_page, or use ref-based click.'
-          );
-        }
-        break; // Only check the most recent call
+      // Only check the most recent call for explicit scroll actions
+      if (ctx.recentCalls.length === 0) return null;
+      const prev = ctx.recentCalls[0];
+
+      if (
+        prev.toolName === 'computer' &&
+        (prev.args?.action === 'scroll' || prev.args?.action === 'scroll_to')
+      ) {
+        return (
+          'Hint: Previous action caused scroll — coordinates from before the scroll may be stale. ' +
+          'Use read_page to get fresh element positions, or use ref-based click.'
+        );
       }
 
       return null;

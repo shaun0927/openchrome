@@ -66,7 +66,7 @@ export const repetitionDetectionRules: HintRule[] = [
         c.args?.action !== 'scroll'
       );
 
-      if (recentClicks.length < 2) return null;
+      if (recentClicks.length < 3) return null;
 
       // Check if current action is also a click
       const currentIsClick = /^(left_click|right_click|double_click|triple_click)/.test(
@@ -75,36 +75,30 @@ export const repetitionDetectionRules: HintRule[] = [
 
       if (!currentIsClick) return null;
 
-      // 3+ clicks in recent 5 calls = potential stall
-      if (recentClicks.length >= 2) {
-        return (
-          '⚠ CLICK STALL: Multiple coordinate clicks without apparent progress. ' +
-          'Try: (1) click_element with a text/semantic query, ' +
-          '(2) read_page mode="dom" to get exact backendNodeIds, then use ref parameter, ' +
-          '(3) javascript_tool with document.querySelector().click() for programmatic click.'
-        );
-      }
-
-      return null;
+      // 3+ coordinate clicks in recent 5 calls = potential stall
+      return (
+        'CLICK STALL: Multiple coordinate clicks without apparent progress. ' +
+        'Try: (1) click_element with a text/semantic query, ' +
+        '(2) read_page mode="dom" to get exact backendNodeIds, then use ref parameter, ' +
+        '(3) javascript_tool with document.querySelector().click() for programmatic click.'
+      );
     },
   },
   {
     name: 'screenshot-verification-loop',
     priority: 91,
     match(ctx) {
-      // Detect: computer(screenshot) called after a recent click
+      // Detect click-screenshot alternation pattern from recentCalls
       if (ctx.toolName !== 'computer') return null;
-      if (!/screenshot/i.test(ctx.resultText) && !ctx.resultText.includes('image')) return null;
+      if (ctx.isError) return null;
 
-      // Check if recent calls show a click-screenshot-click pattern
       const recent = ctx.recentCalls;
-      if (recent.length < 2) return null;
+      if (recent.length < 3) return null;
 
       let screenshotCount = 0;
       let clickCount = 0;
       for (const call of recent) {
         if (call.toolName === 'computer') {
-          // Detect screenshots vs clicks from args
           if (call.args?.action === 'screenshot') screenshotCount++;
           else if (['left_click', 'right_click', 'double_click'].includes(call.args?.action as string)) clickCount++;
         }

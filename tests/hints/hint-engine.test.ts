@@ -298,6 +298,20 @@ describe('HintEngine', () => {
       expect(hint).toContain('CLICK STALL');
     });
 
+    it('coordinate-click-stall: does NOT trigger on only 2 recent clicks', () => {
+      const tracker = makeTracker([
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked at (100, 200)');
+      const hint = engine.getHint('computer', result, false);
+      // Another rule (same-tool-same-result) may match, but CLICK STALL should not
+      if (hint) {
+        expect(hint).not.toContain('CLICK STALL');
+      }
+    });
+
     it('screenshot-verification-loop: triggers on click+screenshot pattern', () => {
       const tracker = makeTracker([
         { toolName: 'computer', args: { action: 'screenshot' } },
@@ -306,7 +320,7 @@ describe('HintEngine', () => {
         { toolName: 'computer', args: { action: 'left_click' } },
       ]);
       const engine = new HintEngine(tracker);
-      const result = makeResult('screenshot image captured');
+      const result = makeResult('Clicked at (200, 300)');
       const hint = engine.getHint('computer', result, false);
       expect(hint).not.toBeNull();
       expect(hint).toContain('Multiple screenshots after clicks');
