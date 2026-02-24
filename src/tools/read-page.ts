@@ -8,6 +8,7 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
+import { MAX_OUTPUT_CHARS } from '../config/defaults';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -353,7 +354,7 @@ const handler: ToolHandler = async (
     // Format nodes
     const lines: string[] = [];
     let charCount = 0;
-    const MAX_OUTPUT = 50000;
+    const MAX_OUTPUT = MAX_OUTPUT_CHARS;
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;

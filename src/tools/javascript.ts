@@ -9,7 +9,7 @@ import { getSessionManager } from '../session-manager';
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
   description:
-    'Execute JavaScript code in the context of the current page. Returns the result of the last expression. For CSS/style inspection, prefer read_page with mode="css" which extracts computed styles without writing custom JS.',
+    'Execute JavaScript code in the context of the current page. Returns the result of the last expression.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -17,18 +17,13 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Tab ID to execute the code in',
       },
-      action: {
-        type: 'string',
-        const: 'javascript_exec',
-        description: 'Must be set to "javascript_exec"',
-      },
       text: {
         type: 'string',
         description:
           'The JavaScript code to execute. The result of the last expression will be returned.',
       },
     },
-    required: ['action', 'text', 'tabId'],
+    required: ['text', 'tabId'],
   },
 };
 
@@ -119,7 +114,7 @@ const handler: ToolHandler = async (
         content: [
           {
             type: 'text',
-            text: `JavaScript error: ${result.error}` + (/style|css|color|font|margin|padding|display|background/i.test(code + (result.error || '')) ? '. Hint: For CSS/style inspection, use read_page with mode="css" instead of custom JS.' : ''),
+            text: `JavaScript error: ${result.error}`,
           },
         ],
         isError: true,

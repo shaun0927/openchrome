@@ -10,14 +10,13 @@ import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { DEFAULT_SCREENSHOT_QUALITY, MAX_OUTPUT_CHARS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'batch_paginate',
   description:
     'Extract content from multiple pages of a paginated viewer (PDF, slides, articles) in a single call. ' +
-    'Eliminates the need for repeated key+screenshot cycles by executing the pagination loop server-side. ' +
-    'ALWAYS prefer this over manual ArrowRight+screenshot loops when dealing with >3 pages. ' +
-    'Supports keyboard navigation, click-based pagination, and URL-based parallel extraction.',
+    'Supports keyboard navigation, click-based pagination, URL-based parallel extraction, and infinite scroll.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -193,7 +192,7 @@ const handler: ToolHandler = async (
           try {
             const { data } = await cdpSession.send('Page.captureScreenshot', {
               format: 'webp',
-              quality: 60,
+              quality: DEFAULT_SCREENSHOT_QUALITY,
               optimizeForSpeed: true,
             });
             result.screenshot = data;
@@ -214,7 +213,7 @@ const handler: ToolHandler = async (
       if (captureMode === 'dom') {
         const rawHtml = await page.evaluate(() => document.body.innerHTML);
         // Trim to avoid huge payloads
-        result.dom = rawHtml.length > 50000 ? rawHtml.slice(0, 50000) + '...[truncated]' : rawHtml;
+        result.dom = rawHtml.length > MAX_OUTPUT_CHARS ? rawHtml.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]' : rawHtml;
       }
     } catch (err) {
       result.error = err instanceof Error ? err.message : String(err);

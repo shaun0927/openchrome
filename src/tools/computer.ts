@@ -7,14 +7,11 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { DEFAULT_SCREENSHOT_QUALITY } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
-  description:
-    'Use mouse and keyboard to interact with a web browser, and take screenshots. ' +
-    '⚠️ PAGINATION WARNING: If you need to capture more than 3 pages of a document (PDF viewer, slides, article), ' +
-    'do NOT use repeated key+screenshot cycles. Instead: (1) call read_page to detect pagination type and total pages, ' +
-    '(2) use batch_paginate for server-side bulk extraction. Manual key/screenshot is fine for 1-3 pages.',
+  description: 'Use mouse and keyboard to interact with a web browser, and take screenshots.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -108,7 +105,7 @@ const handler: ToolHandler = async (
           try {
             const { data } = await cdpSession.send('Page.captureScreenshot', {
               format: 'webp',
-              quality: 60,
+              quality: DEFAULT_SCREENSHOT_QUALITY,
               optimizeForSpeed: true,
             });
 

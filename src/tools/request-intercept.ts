@@ -59,17 +59,7 @@ function matchesPattern(url: string, pattern: string): boolean {
 
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
-  description: `Intercept and control network requests.
-Actions:
-- "enable": Enable request interception
-- "disable": Disable request interception
-- "addRule": Add an intercept rule
-- "removeRule": Remove a rule by ID
-- "listRules": List all active rules
-- "getLogs": Get logged requests
-- "clearLogs": Clear request logs
-
-Rule actions: "block" (abort request), "modify" (change response), "log" (just log)`,
+  description: 'Intercept and monitor network requests. Supports logging, blocking, modifying, and mocking responses.',
   inputSchema: {
     type: 'object',
     properties: {

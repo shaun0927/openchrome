@@ -32,9 +32,7 @@ const USER_AGENT_PRESETS: Record<string, string> = {
 
 const definition: MCPToolDefinition = {
   name: 'user_agent',
-  description: `Change the browser's User-Agent string.
-Presets: ${Object.keys(USER_AGENT_PRESETS).join(', ')}
-Use "preset" for predefined user agents or "custom" for a custom string.`,
+  description: 'Set or reset the browser user agent string. Use a preset or provide a custom string.',
   inputSchema: {
     type: 'object',
     properties: {

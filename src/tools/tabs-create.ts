@@ -8,7 +8,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_create_mcp',
-  description: 'Creates a new tab with the specified URL. URL is required to prevent about:blank tab accumulation. Use workerId for parallel browser operations.',
+  description: 'Creates a new tab with the specified URL. Use workerId for parallel browser operations.',
   inputSchema: {
     type: 'object',
     properties: {

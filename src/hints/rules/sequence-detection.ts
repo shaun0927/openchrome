@@ -25,7 +25,7 @@ export const sequenceDetectionRules: HintRule[] = [
       if (ctx.toolName !== 'navigate') return null;
       if (ctx.isError) return null;
       if (/login|sign.?in|log.?in|auth/i.test(ctx.resultText)) {
-        return 'Hint: Login page detected. Use fill_form({fields:{...}, submit:"Login"}) for credentials.';
+        return 'Hint: Login page detected. The user should already be logged in via their Chrome profile. If not, check that the correct Chrome profile is connected.';
       }
       return null;
     },
@@ -35,7 +35,7 @@ export const sequenceDetectionRules: HintRule[] = [
     priority: 301,
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
-      if (consecutiveCount(ctx, 'read_page') >= 1) {
+      if (consecutiveCount(ctx, 'read_page') >= 2) {
         return 'Hint: Use find(query) or javascript_tool for specific elements.';
       }
       return null;

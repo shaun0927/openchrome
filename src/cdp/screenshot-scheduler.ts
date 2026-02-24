@@ -10,6 +10,7 @@
 
 import { Page } from 'puppeteer-core';
 import { CDPClient } from './client';
+import { DEFAULT_SCREENSHOT_QUALITY } from '../config/defaults';
 
 export interface ScreenshotOptions {
   format?: 'webp' | 'png' | 'jpeg';
@@ -67,7 +68,7 @@ export class ScreenshotScheduler {
 
     try {
       const format = options.format || 'webp';
-      const quality = options.quality ?? 60;
+      const quality = options.quality ?? DEFAULT_SCREENSHOT_QUALITY;
 
       const params: Record<string, unknown> = {
         format,

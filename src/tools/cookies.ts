@@ -8,12 +8,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'cookies',
-  description: `Manage browser cookies for the current page.
-Actions:
-- "get": Get all cookies or a specific cookie by name
-- "set": Set a cookie with name, value, and optional parameters
-- "delete": Delete a specific cookie by name
-- "clear": Clear all cookies for the current domain`,
+  description: 'Manage browser cookies for the current page (get, set, delete, clear).',
   inputSchema: {
     type: 'object',
     properties: {

@@ -13,6 +13,7 @@ import { getGlobalConfig } from './config/global';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
 import { smartGoto } from './utils/smart-goto';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from './config/defaults';
 import { BrowserRouter } from './router';
 import { HybridConfig } from './types/browser-backend';
 import { StorageStateManager } from './storage-state';
@@ -657,7 +658,7 @@ export class SessionManager {
         poolPage = await this.connectionPool.acquirePage();
         // Navigate the pre-warmed page to the target URL
         if (url) {
-          await smartGoto(poolPage, url, { timeout: 30000 });
+          await smartGoto(poolPage, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
         }
         // Copy cookies from the worker's browser context if available
         // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
