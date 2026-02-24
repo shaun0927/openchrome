@@ -635,7 +635,7 @@ async function getHitElementInfo(
       interactiveRoles.has((attrMap['role'] || '').toLowerCase());
 
     // Build attribute string with key attrs only
-    const keyAttrs = ['id', 'class', 'role', 'aria-label', 'data-testid', 'type', 'href', 'data-issue-id'];
+    const keyAttrs = ['id', 'class', 'role', 'aria-label', 'data-testid', 'type', 'href'];
     const attrStr = keyAttrs
       .filter((k) => attrMap[k] !== undefined)
       .map((k) => `${k}="${attrMap[k]}"`)
@@ -675,7 +675,7 @@ async function getHitElementInfo(
               if (
                 el &&
                 el.matches(
-                  'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"],mark[data-issue-id]'
+                  'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"]'
                 )
               ) {
                 const rect = el.getBoundingClientRect();
@@ -698,8 +698,18 @@ async function getHitElementInfo(
         );
 
         if (nearestInfo) {
-          const direction = nearestInfo.dy > 0 ? 'below' : 'above';
-          hitInfo += `\nNearest interactive: <${nearestInfo.tag}> "${nearestInfo.text}" at (${nearestInfo.x}, ${nearestInfo.y}), ${Math.abs(nearestInfo.dy)}px ${direction}`;
+          const absDx = Math.abs(nearestInfo.dx);
+          const absDy = Math.abs(nearestInfo.dy);
+          let direction: string;
+          let distance: number;
+          if (absDy >= absDx) {
+            direction = nearestInfo.dy > 0 ? 'below' : 'above';
+            distance = absDy;
+          } else {
+            direction = nearestInfo.dx > 0 ? 'right' : 'left';
+            distance = absDx;
+          }
+          hitInfo += `\nNearest interactive: <${nearestInfo.tag}> "${nearestInfo.text}" at (${nearestInfo.x}, ${nearestInfo.y}), ${distance}px ${direction}`;
         }
       } catch { /* silently skip */ }
     }

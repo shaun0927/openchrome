@@ -63,7 +63,7 @@ export class HintEngine {
       ...errorRecoveryRules,        // priority 100-108
       ...paginationDetectionRules,   // priority 190-192
       ...compositeSuggestionRules,   // priority 200-203
-      ...repetitionDetectionRules,   // priority 90-252
+      ...repetitionDetectionRules,   // priority 245-252
       ...sequenceDetectionRules,     // priority 300-304
       ...createLearnedRules(this.learner), // priority 350
       ...successHintRules,           // priority 400-403

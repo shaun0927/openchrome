@@ -80,6 +80,7 @@ interface PageResult {
   pageNumber: number;
   text?: string;
   screenshot?: string; // base64
+  screenshotMimeType?: 'image/webp' | 'image/png';
   dom?: string;
   error?: string;
 }
@@ -196,6 +197,7 @@ const handler: ToolHandler = async (
               optimizeForSpeed: true,
             });
             result.screenshot = data;
+            result.screenshotMimeType = 'image/webp';
           } finally {
             await cdpSession.detach().catch(() => {});
           }
@@ -203,6 +205,7 @@ const handler: ToolHandler = async (
           // Fallback to Puppeteer PNG
           const screenshotData = await page.screenshot({ encoding: 'base64', type: 'png' });
           result.screenshot = screenshotData as string;
+          result.screenshotMimeType = 'image/png';
         }
       }
 
@@ -466,7 +469,7 @@ const handler: ToolHandler = async (
           content.push({
             type: 'image',
             data: p.screenshot,
-            mimeType: 'image/webp',
+            mimeType: p.screenshotMimeType ?? 'image/webp',
           });
         }
       }

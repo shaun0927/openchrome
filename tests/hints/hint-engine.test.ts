@@ -157,8 +157,8 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('{"action":"navigate","url":"https://app.com/login","title":"Login - App"}');
       const hint = engine.getHint('navigate', result, false);
-      expect(hint).toContain('fill_form');
       expect(hint).toContain('Login');
+      expect(hint).toContain('Chrome profile');
     });
 
     it('should detect repeated read_page', () => {
@@ -193,9 +193,9 @@ describe('HintEngine', () => {
       expect(hint).toContain('broader query');
     });
 
-    it('should hint after successful click_element', () => {
+    it('should hint after click_element with navigation', () => {
       const engine = new HintEngine(new ActivityTracker());
-      const result = makeResult('Clicked "Submit" button successfully');
+      const result = makeResult('Clicked "Submit" button [Page navigated to /dashboard]');
       const hint = engine.getHint('click_element', result, false);
       expect(hint).toContain('wait_for');
     });
