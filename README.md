@@ -11,6 +11,8 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/openchrome-mcp"><img src="https://img.shields.io/npm/v/openchrome-mcp" alt="npm"></a>
+  <a href="https://github.com/shaun0927/openchrome/releases/latest"><img src="https://img.shields.io/github/v/release/shaun0927/openchrome" alt="Latest Release"></a>
+  <a href="https://github.com/shaun0927/openchrome/releases/latest"><img src="https://img.shields.io/github/release-date/shaun0927/openchrome" alt="Release Date"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
 </p>
 
@@ -200,6 +202,89 @@ oc doctor                   # Diagnose issues
 | **macOS** | Full support |
 | **Windows** | Full support (taskkill process cleanup) |
 | **Linux** | Full support (Snap paths, `CHROME_PATH` env, `--no-sandbox` for CI) |
+
+---
+
+## DOM Mode (Token Efficient)
+
+`read_page` supports three output modes:
+
+| Mode | Output | Tokens | Use Case |
+|------|--------|--------|----------|
+| `ax` (default) | Accessibility tree with `ref_N` IDs | Baseline | Screen readers, semantic analysis |
+| `dom` | Compact DOM with `backendNodeId` | **~5-10x fewer** | Click, fill, extract — most tasks |
+| `css` | CSS diagnostic info (variables, computed styles, framework detection) | Minimal | Debugging styles, Tailwind detection |
+
+**DOM mode example:**
+```
+read_page tabId="tab1" mode="dom"
+
+[page_stats] url: https://example.com | title: Example | scroll: 0,0 | viewport: 1920x1080
+
+[142]<input type="search" placeholder="Search..." aria-label="Search"/>
+[156]<button type="submit"/>Search
+[289]<a href="/home"/>Home
+[352]<h1/>Welcome to Example
+```
+
+DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` IDs which are cleared on each AX-mode `read_page` call.
+
+---
+
+## Stable Selectors
+
+Action tools that accept a `ref` parameter (`form_input`, `computer`, etc.) support three identifier formats:
+
+| Format | Example | Source |
+|--------|---------|--------|
+| `ref_N` | `ref_5` | From `read_page` AX mode (ephemeral) |
+| Raw integer | `142` | From `read_page` DOM mode (stable) |
+| `node_N` | `node_142` | Explicit prefix form (stable) |
+
+**Backward compatible** — existing `ref_N` workflows work unchanged. DOM mode's `backendNodeId` eliminates "ref not found" errors caused by stale references.
+
+---
+
+## Session Persistence
+
+Headless mode (`--headless-shell`) doesn't persist cookies across restarts. Enable storage state persistence to maintain authenticated sessions:
+
+```bash
+oc serve --persist-storage                         # Enable persistence
+oc serve --persist-storage --storage-dir ./state    # Custom directory
+```
+
+Cookies and localStorage are saved atomically every 30 seconds and restored on session creation.
+
+---
+
+## Benchmarks
+
+Measure token efficiency and parallel performance:
+
+```bash
+npm run benchmark                                    # Stub mode: AX vs DOM token efficiency (interactive)
+npm run benchmark:ci                                 # Stub mode: AX vs DOM with JSON + regression detection
+npm run benchmark -- --mode real                     # Real mode: actual MCP server (requires Chrome)
+npx ts-node tests/benchmark/run-parallel.ts          # Stub mode: all parallel benchmark categories
+npx ts-node tests/benchmark/run-parallel.ts --mode real --category batch-js --runs 1  # Real mode
+npx ts-node tests/benchmark/run-parallel.ts --mode real --category realworld --runs 1  # Real-world benchmarks
+```
+
+By default, benchmarks run in **stub mode** — measuring protocol correctness and tool-call counts with mock responses. Use `--mode real` to spawn an actual MCP server subprocess and measure real performance (requires Chrome to be available).
+
+**Parallel benchmark categories:**
+
+| Category | What It Measures |
+|----------|-----------------|
+| Multi-step interaction | Form fill + click sequences across N parallel pages |
+| Batch JS execution | N × `javascript_tool` vs 1 × `batch_execute` |
+| Compiled plan execution | Sequential agent tool calls vs single `execute_plan` |
+| Streaming collection | Blocking vs `workflow_collect_partial` |
+| Init overhead | Sequential `tabs_create` vs batch `workflow_init` |
+| Fault tolerance | Circuit breaker recovery speed |
+| Scalability curve | Speedup efficiency at 1–50x concurrency |
+| **Real-world** | Multi-site crawl, heavy JS, pipeline, scalability with public websites (`httpbin.org`, `jsonplaceholder`, `example.com`) — NOT included in `all`, requires network |
 
 ---
 

@@ -56,6 +56,34 @@ export {
 
 export type { ScalabilityPoint } from './parallel-scalability';
 
+export {
+  createRealworldCrawlSequentialTask,
+  createRealworldCrawlParallelTask,
+  createRealworldCrawlBenchmarkPair,
+  createAllRealworldCrawlTasks,
+} from './realworld-crawl';
+
+export {
+  createRealworldHeavyJSSequentialTask,
+  createRealworldHeavyJSParallelTask,
+  createRealworldHeavyJSBenchmarkPair,
+  createAllRealworldHeavyJSTasks,
+} from './realworld-heavy-js';
+
+export {
+  createRealworldPipelineSequentialTask,
+  createRealworldPipelineCompiledTask,
+  createRealworldPipelineBenchmarkPair,
+  createAllRealworldPipelineTasks,
+} from './realworld-pipeline';
+
+export {
+  createRealworldScalabilitySequentialTask,
+  createRealworldScalabilityParallelTask,
+  createRealworldScalabilityBenchmarkPair,
+  createAllRealworldScalabilityTasks,
+} from './realworld-scalability';
+
 export { createNavigationTask } from './navigation';
 export { createReadingTask } from './reading';
 export { createSearchTask } from './search';
