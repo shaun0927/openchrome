@@ -209,6 +209,77 @@ describe('ReadPageTool - DOM Mode', () => {
       // Should NOT contain non-interactive elements
       expect(text).not.toContain('<h1');
     });
+
+    test('interactive elements have ★ marker', async () => {
+      const handler = await getReadPageHandler();
+      const result = await handler(testSessionId, { tabId: testTargetId, mode: 'dom' }) as any;
+      const text = result.content[0].text;
+
+      // Interactive elements (button, input, a) should have ★ marker
+      expect(text).toContain('★');
+      // button line should have ★
+      expect(text).toMatch(/<button[^>]*\/>.*★/);
+      // input line should have ★
+      expect(text).toMatch(/<input[^>]*\/>.*★/);
+      // a (link) line should have ★
+      expect(text).toMatch(/<a[^>]*\/>.*★/);
+    });
+
+    test('non-interactive elements do not have ★ marker', async () => {
+      const handler = await getReadPageHandler();
+      const result = await handler(testSessionId, { tabId: testTargetId, mode: 'dom' }) as any;
+      const text = result.content[0].text;
+
+      // h1 is not interactive — its line should not have ★
+      const lines = text.split('\n');
+      const h1Line = lines.find((l: string) => l.includes('<h1'));
+      expect(h1Line).toBeDefined();
+      expect(h1Line).not.toContain('★');
+    });
+
+    test('new data-* attributes appear in DOM output', async () => {
+      // Set up a DOM tree with data-cy and data-qa attributes
+      const domWithDataAttrs = {
+        nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+        children: [{
+          nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'HTML', localName: 'html',
+          attributes: [],
+          children: [{
+            nodeId: 3, backendNodeId: 3, nodeType: 1, nodeName: 'BODY', localName: 'body',
+            attributes: [],
+            children: [{
+              nodeId: 4, backendNodeId: 200, nodeType: 1, nodeName: 'BUTTON', localName: 'button',
+              attributes: ['data-cy', 'submit-btn', 'data-qa', 'qa-submit', 'data-state', 'active', 'tabindex', '0'],
+              children: [],
+            }],
+          }],
+        }],
+      };
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'DOM.getDocument',
+        { depth: -1, pierce: true },
+        { root: domWithDataAttrs }
+      );
+
+      const handler = await getReadPageHandler();
+      const result = await handler(testSessionId, { tabId: testTargetId, mode: 'dom' }) as any;
+      const text = result.content[0].text;
+
+      expect(text).toContain('data-cy="submit-btn"');
+      expect(text).toContain('data-qa="qa-submit"');
+      expect(text).toContain('data-state="active"');
+      expect(text).toContain('tabindex="0"');
+    });
+
+    test('docSize appears in page_stats', async () => {
+      const handler = await getReadPageHandler();
+      const result = await handler(testSessionId, { tabId: testTargetId, mode: 'dom' }) as any;
+      const text = result.content[0].text;
+
+      // Should contain docSize in page_stats header
+      expect(text).toContain('docSize: 1920x3000');
+    });
   });
 
   describe('Backward Compatibility', () => {
@@ -219,7 +290,8 @@ describe('ReadPageTool - DOM Mode', () => {
 
       // Default should be AX tree mode
       expect(text).toContain('ref_');
-      expect(text).not.toContain('[page_stats]');
+      // AX mode now includes page_stats (added for LLM context)
+      expect(text).toContain('[page_stats]');
 
       // clearTargetRefs SHOULD be called in AX mode
       expect(mockRefIdManager.clearTargetRefs).toHaveBeenCalled();

@@ -58,6 +58,9 @@ const KEEP_ATTRS = new Set([
   'id', 'name', 'type', 'value', 'placeholder', 'aria-label', 'role',
   'href', 'src', 'alt', 'title', 'data-testid', 'disabled', 'checked',
   'selected', 'required', 'class',
+  // Common data attributes for testing and automation
+  'data-cy', 'data-qa', 'data-id', 'data-value', 'data-state',
+  'tabindex',
 ]);
 
 // Interactive tag names
@@ -117,6 +120,7 @@ function formatElement(
   attrMap: Map<string, string>,
   indent: string,
   textContent: string,
+  interactive: boolean,
 ): string {
   const tagName = node.localName || node.nodeName.toLowerCase();
 
@@ -129,7 +133,8 @@ function formatElement(
   }
   const attrStr = attrParts.length > 0 ? ' ' + attrParts.join(' ') : '';
 
-  const line = `${indent}[${node.backendNodeId}]<${tagName}${attrStr}/>${textContent}`;
+  const interactiveMarker = interactive ? ' ★' : '';
+  const line = `${indent}[${node.backendNodeId}]<${tagName}${attrStr}/>${textContent}${interactiveMarker}`;
   return line;
 }
 
@@ -183,7 +188,7 @@ function serializeNode(
 
   if (!ctx.interactiveOnly || interactive) {
     const textContent = getDirectTextContent(node);
-    const line = formatElement(node, attrMap, indent, textContent);
+    const line = formatElement(node, attrMap, indent, textContent, interactive);
     const lineWithNewline = line + '\n';
 
     if (ctx.totalChars + lineWithNewline.length > ctx.maxOutputChars) {
@@ -256,7 +261,7 @@ export async function serializeDOM(
 
   // Add page stats header
   if (includePageStats) {
-    const statsLine = `[page_stats] url: ${pageStats.url} | title: ${pageStats.title} | scroll: ${pageStats.scrollX},${pageStats.scrollY} | viewport: ${pageStats.viewportWidth}x${pageStats.viewportHeight}\n\n`;
+    const statsLine = `[page_stats] url: ${pageStats.url} | title: ${pageStats.title} | scroll: ${pageStats.scrollX},${pageStats.scrollY} | viewport: ${pageStats.viewportWidth}x${pageStats.viewportHeight} | docSize: ${pageStats.scrollWidth}x${pageStats.scrollHeight}\n\n`;
     lines.push(statsLine);
   }
 
