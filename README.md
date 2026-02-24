@@ -263,10 +263,15 @@ Cookies and localStorage are saved atomically every 30 seconds and restored on s
 Measure token efficiency and parallel performance:
 
 ```bash
-npm run benchmark                                    # AX vs DOM token efficiency (interactive)
-npm run benchmark:ci                                 # AX vs DOM with JSON + regression detection
-npx ts-node tests/benchmark/run-parallel.ts          # All parallel benchmark categories
+npm run benchmark                                    # Stub mode: AX vs DOM token efficiency (interactive)
+npm run benchmark:ci                                 # Stub mode: AX vs DOM with JSON + regression detection
+npm run benchmark -- --mode real                     # Real mode: actual MCP server (requires Chrome)
+npx ts-node tests/benchmark/run-parallel.ts          # Stub mode: all parallel benchmark categories
+npx ts-node tests/benchmark/run-parallel.ts --mode real --category batch-js --runs 1  # Real mode
+npx ts-node tests/benchmark/run-parallel.ts --mode real --category realworld --runs 1  # Real-world benchmarks
 ```
+
+By default, benchmarks run in **stub mode** — measuring protocol correctness and tool-call counts with mock responses. Use `--mode real` to spawn an actual MCP server subprocess and measure real performance (requires Chrome to be available).
 
 **Parallel benchmark categories:**
 
@@ -279,6 +284,7 @@ npx ts-node tests/benchmark/run-parallel.ts          # All parallel benchmark ca
 | Init overhead | Sequential `tabs_create` vs batch `workflow_init` |
 | Fault tolerance | Circuit breaker recovery speed |
 | Scalability curve | Speedup efficiency at 1–50x concurrency |
+| **Real-world** | Multi-site crawl, heavy JS, pipeline, scalability with public websites (`httpbin.org`, `jsonplaceholder`, `example.com`) — NOT included in `all`, requires network |
 
 ---
 

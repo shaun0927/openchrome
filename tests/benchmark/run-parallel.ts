@@ -3,14 +3,14 @@
  * Usage: npx ts-node tests/benchmark/run-parallel.ts [options]
  *
  * Options:
- *   --category <name>   Run specific category (multistep|batch-js|execute-plan|streaming|init-overhead|fault-tolerance|scalability|all)
+ *   --category <name>   Run specific category (multistep|batch-js|execute-plan|streaming|init-overhead|fault-tolerance|scalability|realworld|all)
  *   --mode <mode>       Adapter mode: stub (default) or real
  *   --runs <n>          Runs per task (default: 3)
  *   --json              Output JSON instead of ASCII report
  */
 
 import { BenchmarkRunner } from './benchmark-runner';
-import { OpenChromeStubAdapter } from './adapters';
+import { OpenChromeStubAdapter, OpenChromeRealAdapter } from './adapters';
 import {
   createAllMultistepTasks,
   createAllBatchJSTasks,
@@ -19,6 +19,10 @@ import {
   createAllInitOverheadTasks,
   createAllFaultToleranceTasks,
   createAllScalabilityTasks,
+  createAllRealworldCrawlTasks,
+  createAllRealworldHeavyJSTasks,
+  createAllRealworldPipelineTasks,
+  createAllRealworldScalabilityTasks,
 } from './tasks';
 import {
   buildComparisons,
@@ -60,10 +64,9 @@ function parseArgs(argv: string[]): {
 async function main(): Promise<void> {
   const { category, mode, runs, json } = parseArgs(process.argv);
 
-  if (mode === 'real') {
-    console.error('Warning: --mode real is not yet supported. Using stub adapter.');
-  }
-  const adapter = new OpenChromeStubAdapter({ mode: 'ax' });
+  const adapter = mode === 'real'
+    ? new OpenChromeRealAdapter({ mode: 'ax' })
+    : new OpenChromeStubAdapter({ mode: 'ax' });
   const runner = new BenchmarkRunner({ runsPerTask: runs });
 
   const executePlanPair = createExecutePlanBenchmarkPair();
@@ -109,6 +112,21 @@ async function main(): Promise<void> {
     }
   }
 
+  if (category === 'realworld') {
+    for (const task of createAllRealworldCrawlTasks()) {
+      runner.addTask(task);
+    }
+    for (const task of createAllRealworldHeavyJSTasks()) {
+      runner.addTask(task);
+    }
+    for (const task of createAllRealworldPipelineTasks()) {
+      runner.addTask(task);
+    }
+    for (const task of createAllRealworldScalabilityTasks()) {
+      runner.addTask(task);
+    }
+  }
+
   const report = await runner.run(adapter);
 
   // Split report into sequential and parallel sub-reports for comparison
@@ -127,6 +145,10 @@ async function main(): Promise<void> {
     { title: 'Init Overhead', prefix: 'init' },
     { title: 'Fault Tolerance', prefix: 'fault' },
     { title: 'Scalability', prefix: 'scale' },
+    { title: 'Real-World: Multi-Site Crawl', prefix: 'realcrawl' },
+    { title: 'Real-World: Heavy JS Execution', prefix: 'realjs' },
+    { title: 'Real-World: Pipeline (execute_plan)', prefix: 'realpipeline' },
+    { title: 'Real-World: Scalability Curve', prefix: 'realscale' },
   ];
 
   const categories = categoryDefs

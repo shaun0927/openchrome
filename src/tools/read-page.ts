@@ -7,6 +7,20 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
+import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
+
+function formatPaginationSection(pagination: PaginationInfo): string {
+  if (pagination.type === 'none') return '';
+  const lines: string[] = ['', '[Pagination Detected]'];
+  lines.push(`Type: ${pagination.type}`);
+  if (pagination.currentPage !== undefined && pagination.totalPages !== undefined) {
+    lines.push(`Pages: ${pagination.currentPage} / ${pagination.totalPages}`);
+  } else if (pagination.totalPages !== undefined) {
+    lines.push(`Total Pages: ${pagination.totalPages}`);
+  }
+  lines.push(`Strategy: ${pagination.suggestedStrategy}`);
+  return lines.join('\n');
+}
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
@@ -258,8 +272,10 @@ const handler: ToolHandler = async (
         lines.push('No elements with notable visual styles found.');
       }
 
+      const cssText = lines.join('\n');
+      const cssPagination = await detectPagination(page, tabId);
       return {
-        content: [{ type: 'text', text: lines.join('\n') }],
+        content: [{ type: 'text', text: cssText + formatPaginationSection(cssPagination) }],
       };
     }
 
@@ -277,8 +293,9 @@ const handler: ToolHandler = async (
         outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
       }
 
+      const domPagination = await detectPagination(page, tabId);
       return {
-        content: [{ type: 'text', text: outputText }],
+        content: [{ type: 'text', text: outputText + formatPaginationSection(domPagination) }],
       };
     }
 
@@ -423,6 +440,8 @@ const handler: ToolHandler = async (
     }
 
     const output = lines.join('\n');
+    const axPagination = await detectPagination(page, tabId);
+    const axPaginationSection = formatPaginationSection(axPagination);
 
     if (charCount > MAX_OUTPUT) {
       return {
@@ -431,14 +450,15 @@ const handler: ToolHandler = async (
             type: 'text',
             text:
               output +
-              '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]',
+              '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]' +
+              axPaginationSection,
           },
         ],
       };
     }
 
     return {
-      content: [{ type: 'text', text: output }],
+      content: [{ type: 'text', text: output + axPaginationSection }],
     };
   } catch (error) {
     return {
