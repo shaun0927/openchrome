@@ -69,10 +69,6 @@ async function main(): Promise<void> {
     : new OpenChromeStubAdapter({ mode: 'ax' });
   const runner = new BenchmarkRunner({ runsPerTask: runs });
 
-  if ('setup' in adapter) {
-    await (adapter as OpenChromeRealAdapter).setup();
-  }
-
   const executePlanPair = createExecutePlanBenchmarkPair();
 
   if (category === 'multistep' || category === 'all') {
@@ -167,10 +163,6 @@ async function main(): Promise<void> {
     console.log(toJSON(categories));
   } else {
     console.log(formatParallelReport(categories));
-  }
-
-  if ('teardown' in adapter) {
-    await (adapter as OpenChromeRealAdapter).teardown();
   }
 }
 

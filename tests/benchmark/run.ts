@@ -46,11 +46,6 @@ async function main(): Promise<void> {
     ? new OpenChromeRealAdapter({ mode: 'dom' })
     : new OpenChromeAdapter({ mode: 'dom' });
 
-  if (mode === 'real') {
-    await (axAdapter as OpenChromeRealAdapter).setup();
-    await (domAdapter as OpenChromeRealAdapter).setup();
-  }
-
   console.log(`Running benchmarks in AX mode (${mode})...`);
   const axReport = await runner.run(axAdapter);
 
@@ -79,10 +74,6 @@ async function main(): Promise<void> {
     console.log(BenchmarkRunner.formatReport(reports));
   }
 
-  if (mode === 'real') {
-    await (axAdapter as OpenChromeRealAdapter).teardown();
-    await (domAdapter as OpenChromeRealAdapter).teardown();
-  }
 }
 
 main().catch((err) => {
