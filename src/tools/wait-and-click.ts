@@ -41,6 +41,8 @@ interface FoundElement {
   backendDOMNodeId: number;
   role: string;
   name: string;
+  tagName: string;
+  textContent?: string;
   rect: { x: number; y: number; width: number; height: number };
   score: number;
 }
@@ -196,6 +198,8 @@ const handler: ToolHandler = async (
           name: best.el.getAttribute('aria-label') ||
             best.el.getAttribute('title') ||
             best.el.textContent?.trim().slice(0, 100) || '',
+          tagName: best.el.tagName.toLowerCase(),
+          textContent: best.el.textContent?.trim().slice(0, 50),
           rect: {
             x: best.rect.x + best.rect.width / 2,
             y: best.rect.y + best.rect.height / 2,
@@ -301,7 +305,9 @@ const handler: ToolHandler = async (
         tabId,
         bestMatch.backendDOMNodeId,
         bestMatch.role,
-        bestMatch.name
+        bestMatch.name,
+        bestMatch.tagName,
+        bestMatch.textContent
       );
     }
 

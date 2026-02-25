@@ -459,7 +459,9 @@ const handler: ToolHandler = async (
         tabId,
         bestMatch.backendDOMNodeId,
         bestMatch.role,
-        bestMatch.name
+        bestMatch.name,
+        bestMatch.tagName,
+        bestMatch.textContent
       );
     }
 
