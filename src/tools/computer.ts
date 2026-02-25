@@ -604,6 +604,41 @@ async function resolveRefToCoordinates(
 
   const cdpClient = sessionManager.getCDPClient();
   try {
+    // Validate ref identity before clicking (only for ref_N refs with stored fingerprint)
+    const refEntry = refIdManager.getRef(sessionId, tabId, ref);
+    if (refEntry && refEntry.tagName) {
+      try {
+        const { node } = await cdpClient.send<{
+          node: { localName: string };
+        }>(page, 'DOM.describeNode', { backendNodeId });
+
+        const validation = refIdManager.validateRef(
+          sessionId, tabId, ref,
+          node.localName
+        );
+
+        if (!validation.valid && validation.stale) {
+          return {
+            error: {
+              content: [{
+                type: 'text',
+                text: `Error: ${ref} is stale — ${validation.reason}. The DOM has changed since the element was found. Run find or read_page again to get fresh refs.`,
+              }],
+              isError: true,
+            },
+          };
+        }
+      } catch {
+        // If validation CDP calls fail, proceed with the click
+      }
+    }
+
+    // Log staleness warning (non-blocking)
+    if (refEntry && refIdManager.isRefStale(sessionId, tabId, ref)) {
+      const age = Math.round((Date.now() - refEntry.createdAt) / 1000);
+      console.warn(`[ref-validation] ${ref} is ${age}s old — may be stale`);
+    }
+
     await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
       backendNodeId,
     });

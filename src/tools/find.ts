@@ -358,7 +358,9 @@ const handler: ToolHandler = async (
           tabId,
           el.backendDOMNodeId,
           el.role,
-          el.name
+          el.name,
+          el.tagName,
+          el.textContent
         );
 
         // Include score in output for transparency
