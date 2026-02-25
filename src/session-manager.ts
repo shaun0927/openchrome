@@ -13,7 +13,8 @@ import { getGlobalConfig } from './config/global';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
 import { smartGoto } from './utils/smart-goto';
-import { DEFAULT_NAVIGATION_TIMEOUT_MS } from './config/defaults';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD } from './config/defaults';
+import * as os from 'os';
 import { BrowserRouter } from './router';
 import { HybridConfig } from './types/browser-backend';
 import { StorageStateManager } from './storage-state';
@@ -35,6 +36,10 @@ export interface SessionManagerConfig {
   maxSessions?: number;
   /** Maximum workers per session (default: 20) */
   maxWorkersPerSession?: number;
+  /** Maximum targets (tabs) per worker (default: 5). Oldest closed when exceeded. */
+  maxTargetsPerWorker?: number;
+  /** Memory pressure threshold in bytes. Below this free memory, aggressive cleanup triggers. (default: 500MB) */
+  memoryPressureThreshold?: number;
   /** Use connection pool for page management (default: false for worker isolation) */
   useConnectionPool?: boolean;
   /** Use default browser context (shares cookies/sessions with Chrome profile) */
@@ -63,6 +68,8 @@ const DEFAULT_CONFIG: Required<SessionManagerConfig> = {
   autoCleanup: true,
   maxSessions: 100,
   maxWorkersPerSession: 50,
+  maxTargetsPerWorker: DEFAULT_MAX_TARGETS_PER_WORKER,
+  memoryPressureThreshold: DEFAULT_MEMORY_PRESSURE_THRESHOLD,
   useConnectionPool: true,          // Enabled by default for faster page creation
   useDefaultContext: true,          // Use Chrome profile's cookies/sessions by default
   usePool: false,                   // Disabled by default; enable for multi-Chrome origin isolation
@@ -146,6 +153,17 @@ export class SessionManager {
           console.error(`[SessionManager] Auto-cleanup: removed ${deleted.length} inactive session(s)`);
         }
         this.lastCleanupTime = Date.now();
+
+        // Memory pressure monitoring: aggressive cleanup when free RAM is low
+        const freeMemory = os.freemem();
+        if (freeMemory < this.config.memoryPressureThreshold) {
+          console.error(`[SessionManager] Memory pressure detected: ${Math.round(freeMemory / 1024 / 1024)}MB free (threshold: ${Math.round(this.config.memoryPressureThreshold / 1024 / 1024)}MB)`);
+          const aggressiveTTL = 5 * 60 * 1000; // 5-minute TTL instead of normal 30-minute
+          const aggressiveDeleted = await this.cleanupInactiveSessions(aggressiveTTL);
+          if (aggressiveDeleted.length > 0) {
+            console.error(`[SessionManager] Memory pressure cleanup: removed ${aggressiveDeleted.length} session(s) (5-min TTL)`);
+          }
+        }
       } catch (error) {
         console.error('[SessionManager] Auto-cleanup error:', error);
       }
@@ -638,6 +656,15 @@ export class SessionManager {
     await this.ensureConnected();
 
     const worker = await this.getOrCreateWorker(sessionId, workerId);
+
+    // Enforce per-worker tab limit: close oldest tab when limit reached
+    if (worker.targets.size >= this.config.maxTargetsPerWorker) {
+      const oldestTargetId = worker.targets.values().next().value;
+      if (oldestTargetId) {
+        console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest tab ${oldestTargetId}`);
+        await this.closeTarget(sessionId, oldestTargetId);
+      }
+    }
 
     // Create page — try connection pool first for pre-warmed pages, fall back to direct creation
     const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
