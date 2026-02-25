@@ -139,6 +139,28 @@ export const repetitionDetectionRules: HintRule[] = [
     },
   },
   {
+    name: 'empty-result-streak',
+    priority: 91,
+    match(ctx: HintContext): string | null {
+      if (ctx.toolName !== 'javascript_tool') return null;
+      if (ctx.isError) return null;
+      const trimmed = ctx.resultText.trim();
+      if (trimmed !== '' && trimmed !== 'null' && trimmed !== '[]' && trimmed !== '{}' && trimmed !== 'undefined') {
+        return null;
+      }
+      const recentJsCalls = ctx.recentCalls.filter(
+        (c) => c.toolName === 'javascript_tool' && c.result === 'success'
+      );
+      if (recentJsCalls.length < 2) return null;
+      const totalEmpty = recentJsCalls.length + 1;
+      return (
+        `Hint: javascript_tool returned empty/null results ${totalEmpty} times. ` +
+        'The target element likely does not exist on this page. ' +
+        'Use read_page mode="dom" to check actual page structure before retrying.'
+      );
+    },
+  },
+  {
     name: 'js-escalation-ladder',
     priority: 92,
     match(ctx) {
