@@ -669,10 +669,11 @@ async function getHitElementInfo(
 
     const isHitInteractive =
       interactiveTags.has(localName) ||
-      interactiveRoles.has((attrMap['role'] || '').toLowerCase());
+      interactiveRoles.has((attrMap['role'] || '').toLowerCase()) ||
+      attrMap['contenteditable'] === 'true';
 
     // Build attribute string with key attrs only
-    const keyAttrs = ['id', 'class', 'role', 'aria-label', 'data-testid', 'type', 'href'];
+    const keyAttrs = ['id', 'class', 'role', 'aria-label', 'data-testid', 'type', 'href', 'contenteditable'];
     const attrStr = keyAttrs
       .filter((k) => attrMap[k] !== undefined)
       .map((k) => `${k}="${attrMap[k]}"`)
@@ -712,7 +713,7 @@ async function getHitElementInfo(
               if (
                 el &&
                 el.matches(
-                  'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"]'
+                  'a,button,input,select,textarea,[contenteditable="true"],[role="button"],[role="link"],[role="tab"],[role="menuitem"]'
                 )
               ) {
                 const rect = el.getBoundingClientRect();

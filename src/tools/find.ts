@@ -125,7 +125,10 @@ const handler: ToolHandler = async (
         if (searchLower.includes('search') && (inputEl.type === 'search' || role === 'searchbox')) score += 30;
 
         // Interactive element bonus
-        if (['button', 'link', 'checkbox', 'radio', 'menuitem', 'tab', 'option'].includes(role)) score += 20;
+        if (['button', 'link', 'checkbox', 'radio', 'menuitem', 'tab', 'option', 'textbox'].includes(role)) score += 20;
+
+        // Contenteditable bonus
+        if (el.getAttribute('contenteditable') === 'true') score += 15;
 
         // Visible and reasonably sized elements get bonus
         if (rect.width > 50 && rect.height > 20) score += 10;
@@ -149,6 +152,7 @@ const handler: ToolHandler = async (
         }
 
         const inputEl = el as HTMLInputElement;
+        const isContentEditable = el.getAttribute('contenteditable') === 'true';
         const role =
           el.getAttribute('role') ||
           (el.tagName === 'BUTTON'
@@ -157,7 +161,9 @@ const handler: ToolHandler = async (
               ? 'link'
               : el.tagName === 'INPUT'
                 ? inputEl.type || 'textbox'
-                : el.tagName.toLowerCase());
+                : isContentEditable
+                  ? 'textbox'
+                  : el.tagName.toLowerCase());
 
         return {
           backendDOMNodeId: 0,
@@ -193,7 +199,9 @@ const handler: ToolHandler = async (
       if (
         searchLower.includes('search') ||
         searchLower.includes('input') ||
-        searchLower.includes('text')
+        searchLower.includes('text') ||
+        searchLower.includes('editor') ||
+        searchLower.includes('editable')
       ) {
         roleSelectors.push(
           'input[type="text"]',
@@ -201,7 +209,8 @@ const handler: ToolHandler = async (
           'input:not([type])',
           'textarea',
           '[role="textbox"]',
-          '[role="searchbox"]'
+          '[role="searchbox"]',
+          '[contenteditable="true"]'
         );
       }
       if (searchLower.includes('checkbox')) {

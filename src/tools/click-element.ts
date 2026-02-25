@@ -197,6 +197,7 @@ const handler: ToolHandler = async (
         }
 
         const inputEl = el as HTMLInputElement;
+        const isContentEditable = el.getAttribute('contenteditable') === 'true';
         const role =
           el.getAttribute('role') ||
           (el.tagName === 'BUTTON'
@@ -205,7 +206,9 @@ const handler: ToolHandler = async (
               ? 'link'
               : el.tagName === 'INPUT'
                 ? inputEl.type || 'textbox'
-                : el.tagName.toLowerCase());
+                : isContentEditable
+                  ? 'textbox'
+                  : el.tagName.toLowerCase());
 
         return {
           backendDOMNodeId: 0,
@@ -252,6 +255,7 @@ const handler: ToolHandler = async (
         '[role="option"]',
         '[onclick]',
         '[tabindex]',
+        '[contenteditable="true"]',
         '[role="combobox"]',
         '[role="listbox"]',
         '[role="switch"]',
