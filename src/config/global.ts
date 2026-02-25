@@ -15,6 +15,8 @@ export interface GlobalConfig {
   useHeadlessShell?: boolean;
   /** Run Chrome in headless mode (default: true when auto-launch is enabled) */
   headless?: boolean;
+  /** If true, quit running Chrome to reuse the real profile instead of using temp profile (default: false) */
+  restartChrome?: boolean;
   /** Chrome Pool settings for managing multiple Chrome instances */
   pool?: {
     /** Enable the Chrome pool (default: true) */
