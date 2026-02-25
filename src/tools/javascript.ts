@@ -9,7 +9,7 @@ import { getSessionManager } from '../session-manager';
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
   description:
-    'Execute JavaScript code in the context of the current page. Returns the result of the last expression.',
+    'Execute JavaScript code in the context of the current page. Supports top-level await. Returns the result of the last expression.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -63,7 +63,35 @@ const handler: ToolHandler = async (
     const result = await page.evaluate(async (jsCode: string): Promise<{ success: boolean; value?: string; error?: string }> => {
       try {
         // Use indirect eval to execute in global scope
-        let evalResult = (0, eval)(jsCode);
+        // Supports top-level await via async IIFE wrapping
+        let evalResult;
+        try {
+          // Tier 1: Direct eval (handles simple expressions, non-await code)
+          evalResult = (0, eval)(jsCode);
+        } catch (e) {
+          if (!(e instanceof SyntaxError) || !jsCode.includes('await')) {
+            throw e;
+          }
+          // Tier 2: Try as single async expression (e.g., `await fetch(url)`)
+          const trimmed = jsCode.trim().replace(/;$/, '');
+          try {
+            evalResult = (0, eval)(`(async()=>{return(\n${trimmed}\n);})()`);
+          } catch {
+            // Tier 3: Multi-statement with return-last-expression heuristic
+            const lastSemiIdx = trimmed.lastIndexOf(';');
+            if (lastSemiIdx !== -1) {
+              const head = trimmed.substring(0, lastSemiIdx + 1);
+              const tail = trimmed.substring(lastSemiIdx + 1).trim();
+              if (tail && !/^(const|let|var|function|class|if|for|while|switch|try|throw|return)\b/.test(tail)) {
+                evalResult = (0, eval)(`(async()=>{${head}\nreturn(${tail});})()`);
+              } else {
+                evalResult = (0, eval)(`(async()=>{${trimmed}})()`);
+              }
+            } else {
+              evalResult = (0, eval)(`(async()=>{${trimmed}})()`);
+            }
+          }
+        }
 
         // Await Promise results (handles fetch, async functions, etc.)
         if (evalResult && typeof evalResult === 'object' && typeof evalResult.then === 'function') {
