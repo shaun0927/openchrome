@@ -149,12 +149,25 @@ async function checkDebugPort(port: number): Promise<string | null> {
 }
 
 /**
- * Wait for debug port to become available
+ * Wait for debug port to become available.
+ * Optionally accepts a chromeProcess to fast-fail if Chrome exits before the port opens.
  */
-async function waitForDebugPort(port: number, timeout = 30000): Promise<string> {
+async function waitForDebugPort(
+  port: number,
+  timeout = 30000,
+  chromeProcess?: ChildProcess
+): Promise<string> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
+    // Fast-fail if the spawned Chrome process has already exited
+    if (chromeProcess && chromeProcess.exitCode !== null) {
+      throw new Error(
+        `Chrome exited with code ${chromeProcess.exitCode} before debug port ${port} became available. ` +
+        `Likely cause: --user-data-dir is locked by another Chrome instance.`
+      );
+    }
+
     const wsEndpoint = await checkDebugPort(port);
     if (wsEndpoint) {
       return wsEndpoint;
@@ -192,8 +205,10 @@ export class ChromeLauncher {
       this.instance = null;
     }
 
-    // Check if Chrome is already running with debug port
-    const existingWs = await checkDebugPort(port);
+    // Check if Chrome is already running with debug port.
+    // Use a brief retry window (5s) instead of a single-shot check, because Chrome
+    // may still be binding the debug port during startup (1-5s window).
+    const existingWs = await waitForDebugPort(port, 5000).catch(() => null);
     if (existingWs) {
       console.error(`[ChromeLauncher] Found existing Chrome on port ${port}`);
       this.instance = {
@@ -358,8 +373,13 @@ export class ChromeLauncher {
     // Killing the root process may not clean up child processes (renderers, GPU).
     // The oc_stop tool handles this via session/pool cleanup before process kill.
 
-    // Wait for debug port
-    const wsEndpoint = await waitForDebugPort(port);
+    // Log Chrome process exit for immediate diagnostics
+    chromeProcess.once('exit', (code, signal) => {
+      console.error(`[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal})`);
+    });
+
+    // Wait for debug port — pass chromeProcess for fast-fail on premature exit
+    const wsEndpoint = await waitForDebugPort(port, 30000, chromeProcess);
 
     this.instance = {
       wsEndpoint,
@@ -525,7 +545,9 @@ export class ChromeLauncher {
   }
 
   /**
-   * Check if a Chrome profile directory is locked by another Chrome instance
+   * Check if a Chrome profile directory is locked by another Chrome instance.
+   * On Unix, validates SingletonLock symlink targets by checking if the PID is alive,
+   * so stale lock files from crashed Chrome instances are correctly ignored.
    */
   private isProfileLocked(profileDir: string): boolean {
     if (os.platform() === 'win32') {
@@ -538,7 +560,7 @@ export class ChromeLauncher {
       return false;
     }
 
-    // Unix: Chrome uses SingletonLock symlinks
+    // Unix: Chrome uses SingletonLock (symlink to "hostname-pid"), SingletonSocket, SingletonCookie
     const lockFiles = [
       path.join(profileDir, 'SingletonLock'),
       path.join(profileDir, 'SingletonSocket'),
@@ -546,9 +568,35 @@ export class ChromeLauncher {
     ];
 
     for (const lockFile of lockFiles) {
-      if (fs.existsSync(lockFile)) {
+      // Use lstatSync instead of existsSync because SingletonLock is a dangling symlink
+      // (target "hostname-pid" doesn't exist as a file), and existsSync follows symlinks.
+      try {
+        const stats = fs.lstatSync(lockFile);
+
+        // For symlinks (SingletonLock), validate the PID is still alive
+        if (stats.isSymbolicLink()) {
+          try {
+            const target = fs.readlinkSync(lockFile);
+            const pid = parseInt(target.split('-').pop()!, 10);
+            if (!isNaN(pid) && pid > 0) {
+              try {
+                process.kill(pid, 0); // Signal 0: check if process exists without killing
+              } catch {
+                // PID not alive → stale lock file left by crashed Chrome, skip it
+                console.error(`[ChromeLauncher] Stale lock ignored: ${lockFile} (PID ${pid} not alive)`);
+                continue;
+              }
+            }
+          } catch {
+            // readlinkSync failed — can't validate, assume locked for safety
+          }
+        }
+
         console.error(`[ChromeLauncher] Profile locked: ${lockFile} exists`);
         return true;
+      } catch {
+        // lstatSync throws if file doesn't exist → not locked by this file
+        continue;
       }
     }
 
