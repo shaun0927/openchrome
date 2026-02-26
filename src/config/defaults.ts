@@ -49,3 +49,6 @@ export const DEFAULT_SAFE_TITLE_TIMEOUT_MS = 3000;
 
 /** Per-item timeout in request queue (ms). Safety net against indefinitely hung CDP commands. */
 export const DEFAULT_QUEUE_ITEM_TIMEOUT_MS = 120000;
+
+/** Global tool execution timeout in milliseconds. Absolute safety net against indefinitely hung handlers. */
+export const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 120000;

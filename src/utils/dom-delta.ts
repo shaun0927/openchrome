@@ -7,6 +7,7 @@
  */
 
 import type { Page } from 'puppeteer-core';
+import { safeTitle } from './safe-title';
 
 export interface DomDeltaOptions {
   /** Time to wait for DOM to settle after action (ms). Default: 150 */
@@ -280,7 +281,7 @@ export async function withDomDelta<T>(
     // Page navigated — observer is gone
     let title = '';
     try {
-      title = await page.title();
+      title = await safeTitle(page);
     } catch {
       // ignore
     }

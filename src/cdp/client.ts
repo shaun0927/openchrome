@@ -808,7 +808,10 @@ export class CDPClient {
 
     for (const target of targets) {
       if (getTargetId(target) === targetId && target.type() === 'page') {
-        const page = await target.page();
+        const page = await Promise.race([
+          target.page(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+        ]);
         if (page) {
           // Populate index for future lookups
           this.targetIdIndex.set(targetId, page);

@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_context_mcp',
@@ -61,7 +62,7 @@ const handler: ToolHandler = async (
               tabId: targetId,
               workerId: workerInfo.id,
               url: page.url(),
-              title: await page.title(),
+              title: await safeTitle(page),
             };
             tabInfos.push(tabInfo);
             workerTabs[workerInfo.id].push(tabInfo);

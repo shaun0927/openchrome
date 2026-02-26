@@ -23,6 +23,7 @@ import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS } from './config/defaults';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -426,7 +427,16 @@ export class MCPServer {
 
       let result: MCPResult;
       try {
-        result = await tool.handler(sessionId, toolArgs);
+        let tid: ReturnType<typeof setTimeout>;
+        result = await Promise.race([
+          tool.handler(sessionId, toolArgs).finally(() => clearTimeout(tid)),
+          new Promise<never>((_, reject) => {
+            tid = setTimeout(
+              () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms`)),
+              DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+            );
+          }),
+        ]);
       } catch (handlerError) {
         if (isConnectionError(handlerError)) {
           // Attempt internal reconnection before surfacing error to LLM
@@ -435,7 +445,16 @@ export class MCPServer {
           try {
             await cdpClient.forceReconnect();
             console.error(`[MCPServer] Reconnected, retrying ${toolName}...`);
-            result = await tool.handler(sessionId, toolArgs);
+            let tid2: ReturnType<typeof setTimeout>;
+            result = await Promise.race([
+              tool.handler(sessionId, toolArgs).finally(() => clearTimeout(tid2)),
+              new Promise<never>((_, reject) => {
+                tid2 = setTimeout(
+                  () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (retry)`)),
+                  DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+                );
+              }),
+            ]);
           } catch (retryError) {
             throw handlerError; // throw ORIGINAL error
           }
