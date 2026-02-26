@@ -351,7 +351,7 @@ describe('HintEngine', () => {
       const result = makeResult('null');
       const hint = engine.getHint('javascript_tool', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('empty/null results');
+      expect(hint).toContain('empty/null result');
       expect(hint).toContain('read_page');
     });
 
@@ -365,7 +365,7 @@ describe('HintEngine', () => {
       const result = makeResult('<div class="save-indicator">Saved</div>');
       const hint = engine.getHint('javascript_tool', result, false);
       if (hint) {
-        expect(hint).not.toContain('empty/null results');
+        expect(hint).not.toContain('empty/null result');
       }
     });
 
@@ -378,7 +378,7 @@ describe('HintEngine', () => {
       const result = makeResult('[]');
       const hint = engine.getHint('javascript_tool', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('empty/null results');
+      expect(hint).toContain('empty/null result');
       expect(hint).not.toContain('escalation ladder');
     });
 

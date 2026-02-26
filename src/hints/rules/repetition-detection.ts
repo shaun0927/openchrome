@@ -140,7 +140,7 @@ export const repetitionDetectionRules: HintRule[] = [
   },
   {
     name: 'empty-result-streak',
-    priority: 91,
+    priority: 89,
     match(ctx: HintContext): string | null {
       if (ctx.toolName !== 'javascript_tool') return null;
       if (ctx.isError) return null;
@@ -152,10 +152,10 @@ export const repetitionDetectionRules: HintRule[] = [
         (c) => c.toolName === 'javascript_tool' && c.result === 'success'
       );
       if (recentJsCalls.length < 2) return null;
-      const totalEmpty = recentJsCalls.length + 1;
+      const attemptCount = recentJsCalls.length + 1;
       return (
-        `Hint: javascript_tool returned empty/null results ${totalEmpty} times. ` +
-        'The target element likely does not exist on this page. ' +
+        `Hint: javascript_tool returned empty/null result — this is attempt #${attemptCount} with no useful output. ` +
+        'The target element likely does not exist on this page or the selector is wrong. ' +
         'Use read_page mode="dom" to check actual page structure before retrying.'
       );
     },
