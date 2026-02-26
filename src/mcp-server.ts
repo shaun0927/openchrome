@@ -427,14 +427,15 @@ export class MCPServer {
 
       let result: MCPResult;
       try {
+        let tid: ReturnType<typeof setTimeout>;
         result = await Promise.race([
-          tool.handler(sessionId, toolArgs),
-          new Promise<never>((_, reject) =>
-            setTimeout(
+          tool.handler(sessionId, toolArgs).finally(() => clearTimeout(tid)),
+          new Promise<never>((_, reject) => {
+            tid = setTimeout(
               () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms`)),
               DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
-            ),
-          ),
+            );
+          }),
         ]);
       } catch (handlerError) {
         if (isConnectionError(handlerError)) {
@@ -444,14 +445,15 @@ export class MCPServer {
           try {
             await cdpClient.forceReconnect();
             console.error(`[MCPServer] Reconnected, retrying ${toolName}...`);
+            let tid2: ReturnType<typeof setTimeout>;
             result = await Promise.race([
-              tool.handler(sessionId, toolArgs),
-              new Promise<never>((_, reject) =>
-                setTimeout(
+              tool.handler(sessionId, toolArgs).finally(() => clearTimeout(tid2)),
+              new Promise<never>((_, reject) => {
+                tid2 = setTimeout(
                   () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (retry)`)),
                   DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
-                ),
-              ),
+                );
+              }),
             ]);
           } catch (retryError) {
             throw handlerError; // throw ORIGINAL error
