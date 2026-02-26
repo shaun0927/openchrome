@@ -73,6 +73,14 @@ export class CDPConnectionPool {
 
     await this.cdpClient.connect();
 
+    // Evict pages from inUsePages when tabs are externally closed (e.g. user closes tab in Chrome)
+    this.cdpClient.addTargetDestroyedListener((_targetId, page) => {
+      if (page && this.inUsePages.has(page)) {
+        this.inUsePages.delete(page);
+        console.error(`[Pool] Evicted externally closed page (target: ${_targetId})`);
+      }
+    });
+
     if (this.config.preWarm) {
       console.error(`[Pool] Pre-warming ${this.config.minPoolSize} pages...`);
       await this.ensureMinimumPages();
