@@ -67,6 +67,9 @@
     "uuid": "^9.0.0",
     "write-file-atomic": "^5.0.1"
   },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
   "engines": {
     "node": ">=18.0.0"
   },

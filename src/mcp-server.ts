@@ -18,6 +18,7 @@ import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import { HintEngine } from './hints';
+import { formatAge } from './utils/format-age';
 import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
@@ -70,6 +71,7 @@ export class MCPServer {
   private operationController: OperationController | null = null;
   private hintEngine: HintEngine | null = null;
   private options: MCPServerOptions;
+  private profileWarningShown = false;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
@@ -456,6 +458,18 @@ export class MCPServer {
         }
       }
 
+      // Inject profile state
+      const profileInfo = this.buildProfileInfo();
+      if (profileInfo) {
+        (result as Record<string, unknown>)._profile = profileInfo.profile;
+        if (profileInfo.warning) {
+          const content = (result as Record<string, unknown>).content;
+          if (Array.isArray(content)) {
+            content.unshift({ type: 'text', text: profileInfo.warning });
+          }
+        }
+      }
+
       // Inject proactive hint into both _hint (backward compat) and content[] (guaranteed MCP delivery)
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false);
@@ -502,6 +516,12 @@ export class MCPServer {
             endTime: timing.endTime,
           };
         }
+      }
+
+      // Inject profile state (no warning on error responses)
+      const profileInfoErr = this.buildProfileInfo();
+      if (profileInfoErr) {
+        (errResult as Record<string, unknown>)._profile = profileInfoErr.profile;
       }
 
       // Inject proactive hint for errors into both _hint and content[]
@@ -679,8 +699,53 @@ export class MCPServer {
     if (['worker_create', 'worker_list', 'worker_delete', 'worker_update', 'worker_complete'].includes(toolName)) return 'worker';
     if (['click_element', 'fill_form', 'wait_and_click', 'wait_for'].includes(toolName)) return 'composite';
     if (['batch_execute', 'lightweight_scroll'].includes(toolName)) return 'performance';
-    if (toolName === 'oc_stop') return 'lifecycle';
+    if (toolName === 'oc_stop' || toolName === 'oc_profile_status') return 'lifecycle';
     return 'interaction';
+  }
+
+  /**
+   * Build the _profile metadata object and optional one-time warning.
+   * Returns null if profile state cannot be determined (e.g., launcher not initialized).
+   */
+  private buildProfileInfo(): {
+    profile: Record<string, unknown>;
+    warning: string | null;
+  } | null {
+    try {
+      const launcher = getChromeLauncher();
+      const state = launcher.getProfileState();
+
+      const profile: Record<string, unknown> = {
+        type: state.type,
+        extensions: state.extensionsAvailable,
+      };
+
+      if (state.cookieCopiedAt) {
+        profile.cookieAge = formatAge(state.cookieCopiedAt);
+      }
+
+      let warning: string | null = null;
+      if (!this.profileWarningShown && state.type !== 'real' && state.type !== 'explicit') {
+        const parts: string[] = [];
+        if (state.type === 'persistent') {
+          parts.push('⚠️ Browser running with persistent OpenChrome profile (real Chrome profile is locked).');
+          parts.push(`Available: synced cookies${state.cookieCopiedAt ? ` (${formatAge(state.cookieCopiedAt)})` : ''} — authentication may work`);
+          parts.push('Not available: extensions, saved passwords, bookmarks');
+          parts.push('Tip: If authentication fails, the cookie sync may be stale. Ask the user to close Chrome.');
+        } else {
+          parts.push('⚠️ Browser running with fresh temporary profile (no user data).');
+          parts.push('Not available: cookies, extensions, saved passwords, localStorage, bookmarks');
+          parts.push('Tip: The user will need to log in manually to any sites that require authentication.');
+        }
+        warning = parts.join('\n');
+        this.profileWarningShown = true;
+      }
+
+      return { profile, warning };
+    } catch {
+      // Launcher may not be initialized yet
+      return null;
+    }
   }
 
   /**
