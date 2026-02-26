@@ -9,6 +9,7 @@ import * as os from 'os';
 import * as http from 'http';
 import { getGlobalConfig } from '../config/global';
 import { DEFAULT_VIEWPORT } from '../config/defaults';
+import { copyCookiesAtomic } from './sqlite-cookie-copy';
 
 export interface ChromeInstance {
   wsEndpoint: string;
@@ -509,22 +510,13 @@ export class ChromeLauncher {
         fs.copyFileSync(localStateSrc, path.join(destDir, 'Local State'));
       }
 
-      // Copy cookie database files from Default profile.
-      // Chrome uses SQLite WAL mode, so we copy in order: main DB → WAL → SHM → journal.
-      // If the main DB copy races with a Chrome write, the WAL file provides recovery.
-      // This is safe for read-only consumption by the new Chrome instance.
-      const cookieFiles = ['Cookies', 'Cookies-wal', 'Cookies-shm', 'Cookies-journal'];
-      let copiedCount = 0;
-      for (const file of cookieFiles) {
-        const src = path.join(sourceDir, 'Default', file);
-        if (fs.existsSync(src)) {
-          try {
-            fs.copyFileSync(src, path.join(destDefault, file));
-            copiedCount++;
-          } catch {
-            // Individual file copy failure is non-fatal (e.g., WAL may not exist)
-          }
-        }
+      // Copy cookie database using atomic SQLite backup.
+      // Chrome's Cookies DB uses WAL mode; naive file copy creates inconsistent state.
+      // copyCookiesAtomic uses a 3-tier fallback: better-sqlite3 → sqlite3 CLI → main-DB-only.
+      const sourceDefault = path.join(sourceDir, 'Default');
+      const cookieResult = copyCookiesAtomic(sourceDefault, destDefault);
+      if (cookieResult.warning) {
+        console.error(`[ChromeLauncher] Cookie copy warning: ${cookieResult.warning}`);
       }
 
       // Copy and patch Preferences to prevent "Chrome didn't shut down correctly" prompt.
@@ -550,7 +542,7 @@ export class ChromeLauncher {
         }
       }
 
-      console.error(`[ChromeLauncher] Copied essential profile data (${copiedCount} cookie files) from locked profile`);
+      console.error(`[ChromeLauncher] Copied essential profile data (cookies via ${cookieResult.method}) from locked profile`);
     } catch (err) {
       console.error(`[ChromeLauncher] Failed to copy profile data (non-fatal):`, err);
     }
