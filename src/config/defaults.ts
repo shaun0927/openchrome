@@ -91,8 +91,10 @@ export const DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS = 45000;
 
 /** Heartbeat active ping timeout in milliseconds.
  *  Sends Browser.getVersion to detect half-open WebSocket connections
- *  (e.g., after macOS sleep/wake) that browser.isConnected() misses. */
-export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 5000;
+ *  (e.g., after macOS sleep/wake) that browser.isConnected() misses.
+ *  Set higher than heartbeat interval (5s) to avoid false-positive disconnects
+ *  when Chrome is under heavy CPU load (GC pauses, complex JS execution). */
+export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 15000;
 
 /** Connection verification staleness threshold in milliseconds.
  *  If the connection hasn't been verified (by heartbeat or probe) within this window,

@@ -120,6 +120,15 @@ export class SessionManager {
       this.onTargetClosed(targetId);
     });
 
+    // Validate stale targets after reconnection
+    this.cdpClient.addConnectionListener((event) => {
+      if (event.type === 'reconnected') {
+        this.validateTargetsAfterReconnect().catch((err) => {
+          console.error('[SessionManager] Post-reconnect target validation failed:', err);
+        });
+      }
+    });
+
     // Store storage state config if enabled
     if (this.config.storageState?.enabled) {
       this.storageStateConfig = this.config.storageState;
@@ -1087,6 +1096,43 @@ export class SessionManager {
           timestamp: Date.now(),
         });
       }
+    }
+  }
+
+  /**
+   * Validate all tracked targets after a reconnection.
+   * Removes targets that no longer exist in Chrome, keeping valid ones intact.
+   */
+  private async validateTargetsAfterReconnect(): Promise<void> {
+    const trackedTargetIds = Array.from(this.targetToWorker.keys());
+    if (trackedTargetIds.length === 0) return;
+
+    // Get currently alive targets from Chrome
+    let browser;
+    try {
+      browser = this.cdpClient.getBrowser();
+    } catch {
+      // Browser not yet available after reconnect — skip validation
+      return;
+    }
+    const aliveTargetIds = new Set(
+      browser.targets()
+        .filter(t => t.type() === 'page')
+        .map(t => (t as unknown as { _targetId: string })._targetId)
+    );
+
+    let removed = 0;
+    for (const targetId of trackedTargetIds) {
+      if (!aliveTargetIds.has(targetId)) {
+        this.onTargetClosed(targetId);
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      console.error(`[SessionManager] Post-reconnect cleanup: removed ${removed} stale target(s), ${trackedTargetIds.length - removed} still alive`);
+    } else {
+      console.error(`[SessionManager] Post-reconnect validation: all ${trackedTargetIds.length} target(s) still alive`);
     }
   }
 
