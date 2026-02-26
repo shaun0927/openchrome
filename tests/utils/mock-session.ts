@@ -345,12 +345,12 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
  * Creates a simple mock RefIdManager for testing
  */
 export function createMockRefIdManager() {
-  const refs: Map<string, Map<string, Map<string, { refId: string; backendDOMNodeId: number; role: string; name?: string; createdAt: number }>>> = new Map();
+  const refs: Map<string, Map<string, Map<string, { refId: string; backendDOMNodeId: number; role: string; name?: string; tagName?: string; textContent?: string; createdAt: number }>>> = new Map();
   const counters: Map<string, Map<string, number>> = new Map();
 
   return {
     generateRef: jest.fn().mockImplementation(
-      (sessionId: string, targetId: string, backendDOMNodeId: number, role: string, name?: string) => {
+      (sessionId: string, targetId: string, backendDOMNodeId: number, role: string, name?: string, tagName?: string, textContent?: string) => {
         if (!refs.has(sessionId)) {
           refs.set(sessionId, new Map());
         }
@@ -373,6 +373,8 @@ export function createMockRefIdManager() {
           backendDOMNodeId,
           role,
           name,
+          tagName,
+          textContent,
           createdAt: Date.now(),
         });
 
@@ -420,6 +422,33 @@ export function createMockRefIdManager() {
     getTargetRefs: jest.fn().mockImplementation((sessionId: string, targetId: string) => {
       const targetRefs = refs.get(sessionId)?.get(targetId);
       return targetRefs ? Array.from(targetRefs.values()) : [];
+    }),
+
+    isRefStale: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string) => {
+      const entry = refs.get(sessionId)?.get(targetId)?.get(refId);
+      if (!entry) return true;
+      return Date.now() - entry.createdAt > 30_000;
+    }),
+
+    validateRef: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string, currentNodeName: string, currentTextContent?: string) => {
+      const entry = refs.get(sessionId)?.get(targetId)?.get(refId);
+      if (!entry) return { valid: false, reason: 'Ref not found' };
+
+      if (entry.tagName && currentNodeName) {
+        if (entry.tagName.toLowerCase() !== currentNodeName.toLowerCase()) {
+          return { valid: false, stale: true, reason: `Element tag changed: expected <${entry.tagName}>, found <${currentNodeName}>` };
+        }
+      }
+
+      if (entry.textContent && currentTextContent) {
+        const storedPrefix = entry.textContent.slice(0, 30).trim();
+        const currentPrefix = currentTextContent.slice(0, 30).trim();
+        if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
+          return { valid: false, stale: true, reason: `Element text changed` };
+        }
+      }
+
+      return { valid: true, stale: Date.now() - entry.createdAt > 30_000 };
     }),
   };
 }

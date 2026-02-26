@@ -3,11 +3,16 @@
  * Ported from extension
  */
 
+/** TTL for ref staleness warning (30 seconds) */
+export const REF_TTL_MS = 30_000;
+
 export interface RefEntry {
   refId: string;
   backendDOMNodeId: number;
   role: string;
   name?: string;
+  tagName?: string;
+  textContent?: string;
   createdAt: number;
 }
 
@@ -23,7 +28,9 @@ export class RefIdManager {
     targetId: string,
     backendDOMNodeId: number,
     role: string,
-    name?: string
+    name?: string,
+    tagName?: string,
+    textContent?: string
   ): string {
     let sessionRefs = this.refs.get(sessionId);
     if (!sessionRefs) {
@@ -53,6 +60,8 @@ export class RefIdManager {
       backendDOMNodeId,
       role,
       name,
+      tagName,
+      textContent,
       createdAt: Date.now(),
     };
 
@@ -91,6 +100,59 @@ export class RefIdManager {
       return [];
     }
     return Array.from(targetRefs.values());
+  }
+
+  /**
+   * Check if a ref entry is stale (older than REF_TTL_MS)
+   */
+  isRefStale(sessionId: string, targetId: string, refId: string): boolean {
+    const entry = this.getRef(sessionId, targetId, refId);
+    if (!entry) return true;
+    return Date.now() - entry.createdAt > REF_TTL_MS;
+  }
+
+  /**
+   * Validate a ref against current DOM node properties.
+   * Returns { valid: true } if the element identity matches,
+   * or { valid: false, reason } if the ref appears stale.
+   */
+  validateRef(
+    sessionId: string,
+    targetId: string,
+    refId: string,
+    currentNodeName: string,
+    currentTextContent?: string
+  ): { valid: boolean; reason?: string; stale?: boolean } {
+    const entry = this.getRef(sessionId, targetId, refId);
+    if (!entry) return { valid: false, reason: 'Ref not found' };
+
+    const isStale = Date.now() - entry.createdAt > REF_TTL_MS;
+
+    // Validate tagName if stored (case-insensitive)
+    if (entry.tagName && currentNodeName) {
+      if (entry.tagName.toLowerCase() !== currentNodeName.toLowerCase()) {
+        return {
+          valid: false,
+          stale: true,
+          reason: `Element tag changed: expected <${entry.tagName}>, found <${currentNodeName}>`,
+        };
+      }
+    }
+
+    // Validate textContent prefix if stored (first 30 chars)
+    if (entry.textContent && currentTextContent) {
+      const storedPrefix = entry.textContent.slice(0, 30).trim();
+      const currentPrefix = currentTextContent.slice(0, 30).trim();
+      if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
+        return {
+          valid: false,
+          stale: true,
+          reason: `Element text changed: expected "${storedPrefix}...", found "${currentPrefix}..."`,
+        };
+      }
+    }
+
+    return { valid: true, stale: isStale };
   }
 
   /**

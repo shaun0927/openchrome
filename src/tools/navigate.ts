@@ -89,6 +89,34 @@ const handler: ToolHandler = async (
         };
       }
 
+      // Tab reuse: if worker has exactly 1 existing tab, reuse it instead of creating new
+      const resolvedWorkerId = workerId || 'default';
+      const existingTargets = sessionManager.getWorkerTargetIds(sessionId, resolvedWorkerId);
+      if (existingTargets.length === 1) {
+        const existingTabId = existingTargets[0];
+        if (await sessionManager.isTargetValid(existingTabId)) {
+          const page = await sessionManager.getPage(sessionId, existingTabId, undefined, 'navigate');
+          if (page) {
+            await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    action: 'navigate',
+                    url: page.url(),
+                    title: await page.title(),
+                    tabId: existingTabId,
+                    workerId: resolvedWorkerId,
+                    reused: true,
+                  }),
+                },
+              ],
+            };
+          }
+        }
+      }
+
       // Create new tab with URL directly (in specified worker or default)
       const { targetId, page, workerId: assignedWorkerId } = await sessionManager.createTarget(sessionId, targetUrl, workerId);
 

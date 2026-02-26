@@ -5,6 +5,14 @@
 
 import { createMockSessionManager } from './utils/mock-session';
 
+// Mock CDP client for reconnection tests
+const mockForceReconnect = jest.fn().mockResolvedValue(undefined);
+jest.mock('../src/cdp/client', () => ({
+  getCDPClient: jest.fn(() => ({
+    forceReconnect: mockForceReconnect,
+  })),
+}));
+
 // Mock the session manager
 jest.mock('../src/session-manager', () => ({
   getSessionManager: jest.fn(),
@@ -572,6 +580,168 @@ describe('MCPServer', () => {
       expect(names).toContain('tool1');
       expect(names).toContain('tool2');
       expect(names.length).toBe(2);
+    });
+  });
+
+  describe('Connection Error Recovery', () => {
+    beforeEach(() => {
+      mockForceReconnect.mockClear();
+    });
+
+    test('retries tool call after connection error and reconnect', async () => {
+      let callCount = 0;
+      const handler = jest.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          throw new Error('Not connected to Chrome. Call connect() first.');
+        }
+        return { content: [{ type: 'text', text: 'Success after retry' }] };
+      });
+
+      const definition: MCPToolDefinition = {
+        name: 'retry_tool',
+        description: 'Test retry',
+        inputSchema: { type: 'object' as const, properties: {}, required: [] },
+      };
+      server.registerTool('retry_tool', handler, definition);
+
+      const request: MCPRequest = {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'retry_tool', arguments: {} },
+      };
+
+      const response = (await server.handleRequest(request)) as MCPResultResponse;
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(mockForceReconnect).toHaveBeenCalledTimes(1);
+      expect(response.result!.content![0].text).toBe('Success after retry');
+      expect(response.result!.isError).toBeUndefined();
+    });
+
+    test('returns error with reconnection guidance when retry also fails', async () => {
+      const handler = jest.fn().mockRejectedValue(
+        new Error('Connection closed')
+      );
+
+      const definition: MCPToolDefinition = {
+        name: 'fail_tool',
+        description: 'Always fails',
+        inputSchema: { type: 'object' as const, properties: {}, required: [] },
+      };
+      server.registerTool('fail_tool', handler, definition);
+
+      const request: MCPRequest = {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'fail_tool', arguments: {} },
+      };
+
+      const response = (await server.handleRequest(request)) as MCPResultResponse;
+
+      expect(response.result!.isError).toBe(true);
+      expect(response.result!.content![0].text).toContain('Connection closed');
+      expect(response.result!.content![0].text).toContain('/mcp');
+      expect(response.result!.content![0].text).toContain('Do NOT run');
+      expect(mockForceReconnect).toHaveBeenCalledTimes(1);
+    });
+
+    test('does not retry for non-connection errors', async () => {
+      const handler = jest.fn().mockRejectedValue(
+        new Error('Element not found')
+      );
+
+      const definition: MCPToolDefinition = {
+        name: 'normal_error_tool',
+        description: 'Normal error',
+        inputSchema: { type: 'object' as const, properties: {}, required: [] },
+      };
+      server.registerTool('normal_error_tool', handler, definition);
+
+      const request: MCPRequest = {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'normal_error_tool', arguments: {} },
+      };
+
+      const response = (await server.handleRequest(request)) as MCPResultResponse;
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(mockForceReconnect).not.toHaveBeenCalled();
+      expect(response.result!.isError).toBe(true);
+      expect(response.result!.content![0].text).toContain('Element not found');
+      expect(response.result!.content![0].text).not.toContain('/mcp');
+    });
+
+    test('detects various connection error patterns', async () => {
+      const connectionErrors = [
+        'Not connected to Chrome. Call connect() first.',
+        'Protocol error (Runtime.callFunctionOn): Session closed.',
+        'WebSocket is not open: readyState 3 (CLOSED)',
+        'Navigation failed because browser has disconnected',
+        'Execution context was destroyed',
+        'Target closed',
+      ];
+
+      for (const errorMsg of connectionErrors) {
+        let callCount = 0;
+        const handler = jest.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) throw new Error(errorMsg);
+          return { content: [{ type: 'text', text: 'OK' }] };
+        });
+
+        const toolName = `test_tool_${errorMsg.slice(0, 10).replace(/\W/g, '_')}`;
+        const definition: MCPToolDefinition = {
+          name: toolName,
+          description: 'Test',
+          inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        };
+        server.registerTool(toolName, handler, definition);
+
+        const request: MCPRequest = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: toolName, arguments: {} },
+        };
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+        expect(handler).toHaveBeenCalledTimes(2);
+        mockForceReconnect.mockClear();
+      }
+    });
+  });
+
+  describe('Reconnection Instructions', () => {
+    test('instructions mention /mcp as reconnection method', async () => {
+      const request: MCPRequest = {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+      };
+
+      const response = (await server.handleRequest(request)) as MCPResultResponse;
+      const instructions = response.result!.instructions!;
+
+      expect(instructions).toContain('/mcp');
+      expect(instructions).toContain('CONNECTION RECOVERY');
+    });
+
+    test('instructions warn against claude mcp remove/add', async () => {
+      const request: MCPRequest = {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+      };
+
+      const response = (await server.handleRequest(request)) as MCPResultResponse;
+      const instructions = response.result!.instructions!;
+
+      expect(instructions).toMatch(/never.*claude mcp remove|claude mcp add/i);
     });
   });
 });

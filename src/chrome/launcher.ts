@@ -25,6 +25,8 @@ export interface LaunchOptions {
   autoLaunch?: boolean;
   /** If true, force using a temp directory instead of real Chrome profile */
   useTempProfile?: boolean;
+  /** If true, quit running Chrome to reuse the real profile (default: false — uses temp profile instead) */
+  restartChrome?: boolean;
 }
 
 const DEFAULT_PORT = 9222;
@@ -147,12 +149,25 @@ async function checkDebugPort(port: number): Promise<string | null> {
 }
 
 /**
- * Wait for debug port to become available
+ * Wait for debug port to become available.
+ * Optionally accepts a chromeProcess to fast-fail if Chrome exits before the port opens.
  */
-async function waitForDebugPort(port: number, timeout = 30000): Promise<string> {
+async function waitForDebugPort(
+  port: number,
+  timeout = 30000,
+  chromeProcess?: ChildProcess
+): Promise<string> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
+    // Fast-fail if the spawned Chrome process has already exited
+    if (chromeProcess && chromeProcess.exitCode !== null) {
+      throw new Error(
+        `Chrome exited with code ${chromeProcess.exitCode} before debug port ${port} became available. ` +
+        `Likely cause: --user-data-dir is locked by another Chrome instance.`
+      );
+    }
+
     const wsEndpoint = await checkDebugPort(port);
     if (wsEndpoint) {
       return wsEndpoint;
@@ -190,8 +205,10 @@ export class ChromeLauncher {
       this.instance = null;
     }
 
-    // Check if Chrome is already running with debug port
-    const existingWs = await checkDebugPort(port);
+    // Check if Chrome is already running with debug port.
+    // Use a brief retry window (5s) instead of a single-shot check, because Chrome
+    // may still be binding the debug port during startup (1-5s window).
+    const existingWs = await waitForDebugPort(port, 5000).catch(() => null);
     if (existingWs) {
       console.error(`[ChromeLauncher] Found existing Chrome on port ${port}`);
       this.instance = {
@@ -211,21 +228,19 @@ export class ChromeLauncher {
       );
     }
 
-    // Graceful restart: if Chrome is running without debug port and profile is locked,
-    // quit Chrome gracefully so it saves session state, then let the existing launch
-    // logic detect the unlocked real profile and relaunch with --remote-debugging-port.
-    if (!options.useTempProfile) {
+    // Graceful restart: only when explicitly opted in via --restart-chrome flag.
+    // Default behavior: skip restart, fall through to temp profile + cookie copy.
+    const restartChrome = options.restartChrome ?? getGlobalConfig().restartChrome ?? false;
+    if (!options.useTempProfile && restartChrome) {
       const realProfileDir = this.getRealChromeProfileDir();
       if (realProfileDir && this.isProfileLocked(realProfileDir) && this.isChromeRunning()) {
-        console.error('[ChromeLauncher] Chrome running without debug port — attempting graceful restart...');
+        console.error('[ChromeLauncher] --restart-chrome: attempting graceful restart...');
         const unlocked = await this.quitAndUnlockProfile(realProfileDir);
         if (unlocked) {
           console.error('[ChromeLauncher] Chrome quit successfully, profile unlocked. Relaunching with debug port...');
         } else {
           console.error('[ChromeLauncher] Graceful restart failed, falling back to temp profile...');
         }
-        // On success: existing launch logic below detects unlocked profile
-        // On failure: falls through to existing temp-profile path
       }
     }
 
@@ -301,6 +316,7 @@ export class ChromeLauncher {
       `--user-data-dir=${userDataDir}`,
       '--no-first-run',
       '--no-default-browser-check',
+      '--no-restore-last-session',
       // IMPORTANT: Start maximized for proper debugging experience
       '--start-maximized',
       // Fallback window size if maximize doesn't work
@@ -358,8 +374,13 @@ export class ChromeLauncher {
     // Killing the root process may not clean up child processes (renderers, GPU).
     // The oc_stop tool handles this via session/pool cleanup before process kill.
 
-    // Wait for debug port
-    const wsEndpoint = await waitForDebugPort(port);
+    // Log Chrome process exit for immediate diagnostics
+    chromeProcess.once('exit', (code, signal) => {
+      console.error(`[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal})`);
+    });
+
+    // Wait for debug port — pass chromeProcess for fast-fail on premature exit
+    const wsEndpoint = await waitForDebugPort(port, 30000, chromeProcess);
 
     this.instance = {
       wsEndpoint,
@@ -428,6 +449,13 @@ export class ChromeLauncher {
    */
   isConnected(): boolean {
     return this.instance !== null;
+  }
+
+  /**
+   * Get the port this launcher is configured for
+   */
+  getPort(): number {
+    return this.port;
   }
 
   /**
@@ -511,6 +539,10 @@ export class ChromeLauncher {
             prefs.profile.exit_type = 'Normal';
             prefs.profile.exited_cleanly = true;
           }
+          // Suppress session restore so copied profile doesn't reopen old tabs
+          if (!prefs.session) prefs.session = {};
+          prefs.session.restore_on_startup = 5; // 5 = open new tab page, not restore
+          delete prefs.session.startup_urls;
           fs.writeFileSync(path.join(destDefault, 'Preferences'), JSON.stringify(prefs));
         } catch {
           // JSON parse failed — skip Preferences entirely.
@@ -525,7 +557,9 @@ export class ChromeLauncher {
   }
 
   /**
-   * Check if a Chrome profile directory is locked by another Chrome instance
+   * Check if a Chrome profile directory is locked by another Chrome instance.
+   * On Unix, validates SingletonLock symlink targets by checking if the PID is alive,
+   * so stale lock files from crashed Chrome instances are correctly ignored.
    */
   private isProfileLocked(profileDir: string): boolean {
     if (os.platform() === 'win32') {
@@ -538,7 +572,7 @@ export class ChromeLauncher {
       return false;
     }
 
-    // Unix: Chrome uses SingletonLock symlinks
+    // Unix: Chrome uses SingletonLock (symlink to "hostname-pid"), SingletonSocket, SingletonCookie
     const lockFiles = [
       path.join(profileDir, 'SingletonLock'),
       path.join(profileDir, 'SingletonSocket'),
@@ -546,9 +580,35 @@ export class ChromeLauncher {
     ];
 
     for (const lockFile of lockFiles) {
-      if (fs.existsSync(lockFile)) {
+      // Use lstatSync instead of existsSync because SingletonLock is a dangling symlink
+      // (target "hostname-pid" doesn't exist as a file), and existsSync follows symlinks.
+      try {
+        const stats = fs.lstatSync(lockFile);
+
+        // For symlinks (SingletonLock), validate the PID is still alive
+        if (stats.isSymbolicLink()) {
+          try {
+            const target = fs.readlinkSync(lockFile);
+            const pid = parseInt(target.split('-').pop()!, 10);
+            if (!isNaN(pid) && pid > 0) {
+              try {
+                process.kill(pid, 0); // Signal 0: check if process exists without killing
+              } catch {
+                // PID not alive → stale lock file left by crashed Chrome, skip it
+                console.error(`[ChromeLauncher] Stale lock ignored: ${lockFile} (PID ${pid} not alive)`);
+                continue;
+              }
+            }
+          } catch {
+            // readlinkSync failed — can't validate, assume locked for safety
+          }
+        }
+
         console.error(`[ChromeLauncher] Profile locked: ${lockFile} exists`);
         return true;
+      } catch {
+        // lstatSync throws if file doesn't exist → not locked by this file
+        continue;
       }
     }
 
@@ -651,8 +711,12 @@ export class ChromeLauncher {
 let launcherInstance: ChromeLauncher | null = null;
 
 export function getChromeLauncher(port?: number): ChromeLauncher {
-  if (!launcherInstance) {
-    launcherInstance = new ChromeLauncher(port);
+  const resolvedPort = port || DEFAULT_PORT;
+  if (!launcherInstance || launcherInstance.getPort() !== resolvedPort) {
+    if (launcherInstance) {
+      console.error(`[ChromeLauncher] Replacing singleton (port ${launcherInstance.getPort()} → ${resolvedPort})`);
+    }
+    launcherInstance = new ChromeLauncher(resolvedPort);
   }
   return launcherInstance;
 }

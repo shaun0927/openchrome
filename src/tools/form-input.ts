@@ -89,6 +89,33 @@ const handler: ToolHandler = async (
 
     const cdpClient = sessionManager.getCDPClient();
 
+    // Validate ref identity if fingerprint is available
+    const refEntry = refIdManager.getRef(sessionId, tabId, ref);
+    if (refEntry && refEntry.tagName) {
+      try {
+        const { node } = await cdpClient.send<{
+          node: { localName: string };
+        }>(page, 'DOM.describeNode', { backendNodeId });
+
+        const validation = refIdManager.validateRef(
+          sessionId, tabId, ref,
+          node.localName
+        );
+
+        if (!validation.valid && validation.stale) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Error: ${ref} is stale — ${validation.reason}. The DOM has changed since the element was found. Run find or read_page again to get fresh refs.`,
+            }],
+            isError: true,
+          };
+        }
+      } catch {
+        // If validation fails, proceed — DOM.resolveNode will catch removed elements
+      }
+    }
+
     // Resolve the node
     const { object } = await cdpClient.send<{ object: { objectId: string } }>(
       page,

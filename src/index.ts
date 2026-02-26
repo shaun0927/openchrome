@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { getMCPServer } from './mcp-server';
 import { registerAllTools } from './tools';
 import { setGlobalConfig } from './config/global';
+import { writePidFile } from './utils/pid-manager';
 
 const program = new Command();
 
@@ -28,14 +29,16 @@ program
   .option('--chrome-binary <path>', 'Path to Chrome binary (e.g., chrome-headless-shell)')
   .option('--headless-shell', 'Use chrome-headless-shell if available (default: false)')
   .option('--visible', 'Show Chrome window (default: headless when auto-launch)')
+  .option('--restart-chrome', 'Quit running Chrome to reuse real profile (default: uses temp profile)')
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; hybrid?: boolean; lpPort?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string }) => {
     const port = parseInt(options.port, 10);
     const autoLaunch = options.autoLaunch || false;
     const userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
     const chromeBinary = options.chromeBinary || process.env.CHROME_BINARY || undefined;
     const useHeadlessShell = options.headlessShell || false;
+    const restartChrome = options.restartChrome || false;
 
     console.error(`[openchrome] Starting MCP server`);
     console.error(`[openchrome] Chrome debugging port: ${port}`);
@@ -57,7 +60,10 @@ program
     }
 
     // Set global config before initializing anything
-    setGlobalConfig({ port, autoLaunch, userDataDir, chromeBinary, useHeadlessShell, headless });
+    setGlobalConfig({ port, autoLaunch, userDataDir, chromeBinary, useHeadlessShell, headless, restartChrome });
+    if (restartChrome) {
+      console.error(`[openchrome] Restart Chrome mode: enabled (will quit existing Chrome)`);
+    }
 
     // Configure hybrid mode if enabled
     const hybrid = options.hybrid || false;
@@ -76,6 +82,18 @@ program
 
     const server = getMCPServer();
     registerAllTools(server);
+
+    // Write PID file for zombie process detection
+    writePidFile(port);
+
+    // Register signal handlers for graceful shutdown
+    const shutdown = async (signal: string) => {
+      console.error(`[openchrome] Received ${signal}, shutting down...`);
+      await server.stop();
+      process.exit(0);
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
     server.start();
   });
 

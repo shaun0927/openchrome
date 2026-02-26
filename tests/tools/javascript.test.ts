@@ -408,4 +408,199 @@ describe('JavaScriptTool', () => {
       expect(page.evaluate).toHaveBeenCalled();
     });
   });
+
+  describe('Top-level Await Support', () => {
+    // Simulates the 3-tier eval strategy from javascript.ts without browser globals.
+    // This mirrors the exact logic in the source so the tests verify the wrapping behaviour.
+    async function evalWithAwaitSupport(jsCode: string): Promise<{ success: boolean; value?: string; error?: string }> {
+      try {
+        let evalResult: unknown;
+        try {
+          // Tier 1: direct eval
+          evalResult = (0, eval)(jsCode);
+        } catch (e) {
+          if (!(e instanceof SyntaxError) || !jsCode.includes('await')) {
+            throw e;
+          }
+          const trimmed = jsCode.trim().replace(/;$/, '');
+          try {
+            // Tier 2: single async expression
+            evalResult = (0, eval)(`(async()=>{return(\n${trimmed}\n)})()`);
+          } catch {
+            // Tier 3: multi-statement with return-last heuristic
+            const lastSemiIdx = trimmed.lastIndexOf(';');
+            if (lastSemiIdx !== -1) {
+              const head = trimmed.substring(0, lastSemiIdx + 1);
+              const tail = trimmed.substring(lastSemiIdx + 1).trim();
+              if (tail && !/^(const|let|var|function|class|if|for|while|switch|try|throw|return)\b/.test(tail)) {
+                evalResult = (0, eval)(`(async()=>{${head}\nreturn(${tail})})()`);
+              } else {
+                evalResult = (0, eval)(`(async()=>{${trimmed}})()`);
+              }
+            } else {
+              evalResult = (0, eval)(`(async()=>{${trimmed}})()`);
+            }
+          }
+        }
+
+        if (evalResult && typeof evalResult === 'object' && typeof (evalResult as Promise<unknown>).then === 'function') {
+          evalResult = await (evalResult as Promise<unknown>);
+        }
+
+        if (evalResult === undefined) {
+          return { success: true, value: 'undefined' };
+        } else if (evalResult === null) {
+          return { success: true, value: 'null' };
+        } else if (typeof evalResult === 'function') {
+          return { success: true, value: '[Function]' };
+        } else if (typeof evalResult === 'symbol') {
+          return { success: true, value: (evalResult as symbol).toString() };
+        } else {
+          try {
+            return { success: true, value: JSON.stringify(evalResult, null, 2) };
+          } catch {
+            return { success: true, value: String(evalResult) };
+          }
+        }
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    test('supports top-level await with Promise', async () => {
+      const handler = await getJavascriptHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
+        return evalWithAwaitSupport(code);
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'await Promise.resolve(42)',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('42');
+    });
+
+    test('supports await with setTimeout via Promise', async () => {
+      const handler = await getJavascriptHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
+        return evalWithAwaitSupport(code);
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: "await new Promise(r => setTimeout(() => r('done'), 10))",
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('"done"');
+    });
+
+    test('supports multi-statement await with last-expression return', async () => {
+      const handler = await getJavascriptHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
+        return evalWithAwaitSupport(code);
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'const val = await Promise.resolve(10); val * 2',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('20');
+    });
+
+    test('non-await code still works via real eval', async () => {
+      const handler = await getJavascriptHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
+        return evalWithAwaitSupport(code);
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: '1 + 1',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('2');
+    });
+
+    test('non-await string expression is JSON stringified', async () => {
+      const handler = await getJavascriptHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
+        return evalWithAwaitSupport(code);
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: '"hello"',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('"hello"');
+    });
+
+    test('syntax errors without await still produce clear errors', async () => {
+      const handler = await getJavascriptHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
+        return evalWithAwaitSupport(code);
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'function { }',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/SyntaxError|Unexpected token/);
+    });
+
+    test('await undefined/null resolves to null', async () => {
+      const handler = await getJavascriptHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
+        return evalWithAwaitSupport(code);
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'await Promise.resolve(null)',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('null');
+    });
+
+    test('supports multiple awaits in sequence', async () => {
+      const handler = await getJavascriptHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
+        return evalWithAwaitSupport(code);
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'const a = await Promise.resolve(1); const b = await Promise.resolve(2); a + b',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('3');
+    });
+  });
 });

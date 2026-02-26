@@ -253,10 +253,9 @@ describe('NavigateTool', () => {
         url: 'https://example.com',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      // New behavior: creates a new tab instead of returning error
+      // New behavior: navigates (reusing or creating a tab) instead of returning error
       expect(result.isError).toBeFalsy();
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.created).toBe(true);
       expect(parsed.tabId).toBeDefined();
     });
 

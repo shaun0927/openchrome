@@ -34,6 +34,35 @@ jest.mock('../../src/config/global', () => ({
   getGlobalConfig: () => ({}),
 }));
 
+// Mock http so checkDebugPort always returns null (no Chrome on debug port),
+// ensuring ensureChrome() always reaches the restart branch logic.
+jest.mock('http', () => {
+  const EventEmitter = require('events');
+  return {
+    request: jest.fn((_opts: unknown, _cb?: unknown) => {
+      const req = new EventEmitter();
+      req.end = jest.fn(() => {
+        req.emit('error', new Error('connect ECONNREFUSED'));
+      });
+      req.destroy = jest.fn();
+      return req;
+    }),
+  };
+});
+
+// Mock fs.existsSync as a jest.fn wrapping the real implementation.
+// This allows per-test overrides (e.g., blocking Chrome binary discovery)
+// while keeping real filesystem checks for lock file tests.
+const realExistsSync = jest.requireActual('fs').existsSync;
+jest.mock('fs', () => {
+  const actual = jest.requireActual('fs');
+  return {
+    ...actual,
+    existsSync: jest.fn((...args: unknown[]) => realExistsSync(...args)),
+  };
+});
+const mockExistsSync = fs.existsSync as jest.MockedFunction<typeof fs.existsSync>;
+
 const mockExecSync = execSync as jest.MockedFunction<typeof execSync>;
 
 describe('ChromeLauncher graceful restart', () => {
@@ -202,27 +231,95 @@ describe('ChromeLauncher graceful restart', () => {
   });
 
   describe('ensureChrome() restart branch', () => {
-    it('should skip restart when useTempProfile is true', async () => {
-      // Track whether isChromeRunning is called by watching execSync for pgrep
+    beforeEach(() => {
+      // Block Chrome binary discovery so findChromePath() returns null.
+      // This ensures ensureChrome throws "Chrome not found" before reaching
+      // waitForDebugPort, preventing 30s polling timeouts in tests.
+      mockExistsSync.mockImplementation((p: fs.PathLike) => {
+        const pathStr = String(p);
+        if (pathStr.includes('Google Chrome') || pathStr.includes('Chromium') ||
+            pathStr.includes('google-chrome') || pathStr.includes('chrome.exe') ||
+            pathStr.includes('chromium')) {
+          return false;
+        }
+        return realExistsSync(pathStr);
+      });
+    });
+
+    afterEach(() => {
+      // Restore default behavior (delegate to real fs.existsSync)
+      mockExistsSync.mockImplementation((...args: unknown[]) => realExistsSync(...args));
+    });
+
+    it('should skip restart by default (no restartChrome flag)', async () => {
       let pgrepCalled = false;
       mockExecSync.mockImplementation((cmd: unknown) => {
-        const cmdStr = String(cmd);
-        if (cmdStr.includes('pgrep')) {
+        if (String(cmd).includes('pgrep')) pgrepCalled = true;
+        throw new Error('not found');
+      });
+
+      try {
+        await launcher.ensureChrome({ autoLaunch: true });
+      } catch {
+        // Expected — Chrome binary not found in test env
+      }
+
+      expect(pgrepCalled).toBe(false);
+    });
+
+    it('should skip restart when useTempProfile is true', async () => {
+      let pgrepCalled = false;
+      mockExecSync.mockImplementation((cmd: unknown) => {
+        if (String(cmd).includes('pgrep')) pgrepCalled = true;
+        throw new Error('not found');
+      });
+
+      try {
+        await launcher.ensureChrome({ autoLaunch: true, useTempProfile: true });
+      } catch {
+        // Expected — Chrome binary not found in test env
+      }
+
+      expect(pgrepCalled).toBe(false);
+    });
+
+    it('should attempt restart when restartChrome is true', async () => {
+      jest.spyOn(launcher as any, 'getRealChromeProfileDir').mockReturnValue('/tmp/fake-chrome-profile');
+      jest.spyOn(launcher as any, 'isProfileLocked').mockReturnValue(true);
+      // Prevent quitAndUnlockProfile from polling (would timeout)
+      jest.spyOn(launcher as any, 'quitAndUnlockProfile').mockResolvedValue(false);
+
+      let pgrepCalled = false;
+      mockExecSync.mockImplementation((cmd: unknown) => {
+        if (String(cmd).includes('pgrep')) {
           pgrepCalled = true;
+          return Buffer.from('12345');
         }
         throw new Error('not found');
       });
 
       try {
-        await launcher.ensureChrome({
-          autoLaunch: true,
-          useTempProfile: true,
-        });
+        await launcher.ensureChrome({ autoLaunch: true, restartChrome: true });
       } catch {
         // Expected — Chrome binary not found in test env
       }
 
-      // The restart branch (which calls isChromeRunning → pgrep) should be skipped
+      expect(pgrepCalled).toBe(true);
+    });
+
+    it('should not kill Chrome when restartChrome is false (explicit)', async () => {
+      let pgrepCalled = false;
+      mockExecSync.mockImplementation((cmd: unknown) => {
+        if (String(cmd).includes('pgrep')) pgrepCalled = true;
+        throw new Error('not found');
+      });
+
+      try {
+        await launcher.ensureChrome({ autoLaunch: true, restartChrome: false });
+      } catch {
+        // Expected — Chrome binary not found in test env
+      }
+
       expect(pgrepCalled).toBe(false);
     });
   });

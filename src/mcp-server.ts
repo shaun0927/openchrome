@@ -23,6 +23,37 @@ import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 
+/**
+ * Detect if an error is a Chrome/CDP connection error that may be recoverable
+ * by reconnecting to the browser.
+ */
+export function isConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const patterns = [
+    'not connected to chrome',
+    'call connect() first',
+    'connection closed',
+    'protocol error',
+    'target closed',
+    'session closed',
+    'websocket is not open',
+    'websocket connection closed',
+    'browser has disconnected',
+    'browser disconnected',
+    'execution context was destroyed',
+    'cannot find context with specified id',
+    'inspected target navigated or closed',
+    'cdpsession connection closed',
+  ];
+  const lowerMessage = message.toLowerCase();
+  return patterns.some(pattern => lowerMessage.includes(pattern));
+}
+
+const RECONNECTION_GUIDANCE =
+  '\n\n⚠️ CONNECTION RECOVERY: The browser connection was lost. ' +
+  'To reconnect, run /mcp in Claude Code. ' +
+  'Do NOT run "claude mcp remove" or "claude mcp add" — this will break the MCP configuration.';
+
 export interface MCPServerOptions {
   dashboard?: boolean;
   dashboardRefreshInterval?: number;
@@ -89,8 +120,12 @@ export class MCPServer {
     // Handle quit event
     this.dashboard.on('quit', () => {
       console.error('[MCPServer] Dashboard quit requested');
-      this.stop();
-      process.exit(0);
+      this.stop().then(() => {
+        process.exit(0);
+      }).catch((err) => {
+        console.error('[MCPServer] Shutdown error:', err);
+        process.exit(1);
+      });
     });
 
     // Handle delete session event
@@ -175,8 +210,12 @@ export class MCPServer {
 
     this.rl.on('close', () => {
       console.error('[MCPServer] stdin closed, shutting down...');
-      this.stop();
-      process.exit(0);
+      this.stop().then(() => {
+        process.exit(0);
+      }).catch((err) => {
+        console.error('[MCPServer] Shutdown error:', err);
+        process.exit(1);
+      });
     });
 
     console.error('[MCPServer] Ready, waiting for requests...');
@@ -280,6 +319,10 @@ export class MCPServer {
         '',
         'PARALLEL WORKFLOW EXAMPLE:',
         '  "compare prices on Amazon, eBay, Walmart" → workflow_init with 3 workers, one per site',
+        '',
+        'CONNECTION RECOVERY:',
+        '- If a tool returns a connection error, ask the user to run /mcp in Claude Code to reconnect.',
+        '- NEVER run "claude mcp remove" or "claude mcp add" to fix connection issues.',
       ].join('\n'),
     };
   }
@@ -379,7 +422,25 @@ export class MCPServer {
         await this.operationController.gate(callId);
       }
 
-      const result = await tool.handler(sessionId, toolArgs);
+      let result: MCPResult;
+      try {
+        result = await tool.handler(sessionId, toolArgs);
+      } catch (handlerError) {
+        if (isConnectionError(handlerError)) {
+          // Attempt internal reconnection before surfacing error to LLM
+          console.error(`[MCPServer] Connection error during ${toolName}, attempting auto-reconnect...`);
+          const cdpClient = getCDPClient();
+          try {
+            await cdpClient.forceReconnect();
+            console.error(`[MCPServer] Reconnected, retrying ${toolName}...`);
+            result = await tool.handler(sessionId, toolArgs);
+          } catch (retryError) {
+            throw handlerError; // throw ORIGINAL error
+          }
+        } else {
+          throw handlerError;
+        }
+      }
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
@@ -422,8 +483,13 @@ export class MCPServer {
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, 'error', message);
 
+      // Append reconnection guidance for connection errors
+      const displayMessage = isConnectionError(error)
+        ? message + RECONNECTION_GUIDANCE
+        : message;
+
       const errResult: MCPResult = {
-        content: [{ type: 'text', text: `Error: ${message}` }],
+        content: [{ type: 'text', text: `Error: ${displayMessage}` }],
         isError: true,
       };
 
@@ -620,7 +686,7 @@ export class MCPServer {
   /**
    * Stop the server and clean up all Chrome resources
    */
-  stop(): void {
+  async stop(): Promise<void> {
     // Stop dashboard
     if (this.dashboard) {
       this.dashboard.stop();
@@ -631,10 +697,15 @@ export class MCPServer {
       this.rl = null;
     }
 
-    // Clean up Chrome resources (async, best-effort on exit)
-    this.cleanup().catch((err) => {
-      console.error('[MCPServer] Cleanup error:', err);
-    });
+    // Await cleanup with safety timeout to prevent hanging forever
+    const timeoutMs = 5000;
+    await Promise.race([
+      this.cleanup(),
+      new Promise<void>((resolve) => setTimeout(() => {
+        console.error('[MCPServer] Cleanup timed out after 5s, forcing exit');
+        resolve();
+      }, timeoutMs)),
+    ]);
   }
 
   /**
