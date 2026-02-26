@@ -88,6 +88,7 @@ export class StorageStateManager {
       return false;
     }
 
+    let restoreTid: ReturnType<typeof setTimeout>;
     await Promise.race([
       (async () => {
         // Restore cookies
@@ -116,10 +117,10 @@ export class StorageStateManager {
             // Skip if localStorage can't be accessed (about:blank, chrome://)
           }
         }
-      })(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Storage state restore timed out after 10000ms')), 10000)
-      ),
+      })().finally(() => clearTimeout(restoreTid)),
+      new Promise<void>((resolve) => {
+        restoreTid = setTimeout(resolve, 10000);
+      }),
     ]);
 
     return true;

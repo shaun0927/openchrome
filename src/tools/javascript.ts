@@ -65,6 +65,7 @@ const handler: ToolHandler = async (
     }
 
     // Execute the JavaScript (with configurable timeout)
+    let jsTid: ReturnType<typeof setTimeout>;
     const result = await Promise.race([
       page.evaluate(async (jsCode: string): Promise<{ success: boolean; value?: string; error?: string }> => {
       try {
@@ -141,10 +142,10 @@ const handler: ToolHandler = async (
           error: e instanceof Error ? e.message : String(e),
         };
       }
-    }, code),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`JS execution timed out after ${timeout}ms`)), timeout)
-      ),
+    }, code).finally(() => clearTimeout(jsTid)),
+      new Promise<never>((_, reject) => {
+        jsTid = setTimeout(() => reject(new Error(`JS execution timed out after ${timeout}ms`)), timeout);
+      }),
     ]);
 
     if (result.success) {

@@ -153,11 +153,12 @@ const handler: ToolHandler = async (
     }
 
     // Generate PDF (with 60s timeout)
+    let pdfTid: ReturnType<typeof setTimeout>;
     const pdfBuffer = await Promise.race([
-      page.pdf(pdfOptions),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('PDF generation timed out after 60000ms')), 60000)
-      ),
+      page.pdf(pdfOptions).finally(() => clearTimeout(pdfTid)),
+      new Promise<never>((_, reject) => {
+        pdfTid = setTimeout(() => reject(new Error('PDF generation timed out after 60000ms')), 60000);
+      }),
     ]);
 
     if (filePath) {

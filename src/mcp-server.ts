@@ -23,7 +23,7 @@ import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_RECONNECT_TIMEOUT_MS } from './config/defaults';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS } from './config/defaults';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -413,11 +413,12 @@ export class MCPServer {
 
     // Ensure session exists
     if (sessionId) {
+      let sessionInitTid: ReturnType<typeof setTimeout>;
       await Promise.race([
-        this.sessionManager.getOrCreateSession(sessionId),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Session initialization timed out after ${DEFAULT_SESSION_INIT_TIMEOUT_MS}ms`)), DEFAULT_SESSION_INIT_TIMEOUT_MS)
-        ),
+        this.sessionManager.getOrCreateSession(sessionId).finally(() => clearTimeout(sessionInitTid)),
+        new Promise<never>((_, reject) => {
+          sessionInitTid = setTimeout(() => reject(new Error(`Session initialization timed out after ${DEFAULT_SESSION_INIT_TIMEOUT_MS}ms`)), DEFAULT_SESSION_INIT_TIMEOUT_MS);
+        }),
       ]);
     }
 
@@ -427,11 +428,12 @@ export class MCPServer {
     try {
       // Wait at gate if paused
       if (this.operationController) {
+        let gateTid: ReturnType<typeof setTimeout>;
         await Promise.race([
-          this.operationController.gate(callId),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Operation gate timed out after 300000ms')), 300000)
-          ),
+          this.operationController.gate(callId).finally(() => clearTimeout(gateTid)),
+          new Promise<never>((_, reject) => {
+            gateTid = setTimeout(() => reject(new Error(`Operation gate timed out after ${DEFAULT_OPERATION_GATE_TIMEOUT_MS}ms`)), DEFAULT_OPERATION_GATE_TIMEOUT_MS);
+          }),
         ]);
       }
 
@@ -453,11 +455,12 @@ export class MCPServer {
           console.error(`[MCPServer] Connection error during ${toolName}, attempting auto-reconnect...`);
           const cdpClient = getCDPClient();
           try {
+            let reconnectTid: ReturnType<typeof setTimeout>;
             await Promise.race([
-              cdpClient.forceReconnect(),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error(`Reconnect timed out after ${DEFAULT_RECONNECT_TIMEOUT_MS}ms`)), DEFAULT_RECONNECT_TIMEOUT_MS)
-              ),
+              cdpClient.forceReconnect().finally(() => clearTimeout(reconnectTid)),
+              new Promise<never>((_, reject) => {
+                reconnectTid = setTimeout(() => reject(new Error(`Reconnect timed out after ${DEFAULT_RECONNECT_TIMEOUT_MS}ms`)), DEFAULT_RECONNECT_TIMEOUT_MS);
+              }),
             ]);
             console.error(`[MCPServer] Reconnected, retrying ${toolName}...`);
             let tid2: ReturnType<typeof setTimeout>;

@@ -356,7 +356,7 @@ const handler: ToolHandler = async (
           text: resultParts.join('\n') + delta,
         },
       ],
-      isError: errors.length > 0,
+      isError: errors.length > 0 && filledFields.length === 0,
     };
   } catch (error) {
     return {

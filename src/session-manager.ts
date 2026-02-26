@@ -13,7 +13,7 @@ import { getGlobalConfig } from './config/global';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
 import { smartGoto } from './utils/smart-goto';
-import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD } from './config/defaults';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD, DEFAULT_CREATE_TARGET_TIMEOUT_MS, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS } from './config/defaults';
 import * as os from 'os';
 import { BrowserRouter } from './router';
 import { HybridConfig } from './types/browser-backend';
@@ -653,11 +653,12 @@ export class SessionManager {
     url?: string,
     workerId?: string
   ): Promise<{ targetId: string; page: Page; workerId: string }> {
+    let createTargetTid: ReturnType<typeof setTimeout>;
     return Promise.race([
-      this._createTargetImpl(sessionId, url, workerId),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('createTarget timed out after 60000ms')), 60000)
-      ),
+      this._createTargetImpl(sessionId, url, workerId).finally(() => clearTimeout(createTargetTid)),
+      new Promise<never>((_, reject) => {
+        createTargetTid = setTimeout(() => reject(new Error(`createTarget timed out after ${DEFAULT_CREATE_TARGET_TIMEOUT_MS}ms`)), DEFAULT_CREATE_TARGET_TIMEOUT_MS);
+      }),
     ]);
   }
 
@@ -714,7 +715,7 @@ export class SessionManager {
                 }
               }
             })(),
-            new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+            new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS)),
           ]);
         } catch {
           console.error('[SessionManager] Cookie context copy timed out, continuing without cookies');

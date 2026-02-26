@@ -178,6 +178,7 @@ const handler: ToolHandler = async (
     // Try CDP-based drag and drop first
     let usedCDP = false;
     try {
+      let dragTid: ReturnType<typeof setTimeout>;
       await Promise.race([
         (async () => {
           const client = await page.createCDPSession();
@@ -215,10 +216,10 @@ const handler: ToolHandler = async (
           } finally {
             await client.detach().catch(() => {});
           }
-        })(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Drag operation timed out')), 10000)
-        ),
+        })().finally(() => clearTimeout(dragTid)),
+        new Promise<never>((_, reject) => {
+          dragTid = setTimeout(() => reject(new Error('Drag operation timed out')), 10000);
+        }),
       ]);
       usedCDP = true;
     } catch {

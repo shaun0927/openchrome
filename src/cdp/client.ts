@@ -570,23 +570,25 @@ export class CDPClient {
         let attachedSessionId: string | null = null;
         try {
           // Per-candidate timeout to skip unresponsive tabs quickly
+          let attachTid: ReturnType<typeof setTimeout>;
           const { sessionId } = await Promise.race([
             session.send('Target.attachToTarget', {
               targetId: candidate.targetId,
               flatten: true,
+            }).finally(() => clearTimeout(attachTid)),
+            new Promise<never>((_, reject) => {
+              attachTid = setTimeout(() => reject(new Error('cookie scan: attach timeout')), DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS);
             }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('cookie scan: attach timeout')), DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS),
-            ),
           ]) as { sessionId: string };
           attachedSessionId = sessionId;
 
           // Send Network.getAllCookies through the flat CDP session (with per-target timeout)
+          let cookiesTid: ReturnType<typeof setTimeout>;
           const result = await Promise.race([
-            session.send('Network.getAllCookies' as any, undefined, { sessionId } as any),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('cookie scan: getAllCookies timeout')), DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS),
-            ),
+            (session.send('Network.getAllCookies' as any, undefined, { sessionId } as any) as Promise<{ cookies: CookieEntry[] }>).finally(() => clearTimeout(cookiesTid)),
+            new Promise<never>((_, reject) => {
+              cookiesTid = setTimeout(() => reject(new Error('cookie scan: getAllCookies timeout')), DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS);
+            }),
           ]) as { cookies: CookieEntry[] };
           const cookieCount = result?.cookies?.length || 0;
 
@@ -741,19 +743,21 @@ export class CDPClient {
 
     if (context) {
       // Create page in isolated context (for worker isolation)
+      let newPageTid1: ReturnType<typeof setTimeout>;
       page = await Promise.race([
-        context.newPage(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS)
-        ),
+        context.newPage().finally(() => clearTimeout(newPageTid1)),
+        new Promise<never>((_, reject) => {
+          newPageTid1 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
+        }),
       ]) as Page;
     } else {
       // Create page in Chrome's default context
+      let newPageTid2: ReturnType<typeof setTimeout>;
       page = await Promise.race([
-        browser.newPage(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS)
-        ),
+        browser.newPage().finally(() => clearTimeout(newPageTid2)),
+        new Promise<never>((_, reject) => {
+          newPageTid2 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
+        }),
       ]) as Page;
 
       // Copy cookies from an authenticated page (skip for pool pre-warming to avoid

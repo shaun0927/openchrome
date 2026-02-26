@@ -141,6 +141,7 @@ const handler: ToolHandler = async (
     }
 
     // Apply network conditions via CDP with 5s timeout
+    let networkTid: ReturnType<typeof setTimeout>;
     await Promise.race([
       (async () => {
         const client = await page.createCDPSession();
@@ -170,10 +171,10 @@ const handler: ToolHandler = async (
         } finally {
           await client.detach().catch(() => {});
         }
-      })(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Network CDP operation timed out')), 5000)
-      ),
+      })().finally(() => clearTimeout(networkTid)),
+      new Promise<never>((_, reject) => {
+        networkTid = setTimeout(() => reject(new Error('Network CDP operation timed out')), 5000);
+      }),
     ]);
 
     if (preset === 'clear') {

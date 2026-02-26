@@ -76,3 +76,6 @@ export const DEFAULT_CREATE_TARGET_TIMEOUT_MS = 60000;
 
 /** CDP session operation timeout for direct createCDPSession calls. */
 export const DEFAULT_CDP_SESSION_OP_TIMEOUT_MS = 10000;
+
+/** Operation gate timeout in milliseconds. Max wait when tool execution is paused. */
+export const DEFAULT_OPERATION_GATE_TIMEOUT_MS = 300000;
