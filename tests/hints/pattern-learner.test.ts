@@ -303,8 +303,8 @@ describe('PatternLearner', () => {
 
       // Next time same error occurs, should get learned hint
       const hint = engine.getHint('custom_tool', makeResult('strange unknown glitch', true), true);
-      expect(hint).toContain('recovery_tool');
-      expect(hint).toContain('learned');
+      expect(hint?.hint).toContain('recovery_tool');
+      expect(hint?.hint).toContain('learned');
     });
 
     it('should not interfere with static rules', () => {
@@ -313,7 +313,7 @@ describe('PatternLearner', () => {
 
       // Static rule should still fire (error recovery has higher priority)
       const hint = engine.getHint('navigate', makeResult('tab not found', true), true);
-      expect(hint).toContain('tabs_context_mcp');
+      expect(hint?.hint).toContain('tabs_context_mcp');
     });
   });
 });

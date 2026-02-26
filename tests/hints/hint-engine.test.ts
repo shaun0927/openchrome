@@ -46,7 +46,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('Navigation timeout exceeded', true);
       const hint = engine.getHint('navigate', result, true);
-      expect(hint).toContain('wait_for');
+      expect(hint?.hint).toContain('wait_for');
     });
 
     it('should return null when no rules match', () => {
@@ -62,66 +62,66 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('ref not found: abc123', true);
       const hint = engine.getHint('click_element', result, true);
-      expect(hint).toContain('Refs expire');
-      expect(hint).toContain('read_page');
+      expect(hint?.hint).toContain('Refs expire');
+      expect(hint?.hint).toContain('read_page');
     });
 
     it('should hint on tab not found errors', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('tab not found: tab-xyz', true);
       const hint = engine.getHint('navigate', result, true);
-      expect(hint).toContain('tabs_context_mcp');
+      expect(hint?.hint).toContain('tabs_context_mcp');
     });
 
     it('should hint on CSS selector failures', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('selector not found: #my-button', true);
       const hint = engine.getHint('computer', result, true);
-      expect(hint).toContain('find(query)');
+      expect(hint?.hint).toContain('find(query)');
     });
 
     it('should hint on click_element "no clickable elements found"', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('No clickable elements found matching "Submit"', true);
       const hint = engine.getHint('click_element', result, true);
-      expect(hint).toContain('wait_and_click');
-      expect(hint).toContain('read_page');
+      expect(hint?.hint).toContain('wait_and_click');
+      expect(hint?.hint).toContain('read_page');
     });
 
     it('should hint on click_element "no good match found"', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('No good match found for "Login". Best candidate was "Log Out" with low confidence.', true);
       const hint = engine.getHint('click_element', result, true);
-      expect(hint).toContain('wait_and_click');
+      expect(hint?.hint).toContain('wait_and_click');
     });
 
     it('should hint on click_element generic error', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Click element error: Cannot read properties of null', true);
       const hint = engine.getHint('click_element', result, true);
-      expect(hint).toContain('wait_and_click');
+      expect(hint?.hint).toContain('wait_and_click');
     });
 
     it('should hint on timeout errors', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Operation timed out after 30000ms', true);
       const hint = engine.getHint('navigate', result, true);
-      expect(hint).toContain('wait_for');
+      expect(hint?.hint).toContain('wait_for');
     });
 
     it('should hint on null reference errors', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Cannot read property "click" of null', true);
       const hint = engine.getHint('javascript_tool', result, true);
-      expect(hint).toContain('null');
-      expect(hint).toContain('find');
+      expect(hint?.hint).toContain('null');
+      expect(hint?.hint).toContain('find');
     });
 
     it('should hint on coordinate-based click attempts', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('click at position requires x, y coordinates', true);
       const hint = engine.getHint('computer', result, true);
-      expect(hint).toContain('click_element(query)');
+      expect(hint?.hint).toContain('click_element(query)');
     });
 
     it('should not trigger error rules for non-error results', () => {
@@ -130,7 +130,7 @@ describe('HintEngine', () => {
       // Error recovery rules require isError=true
       const hint = engine.getHint('click_element', result, false);
       // Should not get error recovery hint
-      expect(hint === null || !hint.includes('Refs expire')).toBe(true);
+      expect(hint === null || !hint.hint.includes('Refs expire')).toBe(true);
     });
   });
 
@@ -140,7 +140,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('clicked element at position');
       const hint = engine.getHint('click', result, false);
-      expect(hint).toContain('click_element');
+      expect(hint?.hint).toContain('click_element');
     });
 
     it('should suggest fill_form after multiple form_input calls', () => {
@@ -148,7 +148,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('input filled');
       const hint = engine.getHint('form_input', result, false);
-      expect(hint).toContain('fill_form');
+      expect(hint?.hint).toContain('fill_form');
     });
 
     it('should suggest wait_and_click after navigate+click', () => {
@@ -156,14 +156,14 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('clicked');
       const hint = engine.getHint('click_element', result, false);
-      expect(hint).toContain('wait_and_click');
+      expect(hint?.hint).toContain('wait_and_click');
     });
 
     it('should suggest find for truncated read_page', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Page content here... truncated at 5000 chars');
       const hint = engine.getHint('read_page', result, false);
-      expect(hint).toContain('find(query)');
+      expect(hint?.hint).toContain('find(query)');
     });
   });
 
@@ -172,8 +172,8 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('{"action":"navigate","url":"https://app.com/login","title":"Login - App"}');
       const hint = engine.getHint('navigate', result, false);
-      expect(hint).toContain('Login');
-      expect(hint).toContain('Chrome profile');
+      expect(hint?.hint).toContain('Login');
+      expect(hint?.hint).toContain('Chrome profile');
     });
 
     it('should detect repeated read_page', () => {
@@ -181,7 +181,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('page content...');
       const hint = engine.getHint('read_page', result, false);
-      expect(hint).toContain('find(query)');
+      expect(hint?.hint).toContain('find(query)');
     });
 
     it('should detect navigate→screenshot without wait', () => {
@@ -189,7 +189,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('screenshot captured');
       const hint = engine.getHint('computer', result, false);
-      expect(hint).toContain('wait_for');
+      expect(hint?.hint).toContain('wait_for');
     });
   });
 
@@ -198,28 +198,28 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('{"action":"navigate","url":"https://example.com/bad","title":"404 Not Found"}');
       const hint = engine.getHint('navigate', result, false);
-      expect(hint).toContain('Verify URL');
+      expect(hint?.hint).toContain('Verify URL');
     });
 
     it('should hint when find returns no results', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('0 results found');
       const hint = engine.getHint('find', result, false);
-      expect(hint).toContain('broader query');
+      expect(hint?.hint).toContain('broader query');
     });
 
     it('should hint after click_element with navigation', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Clicked "Submit" button [Page navigated to /dashboard]');
       const hint = engine.getHint('click_element', result, false);
-      expect(hint).toContain('wait_for');
+      expect(hint?.hint).toContain('wait_for');
     });
 
     it('should hint after form submission', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Form submitted successfully');
       const hint = engine.getHint('fill_form', result, false);
-      expect(hint).toContain('wait_for');
+      expect(hint?.hint).toContain('wait_for');
     });
   });
 
@@ -230,7 +230,7 @@ describe('HintEngine', () => {
       const result = makeResult('timeout waiting for navigation', true);
       const hint = engine.getHint('navigate', result, true);
       // Should be error-recovery hint (lower priority number = higher precedence)
-      expect(hint).toContain('wait_for');
+      expect(hint?.hint).toContain('wait_for');
     });
   });
 
@@ -256,8 +256,8 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('another weird error', true);
       const hint = engine.getHint('custom_tool', result, true);
-      expect(hint).toContain('failed 3 times');
-      expect(hint).toContain('different approach');
+      expect(hint?.hint).toContain('failed 3 times');
+      expect(hint?.hint).toContain('different approach');
     });
 
     it('should detect A↔B oscillation pattern', () => {
@@ -269,9 +269,9 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('navigated to page');
       const hint = engine.getHint('navigate', result, false);
-      expect(hint).toContain('oscillation');
-      expect(hint).toContain('navigate');
-      expect(hint).toContain('read_page');
+      expect(hint?.hint).toContain('oscillation');
+      expect(hint?.hint).toContain('navigate');
+      expect(hint?.hint).toContain('read_page');
     });
 
     it('should detect same tool called 3+ times with success', () => {
@@ -310,7 +310,7 @@ describe('HintEngine', () => {
       const result = makeResult('Clicked at (100, 200)');
       const hint = engine.getHint('computer', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('CLICK STALL');
+      expect(hint?.hint).toContain('CLICK STALL');
     });
 
     it('coordinate-click-stall: does NOT trigger on only 2 recent clicks', () => {
@@ -323,7 +323,7 @@ describe('HintEngine', () => {
       const hint = engine.getHint('computer', result, false);
       // Another rule (same-tool-same-result) may match, but CLICK STALL should not
       if (hint) {
-        expect(hint).not.toContain('CLICK STALL');
+        expect(hint?.hint).not.toContain('CLICK STALL');
       }
     });
 
@@ -338,20 +338,61 @@ describe('HintEngine', () => {
       const result = makeResult('Clicked at (200, 300)');
       const hint = engine.getHint('computer', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('Multiple screenshots after clicks');
+      expect(hint?.hint).toContain('Multiple screenshots after clicks');
     });
 
-    it('js-escalation-ladder: triggers on 3+ javascript_tool calls', () => {
+    it('empty-result-streak: triggers after 3+ empty javascript_tool results', () => {
       const tracker = makeTracker([
         { toolName: 'javascript_tool' },
         { toolName: 'javascript_tool' },
         { toolName: 'javascript_tool' },
       ]);
       const engine = new HintEngine(tracker);
-      const result = makeResult('undefined');
+      const result = makeResult('null');
       const hint = engine.getHint('javascript_tool', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('escalation ladder');
+      expect(hint?.hint).toContain('empty/null results');
+      expect(hint?.hint).toContain('read_page');
+    });
+
+    it('empty-result-streak: does NOT trigger when current result is non-empty', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('<div class="save-indicator">Saved</div>');
+      const hint = engine.getHint('javascript_tool', result, false);
+      if (hint) {
+        expect(hint?.hint).not.toContain('empty/null results');
+      }
+    });
+
+    it('empty-result-streak: wins over js-escalation-ladder (lower priority)', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('[]');
+      const hint = engine.getHint('javascript_tool', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint?.hint).toContain('empty/null results');
+      expect(hint?.hint).not.toContain('escalation ladder');
+    });
+
+    it('js-escalation-ladder: triggers on 3+ javascript_tool calls with non-empty result', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('document.querySelector returned element data');
+      const hint = engine.getHint('javascript_tool', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint?.hint).toContain('escalation ladder');
     });
 
     it('post-scroll-click: triggers when scroll action precedes coordinate click', () => {
@@ -362,7 +403,7 @@ describe('HintEngine', () => {
       const result = makeResult('Clicked at (300, 400)');
       const hint = engine.getHint('computer', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('scroll');
+      expect(hint?.hint).toContain('scroll');
     });
 
     it('contenteditable-click-hint: triggers when click hits a rich text editor', () => {
@@ -370,7 +411,7 @@ describe('HintEngine', () => {
       const result = makeResult('Clicked at (50, 50) — Hit: div[contenteditable="true"]');
       const hint = engine.getHint('computer', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('rich text editor');
+      expect(hint?.hint).toContain('rich text editor');
     });
 
     it('coordinate-click-after-read: triggers when clicking a non-interactive element', () => {
@@ -378,7 +419,7 @@ describe('HintEngine', () => {
       const result = makeResult('Clicked at (200, 300) — Hit: span [not interactive]');
       const hint = engine.getHint('computer', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('non-interactive');
+      expect(hint?.hint).toContain('non-interactive');
     });
   });
 
@@ -388,8 +429,8 @@ describe('HintEngine', () => {
       const result = makeResult('Page.captureScreenshot timed out', true);
       const hint = engine.getHint('computer', result, true);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('read_page mode="dom"');
-      expect(hint).toContain('Screenshot timed out');
+      expect(hint?.hint).toContain('read_page mode="dom"');
+      expect(hint?.hint).toContain('Screenshot timed out');
     });
 
     it('generic timeout gets updated hint', () => {
@@ -397,8 +438,8 @@ describe('HintEngine', () => {
       const result = makeResult('Navigation timeout', true);
       const hint = engine.getHint('navigate', result, true);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('wait_for');
-      expect(hint).not.toContain('may require login');
+      expect(hint?.hint).toContain('wait_for');
+      expect(hint?.hint).not.toContain('may require login');
     });
 
     it('slow-page-warning fires after slow navigate', () => {
@@ -421,7 +462,7 @@ describe('HintEngine', () => {
       const result = makeResult('screenshot captured');
       const hint = engine.getHint('computer', result, false);
       expect(hint).not.toBeNull();
-      expect(hint).toContain('Slow page detected');
+      expect(hint?.hint).toContain('Slow page detected');
     });
 
     it('slow-page-warning does not fire for fast pages', () => {
@@ -445,7 +486,7 @@ describe('HintEngine', () => {
       const hint = engine.getHint('computer', result, false);
       // Should NOT contain slow-page-warning
       if (hint) {
-        expect(hint).not.toContain('Slow page detected');
+        expect(hint?.hint).not.toContain('Slow page detected');
       }
     });
   });
@@ -483,6 +524,8 @@ describe('HintEngine', () => {
       expect(entry.isError).toBe(true);
       expect(entry.matchedRule).toContain('error-recovery');
       expect(entry.hint).toContain('Refs expire');
+      expect(entry.severity).toBe('info');
+      expect(entry.fireCount).toBe(1);
     });
 
     it('should log hint misses with null values', async () => {
@@ -501,6 +544,8 @@ describe('HintEngine', () => {
       const entry = JSON.parse(lines[0]);
       expect(entry.matchedRule).toBeNull();
       expect(entry.hint).toBeNull();
+      expect(entry.severity).toBeNull();
+      expect(entry.fireCount).toBe(0);
     });
 
     it('should accumulate multiple log entries', async () => {
@@ -518,6 +563,122 @@ describe('HintEngine', () => {
       const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.jsonl'));
       const lines = fs.readFileSync(path.join(tmpDir, files[0]), 'utf-8').trim().split('\n');
       expect(lines).toHaveLength(3);
+    });
+  });
+
+  describe('hint escalation', () => {
+    it('should return info severity for first 2 firings', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('ref not found: abc', true);
+
+      const hint1 = engine.getHint('click_element', result, true);
+      expect(hint1).not.toBeNull();
+      expect(hint1!.severity).toBe('info');
+      expect(hint1!.fireCount).toBe(1);
+
+      const hint2 = engine.getHint('click_element', result, true);
+      expect(hint2!.severity).toBe('info');
+      expect(hint2!.fireCount).toBe(2);
+    });
+
+    it('should escalate to warning severity at 3-4 firings', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('ref not found: abc', true);
+
+      engine.getHint('click_element', result, true);
+      engine.getHint('click_element', result, true);
+      const hint3 = engine.getHint('click_element', result, true);
+      expect(hint3!.severity).toBe('warning');
+      expect(hint3!.fireCount).toBe(3);
+      expect(hint3!.hint).toContain('WARNING');
+
+      const hint4 = engine.getHint('click_element', result, true);
+      expect(hint4!.severity).toBe('warning');
+      expect(hint4!.fireCount).toBe(4);
+    });
+
+    it('should escalate to critical severity at 5+ firings', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('ref not found: abc', true);
+
+      for (let i = 0; i < 4; i++) {
+        engine.getHint('click_element', result, true);
+      }
+      const hint5 = engine.getHint('click_element', result, true);
+      expect(hint5!.severity).toBe('critical');
+      expect(hint5!.fireCount).toBe(5);
+      expect(hint5!.hint).toContain('CRITICAL');
+      expect(hint5!.hint).toContain('you MUST change approach');
+    });
+
+    it('should track fire counts independently per rule', () => {
+      const engine = new HintEngine(new ActivityTracker());
+
+      const errResult = makeResult('ref not found: abc', true);
+      engine.getHint('click_element', errResult, true);
+      const hint2 = engine.getHint('click_element', errResult, true);
+      expect(hint2!.fireCount).toBe(2);
+
+      const navResult = makeResult('{"action":"navigate","url":"https://app.com/login","title":"Login - App"}');
+      const loginHint = engine.getHint('navigate', navResult, false);
+      expect(loginHint!.fireCount).toBe(1);
+
+      const hint3 = engine.getHint('click_element', errResult, true);
+      expect(hint3!.fireCount).toBe(3);
+      expect(hint3!.severity).toBe('warning');
+    });
+  });
+
+  describe('structured hint result', () => {
+    it('should include rule name and severity', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('ref not found: abc', true);
+      const hint = engine.getHint('click_element', result, true);
+      expect(hint).not.toBeNull();
+      expect(hint!.rule).toMatch(/^error-recovery/);
+      expect(hint!.severity).toBe('info');
+      expect(hint!.rawHint).toContain('Refs expire');
+    });
+
+    it('should extract context with coordinates', () => {
+      const tracker = makeTracker([
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked at (940, 43) \u2014 Hit: div.search-box');
+      const hint = engine.getHint('computer', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint!.context).toBeDefined();
+      expect(hint!.context!.coordinates).toBe('(940, 43)');
+      expect(hint!.context!.element).toBe('div.search-box');
+    });
+
+    it('should extract tool suggestion from hint text', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('ref not found: abc', true);
+      const hint = engine.getHint('click_element', result, true);
+      expect(hint!.suggestion).toBeDefined();
+      expect(hint!.suggestion!.tool).toBe('read_page');
+    });
+
+    it('should include action history in critical hints', () => {
+      const tracker = makeTracker([
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+        { toolName: 'computer', args: { action: 'left_click' } },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked at (100, 200)');
+
+      for (let i = 0; i < 4; i++) {
+        engine.getHint('computer', result, false);
+      }
+      const critical = engine.getHint('computer', result, false);
+      expect(critical!.severity).toBe('critical');
+      expect(critical!.hint).toContain('Previous actions:');
+      expect(critical!.hint).toContain('computer');
     });
   });
 });
