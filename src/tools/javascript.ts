@@ -79,10 +79,14 @@ const handler: ToolHandler = async (
           } catch {
             // Tier 3: Multi-statement with return-last-expression heuristic
             const lastSemiIdx = trimmed.lastIndexOf(';');
-            if (lastSemiIdx !== -1) {
+            // Guard: skip split if the semicolon is likely inside a string literal
+            // (odd number of unescaped quotes after the split point)
+            const afterSplit = lastSemiIdx !== -1 ? trimmed.substring(lastSemiIdx + 1) : '';
+            const quotesSafe = ((afterSplit.match(/(?<!\\)["'`]/g) || []).length % 2) === 0;
+            if (lastSemiIdx !== -1 && quotesSafe) {
               const head = trimmed.substring(0, lastSemiIdx + 1);
-              const tail = trimmed.substring(lastSemiIdx + 1).trim();
-              if (tail && !/^(const|let|var|function|class|if|for|while|switch|try|throw|return)\b/.test(tail)) {
+              const tail = afterSplit.trim();
+              if (tail && !/^(const|let|var|function|class|if|for|while|do|switch|try|throw|return|delete|typeof|void)\b/.test(tail)) {
                 evalResult = (0, eval)(`(async()=>{${head}\nreturn(${tail});})()`);
               } else {
                 evalResult = (0, eval)(`(async()=>{${trimmed}})()`);
