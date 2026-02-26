@@ -225,7 +225,7 @@ export class HintEngine {
     const context: NonNullable<HintResult['context']> = {};
 
     // Extract coordinates from "Clicked at (X, Y)" or "(X,Y)" patterns
-    const coordMatch = resultText.match(/\((\d+),?\s*(\d+)\)/);
+    const coordMatch = resultText.match(/\((\d+),\s*(\d+)\)/);
     if (coordMatch) context.coordinates = `(${coordMatch[1]}, ${coordMatch[2]})`;
 
     // Extract element info from "Hit: ..." line
@@ -241,7 +241,7 @@ export class HintEngine {
 
   private extractSuggestion(rawHint: string): HintResult['suggestion'] | undefined {
     // Extract tool name from common patterns like "Use X", "Try X", "Prefer X"
-    const toolMatch = rawHint.match(/(?:Use|Try|Prefer)\s+(\w+)(?:\(|[\s,.])/i);
+    const toolMatch = rawHint.match(/\b(?:Use|Try|Prefer)\s+(\w+)(?:\(|[\s,.])/i);
     if (toolMatch) {
       return {
         tool: toolMatch[1],
