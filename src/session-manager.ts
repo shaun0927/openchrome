@@ -659,6 +659,8 @@ export class SessionManager {
 
     // Enforce per-worker tab limit: close oldest tab when limit reached
     if (worker.targets.size >= this.config.maxTargetsPerWorker) {
+      // Set iterates in insertion order (ES2015+), which corresponds to creation order
+      // as long as targets are only added (never removed and re-added).
       const oldestTargetId = worker.targets.values().next().value;
       if (oldestTargetId) {
         console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest tab ${oldestTargetId}`);

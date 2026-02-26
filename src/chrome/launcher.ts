@@ -513,10 +513,9 @@ export class ChromeLauncher {
             prefs.profile.exited_cleanly = true;
           }
           // Suppress session restore so copied profile doesn't reopen old tabs
-          if (prefs.session) {
-            prefs.session.restore_on_startup = 5; // 5 = open new tab page, not restore
-            delete prefs.session.startup_urls;
-          }
+          if (!prefs.session) prefs.session = {};
+          prefs.session.restore_on_startup = 5; // 5 = open new tab page, not restore
+          delete prefs.session.startup_urls;
           fs.writeFileSync(path.join(destDefault, 'Preferences'), JSON.stringify(prefs));
         } catch {
           // JSON parse failed — skip Preferences entirely.
