@@ -89,8 +89,12 @@ export class MCPServer {
     // Handle quit event
     this.dashboard.on('quit', () => {
       console.error('[MCPServer] Dashboard quit requested');
-      this.stop();
-      process.exit(0);
+      this.stop().then(() => {
+        process.exit(0);
+      }).catch((err) => {
+        console.error('[MCPServer] Shutdown error:', err);
+        process.exit(1);
+      });
     });
 
     // Handle delete session event
@@ -175,8 +179,12 @@ export class MCPServer {
 
     this.rl.on('close', () => {
       console.error('[MCPServer] stdin closed, shutting down...');
-      this.stop();
-      process.exit(0);
+      this.stop().then(() => {
+        process.exit(0);
+      }).catch((err) => {
+        console.error('[MCPServer] Shutdown error:', err);
+        process.exit(1);
+      });
     });
 
     console.error('[MCPServer] Ready, waiting for requests...');
@@ -606,7 +614,7 @@ export class MCPServer {
   /**
    * Stop the server and clean up all Chrome resources
    */
-  stop(): void {
+  async stop(): Promise<void> {
     // Stop dashboard
     if (this.dashboard) {
       this.dashboard.stop();
@@ -617,10 +625,15 @@ export class MCPServer {
       this.rl = null;
     }
 
-    // Clean up Chrome resources (async, best-effort on exit)
-    this.cleanup().catch((err) => {
-      console.error('[MCPServer] Cleanup error:', err);
-    });
+    // Await cleanup with safety timeout to prevent hanging forever
+    const timeoutMs = 5000;
+    await Promise.race([
+      this.cleanup(),
+      new Promise<void>((resolve) => setTimeout(() => {
+        console.error('[MCPServer] Cleanup timed out after 5s, forcing exit');
+        resolve();
+      }, timeoutMs)),
+    ]);
   }
 
   /**

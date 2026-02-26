@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { getMCPServer } from './mcp-server';
 import { registerAllTools } from './tools';
 import { setGlobalConfig } from './config/global';
+import { writePidFile } from './utils/pid-manager';
 
 const program = new Command();
 
@@ -81,6 +82,18 @@ program
 
     const server = getMCPServer();
     registerAllTools(server);
+
+    // Write PID file for zombie process detection
+    writePidFile(port);
+
+    // Register signal handlers for graceful shutdown
+    const shutdown = async (signal: string) => {
+      console.error(`[openchrome] Received ${signal}, shutting down...`);
+      await server.stop();
+      process.exit(0);
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
     server.start();
   });
 
