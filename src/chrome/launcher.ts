@@ -25,6 +25,8 @@ export interface LaunchOptions {
   autoLaunch?: boolean;
   /** If true, force using a temp directory instead of real Chrome profile */
   useTempProfile?: boolean;
+  /** If true, quit running Chrome to reuse the real profile (default: false — uses temp profile instead) */
+  restartChrome?: boolean;
 }
 
 const DEFAULT_PORT = 9222;
@@ -211,21 +213,19 @@ export class ChromeLauncher {
       );
     }
 
-    // Graceful restart: if Chrome is running without debug port and profile is locked,
-    // quit Chrome gracefully so it saves session state, then let the existing launch
-    // logic detect the unlocked real profile and relaunch with --remote-debugging-port.
-    if (!options.useTempProfile) {
+    // Graceful restart: only when explicitly opted in via --restart-chrome flag.
+    // Default behavior: skip restart, fall through to temp profile + cookie copy.
+    const restartChrome = options.restartChrome ?? getGlobalConfig().restartChrome ?? false;
+    if (!options.useTempProfile && restartChrome) {
       const realProfileDir = this.getRealChromeProfileDir();
       if (realProfileDir && this.isProfileLocked(realProfileDir) && this.isChromeRunning()) {
-        console.error('[ChromeLauncher] Chrome running without debug port — attempting graceful restart...');
+        console.error('[ChromeLauncher] --restart-chrome: attempting graceful restart...');
         const unlocked = await this.quitAndUnlockProfile(realProfileDir);
         if (unlocked) {
           console.error('[ChromeLauncher] Chrome quit successfully, profile unlocked. Relaunching with debug port...');
         } else {
           console.error('[ChromeLauncher] Graceful restart failed, falling back to temp profile...');
         }
-        // On success: existing launch logic below detects unlocked profile
-        // On failure: falls through to existing temp-profile path
       }
     }
 
