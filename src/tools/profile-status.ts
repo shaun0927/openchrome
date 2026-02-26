@@ -9,6 +9,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getChromeLauncher } from '../chrome/launcher';
+import { formatAge } from '../utils/format-age';
 
 const definition: MCPToolDefinition = {
   name: 'oc_profile_status',
@@ -31,39 +32,50 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   try {
     const launcher = getChromeLauncher();
-    const profileType = launcher.getProfileType();
+    const state = launcher.getProfileState();
 
     const capabilities = {
-      extensions: profileType === 'real',
-      savedPasswords: profileType === 'real',
-      localStorage: profileType === 'real' || profileType === 'persistent',
-      bookmarks: profileType === 'real',
-      formAutofill: profileType === 'real',
-      sessionCookies: profileType === 'real' || profileType === 'persistent',
-      persistentStorage: profileType === 'real' || profileType === 'persistent',
+      extensions: state.extensionsAvailable,
+      savedPasswords: state.type === 'real',
+      localStorage: state.type === 'real' || state.type === 'persistent',
+      bookmarks: state.type === 'real',
+      formAutofill: state.type === 'real',
+      sessionCookies: state.type === 'real' || state.type === 'persistent',
+      persistentStorage: state.type === 'real' || state.type === 'persistent',
     };
 
     const result: Record<string, unknown> = {
-      profileType: profileType ?? 'unknown',
+      profileType: state.type,
       capabilities,
+      ...(state.sourceProfile && {
+        realProfileLocked: true,
+      }),
+      ...(state.cookieCopiedAt && {
+        cookiesCopied: true,
+        cookieAge: Date.now() - state.cookieCopiedAt,
+        cookieAgeFormatted: formatAge(state.cookieCopiedAt),
+      }),
     };
 
     const lines: string[] = [];
-    if (profileType === 'real') {
+    if (state.type === 'real') {
       lines.push('Profile: Real Chrome profile (full capability)');
       lines.push('All browser features available: extensions, saved passwords, localStorage, bookmarks, form autofill.');
-    } else if (profileType === 'persistent') {
+    } else if (state.type === 'persistent') {
       lines.push('Profile: Persistent OpenChrome profile (synced cookies from real profile)');
+      if (state.cookieCopiedAt) {
+        lines.push(`Cookie sync age: ${formatAge(state.cookieCopiedAt)}`);
+      }
       lines.push('Available: synced cookies, localStorage, IndexedDB, service workers (persist across sessions)');
       lines.push('Not available: extensions, saved passwords, bookmarks, form autofill');
       lines.push('');
       lines.push('Tip: Cookies are synced from the real profile. If authentication fails, a fresh sync will happen on next launch.');
-    } else if (profileType === 'temp') {
+    } else if (state.type === 'temp') {
       lines.push('Profile: Fresh temporary profile (no user data)');
       lines.push('Not available: cookies, extensions, saved passwords, localStorage, bookmarks, form autofill');
       lines.push('');
       lines.push('Tip: The user will need to log in manually to any sites that require authentication.');
-    } else if (profileType === 'explicit') {
+    } else if (state.type === 'explicit') {
       lines.push('Profile: User-specified custom profile directory');
       lines.push('Capabilities depend on the profile contents.');
     } else {
