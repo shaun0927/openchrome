@@ -191,6 +191,7 @@ export class CDPClient {
       return; // Already reconnecting
     }
 
+    this.reconnectAttempts = 0; // Reset counter on each new disconnect event
     this.connectionState = 'reconnecting';
     this.emitConnectionEvent({
       type: 'disconnected',
@@ -201,6 +202,12 @@ export class CDPClient {
     this.sessions.clear();
     this.targetIdIndex.clear();
     this.inFlightCookieScans.clear();
+
+    // Remove old browser listeners before nulling reference
+    if (this.browser) {
+      this.browser.removeAllListeners('disconnected');
+      this.browser.removeAllListeners('targetdestroyed');
+    }
     this.browser = null;
 
     // Attempt reconnection
@@ -322,6 +329,7 @@ export class CDPClient {
     if (this.browser) {
       try {
         this.browser.removeAllListeners('disconnected');
+        this.browser.removeAllListeners('targetdestroyed');
         await this.browser.disconnect();
       } catch {
         // Ignore disconnect errors
@@ -344,6 +352,8 @@ export class CDPClient {
 
     if (this.browser) {
       try {
+        this.browser.removeAllListeners('disconnected');
+        this.browser.removeAllListeners('targetdestroyed');
         await this.browser.disconnect();
       } catch {
         // Browser might already be disconnected

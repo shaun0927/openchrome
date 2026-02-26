@@ -451,6 +451,13 @@ export class ChromeLauncher {
   }
 
   /**
+   * Get the port this launcher is configured for
+   */
+  getPort(): number {
+    return this.port;
+  }
+
+  /**
    * Get the real Chrome profile directory for the current platform
    */
   private getRealChromeProfileDir(): string | null {
@@ -699,8 +706,12 @@ export class ChromeLauncher {
 let launcherInstance: ChromeLauncher | null = null;
 
 export function getChromeLauncher(port?: number): ChromeLauncher {
-  if (!launcherInstance) {
-    launcherInstance = new ChromeLauncher(port);
+  const resolvedPort = port || DEFAULT_PORT;
+  if (!launcherInstance || launcherInstance.getPort() !== resolvedPort) {
+    if (launcherInstance) {
+      console.error(`[ChromeLauncher] Replacing singleton (port ${launcherInstance.getPort()} → ${resolvedPort})`);
+    }
+    launcherInstance = new ChromeLauncher(resolvedPort);
   }
   return launcherInstance;
 }
