@@ -81,6 +81,10 @@ export function copyCookiesAtomic(
   // Tier 1: better-sqlite3 — VACUUM INTO (synchronous, atomic, WAL-aware)
   // -------------------------------------------------------------------------
   try {
+    // VACUUM INTO requires the destination to not exist; remove stale file first.
+    if (fs.existsSync(destPath)) {
+      fs.unlinkSync(destPath);
+    }
     _deps.attemptBetterSqlite3Copy(sourcePath, destPath);
     return { method: 'better-sqlite3', success: true };
   } catch {
@@ -109,11 +113,9 @@ export function copyCookiesAtomic(
     // a partial main-db snapshot is worse than no WAL at all.
     const warning =
       'Used non-atomic file copy (sqlite3 unavailable). Some recent cookies may be missing.';
-    console.error(`[ChromeLauncher] Warning: ${warning}`);
     return { method: 'file-copy', success: true, warning };
   } catch {
     const warning = 'All cookie copy methods failed.';
-    console.error(`[ChromeLauncher] Error: ${warning}`);
     return { method: 'none', success: false, warning };
   }
 }

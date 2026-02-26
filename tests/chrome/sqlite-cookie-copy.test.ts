@@ -91,7 +91,7 @@ describe('copyCookiesAtomic', () => {
     });
 
     it('returns { method: none, success: false } when sourceDefaultDir does not exist', () => {
-      const result = copyCookiesAtomic('/nonexistent/path/Default', '/tmp/oc-test-dst-fake');
+      const result = copyCookiesAtomic('/nonexistent/path/Default', path.join(os.tmpdir(), 'oc-test-dst-fake'));
 
       expect(result.method).toBe('none');
       expect(result.success).toBe(false);
@@ -279,18 +279,15 @@ describe('copyCookiesAtomic', () => {
       }
     });
 
-    it('logs a console.error warning when falling back to file-copy', () => {
+    it('returns a warning string when falling back to file-copy', () => {
       const srcDir = makeTmpWithCookies();
       const dstDir = makeTmpDest();
 
       try {
-        copyCookiesAtomic(srcDir, dstDir);
+        const result = copyCookiesAtomic(srcDir, dstDir);
 
-        expect(consoleErrorSpy).toHaveBeenCalled();
-        const logged = consoleErrorSpy.mock.calls
-          .map((args: unknown[]) => args.join(' '))
-          .join('\n');
-        expect(logged).toMatch(/[Ww]arning/);
+        expect(result.warning).toBeTruthy();
+        expect(result.warning).toMatch(/non-atomic/i);
       } finally {
         fs.rmSync(srcDir, { recursive: true, force: true });
         fs.rmSync(dstDir, { recursive: true, force: true });
@@ -324,7 +321,7 @@ describe('copyCookiesAtomic', () => {
       }
     });
 
-    it('logs a console.error when all methods fail', () => {
+    it('returns a warning when all methods fail', () => {
       const srcDir = makeTmpWithCookies();
       const dstDir = path.join(os.tmpdir(), `oc-test-nonexistent-${Date.now()}`, 'Default');
 
@@ -333,13 +330,11 @@ describe('copyCookiesAtomic', () => {
       });
 
       try {
-        copyCookiesAtomic(srcDir, dstDir);
+        const result = copyCookiesAtomic(srcDir, dstDir);
 
-        expect(consoleErrorSpy).toHaveBeenCalled();
-        const logged = consoleErrorSpy.mock.calls
-          .map((args: unknown[]) => args.join(' '))
-          .join('\n');
-        expect(logged).toMatch(/[Ee]rror/);
+        expect(result.success).toBe(false);
+        expect(result.warning).toBeTruthy();
+        expect(result.warning).toMatch(/failed/i);
       } finally {
         fs.rmSync(srcDir, { recursive: true, force: true });
       }
