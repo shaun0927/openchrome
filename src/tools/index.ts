@@ -56,6 +56,7 @@ import { registerMemoryTools } from './memory';
 
 // Lifecycle tools
 import { registerShutdownTool } from './shutdown';
+import { registerProfileStatusTool } from './profile-status';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -118,6 +119,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Lifecycle tools
   registerShutdownTool(server);
+  registerProfileStatusTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

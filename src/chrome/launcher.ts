@@ -9,13 +9,16 @@ import * as os from 'os';
 import * as http from 'http';
 import { getGlobalConfig } from '../config/global';
 import { DEFAULT_VIEWPORT } from '../config/defaults';
-import { copyCookiesAtomic } from './sqlite-cookie-copy';
+import { ProfileManager } from './profile-manager';
+import type { ProfileType } from './profile-manager';
+export type { ProfileType } from './profile-manager';
 
 export interface ChromeInstance {
   wsEndpoint: string;
   httpEndpoint: string;
   process?: ChildProcess;
   userDataDir?: string;
+  profileType?: ProfileType;
 }
 
 export interface LaunchOptions {
@@ -182,7 +185,8 @@ async function waitForDebugPort(
 export class ChromeLauncher {
   private instance: ChromeInstance | null = null;
   private port: number;
-  private usingRealProfile = false;
+  private profileManager = new ProfileManager();
+  private currentProfileType: ProfileType | undefined;
 
   constructor(port: number = DEFAULT_PORT) {
     this.port = port;
@@ -276,38 +280,37 @@ export class ChromeLauncher {
       );
     }
 
-    // Determine user data directory:
-    // 1. Explicit option from CLI/config/global
-    // 2. Real Chrome profile (macOS: ~/Library/Application Support/Google/Chrome)
-    //    (skipped when using headless-shell, which doesn't support extensions)
-    // 3. Fallback to temp directory
-    let userDataDir = options.userDataDir || globalConfig.userDataDir;
-    let usingRealProfile = false;
+    // Resolve which profile directory to use via ProfileManager.
+    // Priority: explicit > temp/headless > real unlocked > persistent (with sync) > persistent (no sync)
+    const realProfileDir = this.getRealChromeProfileDir();
+    const explicitUserDataDir = options.userDataDir || globalConfig.userDataDir;
+    // Skip expensive isProfileLocked check when result won't be used
+    const isLocked = (!explicitUserDataDir && !options.useTempProfile && !usingHeadlessShell && realProfileDir)
+      ? this.isProfileLocked(realProfileDir)
+      : false;
 
-    if (!userDataDir && !options.useTempProfile && !usingHeadlessShell) {
-      const realProfileDir = this.getRealChromeProfileDir();
-      if (realProfileDir) {
-        if (!this.isProfileLocked(realProfileDir)) {
-          userDataDir = realProfileDir;
-          usingRealProfile = true;
-          this.usingRealProfile = true;
-          console.error(`[ChromeLauncher] Using real Chrome profile: ${realProfileDir}`);
-        } else {
-          // Profile is locked by another Chrome instance.
-          // Create temp profile but copy essential data (cookies, local state)
-          // so the new Chrome session inherits the user's existing authentication.
-          userDataDir = path.join(os.tmpdir(), `openchrome-${Date.now()}`);
-          this.usingRealProfile = false;
-          this.copyEssentialProfileData(realProfileDir, userDataDir);
-          console.error(`[ChromeLauncher] Profile locked, using temp with copied cookies: ${userDataDir}`);
-        }
-      }
-    }
+    const resolution = this.profileManager.resolveProfile({
+      realProfileDir,
+      isProfileLocked: isLocked,
+      explicitUserDataDir,
+      useTempProfile: options.useTempProfile,
+      usingHeadlessShell,
+    });
 
-    if (!userDataDir) {
-      userDataDir = path.join(os.tmpdir(), `openchrome-${Date.now()}`);
-      this.usingRealProfile = false;
+    const userDataDir = resolution.userDataDir;
+    const profileType = resolution.profileType;
+    this.currentProfileType = profileType;
+
+    if (resolution.syncPerformed) {
+      console.error(`[ChromeLauncher] Using persistent profile with fresh cookie sync: ${userDataDir}`);
+    } else if (profileType === 'persistent') {
+      console.error(`[ChromeLauncher] Using persistent profile (cookies fresh): ${userDataDir}`);
+    } else if (profileType === 'real') {
+      console.error(`[ChromeLauncher] Using real Chrome profile: ${userDataDir}`);
+    } else if (profileType === 'temp') {
       console.error(`[ChromeLauncher] Using temp profile: ${userDataDir}`);
+    } else {
+      console.error(`[ChromeLauncher] Using explicit profile: ${userDataDir}`);
     }
 
     fs.mkdirSync(userDataDir, { recursive: true });
@@ -331,8 +334,8 @@ export class ChromeLauncher {
       '--disable-ipc-flooding-protection',
     ];
 
-    // Only disable background features for temp profiles
-    if (!usingRealProfile) {
+    // Only disable background features for non-real profiles
+    if (profileType !== 'real') {
       args.push(
         '--disable-background-networking',
         '--disable-sync',
@@ -388,6 +391,7 @@ export class ChromeLauncher {
       httpEndpoint: `http://127.0.0.1:${port}`,
       process: chromeProcess,
       userDataDir,
+      profileType,
     };
 
     console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
@@ -433,10 +437,12 @@ export class ChromeLauncher {
         this.instance.process.kill();
       }
 
-      // Clean up user data dir (only if using temp profile, never delete real profile)
-      if (this.instance.userDataDir && !this.usingRealProfile) {
+      // Clean up user data dir — only delete temp profiles.
+      // Persistent profiles survive across sessions; real/explicit profiles are never ours to delete.
+      if (this.instance.userDataDir && this.currentProfileType === 'temp') {
         try {
           fs.rmSync(this.instance.userDataDir, { recursive: true, force: true });
+          console.error(`[ChromeLauncher] Cleaned up temp profile: ${this.instance.userDataDir}`);
         } catch {
           // Ignore cleanup errors
         }
@@ -457,6 +463,14 @@ export class ChromeLauncher {
    */
   getPort(): number {
     return this.port;
+  }
+
+  /**
+   * Get the current profile type. Useful for MCP consumers to understand
+   * what capabilities are available (e.g., extensions only with 'real' profile).
+   */
+  getProfileType(): ProfileType | undefined {
+    return this.currentProfileType;
   }
 
   /**
@@ -485,67 +499,6 @@ export class ChromeLauncher {
     }
 
     return null;
-  }
-
-  /**
-   * Copy essential profile data (cookies, local state) from a locked real Chrome profile
-   * to a temp profile directory. This allows the new Chrome instance to start with
-   * the user's existing authentication and cookies.
-   *
-   * Cookie decryption by platform:
-   * - macOS: Chrome uses Keychain key "Chrome Safe Storage". Same binary + same user = works.
-   * - Linux: Chrome uses gnome-keyring or kwallet. Same user session = works.
-   * - Windows: Chrome uses DPAPI tied to user account. Same user = works.
-   * In all cases, launching the same Chrome binary as the same OS user allows
-   * the new instance to decrypt the copied cookies.
-   */
-  private copyEssentialProfileData(sourceDir: string, destDir: string): void {
-    try {
-      const destDefault = path.join(destDir, 'Default');
-      fs.mkdirSync(destDefault, { recursive: true });
-
-      // Copy Local State (contains OS crypt config, encryption key references)
-      const localStateSrc = path.join(sourceDir, 'Local State');
-      if (fs.existsSync(localStateSrc)) {
-        fs.copyFileSync(localStateSrc, path.join(destDir, 'Local State'));
-      }
-
-      // Copy cookie database using atomic SQLite backup.
-      // Chrome's Cookies DB uses WAL mode; naive file copy creates inconsistent state.
-      // copyCookiesAtomic uses a 3-tier fallback: better-sqlite3 → sqlite3 CLI → main-DB-only.
-      const sourceDefault = path.join(sourceDir, 'Default');
-      const cookieResult = copyCookiesAtomic(sourceDefault, destDefault);
-      if (cookieResult.warning) {
-        console.error(`[ChromeLauncher] Cookie copy warning: ${cookieResult.warning}`);
-      }
-
-      // Copy and patch Preferences to prevent "Chrome didn't shut down correctly" prompt.
-      // The source Preferences has exit_type:"Crashed" while Chrome is running.
-      const prefsSrc = path.join(sourceDir, 'Default', 'Preferences');
-      if (fs.existsSync(prefsSrc)) {
-        try {
-          const prefsContent = fs.readFileSync(prefsSrc, 'utf8');
-          const prefs = JSON.parse(prefsContent);
-          // Patch exit_type to Normal so Chrome doesn't show recovery prompt
-          if (prefs.profile) {
-            prefs.profile.exit_type = 'Normal';
-            prefs.profile.exited_cleanly = true;
-          }
-          // Suppress session restore so copied profile doesn't reopen old tabs
-          if (!prefs.session) prefs.session = {};
-          prefs.session.restore_on_startup = 5; // 5 = open new tab page, not restore
-          delete prefs.session.startup_urls;
-          fs.writeFileSync(path.join(destDefault, 'Preferences'), JSON.stringify(prefs));
-        } catch {
-          // JSON parse failed — skip Preferences entirely.
-          // Chrome will create fresh defaults rather than showing a crash recovery prompt.
-        }
-      }
-
-      console.error(`[ChromeLauncher] Copied essential profile data (cookies via ${cookieResult.method}) from locked profile`);
-    } catch (err) {
-      console.error(`[ChromeLauncher] Failed to copy profile data (non-fatal):`, err);
-    }
   }
 
   /**
