@@ -122,6 +122,16 @@ export class CDPClient {
   }
 
   /**
+   * Remove target destroyed listener
+   */
+  removeTargetDestroyedListener(listener: (targetId: string, page?: Page) => void): void {
+    const index = this.targetDestroyedListeners.indexOf(listener);
+    if (index !== -1) {
+      this.targetDestroyedListeners.splice(index, 1);
+    }
+  }
+
+  /**
    * Handle target destroyed event
    */
   private onTargetDestroyed(targetId: string): void {

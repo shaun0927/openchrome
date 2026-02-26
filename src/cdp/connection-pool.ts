@@ -53,6 +53,7 @@ export class CDPConnectionPool {
   private inUsePages: Map<Page, PooledPage> = new Map();
   private maintenanceTimer: NodeJS.Timeout | null = null;
   private isInitialized = false;
+  private targetDestroyedListener: ((targetId: string, page?: Page) => void) | null = null;
 
   // Stats
   private totalPagesCreated = 0;
@@ -73,13 +74,27 @@ export class CDPConnectionPool {
 
     await this.cdpClient.connect();
 
-    // Evict pages from inUsePages when tabs are externally closed (e.g. user closes tab in Chrome)
-    this.cdpClient.addTargetDestroyedListener((_targetId, page) => {
-      if (page && this.inUsePages.has(page)) {
-        this.inUsePages.delete(page);
-        console.error(`[Pool] Evicted externally closed page (target: ${_targetId})`);
-      }
-    });
+    // Evict pages when tabs are externally closed (e.g. user closes tab in Chrome)
+    if (!this.targetDestroyedListener) {
+      this.targetDestroyedListener = (targetId, page) => {
+        if (!page) return;
+
+        // Evict from in-use pages
+        if (this.inUsePages.has(page)) {
+          this.inUsePages.delete(page);
+          console.error(`[Pool] Evicted in-use externally closed page (target: ${targetId})`);
+          return;
+        }
+
+        // Evict from available (idle) pages
+        const idx = this.availablePages.findIndex(p => p.page === page);
+        if (idx !== -1) {
+          this.availablePages.splice(idx, 1);
+          console.error(`[Pool] Evicted available externally closed page (target: ${targetId})`);
+        }
+      };
+      this.cdpClient.addTargetDestroyedListener(this.targetDestroyedListener);
+    }
 
     if (this.config.preWarm) {
       console.error(`[Pool] Pre-warming ${this.config.minPoolSize} pages...`);
@@ -448,6 +463,12 @@ export class CDPConnectionPool {
     if (this.maintenanceTimer) {
       clearInterval(this.maintenanceTimer);
       this.maintenanceTimer = null;
+    }
+
+    // Remove target destroyed listener to prevent accumulation on re-init
+    if (this.targetDestroyedListener) {
+      this.cdpClient.removeTargetDestroyedListener(this.targetDestroyedListener);
+      this.targetDestroyedListener = null;
     }
 
     // Close all available pages
