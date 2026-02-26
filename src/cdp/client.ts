@@ -17,6 +17,8 @@ import {
   DEFAULT_NEW_PAGE_TIMEOUT_MS,
   DEFAULT_PAGE_CONFIG_TIMEOUT_MS,
   DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
+  DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
+  DEFAULT_CONNECT_VERIFY_STALENESS_MS,
 } from '../config/defaults';
 
 // Cookie type shared across methods
@@ -74,6 +76,8 @@ export class CDPClient {
   private inFlightCookieScans: Map<string, Promise<string | null>> = new Map();
   /** Coalesces concurrent connect() calls — only one connectInternal() runs at a time. */
   private pendingConnect: Promise<void> | null = null;
+  /** Timestamp of last successful connection verification (heartbeat or active probe). */
+  private lastVerifiedAt = 0;
   private static readonly COOKIE_CACHE_TTL = 300000; // 5 minutes
 
   constructor(options: CDPClientOptions = {}) {
@@ -174,7 +178,9 @@ export class CDPClient {
   }
 
   /**
-   * Check connection health
+   * Check connection health.
+   * Sends an active CDP probe (Browser.getVersion) to detect half-open WebSocket
+   * connections that browser.isConnected() misses (e.g., after macOS sleep/wake).
    */
   private async checkConnection(): Promise<boolean> {
     if (!this.browser) {
@@ -182,12 +188,26 @@ export class CDPClient {
     }
 
     try {
-      // Simple check - try to get browser version
       if (!this.browser.isConnected()) {
-        console.error('[CDPClient] Heartbeat: Connection lost, attempting reconnect...');
+        console.error('[CDPClient] Heartbeat: Connection flag lost, attempting reconnect...');
         await this.handleDisconnect();
         return false;
       }
+
+      // Active probe: round-trip CDP command to detect dead WebSocket connections.
+      // browser.isConnected() only checks a local flag — half-open TCP connections
+      // (macOS sleep/wake, Chrome crash) pass the flag check but hang on real commands.
+      let pingTid: ReturnType<typeof setTimeout>;
+      await Promise.race([
+        this.browser.version().finally(() => clearTimeout(pingTid)),
+        new Promise<never>((_, reject) => {
+          pingTid = setTimeout(
+            () => reject(new Error('heartbeat ping timeout')),
+            DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      this.lastVerifiedAt = Date.now();
       return true;
     } catch (error) {
       console.error('[CDPClient] Heartbeat check failed:', error);
@@ -211,10 +231,11 @@ export class CDPClient {
       timestamp: Date.now(),
     });
 
-    // Clear existing sessions
+    // Clear existing sessions and stale state
     this.sessions.clear();
     this.targetIdIndex.clear();
     this.inFlightCookieScans.clear();
+    this.lastVerifiedAt = 0;
 
     // Remove old browser listeners before nulling reference
     if (this.browser) {
@@ -321,22 +342,30 @@ export class CDPClient {
    */
   async connect(): Promise<void> {
     if (this.browser && this.browser.isConnected()) {
-      // Verify connection is actually working by checking Chrome endpoint
-      try {
-        const launcher = getChromeLauncher(this.port);
-        const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
-        const currentWsUrl = instance.wsEndpoint;
+      // Skip active probe if recently verified by heartbeat (avoids per-call overhead)
+      if (Date.now() - this.lastVerifiedAt < DEFAULT_CONNECT_VERIFY_STALENESS_MS) {
+        return;
+      }
 
-        // Check if the browser's WebSocket URL matches current Chrome
-        const browserWsUrl = this.browser.wsEndpoint();
-        if (browserWsUrl !== currentWsUrl) {
-          console.error('[CDPClient] WebSocket URL mismatch, reconnecting...');
-          await this.forceReconnect();
-          return;
-        }
+      // Active probe: lightweight CDP round-trip to detect dead WebSocket connections.
+      // Replaces the previous ensureChrome() call which added 2-7s HTTP overhead.
+      // browser.isConnected() only checks a local flag — half-open TCP connections
+      // (macOS sleep/wake, Chrome crash) pass the flag check but hang on real commands.
+      try {
+        let probeTid: ReturnType<typeof setTimeout>;
+        await Promise.race([
+          this.browser.version().finally(() => clearTimeout(probeTid)),
+          new Promise<never>((_, reject) => {
+            probeTid = setTimeout(
+              () => reject(new Error('connection probe timeout')),
+              DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
+            );
+          }),
+        ]);
+        this.lastVerifiedAt = Date.now();
         return;
       } catch {
-        console.error('[CDPClient] Connection check failed, reconnecting...');
+        console.error('[CDPClient] Connection probe failed, reconnecting...');
         await this.forceReconnect();
         return;
       }
@@ -355,6 +384,7 @@ export class CDPClient {
     this.pendingConnect = (async () => {
       try {
         await this.connectInternal();
+        this.lastVerifiedAt = Date.now();
         this.startHeartbeat();
         console.error('[CDPClient] Connected to Chrome');
       } catch (err) {
@@ -374,6 +404,10 @@ export class CDPClient {
    * Force reconnect by disconnecting and reconnecting.
    * Invalidates any pending connect() promise — the old connection attempt
    * will still resolve but its result is discarded because this.browser is replaced.
+   *
+   * Clears ALL stale state (sessions, targetIdIndex, cookie scans) to prevent
+   * post-reconnect operations from using orphaned page references that would
+   * hang until protocolTimeout (30s).
    */
   async forceReconnect(): Promise<void> {
     // Invalidate any in-flight connect() — we're replacing the connection entirely
@@ -390,10 +424,14 @@ export class CDPClient {
       }
       this.browser = null;
       this.sessions.clear();
+      this.targetIdIndex.clear();
+      this.inFlightCookieScans.clear();
     }
 
     this.connectionState = 'connecting';
+    this.lastVerifiedAt = 0;
     await this.connectInternal();
+    this.lastVerifiedAt = Date.now();
     this.startHeartbeat();
     console.error('[CDPClient] Reconnected to Chrome');
   }

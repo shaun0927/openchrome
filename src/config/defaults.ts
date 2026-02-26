@@ -88,3 +88,13 @@ export const DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS = 15000;
 /** Session initialization timeout when autoLaunch is enabled (ms).
  *  Accounts for: port probe (5s) + Chrome launch (30s) + puppeteer connect (15s). */
 export const DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS = 45000;
+
+/** Heartbeat active ping timeout in milliseconds.
+ *  Sends Browser.getVersion to detect half-open WebSocket connections
+ *  (e.g., after macOS sleep/wake) that browser.isConnected() misses. */
+export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 5000;
+
+/** Connection verification staleness threshold in milliseconds.
+ *  If the connection hasn't been verified (by heartbeat or probe) within this window,
+ *  connect() triggers an active CDP probe before returning. */
+export const DEFAULT_CONNECT_VERIFY_STALENESS_MS = 10000;
