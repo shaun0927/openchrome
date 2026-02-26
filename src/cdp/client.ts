@@ -45,7 +45,7 @@ export interface CDPClientOptions {
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
 export interface ConnectionEvent {
-  type: 'connected' | 'disconnected' | 'reconnecting' | 'reconnect_failed';
+  type: 'connected' | 'disconnected' | 'reconnecting' | 'reconnected' | 'reconnect_failed';
   timestamp: number;
   attempt?: number;
   error?: string;
@@ -69,6 +69,8 @@ export class CDPClient {
   private eventListeners: ((event: ConnectionEvent) => void)[] = [];
   private targetDestroyedListeners: ((targetId: string, page?: Page) => void)[] = [];
   private reconnectAttempts = 0;
+  private consecutiveHeartbeatFailures = 0;
+  private checkConnectionInFlight = false;
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
@@ -198,6 +200,10 @@ export class CDPClient {
     if (!this.browser) {
       return false;
     }
+    if (this.checkConnectionInFlight) {
+      return true; // Prior check still in progress
+    }
+    this.checkConnectionInFlight = true;
 
     try {
       if (!this.browser.isConnected()) {
@@ -220,11 +226,22 @@ export class CDPClient {
         }),
       ]);
       this.lastVerifiedAt = Date.now();
+      this.consecutiveHeartbeatFailures = 0;
       return true;
     } catch (error) {
-      console.error('[CDPClient] Heartbeat check failed:', error);
+      this.consecutiveHeartbeatFailures++;
+      if (this.consecutiveHeartbeatFailures < 2) {
+        // First failure: warn but don't disconnect. Chrome may be under heavy load.
+        console.error(`[CDPClient] Heartbeat probe failed (strike ${this.consecutiveHeartbeatFailures}/2), will retry next interval:`, error);
+        return true; // Report as healthy to avoid premature disconnect
+      }
+      // Two consecutive failures: connection is truly dead
+      console.error(`[CDPClient] Heartbeat failed ${this.consecutiveHeartbeatFailures} times consecutively, disconnecting:`, error);
+      this.consecutiveHeartbeatFailures = 0;
       await this.handleDisconnect();
       return false;
+    } finally {
+      this.checkConnectionInFlight = false;
     }
   }
 
@@ -232,8 +249,8 @@ export class CDPClient {
    * Handle disconnection with automatic reconnection
    */
   private async handleDisconnect(): Promise<void> {
-    if (this.connectionState === 'reconnecting') {
-      return; // Already reconnecting
+    if (this.connectionState === 'reconnecting' || this.connectionState === 'connecting') {
+      return; // Already reconnecting or connecting
     }
 
     this.reconnectAttempts = 0; // Reset counter on each new disconnect event
@@ -271,6 +288,10 @@ export class CDPClient {
         await this.connectInternal();
         console.error('[CDPClient] Reconnection successful');
         this.reconnectAttempts = 0;
+        this.emitConnectionEvent({
+          type: 'reconnected',
+          timestamp: Date.now(),
+        });
         return;
       } catch (error) {
         console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
@@ -444,6 +465,7 @@ export class CDPClient {
     this.lastVerifiedAt = 0;
     await this.connectInternal();
     this.lastVerifiedAt = Date.now();
+    this.consecutiveHeartbeatFailures = 0;
     this.startHeartbeat();
     console.error('[CDPClient] Reconnected to Chrome');
   }
