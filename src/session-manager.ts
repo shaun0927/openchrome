@@ -1118,11 +1118,12 @@ export class SessionManager {
     const aliveTargetIds = new Set(
       browser.targets()
         .filter(t => t.type() === 'page')
-        .map(t => (t as unknown as { _targetId: string })._targetId)
+        .map(t => getTargetId(t))
     );
 
     let removed = 0;
     for (const targetId of trackedTargetIds) {
+      if (!this.targetToWorker.has(targetId)) continue; // Already cleaned by targetdestroyed
       if (!aliveTargetIds.has(targetId)) {
         this.onTargetClosed(targetId);
         removed++;

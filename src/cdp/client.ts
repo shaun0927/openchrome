@@ -70,6 +70,7 @@ export class CDPClient {
   private targetDestroyedListeners: ((targetId: string, page?: Page) => void)[] = [];
   private reconnectAttempts = 0;
   private consecutiveHeartbeatFailures = 0;
+  private checkConnectionInFlight = false;
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
@@ -199,6 +200,10 @@ export class CDPClient {
     if (!this.browser) {
       return false;
     }
+    if (this.checkConnectionInFlight) {
+      return true; // Prior check still in progress
+    }
+    this.checkConnectionInFlight = true;
 
     try {
       if (!this.browser.isConnected()) {
@@ -235,6 +240,8 @@ export class CDPClient {
       this.consecutiveHeartbeatFailures = 0;
       await this.handleDisconnect();
       return false;
+    } finally {
+      this.checkConnectionInFlight = false;
     }
   }
 
@@ -242,8 +249,8 @@ export class CDPClient {
    * Handle disconnection with automatic reconnection
    */
   private async handleDisconnect(): Promise<void> {
-    if (this.connectionState === 'reconnecting') {
-      return; // Already reconnecting
+    if (this.connectionState === 'reconnecting' || this.connectionState === 'connecting') {
+      return; // Already reconnecting or connecting
     }
 
     this.reconnectAttempts = 0; // Reset counter on each new disconnect event
@@ -458,6 +465,7 @@ export class CDPClient {
     this.lastVerifiedAt = 0;
     await this.connectInternal();
     this.lastVerifiedAt = Date.now();
+    this.consecutiveHeartbeatFailures = 0;
     this.startHeartbeat();
     console.error('[CDPClient] Reconnected to Chrome');
   }
