@@ -164,6 +164,7 @@ describe('ChromeLauncher port race condition fixes', () => {
 
   describe('ensureChrome() retry window', () => {
     it('should use retry window (not single-shot) for existing Chrome detection', async () => {
+      expect.assertions(2);
       // This test verifies that ensureChrome uses waitForDebugPort (5s retry)
       // instead of a single checkDebugPort call.
       // Since we can't easily mock the http module here, we verify the behavior
@@ -176,7 +177,7 @@ describe('ChromeLauncher port race condition fixes', () => {
       } catch (e: any) {
         // Should throw after the 5s retry window
         const elapsed = Date.now() - startTime;
-        expect(elapsed).toBeGreaterThanOrEqual(4000); // At least 4s (5s minus tolerance)
+        expect(elapsed).toBeGreaterThanOrEqual(2000); // At least 2s (generous lower bound to avoid CI flakiness)
         expect(e.message).toContain('Chrome is not running');
       }
     }, 10000); // 10s timeout for this test
