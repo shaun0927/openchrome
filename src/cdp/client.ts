@@ -6,7 +6,15 @@ import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'pu
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
-import { DEFAULT_VIEWPORT, DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_PROTOCOL_TIMEOUT_MS } from '../config/defaults';
+import {
+  DEFAULT_VIEWPORT,
+  DEFAULT_NAVIGATION_TIMEOUT_MS,
+  DEFAULT_PROTOCOL_TIMEOUT_MS,
+  DEFAULT_COOKIE_SCAN_TIMEOUT_MS,
+  DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS,
+  DEFAULT_COOKIE_SCAN_MAX_CANDIDATES,
+  DEFAULT_COOKIE_COPY_TIMEOUT_MS,
+} from '../config/defaults';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -496,6 +504,7 @@ export class CDPClient {
    * Uses Target.getTargets result directly instead of /json/list HTTP calls.
    */
   private async _doFindAuthenticatedPageTargetId(targetDomain: string | undefined, cacheKey: string): Promise<string | null> {
+    const scanStart = Date.now();
     const browser = this.getBrowser();
     const session = await browser.target().createCDPSession();
 
@@ -539,22 +548,44 @@ export class CDPClient {
         console.error(`[CDPClient] Sorted ${candidates.length} candidates by domain match to ${targetDomain}`);
       }
 
+      // Limit candidates to prevent N×30s cascading timeouts in parallel sessions.
+      // Best-match candidates are already sorted first, so truncating is safe.
+      if (candidates.length > DEFAULT_COOKIE_SCAN_MAX_CANDIDATES) {
+        console.error(`[CDPClient] Limiting cookie scan from ${candidates.length} to ${DEFAULT_COOKIE_SCAN_MAX_CANDIDATES} candidates`);
+        candidates = candidates.slice(0, DEFAULT_COOKIE_SCAN_MAX_CANDIDATES);
+      }
+
       // Check each candidate to find one with actual cookies (in priority order).
       // Uses Target.attachToTarget over the existing multiplexed session — no raw WebSocket,
       // no /json/list HTTP round-trip.
       for (const candidate of candidates) {
+        // Check overall scan timeout to prevent cascading hangs
+        if (Date.now() - scanStart > DEFAULT_COOKIE_SCAN_TIMEOUT_MS) {
+          console.error(`[CDPClient] Cookie scan timed out after ${Date.now() - scanStart}ms`);
+          return null;
+        }
+
         let attachedSessionId: string | null = null;
         try {
-          const { sessionId } = await session.send('Target.attachToTarget', {
-            targetId: candidate.targetId,
-            flatten: true,
-          }) as { sessionId: string };
+          // Per-candidate timeout to skip unresponsive tabs quickly
+          const { sessionId } = await Promise.race([
+            session.send('Target.attachToTarget', {
+              targetId: candidate.targetId,
+              flatten: true,
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('cookie scan: attach timeout')), DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS),
+            ),
+          ]) as { sessionId: string };
           attachedSessionId = sessionId;
 
-          // Send Network.getAllCookies through the flat CDP session
-          const result = await session.send('Network.getAllCookies' as any, undefined, { sessionId } as any) as {
-            cookies: CookieEntry[];
-          };
+          // Send Network.getAllCookies through the flat CDP session (with per-target timeout)
+          const result = await Promise.race([
+            session.send('Network.getAllCookies' as any, undefined, { sessionId } as any),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('cookie scan: getAllCookies timeout')), DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS),
+            ),
+          ]) as { cookies: CookieEntry[] };
           const cookieCount = result?.cookies?.length || 0;
 
           if (cookieCount > 0) {
@@ -564,7 +595,7 @@ export class CDPClient {
             return candidate.targetId;
           }
         } catch {
-          // Target may be unresponsive or already detached — skip
+          // Target may be unresponsive, timed out, or already detached — skip
         } finally {
           if (attachedSessionId) {
             await session.send('Target.detachFromTarget', { sessionId: attachedSessionId }).catch(() => {});
@@ -714,11 +745,20 @@ export class CDPClient {
       page = await browser.newPage();
 
       // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
-      // CDP session conflicts and unnecessary overhead on about:blank pages)
+      // CDP session conflicts and unnecessary overhead on about:blank pages).
+      // Overall timeout prevents cascading hangs from unresponsive source tabs.
       if (!skipCookieBridge) {
         const authPageTargetId = await this.findAuthenticatedPageTargetId(targetDomain);
         if (authPageTargetId) {
-          await this.copyCookiesViaCDP(authPageTargetId, page);
+          await Promise.race([
+            this.copyCookiesViaCDP(authPageTargetId, page),
+            new Promise<void>((resolve) =>
+              setTimeout(() => {
+                console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
+                resolve();
+              }, DEFAULT_COOKIE_COPY_TIMEOUT_MS),
+            ),
+          ]);
         }
       }
     }

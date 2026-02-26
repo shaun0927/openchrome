@@ -8,6 +8,7 @@ import {
 import { ToolRoutingRegistry } from './tool-routing-registry';
 import { LightpandaLauncher } from '../lightpanda/launcher';
 import { CookieSync } from './cookie-sync';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 export interface RouteResult {
   backend: BrowserBackend;
@@ -124,7 +125,7 @@ export class BrowserRouter {
     }
 
     try {
-      await chromePage.goto(url);
+      await chromePage.goto(url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
     } catch {
       // best-effort navigation
     }

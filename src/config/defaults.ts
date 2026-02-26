@@ -31,3 +31,21 @@ export const DEFAULT_MAX_TARGETS_PER_WORKER = 5;
 
 /** Memory pressure threshold in bytes (500MB). Below this free memory, aggressive cleanup triggers. */
 export const DEFAULT_MEMORY_PRESSURE_THRESHOLD = 500 * 1024 * 1024;
+
+/** Cookie scan overall timeout in milliseconds. Prevents N×30s cascading hangs in parallel sessions. */
+export const DEFAULT_COOKIE_SCAN_TIMEOUT_MS = 5000;
+
+/** Per-candidate cookie probe timeout in milliseconds. Skips unresponsive tabs quickly. */
+export const DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS = 2000;
+
+/** Maximum candidates to probe during cookie source scan. */
+export const DEFAULT_COOKIE_SCAN_MAX_CANDIDATES = 5;
+
+/** Overall cookie copy timeout in milliseconds. */
+export const DEFAULT_COOKIE_COPY_TIMEOUT_MS = 10000;
+
+/** Safe page.title() timeout in milliseconds. Prevents hangs on frozen renderers. */
+export const DEFAULT_SAFE_TITLE_TIMEOUT_MS = 3000;
+
+/** Per-item timeout in request queue (ms). Safety net against indefinitely hung CDP commands. */
+export const DEFAULT_QUEUE_ITEM_TIMEOUT_MS = 120000;

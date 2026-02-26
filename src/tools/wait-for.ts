@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'wait_for',
@@ -182,7 +183,7 @@ const handler: ToolHandler = async (
                 action: 'wait_for',
                 type: 'navigation',
                 url: page.url(),
-                title: await page.title(),
+                title: await safeTitle(page),
                 elapsed,
                 message: `Navigation completed after ${elapsed}ms`,
               }),
