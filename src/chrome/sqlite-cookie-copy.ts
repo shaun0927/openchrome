@@ -16,7 +16,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 export interface CookieCopyResult {
   method: 'better-sqlite3' | 'sqlite3-cli' | 'file-copy' | 'none';
@@ -91,9 +91,7 @@ export function copyCookiesAtomic(
   // Tier 2: sqlite3 CLI — .backup command
   // -------------------------------------------------------------------------
   try {
-    const escapedSource = sourcePath.replace(/'/g, "'\\''");
-    const escapedDest = destPath.replace(/'/g, "'\\''");
-    execSync(`sqlite3 '${escapedSource}' ".backup '${escapedDest}'"`, {
+    execFileSync('sqlite3', [sourcePath, `.backup '${destPath.replace(/'/g, "''")}'`], {
       timeout: 5000,
       stdio: 'ignore',
     });

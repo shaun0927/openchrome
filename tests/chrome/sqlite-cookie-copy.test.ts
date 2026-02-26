@@ -20,13 +20,13 @@ jest.mock('child_process', () => {
   const actual = jest.requireActual('child_process');
   return {
     ...actual,
-    execSync: jest.fn(),
+    execFileSync: jest.fn(),
   };
 });
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { copyCookiesAtomic, _deps } from '../../src/chrome/sqlite-cookie-copy';
-const mockExecSync = execSync as jest.MockedFunction<typeof execSync>;
+const mockExecFileSync = execFileSync as jest.MockedFunction<typeof execFileSync>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,7 +54,7 @@ describe('copyCookiesAtomic', () => {
 
   beforeEach(() => {
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockExecSync.mockReset();
+    mockExecFileSync.mockReset();
     // By default, make Tier 1 fail so most tests exercise Tier 2/3
     betterSqliteSpy = jest
       .spyOn(_deps, 'attemptBetterSqlite3Copy')
@@ -130,7 +130,7 @@ describe('copyCookiesAtomic', () => {
 
       try {
         copyCookiesAtomic(srcDir, dstDir);
-        expect(mockExecSync).not.toHaveBeenCalled();
+        expect(mockExecFileSync).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(srcDir, { recursive: true, force: true });
         fs.rmSync(dstDir, { recursive: true, force: true });
@@ -148,7 +148,7 @@ describe('copyCookiesAtomic', () => {
       const dstDir = makeTmpDest();
 
       // Tier 1 fails (default), Tier 2 succeeds
-      mockExecSync.mockReturnValue(Buffer.from(''));
+      mockExecFileSync.mockReturnValue(Buffer.from(''));
 
       try {
         const result = copyCookiesAtomic(srcDir, dstDir);
@@ -162,21 +162,22 @@ describe('copyCookiesAtomic', () => {
       }
     });
 
-    it('calls execSync with sqlite3 backup command containing source and dest paths', () => {
+    it('calls execFileSync with sqlite3 backup command containing source and dest paths', () => {
       const srcDir = makeTmpWithCookies();
       const dstDir = makeTmpDest();
 
-      mockExecSync.mockReturnValue(Buffer.from(''));
+      mockExecFileSync.mockReturnValue(Buffer.from(''));
 
       try {
         copyCookiesAtomic(srcDir, dstDir);
 
-        expect(mockExecSync).toHaveBeenCalledTimes(1);
-        const cmd = mockExecSync.mock.calls[0][0] as string;
-        expect(cmd).toContain('sqlite3');
-        expect(cmd).toContain('.backup');
-        expect(cmd).toContain(path.join(srcDir, 'Cookies'));
-        expect(cmd).toContain(path.join(dstDir, 'Cookies'));
+        expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+        const cmd = mockExecFileSync.mock.calls[0][0] as string;
+        const args = mockExecFileSync.mock.calls[0][1] as string[];
+        expect(cmd).toBe('sqlite3');
+        expect(args[0]).toBe(path.join(srcDir, 'Cookies'));
+        expect(args[1]).toContain('.backup');
+        expect(args[1]).toContain(path.join(dstDir, 'Cookies'));
       } finally {
         fs.rmSync(srcDir, { recursive: true, force: true });
         fs.rmSync(dstDir, { recursive: true, force: true });
@@ -187,7 +188,7 @@ describe('copyCookiesAtomic', () => {
       const srcDir = makeTmpWithCookies();
       const dstDir = makeTmpDest();
 
-      mockExecSync.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         throw new Error('sqlite3: command not found');
       });
 
@@ -210,7 +211,7 @@ describe('copyCookiesAtomic', () => {
   describe('Tier 3: file-copy (real filesystem)', () => {
     beforeEach(() => {
       // Make both Tier 1 and Tier 2 fail
-      mockExecSync.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         throw new Error('sqlite3: command not found');
       });
     });
@@ -307,7 +308,7 @@ describe('copyCookiesAtomic', () => {
       // Destination inside a non-existent directory so copyFileSync also fails
       const dstDir = path.join(os.tmpdir(), `oc-test-nonexistent-${Date.now()}`, 'Default');
 
-      mockExecSync.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         throw new Error('sqlite3: command not found');
       });
 
@@ -327,7 +328,7 @@ describe('copyCookiesAtomic', () => {
       const srcDir = makeTmpWithCookies();
       const dstDir = path.join(os.tmpdir(), `oc-test-nonexistent-${Date.now()}`, 'Default');
 
-      mockExecSync.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         throw new Error('sqlite3: command not found');
       });
 
@@ -354,7 +355,7 @@ describe('copyCookiesAtomic', () => {
       const srcDir = makeTmpWithCookies();
       const dstDir = makeTmpDest();
 
-      mockExecSync.mockReturnValue(Buffer.from(''));
+      mockExecFileSync.mockReturnValue(Buffer.from(''));
 
       try {
         // Create a destination with a single-quote in the name
@@ -400,7 +401,7 @@ describe('copyCookiesAtomic', () => {
     it('always returns an object with method and success fields', () => {
       const srcDir = makeTmpWithCookies();
       const dstDir = makeTmpDest();
-      mockExecSync.mockReturnValue(Buffer.from(''));
+      mockExecFileSync.mockReturnValue(Buffer.from(''));
 
       try {
         const result = copyCookiesAtomic(srcDir, dstDir);
@@ -419,7 +420,7 @@ describe('copyCookiesAtomic', () => {
       const srcDir = makeTmpWithCookies();
       const dstDir = makeTmpDest();
       // Tier 2 succeeds cleanly
-      mockExecSync.mockReturnValue(Buffer.from(''));
+      mockExecFileSync.mockReturnValue(Buffer.from(''));
 
       try {
         const result = copyCookiesAtomic(srcDir, dstDir);
