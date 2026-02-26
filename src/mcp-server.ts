@@ -422,9 +422,13 @@ export class MCPServer {
           // Attempt internal reconnection before surfacing error to LLM
           console.error(`[MCPServer] Connection error during ${toolName}, attempting auto-reconnect...`);
           const cdpClient = getCDPClient();
-          await cdpClient.forceReconnect();
-          console.error(`[MCPServer] Reconnected successfully, retrying ${toolName}...`);
-          result = await tool.handler(sessionId, toolArgs);
+          try {
+            await cdpClient.forceReconnect();
+            console.error(`[MCPServer] Reconnected, retrying ${toolName}...`);
+            result = await tool.handler(sessionId, toolArgs);
+          } catch (retryError) {
+            throw handlerError; // throw ORIGINAL error
+          }
         } else {
           throw handlerError;
         }
