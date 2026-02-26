@@ -13,6 +13,16 @@ import { registerAllTools } from './tools';
 import { setGlobalConfig } from './config/global';
 import { writePidFile } from './utils/pid-manager';
 
+// Prevent silent crashes from unhandled promise rejections in background tasks
+process.on('unhandledRejection', (reason) => {
+  console.error('[openchrome] Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[openchrome] Uncaught exception:', error);
+  process.exit(1);
+});
+
 const program = new Command();
 
 program
