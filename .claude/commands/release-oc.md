@@ -173,7 +173,7 @@ Skipping this step causes version mismatch where the MCP server runs old code.
 npm install -g openchrome-mcp
 
 # 2. Kill all running MCP server processes (they still use the old version)
-pkill -f "openchrome.*serve"
+pkill -f "openchrome-mcp.*serve" || true
 
 # 3. Verify version consistency across all 4 paths
 echo "src:    $(node -p \"require('./package.json').version\")" && \
