@@ -77,7 +77,7 @@ describe('oc_profile_status tool', () => {
     expect(data.capabilities.extensions).toBe(false);
     expect(data.capabilities.sessionCookies).toBe(true);
     expect(data.cookiesCopied).toBe(true);
-    expect(data.realProfilePath).toBe('/Users/test/Library/Application Support/Google/Chrome');
+    expect(data.realProfilePath).toBeUndefined(); // paths not exposed to LLM
     expect(data.realProfileLocked).toBe(true);
     expect(result.content[1].text).toContain('Temporary profile');
   });
