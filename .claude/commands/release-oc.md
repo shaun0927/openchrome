@@ -152,6 +152,8 @@ git log --oneline -10
 
 ## STEP 8: Publish (only if user requests)
 
+### 8a. Publish to npm
+
 ```bash
 npm version patch   # or minor/major per user request
 git push origin main --tags
@@ -160,6 +162,29 @@ npm publish
 ```
 
 Skip this step entirely unless the user explicitly asks for a version bump or publish.
+
+### 8b. Post-publish: Local Environment Sync
+
+**CRITICAL** — `npm publish` alone does NOT update the local environment.
+Skipping this step causes version mismatch where the MCP server runs old code.
+
+```bash
+# 1. Update global npm package
+npm install -g openchrome-mcp
+
+# 2. Kill all running MCP server processes (they still use the old version)
+pkill -f "openchrome-mcp.*serve" || true
+
+# 3. Verify version consistency across all 4 paths
+echo "src:    $(node -p \"require('./package.json').version\")" && \
+echo "dist:   $(node dist/cli/index.js --version 2>/dev/null)" && \
+echo "global: $(npm ls -g openchrome-mcp 2>/dev/null | grep openchrome)" && \
+echo "npm:    $(npm view openchrome-mcp version)"
+```
+
+**Gate**: All 4 versions must match. If dist is outdated, run `npm run build` first.
+
+After verification, the user must **restart Claude Code** for the new MCP server to take effect.
 
 ---
 
@@ -171,3 +196,5 @@ Skip this step entirely unless the user explicitly asks for a version bump or pu
 - [ ] `npm run build` passes on develop (and main after release merge)
 - [ ] No unnecessary branches remain
 - [ ] Working tree is clean
+- [ ] (If published) Global npm package matches published version
+- [ ] (If published) No zombie MCP server processes running old version
