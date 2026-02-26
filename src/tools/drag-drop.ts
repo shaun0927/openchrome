@@ -178,43 +178,51 @@ const handler: ToolHandler = async (
     // Try CDP-based drag and drop first
     let usedCDP = false;
     try {
-      const client = await page.createCDPSession();
+      await Promise.race([
+        (async () => {
+          const client = await page.createCDPSession();
+          try {
+            // Dispatch drag events via CDP
+            await client.send('Input.dispatchDragEvent', {
+              type: 'dragEnter',
+              x: target.x,
+              y: target.y,
+              data: {
+                items: [],
+                dragOperationsMask: 1,
+              },
+            });
 
-      // Dispatch drag events via CDP
-      await client.send('Input.dispatchDragEvent', {
-        type: 'dragEnter',
-        x: target.x,
-        y: target.y,
-        data: {
-          items: [],
-          dragOperationsMask: 1,
-        },
-      });
+            await client.send('Input.dispatchDragEvent', {
+              type: 'dragOver',
+              x: target.x,
+              y: target.y,
+              data: {
+                items: [],
+                dragOperationsMask: 1,
+              },
+            });
 
-      await client.send('Input.dispatchDragEvent', {
-        type: 'dragOver',
-        x: target.x,
-        y: target.y,
-        data: {
-          items: [],
-          dragOperationsMask: 1,
-        },
-      });
-
-      await client.send('Input.dispatchDragEvent', {
-        type: 'drop',
-        x: target.x,
-        y: target.y,
-        data: {
-          items: [],
-          dragOperationsMask: 1,
-        },
-      });
-
-      await client.detach();
+            await client.send('Input.dispatchDragEvent', {
+              type: 'drop',
+              x: target.x,
+              y: target.y,
+              data: {
+                items: [],
+                dragOperationsMask: 1,
+              },
+            });
+          } finally {
+            await client.detach().catch(() => {});
+          }
+        })(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Drag operation timed out')), 10000)
+        ),
+      ]);
       usedCDP = true;
     } catch {
-      // CDP drag events not supported, fall back to mouse simulation
+      // CDP drag events not supported or timed out, fall back to mouse simulation
       usedCDP = false;
     }
 

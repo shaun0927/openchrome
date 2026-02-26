@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { MAX_OUTPUT_CHARS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'page_content',
@@ -74,16 +75,22 @@ const handler: ToolHandler = async (
               }),
             },
           ],
+          isError: true,
         };
       }
 
-      const html = await page.evaluate(
+      let html = await page.evaluate(
         (el: Element, getOuter: boolean) => {
           return getOuter ? el.outerHTML : el.innerHTML;
         },
         element,
         outerHTML
       );
+
+      const originalLength = html.length;
+      if (html.length > MAX_OUTPUT_CHARS) {
+        html = html.substring(0, MAX_OUTPUT_CHARS) + `\n\n[Truncated: ${originalLength} chars total, showing first ${MAX_OUTPUT_CHARS}]`;
+      }
 
       return {
         content: [
@@ -93,7 +100,7 @@ const handler: ToolHandler = async (
               action: 'page_content',
               selector,
               outerHTML,
-              contentLength: html.length,
+              contentLength: originalLength,
               content: html,
             }),
           },
@@ -101,7 +108,12 @@ const handler: ToolHandler = async (
       };
     } else {
       // Get full page content
-      const html = await page.content();
+      let html = await page.content();
+
+      const originalLength = html.length;
+      if (html.length > MAX_OUTPUT_CHARS) {
+        html = html.substring(0, MAX_OUTPUT_CHARS) + `\n\n[Truncated: ${originalLength} chars total, showing first ${MAX_OUTPUT_CHARS}]`;
+      }
 
       return {
         content: [
@@ -110,7 +122,7 @@ const handler: ToolHandler = async (
             text: JSON.stringify({
               action: 'page_content',
               selector: null,
-              contentLength: html.length,
+              contentLength: originalLength,
               content: html,
             }),
           },

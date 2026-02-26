@@ -88,32 +88,39 @@ export class StorageStateManager {
       return false;
     }
 
-    // Restore cookies
-    if (state.cookies && state.cookies.length > 0) {
-      // Filter out expired session cookies but keep persistent ones
-      const validCookies = state.cookies.filter(c => {
-        if (c.session) return true; // session cookies are always valid
-        if (c.expires > 0 && c.expires < Date.now() / 1000) return false; // expired
-        return true;
-      });
+    await Promise.race([
+      (async () => {
+        // Restore cookies
+        if (state.cookies && state.cookies.length > 0) {
+          // Filter out expired session cookies but keep persistent ones
+          const validCookies = state.cookies.filter(c => {
+            if (c.session) return true; // session cookies are always valid
+            if (c.expires > 0 && c.expires < Date.now() / 1000) return false; // expired
+            return true;
+          });
 
-      if (validCookies.length > 0) {
-        await cdpClient.send(page, 'Network.setCookies', { cookies: validCookies });
-      }
-    }
-
-    // Restore localStorage
-    if (state.localStorage && Object.keys(state.localStorage).length > 0) {
-      try {
-        await page.evaluate((data: Record<string, string>) => {
-          for (const [key, value] of Object.entries(data)) {
-            window.localStorage.setItem(key, value);
+          if (validCookies.length > 0) {
+            await cdpClient.send(page, 'Network.setCookies', { cookies: validCookies });
           }
-        }, state.localStorage);
-      } catch {
-        // Skip if localStorage can't be accessed (about:blank, chrome://)
-      }
-    }
+        }
+
+        // Restore localStorage
+        if (state.localStorage && Object.keys(state.localStorage).length > 0) {
+          try {
+            await page.evaluate((data: Record<string, string>) => {
+              for (const [key, value] of Object.entries(data)) {
+                window.localStorage.setItem(key, value);
+              }
+            }, state.localStorage);
+          } catch {
+            // Skip if localStorage can't be accessed (about:blank, chrome://)
+          }
+        }
+      })(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Storage state restore timed out after 10000ms')), 10000)
+      ),
+    ]);
 
     return true;
   }

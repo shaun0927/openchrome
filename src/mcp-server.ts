@@ -23,7 +23,7 @@ import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS } from './config/defaults';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_RECONNECT_TIMEOUT_MS } from './config/defaults';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -413,7 +413,12 @@ export class MCPServer {
 
     // Ensure session exists
     if (sessionId) {
-      await this.sessionManager.getOrCreateSession(sessionId);
+      await Promise.race([
+        this.sessionManager.getOrCreateSession(sessionId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Session initialization timed out after ${DEFAULT_SESSION_INIT_TIMEOUT_MS}ms`)), DEFAULT_SESSION_INIT_TIMEOUT_MS)
+        ),
+      ]);
     }
 
     // Start activity tracking
@@ -422,14 +427,19 @@ export class MCPServer {
     try {
       // Wait at gate if paused
       if (this.operationController) {
-        await this.operationController.gate(callId);
+        await Promise.race([
+          this.operationController.gate(callId),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Operation gate timed out after 300000ms')), 300000)
+          ),
+        ]);
       }
 
       let result: MCPResult;
       try {
         let tid: ReturnType<typeof setTimeout>;
         result = await Promise.race([
-          tool.handler(sessionId, toolArgs).finally(() => clearTimeout(tid)),
+          Promise.resolve(tool.handler(sessionId, toolArgs)).finally(() => clearTimeout(tid)),
           new Promise<never>((_, reject) => {
             tid = setTimeout(
               () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms`)),
@@ -443,11 +453,16 @@ export class MCPServer {
           console.error(`[MCPServer] Connection error during ${toolName}, attempting auto-reconnect...`);
           const cdpClient = getCDPClient();
           try {
-            await cdpClient.forceReconnect();
+            await Promise.race([
+              cdpClient.forceReconnect(),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`Reconnect timed out after ${DEFAULT_RECONNECT_TIMEOUT_MS}ms`)), DEFAULT_RECONNECT_TIMEOUT_MS)
+              ),
+            ]);
             console.error(`[MCPServer] Reconnected, retrying ${toolName}...`);
             let tid2: ReturnType<typeof setTimeout>;
             result = await Promise.race([
-              tool.handler(sessionId, toolArgs).finally(() => clearTimeout(tid2)),
+              Promise.resolve(tool.handler(sessionId, toolArgs)).finally(() => clearTimeout(tid2)),
               new Promise<never>((_, reject) => {
                 tid2 = setTimeout(
                   () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (retry)`)),

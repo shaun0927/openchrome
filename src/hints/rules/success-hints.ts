@@ -9,6 +9,7 @@ export const successHintRules: HintRule[] = [
     name: 'navigate-error-page',
     priority: 400,
     match(ctx) {
+      if (ctx.fireCounts.get('navigate-error-page') ?? 0 > 0) return null;
       if (ctx.toolName !== 'navigate') return null;
       if (ctx.isError) return null;
       if (/404|not found|error|forbidden|403|500|internal server/i.test(ctx.resultText)) {
@@ -21,6 +22,7 @@ export const successHintRules: HintRule[] = [
     name: 'find-no-results',
     priority: 401,
     match(ctx) {
+      if (ctx.fireCounts.get('find-no-results') ?? 0 > 0) return null;
       if (ctx.toolName !== 'find') return null;
       if (ctx.isError) return null;
       if (/no results?|0 (results?|matches|elements)|empty|not found|\[\]/i.test(ctx.resultText)) {
@@ -33,6 +35,7 @@ export const successHintRules: HintRule[] = [
     name: 'click-element-success',
     priority: 402,
     match(ctx) {
+      if (ctx.fireCounts.get('click-element-success') ?? 0 > 0) return null;
       if (ctx.toolName !== 'click_element') return null;
       if (ctx.isError) return null;
       // Only hint if the delta suggests navigation or URL change
@@ -46,6 +49,7 @@ export const successHintRules: HintRule[] = [
     name: 'fill-form-submitted',
     priority: 403,
     match(ctx) {
+      if (ctx.fireCounts.get('fill-form-submitted') ?? 0 > 0) return null;
       if (ctx.toolName !== 'fill_form') return null;
       if (ctx.isError) return null;
       if (/submit|submitted|success/i.test(ctx.resultText)) {

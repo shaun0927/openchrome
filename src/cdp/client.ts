@@ -14,6 +14,8 @@ import {
   DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS,
   DEFAULT_COOKIE_SCAN_MAX_CANDIDATES,
   DEFAULT_COOKIE_COPY_TIMEOUT_MS,
+  DEFAULT_NEW_PAGE_TIMEOUT_MS,
+  DEFAULT_PAGE_CONFIG_TIMEOUT_MS,
 } from '../config/defaults';
 
 // Cookie type shared across methods
@@ -739,10 +741,20 @@ export class CDPClient {
 
     if (context) {
       // Create page in isolated context (for worker isolation)
-      page = await context.newPage();
+      page = await Promise.race([
+        context.newPage(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS)
+        ),
+      ]) as Page;
     } else {
       // Create page in Chrome's default context
-      page = await browser.newPage();
+      page = await Promise.race([
+        browser.newPage(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS)
+        ),
+      ]) as Page;
 
       // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
       // CDP session conflicts and unnecessary overhead on about:blank pages).
@@ -766,8 +778,11 @@ export class CDPClient {
     // Index page for O(1) target-to-page lookups (replaces eager targetcreated indexing)
     this.targetIdIndex.set(getTargetId(page.target()), page);
 
-    // Set default viewport for consistent debugging experience
-    await page.setViewport(CDPClient.DEFAULT_VIEWPORT);
+    // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
+    await Promise.race([
+      page.setViewport(CDPClient.DEFAULT_VIEWPORT),
+      new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS)),
+    ]);
 
     if (url) {
       try {

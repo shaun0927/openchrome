@@ -653,6 +653,19 @@ export class SessionManager {
     url?: string,
     workerId?: string
   ): Promise<{ targetId: string; page: Page; workerId: string }> {
+    return Promise.race([
+      this._createTargetImpl(sessionId, url, workerId),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('createTarget timed out after 60000ms')), 60000)
+      ),
+    ]);
+  }
+
+  private async _createTargetImpl(
+    sessionId: string,
+    url?: string,
+    workerId?: string
+  ): Promise<{ targetId: string; page: Page; workerId: string }> {
     await this.ensureConnected();
 
     const worker = await this.getOrCreateWorker(sessionId, workerId);
@@ -691,15 +704,20 @@ export class SessionManager {
         }
         // Copy cookies from the worker's browser context if available
         // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
-        if (worker.context) {
-          try {
-            const cookies = await worker.context.cookies();
-            if (cookies.length > 0) {
-              await poolPage.setCookie(...cookies);
-            }
-          } catch {
-            // Best-effort cookie copy
-          }
+        try {
+          await Promise.race([
+            (async () => {
+              if (worker.context) {
+                const cookies = await worker.context.cookies();
+                if (cookies.length > 0) {
+                  await poolPage.setCookie(...cookies);
+                }
+              }
+            })(),
+            new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+          ]);
+        } catch {
+          console.error('[SessionManager] Cookie context copy timed out, continuing without cookies');
         }
         page = poolPage;
         console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);

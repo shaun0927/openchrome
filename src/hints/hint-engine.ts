@@ -30,6 +30,7 @@ export interface HintContext {
   resultText: string;
   isError: boolean;
   recentCalls: ToolCallEvent[];
+  fireCounts: Map<string, number>;
 }
 
 export interface HintRule {
@@ -73,6 +74,7 @@ export class HintEngine {
   private learner: PatternLearner;
   private logFilePath: string | null = null;
   private hintEscalation: Map<string, number> = new Map(); // ruleName -> session fire count
+  private missCounts: Map<string, number> = new Map(); // ruleName -> consecutive miss count
 
   // Buffered async write stream
   private logStream: fs.WriteStream | null = null;
@@ -135,7 +137,7 @@ export class HintEngine {
     const resultText = this.extractText(result);
     const recentCalls = this.activityTracker.getRecentCalls(5);
 
-    const ctx: HintContext = { toolName, resultText, isError, recentCalls };
+    const ctx: HintContext = { toolName, resultText, isError, recentCalls, fireCounts: this.hintEscalation };
 
     let matchedRule: string | null = null;
     let rawHint: string | null = null;
@@ -145,7 +147,17 @@ export class HintEngine {
       if (h) {
         matchedRule = rule.name;
         rawHint = h;
+        // Reset miss count on match
+        this.missCounts.set(rule.name, 0);
         break;
+      } else {
+        // Increment miss count; after 10 consecutive misses, decay fire count to 0
+        const misses = (this.missCounts.get(rule.name) || 0) + 1;
+        this.missCounts.set(rule.name, misses);
+        if (misses >= 10) {
+          this.hintEscalation.set(rule.name, 0);
+          this.missCounts.set(rule.name, 0);
+        }
       }
     }
 
