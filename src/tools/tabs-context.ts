@@ -18,6 +18,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Optional: Get tabs for a specific worker only.',
       },
+      summary: {
+        type: 'boolean',
+        description: 'If true, return only worker/tab counts without full tab details.',
+      },
     },
     required: [],
   },
@@ -36,6 +40,7 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const sessionManager = getSessionManager();
   const requestedWorkerId = args.workerId as string | undefined;
+  const summaryMode = args.summary as boolean | undefined;
 
   try {
     const session = await sessionManager.getOrCreateSession(sessionId);
@@ -71,6 +76,30 @@ const handler: ToolHandler = async (
           // Target may have been closed, skip it
         }
       }
+    }
+
+    if (summaryMode) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                sessionId,
+                workerCount: workers.length,
+                tabCount: tabInfos.length,
+                workers: workers.map((w) => ({
+                  id: w.id,
+                  name: w.name,
+                  tabCount: workerTabs[w.id]?.length || 0,
+                })),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
     }
 
     return {

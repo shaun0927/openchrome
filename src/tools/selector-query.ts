@@ -97,10 +97,13 @@ const handler: ToolHandler = async (
         };
       }
 
+      const MAX_SELECTOR_RESULTS = 50;
+      const totalCount = elements.length;
+      const limitedElements = elements.slice(0, MAX_SELECTOR_RESULTS);
       const elementInfos: ElementInfo[] = [];
 
-      for (let i = 0; i < elements.length; i++) {
-        const element = elements[i];
+      for (let i = 0; i < limitedElements.length; i++) {
+        const element = limitedElements[i];
         const info = await page.evaluate(
           (el: Element, index: number): ElementInfo => {
             const rect = el.getBoundingClientRect();
@@ -142,17 +145,22 @@ const handler: ToolHandler = async (
         elementInfos.push(info);
       }
 
+      const result: Record<string, unknown> = {
+        action: 'selector_query',
+        selector,
+        multiple: true,
+        elements: elementInfos,
+        count: elementInfos.length,
+      };
+      if (totalCount > MAX_SELECTOR_RESULTS) {
+        result.totalCount = totalCount;
+        result.note = `Results limited to first ${MAX_SELECTOR_RESULTS} of ${totalCount} matching elements`;
+      }
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({
-              action: 'selector_query',
-              selector,
-              multiple: true,
-              elements: elementInfos,
-              count: elementInfos.length,
-            }),
+            text: JSON.stringify(result),
           },
         ],
       };

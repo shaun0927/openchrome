@@ -470,25 +470,39 @@ const handler: ToolHandler = async (
     }
 
     const clickType = doubleClick ? 'Double-clicked' : 'Clicked';
-    const resultText = `${clickType} ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}${delta}`;
+    const confidenceNote = bestMatch.score < 50 ? ` (low confidence: ${bestMatch.score}/100)` : '';
+    const resultText = `${clickType} ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}${confidenceNote}${delta}`;
 
     // Optional verification screenshot — WebP via CDP for speed and consistency
     if (verify) {
       try {
-        const cdpSession = await (page as any).target().createCDPSession();
-        const { data } = await cdpSession.send('Page.captureScreenshot', {
-          format: 'webp',
-          quality: DEFAULT_SCREENSHOT_QUALITY,
-          optimizeForSpeed: true,
-        });
-        await cdpSession.detach();
+        const screenshotResult = await Promise.race([
+          (async () => {
+            const cdpSession = await (page as any).target().createCDPSession();
+            try {
+              const { data } = await cdpSession.send('Page.captureScreenshot', {
+                format: 'webp',
+                quality: DEFAULT_SCREENSHOT_QUALITY,
+                optimizeForSpeed: true,
+              });
+              return data as string;
+            } finally {
+              await cdpSession.detach().catch(() => {});
+            }
+          })(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+        ]);
 
-        return {
-          content: [
-            { type: 'text', text: resultText },
-            { type: 'image', data, mimeType: 'image/webp' },
-          ],
-        };
+        if (screenshotResult !== null) {
+          return {
+            content: [
+              { type: 'text', text: resultText },
+              { type: 'image', data: screenshotResult, mimeType: 'image/webp' },
+            ],
+          };
+        }
+        // Timeout — fall through to fallback
+        throw new Error('Screenshot timed out');
       } catch {
         // Fall back to Puppeteer PNG if CDP session creation fails
         const screenshot = await page.screenshot({

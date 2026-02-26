@@ -22,6 +22,10 @@ const definition: MCPToolDefinition = {
         description:
           'The JavaScript code to execute. The result of the last expression will be returned.',
       },
+      timeout: {
+        type: 'number',
+        description: 'Timeout in milliseconds for JavaScript execution (default: 30000)',
+      },
     },
     required: ['text', 'tabId'],
   },
@@ -33,6 +37,7 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const code = args.text as string;
+  const timeout = (args.timeout as number) || 30000;
 
   const sessionManager = getSessionManager();
 
@@ -59,8 +64,10 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Execute the JavaScript
-    const result = await page.evaluate(async (jsCode: string): Promise<{ success: boolean; value?: string; error?: string }> => {
+    // Execute the JavaScript (with configurable timeout)
+    let jsTid: ReturnType<typeof setTimeout>;
+    const result = await Promise.race([
+      page.evaluate(async (jsCode: string): Promise<{ success: boolean; value?: string; error?: string }> => {
       try {
         // Use indirect eval to execute in global scope
         // Supports top-level await via async IIFE wrapping
@@ -135,7 +142,11 @@ const handler: ToolHandler = async (
           error: e instanceof Error ? e.message : String(e),
         };
       }
-    }, code);
+    }, code).finally(() => clearTimeout(jsTid)),
+      new Promise<never>((_, reject) => {
+        jsTid = setTimeout(() => reject(new Error(`JS execution timed out after ${timeout}ms`)), timeout);
+      }),
+    ]);
 
     if (result.success) {
       return {

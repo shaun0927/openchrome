@@ -152,8 +152,14 @@ const handler: ToolHandler = async (
       if (footerTemplate) pdfOptions.footerTemplate = footerTemplate;
     }
 
-    // Generate PDF
-    const pdfBuffer = await page.pdf(pdfOptions);
+    // Generate PDF (with 60s timeout)
+    let pdfTid: ReturnType<typeof setTimeout>;
+    const pdfBuffer = await Promise.race([
+      page.pdf(pdfOptions).finally(() => clearTimeout(pdfTid)),
+      new Promise<never>((_, reject) => {
+        pdfTid = setTimeout(() => reject(new Error('PDF generation timed out after 60000ms')), 60000);
+      }),
+    ]);
 
     if (filePath) {
       // Resolve path (support ~ for home directory)

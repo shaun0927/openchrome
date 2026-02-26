@@ -52,3 +52,30 @@ export const DEFAULT_QUEUE_ITEM_TIMEOUT_MS = 120000;
 
 /** Global tool execution timeout in milliseconds. Absolute safety net against indefinitely hung handlers. */
 export const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 120000;
+
+/** Session initialization timeout (getOrCreateSession). Prevents pre-handler hangs. */
+export const DEFAULT_SESSION_INIT_TIMEOUT_MS = 30000;
+
+/** Reconnect timeout in milliseconds. Prevents indefinite hang between retry races. */
+export const DEFAULT_RECONNECT_TIMEOUT_MS = 15000;
+
+/** New page creation timeout in milliseconds. Chrome can hang on Target.createTarget under load. */
+export const DEFAULT_NEW_PAGE_TIMEOUT_MS = 15000;
+
+/** Page configuration timeout (setViewport, etc.) in milliseconds. */
+export const DEFAULT_PAGE_CONFIG_TIMEOUT_MS = 5000;
+
+/** Cookie context operation timeout in milliseconds. */
+export const DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS = 5000;
+
+/** Storage state restore timeout in milliseconds. */
+export const DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS = 10000;
+
+/** createTarget aggregate timeout in milliseconds. Safety net for entire tab creation chain. */
+export const DEFAULT_CREATE_TARGET_TIMEOUT_MS = 60000;
+
+/** CDP session operation timeout for direct createCDPSession calls. */
+export const DEFAULT_CDP_SESSION_OP_TIMEOUT_MS = 10000;
+
+/** Operation gate timeout in milliseconds. Max wait when tool execution is paused. */
+export const DEFAULT_OPERATION_GATE_TIMEOUT_MS = 300000;

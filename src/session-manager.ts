@@ -13,7 +13,7 @@ import { getGlobalConfig } from './config/global';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
 import { smartGoto } from './utils/smart-goto';
-import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD } from './config/defaults';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD, DEFAULT_CREATE_TARGET_TIMEOUT_MS, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS } from './config/defaults';
 import * as os from 'os';
 import { BrowserRouter } from './router';
 import { HybridConfig } from './types/browser-backend';
@@ -653,6 +653,20 @@ export class SessionManager {
     url?: string,
     workerId?: string
   ): Promise<{ targetId: string; page: Page; workerId: string }> {
+    let createTargetTid: ReturnType<typeof setTimeout>;
+    return Promise.race([
+      this._createTargetImpl(sessionId, url, workerId).finally(() => clearTimeout(createTargetTid)),
+      new Promise<never>((_, reject) => {
+        createTargetTid = setTimeout(() => reject(new Error(`createTarget timed out after ${DEFAULT_CREATE_TARGET_TIMEOUT_MS}ms`)), DEFAULT_CREATE_TARGET_TIMEOUT_MS);
+      }),
+    ]);
+  }
+
+  private async _createTargetImpl(
+    sessionId: string,
+    url?: string,
+    workerId?: string
+  ): Promise<{ targetId: string; page: Page; workerId: string }> {
     await this.ensureConnected();
 
     const worker = await this.getOrCreateWorker(sessionId, workerId);
@@ -691,15 +705,20 @@ export class SessionManager {
         }
         // Copy cookies from the worker's browser context if available
         // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
-        if (worker.context) {
-          try {
-            const cookies = await worker.context.cookies();
-            if (cookies.length > 0) {
-              await poolPage.setCookie(...cookies);
-            }
-          } catch {
-            // Best-effort cookie copy
-          }
+        try {
+          await Promise.race([
+            (async () => {
+              if (worker.context) {
+                const cookies = await worker.context.cookies();
+                if (cookies.length > 0) {
+                  await poolPage.setCookie(...cookies);
+                }
+              }
+            })(),
+            new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS)),
+          ]);
+        } catch {
+          console.error('[SessionManager] Cookie context copy timed out, continuing without cookies');
         }
         page = poolPage;
         console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);
