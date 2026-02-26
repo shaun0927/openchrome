@@ -98,7 +98,7 @@ describe('MCPServer _profile injection', () => {
 
   test('includes _profile in error tool response', async () => {
     mockGetProfileState.mockReturnValue({
-      type: 'temp-snapshot',
+      type: 'persistent',
       extensionsAvailable: false,
       cookieCopiedAt: Date.now() - 60000,
     });
@@ -106,13 +106,13 @@ describe('MCPServer _profile injection', () => {
       throw new Error('Tool failed');
     });
     expect(response.result._profile).toBeDefined();
-    expect(response.result._profile!.type).toBe('temp-snapshot');
+    expect(response.result._profile!.type).toBe('persistent');
     expect(response.result._profile!.extensions).toBe(false);
   });
 
   test('shows one-time warning for non-real profile on first call only', async () => {
     mockGetProfileState.mockReturnValue({
-      type: 'temp-snapshot',
+      type: 'persistent',
       extensionsAvailable: false,
       cookieCopiedAt: Date.now() - 120000,
     });
@@ -139,7 +139,7 @@ describe('MCPServer _profile injection', () => {
     const response1 = (await server.handleRequest(request)) as MCPResultResponse;
     const warning1 = response1.result.content!.find((c) => c.text.includes('\u26a0'));
     expect(warning1).toBeDefined();
-    expect(warning1!.text).toContain('temporary profile');
+    expect(warning1!.text).toContain('persistent OpenChrome profile');
 
     // Second call should NOT include warning
     const response2 = (await server.handleRequest(request)) as MCPResultResponse;
@@ -160,9 +160,9 @@ describe('MCPServer _profile injection', () => {
     expect(response.result.content![0].text).toBe('OK');
   });
 
-  test('includes cookieAge in _profile for temp-snapshot', async () => {
+  test('includes cookieAge in _profile for persistent profile', async () => {
     mockGetProfileState.mockReturnValue({
-      type: 'temp-snapshot',
+      type: 'persistent',
       extensionsAvailable: false,
       cookieCopiedAt: Date.now() - 120000,
     });
@@ -198,7 +198,7 @@ describe('MCPServer _profile injection', () => {
 
   test('warning is prepended before tool content', async () => {
     mockGetProfileState.mockReturnValue({
-      type: 'temp-snapshot',
+      type: 'persistent',
       extensionsAvailable: false,
       cookieCopiedAt: Date.now() - 60000,
     });

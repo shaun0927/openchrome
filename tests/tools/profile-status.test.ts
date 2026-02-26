@@ -62,10 +62,10 @@ describe('oc_profile_status tool', () => {
     expect(result.content[1].text).toContain('Real Chrome profile');
   });
 
-  test('reports temp-snapshot profile with cookie age', async () => {
+  test('reports persistent profile with cookie age', async () => {
     const fiveMinAgo = Date.now() - 300000;
     mockGetProfileState.mockReturnValue({
-      type: 'temp-snapshot',
+      type: 'persistent',
       cookieCopiedAt: fiveMinAgo,
       extensionsAvailable: false,
       sourceProfile: '/Users/test/Library/Application Support/Google/Chrome',
@@ -73,24 +73,24 @@ describe('oc_profile_status tool', () => {
     });
     const result = await handler('default', {});
     const data = JSON.parse(result.content[0].text);
-    expect(data.profileType).toBe('temp-snapshot');
+    expect(data.profileType).toBe('persistent');
     expect(data.capabilities.extensions).toBe(false);
     expect(data.capabilities.sessionCookies).toBe(true);
     expect(data.cookiesCopied).toBe(true);
     expect(data.realProfilePath).toBeUndefined(); // paths not exposed to LLM
     expect(data.realProfileLocked).toBe(true);
-    expect(result.content[1].text).toContain('Temporary profile');
+    expect(result.content[1].text).toContain('Persistent OpenChrome profile');
   });
 
-  test('reports temp-fresh profile', async () => {
+  test('reports temp profile', async () => {
     mockGetProfileState.mockReturnValue({
-      type: 'temp-fresh',
+      type: 'temp',
       extensionsAvailable: false,
       userDataDir: '/tmp/openchrome-456',
     });
     const result = await handler('default', {});
     const data = JSON.parse(result.content[0].text);
-    expect(data.profileType).toBe('temp-fresh');
+    expect(data.profileType).toBe('temp');
     expect(data.capabilities.extensions).toBe(false);
     expect(data.capabilities.sessionCookies).toBe(false);
     expect(result.content[1].text).toContain('Fresh temporary profile');
@@ -112,7 +112,7 @@ describe('oc_profile_status tool', () => {
 
   test('cookie age is a number in milliseconds', async () => {
     mockGetProfileState.mockReturnValue({
-      type: 'temp-snapshot',
+      type: 'persistent',
       cookieCopiedAt: Date.now() - 60000,
       extensionsAvailable: false,
       sourceProfile: '/Users/test/Chrome',

@@ -42,7 +42,7 @@ describe('ChromeLauncher ProfileState', () => {
     const { ChromeLauncher } = jest.requireActual('../src/chrome/launcher') as typeof import('../src/chrome/launcher');
     const instance = new ChromeLauncher(9222);
     const state = instance.getProfileState();
-    const validTypes = ['real', 'temp-snapshot', 'temp-fresh'];
+    const validTypes = ['real', 'persistent', 'temp', 'explicit'];
     expect(validTypes).toContain(state.type);
   });
 
