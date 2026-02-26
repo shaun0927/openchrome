@@ -67,7 +67,7 @@ export class CDPClient {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private connectionState: ConnectionState = 'disconnected';
   private eventListeners: ((event: ConnectionEvent) => void)[] = [];
-  private targetDestroyedListeners: ((targetId: string) => void)[] = [];
+  private targetDestroyedListeners: ((targetId: string, page?: Page) => void)[] = [];
   private reconnectAttempts = 0;
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
@@ -117,8 +117,18 @@ export class CDPClient {
   /**
    * Add target destroyed listener
    */
-  addTargetDestroyedListener(listener: (targetId: string) => void): void {
+  addTargetDestroyedListener(listener: (targetId: string, page?: Page) => void): void {
     this.targetDestroyedListeners.push(listener);
+  }
+
+  /**
+   * Remove target destroyed listener
+   */
+  removeTargetDestroyedListener(listener: (targetId: string, page?: Page) => void): void {
+    const index = this.targetDestroyedListeners.indexOf(listener);
+    if (index !== -1) {
+      this.targetDestroyedListeners.splice(index, 1);
+    }
   }
 
   /**
@@ -134,10 +144,12 @@ export class CDPClient {
     }
     // Clean up cookie data cache for this target
     this.cookieDataCache.delete(targetId);
+    // Look up page BEFORE deleting from index so listeners can use it
+    const page = this.targetIdIndex.get(targetId);
     this.targetIdIndex.delete(targetId);
     for (const listener of this.targetDestroyedListeners) {
       try {
-        listener(targetId);
+        listener(targetId, page);
       } catch (e) {
         console.error('[CDPClient] Target destroyed listener error:', e);
       }
