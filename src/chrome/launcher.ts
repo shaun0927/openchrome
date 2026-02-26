@@ -182,11 +182,23 @@ async function waitForDebugPort(
   throw new Error(`Chrome debug port ${port} not available after ${timeout}ms`);
 }
 
+export interface ProfileState {
+  type: ProfileType;             // from profile-manager: 'real' | 'persistent' | 'temp' | 'explicit'
+  cookieCopiedAt?: number;       // timestamp when cookies were copied (undefined for real profile)
+  extensionsAvailable: boolean;
+  sourceProfile?: string;        // path to the real profile (if synced from)
+  userDataDir?: string;          // actual userDataDir being used
+}
+
 export class ChromeLauncher {
   private instance: ChromeInstance | null = null;
   private port: number;
   private profileManager = new ProfileManager();
   private currentProfileType: ProfileType | undefined;
+  private profileState: ProfileState = {
+    type: 'real',
+    extensionsAvailable: true,
+  };
 
   constructor(port: number = DEFAULT_PORT) {
     this.port = port;
@@ -220,6 +232,8 @@ export class ChromeLauncher {
         wsEndpoint: existingWs,
         httpEndpoint: `http://127.0.0.1:${port}`,
       };
+      // Attached to user-started Chrome — assume real profile
+      this.profileState = { type: 'real', extensionsAvailable: true };
       return this.instance;
     }
 
@@ -300,6 +314,15 @@ export class ChromeLauncher {
     const userDataDir = resolution.userDataDir;
     const profileType = resolution.profileType;
     this.currentProfileType = profileType;
+
+    // Track profile state for MCP consumers
+    this.profileState = {
+      type: profileType,
+      extensionsAvailable: profileType === 'real' || profileType === 'explicit',
+      ...(resolution.syncPerformed && { cookieCopiedAt: Date.now() }),
+      ...(realProfileDir && profileType === 'persistent' && { sourceProfile: realProfileDir }),
+      userDataDir,
+    };
 
     if (resolution.syncPerformed) {
       console.error(`[ChromeLauncher] Using persistent profile with fresh cookie sync: ${userDataDir}`);
@@ -471,6 +494,14 @@ export class ChromeLauncher {
    */
   getProfileType(): ProfileType | undefined {
     return this.currentProfileType;
+  }
+
+  /**
+   * Get the current profile state.
+   * Describes what type of Chrome profile is in use and its capabilities.
+   */
+  getProfileState(): ProfileState {
+    return { ...this.profileState };
   }
 
   /**

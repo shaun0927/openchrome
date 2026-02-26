@@ -18,6 +18,7 @@ import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import { HintEngine } from './hints';
+import { formatAge } from './utils/format-age';
 import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
@@ -702,40 +703,47 @@ export class MCPServer {
     return 'interaction';
   }
 
+  /**
+   * Build the _profile metadata object and optional one-time warning.
+   * Returns null if profile state cannot be determined (e.g., launcher not initialized).
+   */
   private buildProfileInfo(): {
     profile: Record<string, unknown>;
     warning: string | null;
   } | null {
     try {
       const launcher = getChromeLauncher();
-      const profileType = launcher.getProfileType();
-
-      // Don't inject profile info before Chrome is launched
-      if (profileType === undefined) return null;
+      const state = launcher.getProfileState();
 
       const profile: Record<string, unknown> = {
-        type: profileType,
-        extensions: profileType === 'real',
+        type: state.type,
+        extensions: state.extensionsAvailable,
       };
 
+      if (state.cookieCopiedAt) {
+        profile.cookieAge = formatAge(state.cookieCopiedAt);
+      }
+
       let warning: string | null = null;
-      if (!this.profileWarningShown && profileType && profileType !== 'real') {
-        this.profileWarningShown = true;
+      if (!this.profileWarningShown && state.type !== 'real' && state.type !== 'explicit') {
         const parts: string[] = [];
-        if (profileType === 'persistent') {
+        if (state.type === 'persistent') {
           parts.push('⚠️ Browser running with persistent OpenChrome profile (real Chrome profile is locked).');
-          parts.push('Available: synced cookies, persistent localStorage/IndexedDB across sessions');
-        } else if (profileType === 'temp') {
-          parts.push('⚠️ Browser running with fresh temporary profile.');
+          parts.push(`Available: synced cookies${state.cookieCopiedAt ? ` (${formatAge(state.cookieCopiedAt)})` : ''} — authentication may work`);
+          parts.push('Not available: extensions, saved passwords, bookmarks');
+          parts.push('Tip: If authentication fails, the cookie sync may be stale. Ask the user to close Chrome.');
         } else {
-          parts.push(`⚠️ Browser running with ${profileType} profile.`);
+          parts.push('⚠️ Browser running with fresh temporary profile (no user data).');
+          parts.push('Not available: cookies, extensions, saved passwords, localStorage, bookmarks');
+          parts.push('Tip: The user will need to log in manually to any sites that require authentication.');
         }
-        parts.push('Not available: extensions, saved passwords, bookmarks');
         warning = parts.join('\n');
+        this.profileWarningShown = true;
       }
 
       return { profile, warning };
     } catch {
+      // Launcher may not be initialized yet
       return null;
     }
   }
