@@ -16,6 +16,7 @@ import {
   DEFAULT_COOKIE_COPY_TIMEOUT_MS,
   DEFAULT_NEW_PAGE_TIMEOUT_MS,
   DEFAULT_PAGE_CONFIG_TIMEOUT_MS,
+  DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
 } from '../config/defaults';
 
 // Cookie type shared across methods
@@ -71,6 +72,8 @@ export class CDPClient {
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
   private targetIdIndex: Map<string, Page> = new Map();
   private inFlightCookieScans: Map<string, Promise<string | null>> = new Map();
+  /** Coalesces concurrent connect() calls — only one connectInternal() runs at a time. */
+  private pendingConnect: Promise<void> | null = null;
   private static readonly COOKIE_CACHE_TTL = 300000; // 5 minutes
 
   constructor(options: CDPClientOptions = {}) {
@@ -264,11 +267,23 @@ export class CDPClient {
     const launcher = getChromeLauncher(this.port);
     const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
 
-    this.browser = await puppeteer.connect({
-      browserWSEndpoint: instance.wsEndpoint,
-      defaultViewport: null,
-      protocolTimeout: DEFAULT_PROTOCOL_TIMEOUT_MS,
-    });
+    // Explicit timeout on puppeteer.connect() — protocolTimeout only covers CDP messages,
+    // NOT the initial WebSocket handshake. Without this, a listening but unresponsive Chrome
+    // can block for the OS TCP timeout (60-120s on macOS).
+    let wsConnectTid: ReturnType<typeof setTimeout>;
+    this.browser = await Promise.race([
+      puppeteer.connect({
+        browserWSEndpoint: instance.wsEndpoint,
+        defaultViewport: null,
+        protocolTimeout: DEFAULT_PROTOCOL_TIMEOUT_MS,
+      }).finally(() => clearTimeout(wsConnectTid)),
+      new Promise<never>((_, reject) => {
+        wsConnectTid = setTimeout(
+          () => reject(new Error(`puppeteer.connect() timed out after ${DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS}ms (WebSocket to ${instance.wsEndpoint})`)),
+          DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
+        );
+      }),
+    ]) as Browser;
 
     // Set up disconnect handler
     this.browser.on('disconnected', () => {
@@ -299,7 +314,10 @@ export class CDPClient {
   }
 
   /**
-   * Connect to Chrome instance
+   * Connect to Chrome instance.
+   * Uses promise coalescing: concurrent callers share a single connectInternal() call
+   * instead of each independently opening a WebSocket (which would orphan event listeners
+   * and heartbeat timers from the first connection).
    */
   async connect(): Promise<void> {
     if (this.browser && this.browser.isConnected()) {
@@ -324,16 +342,42 @@ export class CDPClient {
       }
     }
 
+    // Coalesce concurrent connect() calls — only one connectInternal() runs at a time.
+    // Without this, parallel tool calls (e.g., ultrapilot workflows) each trigger
+    // connectInternal(), creating duplicate WebSocket connections where the second
+    // overwrites this.browser and orphans the first's event listeners + heartbeat.
+    if (this.pendingConnect) {
+      console.error('[CDPClient] Coalescing concurrent connect() call');
+      return this.pendingConnect;
+    }
+
     this.connectionState = 'connecting';
-    await this.connectInternal();
-    this.startHeartbeat();
-    console.error('[CDPClient] Connected to Chrome');
+    this.pendingConnect = (async () => {
+      try {
+        await this.connectInternal();
+        this.startHeartbeat();
+        console.error('[CDPClient] Connected to Chrome');
+      } catch (err) {
+        this.connectionState = 'disconnected';
+        throw err;
+      }
+    })();
+
+    try {
+      await this.pendingConnect;
+    } finally {
+      this.pendingConnect = null;
+    }
   }
 
   /**
-   * Force reconnect by disconnecting and reconnecting
+   * Force reconnect by disconnecting and reconnecting.
+   * Invalidates any pending connect() promise — the old connection attempt
+   * will still resolve but its result is discarded because this.browser is replaced.
    */
   async forceReconnect(): Promise<void> {
+    // Invalidate any in-flight connect() — we're replacing the connection entirely
+    this.pendingConnect = null;
     this.stopHeartbeat();
 
     if (this.browser) {

@@ -23,7 +23,8 @@ import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS } from './config/defaults';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS } from './config/defaults';
+import { getGlobalConfig } from './config/global';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -172,7 +173,8 @@ export class MCPServer {
 
     this.rl = readline.createInterface({
       input: process.stdin,
-      output: process.stdout,
+      // Do NOT set output to process.stdout — stdout is the MCP JSON-RPC channel.
+      // Setting it risks protocol corruption if readline writes internally (prompts, echoes).
       terminal: false,
     });
 
@@ -411,13 +413,19 @@ export class MCPServer {
       throw new Error(`Unknown tool: ${toolName}`);
     }
 
-    // Ensure session exists
+    // Ensure session exists.
+    // Use a longer timeout when autoLaunch is enabled because Chrome launch (up to 30s)
+    // + puppeteer.connect (up to 15s) can exceed the default 30s session init timeout.
     if (sessionId) {
+      const globalConfig = getGlobalConfig();
+      const sessionInitTimeout = globalConfig.autoLaunch
+        ? DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS
+        : DEFAULT_SESSION_INIT_TIMEOUT_MS;
       let sessionInitTid: ReturnType<typeof setTimeout>;
       await Promise.race([
         this.sessionManager.getOrCreateSession(sessionId).finally(() => clearTimeout(sessionInitTid)),
         new Promise<never>((_, reject) => {
-          sessionInitTid = setTimeout(() => reject(new Error(`Session initialization timed out after ${DEFAULT_SESSION_INIT_TIMEOUT_MS}ms`)), DEFAULT_SESSION_INIT_TIMEOUT_MS);
+          sessionInitTid = setTimeout(() => reject(new Error(`Session initialization timed out after ${sessionInitTimeout}ms`)), sessionInitTimeout);
         }),
       ]);
     }

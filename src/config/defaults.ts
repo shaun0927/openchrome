@@ -79,3 +79,12 @@ export const DEFAULT_CDP_SESSION_OP_TIMEOUT_MS = 10000;
 
 /** Operation gate timeout in milliseconds. Max wait when tool execution is paused. */
 export const DEFAULT_OPERATION_GATE_TIMEOUT_MS = 300000;
+
+/** Explicit timeout for puppeteer.connect() WebSocket connection (ms).
+ *  protocolTimeout only covers CDP messages, not the initial WebSocket handshake.
+ *  Without this, a listening but unresponsive Chrome can block for OS TCP timeout (60-120s). */
+export const DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS = 15000;
+
+/** Session initialization timeout when autoLaunch is enabled (ms).
+ *  Accounts for: port probe (5s) + Chrome launch (30s) + puppeteer connect (15s). */
+export const DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS = 45000;
