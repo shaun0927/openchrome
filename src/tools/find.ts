@@ -96,9 +96,11 @@ const handler: ToolHandler = async (
         const placeholder = inputEl.placeholder?.toLowerCase() || '';
         const title = el.getAttribute('title')?.toLowerCase() || '';
         const name = ariaLabel || title || text.slice(0, 100);
+        const isContentEditable = el.getAttribute('contenteditable') === 'true';
         const role = el.getAttribute('role') ||
           (el.tagName === 'BUTTON' ? 'button' : el.tagName === 'A' ? 'link' :
-           el.tagName === 'INPUT' ? inputEl.type || 'textbox' : el.tagName.toLowerCase());
+           el.tagName === 'INPUT' ? inputEl.type || 'textbox'
+             : isContentEditable ? 'textbox' : el.tagName.toLowerCase());
 
         // Exact match (highest priority)
         if (name === searchLower || text === searchLower) score += 100;
