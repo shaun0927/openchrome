@@ -702,13 +702,6 @@ export class MCPServer {
     return 'interaction';
   }
 
-  private formatCookieAge(copiedAt: number): string {
-    const ageMs = Date.now() - copiedAt;
-    if (ageMs < 60000) return `${Math.round(ageMs / 1000)}s ago`;
-    if (ageMs < 3600000) return `${Math.round(ageMs / 60000)}m ago`;
-    return `${Math.round(ageMs / 3600000)}h ago`;
-  }
-
   private buildProfileInfo(): {
     profile: Record<string, unknown>;
     warning: string | null;
@@ -717,8 +710,11 @@ export class MCPServer {
       const launcher = getChromeLauncher();
       const profileType = launcher.getProfileType();
 
+      // Don't inject profile info before Chrome is launched
+      if (profileType === undefined) return null;
+
       const profile: Record<string, unknown> = {
-        type: profileType ?? 'unknown',
+        type: profileType,
         extensions: profileType === 'real',
       };
 

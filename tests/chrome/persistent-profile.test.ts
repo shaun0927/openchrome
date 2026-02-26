@@ -9,7 +9,7 @@
  * 5. ProfileManager.resolveProfile() — profile selection priority
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -24,11 +24,11 @@ jest.mock('child_process', () => {
   const actual = jest.requireActual('child_process');
   return {
     ...actual,
-    execSync: jest.fn(),
+    execFileSync: jest.fn(),
   };
 });
 
-const mockExecSync = execSync as jest.MockedFunction<typeof execSync>;
+const mockExecFileSync = execFileSync as jest.MockedFunction<typeof execFileSync>;
 
 describe('ProfileManager', () => {
   let consoleErrorSpy: jest.SpyInstance;
@@ -36,7 +36,7 @@ describe('ProfileManager', () => {
 
   beforeEach(() => {
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockExecSync.mockReset();
+    mockExecFileSync.mockReset();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-pm-test-'));
 
     // Override static constants to use temp directories for test isolation
@@ -200,12 +200,12 @@ describe('ProfileManager', () => {
       fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies'), 'cookie-db');
 
       // Mock: `which sqlite3` succeeds, backup command succeeds
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        const cmdStr = String(cmd);
-        if (cmdStr.includes('which sqlite3') || cmdStr.includes('where sqlite3')) {
+      mockExecFileSync.mockImplementation((file: unknown, args?: unknown) => {
+        const fileStr = String(file);
+        if (fileStr === 'which' || fileStr === 'where') {
           return Buffer.from('/usr/bin/sqlite3');
         }
-        if (cmdStr.includes('sqlite3') && cmdStr.includes('.backup')) {
+        if (fileStr === 'sqlite3') {
           // Simulate creating the backup file
           const destDefault = path.join(destDir, 'Default');
           fs.mkdirSync(destDefault, { recursive: true });
@@ -225,9 +225,8 @@ describe('ProfileManager', () => {
       fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies'), 'cookie-db');
 
       // Mock: `which sqlite3` fails
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        const cmdStr = String(cmd);
-        if (cmdStr.includes('which sqlite3') || cmdStr.includes('where sqlite3')) {
+      mockExecFileSync.mockImplementation((file: unknown) => {
+        if (String(file) === 'which' || String(file) === 'where') {
           throw new Error('not found');
         }
         return Buffer.from('');
@@ -250,12 +249,11 @@ describe('ProfileManager', () => {
       fs.writeFileSync(path.join(destDir, 'Default', 'Cookies-shm'), 'stale-shm');
       fs.writeFileSync(path.join(destDir, 'Default', 'Cookies-journal'), 'stale-journal');
 
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        const cmdStr = String(cmd);
-        if (cmdStr.includes('which sqlite3') || cmdStr.includes('where sqlite3')) {
+      mockExecFileSync.mockImplementation((file: unknown) => {
+        if (String(file) === 'which' || String(file) === 'where') {
           return Buffer.from('/usr/bin/sqlite3');
         }
-        if (cmdStr.includes('.backup')) {
+        if (String(file) === 'sqlite3') {
           return Buffer.from('');
         }
         return Buffer.from('');
@@ -280,8 +278,8 @@ describe('ProfileManager', () => {
         JSON.stringify(sourcePrefs)
       );
 
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        if (String(cmd).includes('which sqlite3') || String(cmd).includes('where sqlite3')) {
+      mockExecFileSync.mockImplementation((file: unknown) => {
+        if (String(file) === 'which' || String(file) === 'where') {
           throw new Error('not found');
         }
         return Buffer.from('');
@@ -304,8 +302,8 @@ describe('ProfileManager', () => {
     it('should copy Local State file', () => {
       fs.writeFileSync(path.join(sourceDir, 'Local State'), '{"os_crypt":{"key":"abc"}}');
 
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        if (String(cmd).includes('which sqlite3') || String(cmd).includes('where sqlite3')) {
+      mockExecFileSync.mockImplementation((file: unknown) => {
+        if (String(file) === 'which' || String(file) === 'where') {
           throw new Error('not found');
         }
         return Buffer.from('');
@@ -322,8 +320,8 @@ describe('ProfileManager', () => {
 
     it('should handle missing source Cookies file gracefully', () => {
       // No Cookies file in source
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        if (String(cmd).includes('which sqlite3') || String(cmd).includes('where sqlite3')) {
+      mockExecFileSync.mockImplementation((file: unknown) => {
+        if (String(file) === 'which' || String(file) === 'where') {
           throw new Error('not found');
         }
         return Buffer.from('');
@@ -336,8 +334,8 @@ describe('ProfileManager', () => {
     it('should update sync metadata after successful sync', () => {
       fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies'), 'cookie-db');
 
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        if (String(cmd).includes('which sqlite3') || String(cmd).includes('where sqlite3')) {
+      mockExecFileSync.mockImplementation((file: unknown) => {
+        if (String(file) === 'which' || String(file) === 'where') {
           throw new Error('not found');
         }
         return Buffer.from('');
@@ -507,7 +505,7 @@ describe('ProfileManager', () => {
     it('should return persistent profile with sync when locked and stale', () => {
       const manager = new ProfileManager();
       jest.spyOn(manager, 'needsSync').mockReturnValue(true);
-      jest.spyOn(manager, 'syncCookies').mockReturnValue({ atomic: true });
+      jest.spyOn(manager, 'syncCookies').mockReturnValue({ atomic: true, success: true });
       jest.spyOn(manager, 'getOrCreatePersistentProfile').mockReturnValue('/mock/persistent');
 
       const result = manager.resolveProfile({

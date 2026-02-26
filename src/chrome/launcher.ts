@@ -284,7 +284,10 @@ export class ChromeLauncher {
     // Priority: explicit > temp/headless > real unlocked > persistent (with sync) > persistent (no sync)
     const realProfileDir = this.getRealChromeProfileDir();
     const explicitUserDataDir = options.userDataDir || globalConfig.userDataDir;
-    const isLocked = realProfileDir ? this.isProfileLocked(realProfileDir) : false;
+    // Skip expensive isProfileLocked check when result won't be used
+    const isLocked = (!explicitUserDataDir && !options.useTempProfile && !usingHeadlessShell && realProfileDir)
+      ? this.isProfileLocked(realProfileDir)
+      : false;
 
     const resolution = this.profileManager.resolveProfile({
       realProfileDir,

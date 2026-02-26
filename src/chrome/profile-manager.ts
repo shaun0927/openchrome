@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -120,6 +120,9 @@ export class ProfileManager {
       currentHash = `${stat.mtimeMs}:${stat.size}`;
     } catch {
       // Cookies file doesn't exist in source — no sync possible
+      if (!metadata) {
+        console.error('[ProfileManager] Source Cookies not found and no prior sync — persistent profile will have no cookies');
+      }
       return false;
     }
 
@@ -144,13 +147,14 @@ export class ProfileManager {
    * After a successful sync the metadata file is updated via
    * `updateSyncMetadata`.
    *
-   * @returns `{ atomic: true }` when sqlite3 backup was used,
-   *          `{ atomic: false }` when the plain-copy fallback was used.
+   * @returns `{ atomic: true, success: true }` when sqlite3 backup was used,
+   *          `{ atomic: false, success: true }` when the plain-copy fallback was used,
+   *          `{ atomic: false, success: false }` when all methods failed.
    */
   syncCookies(
     sourceDir: string,
     destDir: string
-  ): { atomic: boolean } {
+  ): { atomic: boolean; success: boolean } {
     try {
       const destDefault = path.join(destDir, 'Default');
       fs.mkdirSync(destDefault, { recursive: true });
@@ -172,8 +176,11 @@ export class ProfileManager {
         if (sqlite3Available) {
           // Atomic backup using the SQLite .backup command.
           // This works even when Chrome is actively writing to the DB.
-          const cmd = `sqlite3 "${sourceCookiesPath}" ".backup '${destCookiesPath}'"`;
-          execSync(cmd, { stdio: 'ignore', timeout: 10000 });
+          // Uses execFileSync (no shell) to prevent injection via path characters.
+          execFileSync('sqlite3', [
+            sourceCookiesPath,
+            `.backup '${destCookiesPath.replace(/'/g, "''")}'`,
+          ], { stdio: 'ignore', timeout: 10000 });
 
           // .backup produces a clean WAL-checkpoint DB — remove stale WAL/SHM/journal
           // at the destination so Chrome doesn't get confused.
@@ -251,13 +258,13 @@ export class ProfileManager {
       console.error(
         `[ProfileManager] Cookie sync complete (atomic=${atomic}) from ${sourceDir} → ${destDir}`
       );
-      return { atomic };
+      return { atomic, success: true };
     } catch (err) {
       console.error(
         '[ProfileManager] syncCookies failed (non-fatal):',
         err
       );
-      return { atomic: false };
+      return { atomic: false, success: false };
     }
   }
 
@@ -386,11 +393,11 @@ export class ProfileManager {
       }
 
       // Stale — sync cookies from real profile into persistent profile
-      this.syncCookies(realProfileDir, persistentDir);
+      const syncResult = this.syncCookies(realProfileDir, persistentDir);
       return {
         userDataDir: persistentDir,
         profileType: 'persistent',
-        syncPerformed: true,
+        syncPerformed: syncResult.atomic || syncResult.success,
       };
     }
 
@@ -409,10 +416,12 @@ export class ProfileManager {
 
   /** Check whether the `sqlite3` CLI is available on PATH. */
   private _isSqlite3Available(): boolean {
-    const platform = os.platform();
-    const checkCmd = platform === 'win32' ? 'where sqlite3' : 'which sqlite3';
     try {
-      execSync(checkCmd, { stdio: 'ignore' });
+      execFileSync(
+        os.platform() === 'win32' ? 'where' : 'which',
+        ['sqlite3'],
+        { stdio: 'ignore', timeout: 3000 },
+      );
       return true;
     } catch {
       return false;
