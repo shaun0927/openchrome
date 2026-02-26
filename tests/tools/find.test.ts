@@ -369,7 +369,9 @@ describe('FindTool', () => {
         testTargetId,
         12345,
         'button',
-        'Submit'
+        'Submit',
+        'button',
+        undefined
       );
     });
   });
