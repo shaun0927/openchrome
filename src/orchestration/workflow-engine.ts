@@ -9,6 +9,7 @@ import { getCDPConnectionPool } from '../cdp/connection-pool';
 import { getCDPClient } from '../cdp/client';
 import { ToolEntry } from '../types/tool-manifest';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 export interface WorkflowStep {
   workerId: string;
@@ -184,7 +185,7 @@ export class WorkflowEngine {
             // Cookie bridging failure is non-fatal — page navigates without cookies
           }
 
-          await page.goto(step.url, { waitUntil: 'domcontentloaded' }).catch(() => {
+          await page.goto(step.url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }).catch(() => {
             // Navigation may fail for some URLs; worker will retry
           });
         }

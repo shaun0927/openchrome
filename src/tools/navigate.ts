@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
+import { safeTitle } from '../utils/safe-title';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
@@ -105,7 +106,7 @@ const handler: ToolHandler = async (
                   text: JSON.stringify({
                     action: 'navigate',
                     url: page.url(),
-                    title: await page.title(),
+                    title: await safeTitle(page),
                     tabId: existingTabId,
                     workerId: resolvedWorkerId,
                     reused: true,
@@ -127,7 +128,7 @@ const handler: ToolHandler = async (
             text: JSON.stringify({
               action: 'navigate',
               url: page.url(),
-              title: await page.title(),
+              title: await safeTitle(page),
               tabId: targetId,
               workerId: assignedWorkerId,
               created: true,
@@ -183,7 +184,7 @@ const handler: ToolHandler = async (
             text: JSON.stringify({
               action: 'back',
               url: page.url(),
-              title: await page.title(),
+              title: await safeTitle(page),
             }),
           },
         ],
@@ -199,7 +200,7 @@ const handler: ToolHandler = async (
             text: JSON.stringify({
               action: 'forward',
               url: page.url(),
-              title: await page.title(),
+              title: await safeTitle(page),
             }),
           },
         ],
@@ -263,7 +264,7 @@ const handler: ToolHandler = async (
           text: JSON.stringify({
             action: 'navigate',
             url: page.url(),
-            title: await page.title(),
+            title: await safeTitle(page),
             ...(authRedirect && { redirectedFrom: authRedirect.from, authRedirect: true }),
           }),
         },

@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { safeTitle } from '../utils/safe-title';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
@@ -74,7 +75,7 @@ const handler: ToolHandler = async (
           text: JSON.stringify({
             action: 'reload',
             url: page.url(),
-            title: await page.title(),
+            title: await safeTitle(page),
             ignoreCache,
             message: ignoreCache ? 'Page reloaded (cache bypassed)' : 'Page reloaded',
           }),

@@ -268,7 +268,7 @@ describe('BrowserRouter', () => {
 
       const result: EscalationResult = await router.escalate(lightpandaPage as any, chromePage as any);
 
-      expect(chromePage.goto).toHaveBeenCalledWith(url);
+      expect(chromePage.goto).toHaveBeenCalledWith(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       expect(result.url).toBe(url);
     });
   });
