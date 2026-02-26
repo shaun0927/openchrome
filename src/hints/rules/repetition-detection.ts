@@ -154,7 +154,7 @@ export const repetitionDetectionRules: HintRule[] = [
       if (recentJsCalls.length < 2) return null;
       const attemptCount = recentJsCalls.length + 1;
       return (
-        `Hint: javascript_tool returned empty/null result — this is attempt #${attemptCount} with no useful output. ` +
+        `Hint: javascript_tool returned empty/null results — attempt #${attemptCount} with no useful output. ` +
         'The target element likely does not exist on this page or the selector is wrong. ' +
         'Use read_page mode="dom" to check actual page structure before retrying.'
       );

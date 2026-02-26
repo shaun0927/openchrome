@@ -458,13 +458,20 @@ export class MCPServer {
 
       // Inject proactive hint into both _hint (backward compat) and content[] (guaranteed MCP delivery)
       if (this.hintEngine) {
-        const hint = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false);
-        if (hint) {
-          (result as Record<string, unknown>)._hint = hint;
+        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false);
+        if (hintResult) {
+          (result as Record<string, unknown>)._hint = hintResult.hint;
+          (result as Record<string, unknown>)._hintMeta = {
+            severity: hintResult.severity,
+            rule: hintResult.rule,
+            fireCount: hintResult.fireCount,
+            ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+            ...(hintResult.context && { context: hintResult.context }),
+          };
           const content = (result as Record<string, unknown>).content;
           if (Array.isArray(content)) {
             // Hint appended after tool result (may follow image blobs for verify:true tools)
-            content.push({ type: 'text', text: `\n${hint}` });
+            content.push({ type: 'text', text: `\n${hintResult.hint}` });
           }
         }
       }
@@ -499,11 +506,18 @@ export class MCPServer {
 
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
-        const hint = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true);
-        if (hint) {
-          (errResult as Record<string, unknown>)._hint = hint;
+        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true);
+        if (hintResult) {
+          (errResult as Record<string, unknown>)._hint = hintResult.hint;
+          (errResult as Record<string, unknown>)._hintMeta = {
+            severity: hintResult.severity,
+            rule: hintResult.rule,
+            fireCount: hintResult.fireCount,
+            ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+            ...(hintResult.context && { context: hintResult.context }),
+          };
           if (Array.isArray(errResult.content)) {
-            errResult.content.push({ type: 'text', text: `\n${hint}` });
+            errResult.content.push({ type: 'text', text: `\n${hintResult.hint}` });
           }
         }
       }
