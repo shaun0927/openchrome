@@ -47,6 +47,9 @@ extension-unpacked/
 # AI session/orchestration state
 .omc/
 
+# Local MCP configuration
+.mcp.json
+
 # Claude Code ephemeral worktrees
 .claude/worktrees/
 
