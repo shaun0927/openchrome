@@ -528,6 +528,7 @@ const handler: ToolHandler = async (
       }
 
       case 'scroll_to': {
+        // Note: scroll_to does not validate ref identity (less destructive than click)
         if (!ref) {
           return {
             content: [{ type: 'text', text: 'Error: ref is required for scroll_to' }],
