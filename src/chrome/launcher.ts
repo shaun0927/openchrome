@@ -708,6 +708,9 @@ let launcherInstance: ChromeLauncher | null = null;
 export function getChromeLauncher(port?: number): ChromeLauncher {
   const resolvedPort = port || DEFAULT_PORT;
   if (!launcherInstance || launcherInstance.getPort() !== resolvedPort) {
+    if (launcherInstance) {
+      console.error(`[ChromeLauncher] Replacing singleton (port ${launcherInstance.getPort()} → ${resolvedPort})`);
+    }
     launcherInstance = new ChromeLauncher(resolvedPort);
   }
   return launcherInstance;

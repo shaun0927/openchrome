@@ -329,6 +329,7 @@ export class CDPClient {
     if (this.browser) {
       try {
         this.browser.removeAllListeners('disconnected');
+        this.browser.removeAllListeners('targetdestroyed');
         await this.browser.disconnect();
       } catch {
         // Ignore disconnect errors
@@ -351,6 +352,8 @@ export class CDPClient {
 
     if (this.browser) {
       try {
+        this.browser.removeAllListeners('disconnected');
+        this.browser.removeAllListeners('targetdestroyed');
         await this.browser.disconnect();
       } catch {
         // Browser might already be disconnected
