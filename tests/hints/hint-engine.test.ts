@@ -341,14 +341,55 @@ describe('HintEngine', () => {
       expect(hint).toContain('Multiple screenshots after clicks');
     });
 
-    it('js-escalation-ladder: triggers on 3+ javascript_tool calls', () => {
+    it('empty-result-streak: triggers after 3+ empty javascript_tool results', () => {
       const tracker = makeTracker([
         { toolName: 'javascript_tool' },
         { toolName: 'javascript_tool' },
         { toolName: 'javascript_tool' },
       ]);
       const engine = new HintEngine(tracker);
-      const result = makeResult('undefined');
+      const result = makeResult('null');
+      const hint = engine.getHint('javascript_tool', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('empty/null result');
+      expect(hint).toContain('read_page');
+    });
+
+    it('empty-result-streak: does NOT trigger when current result is non-empty', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('<div class="save-indicator">Saved</div>');
+      const hint = engine.getHint('javascript_tool', result, false);
+      if (hint) {
+        expect(hint).not.toContain('empty/null result');
+      }
+    });
+
+    it('empty-result-streak: wins over js-escalation-ladder (lower priority)', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('[]');
+      const hint = engine.getHint('javascript_tool', result, false);
+      expect(hint).not.toBeNull();
+      expect(hint).toContain('empty/null result');
+      expect(hint).not.toContain('escalation ladder');
+    });
+
+    it('js-escalation-ladder: triggers on 3+ javascript_tool calls with non-empty result', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('document.querySelector returned element data');
       const hint = engine.getHint('javascript_tool', result, false);
       expect(hint).not.toBeNull();
       expect(hint).toContain('escalation ladder');
