@@ -316,6 +316,7 @@ export class ChromeLauncher {
       `--user-data-dir=${userDataDir}`,
       '--no-first-run',
       '--no-default-browser-check',
+      '--no-restore-last-session',
       // IMPORTANT: Start maximized for proper debugging experience
       '--start-maximized',
       // Fallback window size if maximize doesn't work
@@ -538,6 +539,10 @@ export class ChromeLauncher {
             prefs.profile.exit_type = 'Normal';
             prefs.profile.exited_cleanly = true;
           }
+          // Suppress session restore so copied profile doesn't reopen old tabs
+          if (!prefs.session) prefs.session = {};
+          prefs.session.restore_on_startup = 5; // 5 = open new tab page, not restore
+          delete prefs.session.startup_urls;
           fs.writeFileSync(path.join(destDefault, 'Preferences'), JSON.stringify(prefs));
         } catch {
           // JSON parse failed — skip Preferences entirely.

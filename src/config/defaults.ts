@@ -25,3 +25,9 @@ export const DEFAULT_PROTOCOL_TIMEOUT_MS = 30000;
 
 /** Screenshot-specific timeout. Shorter than protocol timeout for fast fallback. */
 export const DEFAULT_SCREENSHOT_TIMEOUT_MS = 15000;
+
+/** Maximum number of tabs (targets) per worker. Oldest tab is closed when limit is reached. */
+export const DEFAULT_MAX_TARGETS_PER_WORKER = 5;
+
+/** Memory pressure threshold in bytes (500MB). Below this free memory, aggressive cleanup triggers. */
+export const DEFAULT_MEMORY_PRESSURE_THRESHOLD = 500 * 1024 * 1024;
