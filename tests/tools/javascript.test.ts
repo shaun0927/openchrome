@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 /**
  * Tests for JavaScript Tool
+ * Uses CDP Runtime.evaluate mocking instead of page.evaluate
  */
 
 import { createMockSessionManager } from '../utils/mock-session';
@@ -51,29 +52,39 @@ describe('JavaScriptTool', () => {
   describe('Code Execution', () => {
     test('executes simple expression', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({ success: true, value: '42' });
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'number', value: 42, description: '42' },
+      });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: '1 + 1',
       }) as { content: Array<{ type: string; text: string }> };
 
-      expect(page.evaluate).toHaveBeenCalled();
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Runtime.evaluate',
+        expect.objectContaining({
+          expression: '1 + 1',
+          returnByValue: true,
+          awaitPromise: true,
+          userGesture: true,
+        })
+      );
+
       expect(result.content[0].text).toBe('42');
     });
 
     test('returns undefined result', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({ success: true, value: 'undefined' });
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'undefined' },
+      });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: 'undefined',
       }) as { content: Array<{ type: string; text: string }> };
 
@@ -82,13 +93,13 @@ describe('JavaScriptTool', () => {
 
     test('returns null result', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({ success: true, value: 'null' });
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'object', subtype: 'null', value: null },
+      });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: 'null',
       }) as { content: Array<{ type: string; text: string }> };
 
@@ -97,16 +108,13 @@ describe('JavaScriptTool', () => {
 
     test('returns object result as JSON', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({
-        success: true,
-        value: JSON.stringify({ name: 'test', value: 123 }, null, 2),
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'object', value: { name: 'test', value: 123 } },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: '({name: "test", value: 123})',
       }) as { content: Array<{ type: string; text: string }> };
 
@@ -116,16 +124,13 @@ describe('JavaScriptTool', () => {
 
     test('returns array result as JSON', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({
-        success: true,
-        value: JSON.stringify([1, 2, 3], null, 2),
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'object', subtype: 'array', value: [1, 2, 3] },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: '[1, 2, 3]',
       }) as { content: Array<{ type: string; text: string }> };
 
@@ -133,109 +138,92 @@ describe('JavaScriptTool', () => {
       expect(result.content[0].text).toContain('1');
     });
 
-    test('returns function as [Function]', async () => {
+    test('returns function description', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({ success: true, value: '[Function]' });
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'function', description: 'function test() {}' },
+      });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: 'function test() {}',
       }) as { content: Array<{ type: string; text: string }> };
 
-      expect(result.content[0].text).toBe('[Function]');
+      expect(result.content[0].text).toContain('function test() {}');
     });
 
-    test('returns Element as tag string', async () => {
+    test('returns Symbol description', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({
-        success: true,
-        value: '<div id="test" class="container">',
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'symbol', description: 'Symbol(test)' },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
-        text: 'document.getElementById("test")',
-      }) as { content: Array<{ type: string; text: string }> };
-
-      expect(result.content[0].text).toContain('<div');
-    });
-
-    test('returns NodeList as count', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockResolvedValue({
-        success: true,
-        value: '[5 elements]',
-      });
-
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        action: 'javascript_exec',
-        text: 'document.querySelectorAll("div")',
-      }) as { content: Array<{ type: string; text: string }> };
-
-      expect(result.content[0].text).toContain('elements');
-    });
-
-    test('returns Symbol as string', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockResolvedValue({
-        success: true,
-        value: 'Symbol(test)',
-      });
-
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        action: 'javascript_exec',
         text: 'Symbol("test")',
       }) as { content: Array<{ type: string; text: string }> };
 
-      expect(result.content[0].text).toContain('Symbol');
+      expect(result.content[0].text).toContain('Symbol(test)');
+    });
+
+    test('returns DOM element description', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: {
+          type: 'object',
+          subtype: 'node',
+          className: 'HTMLDivElement',
+          description: 'div#test.container',
+        },
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'document.getElementById("test")',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      // Source reformats "div#test.container" → '<div id="test" class="container">'
+      expect(result.content[0].text).toContain('<div');
     });
   });
 
   describe('Error Handling', () => {
     test('catches and returns runtime errors', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({
-        success: false,
-        error: 'ReferenceError: undefinedVar is not defined',
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'object', subtype: 'error' },
+        exceptionDetails: {
+          text: 'Uncaught ReferenceError',
+          exception: { description: 'ReferenceError: undefinedVar is not defined' },
+        },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: 'undefinedVar',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('JavaScript error');
       expect(result.content[0].text).toContain('ReferenceError');
     });
 
     test('handles syntax errors', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({
-        success: false,
-        error: 'SyntaxError: Unexpected token',
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'object', subtype: 'error' },
+        exceptionDetails: {
+          text: 'Uncaught SyntaxError',
+          exception: { description: 'SyntaxError: Unexpected token' },
+        },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: 'function { }',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
@@ -243,15 +231,13 @@ describe('JavaScriptTool', () => {
       expect(result.content[0].text).toContain('SyntaxError');
     });
 
-    test('handles page.evaluate failures', async () => {
+    test('handles CDP call failures', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockRejectedValue(new Error('Execution context was destroyed'));
+      mockSessionManager.mockCDPClient.send.mockRejectedValueOnce(new Error('Protocol error'));
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
         text: 'while(true){}',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
@@ -263,7 +249,6 @@ describe('JavaScriptTool', () => {
       const handler = await getJavascriptHandler();
 
       const result = await handler(testSessionId, {
-        action: 'javascript_exec',
         text: '1 + 1',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
@@ -276,7 +261,6 @@ describe('JavaScriptTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
@@ -289,7 +273,6 @@ describe('JavaScriptTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: 'non-existent-tab',
-        action: 'javascript_exec',
         text: '1 + 1',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
@@ -298,58 +281,90 @@ describe('JavaScriptTool', () => {
     });
   });
 
-  describe('Page Context Execution', () => {
-    test('executes in page context', async () => {
+  describe('Top-level Await', () => {
+    test('supports top-level await', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({ success: true, value: 'true' });
-
-      await handler(testSessionId, {
-        tabId: testTargetId,
-        action: 'javascript_exec',
-        text: 'typeof window !== "undefined"',
-      });
-
-      // page.evaluate executes code in page context
-      expect(page.evaluate).toHaveBeenCalledWith(
-        expect.any(Function),
-        'typeof window !== "undefined"'
-      );
-    });
-
-    test('can access window object', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockResolvedValue({
-        success: true,
-        value: JSON.stringify({ href: 'about:blank' }),
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'number', value: 42, description: '42' },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        action: 'javascript_exec',
-        text: 'window.location.href',
-      }) as { content: Array<{ type: string; text: string }> };
+        text: 'await Promise.resolve(42)',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(page.evaluate).toHaveBeenCalled();
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Runtime.evaluate',
+        expect.objectContaining({ awaitPromise: true })
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('42');
     });
 
-    test('can access document object', async () => {
+    test('supports multi-statement with await', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({ success: true, value: '"Test Page"' });
-
-      await handler(testSessionId, {
-        tabId: testTargetId,
-        action: 'javascript_exec',
-        text: 'document.title',
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'number', value: 20, description: '20' },
       });
 
-      expect(page.evaluate).toHaveBeenCalled();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'const val = await Promise.resolve(10); val * 2',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Runtime.evaluate',
+        expect.objectContaining({ awaitPromise: true })
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('20');
     });
+
+    test('supports multiple awaits in sequence', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'number', value: 3, description: '3' },
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'const a = await Promise.resolve(1); const b = await Promise.resolve(2); a + b',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Runtime.evaluate',
+        expect.objectContaining({ awaitPromise: true })
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('3');
+    });
+  });
+
+  describe('Timeout', () => {
+    test('handles timeout', async () => {
+      const handler = await getJavascriptHandler();
+
+      // Return a promise that never resolves to simulate a hang
+      mockSessionManager.mockCDPClient.send.mockReturnValueOnce(new Promise(() => {}));
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'while(true){}',
+        timeout: 100,
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/timeout|timed out/i);
+    }, 5000);
   });
 
   describe('Session Isolation', () => {
@@ -362,7 +377,6 @@ describe('JavaScriptTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: session2TargetId,
-        action: 'javascript_exec',
         text: '1 + 1',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
@@ -371,236 +385,53 @@ describe('JavaScriptTool', () => {
     });
   });
 
-  describe('Complex Expressions', () => {
-    test('handles multi-line code', async () => {
+  describe('Block statement support (previously broken with eval)', () => {
+    test('handles code with for loops containing semicolons', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockResolvedValue({ success: true, value: '6' });
-
-      const code = `
-        const x = 1;
-        const y = 2;
-        x + y * 2 + 1
-      `;
-
-      await handler(testSessionId, {
-        tabId: testTargetId,
-        action: 'javascript_exec',
-        text: code,
-      });
-
-      expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), code);
-    });
-
-    test('handles async/await expressions', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockResolvedValue({ success: true, value: '"fetched"' });
-
-      await handler(testSessionId, {
-        tabId: testTargetId,
-        action: 'javascript_exec',
-        text: 'Promise.resolve("fetched")',
-      });
-
-      expect(page.evaluate).toHaveBeenCalled();
-    });
-  });
-
-  describe('Top-level Await Support', () => {
-    // Simulates the 3-tier eval strategy from javascript.ts without browser globals.
-    // This mirrors the exact logic in the source so the tests verify the wrapping behaviour.
-    async function evalWithAwaitSupport(jsCode: string): Promise<{ success: boolean; value?: string; error?: string }> {
-      try {
-        let evalResult: unknown;
-        try {
-          // Tier 1: direct eval
-          evalResult = (0, eval)(jsCode);
-        } catch (e) {
-          if (!(e instanceof SyntaxError) || !jsCode.includes('await')) {
-            throw e;
-          }
-          const trimmed = jsCode.trim().replace(/;$/, '');
-          try {
-            // Tier 2: single async expression
-            evalResult = (0, eval)(`(async()=>{return(\n${trimmed}\n)})()`);
-          } catch {
-            // Tier 3: multi-statement with return-last heuristic
-            const lastSemiIdx = trimmed.lastIndexOf(';');
-            if (lastSemiIdx !== -1) {
-              const head = trimmed.substring(0, lastSemiIdx + 1);
-              const tail = trimmed.substring(lastSemiIdx + 1).trim();
-              if (tail && !/^(const|let|var|function|class|if|for|while|switch|try|throw|return)\b/.test(tail)) {
-                evalResult = (0, eval)(`(async()=>{${head}\nreturn(${tail})})()`);
-              } else {
-                evalResult = (0, eval)(`(async()=>{${trimmed}})()`);
-              }
-            } else {
-              evalResult = (0, eval)(`(async()=>{${trimmed}})()`);
-            }
-          }
-        }
-
-        if (evalResult && typeof evalResult === 'object' && typeof (evalResult as Promise<unknown>).then === 'function') {
-          evalResult = await (evalResult as Promise<unknown>);
-        }
-
-        if (evalResult === undefined) {
-          return { success: true, value: 'undefined' };
-        } else if (evalResult === null) {
-          return { success: true, value: 'null' };
-        } else if (typeof evalResult === 'function') {
-          return { success: true, value: '[Function]' };
-        } else if (typeof evalResult === 'symbol') {
-          return { success: true, value: (evalResult as symbol).toString() };
-        } else {
-          try {
-            return { success: true, value: JSON.stringify(evalResult, null, 2) };
-          } catch {
-            return { success: true, value: String(evalResult) };
-          }
-        }
-      } catch (e) {
-        return { success: false, error: e instanceof Error ? e.message : String(e) };
-      }
-    }
-
-    test('supports top-level await with Promise', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
-        return evalWithAwaitSupport(code);
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'number', value: 10, description: '10' },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        text: 'await Promise.resolve(42)',
+        text: 'let sum = 0; for (let i = 1; i <= 4; i++) { sum += i; } sum',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toBe('42');
+      expect(result.content[0].text).toBe('10');
     });
 
-    test('supports await with setTimeout via Promise', async () => {
+    test('handles code with if/else blocks', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
-        return evalWithAwaitSupport(code);
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'string', value: 'yes', description: 'yes' },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        text: "await new Promise(r => setTimeout(() => r('done'), 10))",
+        text: 'const x = 5; if (x > 3) { "yes" } else { "no" }',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toBe('"done"');
+      expect(result.content[0].text).toBe('yes');
     });
 
-    test('supports multi-statement await with last-expression return', async () => {
+    test('handles template literals with expressions', async () => {
       const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
-        return evalWithAwaitSupport(code);
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'string', value: 'Hello, world!', description: 'Hello, world!' },
       });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        text: 'const val = await Promise.resolve(10); val * 2',
+        text: 'const name = "world"; `Hello, ${name}!`',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toBe('20');
-    });
-
-    test('non-await code still works via real eval', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
-        return evalWithAwaitSupport(code);
-      });
-
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        text: '1 + 1',
-      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
-
-      expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toBe('2');
-    });
-
-    test('non-await string expression is JSON stringified', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
-        return evalWithAwaitSupport(code);
-      });
-
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        text: '"hello"',
-      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
-
-      expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toBe('"hello"');
-    });
-
-    test('syntax errors without await still produce clear errors', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
-        return evalWithAwaitSupport(code);
-      });
-
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        text: 'function { }',
-      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
-
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toMatch(/SyntaxError|Unexpected token/);
-    });
-
-    test('await undefined/null resolves to null', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
-        return evalWithAwaitSupport(code);
-      });
-
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        text: 'await Promise.resolve(null)',
-      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
-
-      expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toBe('null');
-    });
-
-    test('supports multiple awaits in sequence', async () => {
-      const handler = await getJavascriptHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
-
-      (page.evaluate as jest.Mock).mockImplementation(async (_fn: unknown, code: string) => {
-        return evalWithAwaitSupport(code);
-      });
-
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        text: 'const a = await Promise.resolve(1); const b = await Promise.resolve(2); a + b',
-      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
-
-      expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toBe('3');
+      expect(result.content[0].text).toBe('Hello, world!');
     });
   });
 });
