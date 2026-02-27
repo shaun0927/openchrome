@@ -322,6 +322,9 @@ export class SessionManager {
     let session = this.sessions.get(sessionId);
     if (!session) {
       session = await this.createSession({ id: sessionId });
+    } else {
+      // Refresh TTL for existing sessions on every access
+      this.touchSession(sessionId);
     }
     return session;
   }
@@ -400,8 +403,16 @@ export class SessionManager {
   async cleanupInactiveSessions(maxAgeMs: number): Promise<string[]> {
     const now = Date.now();
     const deletedSessions: string[] = [];
+    // Memory pressure uses aggressive 5-min TTL; normal cleanup uses 30-min TTL.
+    const isMemoryPressure = maxAgeMs < this.config.sessionTTL;
 
     for (const [sessionId, session] of this.sessions) {
+      // Protect the "default" session from normal TTL expiry — it's the
+      // primary session for most single-agent workflows. Under memory
+      // pressure we still clean it up to prevent OOM.
+      if (sessionId === 'default' && !isMemoryPressure) {
+        continue;
+      }
       if (now - session.lastActivityAt > maxAgeMs) {
         await this.deleteSession(sessionId);
         deletedSessions.push(sessionId);
@@ -865,6 +876,9 @@ export class SessionManager {
    * @param toolName Optional MCP tool name for hybrid BrowserRouter routing
    */
   async getPage(sessionId: string, targetId: string, workerId?: string, toolName?: string): Promise<Page | null> {
+    // Keep session alive on every page access (hottest path)
+    this.touchSession(sessionId);
+
     const ownerInfo = this.targetToWorker.get(targetId);
 
     if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
@@ -1179,10 +1193,25 @@ export class SessionManager {
       }
     }
 
+    // Rebuild the CDP client's targetIdIndex from surviving targets.
+    // The index was cleared during disconnect (handleDisconnect / forceReconnect)
+    // and needs to be restored for O(1) lookups to work.
+    const indexed = await this.cdpClient.rebuildTargetIdIndex();
+
+    // Refresh TTL for all sessions that still have live targets,
+    // so they aren't immediately reaped by the next cleanup cycle.
+    const touchedSessions = new Set<string>();
+    for (const ownerInfo of this.targetToWorker.values()) {
+      if (!touchedSessions.has(ownerInfo.sessionId)) {
+        this.touchSession(ownerInfo.sessionId);
+        touchedSessions.add(ownerInfo.sessionId);
+      }
+    }
+
     if (removed > 0) {
-      console.error(`[SessionManager] Post-reconnect cleanup: removed ${removed} stale target(s), ${trackedTargetIds.length - removed} still alive`);
+      console.error(`[SessionManager] Post-reconnect cleanup: removed ${removed} stale target(s), ${trackedTargetIds.length - removed} still alive, ${indexed} indexed`);
     } else {
-      console.error(`[SessionManager] Post-reconnect validation: all ${trackedTargetIds.length} target(s) still alive`);
+      console.error(`[SessionManager] Post-reconnect validation: all ${trackedTargetIds.length} target(s) still alive, ${indexed} indexed`);
     }
   }
 
