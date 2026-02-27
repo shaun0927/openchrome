@@ -34,6 +34,6 @@ jobs:
         run: npm run lint
 
       - name: Run tests
-        run: npm test
+        run: npx jest --config jest.ci.config.js
         env:
           CI: true
