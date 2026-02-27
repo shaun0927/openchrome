@@ -868,6 +868,12 @@ export class SessionManager {
     const ownerInfo = this.targetToWorker.get(targetId);
 
     if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
+      // Fallback: target may exist in Chrome but not in our tracking map.
+      // This happens after cross-origin navigation (e.g., OAuth redirect) where
+      // Chrome replaces the renderer process, creating a new target that we missed
+      // (we skip targetcreated indexing to prevent ghost tabs).
+      const recovered = await this.tryRecoverTarget(sessionId, targetId, workerId);
+      if (recovered) return recovered;
       throw new Error(`Target ${targetId} does not belong to session ${sessionId}`);
     }
 
@@ -894,6 +900,49 @@ export class SessionManager {
       return page;
     } catch {
       this.onTargetClosed(targetId);
+      return null;
+    }
+  }
+
+  /**
+   * Attempt to recover an untracked target that exists in Chrome.
+   * Cross-origin navigations (OAuth, SSO) can cause Chrome to replace the target
+   * without OpenChrome tracking the new one (we skip targetcreated indexing to
+   * prevent ghost tabs). This fallback re-registers valid targets.
+   */
+  private async tryRecoverTarget(sessionId: string, targetId: string, workerId?: string): Promise<Page | null> {
+    try {
+      const page = await this.cdpClient.getPageByTargetId(targetId);
+      if (!page || page.isClosed()) return null;
+
+      // Safety: reject internal Chrome pages to prevent session hijacking
+      const pageUrl = page.url();
+      if (pageUrl.startsWith('chrome://') || pageUrl.startsWith('chrome-extension://')) {
+        console.error(`[SessionManager] Rejecting recovery of internal Chrome page: ${pageUrl.slice(0, 50)}`);
+        return null;
+      }
+
+      const session = this.sessions.get(sessionId);
+      if (!session) return null;
+
+      const resolvedWorkerId = workerId || session.defaultWorkerId;
+      const worker = session.workers.get(resolvedWorkerId);
+      if (!worker) return null;
+
+      // Safety: only recover into sessions that have at least one active target,
+      // confirming they have been actively used (not a stale or rogue session).
+      if (worker.targets.size === 0 && session.workers.size <= 1) {
+        console.error(`[SessionManager] Rejecting recovery into empty session ${sessionId}`);
+        return null;
+      }
+
+      // Re-register the target
+      worker.targets.add(targetId);
+      this.targetToWorker.set(targetId, { sessionId, workerId: resolvedWorkerId });
+      console.error(`[SessionManager] Recovered untracked target ${targetId.slice(0, 8)} (${pageUrl.slice(0, 50)}) into session ${sessionId} worker ${resolvedWorkerId}`);
+
+      return page;
+    } catch {
       return null;
     }
   }

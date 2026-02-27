@@ -176,7 +176,28 @@ export class CDPClient {
    */
   private startHeartbeat(): void {
     this.stopHeartbeat();
+    let lastHeartbeatTime = Date.now();
     this.heartbeatTimer = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - lastHeartbeatTime;
+      lastHeartbeatTime = now;
+
+      // Clock jump detection: if elapsed >> heartbeat interval, system likely slept/woke.
+      // Immediately force reconnect instead of waiting for 2× probe failure (35-40s).
+      if (elapsed > this.heartbeatIntervalMs * 3) {
+        // Guard: skip if reconnect is already in progress (prevents concurrent forceReconnect calls)
+        if (this.connectionState === 'reconnecting' || this.connectionState === 'connecting') {
+          return;
+        }
+        // Stop heartbeat to prevent further ticks during the reconnect attempt
+        this.stopHeartbeat();
+        console.error(`[CDPClient] Sleep/wake detected (${elapsed}ms gap, expected ~${this.heartbeatIntervalMs}ms). Force reconnecting...`);
+        this.forceReconnect().catch(err => {
+          console.error('[CDPClient] Post-wake reconnect failed:', err);
+        });
+        return;
+      }
+
       this.checkConnection();
     }, this.heartbeatIntervalMs);
   }
@@ -319,28 +340,63 @@ export class CDPClient {
    */
   private async connectInternal(): Promise<void> {
     const launcher = getChromeLauncher(this.port);
-    const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
 
-    // Explicit timeout on puppeteer.connect() — protocolTimeout only covers CDP messages,
-    // NOT the initial WebSocket handshake. Without this, a listening but unresponsive Chrome
-    // can block for the OS TCP timeout (60-120s on macOS).
-    let wsConnectTid: ReturnType<typeof setTimeout>;
-    this.browser = await Promise.race([
-      puppeteer.connect({
-        browserWSEndpoint: instance.wsEndpoint,
-        defaultViewport: null,
-        protocolTimeout: DEFAULT_PROTOCOL_TIMEOUT_MS,
-      }).finally(() => clearTimeout(wsConnectTid)),
-      new Promise<never>((_, reject) => {
-        wsConnectTid = setTimeout(
-          () => reject(new Error(`puppeteer.connect() timed out after ${DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS}ms (WebSocket to ${instance.wsEndpoint})`)),
-          DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
-        );
-      }),
-    ]) as Browser;
+    // Retry loop: after macOS sleep/wake, Chrome's WebSocket listener may be in a
+    // half-open TCP state. The HTTP endpoint (/json/version) works because it's
+    // stateless, but the WebSocket handshake hangs. The first failed attempt sends
+    // a TCP RST that clears Chrome's stale state, so the second attempt succeeds.
+    const maxConnectRetries = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxConnectRetries; attempt++) {
+      // Re-fetch instance on each attempt — Chrome may have regenerated its UUID
+      const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
+
+      try {
+        let wsConnectTid: ReturnType<typeof setTimeout>;
+        this.browser = await Promise.race([
+          puppeteer.connect({
+            browserWSEndpoint: instance.wsEndpoint,
+            defaultViewport: null,
+            protocolTimeout: DEFAULT_PROTOCOL_TIMEOUT_MS,
+          }).finally(() => clearTimeout(wsConnectTid)),
+          new Promise<never>((_, reject) => {
+            wsConnectTid = setTimeout(
+              () => reject(new Error(`puppeteer.connect() timed out after ${DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS}ms (WebSocket to ${instance.wsEndpoint})`)),
+              DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
+            );
+          }),
+        ]) as Browser;
+
+        if (attempt > 1) {
+          console.error(`[CDPClient] connectInternal succeeded on attempt ${attempt}/${maxConnectRetries}`);
+        }
+        break; // Success — exit retry loop
+      } catch (err) {
+        // Clean up any partially-connected browser from this attempt to prevent
+        // orphaned event listeners from firing handleDisconnect on an old browser.
+        if (this.browser) {
+          this.browser.removeAllListeners('disconnected');
+          this.browser.removeAllListeners('targetdestroyed');
+          this.browser.disconnect().catch(() => {});
+          this.browser = null;
+        }
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < maxConnectRetries) {
+          console.error(`[CDPClient] connectInternal attempt ${attempt}/${maxConnectRetries} failed, retrying in 1s: ${lastError.message}`);
+          // Invalidate launcher cache so next ensureChrome() re-checks via HTTP
+          launcher.invalidateInstance();
+          // Brief pause: TCP RST from the timeout needs time to reach Chrome's listener
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } else {
+          throw lastError;
+        }
+      }
+    }
 
     // Set up disconnect handler
-    this.browser.on('disconnected', () => {
+    // Non-null assertion: the retry loop above either sets this.browser and breaks, or throws.
+    this.browser!.on('disconnected', () => {
       console.error('[CDPClient] Browser disconnected');
       this.handleDisconnect().catch((err) => {
         console.error('[CDPClient] handleDisconnect failed:', err);
@@ -348,7 +404,7 @@ export class CDPClient {
     });
 
     // Set up target destroyed handler
-    this.browser.on('targetdestroyed', (target) => {
+    this.browser!.on('targetdestroyed', (target) => {
       const targetId = getTargetId(target);
       console.error(`[CDPClient] Target destroyed: ${targetId}`);
       this.onTargetDestroyed(targetId);
@@ -461,13 +517,24 @@ export class CDPClient {
       this.inFlightCookieScans.clear();
     }
 
-    this.connectionState = 'connecting';
+    this.connectionState = 'reconnecting';
     this.lastVerifiedAt = 0;
-    await this.connectInternal();
-    this.lastVerifiedAt = Date.now();
-    this.consecutiveHeartbeatFailures = 0;
-    this.startHeartbeat();
-    console.error('[CDPClient] Reconnected to Chrome');
+    try {
+      await this.connectInternal();
+      this.lastVerifiedAt = Date.now();
+      this.consecutiveHeartbeatFailures = 0;
+      this.startHeartbeat();
+      this.emitConnectionEvent({ type: 'reconnected', timestamp: Date.now() });
+      console.error('[CDPClient] Reconnected to Chrome');
+    } catch (err) {
+      this.connectionState = 'disconnected';
+      this.emitConnectionEvent({
+        type: 'reconnect_failed',
+        timestamp: Date.now(),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   /**
