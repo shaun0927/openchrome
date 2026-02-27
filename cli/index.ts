@@ -113,8 +113,9 @@ program
       // Ignore if not exists
     }
 
-    // Use npx for auto-updates: every server start fetches the latest version
-    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx -y openchrome-mcp ${serveArgs.join(' ')}`;
+    // Use npx @latest for auto-updates: every server start fetches the latest version.
+    // Without @latest, npx may serve a stale cached version indefinitely.
+    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx -y openchrome-mcp@latest ${serveArgs.join(' ')}`;
 
     console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
 
@@ -172,7 +173,7 @@ program
       console.error('     "mcpServers": {');
       console.error('       "openchrome": {');
       console.error('         "command": "npx",');
-      console.error(`         "args": ["-y", "openchrome-mcp", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
+      console.error(`         "args": ["-y", "openchrome-mcp@latest", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
       console.error('       }');
       console.error('     }');
       console.error('   }');
@@ -198,6 +199,25 @@ program
 
     // Non-blocking update check (fires in background)
     checkForUpdates(version).catch(() => {});
+
+    // Auto-migrate: patch ~/.claude.json to use @latest if still using bare package name.
+    // This ensures existing users get auto-updates without re-running setup.
+    try {
+      const claudeConfigPath = path.join(os.homedir(), '.claude.json');
+      if (fs.existsSync(claudeConfigPath)) {
+        const raw = fs.readFileSync(claudeConfigPath, 'utf8');
+        // Only patch if the file contains the bare name without @latest
+        if (raw.includes('openchrome-mcp') && !raw.includes('openchrome-mcp@')) {
+          const patched = raw.replace(/openchrome-mcp(?!@)/g, 'openchrome-mcp@latest');
+          if (patched !== raw) {
+            fs.writeFileSync(claudeConfigPath, patched);
+            console.error('[openchrome] Auto-migrated MCP config to use @latest for auto-updates');
+          }
+        }
+      }
+    } catch {
+      // Best-effort migration — don't block server start
+    }
 
     console.error(`[openchrome] Starting MCP server`);
     console.error(`[openchrome] Chrome debugging port: ${port}`);
