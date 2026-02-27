@@ -51,6 +51,10 @@ import { registerBatchExecuteTool } from './batch-execute';
 import { registerLightweightScrollTool } from './lightweight-scroll';
 import { registerBatchPaginateTool } from './batch-paginate';
 
+// Smart Tools (reduce LLM wandering)
+import { registerInteractTool } from './interact';
+import { registerInspectTool } from './inspect';
+
 // Memory tools (domain knowledge persistence)
 import { registerMemoryTools } from './memory';
 
@@ -113,6 +117,10 @@ export function registerAllTools(server: MCPServer): void {
   registerBatchExecuteTool(server);
   registerLightweightScrollTool(server);
   registerBatchPaginateTool(server);
+
+  // Smart Tools (reduce LLM wandering — response enrichment + composite tools)
+  registerInteractTool(server);
+  registerInspectTool(server);
 
   // Memory tools (domain knowledge persistence)
   registerMemoryTools(server);

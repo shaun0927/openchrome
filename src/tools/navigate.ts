@@ -8,6 +8,8 @@ import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
+import { generateVisualSummary } from '../utils/visual-summary';
+import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -99,6 +101,8 @@ const handler: ToolHandler = async (
           const page = await sessionManager.getPage(sessionId, existingTabId, undefined, 'navigate');
           if (page) {
             await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+            AdaptiveScreenshot.getInstance().reset(existingTabId);
+            const summary = await generateVisualSummary(page);
             return {
               content: [
                 {
@@ -110,6 +114,7 @@ const handler: ToolHandler = async (
                     tabId: existingTabId,
                     workerId: resolvedWorkerId,
                     reused: true,
+                    ...(summary && { visualSummary: summary }),
                   }),
                 },
               ],
@@ -121,6 +126,8 @@ const handler: ToolHandler = async (
       // Create new tab with URL directly (in specified worker or default)
       const { targetId, page, workerId: assignedWorkerId } = await sessionManager.createTarget(sessionId, targetUrl, workerId);
 
+      AdaptiveScreenshot.getInstance().reset(targetId);
+      const summary = await generateVisualSummary(page);
       return {
         content: [
           {
@@ -132,6 +139,7 @@ const handler: ToolHandler = async (
               tabId: targetId,
               workerId: assignedWorkerId,
               created: true,
+              ...(summary && { visualSummary: summary }),
             }),
           },
         ],
@@ -177,6 +185,8 @@ const handler: ToolHandler = async (
     // Handle history navigation
     if (url === 'back') {
       await page.goBack({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+      AdaptiveScreenshot.getInstance().reset(tabId);
+      const backSummary = await generateVisualSummary(page);
       return {
         content: [
           {
@@ -185,6 +195,7 @@ const handler: ToolHandler = async (
               action: 'back',
               url: page.url(),
               title: await safeTitle(page),
+              ...(backSummary && { visualSummary: backSummary }),
             }),
           },
         ],
@@ -193,6 +204,8 @@ const handler: ToolHandler = async (
 
     if (url === 'forward') {
       await page.goForward({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+      AdaptiveScreenshot.getInstance().reset(tabId);
+      const fwdSummary = await generateVisualSummary(page);
       return {
         content: [
           {
@@ -201,6 +214,7 @@ const handler: ToolHandler = async (
               action: 'forward',
               url: page.url(),
               title: await safeTitle(page),
+              ...(fwdSummary && { visualSummary: fwdSummary }),
             }),
           },
         ],
@@ -257,6 +271,8 @@ const handler: ToolHandler = async (
     // Navigate with smart auth redirect detection
     const { authRedirect } = await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
 
+    AdaptiveScreenshot.getInstance().reset(tabId);
+    const navSummary = await generateVisualSummary(page);
     return {
       content: [
         {
@@ -266,6 +282,7 @@ const handler: ToolHandler = async (
             url: page.url(),
             title: await safeTitle(page),
             ...(authRedirect && { redirectedFrom: authRedirect.from, authRedirect: true }),
+            ...(navSummary && { visualSummary: navSummary }),
           }),
         },
       ],

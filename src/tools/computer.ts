@@ -4,11 +4,13 @@
 
 import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_QUALITY } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
+import { generateVisualSummary } from '../utils/visual-summary';
+import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -111,6 +113,23 @@ const handler: ToolHandler = async (
           // Page may be navigating — proceed anyway
         }
 
+        // Phase 1.5: Adaptive screenshot — decide response mode based on repetition
+        const adaptive = AdaptiveScreenshot.getInstance();
+        const screenshotMode = await adaptive.evaluate(page, tabId);
+
+        // text_only mode: skip expensive screenshot, return visual summary
+        if (screenshotMode === 'text_only') {
+          const summary = await generateVisualSummary(page);
+          return {
+            content: [{
+              type: 'text',
+              text: summary
+                ? `[Adaptive] Screenshot replaced with text summary (repeated capture at same scroll position).\n${summary}\nTip: Use read_page(mode="dom") for structured page state, or inspect(query="...") for targeted extraction.`
+                : '[Adaptive] Repeated screenshot at same scroll position. No visual change detected. Use read_page(mode="dom") or inspect(query="...") for page state.',
+            }],
+          };
+        }
+
         // Phase 2: Screenshot with retry
         const attemptScreenshot = async (): Promise<{ data: string; mimeType: string } | null> => {
           try {
@@ -147,9 +166,16 @@ const handler: ToolHandler = async (
         }
 
         if (screenshot) {
-          return {
-            content: [{ type: 'image', data: screenshot.data, mimeType: screenshot.mimeType }],
-          };
+          const content: MCPContent[] = [
+            { type: 'image', data: screenshot.data, mimeType: screenshot.mimeType },
+          ];
+
+          // annotated mode: append note about repeated screenshot
+          if (screenshotMode === 'annotated') {
+            content.push({ type: 'text', text: adaptive.getAnnotation() });
+          }
+
+          return { content };
         }
 
         // Phase 3: DOM fallback — always give the LLM page state
@@ -208,10 +234,15 @@ const handler: ToolHandler = async (
           };
         }
 
+        // Reset adaptive screenshot on click (page state changes)
+        AdaptiveScreenshot.getInstance().reset(tabId);
+
         if (refInfo) {
           const { delta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
+          const summary = await generateVisualSummary(page);
+          const summaryText = summary ? `\n${summary}` : '';
           return {
-            content: [{ type: 'text', text: `Clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})${delta}` }],
+            content: [{ type: 'text', text: `Clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})${delta}${summaryText}` }],
           };
         }
 
@@ -226,11 +257,16 @@ const handler: ToolHandler = async (
         const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
         const { delta: leftDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
 
+        // Internal fallback: if hit non-interactive element, suggest but don't auto-retry
+        // (auto-retry could cause unintended side effects on elements the LLM didn't intend)
+        const summary = await generateVisualSummary(page);
+        const summaryText = summary ? `\n${summary}` : '';
+
         const resultText = leftClickValidation.warning
           ? `Clicked at (${clickCoord[0]}, ${clickCoord[1]}). Warning: ${leftClickValidation.warning}${leftDelta}`
           : `Clicked at (${clickCoord[0]}, ${clickCoord[1]})${leftDelta}`;
         return {
-          content: [{ type: 'text', text: resultText + leftClickHitInfo }],
+          content: [{ type: 'text', text: resultText + leftClickHitInfo + summaryText }],
         };
       }
 
