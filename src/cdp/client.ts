@@ -185,6 +185,12 @@ export class CDPClient {
       // Clock jump detection: if elapsed >> heartbeat interval, system likely slept/woke.
       // Immediately force reconnect instead of waiting for 2× probe failure (35-40s).
       if (elapsed > this.heartbeatIntervalMs * 3) {
+        // Guard: skip if reconnect is already in progress (prevents concurrent forceReconnect calls)
+        if (this.connectionState === 'reconnecting' || this.connectionState === 'connecting') {
+          return;
+        }
+        // Stop heartbeat to prevent further ticks during the reconnect attempt
+        this.stopHeartbeat();
         console.error(`[CDPClient] Sleep/wake detected (${elapsed}ms gap, expected ~${this.heartbeatIntervalMs}ms). Force reconnecting...`);
         this.forceReconnect().catch(err => {
           console.error('[CDPClient] Post-wake reconnect failed:', err);
@@ -367,6 +373,14 @@ export class CDPClient {
         }
         break; // Success — exit retry loop
       } catch (err) {
+        // Clean up any partially-connected browser from this attempt to prevent
+        // orphaned event listeners from firing handleDisconnect on an old browser.
+        if (this.browser) {
+          this.browser.removeAllListeners('disconnected');
+          this.browser.removeAllListeners('targetdestroyed');
+          this.browser.disconnect().catch(() => {});
+          this.browser = null;
+        }
         lastError = err instanceof Error ? err : new Error(String(err));
         if (attempt < maxConnectRetries) {
           console.error(`[CDPClient] connectInternal attempt ${attempt}/${maxConnectRetries} failed, retrying in 1s: ${lastError.message}`);
@@ -503,13 +517,24 @@ export class CDPClient {
       this.inFlightCookieScans.clear();
     }
 
-    this.connectionState = 'connecting';
+    this.connectionState = 'reconnecting';
     this.lastVerifiedAt = 0;
-    await this.connectInternal();
-    this.lastVerifiedAt = Date.now();
-    this.consecutiveHeartbeatFailures = 0;
-    this.startHeartbeat();
-    console.error('[CDPClient] Reconnected to Chrome');
+    try {
+      await this.connectInternal();
+      this.lastVerifiedAt = Date.now();
+      this.consecutiveHeartbeatFailures = 0;
+      this.startHeartbeat();
+      this.emitConnectionEvent({ type: 'reconnected', timestamp: Date.now() });
+      console.error('[CDPClient] Reconnected to Chrome');
+    } catch (err) {
+      this.connectionState = 'disconnected';
+      this.emitConnectionEvent({
+        type: 'reconnect_failed',
+        timestamp: Date.now(),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   /**

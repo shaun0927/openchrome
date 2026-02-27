@@ -52,6 +52,10 @@ export function isConnectionError(error: unknown): boolean {
   return patterns.some(pattern => lowerMessage.includes(pattern));
 }
 
+/** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
+ *  sleep/wake). Skip session initialization so oc_stop can always reach its handler. */
+const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status']);
+
 const RECONNECTION_GUIDANCE =
   '\n\n⚠️ CONNECTION RECOVERY: The browser connection was lost. ' +
   'To reconnect, run /mcp in Claude Code. ' +
@@ -412,10 +416,6 @@ export class MCPServer {
     if (!tool) {
       throw new Error(`Unknown tool: ${toolName}`);
     }
-
-    // Lifecycle tools must work even when the CDP connection is broken (e.g., after
-    // sleep/wake). Skip session initialization so oc_stop can always reach its handler.
-    const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status']);
 
     // Ensure session exists.
     // Use a longer timeout when autoLaunch is enabled because Chrome launch (up to 30s)

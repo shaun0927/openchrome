@@ -424,6 +424,10 @@ export class ChromeLauncher {
   /**
    * Invalidate cached instance so next ensureChrome() re-fetches from HTTP.
    * Called by CDPClient when puppeteer.connect() fails and a retry is needed.
+   *
+   * NOTE: Not concurrency-safe with ensureChrome(). Safe to call when
+   * ensureChrome() is not in-flight (e.g., after puppeteer.connect() fails,
+   * before the 1s retry sleep). At worst causes an extra HTTP probe (~2-5s).
    */
   invalidateInstance(): void {
     if (this.instance) {
