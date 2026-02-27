@@ -422,6 +422,17 @@ export class ChromeLauncher {
   }
 
   /**
+   * Invalidate cached instance so next ensureChrome() re-fetches from HTTP.
+   * Called by CDPClient when puppeteer.connect() fails and a retry is needed.
+   */
+  invalidateInstance(): void {
+    if (this.instance) {
+      console.error('[ChromeLauncher] Cached instance invalidated (will re-fetch from HTTP)');
+      this.instance = null;
+    }
+  }
+
+  /**
    * Get debug endpoint URL
    */
   async getDebugEndpoint(): Promise<string> {
