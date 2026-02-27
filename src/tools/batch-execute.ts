@@ -153,6 +153,7 @@ const handler: ToolHandler = async (
       const timeout = task.timeout || 30000;
 
       // Execute via CDP Runtime.evaluate with full await support
+      let tid: ReturnType<typeof setTimeout>;
       const cdpResult = await Promise.race([
         cdpClient.send<{
           result: {
@@ -171,10 +172,10 @@ const handler: ToolHandler = async (
           returnByValue: true,
           awaitPromise: true,
           userGesture: true,
+        }).finally(() => clearTimeout(tid)),
+        new Promise<never>((_, reject) => {
+          tid = setTimeout(() => reject(new Error(`Timeout after ${timeout}ms`)), timeout);
         }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout after ${timeout}ms`)), timeout)
-        ),
       ]);
 
       if (cdpResult.exceptionDetails) {
