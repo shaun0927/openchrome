@@ -103,8 +103,9 @@ gh pr view <N> --json files
 Before merging ANY PR, verify ALL of these:
 
 ```bash
-npm run build                                         # must pass
-git diff --name-only HEAD | wc -l                     # must be 0 (clean tree)
+npm ci                                                 # must pass (lockfile in sync)
+npm run build                                          # must pass
+git diff --name-only HEAD | wc -l                      # must be 0 (clean tree)
 ```
 
 Also grep for known anti-patterns:
@@ -113,6 +114,8 @@ Also grep for known anti-patterns:
 grep -r "process\.env\.HOME" src/ --include="*.ts"    # must be 0 results
 grep -r "console\.log(" src/ --include="*.ts"          # must be 0 in tool handlers
 ```
+
+**If `npm ci` fails**: Run `npm install`, commit `package-lock.json`, then retry.
 
 **Gate**: All checks pass. If any fail, fix before merging.
 
