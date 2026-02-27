@@ -1000,7 +1000,9 @@ export class CDPClient {
    * for targets that survived the disconnect.
    */
   async rebuildTargetIdIndex(): Promise<number> {
-    this.targetIdIndex.clear();
+    // Build into a fresh Map, then swap atomically to avoid a window
+    // where concurrent getPageByTargetId() calls miss the fast path.
+    const newIndex = new Map<string, Page>();
     let indexed = 0;
     try {
       const browser = this.getBrowser();
@@ -1008,13 +1010,14 @@ export class CDPClient {
       for (const page of pages) {
         if (!page.isClosed()) {
           const targetId = getTargetId(page.target());
-          this.targetIdIndex.set(targetId, page);
+          newIndex.set(targetId, page);
           indexed++;
         }
       }
-    } catch {
-      // Browser may not be ready yet — index will be rebuilt lazily via getPageByTargetId fallback
+    } catch (err) {
+      console.error('[CDPClient] rebuildTargetIdIndex failed, will rebuild lazily:', err);
     }
+    this.targetIdIndex = newIndex; // atomic swap
     return indexed;
   }
 

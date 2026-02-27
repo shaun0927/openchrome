@@ -25,6 +25,9 @@ function getTargetId(target: Target): string {
   return (target as unknown as { _targetId: string })._targetId;
 }
 
+/** The primary session ID used by most single-agent workflows. */
+const DEFAULT_SESSION_ID = 'default';
+
 export interface SessionManagerConfig {
   /** Session TTL in milliseconds (default: 30 minutes) */
   sessionTTL?: number;
@@ -168,7 +171,7 @@ export class SessionManager {
         if (freeMemory < this.config.memoryPressureThreshold) {
           console.error(`[SessionManager] Memory pressure detected: ${Math.round(freeMemory / 1024 / 1024)}MB free (threshold: ${Math.round(this.config.memoryPressureThreshold / 1024 / 1024)}MB)`);
           const aggressiveTTL = 5 * 60 * 1000; // 5-minute TTL instead of normal 30-minute
-          const aggressiveDeleted = await this.cleanupInactiveSessions(aggressiveTTL);
+          const aggressiveDeleted = await this.cleanupInactiveSessions(aggressiveTTL, { force: true });
           if (aggressiveDeleted.length > 0) {
             console.error(`[SessionManager] Memory pressure cleanup: removed ${aggressiveDeleted.length} session(s) (5-min TTL)`);
           }
@@ -400,17 +403,17 @@ export class SessionManager {
   /**
    * Clean up inactive sessions
    */
-  async cleanupInactiveSessions(maxAgeMs: number): Promise<string[]> {
+  async cleanupInactiveSessions(maxAgeMs: number, options?: { force?: boolean }): Promise<string[]> {
     const now = Date.now();
     const deletedSessions: string[] = [];
-    // Memory pressure uses aggressive 5-min TTL; normal cleanup uses 30-min TTL.
-    const isMemoryPressure = maxAgeMs < this.config.sessionTTL;
+    // force=true means memory pressure — clean everything including "default".
+    const isMemoryPressure = options?.force === true;
 
     for (const [sessionId, session] of this.sessions) {
       // Protect the "default" session from normal TTL expiry — it's the
       // primary session for most single-agent workflows. Under memory
-      // pressure we still clean it up to prevent OOM.
-      if (sessionId === 'default' && !isMemoryPressure) {
+      // pressure (force=true) we still clean it up to prevent OOM.
+      if (sessionId === DEFAULT_SESSION_ID && !isMemoryPressure) {
         continue;
       }
       if (now - session.lastActivityAt > maxAgeMs) {
@@ -436,7 +439,8 @@ export class SessionManager {
   }
 
   /**
-   * Force cleanup all sessions
+   * Force cleanup all sessions (including "default").
+   * Unlike cleanupInactiveSessions, this is a forced full teardown (called on shutdown).
    */
   async cleanupAllSessions(): Promise<number> {
     const count = this.sessions.size;
@@ -876,9 +880,6 @@ export class SessionManager {
    * @param toolName Optional MCP tool name for hybrid BrowserRouter routing
    */
   async getPage(sessionId: string, targetId: string, workerId?: string, toolName?: string): Promise<Page | null> {
-    // Keep session alive on every page access (hottest path)
-    this.touchSession(sessionId);
-
     const ownerInfo = this.targetToWorker.get(targetId);
 
     if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
@@ -894,6 +895,9 @@ export class SessionManager {
     if (workerId && ownerInfo.workerId !== workerId) {
       throw new Error(`Target ${targetId} does not belong to worker ${workerId}`);
     }
+
+    // Refresh session TTL only after ownership is confirmed (hottest path)
+    this.touchSession(sessionId);
 
     const cdpClient = this.getCDPClientForWorker(sessionId, ownerInfo.workerId);
 
