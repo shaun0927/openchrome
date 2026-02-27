@@ -1,0 +1,24 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "project": "./tsconfig.json"
+  },
+  "plugins": ["@typescript-eslint"],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended"
+  ],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "off",
+    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "@typescript-eslint/no-var-requires": "off",
+    "no-console": "off",
+    "no-case-declarations": "off",
+    "no-control-regex": "off",
+    "no-inner-declarations": "off",
+    "no-empty": "off",
+    "prefer-const": "warn"
+  },
+  "ignorePatterns": ["dist/", "node_modules/", "**/*.test.ts"]
+}
