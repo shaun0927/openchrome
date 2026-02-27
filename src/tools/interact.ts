@@ -1,22 +1,21 @@
 /**
- * Click Element Tool - Composite tool that finds and clicks an element in one operation
+ * Interact Tool - Composite tool that finds an element, performs an action,
+ * waits for stability, and returns a comprehensive state summary.
  *
- * This reduces the typical find → get coordinates → click pattern into a single tool call.
+ * Reduces multi-step find→click→screenshot sequences to a single call.
  */
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_VIEWPORT } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
-import { generateVisualSummary } from '../utils/visual-summary';
-import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 
 const definition: MCPToolDefinition = {
-  name: 'click_element',
-  description: 'Find an element by natural language query and click it in one operation. Returns the clicked element info and optionally a verification screenshot.',
+  name: 'interact',
+  description:
+    'Find an element, perform an action, wait for stability, and return a comprehensive state summary. Reduces multi-step find→click→screenshot sequences to a single call.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -26,19 +25,21 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Natural language description of the element to click (e.g., "Login button", "Save Changes")',
+        description: 'Natural language description of the element to interact with',
       },
-      wait_after: {
+      action: {
+        type: 'string',
+        enum: ['click', 'double_click', 'hover'],
+        description: 'Action to perform on the element (default: "click")',
+      },
+      waitAfter: {
         type: 'number',
-        description: 'Milliseconds to wait after clicking (default: 100, max: 5000)',
+        description: 'Milliseconds to wait after action for DOM to settle (default: 500)',
       },
-      verify: {
-        type: 'boolean',
-        description: 'If true, returns a screenshot after clicking to verify the action',
-      },
-      double_click: {
-        type: 'boolean',
-        description: 'If true, performs a double-click instead of single click',
+      returnFormat: {
+        type: 'string',
+        enum: ['state_summary', 'dom_delta', 'both'],
+        description: 'What to include in the response (default: "both")',
       },
     },
     required: ['tabId', 'query'],
@@ -51,9 +52,9 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const query = args.query as string;
-  const waitAfter = Math.min(Math.max((args.wait_after as number) || 100, 0), 5000);
-  const verify = args.verify as boolean | undefined;
-  const doubleClick = args.double_click as boolean | undefined;
+  const action = (args.action as string) || 'click';
+  const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
+  const returnFormat = (args.returnFormat as string) || 'both';
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -73,7 +74,7 @@ const handler: ToolHandler = async (
   }
 
   try {
-    const page = await sessionManager.getPage(sessionId, tabId, undefined, 'click_element');
+    const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
     if (!page) {
       return {
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
@@ -84,17 +85,16 @@ const handler: ToolHandler = async (
     const queryLower = query.toLowerCase();
     const queryTokens = tokenizeQuery(query);
 
-    // Find elements matching the query
+    // Find elements matching the query using same approach as click-element.ts
     const results = await page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
       const elements: Omit<FoundElement, 'score'>[] = [];
-      const domElements: Element[] = []; // Parallel array of DOM references for batched node ID resolution
-      const maxResults = 30; // Get more candidates for better scoring
+      const domElements: Element[] = [];
+      const maxResults = 30;
 
       function getElementInfo(el: Element): Omit<FoundElement, 'score'> | null {
         const rect = el.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) return null;
 
-        // Skip invisible elements
         const style = window.getComputedStyle(el);
         if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') {
           return null;
@@ -128,7 +128,7 @@ const handler: ToolHandler = async (
           ariaLabel: el.getAttribute('aria-label') || undefined,
           textContent: el.textContent?.trim().slice(0, 50),
           rect: {
-            x: rect.x + rect.width / 2, // Center point
+            x: rect.x + rect.width / 2,
             y: rect.y + rect.height / 2,
             width: rect.width,
             height: rect.height,
@@ -142,7 +142,6 @@ const handler: ToolHandler = async (
         .filter(t => t.length > 1)
         .filter(t => !['the', 'a', 'an', 'to', 'for', 'of', 'in', 'on', 'at', 'and', 'or'].includes(t));
 
-      // Search for interactive elements
       const interactiveSelectors = [
         'button',
         '[role="button"]',
@@ -180,11 +179,11 @@ const handler: ToolHandler = async (
             if (seen.has(el) || elements.length >= maxResults) continue;
             const info = getElementInfo(el);
             if (info) {
-              const combinedText = `${info.name} ${info.textContent || ''} ${info.ariaLabel || ''} ${info.placeholder || ''}`.toLowerCase();
-              // Check if any token matches
+              const combinedText =
+                `${info.name} ${info.textContent || ''} ${info.ariaLabel || ''} ${info.placeholder || ''}`.toLowerCase();
               if (queryTokens.some(token => combinedText.includes(token)) || combinedText.includes(searchLower)) {
                 seen.add(el);
-                (el as unknown as { __clickIndex: number }).__clickIndex = elements.length;
+                (el as unknown as { __interactIndex: number }).__interactIndex = elements.length;
                 domElements.push(el);
                 elements.push(info);
               }
@@ -203,10 +202,11 @@ const handler: ToolHandler = async (
         if (!seen.has(el)) {
           const info = getElementInfo(el);
           if (info) {
-            const combinedText = `${info.name} ${info.textContent || ''} ${info.ariaLabel || ''} ${info.placeholder || ''}`.toLowerCase();
+            const combinedText =
+              `${info.name} ${info.textContent || ''} ${info.ariaLabel || ''} ${info.placeholder || ''}`.toLowerCase();
             if (combinedText.includes(searchLower) || queryTokens.some(token => combinedText.includes(token))) {
               seen.add(el);
-              (el as unknown as { __clickIndex: number }).__clickIndex = elements.length;
+              (el as unknown as { __interactIndex: number }).__interactIndex = elements.length;
               domElements.push(el);
               elements.push(info);
             }
@@ -220,21 +220,14 @@ const handler: ToolHandler = async (
 
     if (results.length === 0) {
       return {
-        content: [
-          {
-            type: 'text',
-            text: `No clickable elements found matching "${query}"`,
-          },
-        ],
+        content: [{ type: 'text', text: `No elements found matching "${query}"` }],
         isError: true,
       };
     }
 
-    // Get backend DOM node IDs — batched approach (single DOM walk + parallel DOM.describeNode)
-    // Replaces per-candidate querySelectorAll('*').find() which is O(n) × candidates = O(30n)
+    // Get backend DOM node IDs via batched CDP approach
     const cdpClient = sessionManager.getCDPClient();
 
-    // Step 1: Single Runtime.evaluate to collect all tagged elements in index order
     const { result: batchResult } = await cdpClient.send<{
       result: { objectId?: string };
     }>(page, 'Runtime.evaluate', {
@@ -244,8 +237,8 @@ const handler: ToolHandler = async (
         let node;
         while (node = walker.nextNode()) {
           const el = node;
-          if (el.__clickIndex !== undefined) {
-            indexedEls.push({ el, index: el.__clickIndex });
+          if (el.__interactIndex !== undefined) {
+            indexedEls.push({ el, index: el.__interactIndex });
           }
         }
         indexedEls.sort((a, b) => a.index - b.index);
@@ -255,7 +248,6 @@ const handler: ToolHandler = async (
     });
 
     if (batchResult.objectId) {
-      // Step 2: Get array properties to obtain individual element object references
       const { result: properties } = await cdpClient.send<{
         result: Array<{ name: string; value: { objectId?: string } }>;
       }>(page, 'Runtime.getProperties', {
@@ -263,34 +255,33 @@ const handler: ToolHandler = async (
         ownProperties: true,
       });
 
-      // Step 3: Parallel DOM.describeNode for all candidates
       const describePromises: Promise<void>[] = [];
       for (const prop of properties) {
         const index = parseInt(prop.name, 10);
         if (isNaN(index) || index >= results.length || !prop.value?.objectId) continue;
 
         describePromises.push(
-          cdpClient.send<{ node: { backendNodeId: number } }>(
-            page,
-            'DOM.describeNode',
-            { objectId: prop.value.objectId }
-          ).then(({ node }) => {
-            results[index].backendDOMNodeId = node.backendNodeId;
-          }).catch(() => {
-            // Skip if we can't get the backend node ID
-          })
+          cdpClient
+            .send<{ node: { backendNodeId: number } }>(page, 'DOM.describeNode', {
+              objectId: prop.value.objectId,
+            })
+            .then(({ node }) => {
+              results[index].backendDOMNodeId = node.backendNodeId;
+            })
+            .catch(() => {
+              // Skip if we can't get the backend node ID
+            })
         );
       }
 
       await Promise.all(describePromises);
     }
 
-    // Score and sort elements
+    // Score and sort
     const scoredResults: FoundElement[] = results
       .map(el => ({ ...el, score: scoreElement(el as FoundElement, queryLower, queryTokens) }))
       .sort((a, b) => b.score - a.score);
 
-    // Get the best match
     const bestMatch = scoredResults[0];
 
     if (!bestMatch || bestMatch.score < 10) {
@@ -305,21 +296,15 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Click the element at its center coordinates
-    const clickX = Math.round(bestMatch.rect.x);
-    const clickY = Math.round(bestMatch.rect.y);
-
     // Scroll into view first if needed
     if (bestMatch.backendDOMNodeId) {
       try {
         await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
           backendNodeId: bestMatch.backendDOMNodeId,
         });
-        // Small delay after scroll
         await new Promise(resolve => setTimeout(resolve, 50));
 
-        // Re-get position after scroll — use __clickIndex=0 on sorted best match
-        // (best match was index 0 before sorting; use backendDOMNodeId instead to be precise)
+        // Re-get position after scroll
         const { result: boxResult } = await cdpClient.send<{
           result: { value: { x: number; y: number; width: number; height: number } | null };
         }>(page, 'Runtime.evaluate', {
@@ -328,7 +313,7 @@ const handler: ToolHandler = async (
             let node;
             while (node = walker.nextNode()) {
               const el = node;
-              if (el.__clickIndex === 0) {
+              if (el.__interactIndex === 0) {
                 const rect = el.getBoundingClientRect();
                 return { x: rect.x + rect.width/2, y: rect.y + rect.height/2, width: rect.width, height: rect.height };
               }
@@ -350,16 +335,22 @@ const handler: ToolHandler = async (
     const finalX = Math.round(bestMatch.rect.x);
     const finalY = Math.round(bestMatch.rect.y);
 
-    // Perform the click with DOM delta capture (settleMs includes waitAfter)
-    const { delta } = await withDomDelta(page, async () => {
-      if (doubleClick) {
-        await page.mouse.click(finalX, finalY, { clickCount: 2 });
-      } else {
-        await page.mouse.click(finalX, finalY);
-      }
-    }, { settleMs: Math.max(150, waitAfter) });
+    // Perform the action with DOM delta capture
+    const { delta } = await withDomDelta(
+      page,
+      async () => {
+        if (action === 'double_click') {
+          await page.mouse.click(finalX, finalY, { clickCount: 2 });
+        } else if (action === 'hover') {
+          await page.mouse.move(finalX, finalY);
+        } else {
+          await page.mouse.click(finalX, finalY);
+        }
+      },
+      { settleMs: Math.max(150, waitAfter) }
+    );
 
-    // Generate ref for the clicked element
+    // Generate ref for the interacted element
     let refId = '';
     if (bestMatch.backendDOMNodeId) {
       refId = refIdManager.generateRef(
@@ -373,77 +364,116 @@ const handler: ToolHandler = async (
       );
     }
 
-    // Reset adaptive screenshot on click (page state changes)
-    AdaptiveScreenshot.getInstance().reset(tabId);
+    // Build action label
+    const actionLabel = action === 'double_click' ? 'double-clicked' : action === 'hover' ? 'hovered' : 'clicked';
+    const interactedLine = `Interacted: ${actionLabel} on <${bestMatch.tagName}> "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}`;
 
-    const clickType = doubleClick ? 'Double-clicked' : 'Clicked';
-    const confidenceNote = bestMatch.score < 50 ? ` (low confidence: ${bestMatch.score}/100)` : '';
-    const summary = await generateVisualSummary(page);
-    const summaryText = summary ? `\n${summary}` : '';
-    const resultText = `${clickType} ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}${confidenceNote}${delta}${summaryText}`;
+    // Gather state summary via page.evaluate
+    const stateSummary = await page.evaluate(() => {
+      const url = window.location.href;
+      const title = document.title;
+      const scrollX = Math.round(window.scrollX);
+      const scrollY = Math.round(window.scrollY);
 
-    // Optional verification screenshot — WebP via CDP for speed and consistency
-    if (verify) {
-      try {
-        const screenshotResult = await Promise.race([
-          (async () => {
-            const cdpSession = await (page as any).target().createCDPSession();
-            try {
-              const { data } = await cdpSession.send('Page.captureScreenshot', {
-                format: 'webp',
-                quality: DEFAULT_SCREENSHOT_QUALITY,
-                optimizeForSpeed: true,
-              });
-              return data as string;
-            } finally {
-              await cdpSession.detach().catch(() => {});
+      // Active element info
+      const active = document.activeElement;
+      let activeInfo = 'none';
+      if (active && active !== document.body) {
+        const inputEl = active as HTMLInputElement;
+        const role =
+          active.getAttribute('role') ||
+          (active.tagName === 'BUTTON'
+            ? 'button'
+            : active.tagName === 'INPUT'
+              ? inputEl.type || 'textbox'
+              : active.tagName.toLowerCase());
+        const name =
+          active.getAttribute('aria-label') ||
+          active.getAttribute('title') ||
+          active.textContent?.trim().slice(0, 40) ||
+          '';
+        activeInfo = `${role}${name ? ` "${name}"` : ''}`;
+      }
+
+      // Visible panel contents (first 80 chars each, max 3)
+      const panels: string[] = [];
+      const panelSelectors = [
+        '[role="tabpanel"]',
+        '[role="dialog"]',
+        '[role="main"]',
+        'main',
+        '.panel',
+        '[class*="panel"]',
+        '[class*="content"]',
+      ];
+      for (const sel of panelSelectors) {
+        if (panels.length >= 3) break;
+        try {
+          const els = document.querySelectorAll(sel);
+          for (const el of els) {
+            if (panels.length >= 3) break;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden') continue;
+            const text = el.textContent?.trim().slice(0, 80) || '';
+            if (text.length > 10) {
+              panels.push(text);
             }
-          })(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
-        ]);
-
-        if (screenshotResult !== null) {
-          return {
-            content: [
-              { type: 'text', text: resultText },
-              { type: 'image', data: screenshotResult, mimeType: 'image/webp' },
-            ],
-          };
+          }
+        } catch {
+          // skip bad selectors
         }
-        // Timeout — fall through to fallback
-        throw new Error('Screenshot timed out');
-      } catch {
-        // Fall back to Puppeteer PNG if CDP session creation fails
-        const screenshot = await page.screenshot({
-          encoding: 'base64',
-          type: 'png',
-          fullPage: false,
-          clip: {
-            x: 0,
-            y: 0,
-            width: Math.min(page.viewport()?.width || DEFAULT_VIEWPORT.width, DEFAULT_VIEWPORT.width),
-            height: Math.min(page.viewport()?.height || DEFAULT_VIEWPORT.height, DEFAULT_VIEWPORT.height),
-          },
-        });
+      }
 
-        return {
-          content: [
-            { type: 'text', text: resultText },
-            { type: 'image', data: screenshot, mimeType: 'image/png' },
-          ],
-        };
+      // Visible headings
+      const headings: string[] = [];
+      for (const hEl of document.querySelectorAll('h1, h2, h3, [role="heading"]')) {
+        const rect = hEl.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        const style = window.getComputedStyle(hEl);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        const text = hEl.textContent?.trim().slice(0, 60) || '';
+        if (text) headings.push(text);
+        if (headings.length >= 3) break;
+      }
+
+      return { url, title, scrollX, scrollY, activeInfo, panels, headings };
+    });
+
+    // Build the response
+    const lines: string[] = [interactedLine];
+
+    if (returnFormat === 'dom_delta' || returnFormat === 'both') {
+      if (delta) {
+        lines.push(delta);
+      }
+    }
+
+    if (returnFormat === 'state_summary' || returnFormat === 'both') {
+      lines.push(
+        `[State Summary] url: ${stateSummary.url} | scroll: ${stateSummary.scrollX},${stateSummary.scrollY} | active: ${stateSummary.activeInfo}`
+      );
+
+      if (stateSummary.headings.length > 0) {
+        lines.push(`[Headings] ${stateSummary.headings.map(h => `"${h}"`).join(' | ')}`);
+      }
+
+      if (stateSummary.panels.length > 0) {
+        const panelParts = stateSummary.panels.map((p, i) => `Panel ${i + 1}: "${p}"`);
+        lines.push(`[Visible] ${panelParts.join(' | ')}`);
       }
     }
 
     return {
-      content: [{ type: 'text', text: resultText }],
+      content: [{ type: 'text', text: lines.join('\n') }],
     };
   } catch (error) {
     return {
       content: [
         {
           type: 'text',
-          text: `Click element error: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Interact error: ${error instanceof Error ? error.message : String(error)}`,
         },
       ],
       isError: true,
@@ -451,6 +481,6 @@ const handler: ToolHandler = async (
   }
 };
 
-export function registerClickElementTool(server: MCPServer): void {
-  server.registerTool('click_element', handler, definition);
+export function registerInteractTool(server: MCPServer): void {
+  server.registerTool('interact', handler, definition);
 }
