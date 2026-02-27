@@ -3,6 +3,8 @@
  * Ported from extension with promise-based lock mechanism
  */
 
+import { DEFAULT_QUEUE_ITEM_TIMEOUT_MS } from '../config/defaults';
+
 interface QueueItem<T> {
   fn: () => Promise<T>;
   resolve: (value: T) => void;
@@ -51,7 +53,15 @@ export class RequestQueue {
         const item = this.queue.shift()!;
 
         try {
-          const result = await item.fn();
+          const result = await Promise.race([
+            item.fn(),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`Queue item timed out after ${DEFAULT_QUEUE_ITEM_TIMEOUT_MS}ms`)),
+                DEFAULT_QUEUE_ITEM_TIMEOUT_MS,
+              ),
+            ),
+          ]);
           item.resolve(result);
         } catch (error) {
           item.reject(error instanceof Error ? error : new Error(String(error)));

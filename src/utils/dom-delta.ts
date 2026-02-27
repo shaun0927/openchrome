@@ -7,9 +7,17 @@
  */
 
 import type { Page } from 'puppeteer-core';
+import { safeTitle } from './safe-title';
 
 export interface DomDeltaOptions {
-  /** Time to wait for DOM to settle after action (ms). Default: 150 */
+  /**
+   * Time to wait for DOM to settle after action (ms). Default: 150.
+   *
+   * For keyboard/type actions where immediate feedback is expected,
+   * callers can pass a lower value (e.g. settleMs: 50) to reduce latency.
+   * For click actions that trigger animations or async network requests,
+   * a higher value (e.g. settleMs: 300-500) may be appropriate.
+   */
   settleMs?: number;
   /** Maximum characters for the delta string. Default: 500 */
   maxChars?: number;
@@ -240,7 +248,10 @@ export async function withDomDelta<T>(
 
   // Inject the MutationObserver
   try {
-    await page.evaluate(INJECT_OBSERVER_SCRIPT);
+    await Promise.race([
+      page.evaluate(INJECT_OBSERVER_SCRIPT),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ]);
   } catch {
     // If injection fails (e.g., page not ready), just run the action without delta
     const result = await action();
@@ -280,7 +291,7 @@ export async function withDomDelta<T>(
     // Page navigated — observer is gone
     let title = '';
     try {
-      title = await page.title();
+      title = await safeTitle(page);
     } catch {
       // ignore
     }
@@ -293,7 +304,10 @@ export async function withDomDelta<T>(
 
   // Collect mutations
   try {
-    const collected = await page.evaluate(COLLECT_DELTA_SCRIPT) as CollectedDelta | null;
+    const collected = await Promise.race([
+      page.evaluate(COLLECT_DELTA_SCRIPT) as Promise<CollectedDelta | null>,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
     if (!collected) {
       return { result, delta: '' };
     }

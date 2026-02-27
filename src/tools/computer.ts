@@ -114,17 +114,24 @@ const handler: ToolHandler = async (
         // Phase 2: Screenshot with retry
         const attemptScreenshot = async (): Promise<{ data: string; mimeType: string } | null> => {
           try {
-            const cdpSession = await (page as any).target().createCDPSession();
-            try {
-              const { data } = await cdpSession.send('Page.captureScreenshot', {
-                format: 'webp',
-                quality: DEFAULT_SCREENSHOT_QUALITY,
-                optimizeForSpeed: true,
-              });
-              return { data, mimeType: 'image/webp' };
-            } finally {
-              await cdpSession.detach().catch(() => {});
-            }
+            const screenshotData = await Promise.race([
+              (async () => {
+                const cdpSession = await (page as any).target().createCDPSession();
+                try {
+                  const { data } = await cdpSession.send('Page.captureScreenshot', {
+                    format: 'webp',
+                    quality: DEFAULT_SCREENSHOT_QUALITY,
+                    optimizeForSpeed: true,
+                  });
+                  return data as string;
+                } finally {
+                  await cdpSession.detach().catch(() => {});
+                }
+              })(),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+            ]);
+            if (screenshotData === null) return null;
+            return { data: screenshotData, mimeType: 'image/webp' };
           } catch {
             return null;
           }

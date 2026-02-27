@@ -31,3 +31,72 @@ export const DEFAULT_MAX_TARGETS_PER_WORKER = 5;
 
 /** Memory pressure threshold in bytes (500MB). Below this free memory, aggressive cleanup triggers. */
 export const DEFAULT_MEMORY_PRESSURE_THRESHOLD = 500 * 1024 * 1024;
+
+/** Cookie scan overall timeout in milliseconds. Prevents N×30s cascading hangs in parallel sessions. */
+export const DEFAULT_COOKIE_SCAN_TIMEOUT_MS = 5000;
+
+/** Per-candidate cookie probe timeout in milliseconds. Skips unresponsive tabs quickly. */
+export const DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS = 2000;
+
+/** Maximum candidates to probe during cookie source scan. */
+export const DEFAULT_COOKIE_SCAN_MAX_CANDIDATES = 5;
+
+/** Overall cookie copy timeout in milliseconds. */
+export const DEFAULT_COOKIE_COPY_TIMEOUT_MS = 10000;
+
+/** Safe page.title() timeout in milliseconds. Prevents hangs on frozen renderers. */
+export const DEFAULT_SAFE_TITLE_TIMEOUT_MS = 3000;
+
+/** Per-item timeout in request queue (ms). Safety net against indefinitely hung CDP commands. */
+export const DEFAULT_QUEUE_ITEM_TIMEOUT_MS = 120000;
+
+/** Global tool execution timeout in milliseconds. Absolute safety net against indefinitely hung handlers. */
+export const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 120000;
+
+/** Session initialization timeout (getOrCreateSession). Prevents pre-handler hangs. */
+export const DEFAULT_SESSION_INIT_TIMEOUT_MS = 30000;
+
+/** Reconnect timeout in milliseconds. Prevents indefinite hang between retry races. */
+export const DEFAULT_RECONNECT_TIMEOUT_MS = 15000;
+
+/** New page creation timeout in milliseconds. Chrome can hang on Target.createTarget under load. */
+export const DEFAULT_NEW_PAGE_TIMEOUT_MS = 15000;
+
+/** Page configuration timeout (setViewport, etc.) in milliseconds. */
+export const DEFAULT_PAGE_CONFIG_TIMEOUT_MS = 5000;
+
+/** Cookie context operation timeout in milliseconds. */
+export const DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS = 5000;
+
+/** Storage state restore timeout in milliseconds. */
+export const DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS = 10000;
+
+/** createTarget aggregate timeout in milliseconds. Safety net for entire tab creation chain. */
+export const DEFAULT_CREATE_TARGET_TIMEOUT_MS = 60000;
+
+/** CDP session operation timeout for direct createCDPSession calls. */
+export const DEFAULT_CDP_SESSION_OP_TIMEOUT_MS = 10000;
+
+/** Operation gate timeout in milliseconds. Max wait when tool execution is paused. */
+export const DEFAULT_OPERATION_GATE_TIMEOUT_MS = 300000;
+
+/** Explicit timeout for puppeteer.connect() WebSocket connection (ms).
+ *  protocolTimeout only covers CDP messages, not the initial WebSocket handshake.
+ *  Without this, a listening but unresponsive Chrome can block for OS TCP timeout (60-120s). */
+export const DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS = 15000;
+
+/** Session initialization timeout when autoLaunch is enabled (ms).
+ *  Accounts for: port probe (5s) + Chrome launch (30s) + puppeteer connect (15s). */
+export const DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS = 45000;
+
+/** Heartbeat active ping timeout in milliseconds.
+ *  Sends Browser.getVersion to detect half-open WebSocket connections
+ *  (e.g., after macOS sleep/wake) that browser.isConnected() misses.
+ *  Set higher than heartbeat interval (5s) to avoid false-positive disconnects
+ *  when Chrome is under heavy CPU load (GC pauses, complex JS execution). */
+export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 15000;
+
+/** Connection verification staleness threshold in milliseconds.
+ *  If the connection hasn't been verified (by heartbeat or probe) within this window,
+ *  connect() triggers an active CDP probe before returning. */
+export const DEFAULT_CONNECT_VERIFY_STALENESS_MS = 10000;

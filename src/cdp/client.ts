@@ -6,7 +6,20 @@ import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'pu
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
-import { DEFAULT_VIEWPORT, DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_PROTOCOL_TIMEOUT_MS } from '../config/defaults';
+import {
+  DEFAULT_VIEWPORT,
+  DEFAULT_NAVIGATION_TIMEOUT_MS,
+  DEFAULT_PROTOCOL_TIMEOUT_MS,
+  DEFAULT_COOKIE_SCAN_TIMEOUT_MS,
+  DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS,
+  DEFAULT_COOKIE_SCAN_MAX_CANDIDATES,
+  DEFAULT_COOKIE_COPY_TIMEOUT_MS,
+  DEFAULT_NEW_PAGE_TIMEOUT_MS,
+  DEFAULT_PAGE_CONFIG_TIMEOUT_MS,
+  DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
+  DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
+  DEFAULT_CONNECT_VERIFY_STALENESS_MS,
+} from '../config/defaults';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -32,7 +45,7 @@ export interface CDPClientOptions {
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
 export interface ConnectionEvent {
-  type: 'connected' | 'disconnected' | 'reconnecting' | 'reconnect_failed';
+  type: 'connected' | 'disconnected' | 'reconnecting' | 'reconnected' | 'reconnect_failed';
   timestamp: number;
   attempt?: number;
   error?: string;
@@ -54,13 +67,19 @@ export class CDPClient {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private connectionState: ConnectionState = 'disconnected';
   private eventListeners: ((event: ConnectionEvent) => void)[] = [];
-  private targetDestroyedListeners: ((targetId: string) => void)[] = [];
+  private targetDestroyedListeners: ((targetId: string, page?: Page) => void)[] = [];
   private reconnectAttempts = 0;
+  private consecutiveHeartbeatFailures = 0;
+  private checkConnectionInFlight = false;
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
   private targetIdIndex: Map<string, Page> = new Map();
   private inFlightCookieScans: Map<string, Promise<string | null>> = new Map();
+  /** Coalesces concurrent connect() calls — only one connectInternal() runs at a time. */
+  private pendingConnect: Promise<void> | null = null;
+  /** Timestamp of last successful connection verification (heartbeat or active probe). */
+  private lastVerifiedAt = 0;
   private static readonly COOKIE_CACHE_TTL = 300000; // 5 minutes
 
   constructor(options: CDPClientOptions = {}) {
@@ -100,8 +119,18 @@ export class CDPClient {
   /**
    * Add target destroyed listener
    */
-  addTargetDestroyedListener(listener: (targetId: string) => void): void {
+  addTargetDestroyedListener(listener: (targetId: string, page?: Page) => void): void {
     this.targetDestroyedListeners.push(listener);
+  }
+
+  /**
+   * Remove target destroyed listener
+   */
+  removeTargetDestroyedListener(listener: (targetId: string, page?: Page) => void): void {
+    const index = this.targetDestroyedListeners.indexOf(listener);
+    if (index !== -1) {
+      this.targetDestroyedListeners.splice(index, 1);
+    }
   }
 
   /**
@@ -117,10 +146,12 @@ export class CDPClient {
     }
     // Clean up cookie data cache for this target
     this.cookieDataCache.delete(targetId);
+    // Look up page BEFORE deleting from index so listeners can use it
+    const page = this.targetIdIndex.get(targetId);
     this.targetIdIndex.delete(targetId);
     for (const listener of this.targetDestroyedListeners) {
       try {
-        listener(targetId);
+        listener(targetId, page);
       } catch (e) {
         console.error('[CDPClient] Target destroyed listener error:', e);
       }
@@ -145,7 +176,28 @@ export class CDPClient {
    */
   private startHeartbeat(): void {
     this.stopHeartbeat();
+    let lastHeartbeatTime = Date.now();
     this.heartbeatTimer = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - lastHeartbeatTime;
+      lastHeartbeatTime = now;
+
+      // Clock jump detection: if elapsed >> heartbeat interval, system likely slept/woke.
+      // Immediately force reconnect instead of waiting for 2× probe failure (35-40s).
+      if (elapsed > this.heartbeatIntervalMs * 3) {
+        // Guard: skip if reconnect is already in progress (prevents concurrent forceReconnect calls)
+        if (this.connectionState === 'reconnecting' || this.connectionState === 'connecting') {
+          return;
+        }
+        // Stop heartbeat to prevent further ticks during the reconnect attempt
+        this.stopHeartbeat();
+        console.error(`[CDPClient] Sleep/wake detected (${elapsed}ms gap, expected ~${this.heartbeatIntervalMs}ms). Force reconnecting...`);
+        this.forceReconnect().catch(err => {
+          console.error('[CDPClient] Post-wake reconnect failed:', err);
+        });
+        return;
+      }
+
       this.checkConnection();
     }, this.heartbeatIntervalMs);
   }
@@ -161,25 +213,56 @@ export class CDPClient {
   }
 
   /**
-   * Check connection health
+   * Check connection health.
+   * Sends an active CDP probe (Browser.getVersion) to detect half-open WebSocket
+   * connections that browser.isConnected() misses (e.g., after macOS sleep/wake).
    */
   private async checkConnection(): Promise<boolean> {
     if (!this.browser) {
       return false;
     }
+    if (this.checkConnectionInFlight) {
+      return true; // Prior check still in progress
+    }
+    this.checkConnectionInFlight = true;
 
     try {
-      // Simple check - try to get browser version
       if (!this.browser.isConnected()) {
-        console.error('[CDPClient] Heartbeat: Connection lost, attempting reconnect...');
+        console.error('[CDPClient] Heartbeat: Connection flag lost, attempting reconnect...');
         await this.handleDisconnect();
         return false;
       }
+
+      // Active probe: round-trip CDP command to detect dead WebSocket connections.
+      // browser.isConnected() only checks a local flag — half-open TCP connections
+      // (macOS sleep/wake, Chrome crash) pass the flag check but hang on real commands.
+      let pingTid: ReturnType<typeof setTimeout>;
+      await Promise.race([
+        this.browser.version().finally(() => clearTimeout(pingTid)),
+        new Promise<never>((_, reject) => {
+          pingTid = setTimeout(
+            () => reject(new Error('heartbeat ping timeout')),
+            DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      this.lastVerifiedAt = Date.now();
+      this.consecutiveHeartbeatFailures = 0;
       return true;
     } catch (error) {
-      console.error('[CDPClient] Heartbeat check failed:', error);
+      this.consecutiveHeartbeatFailures++;
+      if (this.consecutiveHeartbeatFailures < 2) {
+        // First failure: warn but don't disconnect. Chrome may be under heavy load.
+        console.error(`[CDPClient] Heartbeat probe failed (strike ${this.consecutiveHeartbeatFailures}/2), will retry next interval:`, error);
+        return true; // Report as healthy to avoid premature disconnect
+      }
+      // Two consecutive failures: connection is truly dead
+      console.error(`[CDPClient] Heartbeat failed ${this.consecutiveHeartbeatFailures} times consecutively, disconnecting:`, error);
+      this.consecutiveHeartbeatFailures = 0;
       await this.handleDisconnect();
       return false;
+    } finally {
+      this.checkConnectionInFlight = false;
     }
   }
 
@@ -187,8 +270,8 @@ export class CDPClient {
    * Handle disconnection with automatic reconnection
    */
   private async handleDisconnect(): Promise<void> {
-    if (this.connectionState === 'reconnecting') {
-      return; // Already reconnecting
+    if (this.connectionState === 'reconnecting' || this.connectionState === 'connecting') {
+      return; // Already reconnecting or connecting
     }
 
     this.reconnectAttempts = 0; // Reset counter on each new disconnect event
@@ -198,10 +281,11 @@ export class CDPClient {
       timestamp: Date.now(),
     });
 
-    // Clear existing sessions
+    // Clear existing sessions and stale state
     this.sessions.clear();
     this.targetIdIndex.clear();
     this.inFlightCookieScans.clear();
+    this.lastVerifiedAt = 0;
 
     // Remove old browser listeners before nulling reference
     if (this.browser) {
@@ -225,6 +309,10 @@ export class CDPClient {
         await this.connectInternal();
         console.error('[CDPClient] Reconnection successful');
         this.reconnectAttempts = 0;
+        this.emitConnectionEvent({
+          type: 'reconnected',
+          timestamp: Date.now(),
+        });
         return;
       } catch (error) {
         console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
@@ -252,16 +340,63 @@ export class CDPClient {
    */
   private async connectInternal(): Promise<void> {
     const launcher = getChromeLauncher(this.port);
-    const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
 
-    this.browser = await puppeteer.connect({
-      browserWSEndpoint: instance.wsEndpoint,
-      defaultViewport: null,
-      protocolTimeout: DEFAULT_PROTOCOL_TIMEOUT_MS,
-    });
+    // Retry loop: after macOS sleep/wake, Chrome's WebSocket listener may be in a
+    // half-open TCP state. The HTTP endpoint (/json/version) works because it's
+    // stateless, but the WebSocket handshake hangs. The first failed attempt sends
+    // a TCP RST that clears Chrome's stale state, so the second attempt succeeds.
+    const maxConnectRetries = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxConnectRetries; attempt++) {
+      // Re-fetch instance on each attempt — Chrome may have regenerated its UUID
+      const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
+
+      try {
+        let wsConnectTid: ReturnType<typeof setTimeout>;
+        this.browser = await Promise.race([
+          puppeteer.connect({
+            browserWSEndpoint: instance.wsEndpoint,
+            defaultViewport: null,
+            protocolTimeout: DEFAULT_PROTOCOL_TIMEOUT_MS,
+          }).finally(() => clearTimeout(wsConnectTid)),
+          new Promise<never>((_, reject) => {
+            wsConnectTid = setTimeout(
+              () => reject(new Error(`puppeteer.connect() timed out after ${DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS}ms (WebSocket to ${instance.wsEndpoint})`)),
+              DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
+            );
+          }),
+        ]) as Browser;
+
+        if (attempt > 1) {
+          console.error(`[CDPClient] connectInternal succeeded on attempt ${attempt}/${maxConnectRetries}`);
+        }
+        break; // Success — exit retry loop
+      } catch (err) {
+        // Clean up any partially-connected browser from this attempt to prevent
+        // orphaned event listeners from firing handleDisconnect on an old browser.
+        if (this.browser) {
+          this.browser.removeAllListeners('disconnected');
+          this.browser.removeAllListeners('targetdestroyed');
+          this.browser.disconnect().catch(() => {});
+          this.browser = null;
+        }
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < maxConnectRetries) {
+          console.error(`[CDPClient] connectInternal attempt ${attempt}/${maxConnectRetries} failed, retrying in 1s: ${lastError.message}`);
+          // Invalidate launcher cache so next ensureChrome() re-checks via HTTP
+          launcher.invalidateInstance();
+          // Brief pause: TCP RST from the timeout needs time to reach Chrome's listener
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } else {
+          throw lastError;
+        }
+      }
+    }
 
     // Set up disconnect handler
-    this.browser.on('disconnected', () => {
+    // Non-null assertion: the retry loop above either sets this.browser and breaks, or throws.
+    this.browser!.on('disconnected', () => {
       console.error('[CDPClient] Browser disconnected');
       this.handleDisconnect().catch((err) => {
         console.error('[CDPClient] handleDisconnect failed:', err);
@@ -269,7 +404,7 @@ export class CDPClient {
     });
 
     // Set up target destroyed handler
-    this.browser.on('targetdestroyed', (target) => {
+    this.browser!.on('targetdestroyed', (target) => {
       const targetId = getTargetId(target);
       console.error(`[CDPClient] Target destroyed: ${targetId}`);
       this.onTargetDestroyed(targetId);
@@ -289,41 +424,83 @@ export class CDPClient {
   }
 
   /**
-   * Connect to Chrome instance
+   * Connect to Chrome instance.
+   * Uses promise coalescing: concurrent callers share a single connectInternal() call
+   * instead of each independently opening a WebSocket (which would orphan event listeners
+   * and heartbeat timers from the first connection).
    */
   async connect(): Promise<void> {
     if (this.browser && this.browser.isConnected()) {
-      // Verify connection is actually working by checking Chrome endpoint
-      try {
-        const launcher = getChromeLauncher(this.port);
-        const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
-        const currentWsUrl = instance.wsEndpoint;
+      // Skip active probe if recently verified by heartbeat (avoids per-call overhead)
+      if (Date.now() - this.lastVerifiedAt < DEFAULT_CONNECT_VERIFY_STALENESS_MS) {
+        return;
+      }
 
-        // Check if the browser's WebSocket URL matches current Chrome
-        const browserWsUrl = this.browser.wsEndpoint();
-        if (browserWsUrl !== currentWsUrl) {
-          console.error('[CDPClient] WebSocket URL mismatch, reconnecting...');
-          await this.forceReconnect();
-          return;
-        }
+      // Active probe: lightweight CDP round-trip to detect dead WebSocket connections.
+      // Replaces the previous ensureChrome() call which added 2-7s HTTP overhead.
+      // browser.isConnected() only checks a local flag — half-open TCP connections
+      // (macOS sleep/wake, Chrome crash) pass the flag check but hang on real commands.
+      try {
+        let probeTid: ReturnType<typeof setTimeout>;
+        await Promise.race([
+          this.browser.version().finally(() => clearTimeout(probeTid)),
+          new Promise<never>((_, reject) => {
+            probeTid = setTimeout(
+              () => reject(new Error('connection probe timeout')),
+              DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
+            );
+          }),
+        ]);
+        this.lastVerifiedAt = Date.now();
         return;
       } catch {
-        console.error('[CDPClient] Connection check failed, reconnecting...');
+        console.error('[CDPClient] Connection probe failed, reconnecting...');
         await this.forceReconnect();
         return;
       }
     }
 
+    // Coalesce concurrent connect() calls — only one connectInternal() runs at a time.
+    // Without this, parallel tool calls (e.g., ultrapilot workflows) each trigger
+    // connectInternal(), creating duplicate WebSocket connections where the second
+    // overwrites this.browser and orphans the first's event listeners + heartbeat.
+    if (this.pendingConnect) {
+      console.error('[CDPClient] Coalescing concurrent connect() call');
+      return this.pendingConnect;
+    }
+
     this.connectionState = 'connecting';
-    await this.connectInternal();
-    this.startHeartbeat();
-    console.error('[CDPClient] Connected to Chrome');
+    this.pendingConnect = (async () => {
+      try {
+        await this.connectInternal();
+        this.lastVerifiedAt = Date.now();
+        this.startHeartbeat();
+        console.error('[CDPClient] Connected to Chrome');
+      } catch (err) {
+        this.connectionState = 'disconnected';
+        throw err;
+      }
+    })();
+
+    try {
+      await this.pendingConnect;
+    } finally {
+      this.pendingConnect = null;
+    }
   }
 
   /**
-   * Force reconnect by disconnecting and reconnecting
+   * Force reconnect by disconnecting and reconnecting.
+   * Invalidates any pending connect() promise — the old connection attempt
+   * will still resolve but its result is discarded because this.browser is replaced.
+   *
+   * Clears ALL stale state (sessions, targetIdIndex, cookie scans) to prevent
+   * post-reconnect operations from using orphaned page references that would
+   * hang until protocolTimeout (30s).
    */
   async forceReconnect(): Promise<void> {
+    // Invalidate any in-flight connect() — we're replacing the connection entirely
+    this.pendingConnect = null;
     this.stopHeartbeat();
 
     if (this.browser) {
@@ -336,12 +513,28 @@ export class CDPClient {
       }
       this.browser = null;
       this.sessions.clear();
+      this.targetIdIndex.clear();
+      this.inFlightCookieScans.clear();
     }
 
-    this.connectionState = 'connecting';
-    await this.connectInternal();
-    this.startHeartbeat();
-    console.error('[CDPClient] Reconnected to Chrome');
+    this.connectionState = 'reconnecting';
+    this.lastVerifiedAt = 0;
+    try {
+      await this.connectInternal();
+      this.lastVerifiedAt = Date.now();
+      this.consecutiveHeartbeatFailures = 0;
+      this.startHeartbeat();
+      this.emitConnectionEvent({ type: 'reconnected', timestamp: Date.now() });
+      console.error('[CDPClient] Reconnected to Chrome');
+    } catch (err) {
+      this.connectionState = 'disconnected';
+      this.emitConnectionEvent({
+        type: 'reconnect_failed',
+        timestamp: Date.now(),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   /**
@@ -496,6 +689,7 @@ export class CDPClient {
    * Uses Target.getTargets result directly instead of /json/list HTTP calls.
    */
   private async _doFindAuthenticatedPageTargetId(targetDomain: string | undefined, cacheKey: string): Promise<string | null> {
+    const scanStart = Date.now();
     const browser = this.getBrowser();
     const session = await browser.target().createCDPSession();
 
@@ -539,22 +733,46 @@ export class CDPClient {
         console.error(`[CDPClient] Sorted ${candidates.length} candidates by domain match to ${targetDomain}`);
       }
 
+      // Limit candidates to prevent N×30s cascading timeouts in parallel sessions.
+      // Best-match candidates are already sorted first, so truncating is safe.
+      if (candidates.length > DEFAULT_COOKIE_SCAN_MAX_CANDIDATES) {
+        console.error(`[CDPClient] Limiting cookie scan from ${candidates.length} to ${DEFAULT_COOKIE_SCAN_MAX_CANDIDATES} candidates`);
+        candidates = candidates.slice(0, DEFAULT_COOKIE_SCAN_MAX_CANDIDATES);
+      }
+
       // Check each candidate to find one with actual cookies (in priority order).
       // Uses Target.attachToTarget over the existing multiplexed session — no raw WebSocket,
       // no /json/list HTTP round-trip.
       for (const candidate of candidates) {
+        // Check overall scan timeout to prevent cascading hangs
+        if (Date.now() - scanStart > DEFAULT_COOKIE_SCAN_TIMEOUT_MS) {
+          console.error(`[CDPClient] Cookie scan timed out after ${Date.now() - scanStart}ms`);
+          return null;
+        }
+
         let attachedSessionId: string | null = null;
         try {
-          const { sessionId } = await session.send('Target.attachToTarget', {
-            targetId: candidate.targetId,
-            flatten: true,
-          }) as { sessionId: string };
+          // Per-candidate timeout to skip unresponsive tabs quickly
+          let attachTid: ReturnType<typeof setTimeout>;
+          const { sessionId } = await Promise.race([
+            session.send('Target.attachToTarget', {
+              targetId: candidate.targetId,
+              flatten: true,
+            }).finally(() => clearTimeout(attachTid)),
+            new Promise<never>((_, reject) => {
+              attachTid = setTimeout(() => reject(new Error('cookie scan: attach timeout')), DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS);
+            }),
+          ]) as { sessionId: string };
           attachedSessionId = sessionId;
 
-          // Send Network.getAllCookies through the flat CDP session
-          const result = await session.send('Network.getAllCookies' as any, undefined, { sessionId } as any) as {
-            cookies: CookieEntry[];
-          };
+          // Send Network.getAllCookies through the flat CDP session (with per-target timeout)
+          let cookiesTid: ReturnType<typeof setTimeout>;
+          const result = await Promise.race([
+            (session.send('Network.getAllCookies' as any, undefined, { sessionId } as any) as Promise<{ cookies: CookieEntry[] }>).finally(() => clearTimeout(cookiesTid)),
+            new Promise<never>((_, reject) => {
+              cookiesTid = setTimeout(() => reject(new Error('cookie scan: getAllCookies timeout')), DEFAULT_COOKIE_SCAN_PER_TARGET_TIMEOUT_MS);
+            }),
+          ]) as { cookies: CookieEntry[] };
           const cookieCount = result?.cookies?.length || 0;
 
           if (cookieCount > 0) {
@@ -564,7 +782,7 @@ export class CDPClient {
             return candidate.targetId;
           }
         } catch {
-          // Target may be unresponsive or already detached — skip
+          // Target may be unresponsive, timed out, or already detached — skip
         } finally {
           if (attachedSessionId) {
             await session.send('Target.detachFromTarget', { sessionId: attachedSessionId }).catch(() => {});
@@ -708,17 +926,38 @@ export class CDPClient {
 
     if (context) {
       // Create page in isolated context (for worker isolation)
-      page = await context.newPage();
+      let newPageTid1: ReturnType<typeof setTimeout>;
+      page = await Promise.race([
+        context.newPage().finally(() => clearTimeout(newPageTid1)),
+        new Promise<never>((_, reject) => {
+          newPageTid1 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
+        }),
+      ]) as Page;
     } else {
       // Create page in Chrome's default context
-      page = await browser.newPage();
+      let newPageTid2: ReturnType<typeof setTimeout>;
+      page = await Promise.race([
+        browser.newPage().finally(() => clearTimeout(newPageTid2)),
+        new Promise<never>((_, reject) => {
+          newPageTid2 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
+        }),
+      ]) as Page;
 
       // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
-      // CDP session conflicts and unnecessary overhead on about:blank pages)
+      // CDP session conflicts and unnecessary overhead on about:blank pages).
+      // Overall timeout prevents cascading hangs from unresponsive source tabs.
       if (!skipCookieBridge) {
         const authPageTargetId = await this.findAuthenticatedPageTargetId(targetDomain);
         if (authPageTargetId) {
-          await this.copyCookiesViaCDP(authPageTargetId, page);
+          await Promise.race([
+            this.copyCookiesViaCDP(authPageTargetId, page),
+            new Promise<void>((resolve) =>
+              setTimeout(() => {
+                console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
+                resolve();
+              }, DEFAULT_COOKIE_COPY_TIMEOUT_MS),
+            ),
+          ]);
         }
       }
     }
@@ -726,8 +965,11 @@ export class CDPClient {
     // Index page for O(1) target-to-page lookups (replaces eager targetcreated indexing)
     this.targetIdIndex.set(getTargetId(page.target()), page);
 
-    // Set default viewport for consistent debugging experience
-    await page.setViewport(CDPClient.DEFAULT_VIEWPORT);
+    // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
+    await Promise.race([
+      page.setViewport(CDPClient.DEFAULT_VIEWPORT),
+      new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS)),
+    ]);
 
     if (url) {
       try {
@@ -768,7 +1010,10 @@ export class CDPClient {
 
     for (const target of targets) {
       if (getTargetId(target) === targetId && target.type() === 'page') {
-        const page = await target.page();
+        const page = await Promise.race([
+          target.page(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+        ]);
         if (page) {
           // Populate index for future lookups
           this.targetIdIndex.set(targetId, page);

@@ -189,17 +189,27 @@ const handler: ToolHandler = async (
     try {
       if (captureMode === 'screenshot' || captureMode === 'both') {
         try {
-          const cdpSession = await (page as any).target().createCDPSession();
-          try {
-            const { data } = await cdpSession.send('Page.captureScreenshot', {
-              format: 'webp',
-              quality: DEFAULT_SCREENSHOT_QUALITY,
-              optimizeForSpeed: true,
-            });
-            result.screenshot = data;
+          const screenshotData = await Promise.race([
+            (async () => {
+              const cdpSession = await (page as any).target().createCDPSession();
+              try {
+                const { data } = await cdpSession.send('Page.captureScreenshot', {
+                  format: 'webp',
+                  quality: DEFAULT_SCREENSHOT_QUALITY,
+                  optimizeForSpeed: true,
+                });
+                return data as string;
+              } finally {
+                await cdpSession.detach().catch(() => {});
+              }
+            })(),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+          ]);
+          if (screenshotData !== null) {
+            result.screenshot = screenshotData;
             result.screenshotMimeType = 'image/webp';
-          } finally {
-            await cdpSession.detach().catch(() => {});
+          } else {
+            throw new Error('Screenshot timed out');
           }
         } catch {
           // Fallback to Puppeteer PNG

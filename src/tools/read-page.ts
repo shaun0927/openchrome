@@ -56,6 +56,10 @@ const definition: MCPToolDefinition = {
         enum: ['ax', 'dom', 'css'],
         description: 'Output mode: "ax" for accessibility tree (default), "dom" for compact DOM, "css" for CSS diagnostics (variables, computed styles, framework detection)',
       },
+      includePagination: {
+        type: 'boolean',
+        description: 'Whether to detect and include pagination info in the output (default: true)',
+      },
     },
     required: ['tabId'],
   },
@@ -274,9 +278,10 @@ const handler: ToolHandler = async (
       }
 
       const cssText = lines.join('\n');
-      const cssPagination = await detectPagination(page, tabId);
+      const includePagination = args.includePagination !== false;
+      const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: cssText + formatPaginationSection(cssPagination) }],
+        content: [{ type: 'text', text: cssText + cssPaginationSection }],
       };
     }
 
@@ -294,9 +299,10 @@ const handler: ToolHandler = async (
         outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
       }
 
-      const domPagination = await detectPagination(page, tabId);
+      const includePaginationDom = args.includePagination !== false;
+      const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: outputText + formatPaginationSection(domPagination) }],
+        content: [{ type: 'text', text: outputText + domPaginationSection }],
       };
     }
 
@@ -454,8 +460,8 @@ const handler: ToolHandler = async (
     }
 
     const output = lines.join('\n');
-    const axPagination = await detectPagination(page, tabId);
-    const axPaginationSection = formatPaginationSection(axPagination);
+    const includePaginationAx = args.includePagination !== false;
+    const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
 
     if (charCount > MAX_OUTPUT) {
       return {

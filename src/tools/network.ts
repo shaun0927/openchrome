@@ -111,20 +111,73 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get CDP session
-    const client = await page.createCDPSession();
+    // Preset network conditions
+    const presetConfig = NETWORK_PRESETS[preset];
+    if (preset !== 'clear' && preset !== 'custom' && !presetConfig) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: Unknown preset "${preset}". Available: ${Object.keys(NETWORK_PRESETS).join(', ')}`,
+          },
+        ],
+        isError: true,
+      };
+    }
 
-    // Clear network conditions
+    // Custom network conditions validation
+    if (preset === 'custom') {
+      if (downloadKbps === undefined || uploadKbps === undefined || latencyMs === undefined) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'Error: custom preset requires downloadKbps, uploadKbps, and latencyMs',
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    // Apply network conditions via CDP with 5s timeout
+    let networkTid: ReturnType<typeof setTimeout>;
+    await Promise.race([
+      (async () => {
+        const client = await page.createCDPSession();
+        try {
+          if (preset === 'clear') {
+            await client.send('Network.emulateNetworkConditions', {
+              offline: false,
+              downloadThroughput: -1,
+              uploadThroughput: -1,
+              latency: 0,
+            });
+          } else if (preset === 'custom') {
+            await client.send('Network.emulateNetworkConditions', {
+              offline: false,
+              downloadThroughput: (downloadKbps! * 1024) / 8,
+              uploadThroughput: (uploadKbps! * 1024) / 8,
+              latency: latencyMs!,
+            });
+          } else {
+            await client.send('Network.emulateNetworkConditions', {
+              offline: preset === 'offline',
+              downloadThroughput: presetConfig.downloadThroughput,
+              uploadThroughput: presetConfig.uploadThroughput,
+              latency: presetConfig.latency,
+            });
+          }
+        } finally {
+          await client.detach().catch(() => {});
+        }
+      })().finally(() => clearTimeout(networkTid)),
+      new Promise<never>((_, reject) => {
+        networkTid = setTimeout(() => reject(new Error('Network CDP operation timed out')), 5000);
+      }),
+    ]);
+
     if (preset === 'clear') {
-      await client.send('Network.emulateNetworkConditions', {
-        offline: false,
-        downloadThroughput: -1,
-        uploadThroughput: -1,
-        latency: 0,
-      });
-
-      await client.detach();
-
       return {
         content: [
           {
@@ -138,29 +191,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Custom network conditions
     if (preset === 'custom') {
-      if (downloadKbps === undefined || uploadKbps === undefined || latencyMs === undefined) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: 'Error: custom preset requires downloadKbps, uploadKbps, and latencyMs',
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      await client.send('Network.emulateNetworkConditions', {
-        offline: false,
-        downloadThroughput: (downloadKbps * 1024) / 8,
-        uploadThroughput: (uploadKbps * 1024) / 8,
-        latency: latencyMs,
-      });
-
-      await client.detach();
-
       return {
         content: [
           {
@@ -176,29 +207,6 @@ const handler: ToolHandler = async (
         ],
       };
     }
-
-    // Preset network conditions
-    const presetConfig = NETWORK_PRESETS[preset];
-    if (!presetConfig) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error: Unknown preset "${preset}". Available: ${Object.keys(NETWORK_PRESETS).join(', ')}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    await client.send('Network.emulateNetworkConditions', {
-      offline: preset === 'offline',
-      downloadThroughput: presetConfig.downloadThroughput,
-      uploadThroughput: presetConfig.uploadThroughput,
-      latency: presetConfig.latency,
-    });
-
-    await client.detach();
 
     const downloadMbps = ((presetConfig.downloadThroughput * 8) / 1024 / 1024).toFixed(2);
     const uploadMbps = ((presetConfig.uploadThroughput * 8) / 1024 / 1024).toFixed(2);

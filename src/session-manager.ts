@@ -13,7 +13,7 @@ import { getGlobalConfig } from './config/global';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
 import { smartGoto } from './utils/smart-goto';
-import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD } from './config/defaults';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD, DEFAULT_CREATE_TARGET_TIMEOUT_MS, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS } from './config/defaults';
 import * as os from 'os';
 import { BrowserRouter } from './router';
 import { HybridConfig } from './types/browser-backend';
@@ -118,6 +118,15 @@ export class SessionManager {
     // Register target destroyed listener
     this.cdpClient.addTargetDestroyedListener((targetId) => {
       this.onTargetClosed(targetId);
+    });
+
+    // Validate stale targets after reconnection
+    this.cdpClient.addConnectionListener((event) => {
+      if (event.type === 'reconnected') {
+        this.validateTargetsAfterReconnect().catch((err) => {
+          console.error('[SessionManager] Post-reconnect target validation failed:', err);
+        });
+      }
     });
 
     // Store storage state config if enabled
@@ -653,6 +662,20 @@ export class SessionManager {
     url?: string,
     workerId?: string
   ): Promise<{ targetId: string; page: Page; workerId: string }> {
+    let createTargetTid: ReturnType<typeof setTimeout>;
+    return Promise.race([
+      this._createTargetImpl(sessionId, url, workerId).finally(() => clearTimeout(createTargetTid)),
+      new Promise<never>((_, reject) => {
+        createTargetTid = setTimeout(() => reject(new Error(`createTarget timed out after ${DEFAULT_CREATE_TARGET_TIMEOUT_MS}ms`)), DEFAULT_CREATE_TARGET_TIMEOUT_MS);
+      }),
+    ]);
+  }
+
+  private async _createTargetImpl(
+    sessionId: string,
+    url?: string,
+    workerId?: string
+  ): Promise<{ targetId: string; page: Page; workerId: string }> {
     await this.ensureConnected();
 
     const worker = await this.getOrCreateWorker(sessionId, workerId);
@@ -691,15 +714,20 @@ export class SessionManager {
         }
         // Copy cookies from the worker's browser context if available
         // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
-        if (worker.context) {
-          try {
-            const cookies = await worker.context.cookies();
-            if (cookies.length > 0) {
-              await poolPage.setCookie(...cookies);
-            }
-          } catch {
-            // Best-effort cookie copy
-          }
+        try {
+          await Promise.race([
+            (async () => {
+              if (worker.context) {
+                const cookies = await worker.context.cookies();
+                if (cookies.length > 0) {
+                  await poolPage.setCookie(...cookies);
+                }
+              }
+            })(),
+            new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS)),
+          ]);
+        } catch {
+          console.error('[SessionManager] Cookie context copy timed out, continuing without cookies');
         }
         page = poolPage;
         console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);
@@ -840,6 +868,12 @@ export class SessionManager {
     const ownerInfo = this.targetToWorker.get(targetId);
 
     if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
+      // Fallback: target may exist in Chrome but not in our tracking map.
+      // This happens after cross-origin navigation (e.g., OAuth redirect) where
+      // Chrome replaces the renderer process, creating a new target that we missed
+      // (we skip targetcreated indexing to prevent ghost tabs).
+      const recovered = await this.tryRecoverTarget(sessionId, targetId, workerId);
+      if (recovered) return recovered;
       throw new Error(`Target ${targetId} does not belong to session ${sessionId}`);
     }
 
@@ -866,6 +900,49 @@ export class SessionManager {
       return page;
     } catch {
       this.onTargetClosed(targetId);
+      return null;
+    }
+  }
+
+  /**
+   * Attempt to recover an untracked target that exists in Chrome.
+   * Cross-origin navigations (OAuth, SSO) can cause Chrome to replace the target
+   * without OpenChrome tracking the new one (we skip targetcreated indexing to
+   * prevent ghost tabs). This fallback re-registers valid targets.
+   */
+  private async tryRecoverTarget(sessionId: string, targetId: string, workerId?: string): Promise<Page | null> {
+    try {
+      const page = await this.cdpClient.getPageByTargetId(targetId);
+      if (!page || page.isClosed()) return null;
+
+      // Safety: reject internal Chrome pages to prevent session hijacking
+      const pageUrl = page.url();
+      if (pageUrl.startsWith('chrome://') || pageUrl.startsWith('chrome-extension://')) {
+        console.error(`[SessionManager] Rejecting recovery of internal Chrome page: ${pageUrl.slice(0, 50)}`);
+        return null;
+      }
+
+      const session = this.sessions.get(sessionId);
+      if (!session) return null;
+
+      const resolvedWorkerId = workerId || session.defaultWorkerId;
+      const worker = session.workers.get(resolvedWorkerId);
+      if (!worker) return null;
+
+      // Safety: only recover into sessions that have at least one active target,
+      // confirming they have been actively used (not a stale or rogue session).
+      if (worker.targets.size === 0 && session.workers.size <= 1) {
+        console.error(`[SessionManager] Rejecting recovery into empty session ${sessionId}`);
+        return null;
+      }
+
+      // Re-register the target
+      worker.targets.add(targetId);
+      this.targetToWorker.set(targetId, { sessionId, workerId: resolvedWorkerId });
+      console.error(`[SessionManager] Recovered untracked target ${targetId.slice(0, 8)} (${pageUrl.slice(0, 50)}) into session ${sessionId} worker ${resolvedWorkerId}`);
+
+      return page;
+    } catch {
       return null;
     }
   }
@@ -1068,6 +1145,44 @@ export class SessionManager {
           timestamp: Date.now(),
         });
       }
+    }
+  }
+
+  /**
+   * Validate all tracked targets after a reconnection.
+   * Removes targets that no longer exist in Chrome, keeping valid ones intact.
+   */
+  private async validateTargetsAfterReconnect(): Promise<void> {
+    const trackedTargetIds = Array.from(this.targetToWorker.keys());
+    if (trackedTargetIds.length === 0) return;
+
+    // Get currently alive targets from Chrome
+    let browser;
+    try {
+      browser = this.cdpClient.getBrowser();
+    } catch {
+      // Browser not yet available after reconnect — skip validation
+      return;
+    }
+    const aliveTargetIds = new Set(
+      browser.targets()
+        .filter(t => t.type() === 'page')
+        .map(t => getTargetId(t))
+    );
+
+    let removed = 0;
+    for (const targetId of trackedTargetIds) {
+      if (!this.targetToWorker.has(targetId)) continue; // Already cleaned by targetdestroyed
+      if (!aliveTargetIds.has(targetId)) {
+        this.onTargetClosed(targetId);
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      console.error(`[SessionManager] Post-reconnect cleanup: removed ${removed} stale target(s), ${trackedTargetIds.length - removed} still alive`);
+    } else {
+      console.error(`[SessionManager] Post-reconnect validation: all ${trackedTargetIds.length} target(s) still alive`);
     }
   }
 

@@ -45,9 +45,15 @@ const handler: ToolHandler = async (
 
   try {
     // Step 1: Clean up all sessions (closes workers, tabs, browser contexts)
-    const sessionManager = getSessionManager();
-    const sessionCount = await sessionManager.cleanupAllSessions();
-    steps.push(`Cleaned up ${sessionCount} session(s)`);
+    // Wrapped in its own try/catch so a broken CDP connection doesn't prevent
+    // the remaining steps (pool shutdown, CDP disconnect, Chrome kill) from running.
+    try {
+      const sessionManager = getSessionManager();
+      const sessionCount = await sessionManager.cleanupAllSessions();
+      steps.push(`Cleaned up ${sessionCount} session(s)`);
+    } catch (e) {
+      steps.push(`Session cleanup failed: ${e instanceof Error ? e.message : 'error'} (skipped, continuing)`);
+    }
 
     // Step 2: Shutdown connection pool (closes all pooled about:blank pages)
     try {

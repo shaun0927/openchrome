@@ -103,7 +103,8 @@ The hint engine watches every tool call across 6 layers — error recovery, comp
 npx openchrome-mcp setup
 ```
 
-That's it. Say `oc` to your AI agent.
+One command. Configures MCP server + auto-approves tool permissions.
+Restart Claude Code, then say `oc`.
 
 <details>
 <summary>Manual config</summary>

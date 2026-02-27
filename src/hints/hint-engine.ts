@@ -24,12 +24,14 @@ import { repetitionDetectionRules } from './rules/repetition-detection';
 import { paginationDetectionRules } from './rules/pagination-detection';
 import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
+import { setupHintRules } from './rules/setup-hints';
 
 export interface HintContext {
   toolName: string;
   resultText: string;
   isError: boolean;
   recentCalls: ToolCallEvent[];
+  fireCounts: Map<string, number>;
 }
 
 export interface HintRule {
@@ -73,6 +75,7 @@ export class HintEngine {
   private learner: PatternLearner;
   private logFilePath: string | null = null;
   private hintEscalation: Map<string, number> = new Map(); // ruleName -> session fire count
+  private missCounts: Map<string, number> = new Map(); // ruleName -> consecutive miss count
 
   // Buffered async write stream
   private logStream: fs.WriteStream | null = null;
@@ -87,7 +90,8 @@ export class HintEngine {
     // Collect all rules and sort by priority (ascending = highest priority first)
     // Learned rules (350) sit between repetition (250) and success hints (400)
     this.rules = [
-      ...errorRecoveryRules,        // priority 100-108
+      ...setupHintRules,             // priority 90
+      ...errorRecoveryRules,         // priority 100-108
       ...paginationDetectionRules,   // priority 190-192
       ...compositeSuggestionRules,   // priority 200-203
       ...repetitionDetectionRules,   // priority 245-252
@@ -135,7 +139,7 @@ export class HintEngine {
     const resultText = this.extractText(result);
     const recentCalls = this.activityTracker.getRecentCalls(5);
 
-    const ctx: HintContext = { toolName, resultText, isError, recentCalls };
+    const ctx: HintContext = { toolName, resultText, isError, recentCalls, fireCounts: this.hintEscalation };
 
     let matchedRule: string | null = null;
     let rawHint: string | null = null;
@@ -145,7 +149,17 @@ export class HintEngine {
       if (h) {
         matchedRule = rule.name;
         rawHint = h;
+        // Reset miss count on match
+        this.missCounts.set(rule.name, 0);
         break;
+      } else {
+        // Increment miss count; after 10 consecutive misses, decay fire count to 0
+        const misses = (this.missCounts.get(rule.name) || 0) + 1;
+        this.missCounts.set(rule.name, misses);
+        if (misses >= 10) {
+          this.hintEscalation.set(rule.name, 0);
+          this.missCounts.set(rule.name, 0);
+        }
       }
     }
 

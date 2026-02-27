@@ -381,6 +381,7 @@ const handler: ToolHandler = async (
             text: `No elements found matching "${query}"`,
           },
         ],
+        isError: true,
       };
     }
 
