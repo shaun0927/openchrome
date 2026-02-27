@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-const PACKAGE_NAME = 'openchrome';
+const PACKAGE_NAME = 'openchrome-mcp';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface UpdateCache {
@@ -106,8 +106,8 @@ export async function checkForUpdates(currentVersion: string): Promise<void> {
 
     if (latestVersion && compareVersions(currentVersion, latestVersion) < 0) {
       console.error('');
-      console.error(`  Update available: ${currentVersion} → ${latestVersion}`);
-      console.error(`  Run: npm update -g ${PACKAGE_NAME}`);
+      console.error(`  ⬆ Update available: ${currentVersion} → ${latestVersion}`);
+      console.error(`  Run: npx openchrome-mcp@latest setup`);
       console.error('');
     }
   } catch {
