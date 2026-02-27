@@ -24,6 +24,7 @@ import { repetitionDetectionRules } from './rules/repetition-detection';
 import { paginationDetectionRules } from './rules/pagination-detection';
 import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
+import { setupHintRules } from './rules/setup-hints';
 
 export interface HintContext {
   toolName: string;
@@ -89,7 +90,8 @@ export class HintEngine {
     // Collect all rules and sort by priority (ascending = highest priority first)
     // Learned rules (350) sit between repetition (250) and success hints (400)
     this.rules = [
-      ...errorRecoveryRules,        // priority 100-108
+      ...setupHintRules,             // priority 90
+      ...errorRecoveryRules,         // priority 100-108
       ...paginationDetectionRules,   // priority 190-192
       ...compositeSuggestionRules,   // priority 200-203
       ...repetitionDetectionRules,   // priority 245-252

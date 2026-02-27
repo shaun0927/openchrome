@@ -121,7 +121,42 @@ program
     try {
       execSync(fullCommand, { stdio: 'inherit' });
       console.log('\n✅ MCP server configured successfully!\n');
-      console.log(`Scope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}\n`);
+
+      // Configure tool permissions in ~/.claude/settings.json
+      const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+      const permissionEntry = 'mcp__openchrome__*';
+      try {
+        let settings: Record<string, unknown> = {};
+        if (fs.existsSync(settingsPath)) {
+          settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+        } else {
+          // Ensure ~/.claude/ directory exists
+          fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+        }
+
+        // Ensure permissions.allow array exists
+        if (!settings.permissions || typeof settings.permissions !== 'object') {
+          settings.permissions = {};
+        }
+        const permissions = settings.permissions as Record<string, unknown>;
+        if (!Array.isArray(permissions.allow)) {
+          permissions.allow = [];
+        }
+        const allowList = permissions.allow as string[];
+
+        if (allowList.includes(permissionEntry)) {
+          console.log('✓ Tool permissions already configured (auto-approve OpenChrome tools)');
+        } else {
+          allowList.push(permissionEntry);
+          fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+          console.log('✓ Tool permissions configured (auto-approve OpenChrome tools)');
+        }
+      } catch (permError) {
+        console.warn('⚠️  Could not configure tool permissions automatically.');
+        console.warn(`   Manually add "${permissionEntry}" to permissions.allow in ${settingsPath}`);
+      }
+
+      console.log(`\nScope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}`);
       console.log('Auto-updates: enabled (via npx)\n');
       console.log('Next steps:');
       console.log('  1. Restart Claude Code');
