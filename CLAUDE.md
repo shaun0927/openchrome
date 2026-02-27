@@ -24,6 +24,10 @@ This project provides browser automation tools (openchrome).
 
 Browser automation has high context usage. Use as last resort.
 
+## Dependency Management
+
+When modifying `package.json` (adding/removing/updating dependencies), you **MUST** run `npm install` afterwards to sync `package-lock.json`. Always commit both files together. Failing to do this breaks `npm ci` in CI and blocks all builds across every OS and Node version.
+
 ## Parallel Browser Workflow
 
 When 2+ independent browser tasks are requested with parallel intent ("동시에", "병렬로", "parallel"):
