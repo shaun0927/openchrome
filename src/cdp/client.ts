@@ -995,6 +995,33 @@ export class CDPClient {
   }
 
   /**
+   * Rebuild the targetIdIndex from currently alive browser targets.
+   * Called after CDP reconnection to restore O(1) target-to-page lookups
+   * for targets that survived the disconnect.
+   */
+  async rebuildTargetIdIndex(): Promise<number> {
+    // Build into a fresh Map, then swap atomically to avoid a window
+    // where concurrent getPageByTargetId() calls miss the fast path.
+    const newIndex = new Map<string, Page>();
+    let indexed = 0;
+    try {
+      const browser = this.getBrowser();
+      const pages = await browser.pages();
+      for (const page of pages) {
+        if (!page.isClosed()) {
+          const targetId = getTargetId(page.target());
+          newIndex.set(targetId, page);
+          indexed++;
+        }
+      }
+    } catch (err) {
+      console.error('[CDPClient] rebuildTargetIdIndex failed, will rebuild lazily:', err);
+    }
+    this.targetIdIndex = newIndex; // atomic swap
+    return indexed;
+  }
+
+  /**
    * Get page by target ID
    */
   async getPageByTargetId(targetId: string): Promise<Page | null> {
