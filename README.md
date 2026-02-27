@@ -111,7 +111,7 @@ Restart Claude Code, then say `oc`.
 
 **Claude Code:**
 ```bash
-claude mcp add openchrome -- npx -y openchrome-mcp serve --auto-launch
+claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
 ```
 
 **VS Code / Copilot** (`.vscode/mcp.json`):
@@ -121,7 +121,7 @@ claude mcp add openchrome -- npx -y openchrome-mcp serve --auto-launch
     "openchrome": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "openchrome-mcp", "serve", "--auto-launch"]
+      "args": ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
     }
   }
 }
@@ -133,7 +133,7 @@ claude mcp add openchrome -- npx -y openchrome-mcp serve --auto-launch
   "mcpServers": {
     "openchrome": {
       "command": "npx",
-      "args": ["-y", "openchrome-mcp", "serve", "--auto-launch"]
+      "args": ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
     }
   }
 }
