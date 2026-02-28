@@ -84,6 +84,9 @@ const handler: ToolHandler = async (
       // Resolve ~ to home directory
       if (filePath.startsWith('~')) {
         resolvedPath = path.join(os.homedir(), filePath.slice(1));
+      } else if (process.platform === 'win32' && filePath.startsWith('%USERPROFILE%')) {
+        const rest = filePath.slice('%USERPROFILE%'.length).replace(/^[/\\]+/, '');
+        resolvedPath = path.join(os.homedir(), rest);
       } else if (!path.isAbsolute(filePath)) {
         resolvedPath = path.resolve(filePath);
       }

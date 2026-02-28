@@ -166,7 +166,7 @@ export function listBackups(
   }
 
   const basename = path.basename(originalFilename);
-  const pattern = new RegExp(`^${basename.replace('.', '\\.')}\\..*\\.bak$`);
+  const pattern = new RegExp(`^${basename.replace(/\./g, '\\.')}\\..*\\.bak$`);
 
   return fs
     .readdirSync(targetDir)

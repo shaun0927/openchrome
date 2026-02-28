@@ -104,6 +104,11 @@ program
     };
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
+    // Windows: closing the console window sends CTRL_CLOSE_EVENT mapped to SIGHUP by libuv.
+    // Node.js will be force-killed by Windows ~5-10s later; shutdown() is best-effort.
+    if (process.platform === 'win32') {
+      process.on('SIGHUP', () => shutdown('SIGHUP'));
+    }
     server.start();
   });
 

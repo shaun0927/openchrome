@@ -1412,7 +1412,7 @@ export class SessionManager {
     if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
       throw new Error(`Invalid sessionId for storage path: ${sessionId}`);
     }
-    const dir = this.storageStateConfig?.dir || '.openchrome/storage-state';
+    const dir = this.storageStateConfig?.dir || path.join(os.homedir(), '.openchrome', 'storage-state');
     return path.join(dir, `${sessionId}.json`);
   }
 
