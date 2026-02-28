@@ -2,7 +2,7 @@
  * Chrome Launcher - Manages Chrome process with remote debugging
  */
 
-import { spawn, ChildProcess, execSync } from 'child_process';
+import { spawn, ChildProcess, execSync, execFileSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -383,17 +383,10 @@ export class ChromeLauncher {
       console.error('[ChromeLauncher] CI/Docker detected: sandbox disabled');
     }
 
-    // Validate chromePath has no shell metacharacters when using shell:true on Windows.
-    // chromePath comes from findChromePath() (filesystem-verified) or globalConfig.chromeBinary
-    // (user-controlled via CLI --chrome-binary or CHROME_BINARY env var).
-    if (process.platform === 'win32' && /[&|;<>"`^]/.test(chromePath)) {
-      throw new Error(`Invalid characters in Chrome path (possible injection): ${chromePath}`);
-    }
-
     const chromeProcess = spawn(chromePath, args, {
       detached: true,
       stdio: ['ignore', 'ignore', 'ignore'],
-      shell: process.platform === 'win32',
+      // shell: false is safe on all platforms; avoids cmd.exe injection risks on Windows
     });
 
     chromeProcess.unref();
@@ -530,7 +523,8 @@ export class ChromeLauncher {
       const profileDir = path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
       if (fs.existsSync(profileDir)) return profileDir;
     } else if (platform === 'win32') {
-      const profileDir = path.join(home, 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
+      const localAppData = process.env['LOCALAPPDATA'] || path.join(home, 'AppData', 'Local');
+      const profileDir = path.join(localAppData, 'Google', 'Chrome', 'User Data');
       if (fs.existsSync(profileDir)) return profileDir;
     } else {
       // Linux
@@ -613,7 +607,7 @@ export class ChromeLauncher {
     const platform = os.platform();
     try {
       if (platform === 'darwin') {
-        execSync('pgrep -x "Google Chrome"', { stdio: 'ignore' });
+        execFileSync('pgrep', ['-x', 'Google Chrome'], { stdio: 'ignore' });
         return true;
       } else if (platform === 'win32') {
         const output = execSync('tasklist /FI "IMAGENAME eq chrome.exe" /NH', {
@@ -622,14 +616,16 @@ export class ChromeLauncher {
         });
         return output.toLowerCase().includes('chrome.exe');
       } else {
-        // Linux: try chrome first, then google-chrome
-        try {
-          execSync('pgrep -x chrome', { stdio: 'ignore' });
-          return true;
-        } catch {
-          execSync('pgrep -x google-chrome', { stdio: 'ignore' });
-          return true;
+        const linuxNames = ['chrome', 'google-chrome', 'chromium', 'chromium-browser'];
+        for (const name of linuxNames) {
+          try {
+            execFileSync('pgrep', ['-x', name], { stdio: 'ignore' });
+            return true;
+          } catch {
+            // try next
+          }
         }
+        return false;
       }
     } catch {
       return false;
@@ -649,11 +645,8 @@ export class ChromeLauncher {
         // taskkill without /F sends WM_CLOSE for graceful shutdown
         execSync('taskkill /IM chrome.exe', { stdio: 'ignore' });
       } else {
-        // Linux: try both process names
-        try {
-          execSync('pkill -TERM chrome', { stdio: 'ignore' });
-        } catch {
-          execSync('pkill -TERM google-chrome', { stdio: 'ignore' });
+        for (const name of ['chrome', 'google-chrome', 'chromium', 'chromium-browser']) {
+          try { execFileSync('pkill', ['-TERM', name], { stdio: 'ignore' }); } catch { /* not running under this name */ }
         }
       }
     } catch {
