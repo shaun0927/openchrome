@@ -273,9 +273,11 @@ const handler: ToolHandler = async (
           } else {
             // For text inputs/textareas
             if (clearFirst) {
-              await page.keyboard.down('Control');
+              // Use Meta on macOS, Control on other platforms
+              const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+              await page.keyboard.down(modifier);
               await page.keyboard.press('KeyA');
-              await page.keyboard.up('Control');
+              await page.keyboard.up(modifier);
               await page.keyboard.press('Backspace');
             }
             await page.keyboard.type(String(fieldValue));

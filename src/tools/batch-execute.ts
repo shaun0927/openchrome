@@ -119,6 +119,7 @@ const handler: ToolHandler = async (
   }
 
   const sessionManager = getSessionManager();
+  const cdpClient = sessionManager.getCDPClient();
   const limiter = createLimiter(concurrency);
   const startTime = Date.now();
   let aborted = false;
@@ -151,60 +152,70 @@ const handler: ToolHandler = async (
 
       const timeout = task.timeout || 30000;
 
-      // Execute with timeout
-      const result = await Promise.race([
-        page.evaluate(async (jsCode: string): Promise<{ success: boolean; value?: string; error?: string }> => {
-          try {
-            let evalResult = (0, eval)(jsCode);
-            if (evalResult && typeof evalResult === 'object' && typeof evalResult.then === 'function') {
-              evalResult = await evalResult;
-            }
-            if (evalResult === undefined) {
-              return { success: true, value: 'undefined' };
-            } else if (evalResult === null) {
-              return { success: true, value: 'null' };
-            } else if (typeof evalResult === 'function') {
-              return { success: true, value: '[Function]' };
-            } else if (typeof evalResult === 'symbol') {
-              return { success: true, value: evalResult.toString() };
-            } else {
-              try {
-                return { success: true, value: JSON.stringify(evalResult, null, 2) };
-              } catch {
-                return { success: true, value: String(evalResult) };
-              }
-            }
-          } catch (e) {
-            return {
-              success: false,
-              error: e instanceof Error ? e.message : String(e),
-            };
-          }
-        }, task.script),
-        new Promise<{ success: false; error: string }>((resolve) =>
-          setTimeout(() => resolve({ success: false, error: `Timeout after ${timeout}ms` }), timeout)
-        ),
+      // Execute via CDP Runtime.evaluate with full await support
+      let tid: ReturnType<typeof setTimeout>;
+      const cdpResult = await Promise.race([
+        cdpClient.send<{
+          result: {
+            type: string;
+            subtype?: string;
+            value?: unknown;
+            description?: string;
+            className?: string;
+          };
+          exceptionDetails?: {
+            text: string;
+            exception?: { description?: string };
+          };
+        }>(page, 'Runtime.evaluate', {
+          expression: task.script,
+          returnByValue: true,
+          awaitPromise: true,
+          userGesture: true,
+        }).finally(() => clearTimeout(tid)),
+        new Promise<never>((_, reject) => {
+          tid = setTimeout(() => reject(new Error(`Timeout after ${timeout}ms`)), timeout);
+        }),
       ]);
 
-      if (!result.success) {
+      if (cdpResult.exceptionDetails) {
+        const errorMsg =
+          cdpResult.exceptionDetails.exception?.description ||
+          cdpResult.exceptionDetails.text ||
+          'Unknown error';
         if (failFast) aborted = true;
         return {
           tabId: task.tabId,
           workerId,
           success: false,
-          error: result.error,
+          error: errorMsg,
           durationMs: Date.now() - taskStart,
         };
       }
 
-      // Parse JSON result back if possible
-      let data: unknown = result.value;
-      if (typeof result.value === 'string') {
-        try {
-          data = JSON.parse(result.value);
-        } catch {
-          data = result.value;
+      // Format result value
+      const evalResult = cdpResult.result;
+      let resultValue: string;
+      if (evalResult.type === 'undefined') {
+        resultValue = 'undefined';
+      } else if (evalResult.value !== undefined) {
+        if (typeof evalResult.value === 'object') {
+          resultValue = JSON.stringify(evalResult.value, null, 2);
+        } else {
+          resultValue = String(evalResult.value);
         }
+      } else if (evalResult.description) {
+        resultValue = evalResult.description;
+      } else {
+        resultValue = `[${evalResult.type}]`;
+      }
+
+      // Parse JSON result back if possible
+      let data: unknown = resultValue;
+      try {
+        data = JSON.parse(resultValue);
+      } catch {
+        data = resultValue;
       }
 
       return {
