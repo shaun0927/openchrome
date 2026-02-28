@@ -20,7 +20,7 @@ OpenChrome connects to Chrome via the CDP debugging port, which Chrome binds exc
 
 **Opt-in by design**
 
-Users activate OpenChrome by explicitly adding it to their `.mcp.json` configuration file. There is no ambient or automatic activation.
+Users activate OpenChrome by explicitly adding it to their MCP client's configuration (e.g., `.mcp.json`, `.vscode/mcp.json`, or via `claude mcp add`). There is no ambient or automatic activation.
 
 **Trust chain**
 
@@ -48,7 +48,7 @@ Malicious or adversarial web page content could attempt to manipulate an AI agen
 **Mitigations available in OpenChrome:**
 
 - **Domain blocklist** - A configurable blocklist in the global config file allows users to prevent OpenChrome from loading or interacting with specified domains. Sensitive sites (banking portals, password managers, identity providers) should be added to this list.
-- **Audit logging** - All tool invocations are logged. Users can review these logs to detect unexpected or unauthorized actions.
+- **Audit logging** - When enabled via the `--audit-log` flag or `security.audit_log` config, all tool invocations are logged. Users can review these logs to detect unexpected or unauthorized actions.
 
 ---
 
@@ -78,6 +78,7 @@ The following threats are outside OpenChrome's current scope:
 - Ensure no firewall rules or reverse proxies forward external traffic to `localhost:9222`.
 
 **Review audit logs**
+- Enable audit logging first by passing the `--audit-log` flag or setting `security.audit_log` in your config file.
 - Periodically review OpenChrome's audit logs to verify that only expected tool calls were made.
 - Integrate log review into any team or organizational deployment process.
 
@@ -94,8 +95,7 @@ We follow a coordinated (responsible) disclosure policy.
 
 If you discover a security vulnerability in OpenChrome, please report it privately before public disclosure:
 
-- **GitHub Security Advisories** (preferred): Use the "Report a vulnerability" button on the repository's Security tab.
-- **Email**: security@openchrome (placeholder — replace with actual contact before publishing).
+- **GitHub Security Advisories**: Use the "Report a vulnerability" button on the repository's Security tab.
 
 Please include a clear description of the vulnerability, steps to reproduce, and an assessment of impact. We will acknowledge receipt within 3 business days.
 
