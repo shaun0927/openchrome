@@ -104,6 +104,10 @@ program
     };
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
+    // Windows: taskkill /F bypasses SIGTERM; use 'exit' for best-effort synchronous cleanup
+    if (process.platform === 'win32') {
+      process.on('SIGHUP', () => shutdown('SIGHUP'));
+    }
     server.start();
   });
 
