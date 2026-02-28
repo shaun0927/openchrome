@@ -393,7 +393,7 @@ export class ChromeLauncher {
     const chromeProcess = spawn(chromePath, args, {
       detached: true,
       stdio: ['ignore', 'ignore', 'ignore'],
-      shell: process.platform === 'win32',
+      // shell: false is safe on all platforms; avoids cmd.exe injection risks on Windows
     });
 
     chromeProcess.unref();
@@ -530,7 +530,8 @@ export class ChromeLauncher {
       const profileDir = path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
       if (fs.existsSync(profileDir)) return profileDir;
     } else if (platform === 'win32') {
-      const profileDir = path.join(home, 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
+      const localAppData = process.env['LOCALAPPDATA'] || path.join(home, 'AppData', 'Local');
+      const profileDir = path.join(localAppData, 'Google', 'Chrome', 'User Data');
       if (fs.existsSync(profileDir)) return profileDir;
     } else {
       // Linux
@@ -622,14 +623,16 @@ export class ChromeLauncher {
         });
         return output.toLowerCase().includes('chrome.exe');
       } else {
-        // Linux: try chrome first, then google-chrome
-        try {
-          execSync('pgrep -x chrome', { stdio: 'ignore' });
-          return true;
-        } catch {
-          execSync('pgrep -x google-chrome', { stdio: 'ignore' });
-          return true;
+        const linuxNames = ['chrome', 'google-chrome', 'chromium', 'chromium-browser'];
+        for (const name of linuxNames) {
+          try {
+            execSync(`pgrep -x ${name}`, { stdio: 'ignore' });
+            return true;
+          } catch {
+            // try next
+          }
         }
+        return false;
       }
     } catch {
       return false;
@@ -649,11 +652,8 @@ export class ChromeLauncher {
         // taskkill without /F sends WM_CLOSE for graceful shutdown
         execSync('taskkill /IM chrome.exe', { stdio: 'ignore' });
       } else {
-        // Linux: try both process names
-        try {
-          execSync('pkill -TERM chrome', { stdio: 'ignore' });
-        } catch {
-          execSync('pkill -TERM google-chrome', { stdio: 'ignore' });
+        for (const name of ['chrome', 'google-chrome', 'chromium', 'chromium-browser']) {
+          try { execSync(`pkill -TERM ${name}`, { stdio: 'ignore' }); } catch { /* not running under this name */ }
         }
       }
     } catch {
