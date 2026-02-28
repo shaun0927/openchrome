@@ -584,10 +584,15 @@ export class ChromeLauncher {
             if (!isNaN(pid) && pid > 0) {
               try {
                 process.kill(pid, 0); // Signal 0: check if process exists without killing
-              } catch {
-                // PID not alive → stale lock file left by crashed Chrome, skip it
-                console.error(`[ChromeLauncher] Stale lock ignored: ${lockFile} (PID ${pid} not alive)`);
-                continue;
+              } catch (err) {
+                // EPERM means process exists but owned by another user — treat as alive
+                if ((err as NodeJS.ErrnoException).code === 'EPERM') {
+                  // Lock is held by an existing Chrome process — do not skip
+                } else {
+                  // PID not alive → stale lock file left by crashed Chrome, skip it
+                  console.error(`[ChromeLauncher] Stale lock ignored: ${lockFile} (PID ${pid} not alive)`);
+                  continue;
+                }
               }
             }
           } catch {
