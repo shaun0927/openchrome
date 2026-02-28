@@ -357,10 +357,22 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
-      if (text.includes('[Output truncated')) {
-        expect(text).toContain('mode: "dom"');
-        expect(text).toContain('~5-10x fewer tokens');
-      }
+      expect(text).toContain('[Output truncated');
+      expect(text).toContain('mode: "dom"');
+      expect(text).toContain('~5-10x fewer tokens');
+    });
+
+    test('invalid mode returns clear error', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'html',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Invalid mode "html"');
+      expect(result.content[0].text).toContain('Must be "ax", "dom", or "css"');
     });
   });
 
