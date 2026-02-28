@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
+import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_create_mcp',
@@ -41,6 +42,21 @@ const handler: ToolHandler = async (
         {
           type: 'text',
           text: 'Error: url is required. Use navigate tool without tabId to create a new tab with a URL.',
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Domain blocklist check before creating the tab
+  try {
+    assertDomainAllowed(url);
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
         },
       ],
       isError: true,

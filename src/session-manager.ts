@@ -19,6 +19,7 @@ import { BrowserRouter } from './router';
 import { HybridConfig } from './types/browser-backend';
 import { StorageStateManager } from './storage-state';
 import { StorageStateConfig } from './config';
+import { assertDomainAllowed } from './security/domain-guard';
 
 // Helper to get target ID (internal puppeteer property)
 function getTargetId(target: Target): string {
@@ -908,6 +909,9 @@ export class SessionManager {
         this.onTargetClosed(targetId);
         return null;
       }
+
+      // Centralized domain blocklist check — protects ALL tools that call getPage()
+      assertDomainAllowed(page.url());
 
       // Route through BrowserRouter if hybrid mode is active and toolName provided
       if (this.browserRouter && toolName) {

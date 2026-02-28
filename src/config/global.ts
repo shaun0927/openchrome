@@ -26,6 +26,15 @@ export interface GlobalConfig {
     /** Base port for Chrome instances; subsequent instances use basePort+1, +2, etc. (default: 9222) */
     basePort: number;
   };
+  /** Security settings */
+  security?: {
+    /** Domains to block AI agent access to. Supports glob patterns (e.g., "*.bank.com") */
+    blocked_domains?: string[];
+    /** Enable audit logging of tool invocations (default: false) */
+    audit_log?: boolean;
+    /** Custom audit log path (default: ~/.openchrome/audit.log) */
+    audit_log_path?: string;
+  };
   /** Hybrid mode settings (Lightpanda + Chrome routing) */
   hybrid?: {
     /** Enable hybrid mode (default: false) */
