@@ -10,6 +10,7 @@ import { safeTitle } from '../utils/safe-title';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
+import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -49,6 +50,23 @@ const handler: ToolHandler = async (
       content: [{ type: 'text', text: 'Error: url is required' }],
       isError: true,
     };
+  }
+
+  // Domain blocklist check (skip for history navigation commands)
+  if (url !== 'back' && url !== 'forward') {
+    try {
+      assertDomainAllowed(url);
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   }
 
   // If no tabId provided and not a history navigation, create a new tab with the URL

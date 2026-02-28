@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'cookies',
@@ -100,6 +101,9 @@ const handler: ToolHandler = async (
     }
 
     const currentUrl = new URL(page.url());
+
+    // Domain blocklist check
+    assertDomainAllowed(page.url());
 
     switch (action) {
       case 'get': {

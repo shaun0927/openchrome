@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'storage',
@@ -80,6 +81,9 @@ const handler: ToolHandler = async (
         isError: true,
       };
     }
+
+    // Domain blocklist check
+    assertDomainAllowed(page.url());
 
     const storageName = storageType === 'local' ? 'localStorage' : 'sessionStorage';
 
