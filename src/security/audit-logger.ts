@@ -15,6 +15,8 @@ interface AuditEntry {
   args_summary: string;   // brief summary, no sensitive data
 }
 
+let logDirEnsured = false;
+
 // Get log file path
 function getLogPath(): string {
   const config = getGlobalConfig();
@@ -32,12 +34,19 @@ function extractDomain(url?: string): string | null {
   }
 }
 
+const SENSITIVE_KEYS = ['password', 'cookie', 'token', 'secret', 'auth', 'credential', 'value', 'text', 'content'];
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return SENSITIVE_KEYS.some(s => lower.includes(s));
+}
+
 // Summarize args (redact sensitive values)
 function summarizeArgs(args: Record<string, unknown>): string {
   // Include keys like tabId, url, action but redact values of sensitive keys
   const safe: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {
-    if (['password', 'cookie', 'value', 'text'].includes(key.toLowerCase())) {
+    if (isSensitiveKey(key)) {
       safe[key] = '[REDACTED]';
     } else if (typeof value === 'string' && value.length > 100) {
       safe[key] = value.slice(0, 100) + '...';
@@ -64,16 +73,16 @@ export function logAuditEntry(tool: string, sessionId: string, args: Record<stri
   const logDir = path.dirname(logPath);
 
   // Ensure directory exists (first time only)
-  try {
-    if (!fs.existsSync(logDir)) {
+  if (!logDirEnsured) {
+    try {
       fs.mkdirSync(logDir, { recursive: true });
+      logDirEnsured = true;
+    } catch {
+      return; // Non-fatal
     }
-  } catch {
-    // Non-fatal
-    return;
   }
 
   // Non-blocking append
   const line = JSON.stringify(entry) + '\n';
-  fs.appendFile(logPath, line, () => {}); // fire-and-forget
+  fs.appendFile(logPath, line, (err) => { if (err) console.error('[audit-logger] write failed:', err.code); });
 }

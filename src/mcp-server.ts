@@ -497,9 +497,6 @@ export class MCPServer {
       // Audit log successful invocation
       logAuditEntry(toolName, sessionId, toolArgs);
 
-      // Audit log successful invocation
-      logAuditEntry(toolName, sessionId, toolArgs);
-
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
 
