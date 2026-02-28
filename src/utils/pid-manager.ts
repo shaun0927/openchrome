@@ -12,7 +12,9 @@ function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (err) {
+    // EPERM = process exists but we lack permission to signal it (common on Windows)
+    if ((err as NodeJS.ErrnoException).code === 'EPERM') return true;
     return false;
   }
 }
