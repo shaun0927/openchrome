@@ -3,7 +3,7 @@
  * Formats parallel vs sequential benchmark comparison results.
  */
 
-import { BenchmarkReport } from './benchmark-runner';
+import { BenchmarkReport, isParallelTaskResult, ParallelTaskResult } from './benchmark-runner';
 
 export interface ParallelComparisonEntry {
   taskName: string;
@@ -14,6 +14,14 @@ export interface ParallelComparisonEntry {
   parToolCalls: number;
   speedupFactor: number;
   efficiency: number; // speedup / concurrency * 100
+  /** Average phase timings from ParallelTaskResult runs (if available) */
+  phaseTimings?: {
+    initMs: number;
+    executionMs: number;
+    collectMs: number;
+  };
+  /** Average server-side timing from ParallelTaskResult runs (if available) */
+  serverTimingMs?: number;
 }
 
 export interface ScalabilityCurvePoint {
@@ -55,6 +63,20 @@ export function buildComparisons(
       ? seqTask.stats.meanWallTimeMs / parTask.stats.meanWallTimeMs
       : 0;
 
+    // Extract ParallelTaskResult metrics from parallel runs if available
+    const parallelRuns = parTask.runs.filter(isParallelTaskResult);
+    let phaseTimings: ParallelComparisonEntry['phaseTimings'];
+    let serverTimingMs: number | undefined;
+
+    if (parallelRuns.length > 0) {
+      phaseTimings = {
+        initMs: Math.round(parallelRuns.reduce((s, r) => s + r.phaseTimings.initMs, 0) / parallelRuns.length),
+        executionMs: Math.round(parallelRuns.reduce((s, r) => s + r.phaseTimings.executionMs, 0) / parallelRuns.length),
+        collectMs: Math.round(parallelRuns.reduce((s, r) => s + r.phaseTimings.collectMs, 0) / parallelRuns.length),
+      };
+      serverTimingMs = Math.round(parallelRuns.reduce((s, r) => s + r.serverTimingMs, 0) / parallelRuns.length);
+    }
+
     comparisons.push({
       taskName: suffix,
       concurrency,
@@ -66,6 +88,8 @@ export function buildComparisons(
       efficiency: concurrency > 0
         ? Math.round((speedup / concurrency) * 10000) / 100
         : 0,
+      phaseTimings,
+      serverTimingMs,
     });
   }
 
@@ -136,6 +160,26 @@ export function formatComparisonTable(
   }
 
   lines.push(`  ${sep.repeat(74)}`);
+
+  // Phase timing breakdown (if available from ParallelTaskResult data)
+  const withTimings = comparisons.filter((c) => c.phaseTimings);
+  if (withTimings.length > 0) {
+    lines.push('');
+    lines.push('  Phase Breakdown (avg ms):');
+    for (const c of withTimings) {
+      const t = c.phaseTimings!;
+      const total = t.initMs + t.executionMs + t.collectMs;
+      const pct = (ms: number) => total > 0 ? `${Math.round((ms / total) * 100)}%` : '0%';
+      lines.push(
+        '  ' +
+          `${c.concurrency}x`.padEnd(12) +
+          `init: ${t.initMs}ms (${pct(t.initMs)})`.padEnd(22) +
+          `exec: ${t.executionMs}ms (${pct(t.executionMs)})`.padEnd(22) +
+          `collect: ${t.collectMs}ms (${pct(t.collectMs)})`
+      );
+    }
+  }
+
   return lines.join('\n');
 }
 

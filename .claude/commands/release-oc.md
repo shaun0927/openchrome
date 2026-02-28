@@ -194,23 +194,44 @@ Skip this step entirely unless the user explicitly asks for a version bump or pu
 **CRITICAL** — `npm publish` alone does NOT update the local environment.
 Skipping this step causes version mismatch where the MCP server runs old code.
 
+**Root cause**: `npx` caches a semver range (e.g. `^1.4.0`) in `~/.npm/_npx/<hash>/package-lock.json`.
+Even with `@latest`, npx satisfies the range from its local cache without checking the registry.
+You MUST clear this cache after every publish.
+
 ```bash
-# 1. Update global npm package
-npm install -g openchrome-mcp
+# 1. Kill ALL openchrome processes (parents AND node children)
+pkill -f "openchrome-mcp" || true
+pkill -f "_npx.*openchrome" || true
+pkill -f "openchrome serve" || true
+sleep 1
+# Verify no survivors:
+ps aux | grep -E "openchrome.*(serve|mcp)" | grep -v grep
 
-# 2. Kill all running MCP server processes (they still use the old version)
-pkill -f "openchrome-mcp.*serve" || true
+# 2. Clear npx cache (prevents stale version serving)
+rm -rf ~/.npm/_npx/*/node_modules/openchrome-mcp
+rm -rf ~/.npm/_npx/*/package-lock.json
 
-# 3. Verify version consistency across all 4 paths
+# 3. Update global npm package
+npm install -g openchrome-mcp@latest
+
+# 4. Re-run setup to apply --prefer-online flag (one-time fix for existing users)
+npx --prefer-online openchrome-mcp@latest setup
+
+# 5. Verify version consistency across all 5 paths
 echo "src:    $(node -p \"require('./package.json').version\")" && \
 echo "dist:   $(node dist/cli/index.js --version 2>/dev/null)" && \
 echo "global: $(npm ls -g openchrome-mcp 2>/dev/null | grep openchrome)" && \
-echo "npm:    $(npm view openchrome-mcp version)"
+echo "npm:    $(npm view openchrome-mcp version)" && \
+echo "npx:    $(npx --prefer-online openchrome-mcp --version 2>/dev/null)"
 ```
 
-**Gate**: All 4 versions must match. If dist is outdated, run `npm run build` first.
+**Gate**: All 5 versions must match. If dist is outdated, run `npm run build` first.
 
 After verification, the user must **restart Claude Code** for the new MCP server to take effect.
+
+**For other users**: Users running `npx openchrome-mcp@latest serve` will auto-update if they have `--prefer-online` in their MCP config. Users with older configs should either:
+1. Re-run `npx openchrome-mcp@latest setup` (writes the `--prefer-online` flag), or
+2. Manually delete `~/.npm/_npx/` and restart Claude Code
 
 ---
 
@@ -225,4 +246,5 @@ After verification, the user must **restart Claude Code** for the new MCP server
 - [ ] No unnecessary branches remain
 - [ ] Working tree is clean
 - [ ] (If published) Global npm package matches published version
+- [ ] (If published) npx cache cleared (`~/.npm/_npx/*/node_modules/openchrome-mcp` removed)
 - [ ] (If published) No zombie MCP server processes running old version
