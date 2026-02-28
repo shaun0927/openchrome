@@ -10,6 +10,7 @@ import { safeTitle } from '../utils/safe-title';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
+import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -91,6 +92,9 @@ const handler: ToolHandler = async (
           isError: true,
         };
       }
+
+      // Domain blocklist check on normalized URL
+      assertDomainAllowed(targetUrl);
 
       // Tab reuse: if worker has exactly 1 existing tab, reuse it instead of creating new
       const resolvedWorkerId = workerId || 'default';
@@ -267,6 +271,9 @@ const handler: ToolHandler = async (
         isError: true,
       };
     }
+
+    // Domain blocklist check on normalized URL (existing-tab path)
+    assertDomainAllowed(targetUrl);
 
     // Navigate with smart auth redirect detection
     const { authRedirect } = await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });

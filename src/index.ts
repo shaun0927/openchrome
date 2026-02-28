@@ -10,7 +10,7 @@
 import { Command } from 'commander';
 import { getMCPServer } from './mcp-server';
 import { registerAllTools } from './tools';
-import { setGlobalConfig } from './config/global';
+import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { writePidFile } from './utils/pid-manager';
 
 // Prevent silent crashes from unhandled promise rejections in background tasks
@@ -42,7 +42,8 @@ program
   .option('--restart-chrome', 'Quit running Chrome to reuse real profile (default: uses temp profile)')
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string }) => {
+  .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string }) => {
     const port = parseInt(options.port, 10);
     const autoLaunch = options.autoLaunch || false;
     const userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
@@ -88,6 +89,16 @@ program
       });
       console.error(`[openchrome] Hybrid mode: enabled`);
       console.error(`[openchrome] Lightpanda port: ${lpPort}`);
+    }
+
+    // Configure domain blocklist if provided
+    if (options.blockedDomains) {
+      const blockedList = options.blockedDomains.split(',').map((d: string) => d.trim()).filter(Boolean);
+      const existing = getGlobalConfig().security || {};
+      setGlobalConfig({
+        security: { ...existing, blocked_domains: blockedList },
+      });
+      console.error(`[openchrome] Blocked domains: ${blockedList.join(', ')}`);
     }
 
     const server = getMCPServer();
