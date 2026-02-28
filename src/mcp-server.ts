@@ -25,6 +25,7 @@ import { getChromeLauncher } from './chrome/launcher';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS } from './config/defaults';
 import { getGlobalConfig } from './config/global';
+import { logAuditEntry } from './security/audit-logger';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -492,6 +493,12 @@ export class MCPServer {
           throw handlerError;
         }
       }
+
+      // Audit log successful invocation
+      logAuditEntry(toolName, sessionId, toolArgs);
+
+      // Audit log successful invocation
+      logAuditEntry(toolName, sessionId, toolArgs);
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');

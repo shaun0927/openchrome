@@ -43,7 +43,8 @@ program
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
   .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string }) => {
+  .option('--audit-log', 'Enable security audit logging (default: false)')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean }) => {
     const port = parseInt(options.port, 10);
     const autoLaunch = options.autoLaunch || false;
     const userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
@@ -99,6 +100,15 @@ program
         security: { ...existing, blocked_domains: blockedList },
       });
       console.error(`[openchrome] Blocked domains: ${blockedList.join(', ')}`);
+    }
+
+    // Configure audit logging if enabled
+    if (options.auditLog) {
+      const existing = getGlobalConfig().security || {};
+      setGlobalConfig({
+        security: { ...existing, audit_log: true },
+      });
+      console.error('[openchrome] Audit logging: enabled');
     }
 
     const server = getMCPServer();
