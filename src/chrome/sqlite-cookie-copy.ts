@@ -95,8 +95,11 @@ export function copyCookiesAtomic(
   // Tier 2: sqlite3 CLI — .backup command
   // -------------------------------------------------------------------------
   try {
+    if (process.platform === 'win32' && destPath.includes('"')) {
+      throw new Error('sqlite3 .backup: destination path contains \'"\', cannot quote safely on Windows');
+    }
     const backupCmd = process.platform === 'win32'
-      ? `.backup "${destPath.replace(/"/g, '')}"`
+      ? `.backup "${destPath}"`
       : `.backup '${destPath.replace(/'/g, "''")}'`;
     execFileSync('sqlite3', [sourcePath, backupCmd], {
       timeout: 5000,
