@@ -94,10 +94,9 @@ program
     // Configure domain blocklist if provided
     if (options.blockedDomains) {
       const blockedList = options.blockedDomains.split(',').map((d: string) => d.trim()).filter(Boolean);
+      const existing = getGlobalConfig().security || {};
       setGlobalConfig({
-        security: {
-          blocked_domains: blockedList,
-        },
+        security: { ...existing, blocked_domains: blockedList },
       });
       console.error(`[openchrome] Blocked domains: ${blockedList.join(', ')}`);
     }

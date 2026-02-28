@@ -52,23 +52,6 @@ const handler: ToolHandler = async (
     };
   }
 
-  // Domain blocklist check (skip for history navigation commands)
-  if (url !== 'back' && url !== 'forward') {
-    try {
-      assertDomainAllowed(url);
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  }
-
   // If no tabId provided and not a history navigation, create a new tab with the URL
   if (!tabId && url !== 'back' && url !== 'forward') {
     try {
@@ -109,6 +92,9 @@ const handler: ToolHandler = async (
           isError: true,
         };
       }
+
+      // Domain blocklist check on normalized URL
+      assertDomainAllowed(targetUrl);
 
       // Tab reuse: if worker has exactly 1 existing tab, reuse it instead of creating new
       const resolvedWorkerId = workerId || 'default';
@@ -285,6 +271,9 @@ const handler: ToolHandler = async (
         isError: true,
       };
     }
+
+    // Domain blocklist check on normalized URL (existing-tab path)
+    assertDomainAllowed(targetUrl);
 
     // Navigate with smart auth redirect detection
     const { authRedirect } = await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });

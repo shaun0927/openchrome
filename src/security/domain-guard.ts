@@ -13,10 +13,16 @@ import { getGlobalConfig } from '../config/global';
  *   "mail.google.com" -> exact match only
  */
 function globToRegex(pattern: string): RegExp {
+  // Reject overly long patterns (DNS max is 253 chars)
+  if (pattern.length > 253) {
+    throw new Error(`Domain pattern too long (${pattern.length} chars, max 253): "${pattern.slice(0, 50)}..."`);
+  }
+
   // Escape all regex special chars except "*"
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-  // Replace "*" with ".*" to match any characters (including dots for subdomains)
-  const regexStr = escaped.replace(/\*/g, '.*');
+  // Replace "*" with "[^.]*" to match any non-dot characters (single-level wildcard)
+  // This means "*.bank.com" matches "www.bank.com" but NOT "a.b.bank.com"
+  const regexStr = escaped.replace(/\*/g, '[^.]*');
   return new RegExp(`^${regexStr}$`, 'i');
 }
 
@@ -38,11 +44,14 @@ function extractHostname(url: string): string | null {
   }
 
   try {
-    const parsed = new URL(url);
-    return parsed.hostname || null;
+    return new URL(url).hostname.toLowerCase() || null;
   } catch {
-    // Invalid URL — allow by default
-    return null;
+    // Try adding protocol for bare hostnames (e.g., "bank.com")
+    try {
+      return new URL('https://' + url).hostname.toLowerCase() || null;
+    } catch {
+      return null;
+    }
   }
 }
 
