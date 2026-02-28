@@ -14,7 +14,7 @@ import type {
   TaskPattern,
 } from '../types/plan-cache';
 
-const DEFAULT_BASE_PATH = '.openchrome/plans/';
+const DEFAULT_BASE_PATH = path.join('.openchrome', 'plans');
 const REGISTRY_FILENAME = 'plan-registry.json';
 const PLANS_SUBDIR = 'plans';
 const REGISTRY_VERSION = '1.0.0';
