@@ -113,9 +113,10 @@ program
       // Ignore if not exists
     }
 
-    // Use npx @latest for auto-updates: every server start fetches the latest version.
-    // Without @latest, npx may serve a stale cached version indefinitely.
-    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx -y openchrome-mcp@latest ${serveArgs.join(' ')}`;
+    // Use npx @latest with --prefer-online for reliable auto-updates.
+    // Without --prefer-online, npx caches a semver range (e.g. ^1.4.0) in ~/.npm/_npx/
+    // and never re-checks the registry, so @latest effectively becomes @cached.
+    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx --prefer-online -y openchrome-mcp@latest ${serveArgs.join(' ')}`;
 
     console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
 
