@@ -151,6 +151,7 @@ const handler: ToolHandler = async (
           returnByValue: true,
           awaitPromise: true,
           userGesture: true,
+          replMode: true,
         })
         .finally(() => clearTimeout(jsTid)),
       new Promise<never>((_, reject) => {

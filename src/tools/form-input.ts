@@ -158,9 +158,18 @@ const handler: ToolHandler = async (
                   }
                   return { success: true, message: 'Set to ' + shouldCheck };
                 } else {
-                  // For text inputs
+                  // For text inputs - use native setter to bypass React's _valueTracker
                   el.focus();
-                  el.value = String(newValue);
+                  const nativeSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value'
+                  )?.set || Object.getOwnPropertyDescriptor(
+                    window.HTMLTextAreaElement.prototype, 'value'
+                  )?.set;
+                  if (nativeSetter) {
+                    nativeSetter.call(el, String(newValue));
+                  } else {
+                    el.value = String(newValue);
+                  }
                   el.dispatchEvent(new Event('input', { bubbles: true }));
                   el.dispatchEvent(new Event('change', { bubbles: true }));
                   return { success: true, message: 'Set value to "' + newValue + '"' };
