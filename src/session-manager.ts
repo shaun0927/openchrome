@@ -1024,6 +1024,44 @@ export class SessionManager {
   }
 
   /**
+   * Get the session and worker that own a target.
+   * Used by CDPClient's targetcreated listener to determine popup ownership.
+   */
+  getTargetOwner(targetId: string): { sessionId: string; workerId: string } | undefined {
+    return this.targetToWorker.get(targetId);
+  }
+
+  /**
+   * Register an externally-created target (e.g., popup via window.open) into a worker.
+   * Only registers if the target is not already tracked, to avoid overwriting ownership.
+   */
+  registerExternalTarget(targetId: string, sessionId: string, workerId: string): void {
+    // Don't overwrite existing entries
+    if (this.targetToWorker.has(targetId)) return;
+
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    const worker = session.workers.get(workerId);
+    if (!worker) return;
+
+    worker.targets.add(targetId);
+    worker.lastActivityAt = Date.now();
+    this.targetToWorker.set(targetId, { sessionId, workerId });
+
+    this.emitEvent({
+      type: 'session:target-added',
+      sessionId,
+      workerId,
+      targetId,
+      timestamp: Date.now(),
+    });
+
+    this.touchSession(sessionId);
+    console.error(`[SessionManager] Registered external target ${targetId} in worker ${workerId} of session ${sessionId}`);
+  }
+
+  /**
    * Close a specific target/tab
    * @param sessionId Session ID
    * @param targetId Target/Tab ID to close
@@ -1168,7 +1206,10 @@ export class SessionManager {
 
   /**
    * Validate all tracked targets after a reconnection.
-   * Removes targets that no longer exist in Chrome, keeping valid ones intact.
+   * Performs bidirectional reconciliation:
+   * 1. Removes targets that no longer exist in Chrome
+   * 2. Re-maps dead target IDs to new live targets by URL matching
+   *    (Chrome may reassign different target IDs to the same logical tabs)
    */
   private async validateTargetsAfterReconnect(): Promise<void> {
     const trackedTargetIds = Array.from(this.targetToWorker.keys());
@@ -1182,19 +1223,80 @@ export class SessionManager {
       // Browser not yet available after reconnect — skip validation
       return;
     }
-    const aliveTargetIds = new Set(
-      browser.targets()
-        .filter(t => t.type() === 'page')
-        .map(t => getTargetId(t))
-    );
 
+    const aliveTargets = browser.targets().filter(t => t.type() === 'page');
+    const aliveTargetIds = new Set(aliveTargets.map(t => getTargetId(t)));
+
+    // Build a map of untracked live targets by URL for re-mapping
+    const untrackedByUrl = new Map<string, Target>();
+    for (const target of aliveTargets) {
+      const tid = getTargetId(target);
+      if (!this.targetToWorker.has(tid)) {
+        const url = target.url();
+        // Skip internal pages that are unlikely to be our managed tabs
+        if (url && url !== 'about:blank' && !url.startsWith('chrome://')) {
+          untrackedByUrl.set(url, target);
+        }
+      }
+    }
+
+    // Phase 1: Identify dead targets and attempt URL-based re-mapping
     let removed = 0;
+    let remapped = 0;
+    const deadTargetIds: string[] = [];
+
     for (const targetId of trackedTargetIds) {
       if (!this.targetToWorker.has(targetId)) continue; // Already cleaned by targetdestroyed
-      if (!aliveTargetIds.has(targetId)) {
-        this.onTargetClosed(targetId);
-        removed++;
+      if (aliveTargetIds.has(targetId)) continue; // Still alive, no action needed
+
+      // Target is dead — try to find a live replacement by URL
+      const ownerInfo = this.targetToWorker.get(targetId);
+      if (!ownerInfo) continue;
+
+      // Get the last known URL for this target from the CDP client's index
+      let lastUrl: string | undefined;
+      try {
+        const page = await this.cdpClient.getPageByTargetId(targetId);
+        if (page) lastUrl = page.url();
+      } catch {
+        // Page already gone, can't get URL
       }
+
+      if (lastUrl && lastUrl !== 'about:blank' && untrackedByUrl.has(lastUrl)) {
+        // Found a matching live target — re-map
+        const newTarget = untrackedByUrl.get(lastUrl)!;
+        const newTargetId = getTargetId(newTarget);
+        untrackedByUrl.delete(lastUrl); // Consume the match
+
+        // Update targetToWorker mapping
+        this.targetToWorker.delete(targetId);
+        this.targetToWorker.set(newTargetId, ownerInfo);
+
+        // Update worker's target set
+        const session = this.sessions.get(ownerInfo.sessionId);
+        if (session) {
+          const worker = session.workers.get(ownerInfo.workerId);
+          if (worker) {
+            worker.targets.delete(targetId);
+            worker.targets.add(newTargetId);
+          }
+        }
+
+        // Migrate ref IDs from old target to new target
+        getRefIdManager().migrateTarget(ownerInfo.sessionId, targetId, newTargetId);
+
+        console.error(`[SessionManager] Re-mapped target ${targetId} → ${newTargetId} (URL: ${lastUrl})`);
+        remapped++;
+      } else {
+        // No match found — mark for removal
+        deadTargetIds.push(targetId);
+      }
+    }
+
+    // Phase 2: Remove truly dead targets (no URL match found)
+    for (const targetId of deadTargetIds) {
+      this.onTargetClosed(targetId);
+      removed++;
     }
 
     // Rebuild the CDP client's targetIdIndex from surviving targets.
@@ -1212,11 +1314,8 @@ export class SessionManager {
       }
     }
 
-    if (removed > 0) {
-      console.error(`[SessionManager] Post-reconnect cleanup: removed ${removed} stale target(s), ${trackedTargetIds.length - removed} still alive, ${indexed} indexed`);
-    } else {
-      console.error(`[SessionManager] Post-reconnect validation: all ${trackedTargetIds.length} target(s) still alive, ${indexed} indexed`);
-    }
+    const surviving = trackedTargetIds.length - removed;
+    console.error(`[SessionManager] Post-reconnect reconciliation: ${removed} removed, ${remapped} re-mapped, ${surviving} surviving, ${indexed} indexed`);
   }
 
   // ==================== SESSION INFO ====================

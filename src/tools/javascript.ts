@@ -147,7 +147,7 @@ const handler: ToolHandler = async (
     const cdpResult = await Promise.race([
       cdpClient
         .send<CDPEvalResult>(page, 'Runtime.evaluate', {
-          expression: code,
+          expression: `(async () => {\n${code}\n})()`,
           returnByValue: true,
           awaitPromise: true,
           userGesture: true,

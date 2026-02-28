@@ -66,7 +66,7 @@ describe('JavaScriptTool', () => {
         expect.anything(),
         'Runtime.evaluate',
         expect.objectContaining({
-          expression: '1 + 1',
+          expression: '(async () => {\n1 + 1\n})()',
           returnByValue: true,
           awaitPromise: true,
           userGesture: true,

@@ -17,6 +17,18 @@ const AUTH_DOMAINS = [
   'login.salesforce.com',
   'appleid.apple.com',
   'github.com/login',
+  // Supabase
+  'supabase.co/auth',
+  'supabase.com/auth',
+  // Firebase
+  'firebaseapp.com/__/auth',
+  'identitytoolkit.googleapis.com',
+  // Other OAuth providers
+  'cognito-idp.',
+  'login.yahoo.com',
+  'nid.naver.com',
+  'kauth.kakao.com',
+  'access.line.me',
 ];
 
 export interface SmartGotoResult {

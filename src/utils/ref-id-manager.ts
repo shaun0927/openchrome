@@ -156,6 +156,32 @@ export class RefIdManager {
   }
 
   /**
+   * Migrate all refs from one target ID to another.
+   * Used when Chrome reassigns target IDs after reconnection.
+   */
+  migrateTarget(sessionId: string, oldTargetId: string, newTargetId: string): void {
+    const sessionRefs = this.refs.get(sessionId);
+    if (sessionRefs) {
+      const oldRefs = sessionRefs.get(oldTargetId);
+      if (oldRefs) {
+        // Move refs to new target ID
+        sessionRefs.set(newTargetId, oldRefs);
+        sessionRefs.delete(oldTargetId);
+      }
+    }
+
+    // Migrate counter
+    const sessionCounters = this.counters.get(sessionId);
+    if (sessionCounters) {
+      const counter = sessionCounters.get(oldTargetId);
+      if (counter !== undefined) {
+        sessionCounters.set(newTargetId, counter);
+        sessionCounters.delete(oldTargetId);
+      }
+    }
+  }
+
+  /**
    * Unified resolver: accepts "ref_N", raw integer string "142", or "node_142"
    * Returns the backendDOMNodeId for use with CDP DOM.resolveNode
    */

@@ -9,7 +9,7 @@ import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'wait_for',
-  description: 'Wait for a condition to be met before proceeding. Supports waiting for selectors, text, functions, URL changes, and network idle.',
+  description: 'Wait for a condition to be met before proceeding. Supports waiting for selectors, text, functions, URL changes, URL pattern matching, and network idle.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -19,12 +19,12 @@ const definition: MCPToolDefinition = {
       },
       type: {
         type: 'string',
-        enum: ['selector', 'selector_hidden', 'function', 'navigation', 'timeout'],
+        enum: ['selector', 'selector_hidden', 'function', 'navigation', 'url_match', 'timeout'],
         description: 'Type of condition to wait for',
       },
       value: {
         type: 'string',
-        description: 'For "selector"/"selector_hidden": CSS selector. For "function": JavaScript code returning boolean. For "timeout": milliseconds as string.',
+        description: 'For "selector"/"selector_hidden": CSS selector. For "function": JavaScript code returning boolean. For "url_match": URL pattern (string or regex). For "timeout": milliseconds as string.',
       },
       timeout: {
         type: 'number',
@@ -167,6 +167,49 @@ const handler: ToolHandler = async (
         };
       }
 
+      case 'url_match': {
+        if (!value) {
+          return {
+            content: [{ type: 'text', text: 'Error: value (URL pattern) is required for url_match type' }],
+            isError: true,
+          };
+        }
+
+        // Use waitForFunction to poll the URL - works even if navigation already completed
+        await page.waitForFunction(
+          (pattern: string) => {
+            try {
+              const regex = new RegExp(pattern);
+              return regex.test(window.location.href);
+            } catch {
+              // If not a valid regex, do substring match
+              return window.location.href.includes(pattern);
+            }
+          },
+          { timeout },
+          value
+        );
+
+        const elapsed = Date.now() - startTime;
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                action: 'wait_for',
+                type: 'url_match',
+                pattern: value,
+                url: page.url(),
+                title: await safeTitle(page),
+                elapsed,
+                message: `URL matched pattern "${value}" after ${elapsed}ms`,
+              }),
+            },
+          ],
+        };
+      }
+
       case 'navigation': {
         await page.waitForNavigation({
           timeout,
@@ -231,7 +274,7 @@ const handler: ToolHandler = async (
           content: [
             {
               type: 'text',
-              text: `Error: Unknown type "${type}". Use: selector, selector_hidden, function, navigation, or timeout`,
+              text: `Error: Unknown type "${type}". Use: selector, selector_hidden, function, navigation, url_match, or timeout`,
             },
           ],
           isError: true,
