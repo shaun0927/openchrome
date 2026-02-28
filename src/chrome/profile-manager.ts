@@ -177,9 +177,12 @@ export class ProfileManager {
           // Atomic backup using the SQLite .backup command.
           // This works even when Chrome is actively writing to the DB.
           // Uses execFileSync (no shell) to prevent injection via path characters.
+          const backupCmd = process.platform === 'win32'
+            ? `.backup "${destCookiesPath.replace(/"/g, '')}"`
+            : `.backup '${destCookiesPath.replace(/'/g, "''")}'`;
           execFileSync('sqlite3', [
             sourceCookiesPath,
-            `.backup '${destCookiesPath.replace(/'/g, "''")}'`,
+            backupCmd,
           ], { stdio: 'ignore', timeout: 10000 });
 
           // .backup produces a clean WAL-checkpoint DB — remove stale WAL/SHM/journal

@@ -95,7 +95,10 @@ export function copyCookiesAtomic(
   // Tier 2: sqlite3 CLI — .backup command
   // -------------------------------------------------------------------------
   try {
-    execFileSync('sqlite3', [sourcePath, `.backup '${destPath.replace(/'/g, "''")}'`], {
+    const backupCmd = process.platform === 'win32'
+      ? `.backup "${destPath.replace(/"/g, '')}"`
+      : `.backup '${destPath.replace(/'/g, "''")}'`;
+    execFileSync('sqlite3', [sourcePath, backupCmd], {
       timeout: 5000,
       stdio: 'ignore',
     });
