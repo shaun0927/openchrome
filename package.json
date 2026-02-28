@@ -1,6 +1,6 @@
 {
   "name": "openchrome-mcp",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
   "bin": {
