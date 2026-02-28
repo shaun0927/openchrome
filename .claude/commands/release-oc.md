@@ -66,15 +66,32 @@ For EACH open PR (both mine and others'), in order:
 
 ### 4a. Run `/pr-review-oc <N>`
 
-This produces a P0/P1/P2 issue list and verdict.
+This produces a P0/P1/P2 issue list and verdict (single-agent inline review).
 
-### 4b. Check for file conflicts with other PRs
+### 4b. Run `/code-review-oc` on PR changed files (deep specialist review)
+
+Extract the PR's changed files and run a deep code review with 3 parallel specialist agents:
+
+```bash
+gh pr diff <N> --name-only
+```
+
+Then invoke: `/code-review-oc <space-separated file list>`
+
+This spawns 3 specialist agents in parallel:
+- **oc-code-reviewer** — CDP/Puppeteer domain expertise, 6-area review
+- **oc-silent-failure-hunter** — empty catches, swallowed errors, resource leaks
+- **oc-platform-reviewer** — Windows/Linux/macOS compatibility (paths, signals, process mgmt)
+
+Merge the findings from both 4a and 4b. Use the higher-confidence finding when duplicates exist.
+
+### 4c. Check for file conflicts with other PRs
 
 ```bash
 gh pr view <N> --json files
 ```
 
-### 4c. Take action based on ownership + verdict
+### 4d. Take action based on ownership + verdict
 
 **MY PR with P0s**:
 1. `git checkout <branch>`
@@ -111,7 +128,13 @@ git diff --name-only HEAD | wc -l                      # must be 0 (clean tree)
 Also grep for known anti-patterns:
 
 ```bash
-grep -r "process\.env\.HOME" src/ --include="*.ts"    # must be 0 results
+# Platform safety
+grep -r "process\.env\.HOME" src/ --include="*.ts"     # must be 0 — use os.homedir()
+grep -rn "'/dev/tty'" src/ --include="*.ts" | grep -v "platform\|win32"  # must be 0 — needs win32 guard
+grep -rn "SIGKILL\|SIGTERM" src/ --include="*.ts" | grep -v "platform\|win32"  # must be 0 — needs platform guard
+grep -rn "execSync(" src/ --include="*.ts" | grep -v "execFileSync"  # review each — prefer execFileSync
+
+# Code hygiene
 grep -r "console\.log(" src/ --include="*.ts"          # must be 0 in tool handlers
 ```
 
@@ -194,8 +217,10 @@ After verification, the user must **restart Claude Code** for the new MCP server
 ## Completion Checklist
 
 - [ ] Every open PR has a GitHub review comment posted
+- [ ] Every PR passed deep code review (`/code-review-oc`) including platform specialist
 - [ ] All MY PRs: P0 = 0, P1 = 0, merged
 - [ ] All OTHER's PRs: reviewed and commented (NOT merged)
+- [ ] Pre-merge platform anti-pattern grep: all clean
 - [ ] `npm run build` passes on develop (and main after release merge)
 - [ ] No unnecessary branches remain
 - [ ] Working tree is clean
