@@ -291,7 +291,7 @@ By default, benchmarks run in **stub mode** — measuring protocol correctness a
 
 ## Server / Headless Deployment
 
-OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 40+ tools function normally with unauthenticated Chrome.
+OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 47 tools function with unauthenticated Chrome — navigation, scraping, screenshots, form filling, and parallel workflows all work in clean sessions.
 
 ### Quick start
 
@@ -302,33 +302,44 @@ openchrome serve --server-mode
 
 `--server-mode` automatically sets:
 - Auto-launches Chrome in headless mode
-- Uses a temporary clean profile (no login state)
-- Skips cookie bridge scanning (~5s faster per page)
+- Skips cookie bridge scanning (~5s faster per page creation)
+- Optimal defaults for server environments
+
+### What works without login
+
+| Category | Tools |
+|----------|-------|
+| **Navigation & scraping** | `navigate`, `read_page`, `page_content`, `javascript_tool` |
+| **Interaction** | `click_element`, `fill_form`, `drag_drop`, `file_upload` |
+| **Parallel workflows** | `workflow_init` with multiple workers, `batch_execute` |
+| **Screenshots & PDF** | `computer(screenshot)`, `page_pdf` |
+| **Network & performance** | `request_intercept`, `performance_metrics`, `console_capture` |
+
+### Important: MCP client required
+
+OpenChrome is an MCP server — it responds to tool calls, not standalone scripts. Server-side usage requires an MCP client (e.g., Claude API, Claude Code, or a custom MCP client) to drive it:
+
+```
+MCP Client (LLM) → stdio → OpenChrome (--server-mode) → Chrome
+```
+
+For standalone scraping scripts without an LLM, use Playwright or Puppeteer directly.
 
 ### Docker
 
-```dockerfile
-FROM node:20-slim
+A production-ready `Dockerfile` is included in the repository:
 
-# Install Chrome
-RUN apt-get update && apt-get install -y \
-    chromium \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN npm install -g openchrome-mcp
-
-ENV CHROME_PATH=/usr/bin/chromium
-EXPOSE 9222
-
-CMD ["openchrome", "serve", "--server-mode"]
+```bash
+docker build -t openchrome .
+docker run openchrome
 ```
 
 ### Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `CHROME_PATH` | Path to Chrome/Chromium binary |
+| `CHROME_PATH` | Path to Chrome/Chromium binary (used by launcher) |
+| `CHROME_BINARY` | Path to Chrome binary (used by `--chrome-binary` CLI flag) |
 | `CHROME_USER_DATA_DIR` | Custom profile directory |
 | `CI` | Detected automatically; adds `--no-sandbox` |
 | `DOCKER` | Detected automatically; adds `--no-sandbox` |
