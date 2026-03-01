@@ -88,7 +88,34 @@ function compareVersions(current: string, latest: string): number {
 }
 
 /**
- * Check for updates and print a warning if outdated.
+ * Clear stale npx cache entries for openchrome-mcp.
+ * This ensures the next npx invocation fetches the latest version
+ * from the registry instead of serving a stale cached copy.
+ */
+function clearNpxCache(): boolean {
+  try {
+    const npxCacheDir = path.join(os.homedir(), '.npm', '_npx');
+    if (!fs.existsSync(npxCacheDir)) return false;
+
+    let cleared = false;
+    const entries = fs.readdirSync(npxCacheDir);
+    for (const entry of entries) {
+      const pkgDir = path.join(npxCacheDir, entry, 'node_modules', PACKAGE_NAME);
+      if (fs.existsSync(pkgDir)) {
+        // Remove the entire npx cache entry (includes package-lock.json)
+        fs.rmSync(path.join(npxCacheDir, entry), { recursive: true, force: true });
+        cleared = true;
+      }
+    }
+    return cleared;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check for updates. If outdated, auto-clear the npx cache so the
+ * next server restart fetches the latest version automatically.
  * Non-blocking — fires and forgets. Never throws.
  */
 export async function checkForUpdates(currentVersion: string): Promise<void> {
@@ -105,9 +132,16 @@ export async function checkForUpdates(currentVersion: string): Promise<void> {
     }
 
     if (latestVersion && compareVersions(currentVersion, latestVersion) < 0) {
+      // Auto-clear npx cache so next restart gets the new version
+      const cleared = clearNpxCache();
+
       console.error('');
       console.error(`  ⬆ Update available: ${currentVersion} → ${latestVersion}`);
-      console.error(`  Run: npx openchrome-mcp@latest setup`);
+      if (cleared) {
+        console.error(`  Cache cleared — restart Claude Code to use the new version.`);
+      } else {
+        console.error(`  Run: npx openchrome-mcp@latest setup`);
+      }
       console.error('');
     }
   } catch {
