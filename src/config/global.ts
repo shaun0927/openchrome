@@ -17,6 +17,8 @@ export interface GlobalConfig {
   headless?: boolean;
   /** If true, quit running Chrome to reuse the real profile instead of using temp profile (default: false) */
   restartChrome?: boolean;
+  /** If true, skip cookie bridge on page creation (used in server/headless mode) */
+  skipCookieBridge?: boolean;
   /** Chrome Pool settings for managing multiple Chrome instances */
   pool?: {
     /** Enable the Chrome pool (default: true) */

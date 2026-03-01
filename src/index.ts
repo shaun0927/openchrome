@@ -44,9 +44,17 @@ program
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
   .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
   .option('--audit-log', 'Enable security audit logging (default: false)')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean }) => {
+  .option('--server-mode', 'Server/headless mode: auto-launch Chrome with no profile, skip cookie bridge')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; serverMode?: boolean }) => {
     const port = parseInt(options.port, 10);
-    const autoLaunch = options.autoLaunch || false;
+    let autoLaunch = options.autoLaunch || false;
+
+    // Server mode forces headless + auto-launch + no cookie bridge
+    if (options.serverMode) {
+      autoLaunch = true;
+      options.visible = false;
+      console.error('[openchrome] Server mode: enabled (headless, no cookie bridge)');
+    }
     const userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
     const chromeBinary = options.chromeBinary || process.env.CHROME_BINARY || undefined;
     const useHeadlessShell = options.headlessShell || false;
@@ -75,6 +83,11 @@ program
     setGlobalConfig({ port, autoLaunch, userDataDir, chromeBinary, useHeadlessShell, headless, restartChrome });
     if (restartChrome) {
       console.error(`[openchrome] Restart Chrome mode: enabled (will quit existing Chrome)`);
+    }
+
+    // Apply server mode config (skip cookie bridge)
+    if (options.serverMode) {
+      setGlobalConfig({ skipCookieBridge: true });
     }
 
     // Configure hybrid mode if enabled
