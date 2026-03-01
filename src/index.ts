@@ -44,7 +44,7 @@ program
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
   .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
   .option('--audit-log', 'Enable security audit logging (default: false)')
-  .option('--server-mode', 'Server/headless mode: auto-launch Chrome with no profile, skip cookie bridge')
+  .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
   .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; serverMode?: boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
@@ -52,6 +52,9 @@ program
     // Server mode forces headless + auto-launch + no cookie bridge
     if (options.serverMode) {
       autoLaunch = true;
+      if (options.visible) {
+        console.error('[openchrome] Warning: --visible ignored in server mode (headless forced)');
+      }
       options.visible = false;
       console.error('[openchrome] Server mode: enabled (headless, no cookie bridge)');
     }
