@@ -53,8 +53,8 @@ extension-unpacked/
 # Claude Code ephemeral worktrees
 .claude/worktrees/
 
-# User-local Claude Code workflows (personal skills, agents, commands)
-CLAUDE.md
+# Claude Code local settings (not project-shared)
+.claude/settings.local.json
 
 # Ad-hoc analysis/planning outputs
 x-crawl-*.json

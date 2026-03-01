@@ -1,38 +1,22 @@
 # Claude Code Project Instructions
 
-## Trinity Project
+## PR Target Branch
 
-**Repository**: https://github.com/shaun0927/trinity
-**PR Target Branch**: `develop`
-
-Trinity 관련 코드 수정 시 반드시 위 레포지토리의 develop 브랜치로 PR을 생성할 것.
-
-## Browser Tool Usage
-
-This project provides browser automation tools (openchrome).
-
-**Use browser tools ONLY when:**
-- User explicitly requests browser/UI interaction
-- Visual verification or screenshot is needed
-- No API/DB alternative exists
-
-**Prefer these approaches first:**
-1. Code analysis → Read files directly
-2. Data operations → DB queries
-3. API testing → `curl` command
-4. Config changes → Edit files directly
-
-Browser automation has high context usage. Use as last resort.
+All pull requests should target the `develop` branch. Release merges go from `develop` into `main`.
 
 ## Dependency Management
 
 When modifying `package.json` (adding/removing/updating dependencies), you **MUST** run `npm install` afterwards to sync `package-lock.json`. Always commit both files together. Failing to do this breaks `npm ci` in CI and blocks all builds across every OS and Node version.
 
-## Parallel Browser Workflow
+## Build & Test
 
-When 2+ independent browser tasks are requested with parallel intent ("동시에", "병렬로", "parallel"):
-1. `workflow_init` → create workers with dedicated tabs
-2. Spawn background Task agents (each gets hardcoded `tabId` to prevent cross-tab contamination)
-3. `workflow_collect` → unify results
+```bash
+npm install && npm run build && npm test
+```
 
-MCP responses include `_timing.durationMs` for wall-clock performance measurement.
+## Code Quality
+
+- All source code, comments, commit messages, and PR descriptions must be in English
+- Use `console.error()` for logging — `console.log()` writes to stdout which carries MCP JSON-RPC and will corrupt the protocol
+- Use `os.homedir()` instead of `process.env.HOME` (Windows compatibility)
+- Use `path.join()` for file paths instead of string concatenation
