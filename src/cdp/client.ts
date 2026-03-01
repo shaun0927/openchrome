@@ -998,8 +998,9 @@ export class CDPClient {
 
       // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
       // CDP session conflicts and unnecessary overhead on about:blank pages).
+      // Also skip when server mode sets skipCookieBridge globally.
       // Overall timeout prevents cascading hangs from unresponsive source tabs.
-      if (!skipCookieBridge) {
+      if (!skipCookieBridge && !getGlobalConfig().skipCookieBridge) {
         const authPageTargetId = await this.findAuthenticatedPageTargetId(targetDomain);
         if (authPageTargetId) {
           await Promise.race([

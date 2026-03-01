@@ -289,6 +289,70 @@ By default, benchmarks run in **stub mode** — measuring protocol correctness a
 
 ---
 
+## Server / Headless Deployment
+
+OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 40+ tools function normally with unauthenticated Chrome.
+
+### Quick start
+
+```bash
+# Single flag for optimal server defaults
+openchrome serve --server-mode
+```
+
+`--server-mode` automatically sets:
+- Auto-launches Chrome in headless mode
+- Uses a temporary clean profile (no login state)
+- Skips cookie bridge scanning (~5s faster per page)
+
+### Docker
+
+```dockerfile
+FROM node:20-slim
+
+# Install Chrome
+RUN apt-get update && apt-get install -y \
+    chromium \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g openchrome-mcp
+
+ENV CHROME_PATH=/usr/bin/chromium
+EXPOSE 9222
+
+CMD ["openchrome", "serve", "--server-mode"]
+```
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `CHROME_PATH` | Path to Chrome/Chromium binary |
+| `CHROME_USER_DATA_DIR` | Custom profile directory |
+| `CI` | Detected automatically; adds `--no-sandbox` |
+| `DOCKER` | Detected automatically; adds `--no-sandbox` |
+
+### Individual flags
+
+For fine-grained control, use individual flags instead of `--server-mode`:
+
+```bash
+openchrome serve \
+  --auto-launch \
+  --headless-shell \
+  --port 9222
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--auto-launch` | `false` | Auto-launch Chrome if not running |
+| `--headless-shell` | `false` | Use chrome-headless-shell binary |
+| `--visible` | `false` | Show Chrome window (disables headless) |
+| `--server-mode` | `false` | Compound flag for server deployment |
+
+---
+
 ## Development
 
 ```bash
