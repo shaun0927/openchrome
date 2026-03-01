@@ -10,6 +10,7 @@ import { getCDPClient } from '../cdp/client';
 import { ToolEntry } from '../types/tool-manifest';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
+import { getGlobalConfig } from '../config/global';
 
 export interface WorkflowStep {
   workerId: string;
@@ -174,7 +175,7 @@ export class WorkflowEngine {
         // Bridge cookies from an authenticated page before navigating.
         // Pool pages are created with skipCookieBridge=true to avoid CDP session
         // conflicts during bulk creation. We bridge here sequentially after acquisition.
-        if (step.url) {
+        if (step.url && !getGlobalConfig().skipCookieBridge) {
           try {
             const targetHost = new URL(step.url).hostname;
             const authTargetId = await cdpClient.findAuthenticatedPageTargetId(targetHost);
