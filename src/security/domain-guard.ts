@@ -3,6 +3,7 @@
  * Default-allow: no domains blocked unless explicitly configured.
  */
 import { getGlobalConfig } from '../config/global';
+import { extractHostname as extractHostnameFromUrl } from '../utils/url-utils';
 
 /**
  * Convert a glob pattern to a RegExp.
@@ -43,16 +44,12 @@ function extractHostname(url: string): string | null {
     return null;
   }
 
-  try {
-    return new URL(url).hostname.toLowerCase() || null;
-  } catch {
-    // Try adding protocol for bare hostnames (e.g., "bank.com")
-    try {
-      return new URL('https://' + url).hostname.toLowerCase() || null;
-    } catch {
-      return null;
-    }
-  }
+  const hostname = extractHostnameFromUrl(url).toLowerCase();
+  if (hostname) return hostname;
+
+  // Try adding protocol for bare hostnames (e.g., "bank.com")
+  const fallback = extractHostnameFromUrl('https://' + url).toLowerCase();
+  return fallback || null;
 }
 
 /**
