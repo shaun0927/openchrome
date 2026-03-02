@@ -14,22 +14,21 @@ import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
-  description: 'Navigate to a URL, or go forward/back in browser history. If tabId is not provided, creates a new tab with the URL. Use workerId to specify which worker context to use for parallel operations.',
+  description: 'Navigate to URL or go forward/back. No tabId = new tab. workerId for parallel ops.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to navigate. If not provided, a new tab will be created.',
+        description: 'Tab ID to navigate. No tabId = new tab',
       },
       url: {
         type: 'string',
-        description:
-          'The URL to navigate to. Use "forward" to go forward in history or "back" to go back.',
+        description: 'URL, "forward", or "back"',
       },
       workerId: {
         type: 'string',
-        description: 'Worker ID for parallel operations. Uses default worker if not specified.',
+        description: 'Worker ID for parallel ops. Default: default',
       },
     },
     required: ['url'],

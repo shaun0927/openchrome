@@ -45,31 +45,30 @@ const NETWORK_PRESETS: Record<
 
 const definition: MCPToolDefinition = {
   name: 'network',
-  description: 'Simulate network conditions like throttling, latency, and offline mode. Use a preset or provide custom settings.',
+  description: 'Simulate network conditions (throttling, latency, offline).',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to apply network conditions to',
+        description: 'Tab ID to apply conditions to',
       },
       preset: {
         type: 'string',
-        description:
-          'Network preset: offline, slow-2g, 2g, 3g, 4g, fast-wifi, custom, or clear',
+        description: 'Network preset',
         enum: ['offline', 'slow-2g', '2g', '3g', '4g', 'fast-wifi', 'custom', 'clear'],
       },
       downloadKbps: {
         type: 'number',
-        description: 'Custom download speed in Kbps (only for preset=custom)',
+        description: 'Download Kbps (preset=custom only)',
       },
       uploadKbps: {
         type: 'number',
-        description: 'Custom upload speed in Kbps (only for preset=custom)',
+        description: 'Upload Kbps (preset=custom only)',
       },
       latencyMs: {
         type: 'number',
-        description: 'Custom latency in milliseconds (only for preset=custom)',
+        description: 'Latency in ms (preset=custom only)',
       },
     },
     required: ['tabId', 'preset'],

@@ -13,8 +13,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',
-  description:
-    'Scroll a page using JavaScript without taking a screenshot. Returns the new scroll position and metrics. Suitable for infinite scroll and lazy loading scenarios.',
+  description: 'Scroll page via JS without screenshot. Returns new scroll position.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -29,29 +28,23 @@ const definition: MCPToolDefinition = {
       },
       amount: {
         type: 'number',
-        description: 'Scroll amount in pixels (default: 300)',
+        description: 'Scroll amount in pixels. Default: 300',
       },
       smooth: {
         type: 'boolean',
-        description: 'Use smooth scrolling animation (default: false)',
+        description: 'Smooth scrolling animation. Default: false',
       },
       selector: {
         type: 'string',
-        description:
-          'CSS selector of a specific element to scroll (default: window). ' +
-          'Use for scrollable containers like chat panels or sidebars.',
+        description: 'Element to scroll (CSS selector). Default: window',
       },
       scrollToEnd: {
         type: 'boolean',
-        description:
-          'Scroll to the very end in the given direction (default: false). ' +
-          'Useful for reaching the bottom of a page or container.',
+        description: 'Scroll to end in given direction. Default: false',
       },
       waitAfterMs: {
         type: 'number',
-        description:
-          'Milliseconds to wait after scrolling for content to load (default: 0). ' +
-          'Useful for infinite scroll pages that need time to fetch new content.',
+        description: 'Wait after scroll for lazy content in ms. Default: 0',
       },
     },
     required: ['tabId', 'direction'],

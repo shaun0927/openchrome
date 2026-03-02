@@ -16,36 +16,36 @@ import { getDomainMemory } from '../memory/domain-memory';
 const definition: MCPToolDefinition = {
   name: 'memory',
   description:
-    'Manage domain knowledge for future reuse. Actions: "record" (store knowledge), "query" (retrieve by domain), "validate" (report success/failure to adjust confidence).',
+    'Manage domain knowledge. Actions: "record" (store), "query" (retrieve by domain), "validate" (adjust confidence). Key convention: "selector:X", "tip:X", "avoid:X".',
   inputSchema: {
     type: 'object',
     properties: {
       action: {
         type: 'string',
         enum: ['record', 'query', 'validate'],
-        description: 'Action to perform: record, query, or validate domain knowledge',
+        description: 'Action: record, query, or validate',
       },
       domain: {
         type: 'string',
-        description: '(record, query) Website domain (e.g., "x.com", "amazon.com")',
+        description: '(record, query) Domain, e.g. "x.com"',
       },
       key: {
         type: 'string',
         description:
-          '(record) Knowledge key, e.g. "selector:tweet_container". (query) Optional key prefix to filter.',
+          '(record) Key, e.g. "selector:tweet". (query) Key prefix filter.',
       },
       value: {
         type: 'string',
-        description: '(record) The knowledge value (e.g., "article[data-testid=\'tweet\']")',
+        description: '(record) Knowledge value, e.g. a CSS selector string',
       },
       id: {
         type: 'string',
-        description: '(validate) The knowledge entry ID to validate',
+        description: '(validate) Knowledge entry ID',
       },
       success: {
         type: 'boolean',
         description:
-          '(validate) Whether the knowledge was accurate (true) or outdated/broken (false)',
+          '(validate) true = accurate, false = outdated/broken',
       },
     },
     required: ['action'],

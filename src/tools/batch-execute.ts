@@ -13,9 +13,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'batch_execute',
-  description:
-    'Execute JavaScript code across multiple tabs in parallel. Returns results from all tabs. ' +
-    'Each task specifies a tabId and a JavaScript snippet to execute.',
+  description: 'Execute JavaScript across multiple tabs in parallel.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -31,17 +29,15 @@ const definition: MCPToolDefinition = {
             },
             workerId: {
               type: 'string',
-              description: 'Optional worker ID for identification in results',
+              description: 'Worker ID for result identification',
             },
             script: {
               type: 'string',
-              description:
-                'JavaScript code to execute in the tab. The result of the last expression is returned. ' +
-                'Promises are automatically awaited.',
+              description: 'JS code to execute. Promises auto-awaited.',
             },
             timeout: {
               type: 'number',
-              description: 'Timeout in milliseconds for this task (default: 30000)',
+              description: 'Timeout in ms. Default: 30000',
             },
           },
           required: ['tabId', 'script'],
@@ -49,14 +45,11 @@ const definition: MCPToolDefinition = {
       },
       concurrency: {
         type: 'number',
-        description:
-          'Maximum number of tasks to execute simultaneously (default: 10). ' +
-          'Higher values increase parallelism but may cause resource contention.',
+        description: 'Max parallel tasks. Default: 10',
       },
       failFast: {
         type: 'boolean',
-        description:
-          'If true, stop executing remaining tasks when one fails (default: false)',
+        description: 'Stop on first failure. Default: false',
       },
     },
     required: ['tasks'],

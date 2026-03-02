@@ -9,18 +9,17 @@ import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_context_mcp',
-  description:
-    'Get context information about the current MCP session tabs and workers. Returns all tab IDs grouped by worker.',
+  description: 'Get session tab IDs grouped by worker.',
   inputSchema: {
     type: 'object',
     properties: {
       workerId: {
         type: 'string',
-        description: 'Optional: Get tabs for a specific worker only.',
+        description: 'Filter to a specific worker',
       },
       summary: {
         type: 'boolean',
-        description: 'If true, return only worker/tab counts without full tab details.',
+        description: 'Return counts only, no tab details',
       },
     },
     required: [],

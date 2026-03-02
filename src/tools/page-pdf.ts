@@ -11,9 +11,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'page_pdf',
-  description: `Generate a PDF from the current page.
-If path is provided, saves to file. Otherwise returns base64-encoded PDF.
-Supports various paper formats and options.`,
+  description: 'Generate PDF from page. Saves to path or returns base64.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -23,56 +21,56 @@ Supports various paper formats and options.`,
       },
       path: {
         type: 'string',
-        description: 'File path to save PDF (absolute or relative to home). If not provided, returns base64.',
+        description: 'Save path (absolute/relative to home). Omit for base64',
       },
       format: {
         type: 'string',
         enum: ['A4', 'Letter', 'Legal', 'Tabloid', 'A3', 'A5'],
-        description: 'Paper format (default: A4)',
+        description: 'Paper format. Default: A4',
       },
       landscape: {
         type: 'boolean',
-        description: 'Whether to print in landscape mode (default: false)',
+        description: 'Landscape mode. Default: false',
       },
       printBackground: {
         type: 'boolean',
-        description: 'Whether to print background graphics (default: true)',
+        description: 'Print background graphics. Default: true',
       },
       scale: {
         type: 'number',
-        description: 'Scale of the webpage rendering (0.1-2.0, default: 1)',
+        description: 'Render scale (0.1-2.0). Default: 1',
       },
       marginTop: {
         type: 'string',
-        description: 'Top margin (e.g., "1cm", "0.5in")',
+        description: 'Top margin, e.g. "1cm"',
       },
       marginRight: {
         type: 'string',
-        description: 'Right margin (e.g., "1cm", "0.5in")',
+        description: 'Right margin, e.g. "1cm"',
       },
       marginBottom: {
         type: 'string',
-        description: 'Bottom margin (e.g., "1cm", "0.5in")',
+        description: 'Bottom margin, e.g. "1cm"',
       },
       marginLeft: {
         type: 'string',
-        description: 'Left margin (e.g., "1cm", "0.5in")',
+        description: 'Left margin, e.g. "1cm"',
       },
       pageRanges: {
         type: 'string',
-        description: 'Page ranges to print (e.g., "1-5, 8, 11-13")',
+        description: 'Page ranges, e.g. "1-5, 8, 11-13"',
       },
       displayHeaderFooter: {
         type: 'boolean',
-        description: 'Whether to display header and footer (default: false)',
+        description: 'Show header/footer. Default: false',
       },
       headerTemplate: {
         type: 'string',
-        description: 'HTML template for the header (requires displayHeaderFooter: true)',
+        description: 'Header HTML (needs displayHeaderFooter)',
       },
       footerTemplate: {
         type: 'string',
-        description: 'HTML template for the footer (requires displayHeaderFooter: true)',
+        description: 'Footer HTML (needs displayHeaderFooter)',
       },
     },
     required: ['tabId'],

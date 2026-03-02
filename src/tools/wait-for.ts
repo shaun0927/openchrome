@@ -9,7 +9,7 @@ import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'wait_for',
-  description: 'Wait for a condition to be met before proceeding. Supports waiting for selectors, text, functions, URL changes, URL pattern matching, and network idle.',
+  description: 'Wait for a condition (selector, function, navigation, timeout) before proceeding.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,19 +20,19 @@ const definition: MCPToolDefinition = {
       type: {
         type: 'string',
         enum: ['selector', 'selector_hidden', 'function', 'navigation', 'url_match', 'timeout'],
-        description: 'Type of condition to wait for',
+        description: 'Condition type to wait for',
       },
       value: {
         type: 'string',
-        description: 'For "selector"/"selector_hidden": CSS selector. For "function": JavaScript code returning boolean. For "url_match": URL pattern (string or regex). For "timeout": milliseconds as string.',
+        description: 'CSS selector, JS function, URL pattern, or ms as string',
       },
       timeout: {
         type: 'number',
-        description: 'Maximum time to wait in milliseconds. Default: 30000 (30 seconds)',
+        description: 'Max wait in ms. Default: 30000',
       },
       visible: {
         type: 'boolean',
-        description: 'For "selector" type: if true, waits for element to be visible. Default: false',
+        description: 'Wait for visibility (selector type). Default: false',
       },
     },
     required: ['tabId', 'type'],

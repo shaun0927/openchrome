@@ -11,7 +11,7 @@ import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
-  description: 'Fill multiple form fields at once and optionally submit the form. The fields parameter maps field identifiers (label, name, placeholder, or aria-label) to values.',
+  description: 'Fill multiple form fields at once and optionally submit.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -21,7 +21,7 @@ const definition: MCPToolDefinition = {
       },
       fields: {
         type: 'object',
-        description: 'Object mapping field names/labels to values. Keys can be labels, names, placeholders, or aria-labels.',
+        description: 'Map of field labels/names/placeholders to values',
         additionalProperties: {
           oneOf: [
             { type: 'string' },
@@ -32,11 +32,11 @@ const definition: MCPToolDefinition = {
       },
       submit: {
         type: 'string',
-        description: 'Optional: Natural language query for the submit button to click after filling (e.g., "Login", "Submit", "Save")',
+        description: 'Submit button query, e.g. "Login", "Save"',
       },
       clear_first: {
         type: 'boolean',
-        description: 'If true, clears existing field values before entering new values (default: true)',
+        description: 'Clear fields before filling. Default: true',
       },
     },
     required: ['tabId', 'fields'],

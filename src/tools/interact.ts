@@ -14,8 +14,7 @@ import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-find
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description:
-    'Find an element, perform an action, wait for stability, and return a comprehensive state summary. Reduces multi-step find→click→screenshot sequences to a single call.',
+  description: 'Find element, act, wait for stability, return state summary in one call.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -25,21 +24,21 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Natural language description of the element to interact with',
+        description: 'Element to interact with (natural language)',
       },
       action: {
         type: 'string',
         enum: ['click', 'double_click', 'hover'],
-        description: 'Action to perform on the element (default: "click")',
+        description: 'Action to perform. Default: click',
       },
       waitAfter: {
         type: 'number',
-        description: 'Milliseconds to wait after action for DOM to settle (default: 500)',
+        description: 'Wait for DOM settle in ms. Default: 500',
       },
       returnFormat: {
         type: 'string',
         enum: ['state_summary', 'dom_delta', 'both'],
-        description: 'What to include in the response (default: "both")',
+        description: 'Response content. Default: both',
       },
     },
     required: ['tabId', 'query'],

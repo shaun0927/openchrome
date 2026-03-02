@@ -14,8 +14,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
-  description:
-    'Query-focused page state extraction. Returns only data relevant to your query instead of the full DOM tree. Use this instead of read_page + screenshot combos for targeted questions like "what tabs are active", "form field values", "visible error messages".',
+  description: 'Extract focused page state by query. Use instead of read_page + screenshot for targeted questions.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -25,13 +24,12 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description:
-          'What to inspect, e.g. "what tabs are active", "form field values", "visible error messages", "page structure"',
+        description: 'What to inspect, e.g. "active tabs", "form values"',
       },
       scope: {
         type: 'string',
         enum: ['interactive', 'all', 'visible'],
-        description: 'Scope of elements to inspect (default: "visible")',
+        description: 'Element scope. Default: visible',
       },
     },
     required: ['tabId', 'query'],

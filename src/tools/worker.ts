@@ -11,26 +11,26 @@ import { getSessionManager } from '../session-manager';
 const definition: MCPToolDefinition = {
   name: 'worker',
   description:
-    'Manage workers within the session. Actions: "create" (new isolated browser context), "list" (show all workers), "delete" (remove worker and close its tabs).',
+    'Manage workers. Actions: "create" (isolated context), "list" (show all), "delete" (remove and close tabs).',
   inputSchema: {
     type: 'object',
     properties: {
       action: {
         type: 'string',
         enum: ['create', 'list', 'delete'],
-        description: 'Action to perform: create, list, or delete a worker',
+        description: 'Action: create, list, or delete',
       },
       name: {
         type: 'string',
-        description: '(create) Optional name for the worker (e.g., "login-worker", "search-worker")',
+        description: '(create) Worker name, e.g. "login-worker"',
       },
       id: {
         type: 'string',
-        description: '(create) Optional custom ID for the worker. Auto-generated if not provided.',
+        description: '(create) Custom ID. Auto-generated if omitted',
       },
       workerId: {
         type: 'string',
-        description: '(delete) The ID of the worker to delete',
+        description: '(delete) Worker ID to delete',
       },
     },
     required: ['action'],
