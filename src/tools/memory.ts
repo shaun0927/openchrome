@@ -1,49 +1,74 @@
 /**
- * Memory Tools — 3 MCP tools for domain knowledge persistence.
+ * Memory Tool — Consolidated domain knowledge persistence.
  *
- * memory_record   — Agent stores knowledge after successful operations
- * memory_query    — Retrieve domain knowledge sorted by confidence
- * memory_validate — Agent reports success/failure after using knowledge
+ * Actions:
+ *   record   — Store knowledge after discovering useful selectors/strategies
+ *   query    — Retrieve domain knowledge sorted by confidence
+ *   validate — Report success/failure after using knowledge
+ *
+ * Replaces: memory_record, memory_query, memory_validate
  */
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getDomainMemory } from '../memory/domain-memory';
 
-// ============================================
-// memory_record
-// ============================================
-
-const recordDefinition: MCPToolDefinition = {
-  name: 'memory_record',
-  description: `Record domain knowledge for future reuse. Call this after discovering useful selectors, extraction strategies, or site-specific tips. The key should follow a naming convention like "selector:tweet", "tip:scroll_first", "avoid:read_page_for_extraction".`,
+const definition: MCPToolDefinition = {
+  name: 'memory',
+  description:
+    'Manage domain knowledge for future reuse. Actions: "record" (store knowledge), "query" (retrieve by domain), "validate" (report success/failure to adjust confidence).',
   inputSchema: {
     type: 'object',
     properties: {
+      action: {
+        type: 'string',
+        enum: ['record', 'query', 'validate'],
+        description: 'Action to perform: record, query, or validate domain knowledge',
+      },
       domain: {
         type: 'string',
-        description: 'Website domain (e.g., "x.com", "amazon.com")',
+        description: '(record, query) Website domain (e.g., "x.com", "amazon.com")',
       },
       key: {
         type: 'string',
-        description: 'Knowledge key (e.g., "selector:tweet_container", "tip:infinite_scroll")',
+        description:
+          '(record) Knowledge key, e.g. "selector:tweet_container". (query) Optional key prefix to filter.',
       },
       value: {
         type: 'string',
-        description: 'The knowledge value (e.g., "article[data-testid=\'tweet\']")',
+        description: '(record) The knowledge value (e.g., "article[data-testid=\'tweet\']")',
+      },
+      id: {
+        type: 'string',
+        description: '(validate) The knowledge entry ID to validate',
+      },
+      success: {
+        type: 'boolean',
+        description:
+          '(validate) Whether the knowledge was accurate (true) or outdated/broken (false)',
       },
     },
-    required: ['domain', 'key', 'value'],
+    required: ['action'],
   },
 };
 
-const recordHandler: ToolHandler = async (
-  _sessionId: string,
-  args: Record<string, unknown>
-): Promise<MCPResult> => {
+// ---------------------------------------------------------------------------
+// Handlers per action
+// ---------------------------------------------------------------------------
+
+function handleRecord(args: Record<string, unknown>): MCPResult {
   const domain = args.domain as string;
   const key = args.key as string;
   const value = args.value as string;
+
+  if (!domain || !key || !value) {
+    return {
+      content: [
+        { type: 'text', text: 'Error: domain, key, and value are required for record action' },
+      ],
+      isError: true,
+    };
+  }
 
   const entry = getDomainMemory().record(domain, key, value);
 
@@ -55,37 +80,18 @@ const recordHandler: ToolHandler = async (
       },
     ],
   };
-};
+}
 
-// ============================================
-// memory_query
-// ============================================
-
-const queryDefinition: MCPToolDefinition = {
-  name: 'memory_query',
-  description: `Query stored domain knowledge. Returns entries sorted by confidence (highest first). Use before interacting with a site to leverage previously learned selectors and strategies.`,
-  inputSchema: {
-    type: 'object',
-    properties: {
-      domain: {
-        type: 'string',
-        description: 'Website domain to query (e.g., "x.com")',
-      },
-      key: {
-        type: 'string',
-        description: 'Optional key or key prefix to filter (e.g., "selector" returns all selector:* entries)',
-      },
-    },
-    required: ['domain'],
-  },
-};
-
-const queryHandler: ToolHandler = async (
-  _sessionId: string,
-  args: Record<string, unknown>
-): Promise<MCPResult> => {
+function handleQuery(args: Record<string, unknown>): MCPResult {
   const domain = args.domain as string;
   const key = args.key as string | undefined;
+
+  if (!domain) {
+    return {
+      content: [{ type: 'text', text: 'Error: domain is required for query action' }],
+      isError: true,
+    };
+  }
 
   const entries = getDomainMemory().query(domain, key);
 
@@ -97,37 +103,20 @@ const queryHandler: ToolHandler = async (
       },
     ],
   };
-};
+}
 
-// ============================================
-// memory_validate
-// ============================================
-
-const validateDefinition: MCPToolDefinition = {
-  name: 'memory_validate',
-  description: `Validate domain knowledge after using it. Call with success=true when stored knowledge worked correctly, or success=false when it was outdated/broken. This adjusts confidence scores (+0.1 on success, -0.2 on failure).`,
-  inputSchema: {
-    type: 'object',
-    properties: {
-      id: {
-        type: 'string',
-        description: 'The knowledge entry ID to validate',
-      },
-      success: {
-        type: 'boolean',
-        description: 'Whether the knowledge was accurate (true) or outdated/broken (false)',
-      },
-    },
-    required: ['id', 'success'],
-  },
-};
-
-const validateHandler: ToolHandler = async (
-  _sessionId: string,
-  args: Record<string, unknown>
-): Promise<MCPResult> => {
+function handleValidate(args: Record<string, unknown>): MCPResult {
   const id = args.id as string;
   const success = args.success as boolean;
+
+  if (!id || success === undefined || success === null) {
+    return {
+      content: [
+        { type: 'text', text: 'Error: id and success are required for validate action' },
+      ],
+      isError: true,
+    };
+  }
 
   const entry = getDomainMemory().validate(id, success);
 
@@ -136,11 +125,15 @@ const validateHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: JSON.stringify({
-            id,
-            pruned: true,
-            message: 'Entry was pruned due to low confidence or not found',
-          }, null, 2),
+          text: JSON.stringify(
+            {
+              id,
+              pruned: true,
+              message: 'Entry was pruned due to low confidence or not found',
+            },
+            null,
+            2
+          ),
         },
       ],
     };
@@ -154,14 +147,42 @@ const validateHandler: ToolHandler = async (
       },
     ],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+const handler: ToolHandler = async (
+  _sessionId: string,
+  args: Record<string, unknown>
+): Promise<MCPResult> => {
+  const action = args.action as string;
+
+  switch (action) {
+    case 'record':
+      return handleRecord(args);
+    case 'query':
+      return handleQuery(args);
+    case 'validate':
+      return handleValidate(args);
+    default:
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: Unknown action "${action}". Use "record", "query", or "validate".`,
+          },
+        ],
+        isError: true,
+      };
+  }
 };
 
-// ============================================
+// ---------------------------------------------------------------------------
 // Registration
-// ============================================
+// ---------------------------------------------------------------------------
 
 export function registerMemoryTools(server: MCPServer): void {
-  server.registerTool('memory_record', recordHandler, recordDefinition);
-  server.registerTool('memory_query', queryHandler, queryDefinition);
-  server.registerTool('memory_validate', validateHandler, validateDefinition);
+  server.registerTool('memory', handler, definition);
 }

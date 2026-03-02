@@ -13,15 +13,12 @@ import { registerTabsContextTool } from './tabs-context';
 import { registerTabsCreateTool } from './tabs-create';
 import { registerTabsCloseTool } from './tabs-close';
 import { registerNetworkTool } from './network';
-import { registerWorkerCreateTool } from './worker-create';
-import { registerWorkerListTool } from './worker-list';
-import { registerWorkerDeleteTool } from './worker-delete';
+import { registerWorkerTool } from './worker';
 import { registerOrchestrationTools } from './orchestration';
 
 // Phase 1 tools
 import { registerPageReloadTool } from './page-reload';
 import { registerCookiesTool } from './cookies';
-import { registerSelectorQueryTool } from './selector-query';
 import { registerPageContentTool } from './page-content';
 import { registerWaitForTool } from './wait-for';
 import { registerStorageTool } from './storage';
@@ -36,7 +33,6 @@ import { registerPerformanceMetricsTool } from './performance-metrics';
 import { registerRequestInterceptTool } from './request-intercept';
 
 // Phase 3 tools
-import { registerXpathQueryTool } from './xpath-query';
 import { registerFileUploadTool } from './file-upload';
 import { registerHttpAuthTool } from './http-auth';
 import { registerDragDropTool } from './drag-drop';
@@ -58,6 +54,9 @@ import { registerInspectTool } from './inspect';
 // Memory tools (domain knowledge persistence)
 import { registerMemoryTools } from './memory';
 
+// Consolidated DOM query tool
+import { registerQueryDomTool } from './query-dom';
+
 // Lifecycle tools
 import { registerShutdownTool } from './shutdown';
 import { registerProfileStatusTool } from './profile-status';
@@ -75,7 +74,7 @@ export function registerAllTools(server: MCPServer): void {
   // Phase 1: Page and content tools
   registerPageReloadTool(server);
   registerCookiesTool(server);
-  registerSelectorQueryTool(server);
+  registerQueryDomTool(server);
   registerPageContentTool(server);
   registerWaitForTool(server);
   registerStorageTool(server);
@@ -90,7 +89,6 @@ export function registerAllTools(server: MCPServer): void {
   registerRequestInterceptTool(server);
 
   // Phase 3: Advanced tools
-  registerXpathQueryTool(server);
   registerFileUploadTool(server);
   registerHttpAuthTool(server);
   registerDragDropTool(server);
@@ -106,9 +104,7 @@ export function registerAllTools(server: MCPServer): void {
   registerTabsCloseTool(server);
 
   // Worker management (parallel browser operations)
-  registerWorkerCreateTool(server);
-  registerWorkerListTool(server);
-  registerWorkerDeleteTool(server);
+  registerWorkerTool(server);
 
   // Orchestration tools (Chrome-Sisyphus workflow management)
   registerOrchestrationTools(server);

@@ -22,7 +22,7 @@ const TOOL_ROUTING_MAP: Record<string, ToolRouting> = {
   // Phase 1 tools - prefer-lightpanda
   page_reload: 'prefer-lightpanda',
   cookies: 'prefer-lightpanda',
-  selector_query: 'prefer-lightpanda',
+  query_dom: 'prefer-lightpanda',
   page_content: 'prefer-lightpanda',
   wait_for: 'prefer-lightpanda',
   storage: 'prefer-lightpanda',
@@ -36,7 +36,6 @@ const TOOL_ROUTING_MAP: Record<string, ToolRouting> = {
   request_intercept: 'prefer-lightpanda',
 
   // Phase 3 tools - prefer-lightpanda
-  xpath_query: 'prefer-lightpanda',
   file_upload: 'prefer-lightpanda',
   http_auth: 'prefer-lightpanda',
   drag_drop: 'prefer-lightpanda',
@@ -51,10 +50,11 @@ const TOOL_ROUTING_MAP: Record<string, ToolRouting> = {
   tabs_create: 'prefer-lightpanda',
   tabs_close: 'prefer-lightpanda',
 
-  // Worker management tools - prefer-lightpanda
-  worker_create: 'prefer-lightpanda',
-  worker_list: 'prefer-lightpanda',
-  worker_delete: 'prefer-lightpanda',
+  // Worker management tool - prefer-lightpanda
+  worker: 'prefer-lightpanda',
+
+  // Memory tool - prefer-lightpanda
+  memory: 'prefer-lightpanda',
 
   // Orchestration tools - prefer-lightpanda
   workflow_init: 'prefer-lightpanda',
