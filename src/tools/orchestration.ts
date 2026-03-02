@@ -11,6 +11,7 @@ import { getOrchestrationStateManager } from '../orchestration/state-manager';
 import { filterToolsForWorker, WorkerToolConfig } from '../types/tool-manifest';
 import { getPlanRegistry } from '../orchestration/plan-registry';
 import { PlanExecutor } from '../orchestration/plan-executor';
+import { formatError } from '../utils/format-error';
 
 const dnsResolve = promisify(dns.resolve);
 
@@ -199,7 +200,7 @@ const workflowInitHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Error initializing workflow: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error initializing workflow: ${formatError(error)}`,
         },
       ],
       isError: true,
@@ -281,7 +282,7 @@ const workflowStatusHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Error getting workflow status: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error getting workflow status: ${formatError(error)}`,
         },
       ],
       isError: true,
@@ -335,7 +336,7 @@ const workflowCollectHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Error collecting results: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error collecting results: ${formatError(error)}`,
         },
       ],
       isError: true,
@@ -382,7 +383,7 @@ const workflowCleanupHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Error cleaning up workflow: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error cleaning up workflow: ${formatError(error)}`,
         },
       ],
       isError: true,
@@ -471,7 +472,7 @@ const workerUpdateHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Error updating worker: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error updating worker: ${formatError(error)}`,
         },
       ],
       isError: true,
@@ -544,7 +545,7 @@ const workerCompleteHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Error completing worker: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error completing worker: ${formatError(error)}`,
         },
       ],
       isError: true,
@@ -640,7 +641,7 @@ const workflowCollectPartialHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: `Error collecting partial results: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error collecting partial results: ${formatError(error)}`,
         },
       ],
       isError: true,
@@ -776,7 +777,7 @@ const executePlanHandler: ToolHandler = async (
     return {
       content: [{
         type: 'text',
-        text: `Error executing plan "${planId}": ${error instanceof Error ? error.message : String(error)}`,
+        text: `Error executing plan "${planId}": ${formatError(error)}`,
       }],
       isError: true,
     };

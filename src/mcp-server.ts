@@ -19,6 +19,7 @@ import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, Operation
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import { HintEngine } from './hints';
 import { formatAge } from './utils/format-age';
+import { formatError } from './utils/format-error';
 import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
@@ -33,7 +34,7 @@ import { getVersion } from './version';
  * by reconnecting to the browser.
  */
 export function isConnectionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = formatError(error);
   const patterns = [
     'not connected to chrome',
     'call connect() first',
@@ -304,7 +305,7 @@ export class MCPServer {
         result,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatError(error);
       return this.errorResponse(id, MCPErrorCodes.INTERNAL_ERROR, message);
     }
   }
@@ -534,7 +535,7 @@ export class MCPServer {
 
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatError(error);
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, 'error', message);

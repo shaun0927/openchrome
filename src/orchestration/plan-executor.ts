@@ -12,6 +12,7 @@ import {
   PlanErrorHandler,
   PlanExecutionResult,
 } from '../types/plan-cache';
+import { withTimeout } from '../utils/with-timeout';
 
 /**
  * Recursively substitute ${varName} templates in a value using the params map.
@@ -40,17 +41,6 @@ function substituteParams(value: unknown, params: Record<string, unknown>): unkn
   return value;
 }
 
-/**
- * Apply a timeout to a promise via Promise.race.
- */
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms (${label})`)), timeoutMs)
-    ),
-  ]);
-}
 
 /**
  * Extract result data from an MCPResult according to parseResult spec.
