@@ -26,6 +26,7 @@ import { getChromeLauncher } from './chrome/launcher';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS } from './config/defaults';
 import { getGlobalConfig } from './config/global';
+import { getToolTier, ToolTier } from './config/tool-tiers';
 import { logAuditEntry } from './security/audit-logger';
 import { getVersion } from './version';
 
@@ -81,6 +82,7 @@ export class MCPServer {
   private hintEngine: HintEngine | null = null;
   private options: MCPServerOptions;
   private profileWarningShown = false;
+  private exposedTier: ToolTier = 1;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
@@ -160,6 +162,30 @@ export class MCPServer {
   ): void {
     this.tools.set(name, { name, handler, definition });
     this.manifestVersion++;
+  }
+
+  /**
+   * Expand tool exposure to include a higher tier.
+   * Sends tools/list_changed notification so clients re-fetch the tool list.
+   */
+  public expandToolTier(tier: ToolTier): void {
+    if (tier > this.exposedTier) {
+      this.exposedTier = tier;
+      // Notify client that tool list has changed (MCP spec compliant)
+      this.sendNotification('notifications/tools/list_changed');
+    }
+  }
+
+  /**
+   * Send a JSON-RPC notification (no id, no response expected)
+   */
+  private sendNotification(method: string, params?: Record<string, unknown>): void {
+    const notification = {
+      jsonrpc: '2.0' as const,
+      method,
+      ...(params ? { params } : {}),
+    };
+    this.sendResponse(notification as unknown as MCPResponse);
   }
 
   /**
@@ -336,7 +362,7 @@ export class MCPServer {
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
-        tools: {},
+        tools: { listChanged: true },
         resources: {},
       },
       serverInfo: {
@@ -352,8 +378,36 @@ export class MCPServer {
   private async handleToolsList(): Promise<MCPResult> {
     const tools: MCPToolDefinition[] = [];
     for (const registry of this.tools.values()) {
-      tools.push(registry.definition);
+      const tier = getToolTier(registry.definition.name);
+      if (tier <= this.exposedTier) {
+        tools.push(registry.definition);
+      }
     }
+
+    // Add hint about additional tools when not fully expanded
+    if (this.exposedTier < 3) {
+      const hiddenCount = Array.from(this.tools.values()).filter(
+        r => getToolTier(r.definition.name) > this.exposedTier
+      ).length;
+      if (hiddenCount > 0) {
+        tools.push({
+          name: 'expand_tools',
+          description: `Show ${hiddenCount} additional specialist tools (network, emulation, PDF, orchestration, etc). Call with tier=2 for specialist tools, tier=3 for all tools including orchestration.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              tier: {
+                type: 'number',
+                enum: Array.from({ length: 3 - this.exposedTier }, (_, i) => this.exposedTier + 1 + i),
+                description: 'Tool tier to expand to. 2=specialist, 3=all including orchestration',
+              },
+            },
+            required: ['tier'],
+          },
+        });
+      }
+    }
+
     return { tools };
   }
 
@@ -422,9 +476,28 @@ export class MCPServer {
       throw new Error('Missing tool name');
     }
 
+    // Handle the expand_tools meta-tool before normal tool lookup
+    if (toolName === 'expand_tools') {
+      const tier = (toolArgs?.tier as number) || 2;
+      this.expandToolTier(Math.min(tier, 3) as ToolTier);
+      const toolCount = Array.from(this.tools.values()).filter(
+        r => getToolTier(r.definition.name) <= this.exposedTier
+      ).length;
+      return {
+        content: [{ type: 'text', text: `Tool tier expanded to ${this.exposedTier}. Now exposing ${toolCount} tools. Call tools/list to see the updated list.` }],
+      };
+    }
+
     const tool = this.tools.get(toolName);
     if (!tool) {
       throw new Error(`Unknown tool: ${toolName}`);
+    }
+
+    // Auto-expand tier if a higher-tier tool is called directly
+    // This handles the case where the AI learned about the tool from documentation
+    const toolTier = getToolTier(toolName);
+    if (toolTier > this.exposedTier) {
+      this.expandToolTier(toolTier);
     }
 
     // Ensure session exists.
