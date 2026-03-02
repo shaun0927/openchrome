@@ -19,9 +19,11 @@ git stash list
 git branch -a
 gh pr list --state open --json number,title,headRefName,baseRefName,additions,deletions,author,files
 npm run build
+npm run lint
+npm test
 ```
 
-**Gate**: If build fails, fix build errors first. Do NOT proceed with failing build.
+**Gate**: If build, lint, or tests fail, fix errors first. Do NOT proceed with any failures.
 
 ## STEP 2: Classify Open PRs
 
@@ -122,6 +124,8 @@ Before merging ANY PR, verify ALL of these:
 ```bash
 npm ci                                                 # must pass (lockfile in sync)
 npm run build                                          # must pass
+npm run lint                                           # must pass (no errors)
+npm test                                               # must pass (ALL test suites green)
 git diff --name-only HEAD | wc -l                      # must be 0 (clean tree)
 ```
 
@@ -154,6 +158,7 @@ For each MY PR:
 gh pr merge <N> --merge --delete-branch
 git checkout develop && git pull origin develop
 npm run build                                          # verify after each merge
+npm test                                               # verify tests pass after each merge
 ```
 
 **Note**: All PRs target the `develop` branch (per CLAUDE.md). To cut a release, merge `develop` into `main` after all PRs are merged and the build is green:
@@ -178,7 +183,21 @@ git log --oneline -10
 
 ## STEP 8: Publish (only if user requests)
 
-### 8a. Publish to npm
+### 8a. Verify CI passes on main
+
+**CRITICAL**: Do NOT publish until CI is green on main.
+
+```bash
+# Wait for CI to complete after merging to main
+gh run list --branch main --limit 1 --json status,conclusion,databaseId
+# If status is "completed" and conclusion is "success", proceed.
+# If status is "in_progress", wait and re-check.
+# If conclusion is "failure", fix before publishing.
+```
+
+**Gate**: CI must pass (all 9 matrix jobs: 3 OS × 3 Node versions). Do NOT proceed if any job failed.
+
+### 8b. Publish to npm
 
 ```bash
 npm version patch   # or minor/major per user request
@@ -189,7 +208,7 @@ npm publish
 
 Skip this step entirely unless the user explicitly asks for a version bump or publish.
 
-### 8b. Post-publish: Local Environment Sync
+### 8c. Post-publish: Local Environment Sync
 
 **CRITICAL** — `npm publish` alone does NOT update the local environment.
 Skipping this step causes version mismatch where the MCP server runs old code.
@@ -243,8 +262,11 @@ After verification, the user must **restart Claude Code** for the new MCP server
 - [ ] All OTHER's PRs: reviewed and commented (NOT merged)
 - [ ] Pre-merge platform anti-pattern grep: all clean
 - [ ] `npm run build` passes on develop (and main after release merge)
+- [ ] `npm test` passes — ALL test suites green
+- [ ] `npm run lint` passes — no errors
 - [ ] No unnecessary branches remain
 - [ ] Working tree is clean
+- [ ] (If published) CI green on main before publish (all 9 matrix jobs)
 - [ ] (If published) Global npm package matches published version
 - [ ] (If published) npx cache cleared (`~/.npm/_npx/*/node_modules/openchrome-mcp` removed)
 - [ ] (If published) No zombie MCP server processes running old version
