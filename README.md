@@ -165,11 +165,11 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 
 ---
 
-## 47 Tools
+## 45 Tools
 
 | Category | Tools |
 |----------|-------|
-| **Navigate & Interact** | `navigate`, `click_element`, `fill_form`, `wait_and_click`, `find`, `computer` |
+| **Navigate & Interact** | `navigate`, `interact`, `fill_form`, `find`, `computer` |
 | **Read & Extract** | `read_page`, `page_content`, `javascript_tool`, `selector_query`, `xpath_query` |
 | **Environment** | `emulate_device`, `geolocation`, `user_agent`, `network` |
 | **Storage & Debug** | `cookies`, `storage`, `console_capture`, `performance_metrics`, `request_intercept` |
@@ -177,9 +177,9 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 | **Memory** | `memory_record`, `memory_query`, `memory_validate` |
 
 <details>
-<summary>Full tool list (47)</summary>
+<summary>Full tool list (45)</summary>
 
-`navigate` `computer` `read_page` `find` `click_element` `wait_and_click` `form_input` `fill_form` `javascript_tool` `page_reload` `page_content` `page_pdf` `wait_for` `user_agent` `geolocation` `emulate_device` `network` `selector_query` `xpath_query` `cookies` `storage` `console_capture` `performance_metrics` `request_intercept` `drag_drop` `file_upload` `http_auth` `worker_create` `worker_list` `worker_update` `worker_complete` `worker_delete` `tabs_create_mcp` `tabs_context_mcp` `tabs_close` `workflow_init` `workflow_status` `workflow_collect` `workflow_collect_partial` `workflow_cleanup` `execute_plan` `batch_execute` `lightweight_scroll` `memory_record` `memory_query` `memory_validate` `oc_stop`
+`navigate` `interact` `computer` `read_page` `find` `form_input` `fill_form` `javascript_tool` `page_reload` `page_content` `page_pdf` `wait_for` `user_agent` `geolocation` `emulate_device` `network` `selector_query` `xpath_query` `cookies` `storage` `console_capture` `performance_metrics` `request_intercept` `drag_drop` `file_upload` `http_auth` `worker_create` `worker_list` `worker_update` `worker_complete` `worker_delete` `tabs_create_mcp` `tabs_context_mcp` `tabs_close` `workflow_init` `workflow_status` `workflow_collect` `workflow_collect_partial` `workflow_cleanup` `execute_plan` `batch_execute` `lightweight_scroll` `memory_record` `memory_query` `memory_validate` `oc_stop`
 
 </details>
 
@@ -291,7 +291,7 @@ By default, benchmarks run in **stub mode** — measuring protocol correctness a
 
 ## Server / Headless Deployment
 
-OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 47 tools function with unauthenticated Chrome — navigation, scraping, screenshots, form filling, and parallel workflows all work in clean sessions.
+OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 45 tools function with unauthenticated Chrome — navigation, scraping, screenshots, form filling, and parallel workflows all work in clean sessions.
 
 ### Quick start
 
@@ -310,7 +310,7 @@ openchrome serve --server-mode
 | Category | Tools |
 |----------|-------|
 | **Navigation & scraping** | `navigate`, `read_page`, `page_content`, `javascript_tool` |
-| **Interaction** | `click_element`, `fill_form`, `drag_drop`, `file_upload` |
+| **Interaction** | `interact`, `fill_form`, `drag_drop`, `file_upload` |
 | **Parallel workflows** | `workflow_init` with multiple workers, `batch_execute` |
 | **Screenshots & PDF** | `computer(screenshot)`, `page_pdf` |
 | **Network & performance** | `request_intercept`, `performance_metrics`, `console_capture` |
