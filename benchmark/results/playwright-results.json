@@ -1,0 +1,487 @@
+{
+  "approach": "Playwright (CDP connection)",
+  "totalProfiles": 20,
+  "successfulProfiles": 19,
+  "successRate": "95.0%",
+  "totalTweetsExtracted": 78,
+  "timing": {
+    "totalMs": 82273,
+    "totalSec": "82.3",
+    "avgPerProfileMs": 4114
+  },
+  "tokenEstimate": {
+    "htmlMode": {
+      "totalTokens": 3562038,
+      "avgPerProfile": 178102,
+      "description": "Raw HTML sent to LLM (page.content())"
+    },
+    "textMode": {
+      "totalTokens": 9782,
+      "avgPerProfile": 489,
+      "description": "innerText sent to LLM (page.innerText())"
+    },
+    "scriptOverhead": {
+      "scriptTokens": 800,
+      "description": "One-time cost to generate the Playwright script"
+    }
+  },
+  "results": [
+    {
+      "handle": "elonmusk",
+      "name": "Elon Musk",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "Highest usage of 𝕏 ever",
+        "Today was the biggest day on 𝕏 in history.",
+        "You imagine, Grok Imagine does the magic",
+        "Imagine keeps improving",
+        "Example of using the Grok Imagine extension:\nHere is a 26-second scene without cuts, without editing, perfect stylistic coherence, made in 5 minutes.\n\n I requested two 10-second extensions and one 6-second extension.\n There is no loss of quality throughout the sequence and"
+      ],
+      "timing": {
+        "navigationMs": 1199,
+        "waitMs": 4157,
+        "totalMs": 5362
+      },
+      "dataSize": {
+        "htmlSize": 752229,
+        "textSize": 2073,
+        "htmlTokens": 188058,
+        "textTokens": 519
+      }
+    },
+    {
+      "handle": "BillGates",
+      "name": "Bill Gates",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "Thank you for the warm welcome, \n@ncbn\n. It’s exciting to witness Andhra Pradesh’s growth being accelerated through AI, technology, and innovations across health, agriculture & education.",
+        "Technology must serve humanity. Our Real Time Governance System (RTGS) is transforming lives across Andhra Pradesh - delivering speed in governance & ease of doing business in real time. Grateful for my 1990s meeting with Mr. Bill Gates, which inspired this tech-driven citizen",
+        "I’m deeply sad to learn of the passing of Dr. Bill Foege. Bill was a towering figure in global health—a man who saved the lives of literally hundreds of millions of people. He was also a friend and mentor who gave me a deep grounding in the history of global health and inspired",
+        ".\n@fervoenergy\n is creating energy that’s clean, affordable, reliable, and American-made.",
+        "Learning how many kids were dying from diarrhea back in 1997—when I never worried about it with my own kids—led me to get involved in global health."
+      ],
+      "timing": {
+        "navigationMs": 406,
+        "waitMs": 3021,
+        "totalMs": 3432
+      },
+      "dataSize": {
+        "htmlSize": 753195,
+        "textSize": 2772,
+        "htmlTokens": 188299,
+        "textTokens": 693
+      }
+    },
+    {
+      "handle": "BarackObama",
+      "name": "Barack Obama",
+      "success": true,
+      "tweetCount": 3,
+      "tweets": [
+        "Today, we celebrate 12 years of My Brother's Keeper Alliance!\n\nGuided by our six milestones, and rooted in the belief that communities are the unit of change to realize improved life outcomes for boys and young men of color, we build pathways for progress that lead to real,",
+        "Congratulations to the U.S. Men’s and Women’s hockey teams, Alysa Liu, Breezy Johnson, Mikaela Shiffrin and all the amazing Olympic athletes representing \n@TeamUSA\n.",
+        "Michelle and I were deeply saddened to hear about the passing of a true giant, the Reverend Jesse Jackson. We will always be grateful for Jesse's lifetime of service, and the friendship our families share. We stood on his shoulders. We send our deepest condolences to the Jackson"
+      ],
+      "timing": {
+        "navigationMs": 334,
+        "waitMs": 3370,
+        "totalMs": 3706
+      },
+      "dataSize": {
+        "htmlSize": 686662,
+        "textSize": 1982,
+        "htmlTokens": 171666,
+        "textTokens": 496
+      }
+    },
+    {
+      "handle": "cristiano",
+      "name": "Cristiano Ronaldo",
+      "success": true,
+      "tweetCount": 3,
+      "tweets": [
+        "We keep growing together! Important win!",
+        "Keep it going!",
+        "Back where we belong. Now back to work!"
+      ],
+      "timing": {
+        "navigationMs": 256,
+        "waitMs": 3374,
+        "totalMs": 3635
+      },
+      "dataSize": {
+        "htmlSize": 683642,
+        "textSize": 1461,
+        "htmlTokens": 170911,
+        "textTokens": 366
+      }
+    },
+    {
+      "handle": "justinbieber",
+      "name": "Justin Bieber",
+      "success": true,
+      "tweetCount": 3,
+      "tweets": [
+        "( ( DROP 9 NOW LIVE ) )\n\nJB BIRTHDAY DROP \n\n\nhttp://\nSKYLRK.com",
+        "no one id rather spend my birthday withhh.. :))",
+        "FRIDAY 02.13  10AM PT\n\n\n@SKYLRK\n * HAILEY BIEBER"
+      ],
+      "timing": {
+        "navigationMs": 264,
+        "waitMs": 3396,
+        "totalMs": 3664
+      },
+      "dataSize": {
+        "htmlSize": 686354,
+        "textSize": 1348,
+        "htmlTokens": 171589,
+        "textTokens": 337
+      }
+    },
+    {
+      "handle": "taylorswift13",
+      "name": "Taylor Swift",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "My favorite part about writing is that first spark of an idea. It can happen at any time, for any reason. The idea for the Opalite music video crash landed into my imagination when I was doing promo for The Life of a Showgirl. I was a guest on one of my favorite shows,",
+        "I never want to forget a single detail of this hysterical shoot, and now I don’t have to! Excited to share more of the Opalite Music Video with two extended versions full of dance lessoning, our phenomenal cameos, camcorder footage, gigantic scrunchies & fanny pack angles! Parts",
+        "There truly was magic in the *eras* I can’t wait for you guys to see the first two episodes of The End of an Era and relive The Eras Tour | The Final Show TOMORROW on \n@DisneyPlus\n starting 12am PT / 3am ET",
+        "Just 11 days until the final show of The Eras Tour is all yours. The Final Show now featuring THE TORTURED POETS DEPARTMENT on \n@DisneyPlus\n beginning December 12",
+        "Honestly can’t think of a better way to celebrate my (almost) birthday than to relive the Eras Tour with you! This time we’re going backstage. \"The End of an Era\", a 6-episode behind-the-scenes docuseries, streams on \n@DisneyPlus\n beginning Dec 12"
+      ],
+      "timing": {
+        "navigationMs": 249,
+        "waitMs": 3358,
+        "totalMs": 3610
+      },
+      "dataSize": {
+        "htmlSize": 752011,
+        "textSize": 2712,
+        "htmlTokens": 188003,
+        "textTokens": 678
+      }
+    },
+    {
+      "handle": "katyperry",
+      "name": "Katy Perry",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "bandaids\nout now\n\nhttps://\nkaty.lnk.to/BandaidsVideo",
+        "done",
+        "you got this \n@sanbenito\n remind the world what the real American dream looks like  #SuperBowlLX",
+        "I love you",
+        "Mummy’s home"
+      ],
+      "timing": {
+        "navigationMs": 235,
+        "waitMs": 3396,
+        "totalMs": 3635
+      },
+      "dataSize": {
+        "htmlSize": 754891,
+        "textSize": 1883,
+        "htmlTokens": 188723,
+        "textTokens": 471
+      }
+    },
+    {
+      "handle": "rihanna",
+      "name": "Rihanna",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "spray it like you mean it  \nJ’adore Intense.\n\n#JadoreDior",
+        "commercial break",
+        "ring ring…new J’adore coming soon\n\n#JadoreDior",
+        "it’s good",
+        "my 2016 post wins\n\nhappy ANTIversary"
+      ],
+      "timing": {
+        "navigationMs": 237,
+        "waitMs": 3366,
+        "totalMs": 3605
+      },
+      "dataSize": {
+        "htmlSize": 740470,
+        "textSize": 1557,
+        "htmlTokens": 185118,
+        "textTokens": 390
+      }
+    },
+    {
+      "handle": "KimKardashian",
+      "name": "Kim Kardashian",
+      "success": true,
+      "tweetCount": 3,
+      "tweets": [
+        "set selfies",
+        ".\n@SKIMS\n EVERYDAY COTTON",
+        "In response to the recent tragic deaths of Alex Pretti, Renee Good, Silverio Villegas González and Keith Porter Jr. and other victims, I stand in solidarity with calls for accountability and compassionate immigration enforcement. I stand with the families and children nationwide"
+      ],
+      "timing": {
+        "navigationMs": 236,
+        "waitMs": 3368,
+        "totalMs": 3609
+      },
+      "dataSize": {
+        "htmlSize": 679034,
+        "textSize": 1540,
+        "htmlTokens": 169759,
+        "textTokens": 385
+      }
+    },
+    {
+      "handle": "selenagomez",
+      "name": "Selena Gomez",
+      "success": true,
+      "tweetCount": 3,
+      "tweets": [
+        "‘In The Dark’ is out now. This is just a little nostalgia droplet and I hope you love it.  \n@nwtnetflix\n \n\n\nhttps://\nSelenaGomez.lnk.to/InTheDarkVideo",
+        "Selena has a special surprise for Record Store Day  A limited-edition Droplets EP on clear glitter vinyl, featuring \"It Ain't Me\" and \"Wolves,” arriving April 18! View the full list of where to shop for RSD at \nhttp://\nrecordstoreday.com",
+        "Say I Love You First with my new Valentine’s Day collection  Available on my store. \n\n\nhttp://\nselenagomez.lnk.to/store"
+      ],
+      "timing": {
+        "navigationMs": 249,
+        "waitMs": 3373,
+        "totalMs": 3625
+      },
+      "dataSize": {
+        "htmlSize": 687467,
+        "textSize": 1810,
+        "htmlTokens": 171867,
+        "textTokens": 453
+      }
+    },
+    {
+      "handle": "JeffBezos",
+      "name": "Jeff Bezos",
+      "success": true,
+      "tweetCount": 3,
+      "tweets": [
+        "Project Hail Mary is outstanding. Ryan Gosling is so talented he somehow conjures emotion and chemistry with his co-star, even though that co-star is an alien rock puppet! It’s an amazing film — huge kudos to the whole Amazon Studios team.",
+        "Believe in the Hail Mary. Watch the final trailer for Project Hail Mary — only in theaters and IMAX, March 20.",
+        "The Blue Moon MK1 flight vehicle that will land near Shackleton crater. We’ll soon be doing fully integrated checkout tests. At over 26 feet tall (8 meters), it’s smaller than our MK2 human lander but larger than the historic Apollo lander."
+      ],
+      "timing": {
+        "navigationMs": 253,
+        "waitMs": 3356,
+        "totalMs": 3612
+      },
+      "dataSize": {
+        "htmlSize": 694755,
+        "textSize": 1810,
+        "htmlTokens": 173689,
+        "textTokens": 453
+      }
+    },
+    {
+      "handle": "TimCook",
+      "name": "Tim Cook",
+      "success": false,
+      "tweetCount": 0,
+      "tweets": [],
+      "timing": {
+        "navigationMs": 246,
+        "waitMs": 11503,
+        "totalMs": 11753
+      },
+      "dataSize": {
+        "htmlSize": 588283,
+        "textSize": 701,
+        "htmlTokens": 147071,
+        "textTokens": 176
+      }
+    },
+    {
+      "handle": "sama",
+      "name": "Sam Altman",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "I'd like to answer questions about our work with the DoW and our thinking over the past few days. Please AMA.",
+        "Three general things from this AMA:\n\n1. There is more open debate than I thought ther ewould be, at least in this part of Twitter, about whether we should prefer a democratically elected government or unelected private companies to have more power. I guess this is something",
+        "I have to go do something for awhile but can answer more questions tonight.",
+        "@boazbaraktcs\n is also going to help out with answers!",
+        "@natseckatrina\n who leads some of our national security work is going to jump in to answer some of your questions"
+      ],
+      "timing": {
+        "navigationMs": 299,
+        "waitMs": 3371,
+        "totalMs": 3676
+      },
+      "dataSize": {
+        "htmlSize": 741066,
+        "textSize": 2230,
+        "htmlTokens": 185267,
+        "textTokens": 558
+      }
+    },
+    {
+      "handle": "ylecun",
+      "name": "Yann LeCun",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "I do not write posts on X.\nI tweet links to posts on other platforms.\nI like and retweet (occasionally)\nI comment on friends' tweets (rarely)\nFollow me on...",
+        "This is the AI that will be taking our jobs",
+        "JD Vance, October 2024:\n\n“Out interests, I think, very much, is a not going to war in Iran.\"\n\n“Kamala Harris kinda likes war…They seem to be sleepwalking us into a war with Iran.\"",
+        "Introducing Perplexity Computer.\n\nComputer unifies every current AI capability into one system.\n\nIt can research, design, code, deploy, and manage any project end-to-end.",
+        "Pretty crazy when you realize just how flagrant the scaremongering has been about data center water usage:"
+      ],
+      "timing": {
+        "navigationMs": 251,
+        "waitMs": 3414,
+        "totalMs": 3667
+      },
+      "dataSize": {
+        "htmlSize": 778274,
+        "textSize": 2824,
+        "htmlTokens": 194569,
+        "textTokens": 706
+      }
+    },
+    {
+      "handle": "neymarjr",
+      "name": "Neymar Jr",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "Neymar Jr conta: você sabia que a \n@blazebetbr\n tem recompensa de Cashback?\n\nAo subir de ranque ou ativar pela área de Recompensas, você pode receber uma porcentagem de reembolso, conforme os Termos de Serviço da plataforma. As condições podem variar de acordo com período,",
+        "Fé e seguir trabalhando",
+        "Neymar Jr tem o recado: você já está no Canal de WhatsApp da \n@blazebetbr\n?\n\nNo canal oficial, você recebe tudo em primeira mão — lançamentos, desafios exclusivos, missões novas e oportunidades especiais antes de todo mundo. E o melhor: tem recompensa que é só pra quem está",
+        "E aí, sabe dizer quantos gols de falta eu já marquei pelo Santos? \n#CançãoAlimentos #TorcidaCanção #publi",
+        "Carnaval é tempo de festa e na Blaze também é tempo de recompensa!\n\nDurante a semana de 16 a 22 de fevereiro, a Blaze preparou recompensas exclusivas pra você entrar no ritmo. E tem mais: vários jogos com temática de Carnaval, cheios de cor, energia e emoção pra deixar a"
+      ],
+      "timing": {
+        "navigationMs": 239,
+        "waitMs": 3358,
+        "totalMs": 3601
+      },
+      "dataSize": {
+        "htmlSize": 746361,
+        "textSize": 2627,
+        "htmlTokens": 186591,
+        "textTokens": 657
+      }
+    },
+    {
+      "handle": "Oprah",
+      "name": "Oprah Winfrey",
+      "success": true,
+      "tweetCount": 4,
+      "tweets": [
+        "@ ava you sure made us wait long enough  # Nova #QueenSugar",
+        "“All  I do is regard you Darla”. I think Ralph Angel has been pretty understanding about the ex . #QueenSugar",
+        "Guest Column: ‘Queen Sugar’ Helmer DeMane Davis on How Ava DuVernay’s Decision to Hire All Female Directors Offered “Life-Transforming Opportunity”",
+        "#QueenSugar Finale tonight at 8|9c on \n@OWNTV\n!!"
+      ],
+      "timing": {
+        "navigationMs": 242,
+        "waitMs": 3371,
+        "totalMs": 3617
+      },
+      "dataSize": {
+        "htmlSize": 694053,
+        "textSize": 1751,
+        "htmlTokens": 173514,
+        "textTokens": 438
+      }
+    },
+    {
+      "handle": "KevinHart4real",
+      "name": "Kevin Hart",
+      "success": true,
+      "tweetCount": 3,
+      "tweets": [
+        "Super Bowl Sunday!! I see you with your new \"favorite team\" come on now... I'm team \n@DKSportsbook\n for all the betting action! Who ya got?! #DKPartner \nhttp://\ndkng.co/HART",
+        "Divisional Round got EVERYBODY stressed  Doesn't matter if my birds are out, I'm still locked in with \n@DKSportsbook\n all weekend!! #DKPartner \nhttp://\ndkng.co/HART",
+        "If Santa doesn't bring the wins... maybe \n@DKSportsbook\n will  Get in on the action for the big NFL slate tomorrow!! #DKPartner \nhttp://\ndkng.co/HART"
+      ],
+      "timing": {
+        "navigationMs": 242,
+        "waitMs": 3359,
+        "totalMs": 3607
+      },
+      "dataSize": {
+        "htmlSize": 690059,
+        "textSize": 1799,
+        "htmlTokens": 172515,
+        "textTokens": 450
+      }
+    },
+    {
+      "handle": "TheRock",
+      "name": "Dwayne Johnson",
+      "success": true,
+      "tweetCount": 4,
+      "tweets": [
+        "There’s no other high like it.\nIt all became a drug.\nPressure.\n\nBenny Safdie’s THE SMASHING MACHINE is now available to watch at home \n\n#thesmashingmachine",
+        "In a blink, the years roll on. \n\nWe look back and hope we’ve made a positive impact on all those around us, but more importantly ~ a positive impact on ourselves. \n\nLife changes, but the hunger doesn’t. \n\nRemember your why. \n\nOnward. \n\n\nhttp://\nprojectrock.online/SS26Q1DJ\n\n\n@ProjectRock",
+        "This 2017 black and gold colorway was \n@projectrock\n’s FIRST EVER training shoe. \n\nBrings me immense gratitude and motivation to continue to deliver the best in training shoes and fitness wear for our ever growing PROJECT ROCK CULTURE. \n\nA lot has changed since 2017, but the hunger",
+        "That’s an official Jumanji wrap on the one and the only, Danny DeVito \n\nTo work with you, and learn from you has been an honor ~ and to call you my friend, will always be a privilege. Thank you, brother for your anchoring heart and JOY throughout our Jumanji franchise."
+      ],
+      "timing": {
+        "navigationMs": 255,
+        "waitMs": 3379,
+        "totalMs": 3637
+      },
+      "dataSize": {
+        "htmlSize": 704190,
+        "textSize": 2248,
+        "htmlTokens": 176048,
+        "textTokens": 562
+      }
+    },
+    {
+      "handle": "shakira",
+      "name": "Shakira",
+      "success": true,
+      "tweetCount": 5,
+      "tweets": [
+        "Tengo una mezcla de emoción y nostalgia por este cierre de mi gira en mi casa, México.\n\nVeo que están acampando desde hace dos días en el Zócalo y estoy viendo en vivo cómo empiezan ya a ocupar la plaza. Me siento tan agradecida por todo lo que hacen por mí.\n\nEsta noche prometo",
+        "“To’ lo bonito queda, queda pegao en el pecho y lo que no sirve fué, fué, fué”\nALGO TÚ con Beéle. \nQue ganas que ya sea 4 de Marzo!  \nhttps://\nsongwhip.com/shakira/beele-\nalgo-tu\n…",
+        "Te quiero y te admiro Gloria! Y siempre agradecida por tus consejos y cariño!!",
+        "Congratulations Shaki!! @shakira so proud!! Girl power! Latina Power!! ¡¡Felicidades, Shaki!! ¡¡@Shakira tan orgullosa!! ¡El poder de las mujeres! ¡¡Poder latino!!",
+        "En nombre de todo mi equipo de Las Mujeres Ya No Lloran y en nombre de Alejandro y mío, gracias mi gente, y gracias Univision por estos dos grandes reconocimientos.  #PremioLoNuestro"
+      ],
+      "timing": {
+        "navigationMs": 241,
+        "waitMs": 3355,
+        "totalMs": 3599
+      },
+      "dataSize": {
+        "htmlSize": 731556,
+        "textSize": 2402,
+        "htmlTokens": 182889,
+        "textTokens": 601
+      }
+    },
+    {
+      "handle": "BrunoMars",
+      "name": "Bruno Mars",
+      "success": true,
+      "tweetCount": 4,
+      "tweets": [
+        "MY ALBUM IS OUT NOW!  \n\n#theromantic\n#brunomars\n#theromanticworldtour\n#brumoji",
+        "POP POP!!",
+        "Want a love song dedication from \n@BrunoMars\n?!\n\nLeave a talkback on Love Songs Radio! Be sure to include your name, where you're from and what's going on in your love life.\n\n: \nhttp://\nihr.fm/LoveSongsRadio",
+        "BRUNO MARS COMEBACK WEEK"
+      ],
+      "timing": {
+        "navigationMs": 239,
+        "waitMs": 3376,
+        "totalMs": 3620
+      },
+      "dataSize": {
+        "htmlSize": 703567,
+        "textSize": 1570,
+        "htmlTokens": 175892,
+        "textTokens": 393
+      }
+    }
+  ]
+}
