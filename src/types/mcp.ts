@@ -9,6 +9,12 @@ export interface MCPRequest {
   params?: Record<string, unknown>;
 }
 
+export interface MCPNotification {
+  jsonrpc: '2.0';
+  method: string;
+  params?: Record<string, unknown>;
+}
+
 export interface MCPResponse {
   jsonrpc: '2.0';
   id: number | string;
