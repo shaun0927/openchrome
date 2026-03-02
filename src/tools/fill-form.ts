@@ -21,13 +21,9 @@ const definition: MCPToolDefinition = {
       },
       fields: {
         type: 'object',
-        description: 'Map of field labels/names/placeholders to values',
+        description: 'Map of field labels/names/placeholders to values (string). For checkboxes use "true"/"false".',
         additionalProperties: {
-          oneOf: [
-            { type: 'string' },
-            { type: 'boolean' },
-            { type: 'number' },
-          ],
+          type: 'string',
         },
       },
       submit: {

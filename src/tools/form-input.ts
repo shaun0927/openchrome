@@ -23,9 +23,8 @@ const definition: MCPToolDefinition = {
         description: 'ref_N from read_page or backendNodeId from DOM mode',
       },
       value: {
-        oneOf: [{ type: 'string' }, { type: 'boolean' }, { type: 'number' }],
-        description:
-          'Value to set. Boolean for checkboxes, string for selects',
+        type: 'string',
+        description: 'Value to set. For checkboxes use "true"/"false", for number inputs use the numeric string.',
       },
     },
     required: ['ref', 'value', 'tabId'],
