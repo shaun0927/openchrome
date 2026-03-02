@@ -349,8 +349,6 @@ export class ChromeLauncher {
       // Fallback window size if maximize doesn't work
       `--window-size=${DEFAULT_VIEWPORT.width},${DEFAULT_VIEWPORT.height}`,
       // Memory-saving flags (applies to all profile types)
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
       '--renderer-process-limit=16',
       '--js-flags=--max-old-space-size=1024',
       '--disable-backgrounding-occluded-windows',
@@ -373,7 +371,7 @@ export class ChromeLauncher {
     // Headless mode: explicit option > global config (default when auto-launch)
     const headless = options.headless ?? globalConfig.headless ?? false;
     if (headless) {
-      args.push('--headless=new');
+      args.push('--headless=new', '--disable-gpu', '--disable-dev-shm-usage');
       console.error('[ChromeLauncher] Running in headless mode (no visible window)');
     }
 
