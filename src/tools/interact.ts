@@ -40,6 +40,18 @@ const definition: MCPToolDefinition = {
         enum: ['state_summary', 'dom_delta', 'both'],
         description: 'Response content. Default: both',
       },
+      verify: {
+        type: 'boolean',
+        description: 'Return screenshot after action for visual verification',
+      },
+      waitForMs: {
+        type: 'number',
+        description: 'Poll for element before acting (for dynamic/lazy content). Max: 30000',
+      },
+      pollInterval: {
+        type: 'number',
+        description: 'Poll interval when using waitForMs. Default: 200',
+      },
     },
     required: ['tabId', 'query'],
   },
@@ -54,6 +66,9 @@ const handler: ToolHandler = async (
   const action = (args.action as string) || 'click';
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
   const returnFormat = (args.returnFormat as string) || 'both';
+  const verify = args.verify as boolean | undefined;
+  const waitForMs = args.waitForMs as number | undefined;
+  const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -84,6 +99,12 @@ const handler: ToolHandler = async (
     const queryLower = query.toLowerCase();
     const queryTokens = tokenizeQuery(query);
 
+    // Optional polling for dynamic/lazy content
+    const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
+    let bestElement: FoundElement | null = null;
+    const startTime = Date.now();
+
+    do {
     // Find elements matching the query using same approach as click-element.ts
     const results = await page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
       const elements: Omit<FoundElement, 'score'>[] = [];
@@ -217,71 +238,91 @@ const handler: ToolHandler = async (
       return elements;
     }, queryLower);
 
-    if (results.length === 0) {
-      return {
-        content: [{ type: 'text', text: `No elements found matching "${query}"` }],
-        isError: true,
-      };
-    }
-
-    // Get backend DOM node IDs via batched CDP approach
-    const cdpClient = sessionManager.getCDPClient();
-
-    const { result: batchResult } = await cdpClient.send<{
-      result: { objectId?: string };
-    }>(page, 'Runtime.evaluate', {
-      expression: `(() => {
-        const indexedEls = [];
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while (node = walker.nextNode()) {
-          const el = node;
-          if (el.__interactIndex !== undefined) {
-            indexedEls.push({ el, index: el.__interactIndex });
-          }
+      if (results.length === 0) {
+        if (maxWait > 0 && Date.now() - startTime < maxWait) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          continue;
         }
-        indexedEls.sort((a, b) => a.index - b.index);
-        return indexedEls.map(e => e.el);
-      })()`,
-      returnByValue: false,
-    });
-
-    if (batchResult.objectId) {
-      const { result: properties } = await cdpClient.send<{
-        result: Array<{ name: string; value: { objectId?: string } }>;
-      }>(page, 'Runtime.getProperties', {
-        objectId: batchResult.objectId,
-        ownProperties: true,
-      });
-
-      const describePromises: Promise<void>[] = [];
-      for (const prop of properties) {
-        const index = parseInt(prop.name, 10);
-        if (isNaN(index) || index >= results.length || !prop.value?.objectId) continue;
-
-        describePromises.push(
-          cdpClient
-            .send<{ node: { backendNodeId: number } }>(page, 'DOM.describeNode', {
-              objectId: prop.value.objectId,
-            })
-            .then(({ node }) => {
-              results[index].backendDOMNodeId = node.backendNodeId;
-            })
-            .catch(() => {
-              // Skip if we can't get the backend node ID
-            })
-        );
+        return {
+          content: [{ type: 'text', text: `No elements found matching "${query}"` }],
+          isError: true,
+        };
       }
 
-      await Promise.all(describePromises);
-    }
+      // Get backend DOM node IDs via batched CDP approach
+      const cdpClient = sessionManager.getCDPClient();
 
-    // Score and sort
-    const scoredResults: FoundElement[] = results
-      .map(el => ({ ...el, score: scoreElement(el as FoundElement, queryLower, queryTokens) }))
-      .sort((a, b) => b.score - a.score);
+      const { result: batchResult } = await cdpClient.send<{
+        result: { objectId?: string };
+      }>(page, 'Runtime.evaluate', {
+        expression: `(() => {
+          const indexedEls = [];
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+          let node;
+          while (node = walker.nextNode()) {
+            const el = node;
+            if (el.__interactIndex !== undefined) {
+              indexedEls.push({ el, index: el.__interactIndex });
+            }
+          }
+          indexedEls.sort((a, b) => a.index - b.index);
+          return indexedEls.map(e => e.el);
+        })()`,
+        returnByValue: false,
+      });
 
-    const bestMatch = scoredResults[0];
+      if (batchResult.objectId) {
+        const { result: properties } = await cdpClient.send<{
+          result: Array<{ name: string; value: { objectId?: string } }>;
+        }>(page, 'Runtime.getProperties', {
+          objectId: batchResult.objectId,
+          ownProperties: true,
+        });
+
+        const describePromises: Promise<void>[] = [];
+        for (const prop of properties) {
+          const index = parseInt(prop.name, 10);
+          if (isNaN(index) || index >= results.length || !prop.value?.objectId) continue;
+
+          describePromises.push(
+            cdpClient
+              .send<{ node: { backendNodeId: number } }>(page, 'DOM.describeNode', {
+                objectId: prop.value.objectId,
+              })
+              .then(({ node }) => {
+                results[index].backendDOMNodeId = node.backendNodeId;
+              })
+              .catch(() => {
+                // Skip if we can't get the backend node ID
+              })
+          );
+        }
+
+        await Promise.all(describePromises);
+      }
+
+      // Score and sort
+      const scoredResults: FoundElement[] = results
+        .map(el => ({ ...el, score: scoreElement(el as FoundElement, queryLower, queryTokens) }))
+        .sort((a, b) => b.score - a.score);
+
+      if (scoredResults.length > 0 && scoredResults[0].score >= 10) {
+        bestElement = scoredResults[0];
+        break;
+      }
+
+      if (maxWait > 0 && Date.now() - startTime < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      } else {
+        // No polling or timeout reached — use best available even if low score
+        if (scoredResults.length > 0) {
+          bestElement = scoredResults[0];
+        }
+        break;
+      }
+    } while (Date.now() - startTime < maxWait);
+
+    const bestMatch = bestElement;
 
     if (!bestMatch || bestMatch.score < 10) {
       return {
@@ -294,6 +335,8 @@ const handler: ToolHandler = async (
         isError: true,
       };
     }
+
+    const cdpClient = sessionManager.getCDPClient();
 
     // Scroll into view first if needed
     if (bestMatch.backendDOMNodeId) {
@@ -464,8 +507,52 @@ const handler: ToolHandler = async (
       }
     }
 
+    // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG
+    let screenshotContent: { type: 'image'; data: string; mimeType: string } | null = null;
+    if (verify) {
+      try {
+        const screenshotResult = await Promise.race([
+          (async () => {
+            const cdpSession = await (page as any).target().createCDPSession();
+            try {
+              const { data } = await cdpSession.send('Page.captureScreenshot', {
+                format: 'webp',
+                quality: 60,
+                optimizeForSpeed: true,
+              });
+              return { data: data as string, mimeType: 'image/webp' };
+            } finally {
+              await cdpSession.detach().catch(() => {});
+            }
+          })(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+        ]);
+
+        if (screenshotResult) {
+          screenshotContent = { type: 'image' as const, ...screenshotResult };
+        } else {
+          throw new Error('CDP screenshot timed out');
+        }
+      } catch {
+        // Fallback to Puppeteer PNG
+        try {
+          const screenshot = await page.screenshot({ encoding: 'base64', type: 'png', fullPage: false });
+          screenshotContent = { type: 'image' as const, data: screenshot as unknown as string, mimeType: 'image/png' };
+        } catch {
+          // Screenshot failure is non-fatal
+        }
+      }
+    }
+
+    const responseContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+      { type: 'text', text: lines.join('\n') },
+    ];
+    if (screenshotContent) {
+      responseContent.push(screenshotContent);
+    }
+
     return {
-      content: [{ type: 'text', text: lines.join('\n') }],
+      content: responseContent,
     };
   } catch (error) {
     return {

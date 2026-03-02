@@ -24,6 +24,8 @@ jest.mock('../../src/cdp/client', () => ({
     createPage: jest.fn(),
     getPageByTargetId: jest.fn(),
     isConnected: jest.fn().mockReturnValue(true),
+    addTargetDestroyedListener: jest.fn(),
+    removeTargetDestroyedListener: jest.fn(),
   })),
   getCDPClient: jest.fn(),
 }));

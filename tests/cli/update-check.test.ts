@@ -83,6 +83,9 @@ describe('update-check', () => {
       latestVersion: '9.9.9',
     }));
 
+    // Cache-based path re-verifies against live registry
+    mockNpmResponse('9.9.9');
+
     const mod = await import('../../cli/update-check');
     checkForUpdates = mod.checkForUpdates;
 
@@ -143,13 +146,16 @@ describe('update-check', () => {
       latestVersion: '99.0.0',
     }));
 
+    // Cache-based path re-verifies against live registry
+    mockNpmResponse('99.0.0');
+
     const mod = await import('../../cli/update-check');
     checkForUpdates = mod.checkForUpdates;
 
     await checkForUpdates('1.0.0');
 
-    // Should NOT have called https.get (used cache)
-    expect(https.get).not.toHaveBeenCalled();
+    // Should have called https.get once for re-verification (not for initial fetch)
+    expect(https.get).toHaveBeenCalledTimes(1);
 
     // Should still warn based on cached version
     const output = consoleErrorSpy.mock.calls.map((c: unknown[]) => c[0]).join('\n');
@@ -172,6 +178,9 @@ describe('update-check', () => {
       lastCheck: Date.now(),
       latestVersion: '3.4.1',
     }));
+
+    // Cache-based path re-verifies against live registry
+    mockNpmResponse('3.4.1');
 
     await mod.checkForUpdates('3.4.0');
     const output = consoleErrorSpy.mock.calls.map((c: unknown[]) => c[0]).join('\n');
