@@ -144,16 +144,6 @@ export class BrowserRouter {
     return { ...this.stats };
   }
 
-  /** Reset statistics */
-  resetStats(): void {
-    this.stats = {
-      chromeRequests: 0,
-      lightpandaRequests: 0,
-      fallbacks: 0,
-      circuitBreakerTrips: 0,
-    };
-  }
-
   /** Check if circuit breaker is currently open */
   isCircuitOpen(): boolean {
     return this.circuitOpen;
@@ -202,21 +192,4 @@ export class BrowserRouter {
     }
   }
 
-  /** Returns true if the circuit breaker should cause LP to be skipped */
-  private checkCircuitBreaker(): boolean {
-    if (!this.circuitOpen) {
-      return false;
-    }
-
-    const cooldownExpired =
-      Date.now() - this.circuitOpenedAt >= this.config.circuitBreaker.cooldownMs;
-
-    if (cooldownExpired) {
-      this.circuitOpen = false;
-      this.consecutiveFailures = 0;
-      return false;
-    }
-
-    return true;
-  }
 }
