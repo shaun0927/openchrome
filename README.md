@@ -20,6 +20,10 @@
   <img src="assets/demo.svg" alt="Traditional vs OpenChrome" width="100%">
 </p>
 
+<p align="center">
+  <img src="assets/chart-tokens.svg" alt="Token Efficiency: OpenChrome vs Playwright" width="100%">
+</p>
+
 ---
 
 ## What is OpenChrome?
