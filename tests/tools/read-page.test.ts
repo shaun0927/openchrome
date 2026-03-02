@@ -23,7 +23,7 @@ describe('ReadPageTool', () => {
   let testSessionId: string;
   let testTargetId: string;
 
-  const getReadPageHandler = async () => {
+  const getReadPageHandler = async (serializeDOMMock?: jest.Mock) => {
     jest.resetModules();
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
@@ -31,6 +31,11 @@ describe('ReadPageTool', () => {
     jest.doMock('../../src/utils/ref-id-manager', () => ({
       getRefIdManager: () => mockRefIdManager,
     }));
+    if (serializeDOMMock) {
+      jest.doMock('../../src/dom', () => ({
+        serializeDOM: serializeDOMMock,
+      }));
+    }
 
     const { registerReadPageTool } = await import('../../src/tools/read-page');
 
@@ -333,23 +338,38 @@ describe('ReadPageTool', () => {
       expect(result.content[0].type).toBe('text');
     });
 
-    test('truncation message suggests DOM mode', async () => {
-      const handler = await getReadPageHandler();
-
-      // Create tree large enough to exceed MAX_OUTPUT (50K chars)
-      const hugeTree = {
-        nodes: Array.from({ length: 5000 }, (_, i) => ({
+    function generateLargeAXTree(nodeCount: number) {
+      const nodes: Array<{
+        nodeId: number;
+        backendDOMNodeId?: number;
+        role: { value: string };
+        name: { value: string };
+        childIds: number[];
+      }> = [{ nodeId: 1, role: { value: 'WebArea' }, name: { value: 'Test' }, childIds: [] }];
+      for (let i = 2; i <= nodeCount; i++) {
+        nodes[0].childIds.push(i);
+        nodes.push({
           nodeId: i,
-          backendDOMNodeId: 100 + i,
-          role: { value: 'generic' },
-          name: { value: `Element with a long name to inflate character count number ${i} padding text here` },
-        })),
-      };
+          backendDOMNodeId: i * 10,
+          role: { value: 'button' },
+          name: { value: 'Button ' + 'x'.repeat(100) },
+          childIds: [],
+        });
+      }
+      return { nodes };
+    }
 
+    test('auto-fallback to DOM mode when AX tree exceeds output limit', async () => {
+      const mockSerializeDOM = jest.fn().mockResolvedValue({
+        content: '[page_stats] url: https://example.com\n\n<body>\n  <button />\n</body>',
+      });
+      const handler = await getReadPageHandler(mockSerializeDOM);
+
+      // 600 nodes × ~110 chars each ≈ 66K chars > MAX_OUTPUT (50K)
       mockSessionManager.mockCDPClient.setCDPResponse(
         'Accessibility.getFullAXTree',
         { depth: 8 },
-        hugeTree
+        generateLargeAXTree(600)
       );
 
       const result = await handler(testSessionId, {
@@ -357,9 +377,64 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
+      // Should contain DOM output (from serializeDOM mock)
+      expect(text).toContain('<body>');
+      // Should contain the auto-fallback notice
+      expect(text).toContain('[AX tree exceeded output limit');
+      expect(text).toContain('Auto-switched to DOM mode');
+      // Should NOT contain the old truncation message
+      expect(text).not.toContain('[Output truncated');
+    });
+
+    test('auto-fallback passes correct options to serializeDOM', async () => {
+      const mockSerializeDOM = jest.fn().mockResolvedValue({
+        content: '[page_stats] url: https://example.com\n\n<body></body>',
+      });
+      const handler = await getReadPageHandler(mockSerializeDOM);
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        generateLargeAXTree(600)
+      );
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        filter: 'all',
+      });
+
+      expect(mockSerializeDOM).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          maxDepth: -1,
+          filter: 'all',
+          interactiveOnly: false,
+        })
+      );
+    });
+
+    test('falls back to truncated AX output when DOM serialization fails', async () => {
+      const mockSerializeDOM = jest.fn().mockRejectedValue(new Error('DOM serialization failed'));
+      const handler = await getReadPageHandler(mockSerializeDOM);
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        generateLargeAXTree(600)
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      // Should fall back to original truncation message
       expect(text).toContain('[Output truncated');
       expect(text).toContain('mode: "dom"');
       expect(text).toContain('~5-10x fewer tokens');
+      // Should NOT contain the auto-fallback notice
+      expect(text).not.toContain('[AX tree exceeded output limit');
     });
 
     test('invalid mode returns clear error', async () => {

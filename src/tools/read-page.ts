@@ -464,18 +464,42 @@ const handler: ToolHandler = async (
     const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
 
     if (charCount > MAX_OUTPUT) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              pageStatsLine +
-              output +
-              '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]' +
-              axPaginationSection,
-          },
-        ],
-      };
+      // Auto-fallback: DOM mode produces complete output at ~5-10x fewer tokens
+      try {
+        const domResult = await serializeDOM(page, cdpClient, {
+          maxDepth: -1,
+          filter: filter,
+          interactiveOnly: filter === 'interactive',
+        });
+
+        const fallbackNote =
+          '\n\n[AX tree exceeded output limit (' + charCount + ' chars). ' +
+          'Auto-switched to DOM mode for complete output. ' +
+          'Use mode: "ax" with ref_id to scope specific subtrees for AX format.]';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: domResult.content + fallbackNote + axPaginationSection,
+            },
+          ],
+        };
+      } catch {
+        // If DOM serialization fails, fall back to truncated AX (original behavior)
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                pageStatsLine +
+                output +
+                '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]' +
+                axPaginationSection,
+            },
+          ],
+        };
+      }
     }
 
     return {
