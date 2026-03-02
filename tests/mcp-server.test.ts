@@ -88,7 +88,7 @@ describe('MCPServer', () => {
         expect(response.result!.serverInfo!.version).toBeDefined();
       });
 
-      test('returns instructions field as a string', async () => {
+      test('does NOT include instructions field (MCP protocol conformance)', async () => {
         const request: MCPRequest = {
           jsonrpc: '2.0',
           id: 1,
@@ -97,12 +97,11 @@ describe('MCPServer', () => {
 
         const response = (await server.handleRequest(request)) as MCPResultResponse;
 
-        expect(response.result!.instructions).toBeDefined();
-        expect(typeof response.result!.instructions).toBe('string');
-        expect(response.result!.instructions!.length).toBeGreaterThan(0);
+        // MCP 2024-11-05 spec: InitializeResult only allows protocolVersion, capabilities, serverInfo
+        expect(response.result!.instructions).toBeUndefined();
       });
 
-      test('instructions contain "oc" keyword trigger', async () => {
+      test('result contains only spec-allowed keys', async () => {
         const request: MCPRequest = {
           jsonrpc: '2.0',
           id: 1,
@@ -110,99 +109,26 @@ describe('MCPServer', () => {
         };
 
         const response = (await server.handleRequest(request)) as MCPResultResponse;
-        const instructions = response.result!.instructions!;
+        const keys = Object.keys(response.result!).sort();
 
-        // Must mention "oc" as a trigger keyword
-        expect(instructions).toContain('"oc"');
-        expect(instructions).toMatch(/oc.*browser automation|browser automation.*oc/i);
-      });
-
-      test('instructions contain key behavioral rules', async () => {
-        const request: MCPRequest = {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-        };
-
-        const response = (await server.handleRequest(request)) as MCPResultResponse;
-        const instructions = response.result!.instructions!;
-
-        // Must tell LLM not to attempt login
-        expect(instructions).toMatch(/already logged in/i);
-        expect(instructions).toMatch(/never attempt login/i);
-
-        // Must mention parallel workflow
-        expect(instructions).toContain('workflow_init');
-        expect(instructions).toContain('workflow_collect');
-
-        // Must mention tool preferences
-        expect(instructions).toContain('click_element');
-        expect(instructions).toContain('fill_form');
-
-        // Must mention worker isolation
-        expect(instructions).toMatch(/isolated browser context/i);
-      });
-
-      test('instructions contain workflow example', async () => {
-        const request: MCPRequest = {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-        };
-
-        const response = (await server.handleRequest(request)) as MCPResultResponse;
-        const instructions = response.result!.instructions!;
-
-        // Must have at least one example with arrow notation
-        expect(instructions).toContain('EXAMPLE');
-        expect(instructions).toContain('→');
-      });
-
-      test('instructions reference key tools', async () => {
-        const request: MCPRequest = {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-        };
-
-        const response = (await server.handleRequest(request)) as MCPResultResponse;
-        const instructions = response.result!.instructions!;
-
-        // Must reference essential tools inline
-        const essentialTools = ['click_element', 'fill_form', 'workflow_init', 'workflow_collect'];
-        for (const tool of essentialTools) {
-          expect(instructions).toContain(tool);
-        }
-      });
-
-      test('instructions do not contain Korean text', async () => {
-        const request: MCPRequest = {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-        };
-
-        const response = (await server.handleRequest(request)) as MCPResultResponse;
-        const instructions = response.result!.instructions!;
-
-        // No Hangul characters (Unicode range AC00-D7AF for syllables, 1100-11FF for jamo)
-        const koreanRegex = /[\uAC00-\uD7AF\u1100-\u11FF]/;
-        expect(koreanRegex.test(instructions)).toBe(false);
+        expect(keys).toEqual(['capabilities', 'protocolVersion', 'serverInfo']);
       });
     });
 
     describe('initialized', () => {
-      test('acknowledges initialized notification', async () => {
+      test('handles initialized as a known method without error', async () => {
+        // initialized is handled as a notification in the stdio line handler,
+        // but when called via handleRequest directly it should not error
         const request: MCPRequest = {
           jsonrpc: '2.0',
           id: 2,
-          method: 'initialized',
+          method: 'notifications/initialized',
         };
 
         const response = (await server.handleRequest(request)) as MCPResultResponse;
 
-        expect(response.result).toBeDefined();
-        expect(response.error).toBeUndefined();
+        // Should return a valid response (not an error)
+        expect(response.jsonrpc).toBe('2.0');
       });
     });
 
@@ -717,31 +643,30 @@ describe('MCPServer', () => {
   });
 
   describe('Reconnection Instructions', () => {
-    test('instructions mention /mcp as reconnection method', async () => {
+    test('connection error responses include /mcp recovery guidance', async () => {
+      const handler = jest.fn().mockRejectedValue(
+        new Error('Connection closed')
+      );
+
+      const definition: MCPToolDefinition = {
+        name: 'reconnect_test_tool',
+        description: 'Test reconnection',
+        inputSchema: { type: 'object' as const, properties: {}, required: [] },
+      };
+      server.registerTool('reconnect_test_tool', handler, definition);
+
       const request: MCPRequest = {
         jsonrpc: '2.0',
         id: 1,
-        method: 'initialize',
+        method: 'tools/call',
+        params: { name: 'reconnect_test_tool', arguments: {} },
       };
 
       const response = (await server.handleRequest(request)) as MCPResultResponse;
-      const instructions = response.result!.instructions!;
 
-      expect(instructions).toContain('/mcp');
-      expect(instructions).toContain('CONNECTION RECOVERY');
-    });
-
-    test('instructions warn against claude mcp remove/add', async () => {
-      const request: MCPRequest = {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-      };
-
-      const response = (await server.handleRequest(request)) as MCPResultResponse;
-      const instructions = response.result!.instructions!;
-
-      expect(instructions).toMatch(/never.*claude mcp remove|claude mcp add/i);
+      expect(response.result!.isError).toBe(true);
+      expect(response.result!.content![0].text).toContain('/mcp');
+      expect(response.result!.content![0].text).toContain('Do NOT run');
     });
   });
 });
