@@ -362,7 +362,7 @@ export class MCPServer {
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
-        tools: {},
+        tools: { listChanged: true },
         resources: {},
       },
       serverInfo: {
@@ -398,7 +398,7 @@ export class MCPServer {
             properties: {
               tier: {
                 type: 'number',
-                enum: [2, 3],
+                enum: Array.from({ length: 3 - this.exposedTier }, (_, i) => this.exposedTier + 1 + i),
                 description: 'Tool tier to expand to. 2=specialist, 3=all including orchestration',
               },
             },
