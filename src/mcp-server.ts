@@ -4,6 +4,7 @@
 
 import * as readline from 'readline';
 import * as path from 'path';
+import { readFileSync } from 'fs';
 import {
   MCPRequest,
   MCPResponse,
@@ -186,9 +187,9 @@ export class MCPServer {
     this.rl.on('line', (line) => {
       if (!line.trim()) return;
 
-      let request: MCPRequest;
+      let parsed: Record<string, unknown>;
       try {
-        request = JSON.parse(line) as MCPRequest;
+        parsed = JSON.parse(line) as Record<string, unknown>;
       } catch (error) {
         const errorResponse: MCPResponse = {
           jsonrpc: '2.0',
@@ -201,6 +202,18 @@ export class MCPServer {
         this.sendResponse(errorResponse);
         return;
       }
+
+      // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
+      if (parsed.id === undefined || parsed.id === null) {
+        const method = parsed.method as string;
+        if (method === 'notifications/initialized' || method === 'initialized') {
+          console.error(`[MCPServer] Received notification: ${method}`);
+        }
+        // All notifications are silently ignored (no response sent)
+        return;
+      }
+
+      const request = parsed as unknown as MCPRequest;
 
       // Fire-and-forget: process requests concurrently
       this.handleRequest(request)
@@ -253,11 +266,6 @@ export class MCPServer {
           result = await this.handleInitialize(params);
           break;
 
-        case 'initialized':
-          // Client acknowledgment, no response needed but we send confirmation
-          result = {};
-          break;
-
         case 'tools/list':
           result = await this.handleToolsList();
           break;
@@ -305,6 +313,7 @@ export class MCPServer {
    * Handle initialize request
    */
   private async handleInitialize(_params?: Record<string, unknown>): Promise<MCPResult> {
+    const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
@@ -313,27 +322,8 @@ export class MCPServer {
       },
       serverInfo: {
         name: 'openchrome',
-        version: '1.0.2',
+        version: packageJson.version,
       },
-      instructions: [
-        'OpenChrome gives you browser automation using the user\'s actual Chrome — already logged in to everything.',
-        '',
-        'KEY RULES:',
-        '- The user is ALREADY LOGGED IN to every site. Never attempt login or enter credentials unless explicitly asked.',
-        '- For multi-site tasks, use workflow_init → create parallel workers → workflow_collect.',
-        '- Prefer click_element over computer(click), fill_form over multiple form_input calls.',
-        '- Each Worker gets an isolated browser context (separate cookies, localStorage, sessions).',
-        '- The user may prefix requests with "oc" to indicate browser automation (e.g., "oc screenshot my Gmail").',
-        '',
-        'DOM DELTA: Action tools return [DOM Delta] showing what changed — prefer reading delta over screenshots.',
-        '',
-        'PARALLEL WORKFLOW EXAMPLE:',
-        '  "compare prices on Amazon, eBay, Walmart" → workflow_init with 3 workers, one per site',
-        '',
-        'CONNECTION RECOVERY:',
-        '- If a tool returns a connection error, ask the user to run /mcp in Claude Code to reconnect.',
-        '- NEVER run "claude mcp remove" or "claude mcp add" to fix connection issues.',
-      ].join('\n'),
     };
   }
 

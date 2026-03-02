@@ -144,7 +144,32 @@ grep -r "console\.log(" src/ --include="*.ts"          # must be 0 in tool handl
 
 **If `npm ci` fails**: Run `npm install`, commit `package-lock.json`, then retry.
 
-**Gate**: All checks pass. If any fail, fix before merging.
+### MCP Protocol Conformance
+
+Verify the MCP server produces spec-compliant responses:
+
+```bash
+# 1. Initialize response must contain ONLY: protocolVersion, capabilities, serverInfo
+INIT_RESPONSE=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"conformance-test","version":"1.0.0"}}}' | timeout 10 node dist/cli/index.js serve 2>/dev/null | head -1)
+INIT_KEYS=$(echo "$INIT_RESPONSE" | jq -r '.result | keys | sort | join(",")')
+echo "Initialize result keys: $INIT_KEYS"
+# MUST be exactly: capabilities,protocolVersion,serverInfo (no instructions or other fields)
+
+# 2. All tool inputSchemas use only basic JSON Schema (no oneOf/anyOf/allOf at property level)
+TOOLS_RESPONSE=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | timeout 10 node dist/cli/index.js serve 2>/dev/null | tail -1)
+NONSTANDARD_TOOLS=$(echo "$TOOLS_RESPONSE" | jq -r '[.result.tools[] | select(.inputSchema.properties | to_entries[]? | .value | (has("oneOf") or has("anyOf") or has("allOf")))] | length')
+echo "Tools with non-standard schemas: $NONSTANDARD_TOOLS"
+# MUST be 0
+
+# 3. serverInfo.version matches package.json version
+SERVER_VERSION=$(echo "$INIT_RESPONSE" | jq -r '.result.serverInfo.version')
+PACKAGE_VERSION=$(node -p "require('./package.json').version")
+echo "Server version: $SERVER_VERSION, Package version: $PACKAGE_VERSION"
+# MUST match
+```
+
+**Gate**: All 3 checks must pass. If any fail, fix before merging.
 
 ## STEP 6: Merge (MY PRs only)
 
@@ -261,6 +286,9 @@ After verification, the user must **restart Claude Code** for the new MCP server
 - [ ] All MY PRs: P0 = 0, P1 = 0, merged
 - [ ] All OTHER's PRs: reviewed and commented (NOT merged)
 - [ ] Pre-merge platform anti-pattern grep: all clean
+- [ ] MCP Protocol: `initialize` response contains only `protocolVersion`, `capabilities`, `serverInfo`
+- [ ] MCP Protocol: Tool schemas use only basic JSON Schema (no `oneOf`/`anyOf`/`allOf` in properties)
+- [ ] MCP Protocol: `serverInfo.version` matches `package.json` version
 - [ ] `npm run build` passes on develop (and main after release merge)
 - [ ] `npm test` passes — ALL test suites green
 - [ ] `npm run lint` passes — no errors
