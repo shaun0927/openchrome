@@ -90,6 +90,18 @@ const handler: ToolHandler = async (
         resolvedPath = path.resolve(filePath);
       }
 
+      // Block uploads of sensitive files (exact path segment matching)
+      const normalizedPath = path.resolve(resolvedPath);
+      const sensitivePatterns = ['.ssh', '.gnupg', '.aws', '.env', 'id_rsa', 'id_ed25519', '.npmrc'];
+      const pathSegments = normalizedPath.toLowerCase().split(path.sep);
+      const isSensitive = sensitivePatterns.some(p => pathSegments.includes(p));
+      if (isSensitive) {
+        return {
+          content: [{ type: 'text', text: `Error: Upload blocked — "${filePath}" matches a sensitive file pattern` }],
+          isError: true,
+        };
+      }
+
       // Check if file exists
       try {
         const stats = await fs.stat(resolvedPath);
