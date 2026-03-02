@@ -11,7 +11,6 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
-import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
