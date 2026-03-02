@@ -169,6 +169,16 @@ const handler: ToolHandler = async (
           };
         }
 
+        // Validate that cookie domain is not on the blocklist
+        const cookieDomain = domain ?? currentUrl.hostname;
+        const { isDomainBlocked } = await import('../security/domain-guard');
+        if (isDomainBlocked(`https://${cookieDomain}`)) {
+          return {
+            content: [{ type: 'text', text: `Error: Cannot set cookies for blocked domain "${cookieDomain}"` }],
+            isError: true,
+          };
+        }
+
         const cookieToSet: {
           name: string;
           value: string;

@@ -916,7 +916,14 @@ export class SessionManager {
       }
 
       return page;
-    } catch {
+    } catch (error) {
+      // Re-throw domain guard errors — they must not be silently swallowed
+      if (error instanceof Error && (
+        error.message.includes('blocked by security policy') ||
+        error.message.includes('blocked when domain restrictions are active')
+      )) {
+        throw error;
+      }
       this.onTargetClosed(targetId);
       return null;
     }
