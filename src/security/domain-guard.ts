@@ -37,10 +37,15 @@ function extractHostname(url: string): string | null {
     url === 'about:blank' ||
     url.startsWith('about:') ||
     url.startsWith('chrome:') ||
-    url.startsWith('chrome-extension:') ||
-    url.startsWith('data:') ||
-    url.startsWith('file:')
+    url.startsWith('chrome-extension:')
   ) {
+    return null;
+  }
+
+  // Allow data: URIs — they don't have hostnames and blocking them globally
+  // would break inline images, SVGs, and other legitimate content.
+  // Note: file: URIs are NOT exempted — they could be used to read local files.
+  if (url.startsWith('data:')) {
     return null;
   }
 
