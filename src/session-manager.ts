@@ -20,11 +20,7 @@ import { HybridConfig } from './types/browser-backend';
 import { StorageStateManager } from './storage-state';
 import { StorageStateConfig } from './config';
 import { assertDomainAllowed } from './security/domain-guard';
-
-// Helper to get target ID (internal puppeteer property)
-function getTargetId(target: Target): string {
-  return (target as unknown as { _targetId: string })._targetId;
-}
+import { getTargetId } from './utils/puppeteer-helpers';
 
 /** The primary session ID used by most single-agent workflows. */
 const DEFAULT_SESSION_ID = 'default';

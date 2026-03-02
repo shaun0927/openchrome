@@ -11,6 +11,7 @@ import { ToolEntry } from '../types/tool-manifest';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { getGlobalConfig } from '../config/global';
+import { getTargetId } from '../utils/puppeteer-helpers';
 
 export interface WorkflowStep {
   workerId: string;
@@ -192,7 +193,7 @@ export class WorkflowEngine {
         }
 
         // Register the page as a target in the session manager
-        const targetId = (page.target() as unknown as { _targetId: string })._targetId;
+        const targetId = getTargetId(page.target());
         this.sessionManager.registerExistingTarget(sessionId, worker.id, targetId);
 
         return {
