@@ -132,6 +132,19 @@ export async function checkForUpdates(currentVersion: string): Promise<void> {
     }
 
     if (latestVersion && compareVersions(currentVersion, latestVersion) < 0) {
+      // Re-verify against live registry when cache says update available.
+      // Guards against stale cache from briefly-published-then-unpublished versions.
+      if (cached) {
+        const liveVersion = await fetchLatestVersion();
+        if (liveVersion) {
+          latestVersion = liveVersion;
+          writeCache(liveVersion);
+        }
+        if (!liveVersion || compareVersions(currentVersion, latestVersion) >= 0) {
+          return;
+        }
+      }
+
       // Auto-clear npx cache so next restart gets the new version
       const cleared = clearNpxCache();
 
