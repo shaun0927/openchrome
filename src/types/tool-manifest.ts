@@ -24,7 +24,7 @@ export interface ToolEntry {
 /** Tool categories for WorkerToolConfig filtering */
 export type ToolCategory =
   | 'navigation'      // navigate, page_reload
-  | 'interaction'     // computer, click_element, form_input, fill_form, drag_drop
+  | 'interaction'     // computer, form_input, fill_form, drag_drop
   | 'content'         // read_page, find, page_content, query_dom, memory
   | 'javascript'      // javascript_tool
   | 'network'         // network, cookies, storage, request_intercept, http_auth
@@ -33,7 +33,7 @@ export type ToolCategory =
   | 'emulation'       // user_agent, geolocation, emulate_device
   | 'orchestration'   // workflow_init, workflow_status, workflow_collect, etc.
   | 'worker'          // worker, worker_update, worker_complete
-  | 'composite'       // click_element, fill_form, wait_and_click, wait_for
+  | 'composite'       // interact, inspect, fill_form, wait_for
   | 'performance'     // batch_execute, lightweight_scroll
   | 'lifecycle';      // oc_stop
 
