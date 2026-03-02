@@ -31,7 +31,7 @@ function extractDomain(url?: string): string | null {
   return extractHostname(url) || null;
 }
 
-const SENSITIVE_KEYS = ['password', 'cookie', 'token', 'secret', 'auth', 'credential', 'value', 'text', 'content'];
+const SENSITIVE_KEYS = ['password', 'cookie', 'token', 'secret', 'auth', 'credential', 'value', 'text'];
 
 function isSensitiveKey(key: string): boolean {
   const lower = key.toLowerCase();

@@ -204,6 +204,25 @@ export class MCPServer {
         return;
       }
 
+      // Validate JSON-RPC 2.0 envelope
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        parsed.jsonrpc !== '2.0' ||
+        typeof parsed.method !== 'string'
+      ) {
+        const errorResponse: MCPResponse = {
+          jsonrpc: '2.0',
+          id: (parsed.id as string | number) ?? 0,
+          error: {
+            code: MCPErrorCodes.INVALID_REQUEST,
+            message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
+          },
+        };
+        this.sendResponse(errorResponse);
+        return;
+      }
+
       // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
       if (parsed.id === undefined || parsed.id === null) {
         const method = parsed.method as string;
