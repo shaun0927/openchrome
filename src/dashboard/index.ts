@@ -5,6 +5,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { getVersion } from '../version.js';
 import { ANSI } from './ansi.js';
 import { Renderer, getRenderer } from './renderer.js';
 import { KeyboardHandler, getKeyboardHandler, KeyEvent } from './keyboard-handler.js';
@@ -53,7 +54,7 @@ export class Dashboard extends EventEmitter {
       maxLogEntries: options.maxLogEntries ?? 50,
     };
 
-    this.version = options.version ?? '3.0.4';
+    this.version = options.version ?? getVersion();
 
     this.renderer = getRenderer();
     this.keyboard = getKeyboardHandler();

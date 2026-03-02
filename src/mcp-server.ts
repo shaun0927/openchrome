@@ -4,7 +4,6 @@
 
 import * as readline from 'readline';
 import * as path from 'path';
-import { readFileSync } from 'fs';
 import {
   MCPRequest,
   MCPResponse,
@@ -27,6 +26,7 @@ import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS } from './config/defaults';
 import { getGlobalConfig } from './config/global';
 import { logAuditEntry } from './security/audit-logger';
+import { getVersion } from './version';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -313,7 +313,6 @@ export class MCPServer {
    * Handle initialize request
    */
   private async handleInitialize(_params?: Record<string, unknown>): Promise<MCPResult> {
-    const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
@@ -322,7 +321,7 @@ export class MCPServer {
       },
       serverInfo: {
         name: 'openchrome',
-        version: packageJson.version,
+        version: getVersion(),
       },
     };
   }

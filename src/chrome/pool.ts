@@ -61,45 +61,6 @@ async function checkDebugPort(port: number): Promise<boolean> {
   });
 }
 
-/**
- * Fetch cookies from a Chrome instance via CDP HTTP API
- */
-async function fetchCookies(
-  port: number,
-  domain: string
-): Promise<Array<{ name: string; value: string; domain: string; path: string; secure: boolean; httpOnly: boolean }>> {
-  return new Promise((resolve) => {
-    // Get list of tabs to find a usable websocket target
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port,
-        path: '/json',
-        method: 'GET',
-        timeout: 3000,
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          try {
-            const tabs = JSON.parse(data);
-            resolve(tabs); // caller handles further CDP calls
-          } catch {
-            resolve([]);
-          }
-        });
-      }
-    );
-    req.on('error', () => resolve([]));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve([]);
-    });
-    req.end();
-  });
-}
-
 export class ChromePool {
   private config: ChromePoolConfig;
   private instances: Map<number, PooledInstance> = new Map();
@@ -173,72 +134,6 @@ export class ChromePool {
       `[ChromePool] Released origin "${origin}" from port ${port}. ` +
         `Remaining origins: ${instance.tabCount}`
     );
-  }
-
-  /**
-   * Get the current instance assignment for an origin.
-   * Returns the first instance that has this origin registered, or null.
-   */
-  getInstanceForOrigin(origin: string): PooledInstance | null {
-    for (const [, instance] of this.instances) {
-      if (instance.origins.has(origin)) {
-        return instance;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Copy cookies between two Chrome instances for a given domain.
-   * Uses CDP Network.getAllCookies / Network.setCookies via WebSocket.
-   * This is a best-effort operation; failures are logged but not thrown.
-   */
-  async copyCookiesBetweenInstances(
-    sourcePort: number,
-    destPort: number,
-    domain: string
-  ): Promise<void> {
-    const sourceInstance = this.instances.get(sourcePort);
-    const destInstance = this.instances.get(destPort);
-
-    if (!sourceInstance || !destInstance) {
-      console.error(
-        `[ChromePool] copyCookies: instance not found (source=${sourcePort}, dest=${destPort})`
-      );
-      return;
-    }
-
-    try {
-      // Retrieve tab list from source to find a WS target for CDP
-      const tabs = await fetchCookies(sourcePort, domain);
-      if (!Array.isArray(tabs) || tabs.length === 0) {
-        console.error(
-          `[ChromePool] copyCookies: no tabs found on source port ${sourcePort}`
-        );
-        return;
-      }
-
-      // Use the first available tab's WebSocket URL for CDP
-      const firstTab = tabs[0] as { webSocketDebuggerUrl?: string };
-      const wsUrl: string | undefined = firstTab.webSocketDebuggerUrl;
-      if (!wsUrl) {
-        console.error(
-          `[ChromePool] copyCookies: no WebSocket URL on source port ${sourcePort}`
-        );
-        return;
-      }
-
-      console.error(
-        `[ChromePool] Cookie bridging from port ${sourcePort} to ${destPort} for domain "${domain}" ` +
-          `requires a CDP WebSocket client. Skipping (implement via CDP client if needed).`
-      );
-      // Full cookie bridging requires a CDP WebSocket connection. The CDP client
-      // in this project (src/cdp/client.ts) should be used here. Left as a
-      // hook for integration — callers with a live CDP session can transfer
-      // cookies directly via Network.getAllCookies / Network.setCookies.
-    } catch (err) {
-      console.error(`[ChromePool] copyCookies error:`, err);
-    }
   }
 
   /**
