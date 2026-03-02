@@ -3,6 +3,7 @@
  * Default-allow: no domains blocked unless explicitly configured.
  */
 import { getGlobalConfig } from '../config/global';
+import { extractHostname as extractHostnameFromUrl } from '../utils/url-utils';
 
 /**
  * Convert a glob pattern to a RegExp.
@@ -36,23 +37,24 @@ function extractHostname(url: string): string | null {
     url === 'about:blank' ||
     url.startsWith('about:') ||
     url.startsWith('chrome:') ||
-    url.startsWith('chrome-extension:') ||
-    url.startsWith('data:') ||
-    url.startsWith('file:')
+    url.startsWith('chrome-extension:')
   ) {
     return null;
   }
 
-  try {
-    return new URL(url).hostname.toLowerCase() || null;
-  } catch {
-    // Try adding protocol for bare hostnames (e.g., "bank.com")
-    try {
-      return new URL('https://' + url).hostname.toLowerCase() || null;
-    } catch {
-      return null;
-    }
+  // Allow data: URIs — they don't have hostnames and blocking them globally
+  // would break inline images, SVGs, and other legitimate content.
+  // Note: file: URIs are NOT exempted — they could be used to read local files.
+  if (url.startsWith('data:')) {
+    return null;
   }
+
+  const hostname = extractHostnameFromUrl(url).toLowerCase();
+  if (hostname) return hostname;
+
+  // Try adding protocol for bare hostnames (e.g., "bank.com")
+  const fallback = extractHostnameFromUrl('https://' + url).toLowerCase();
+  return fallback || null;
 }
 
 /**

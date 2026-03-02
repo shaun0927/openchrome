@@ -6,6 +6,7 @@ import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'pu
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
+import { getTargetId } from '../utils/puppeteer-helpers';
 import {
   DEFAULT_VIEWPORT,
   DEFAULT_NAVIGATION_TIMEOUT_MS,
@@ -51,11 +52,6 @@ export interface ConnectionEvent {
   error?: string;
 }
 
-// Helper to get target ID (internal puppeteer property)
-function getTargetId(target: Target): string {
-  // Access the internal _targetId property
-  return (target as unknown as { _targetId: string })._targetId;
-}
 
 export class CDPClient {
   private browser: Browser | null = null;

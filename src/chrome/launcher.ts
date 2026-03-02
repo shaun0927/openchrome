@@ -428,16 +428,6 @@ export class ChromeLauncher {
   }
 
   /**
-   * Get debug endpoint URL
-   */
-  async getDebugEndpoint(): Promise<string> {
-    if (!this.instance) {
-      await this.ensureChrome();
-    }
-    return this.instance!.httpEndpoint;
-  }
-
-  /**
    * Get WebSocket endpoint
    */
   async getWsEndpoint(): Promise<string> {

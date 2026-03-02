@@ -9,6 +9,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { extractHostname } from '../utils/url-utils';
 
 export interface DomainKnowledge {
   id: string;
@@ -213,9 +214,5 @@ export function getDomainMemory(): DomainMemory {
  * Extract domain from a URL string. Returns empty string on failure.
  */
 export function extractDomainFromUrl(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return '';
-  }
+  return extractHostname(url);
 }

@@ -4,7 +4,6 @@
 
 import * as readline from 'readline';
 import * as path from 'path';
-import { readFileSync } from 'fs';
 import {
   MCPRequest,
   MCPResponse,
@@ -20,6 +19,7 @@ import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, Operation
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import { HintEngine } from './hints';
 import { formatAge } from './utils/format-age';
+import { formatError } from './utils/format-error';
 import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
@@ -27,13 +27,14 @@ import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS } from './config/defaults';
 import { getGlobalConfig } from './config/global';
 import { logAuditEntry } from './security/audit-logger';
+import { getVersion } from './version';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
  * by reconnecting to the browser.
  */
 export function isConnectionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = formatError(error);
   const patterns = [
     'not connected to chrome',
     'call connect() first',
@@ -203,6 +204,25 @@ export class MCPServer {
         return;
       }
 
+      // Validate JSON-RPC 2.0 envelope
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        parsed.jsonrpc !== '2.0' ||
+        typeof parsed.method !== 'string'
+      ) {
+        const errorResponse: MCPResponse = {
+          jsonrpc: '2.0',
+          id: (parsed.id as string | number) ?? 0,
+          error: {
+            code: MCPErrorCodes.INVALID_REQUEST,
+            message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
+          },
+        };
+        this.sendResponse(errorResponse);
+        return;
+      }
+
       // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
       if (parsed.id === undefined || parsed.id === null) {
         const method = parsed.method as string;
@@ -304,7 +324,7 @@ export class MCPServer {
         result,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatError(error);
       return this.errorResponse(id, MCPErrorCodes.INTERNAL_ERROR, message);
     }
   }
@@ -313,7 +333,6 @@ export class MCPServer {
    * Handle initialize request
    */
   private async handleInitialize(_params?: Record<string, unknown>): Promise<MCPResult> {
-    const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
@@ -322,7 +341,7 @@ export class MCPServer {
       },
       serverInfo: {
         name: 'openchrome',
-        version: packageJson.version,
+        version: getVersion(),
       },
     };
   }
@@ -535,7 +554,7 @@ export class MCPServer {
 
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatError(error);
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, 'error', message);

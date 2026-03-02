@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { getGlobalConfig } from '../config/global';
+import { extractHostname } from '../utils/url-utils';
 
 interface AuditEntry {
   timestamp: string;      // ISO 8601
@@ -27,14 +28,10 @@ function getLogPath(): string {
 // Extract domain from URL safely
 function extractDomain(url?: string): string | null {
   if (!url) return null;
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return null;
-  }
+  return extractHostname(url) || null;
 }
 
-const SENSITIVE_KEYS = ['password', 'cookie', 'token', 'secret', 'auth', 'credential', 'value', 'text', 'content'];
+const SENSITIVE_KEYS = ['password', 'cookie', 'token', 'secret', 'auth', 'credential', 'value', 'text'];
 
 function isSensitiveKey(key: string): boolean {
   const lower = key.toLowerCase();

@@ -20,11 +20,7 @@ import { HybridConfig } from './types/browser-backend';
 import { StorageStateManager } from './storage-state';
 import { StorageStateConfig } from './config';
 import { assertDomainAllowed } from './security/domain-guard';
-
-// Helper to get target ID (internal puppeteer property)
-function getTargetId(target: Target): string {
-  return (target as unknown as { _targetId: string })._targetId;
-}
+import { getTargetId } from './utils/puppeteer-helpers';
 
 /** The primary session ID used by most single-agent workflows. */
 const DEFAULT_SESSION_ID = 'default';
@@ -920,7 +916,14 @@ export class SessionManager {
       }
 
       return page;
-    } catch {
+    } catch (error) {
+      // Re-throw domain guard errors — they must not be silently swallowed
+      if (error instanceof Error && (
+        error.message.includes('blocked by security policy') ||
+        error.message.includes('blocked when domain restrictions are active')
+      )) {
+        throw error;
+      }
       this.onTargetClosed(targetId);
       return null;
     }

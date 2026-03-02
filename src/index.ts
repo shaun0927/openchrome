@@ -12,6 +12,7 @@ import { getMCPServer } from './mcp-server';
 import { registerAllTools } from './tools';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { writePidFile } from './utils/pid-manager';
+import { getVersion } from './version';
 
 // Prevent silent crashes from unhandled promise rejections in background tasks
 process.on('unhandledRejection', (reason) => {
@@ -28,7 +29,7 @@ const program = new Command();
 program
   .name('openchrome')
   .description('MCP server for parallel Claude Code browser sessions')
-  .version('2.0.0');
+  .version(getVersion());
 
 program
   .command('serve')
