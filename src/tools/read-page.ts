@@ -26,7 +26,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 const definition: MCPToolDefinition = {
   name: 'read_page',
   description:
-    'Get page content. Default mode "ax" returns accessibility tree with ref_N identifiers. Mode "dom" returns compact DOM (~5-10x fewer tokens). Mode "css" returns CSS diagnostic info (variables, computed styles, framework detection) — use this BEFORE javascript_tool for style inspection or visual debugging.',
+    'Get page content. Default mode "dom" returns compact DOM (~5-10x fewer tokens) with stable backendNodeId identifiers. Mode "ax" returns accessibility tree with ref_N identifiers for ARIA/accessibility auditing. Mode "css" returns CSS diagnostic info (variables, computed styles, framework detection) — use this BEFORE javascript_tool for style inspection or visual debugging.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -54,7 +54,7 @@ const definition: MCPToolDefinition = {
       mode: {
         type: 'string',
         enum: ['ax', 'dom', 'css'],
-        description: 'Output mode: "ax" for accessibility tree (default), "dom" for compact DOM, "css" for CSS diagnostics (variables, computed styles, framework detection)',
+        description: 'Output mode: "dom" for compact DOM (default), "ax" for accessibility tree, "css" for CSS diagnostics (variables, computed styles, framework detection)',
       },
       includePagination: {
         type: 'boolean',
@@ -107,7 +107,7 @@ const handler: ToolHandler = async (
     const cdpClient = sessionManager.getCDPClient();
 
     // Mode dispatch
-    const mode = (args.mode as string) || 'ax';
+    const mode = (args.mode as string) || 'dom';
     if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
       return {
         content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
