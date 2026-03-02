@@ -291,7 +291,10 @@ export class CDPClient {
     }
     this.browser = null;
 
-    // Attempt reconnection
+    // Attempt reconnection — do NOT auto-launch Chrome.
+    // If Chrome was closed by the user, we should stay disconnected and only
+    // re-launch when the next tool call arrives (lazy launch). This prevents
+    // the "Chrome keeps reopening" loop reported in issue #159.
     while (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
@@ -303,7 +306,7 @@ export class CDPClient {
       });
 
       try {
-        await this.connectInternal();
+        await this.connectInternal({ autoLaunch: false });
         console.error('[CDPClient] Reconnection successful');
         this.reconnectAttempts = 0;
         this.emitConnectionEvent({
@@ -320,23 +323,26 @@ export class CDPClient {
       }
     }
 
-    // All attempts failed
+    // All attempts failed — Chrome is not running. Stay disconnected until
+    // the next tool call triggers a fresh connect() with autoLaunch.
     this.connectionState = 'disconnected';
+    this.stopHeartbeat();
     this.emitConnectionEvent({
       type: 'reconnect_failed',
       timestamp: Date.now(),
       error: `Failed after ${this.maxReconnectAttempts} attempts`,
     });
 
-    console.error('[CDPClient] All reconnection attempts failed');
+    console.error('[CDPClient] All reconnection attempts failed. Chrome will be re-launched on next tool call.');
     this.reconnectAttempts = 0;
   }
 
   /**
    * Internal connect logic
    */
-  private async connectInternal(): Promise<void> {
+  private async connectInternal(options?: { autoLaunch?: boolean }): Promise<void> {
     const launcher = getChromeLauncher(this.port);
+    const autoLaunch = options?.autoLaunch ?? this.autoLaunch;
 
     // Retry loop: after macOS sleep/wake, Chrome's WebSocket listener may be in a
     // half-open TCP state. The HTTP endpoint (/json/version) works because it's
@@ -347,7 +353,7 @@ export class CDPClient {
 
     for (let attempt = 1; attempt <= maxConnectRetries; attempt++) {
       // Re-fetch instance on each attempt — Chrome may have regenerated its UUID
-      const instance = await launcher.ensureChrome({ autoLaunch: this.autoLaunch });
+      const instance = await launcher.ensureChrome({ autoLaunch });
 
       try {
         let wsConnectTid: ReturnType<typeof setTimeout>;
@@ -568,7 +574,9 @@ export class CDPClient {
     this.connectionState = 'reconnecting';
     this.lastVerifiedAt = 0;
     try {
-      await this.connectInternal();
+      // Do NOT auto-launch Chrome on heartbeat-triggered reconnect.
+      // If Chrome was closed, stay disconnected until the next tool call.
+      await this.connectInternal({ autoLaunch: false });
       this.lastVerifiedAt = Date.now();
       this.consecutiveHeartbeatFailures = 0;
       this.startHeartbeat();
