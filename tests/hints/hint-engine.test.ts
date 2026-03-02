@@ -51,6 +51,8 @@ describe('HintEngine', () => {
 
     it('should return null when no rules match', () => {
       const engine = new HintEngine(new ActivityTracker());
+      // Use a non-first call to avoid setup-permission-hint (fires once on first success)
+      engine.getHint('navigate', makeResult('warmup'), false);
       const result = makeResult('{"action":"navigate","url":"https://example.com","title":"Example"}');
       const hint = engine.getHint('navigate', result, false);
       expect(hint).toBeNull();
@@ -287,12 +289,16 @@ describe('HintEngine', () => {
     });
 
     it('should not trigger on mixed tool calls', () => {
+      // makeTracker reverses input, so first element becomes most recent in getRecentCalls.
+      // Put 'find' first so recentCalls[0]='find' — not an action trigger for state-check-after-action.
       const tracker = makeTracker([
-        { toolName: 'navigate' },
         { toolName: 'find' },
+        { toolName: 'navigate' },
         { toolName: 'click_element' },
       ]);
       const engine = new HintEngine(tracker);
+      // Warm up to consume setup-permission-hint
+      engine.getHint('find', makeResult('warmup'), false);
       const result = makeResult('{"status":"ok"}');
       const hint = engine.getHint('read_page', result, false);
       expect(hint).toBeNull();

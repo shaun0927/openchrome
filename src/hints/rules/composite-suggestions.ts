@@ -51,7 +51,7 @@ export const compositeSuggestionRules: HintRule[] = [
       if (ctx.toolName !== 'read_page') return null;
       if (ctx.isError) return null;
       if (/truncat|too (long|large)|content cut|\.\.\.$/i.test(ctx.resultText)) {
-        return 'Hint: Use find(query) for targeted element search.';
+        return 'Hint: Output was truncated. Use inspect(query) for targeted state checks, find(query) for element search, or read_page mode="dom" for compact output.';
       }
       return null;
     },
@@ -90,6 +90,33 @@ export const compositeSuggestionRules: HintRule[] = [
           'Hint: Clicked a non-interactive element. Use click_element with a text query ' +
           'or read_page mode="dom" to find the correct target.'
         );
+      }
+      return null;
+    },
+  },
+  {
+    name: 'state-check-after-action',
+    priority: 206,
+    match(ctx) {
+      if (ctx.toolName !== 'read_page') return null;
+      if (
+        lastToolWas(ctx, 'navigate') ||
+        lastToolWas(ctx, 'click_element') ||
+        lastToolWas(ctx, 'wait_and_click') ||
+        lastToolWas(ctx, 'interact')
+      ) {
+        return 'Hint: Use inspect(query) for quick page state checks after actions — e.g. inspect("error messages") or inspect("form field values").';
+      }
+      return null;
+    },
+  },
+  {
+    name: 'repeated-read-page',
+    priority: 207,
+    match(ctx) {
+      if (ctx.toolName !== 'read_page') return null;
+      if (recentToolCount(ctx, 'read_page') >= 2) {
+        return 'Hint: Use inspect(query) for targeted extraction instead of repeated full page reads — e.g. inspect("what tabs are active") or inspect("visible errors").';
       }
       return null;
     },
