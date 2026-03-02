@@ -283,7 +283,7 @@ function startIsolatedSession(claudeArgs: string[]): void {
   const child = spawn(claudeCmd, claudeArgs, {
     env,
     stdio: 'inherit',
-    shell: true,
+    shell: process.platform === 'win32',
   });
 
   // Cleanup on exit

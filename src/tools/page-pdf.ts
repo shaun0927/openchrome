@@ -171,6 +171,21 @@ const handler: ToolHandler = async (
         resolvedPath = path.resolve(filePath);
       }
 
+      // Validate the output path — block writes to sensitive directories
+      const normalizedPath = path.resolve(resolvedPath);
+      const homeDir = os.homedir();
+      const sensitiveRoots = [
+        path.join(homeDir, '.ssh'),
+        path.join(homeDir, '.gnupg'),
+        path.join(homeDir, '.aws'),
+      ];
+      if (sensitiveRoots.some(root => normalizedPath.startsWith(root + path.sep) || normalizedPath === root)) {
+        return {
+          content: [{ type: 'text', text: `Error: Cannot write PDF to sensitive directory "${path.dirname(normalizedPath)}"` }],
+          isError: true,
+        };
+      }
+
       // Ensure directory exists
       const dir = path.dirname(resolvedPath);
       await fs.mkdir(dir, { recursive: true });
