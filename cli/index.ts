@@ -405,7 +405,7 @@ program
     const child = spawn(claudeCmd, args, {
       env,
       stdio: 'inherit',
-      shell: true,
+      shell: process.platform === 'win32',
     });
 
     // Handle exit
