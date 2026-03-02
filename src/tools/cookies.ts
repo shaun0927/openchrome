@@ -20,40 +20,40 @@ const definition: MCPToolDefinition = {
       action: {
         type: 'string',
         enum: ['get', 'set', 'delete', 'clear'],
-        description: 'Action to perform: get, set, delete, or clear',
+        description: 'Action to perform',
       },
       name: {
         type: 'string',
-        description: 'Cookie name (required for set and delete, optional for get)',
+        description: 'Cookie name',
       },
       value: {
         type: 'string',
-        description: 'Cookie value (required for set action)',
+        description: 'Cookie value',
       },
       domain: {
         type: 'string',
-        description: 'Cookie domain (optional for set, defaults to current domain)',
+        description: 'Cookie domain. Default: current domain',
       },
       path: {
         type: 'string',
-        description: 'Cookie path (optional for set, defaults to "/")',
+        description: 'Cookie path. Default: /',
       },
       secure: {
         type: 'boolean',
-        description: 'Whether cookie is secure (optional for set)',
+        description: 'Secure flag',
       },
       httpOnly: {
         type: 'boolean',
-        description: 'Whether cookie is HTTP only (optional for set)',
+        description: 'HTTP-only flag',
       },
       sameSite: {
         type: 'string',
         enum: ['Strict', 'Lax', 'None'],
-        description: 'SameSite attribute (optional for set)',
+        description: 'SameSite attribute',
       },
       expires: {
         type: 'number',
-        description: 'Cookie expiration as Unix timestamp in seconds (optional for set)',
+        description: 'Expiration as Unix timestamp in seconds',
       },
     },
     required: ['tabId', 'action'],

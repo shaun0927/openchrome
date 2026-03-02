@@ -9,8 +9,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 
 const definition: MCPToolDefinition = {
   name: 'find',
-  description:
-    'Find elements on the page using natural language. Returns up to 20 matching elements with references.',
+  description: 'Find elements by natural language query. Returns up to 20 matches with refs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,7 +19,7 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Natural language description of what to find (e.g., "search bar", "login button")',
+        description: 'What to find, e.g. "search bar", "login button"',
       },
     },
     required: ['query', 'tabId'],

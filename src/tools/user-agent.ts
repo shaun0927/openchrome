@@ -32,7 +32,7 @@ const USER_AGENT_PRESETS: Record<string, string> = {
 
 const definition: MCPToolDefinition = {
   name: 'user_agent',
-  description: 'Set or reset the browser user agent string. Use a preset or provide a custom string.',
+  description: 'Set or reset browser user agent via preset or custom string.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -42,12 +42,12 @@ const definition: MCPToolDefinition = {
       },
       preset: {
         type: 'string',
-        description: `Preset name: ${Object.keys(USER_AGENT_PRESETS).join(', ')}`,
+        description: 'UA preset',
         enum: Object.keys(USER_AGENT_PRESETS),
       },
       custom: {
         type: 'string',
-        description: 'Custom user agent string (overrides preset if provided)',
+        description: 'Custom UA string (overrides preset)',
       },
     },
     required: ['tabId'],

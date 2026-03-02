@@ -13,12 +13,7 @@ import { formatAge } from '../utils/format-age';
 
 const definition: MCPToolDefinition = {
   name: 'oc_profile_status',
-  description:
-    'Check the current browser profile type and capabilities. ' +
-    'Returns whether the browser is using the real Chrome profile (full capability), ' +
-    'a persistent OpenChrome profile (synced cookies, persistent storage), ' +
-    'or a temporary profile (no user data). ' +
-    'Use this to diagnose authentication failures or missing browser features.',
+  description: 'Check browser profile type (real/persistent/temporary) and capabilities. Use to diagnose auth failures.',
   inputSchema: {
     type: 'object',
     properties: {},

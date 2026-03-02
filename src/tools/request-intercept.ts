@@ -59,7 +59,7 @@ function matchesPattern(url: string, pattern: string): boolean {
 
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
-  description: 'Intercept and monitor network requests. Supports logging, blocking, modifying, and mocking responses.',
+  description: 'Intercept and monitor network requests (log, block, modify).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -74,25 +74,25 @@ const definition: MCPToolDefinition = {
       },
       rule: {
         type: 'object',
-        description: 'Rule definition for addRule action',
+        description: 'Rule for addRule action',
         properties: {
           pattern: {
             type: 'string',
-            description: 'URL pattern to match (glob-like, e.g., "*://example.com/*")',
+            description: 'URL glob pattern, e.g. "*://example.com/*"',
           },
           resourceTypes: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Resource types: document, stylesheet, image, font, script, xhr, fetch',
+            description: 'Filter by resource type',
           },
           action: {
             type: 'string',
             enum: ['block', 'modify', 'log'],
-            description: 'What to do with matched requests',
+            description: 'Action for matched requests',
           },
           modifyOptions: {
             type: 'object',
-            description: 'Options for modify action',
+            description: 'Modify action options',
             properties: {
               status: { type: 'number' },
               headers: { type: 'object' },

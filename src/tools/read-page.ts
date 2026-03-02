@@ -25,8 +25,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description:
-    'Get page content. Default mode "ax" returns accessibility tree with ref_N identifiers. Mode "dom" returns compact DOM (~5-10x fewer tokens). Mode "css" returns CSS diagnostic info (variables, computed styles, framework detection) — use this BEFORE javascript_tool for style inspection or visual debugging.',
+  description: 'Get page content as compact DOM (default), accessibility tree (ax), or CSS diagnostics (css). Use css mode BEFORE javascript_tool for style inspection.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -36,29 +35,29 @@ const definition: MCPToolDefinition = {
       },
       depth: {
         type: 'number',
-        description: 'Maximum depth of the tree to traverse (default: 8 for "all", 5 for "interactive")',
+        description: 'Max tree depth. Default: 8 (all), 5 (interactive)',
       },
       filter: {
         type: 'string',
         enum: ['interactive', 'all'],
-        description: 'Filter elements: "interactive" for buttons/links/inputs only',
+        description: 'Filter: "interactive" for buttons/links/inputs only',
       },
       ref_id: {
         type: 'string',
-        description: 'Reference ID of a parent element to read from',
+        description: 'Parent element ref for subtree scoping',
       },
       selector: {
         type: 'string',
-        description: '(css mode only) CSS selector to inspect specific elements. If omitted, inspects all elements with visual properties.',
+        description: 'CSS selector to inspect (css mode only)',
       },
       mode: {
         type: 'string',
         enum: ['ax', 'dom', 'css'],
-        description: 'Output mode: "ax" for accessibility tree (default), "dom" for compact DOM, "css" for CSS diagnostics (variables, computed styles, framework detection)',
+        description: 'Output mode: dom (default), ax, or css',
       },
       includePagination: {
         type: 'boolean',
-        description: 'Whether to detect and include pagination info in the output (default: true)',
+        description: 'Include pagination info. Default: true',
       },
     },
     required: ['tabId'],
@@ -107,7 +106,7 @@ const handler: ToolHandler = async (
     const cdpClient = sessionManager.getCDPClient();
 
     // Mode dispatch
-    const mode = (args.mode as string) || 'ax';
+    const mode = (args.mode as string) || 'dom';
     if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
       return {
         content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
@@ -464,18 +463,42 @@ const handler: ToolHandler = async (
     const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
 
     if (charCount > MAX_OUTPUT) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              pageStatsLine +
-              output +
-              '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]' +
-              axPaginationSection,
-          },
-        ],
-      };
+      // Auto-fallback: DOM mode produces complete output at ~5-10x fewer tokens
+      try {
+        const domResult = await serializeDOM(page, cdpClient, {
+          maxDepth: -1,
+          filter: filter,
+          interactiveOnly: filter === 'interactive',
+        });
+
+        const fallbackNote =
+          '\n\n[AX tree exceeded output limit (' + charCount + ' chars). ' +
+          'Auto-switched to DOM mode for complete output. ' +
+          'Use mode: "ax" with ref_id to scope specific subtrees for AX format.]';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: domResult.content + fallbackNote + axPaginationSection,
+            },
+          ],
+        };
+      } catch {
+        // If DOM serialization fails, fall back to truncated AX (original behavior)
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                pageStatsLine +
+                output +
+                '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]' +
+                axPaginationSection,
+            },
+          ],
+        };
+      }
     }
 
     return {

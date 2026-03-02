@@ -8,26 +8,26 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'http_auth',
-  description: 'Manage HTTP Basic/Digest authentication credentials (set, clear, status).',
+  description: 'Manage HTTP Basic/Digest authentication credentials.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to set authentication for',
+        description: 'Tab ID to set auth for',
       },
       action: {
         type: 'string',
         enum: ['set', 'clear'],
-        description: 'Action: set or clear credentials',
+        description: 'Set or clear credentials',
       },
       username: {
         type: 'string',
-        description: 'Username for HTTP authentication (required for "set" action)',
+        description: 'Username for HTTP auth',
       },
       password: {
         type: 'string',
-        description: 'Password for HTTP authentication (required for "set" action)',
+        description: 'Password for HTTP auth',
       },
     },
     required: ['tabId', 'action'],

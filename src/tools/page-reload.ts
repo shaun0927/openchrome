@@ -10,7 +10,7 @@ import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'page_reload',
-  description: 'Reload the current page. Optionally bypass cache for a hard refresh.',
+  description: 'Reload the current page.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,7 +20,7 @@ const definition: MCPToolDefinition = {
       },
       ignoreCache: {
         type: 'boolean',
-        description: 'If true, bypasses the browser cache (hard refresh). Default: false',
+        description: 'Bypass cache (hard refresh). Default: false',
       },
     },
     required: ['tabId'],

@@ -25,7 +25,7 @@ const LOCATION_PRESETS: Record<
 
 const definition: MCPToolDefinition = {
   name: 'geolocation',
-  description: 'Set or clear geolocation coordinates. Use a preset city or provide custom latitude/longitude.',
+  description: 'Set or clear geolocation via preset city or custom coordinates.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -35,7 +35,7 @@ const definition: MCPToolDefinition = {
       },
       preset: {
         type: 'string',
-        description: `Preset location: ${Object.keys(LOCATION_PRESETS).join(', ')}`,
+        description: 'Preset city',
         enum: Object.keys(LOCATION_PRESETS),
       },
       latitude: {
@@ -48,7 +48,7 @@ const definition: MCPToolDefinition = {
       },
       accuracy: {
         type: 'number',
-        description: 'Accuracy in meters (default: 100)',
+        description: 'Accuracy in meters. Default: 100',
       },
     },
     required: ['tabId'],

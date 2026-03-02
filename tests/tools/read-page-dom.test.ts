@@ -283,18 +283,18 @@ describe('ReadPageTool - DOM Mode', () => {
   });
 
   describe('Backward Compatibility', () => {
-    test('default mode (no mode param) returns AX tree with ref_N', async () => {
+    test('default mode (no mode param) returns compact DOM output', async () => {
       const handler = await getReadPageHandler();
       const result = await handler(testSessionId, { tabId: testTargetId }) as any;
       const text = result.content[0].text;
 
-      // Default should be AX tree mode
-      expect(text).toContain('ref_');
-      // AX mode now includes page_stats (added for LLM context)
+      // Default should now be DOM mode
       expect(text).toContain('[page_stats]');
+      // DOM mode uses backendNodeId identifiers, not ref_N
+      expect(text).not.toContain('ref_');
 
-      // clearTargetRefs SHOULD be called in AX mode
-      expect(mockRefIdManager.clearTargetRefs).toHaveBeenCalled();
+      // clearTargetRefs should NOT be called in DOM mode
+      expect(mockRefIdManager.clearTargetRefs).not.toHaveBeenCalled();
     });
 
     test('mode=ax explicitly returns AX tree', async () => {

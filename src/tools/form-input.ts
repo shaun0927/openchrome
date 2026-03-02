@@ -10,7 +10,7 @@ import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
-  description: 'Set values in form elements using element reference ID from read_page or find tools.',
+  description: 'Set form element value using ref from read_page or find.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,12 +20,12 @@ const definition: MCPToolDefinition = {
       },
       ref: {
         type: 'string',
-        description: 'Element reference ID (ref_N from read_page) or backendNodeId (number from DOM mode)',
+        description: 'ref_N from read_page or backendNodeId from DOM mode',
       },
       value: {
         oneOf: [{ type: 'string' }, { type: 'boolean' }, { type: 'number' }],
         description:
-          'The value to set. For checkboxes use boolean, for selects use option value or text',
+          'Value to set. Boolean for checkboxes, string for selects',
       },
     },
     required: ['ref', 'value', 'tabId'],

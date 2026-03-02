@@ -23,7 +23,7 @@ describe('ReadPageTool', () => {
   let testSessionId: string;
   let testTargetId: string;
 
-  const getReadPageHandler = async () => {
+  const getReadPageHandler = async (serializeDOMMock?: jest.Mock) => {
     jest.resetModules();
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
@@ -31,6 +31,11 @@ describe('ReadPageTool', () => {
     jest.doMock('../../src/utils/ref-id-manager', () => ({
       getRefIdManager: () => mockRefIdManager,
     }));
+    if (serializeDOMMock) {
+      jest.doMock('../../src/dom', () => ({
+        serializeDOM: serializeDOMMock,
+      }));
+    }
 
     const { registerReadPageTool } = await import('../../src/tools/read-page');
 
@@ -76,6 +81,32 @@ describe('ReadPageTool', () => {
       sampleAccessibilityTree
     );
 
+    // Set up DOM.getDocument response for DOM mode (now the default)
+    mockSessionManager.mockCDPClient.setCDPResponse(
+      'DOM.getDocument',
+      { depth: -1, pierce: true },
+      {
+        root: {
+          nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+          children: [{
+            nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'HTML', localName: 'html',
+            attributes: [],
+            children: [{
+              nodeId: 3, backendNodeId: 3, nodeType: 1, nodeName: 'BODY', localName: 'body',
+              attributes: [],
+              children: [
+                {
+                  nodeId: 4, backendNodeId: 100, nodeType: 1, nodeName: 'BUTTON', localName: 'button',
+                  attributes: ['type', 'submit'],
+                  children: [{ nodeId: 5, backendNodeId: 5, nodeType: 3, nodeName: '#text', localName: '', nodeValue: 'Submit' }],
+                },
+              ],
+            }],
+          }],
+        },
+      }
+    );
+
     // Set up page.evaluate for page stats (AX mode now calls evaluate for page metadata)
     const page = mockSessionManager.pages.get(testTargetId);
     if (page) {
@@ -102,6 +133,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
@@ -122,6 +154,7 @@ describe('ReadPageTool', () => {
 
       await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
         depth: 5,
       });
 
@@ -143,6 +176,7 @@ describe('ReadPageTool', () => {
 
       await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
         filter: 'interactive',
       });
 
@@ -164,6 +198,7 @@ describe('ReadPageTool', () => {
 
       await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
         filter: 'interactive',
         depth: 3,
       });
@@ -180,6 +215,7 @@ describe('ReadPageTool', () => {
 
       await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       });
 
       // Should have generated refs for elements with backendDOMNodeId
@@ -191,6 +227,7 @@ describe('ReadPageTool', () => {
 
       await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       });
 
       expect(mockRefIdManager.clearTargetRefs).toHaveBeenCalledWith(testSessionId, testTargetId);
@@ -207,6 +244,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       // Should return without error
@@ -220,6 +258,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
         filter: 'all',
       }) as { content: Array<{ type: string; text: string }> };
 
@@ -232,6 +271,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
         filter: 'interactive',
       }) as { content: Array<{ type: string; text: string }> };
 
@@ -253,6 +293,7 @@ describe('ReadPageTool', () => {
       // The sample tree has button, textbox, link which are all interactive
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
         filter: 'interactive',
       }) as { content: Array<{ type: string; text: string }> };
 
@@ -274,6 +315,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
@@ -286,6 +328,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
@@ -298,6 +341,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
@@ -327,29 +371,98 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       // Should handle without error
       expect(result.content[0].type).toBe('text');
     });
 
-    test('truncation message suggests DOM mode', async () => {
-      const handler = await getReadPageHandler();
-
-      // Create tree large enough to exceed MAX_OUTPUT (50K chars)
-      const hugeTree = {
-        nodes: Array.from({ length: 5000 }, (_, i) => ({
+    function generateLargeAXTree(nodeCount: number) {
+      const nodes: Array<{
+        nodeId: number;
+        backendDOMNodeId?: number;
+        role: { value: string };
+        name: { value: string };
+        childIds: number[];
+      }> = [{ nodeId: 1, role: { value: 'WebArea' }, name: { value: 'Test' }, childIds: [] }];
+      for (let i = 2; i <= nodeCount; i++) {
+        nodes[0].childIds.push(i);
+        nodes.push({
           nodeId: i,
-          backendDOMNodeId: 100 + i,
-          role: { value: 'generic' },
-          name: { value: `Element with a long name to inflate character count number ${i} padding text here` },
-        })),
-      };
+          backendDOMNodeId: i * 10,
+          role: { value: 'button' },
+          name: { value: 'Button ' + 'x'.repeat(100) },
+          childIds: [],
+        });
+      }
+      return { nodes };
+    }
+
+    test('auto-fallback to DOM mode when AX tree exceeds output limit', async () => {
+      const mockSerializeDOM = jest.fn().mockResolvedValue({
+        content: '[page_stats] url: https://example.com\n\n<body>\n  <button />\n</body>',
+      });
+      const handler = await getReadPageHandler(mockSerializeDOM);
+
+      // 600 nodes × ~110 chars each ≈ 66K chars > MAX_OUTPUT (50K)
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        generateLargeAXTree(600)
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      // Should contain DOM output (from serializeDOM mock)
+      expect(text).toContain('<body>');
+      // Should contain the auto-fallback notice
+      expect(text).toContain('[AX tree exceeded output limit');
+      expect(text).toContain('Auto-switched to DOM mode');
+      // Should NOT contain the old truncation message
+      expect(text).not.toContain('[Output truncated');
+    });
+
+    test('auto-fallback passes correct options to serializeDOM', async () => {
+      const mockSerializeDOM = jest.fn().mockResolvedValue({
+        content: '[page_stats] url: https://example.com\n\n<body></body>',
+      });
+      const handler = await getReadPageHandler(mockSerializeDOM);
 
       mockSessionManager.mockCDPClient.setCDPResponse(
         'Accessibility.getFullAXTree',
         { depth: 8 },
-        hugeTree
+        generateLargeAXTree(600)
+      );
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        filter: 'all',
+      });
+
+      expect(mockSerializeDOM).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          maxDepth: -1,
+          filter: 'all',
+          interactiveOnly: false,
+        })
+      );
+    });
+
+    test('falls back to truncated AX output when DOM serialization fails', async () => {
+      const mockSerializeDOM = jest.fn().mockRejectedValue(new Error('DOM serialization failed'));
+      const handler = await getReadPageHandler(mockSerializeDOM);
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        generateLargeAXTree(600)
       );
 
       const result = await handler(testSessionId, {
@@ -357,9 +470,12 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
+      // Should fall back to original truncation message
       expect(text).toContain('[Output truncated');
       expect(text).toContain('mode: "dom"');
       expect(text).toContain('~5-10x fewer tokens');
+      // Should NOT contain the auto-fallback notice
+      expect(text).not.toContain('[AX tree exceeded output limit');
     });
 
     test('invalid mode returns clear error', async () => {
@@ -382,6 +498,7 @@ describe('ReadPageTool', () => {
 
       await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       });
 
       // Check that refs were generated with correct session and target
@@ -436,6 +553,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
@@ -447,6 +565,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
@@ -459,6 +578,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
@@ -470,6 +590,7 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;

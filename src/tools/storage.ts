@@ -9,7 +9,7 @@ import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'storage',
-  description: 'Manage browser localStorage and sessionStorage (get, set, delete, clear, keys).',
+  description: 'Manage browser localStorage and sessionStorage.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,7 +20,7 @@ const definition: MCPToolDefinition = {
       storageType: {
         type: 'string',
         enum: ['local', 'session'],
-        description: 'Storage type: "local" for localStorage, "session" for sessionStorage',
+        description: 'local or session storage',
       },
       action: {
         type: 'string',
@@ -29,11 +29,11 @@ const definition: MCPToolDefinition = {
       },
       key: {
         type: 'string',
-        description: 'Storage key (required for set and remove, optional for get)',
+        description: 'Storage key',
       },
       value: {
         type: 'string',
-        description: 'Value to store (required for set action). Objects should be JSON stringified.',
+        description: 'Value to store. JSON-stringify objects',
       },
     },
     required: ['tabId', 'storageType', 'action'],

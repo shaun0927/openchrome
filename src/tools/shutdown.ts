@@ -17,18 +17,13 @@ import { getChromeLauncher } from '../chrome/launcher';
 
 const definition: MCPToolDefinition = {
   name: 'oc_stop',
-  description:
-    'Gracefully shut down OpenChrome: close all browser sessions, tabs, and the Chrome process. ' +
-    'Use this when you are done with browser automation. Chrome will be re-launched ' +
-    'automatically on the next OpenChrome tool call.',
+  description: 'Shut down OpenChrome and close Chrome. Auto-relaunched on next tool call.',
   inputSchema: {
     type: 'object',
     properties: {
       keepChrome: {
         type: 'boolean',
-        description:
-          'If true, keep Chrome running but disconnect OpenChrome from it (default: false). ' +
-          'When false, Chrome is killed if OpenChrome launched it.',
+        description: 'Keep Chrome running, just disconnect. Default: false',
       },
     },
     required: [],

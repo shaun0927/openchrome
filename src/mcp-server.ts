@@ -742,16 +742,17 @@ export class MCPServer {
   private inferToolCategory(toolName: string): ToolCategory {
     if (['navigate', 'page_reload'].includes(toolName)) return 'navigation';
     if (['computer', 'form_input', 'drag_drop'].includes(toolName)) return 'interaction';
-    if (['read_page', 'find', 'page_content', 'selector_query', 'xpath_query'].includes(toolName)) return 'content';
+    if (['read_page', 'find', 'page_content', 'query_dom'].includes(toolName)) return 'content';
     if (toolName === 'javascript_tool') return 'javascript';
     if (['network', 'cookies', 'storage', 'request_intercept', 'http_auth'].includes(toolName)) return 'network';
     if (['tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';
     if (['page_pdf', 'console_capture', 'performance_metrics', 'file_upload'].includes(toolName)) return 'media';
     if (['user_agent', 'geolocation', 'emulate_device'].includes(toolName)) return 'emulation';
     if (['workflow_init', 'workflow_status', 'workflow_collect', 'workflow_collect_partial', 'workflow_cleanup', 'execute_plan'].includes(toolName)) return 'orchestration';
-    if (['worker_create', 'worker_list', 'worker_delete', 'worker_update', 'worker_complete'].includes(toolName)) return 'worker';
+    if (['worker', 'worker_update', 'worker_complete'].includes(toolName)) return 'worker';
     if (['click_element', 'fill_form', 'wait_and_click', 'wait_for'].includes(toolName)) return 'composite';
     if (['batch_execute', 'lightweight_scroll'].includes(toolName)) return 'performance';
+    if (toolName === 'memory') return 'content';
     if (toolName === 'oc_stop' || toolName === 'oc_profile_status') return 'lifecycle';
     return 'interaction';
   }

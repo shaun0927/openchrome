@@ -14,9 +14,7 @@ import { DEFAULT_SCREENSHOT_QUALITY, MAX_OUTPUT_CHARS } from '../config/defaults
 
 const definition: MCPToolDefinition = {
   name: 'batch_paginate',
-  description:
-    'Extract content from multiple pages of a paginated viewer (PDF, slides, articles) in a single call. ' +
-    'Supports keyboard navigation, click-based pagination, URL-based parallel extraction, and infinite scroll.',
+  description: 'Extract content from paginated viewers (PDF, slides, articles) in a single call.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -27,49 +25,44 @@ const definition: MCPToolDefinition = {
       strategy: {
         type: 'string',
         enum: ['keyboard', 'click', 'url', 'scroll'],
-        description:
-          'Pagination strategy: "keyboard" (ArrowRight/ArrowDown), "click" (CSS selector), "url" (parallel multi-tab), "scroll" (infinite scroll)',
+        description: 'Pagination strategy',
       },
       totalPages: {
         type: 'number',
-        description: 'Total number of pages to capture. Required for keyboard/click strategies.',
+        description: 'Pages to capture. Required for keyboard/click',
       },
       startPage: {
         type: 'number',
-        description:
-          'Starting page number (default: 1). Useful when resuming from a specific page.',
+        description: 'Starting page number. Default: 1',
       },
       captureMode: {
         type: 'string',
         enum: ['screenshot', 'text', 'dom', 'both'],
-        description:
-          'What to capture per page: "screenshot" (base64 image), "text" (accessibility text), "dom" (compact DOM), "both" (screenshot + text). Default: "text".',
+        description: 'Capture format per page. Default: text',
       },
       keyAction: {
         type: 'string',
-        description: '(keyboard strategy) Key to press for next page. Default: "ArrowRight".',
+        description: 'Key for next page (keyboard). Default: ArrowRight',
       },
       nextSelector: {
         type: 'string',
-        description: '(click strategy) CSS selector for the "next page" button.',
+        description: 'Next-page button selector (click strategy)',
       },
       urlTemplate: {
         type: 'string',
-        description:
-          '(url strategy) URL template with {N}, {page}, or {offset} placeholder for page number, e.g. "https://example.com/page/{N}".',
+        description: 'URL with {N}/{page}/{offset} placeholder (url strategy)',
       },
       waitBetweenPages: {
         type: 'number',
-        description:
-          'Milliseconds to wait between page transitions for rendering. Default: 500.',
+        description: 'Wait between pages in ms. Default: 500',
       },
       scrollAmount: {
         type: 'number',
-        description: '(scroll strategy) Viewport heights to scroll per step. Default: 1.',
+        description: 'Viewport heights per scroll step. Default: 1',
       },
       maxScrolls: {
         type: 'number',
-        description: '(scroll strategy) Maximum number of scroll steps. Default: 50.',
+        description: 'Max scroll steps. Default: 50',
       },
     },
     required: ['tabId', 'strategy'],
