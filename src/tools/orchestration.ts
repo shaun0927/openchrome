@@ -425,6 +425,8 @@ const workerUpdateDefinition: MCPToolDefinition = {
       extractedData: {
         type: 'object',
         description: 'Data extracted so far',
+        properties: {},
+        additionalProperties: true,
       },
       error: {
         type: 'string',
@@ -503,6 +505,8 @@ const workerCompleteDefinition: MCPToolDefinition = {
       extractedData: {
         type: 'object',
         description: 'Final extracted data',
+        properties: {},
+        additionalProperties: true,
       },
     },
     required: ['workerName', 'status', 'resultSummary'],
@@ -665,6 +669,8 @@ const executePlanDefinition: MCPToolDefinition = {
       params: {
         type: 'object',
         description: 'Runtime params merged with plan defaults',
+        properties: {},
+        additionalProperties: true,
       },
     },
     required: ['planId', 'tabId'],
