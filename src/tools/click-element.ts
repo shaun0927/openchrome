@@ -16,7 +16,7 @@ import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-find
 
 const definition: MCPToolDefinition = {
   name: 'click_element',
-  description: 'Find an element by natural language query and click it in one operation. Returns the clicked element info and optionally a verification screenshot.',
+  description: 'Find and click an element by natural language query in one call.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -26,19 +26,19 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Natural language description of the element to click (e.g., "Login button", "Save Changes")',
+        description: 'Element to click, e.g. "Login button"',
       },
       wait_after: {
         type: 'number',
-        description: 'Milliseconds to wait after clicking (default: 100, max: 5000)',
+        description: 'Wait after click in ms. Default: 100, max: 5000',
       },
       verify: {
         type: 'boolean',
-        description: 'If true, returns a screenshot after clicking to verify the action',
+        description: 'Return screenshot after click for verification',
       },
       double_click: {
         type: 'boolean',
-        description: 'If true, performs a double-click instead of single click',
+        description: 'Perform double-click instead of single',
       },
     },
     required: ['tabId', 'query'],

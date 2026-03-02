@@ -11,8 +11,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'file_upload',
-  description: `Upload files to a file input element on the page.
-Supports single or multiple file uploads.`,
+  description: 'Upload files to a file input element on the page.',
   inputSchema: {
     type: 'object',
     properties: {

@@ -50,15 +50,15 @@ const definition: MCPToolDefinition = {
       filter: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Log types to capture: log, warn, error, info, debug (default: all)',
+        description: 'Log types to capture. Default: all',
       },
       limit: {
         type: 'number',
-        description: 'Maximum number of logs to return (for "get" action)',
+        description: 'Max logs to return (get action)',
       },
       maxLogs: {
         type: 'number',
-        description: 'Maximum logs to store (for "start" action, default: 1000)',
+        description: 'Max logs to store. Default: 1000',
       },
     },
     required: ['tabId', 'action'],

@@ -8,12 +8,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'performance_metrics',
-  description: `Get performance metrics for the current page.
-Collects various metrics including:
-- Puppeteer metrics (JS heap, layout counts, etc.)
-- Navigation timing (page load, DOM content loaded)
-- Paint timing (first paint, first contentful paint)
-- Resource timing (optional)`,
+  description: 'Get page performance metrics (timing, paint, heap, resources).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -24,11 +19,11 @@ Collects various metrics including:
       type: {
         type: 'string',
         enum: ['all', 'puppeteer', 'navigation', 'paint', 'resource'],
-        description: 'Type of metrics to retrieve (default: all)',
+        description: 'Metrics type. Default: all',
       },
       includeResources: {
         type: 'boolean',
-        description: 'Whether to include resource timing data (can be large)',
+        description: 'Include resource timing (can be large)',
       },
     },
     required: ['tabId'],

@@ -8,8 +8,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_close',
-  description:
-    'Close one or more tabs. Use tabId to close a specific tab, or workerId to close all tabs in a worker.',
+  description: 'Close one or more tabs by tabId, tabIds, or workerId.',
   inputSchema: {
     type: 'object',
     properties: {

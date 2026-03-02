@@ -13,8 +13,7 @@ interface Position {
 
 const definition: MCPToolDefinition = {
   name: 'drag_drop',
-  description: `Perform drag and drop operations on the page.
-Supports dragging from/to elements by selector or coordinates.`,
+  description: 'Drag and drop by selector or coordinates.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -24,35 +23,35 @@ Supports dragging from/to elements by selector or coordinates.`,
       },
       sourceSelector: {
         type: 'string',
-        description: 'CSS selector for the source element to drag',
+        description: 'Source element CSS selector',
       },
       sourceX: {
         type: 'number',
-        description: 'X coordinate of source position (alternative to selector)',
+        description: 'Source X (alternative to selector)',
       },
       sourceY: {
         type: 'number',
-        description: 'Y coordinate of source position (alternative to selector)',
+        description: 'Source Y (alternative to selector)',
       },
       targetSelector: {
         type: 'string',
-        description: 'CSS selector for the target drop zone',
+        description: 'Target drop zone CSS selector',
       },
       targetX: {
         type: 'number',
-        description: 'X coordinate of target position (alternative to selector)',
+        description: 'Target X (alternative to selector)',
       },
       targetY: {
         type: 'number',
-        description: 'Y coordinate of target position (alternative to selector)',
+        description: 'Target Y (alternative to selector)',
       },
       steps: {
         type: 'number',
-        description: 'Number of intermediate steps for the drag (default: 10)',
+        description: 'Intermediate drag steps. Default: 10',
       },
       delay: {
         type: 'number',
-        description: 'Delay in ms between steps (default: 10)',
+        description: 'Delay in ms between steps. Default: 10',
       },
     },
     required: ['tabId'],

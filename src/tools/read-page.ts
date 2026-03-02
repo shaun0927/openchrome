@@ -25,8 +25,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description:
-    'Get page content. Default mode "dom" returns compact DOM (~5-10x fewer tokens) with stable backendNodeId identifiers. Mode "ax" returns accessibility tree with ref_N identifiers for ARIA/accessibility auditing. Mode "css" returns CSS diagnostic info (variables, computed styles, framework detection) — use this BEFORE javascript_tool for style inspection or visual debugging.',
+  description: 'Get page content as compact DOM (default), accessibility tree (ax), or CSS diagnostics (css). Use css mode BEFORE javascript_tool for style inspection.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -36,29 +35,29 @@ const definition: MCPToolDefinition = {
       },
       depth: {
         type: 'number',
-        description: 'Maximum depth of the tree to traverse (default: 8 for "all", 5 for "interactive")',
+        description: 'Max tree depth. Default: 8 (all), 5 (interactive)',
       },
       filter: {
         type: 'string',
         enum: ['interactive', 'all'],
-        description: 'Filter elements: "interactive" for buttons/links/inputs only',
+        description: 'Filter: "interactive" for buttons/links/inputs only',
       },
       ref_id: {
         type: 'string',
-        description: 'Reference ID of a parent element to read from',
+        description: 'Parent element ref for subtree scoping',
       },
       selector: {
         type: 'string',
-        description: '(css mode only) CSS selector to inspect specific elements. If omitted, inspects all elements with visual properties.',
+        description: 'CSS selector to inspect (css mode only)',
       },
       mode: {
         type: 'string',
         enum: ['ax', 'dom', 'css'],
-        description: 'Output mode: "dom" for compact DOM (default), "ax" for accessibility tree, "css" for CSS diagnostics (variables, computed styles, framework detection)',
+        description: 'Output mode: dom (default), ax, or css',
       },
       includePagination: {
         type: 'boolean',
-        description: 'Whether to detect and include pagination info in the output (default: true)',
+        description: 'Include pagination info. Default: true',
       },
     },
     required: ['tabId'],

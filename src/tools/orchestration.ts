@@ -20,16 +20,13 @@ const dnsResolve = promisify(dns.resolve);
 
 const workflowInitDefinition: MCPToolDefinition = {
   name: 'workflow_init',
-  description: `Initialize a Chrome-Sisyphus workflow with multiple workers.
-Creates isolated browser contexts for each worker and sets up scratchpad files.
-
-Use this to prepare parallel browser operations before launching worker agents.`,
+  description: 'Initialize a workflow with multiple isolated workers for parallel browser ops.',
   inputSchema: {
     type: 'object',
     properties: {
       name: {
         type: 'string',
-        description: 'Name of the workflow (e.g., "Price comparison")',
+        description: 'Workflow name',
       },
       workers: {
         type: 'array',
@@ -39,7 +36,7 @@ Use this to prepare parallel browser operations before launching worker agents.`
           properties: {
             name: {
               type: 'string',
-              description: 'Worker name (e.g., "coupang", "11st")',
+              description: 'Worker name',
             },
             url: {
               type: 'string',
@@ -55,7 +52,7 @@ Use this to prepare parallel browser operations before launching worker agents.`
             },
             shareCookies: {
               type: 'boolean',
-              description: 'If true, worker shares cookies from existing Chrome session instead of isolated context (default: false)',
+              description: 'Share cookies from Chrome session. Default: false',
             },
           },
           required: ['name', 'url', 'task'],
@@ -63,15 +60,15 @@ Use this to prepare parallel browser operations before launching worker agents.`
       },
       workerTimeoutMs: {
         type: 'number',
-        description: 'Maximum execution time per worker in milliseconds (default: 60000). Workers exceeding this limit are force-completed with PARTIAL status.',
+        description: 'Per-worker timeout in ms. Default: 60000',
       },
       maxStaleIterations: {
         type: 'number',
-        description: 'Maximum consecutive worker updates with no data change before circuit breaker triggers (default: 5). Prevents runaway workers stuck in retry loops.',
+        description: 'Stale update limit before circuit break. Default: 5',
       },
       globalTimeoutMs: {
         type: 'number',
-        description: 'Maximum total workflow execution time in milliseconds (default: 300000). All running workers are force-completed when exceeded.',
+        description: 'Global workflow timeout in ms. Default: 300000',
       },
     },
     required: ['name', 'workers'],
@@ -216,14 +213,13 @@ const workflowInitHandler: ToolHandler = async (
 
 const workflowStatusDefinition: MCPToolDefinition = {
   name: 'workflow_status',
-  description: `Get the current status of a Chrome-Sisyphus workflow.
-Returns orchestration state and all worker states.`,
+  description: 'Get current workflow status and worker states.',
   inputSchema: {
     type: 'object',
     properties: {
       includeWorkerDetails: {
         type: 'boolean',
-        description: 'Include full worker scratchpad details (default: false)',
+        description: 'Include worker scratchpad details. Default: false',
       },
     },
     required: [],
@@ -299,8 +295,7 @@ const workflowStatusHandler: ToolHandler = async (
 
 const workflowCollectDefinition: MCPToolDefinition = {
   name: 'workflow_collect',
-  description: `Collect and aggregate results from all workers in the workflow.
-Use this after all worker Background Tasks have completed.`,
+  description: 'Collect and aggregate results from all workers after completion.',
   inputSchema: {
     type: 'object',
     properties: {},
@@ -354,8 +349,7 @@ const workflowCollectHandler: ToolHandler = async (
 
 const workflowCleanupDefinition: MCPToolDefinition = {
   name: 'workflow_cleanup',
-  description: `Clean up workflow resources including workers, tabs, and scratchpad files.
-Use this after workflow completion or to abort a workflow.`,
+  description: 'Clean up workflow resources (workers, tabs, scratchpads).',
   inputSchema: {
     type: 'object',
     properties: {},
@@ -402,8 +396,7 @@ const workflowCleanupHandler: ToolHandler = async (
 
 const workerUpdateDefinition: MCPToolDefinition = {
   name: 'worker_update',
-  description: `Update a worker's progress in the orchestration scratchpad.
-Call this from worker agents to report progress.`,
+  description: 'Report worker progress to the orchestration scratchpad.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -490,8 +483,7 @@ const workerUpdateHandler: ToolHandler = async (
 
 const workerCompleteDefinition: MCPToolDefinition = {
   name: 'worker_complete',
-  description: `Mark a worker as complete with final results.
-Call this from worker agents when task is done.`,
+  description: 'Mark a worker as complete with final results.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -506,7 +498,7 @@ Call this from worker agents when task is done.`,
       },
       resultSummary: {
         type: 'string',
-        description: 'Brief summary of results (max 100 chars)',
+        description: 'Result summary (max 100 chars)',
       },
       extractedData: {
         type: 'object',
@@ -562,15 +554,13 @@ const workerCompleteHandler: ToolHandler = async (
 
 const workflowCollectPartialDefinition: MCPToolDefinition = {
   name: 'workflow_collect_partial',
-  description: `Collect results from completed workers without waiting for all workers to finish.
-Returns only workers that have already reported SUCCESS, PARTIAL, or FAIL status.
-Use this to stream results as they become available instead of waiting for the slowest worker.`,
+  description: 'Collect results from completed workers without waiting for all. Use to stream results as available.',
   inputSchema: {
     type: 'object',
     properties: {
       onlySuccessful: {
         type: 'boolean',
-        description: 'If true, only return workers with SUCCESS or PARTIAL status (default: false)',
+        description: 'Only return successful workers. Default: false',
       },
     },
     required: [],
@@ -660,16 +650,13 @@ const workflowCollectPartialHandler: ToolHandler = async (
 
 const executePlanDefinition: MCPToolDefinition = {
   name: 'execute_plan',
-  description: `Execute a cached compiled plan by ID, bypassing per-step agent LLM round-trips.
-The plan's tool calls are chained internally on the server side.
-Use this for repeated task patterns (e.g., tweet extraction) where the tool sequence is known.
-Falls back gracefully — returns an error result if the plan fails, allowing the agent to retry manually.`,
+  description: 'Execute a cached plan by ID, bypassing per-step LLM calls. Falls back gracefully on failure for manual retry.',
   inputSchema: {
     type: 'object',
     properties: {
       planId: {
         type: 'string',
-        description: 'ID of the compiled plan to execute (e.g., "x-tweet-extraction-v1")',
+        description: 'Plan ID, e.g. "x-tweet-extraction-v1"',
       },
       tabId: {
         type: 'string',
@@ -677,7 +664,7 @@ Falls back gracefully — returns an error result if the plan fails, allowing th
       },
       params: {
         type: 'object',
-        description: 'Additional runtime parameters to pass to the plan (merged with plan defaults)',
+        description: 'Runtime params merged with plan defaults',
       },
     },
     required: ['planId', 'tabId'],

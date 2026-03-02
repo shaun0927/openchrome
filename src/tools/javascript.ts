@@ -9,23 +9,21 @@ import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
-  description:
-    'Execute JavaScript code in the context of the current page. Supports top-level await. Returns the result of the last expression.',
+  description: 'Execute JavaScript in page context. Supports top-level await.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to execute the code in',
+        description: 'Tab ID to execute code in',
       },
       text: {
         type: 'string',
-        description:
-          'The JavaScript code to execute. The result of the last expression will be returned.',
+        description: 'JS code to execute. Last expression returned.',
       },
       timeout: {
         type: 'number',
-        description: 'Timeout in milliseconds for JavaScript execution (default: 30000)',
+        description: 'Timeout in ms. Default: 30000',
       },
     },
     required: ['text', 'tabId'],

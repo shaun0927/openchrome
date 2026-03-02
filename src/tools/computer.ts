@@ -14,7 +14,7 @@ import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
-  description: 'Use mouse and keyboard to interact with a web browser, and take screenshots.',
+  description: 'Perform mouse, keyboard, and screenshot actions on a browser tab.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -37,7 +37,7 @@ const definition: MCPToolDefinition = {
           'scroll_to',
           'hover',
         ],
-        description: 'The action to perform',
+        description: 'Action to perform',
       },
       coordinate: {
         type: 'array',
@@ -63,7 +63,7 @@ const definition: MCPToolDefinition = {
       },
       ref: {
         type: 'string',
-        description: 'Element reference ID (ref_N from read_page) or backendNodeId (number from DOM mode)',
+        description: 'ref_N from read_page or backendNodeId from DOM mode',
       },
     },
     required: ['action', 'tabId'],

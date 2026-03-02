@@ -40,7 +40,7 @@ interface XPathElementInfo {
 const definition: MCPToolDefinition = {
   name: 'query_dom',
   description:
-    'Query DOM elements using CSS selectors or XPath expressions. Returns element information including tag, attributes, text, and position.',
+    'Query DOM elements via CSS selectors or XPath. Returns tag, attributes, text, and position.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -51,24 +51,23 @@ const definition: MCPToolDefinition = {
       method: {
         type: 'string',
         enum: ['css', 'xpath'],
-        description: 'Query method: "css" for CSS selectors, "xpath" for XPath expressions',
+        description: 'Query method: css or xpath',
       },
       selector: {
         type: 'string',
-        description: '(css) CSS selector to query (e.g., "#search", ".button", "input[type=text]")',
+        description: '(css) CSS selector, e.g. "#search", ".button"',
       },
       xpath: {
         type: 'string',
-        description: '(xpath) XPath expression to evaluate',
+        description: '(xpath) XPath expression',
       },
       multiple: {
         type: 'boolean',
-        description:
-          'If true, returns all matching elements. If false, returns only the first match. Default: false',
+        description: 'Return all matches. Default: false',
       },
       limit: {
         type: 'number',
-        description: '(xpath, multiple: true) Maximum number of results to return',
+        description: '(xpath, multiple) Max results to return',
       },
     },
     required: ['tabId', 'method'],

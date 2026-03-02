@@ -83,7 +83,7 @@ const DEVICE_PRESETS: Record<string, DevicePreset> = {
 
 const definition: MCPToolDefinition = {
   name: 'emulate_device',
-  description: 'Emulate a device with specific viewport and user agent settings. Use a preset or provide custom dimensions.',
+  description: 'Emulate device viewport and user agent via preset or custom dimensions.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -93,7 +93,7 @@ const definition: MCPToolDefinition = {
       },
       preset: {
         type: 'string',
-        description: `Device preset: ${Object.keys(DEVICE_PRESETS).join(', ')}`,
+        description: `Device preset`,
         enum: Object.keys(DEVICE_PRESETS),
       },
       width: {
@@ -106,15 +106,15 @@ const definition: MCPToolDefinition = {
       },
       deviceScaleFactor: {
         type: 'number',
-        description: 'Device scale factor (default: 1)',
+        description: 'Device scale factor. Default: 1',
       },
       isMobile: {
         type: 'boolean',
-        description: 'Whether to emulate mobile device (default: false)',
+        description: 'Emulate mobile device. Default: false',
       },
       hasTouch: {
         type: 'boolean',
-        description: 'Whether to emulate touch events (default: false)',
+        description: 'Emulate touch events. Default: false',
       },
       userAgent: {
         type: 'string',

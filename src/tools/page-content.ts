@@ -9,9 +9,7 @@ import { MAX_OUTPUT_CHARS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'page_content',
-  description: `Get HTML content from the current page.
-Returns the full page HTML or content from a specific element using a CSS selector.
-Useful for scraping and extracting page structure.`,
+  description: 'Get HTML content from page or a specific element.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -21,11 +19,11 @@ Useful for scraping and extracting page structure.`,
       },
       selector: {
         type: 'string',
-        description: 'Optional CSS selector to get content from a specific element. If not provided, returns full page HTML.',
+        description: 'CSS selector for specific element. Omit for full page',
       },
       outerHTML: {
         type: 'boolean',
-        description: 'If true, returns outerHTML (includes the element itself). If false, returns innerHTML. Default: true',
+        description: 'Return outerHTML vs innerHTML. Default: true',
       },
     },
     required: ['tabId'],

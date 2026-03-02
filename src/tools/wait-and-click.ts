@@ -12,7 +12,7 @@ import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'wait_and_click',
-  description: 'Wait for an element matching the query to appear, then click it. Useful for clicking elements that appear after page load or after other interactions.',
+  description: 'Wait for an element to appear, then click it. For dynamic/lazy content.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -22,15 +22,15 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Natural language description of the element to wait for and click',
+        description: 'Element to wait for and click (natural language)',
       },
       timeout: {
         type: 'number',
-        description: 'Maximum time to wait in milliseconds (default: 5000, max: 30000)',
+        description: 'Max wait in ms. Default: 5000, max: 30000',
       },
       poll_interval: {
         type: 'number',
-        description: 'How often to check for the element in milliseconds (default: 200)',
+        description: 'Poll interval in ms. Default: 200',
       },
     },
     required: ['tabId', 'query'],
