@@ -25,14 +25,14 @@ export interface ToolEntry {
 export type ToolCategory =
   | 'navigation'      // navigate, page_reload
   | 'interaction'     // computer, click_element, form_input, fill_form, drag_drop
-  | 'content'         // read_page, find, page_content, selector_query, xpath_query
+  | 'content'         // read_page, find, page_content, query_dom, memory
   | 'javascript'      // javascript_tool
   | 'network'         // network, cookies, storage, request_intercept, http_auth
   | 'tabs'            // tabs_context, tabs_create, tabs_close
   | 'media'           // page_pdf, console_capture, performance_metrics, file_upload
   | 'emulation'       // user_agent, geolocation, emulate_device
   | 'orchestration'   // workflow_init, workflow_status, workflow_collect, etc.
-  | 'worker'          // worker_create, worker_list, worker_delete
+  | 'worker'          // worker, worker_update, worker_complete
   | 'composite'       // click_element, fill_form, wait_and_click, wait_for
   | 'performance'     // batch_execute, lightweight_scroll
   | 'lifecycle';      // oc_stop

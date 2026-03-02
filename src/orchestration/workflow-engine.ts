@@ -818,7 +818,7 @@ export class WorkflowEngine {
         const entries = getDomainMemory().query(domain);
         if (entries.length > 0) {
           const lines = entries.map((e) => `- **${e.key}**: ${e.value} (confidence: ${e.confidence.toFixed(1)})`);
-          domainKnowledgeSection = `\n\n## Domain Knowledge (${domain})\n\nPreviously learned knowledge for this domain. Validate after use with memory_validate.\n\n${lines.join('\n')}`;
+          domainKnowledgeSection = `\n\n## Domain Knowledge (${domain})\n\nPreviously learned knowledge for this domain. Validate after use with memory(action: "validate").\n\n${lines.join('\n')}`;
         }
       }
     }

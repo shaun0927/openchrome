@@ -57,9 +57,9 @@ function createMockManifest(): ToolManifest {
         category: 'orchestration',
       },
       {
-        name: 'worker_create',
-        description: 'Create worker',
-        inputSchema: { type: 'object', properties: { name: { type: 'string' } } },
+        name: 'worker',
+        description: 'Worker management',
+        inputSchema: { type: 'object', properties: { action: { type: 'string' } } },
         category: 'worker',
       },
       {
@@ -109,7 +109,7 @@ describe('filterToolsForWorker', () => {
     expect(names).not.toContain('navigate');      // navigation
     expect(names).not.toContain('computer');      // interaction
     expect(names).not.toContain('workflow_init'); // orchestration
-    expect(names).not.toContain('worker_create'); // worker
+    expect(names).not.toContain('worker'); // worker
     expect(names).not.toContain('cookies');       // network
     expect(names).not.toContain('tabs_context');  // tabs
     expect(names).not.toContain('oc_stop');      // lifecycle
@@ -128,7 +128,7 @@ describe('filterToolsForWorker', () => {
 
     // excluded categories
     expect(names).not.toContain('workflow_init'); // orchestration
-    expect(names).not.toContain('worker_create'); // worker
+    expect(names).not.toContain('worker'); // worker
     expect(names).not.toContain('cookies');       // network
     expect(names).not.toContain('tabs_context');  // tabs
     expect(names).not.toContain('oc_stop');      // lifecycle
@@ -150,7 +150,7 @@ describe('filterToolsForWorker', () => {
 
     // excluded: orchestration, worker, lifecycle
     expect(names).not.toContain('workflow_init'); // orchestration
-    expect(names).not.toContain('worker_create'); // worker
+    expect(names).not.toContain('worker'); // worker
     expect(names).not.toContain('oc_stop');      // lifecycle
   });
 
