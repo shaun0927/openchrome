@@ -106,11 +106,15 @@ program
       serveArgs.push('--dashboard');
     }
 
-    // Remove existing configuration first (if any)
-    try {
-      execSync('claude mcp remove openchrome 2>/dev/null', { stdio: 'pipe' });
-    } catch {
-      // Ignore if not exists
+    // Remove existing configuration from ALL scopes to prevent duplicates.
+    // Without explicit scope flags, `claude mcp remove` only targets one scope,
+    // leaving the other intact and causing dual-registration conflicts.
+    for (const removeScope of ['user', 'project']) {
+      try {
+        execSync(`claude mcp remove openchrome -s ${removeScope} 2>/dev/null`, { stdio: 'pipe' });
+      } catch {
+        // Ignore if not exists in this scope
+      }
     }
 
     // Use npx @latest with --prefer-online for reliable auto-updates.

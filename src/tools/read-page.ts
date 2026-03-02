@@ -285,24 +285,28 @@ const handler: ToolHandler = async (
     }
 
     if (mode === 'dom') {
-      const refId = args.ref_id as string | undefined;
-      const depth = args.depth as number | undefined;
-      const result = await serializeDOM(page, cdpClient, {
-        maxDepth: depth ?? -1,
-        filter: filter,
-        interactiveOnly: filter === 'interactive',
-      });
+      try {
+        const refId = args.ref_id as string | undefined;
+        const depth = args.depth as number | undefined;
+        const result = await serializeDOM(page, cdpClient, {
+          maxDepth: depth ?? -1,
+          filter: filter,
+          interactiveOnly: filter === 'interactive',
+        });
 
-      let outputText = result.content;
-      if (refId) {
-        outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
+        let outputText = result.content;
+        if (refId) {
+          outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
+        }
+
+        const includePaginationDom = args.includePagination !== false;
+        const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+        return {
+          content: [{ type: 'text', text: outputText + domPaginationSection }],
+        };
+      } catch {
+        // DOM serialization failed — fall through to AX mode as fallback
       }
-
-      const includePaginationDom = args.includePagination !== false;
-      const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
-      return {
-        content: [{ type: 'text', text: outputText + domPaginationSection }],
-      };
     }
 
     // Resolve ref_id to backendDOMNodeId if provided (AX mode subtree scoping)
