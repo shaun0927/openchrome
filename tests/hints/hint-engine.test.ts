@@ -648,7 +648,23 @@ describe('HintEngine', () => {
       const hint = engine.getHint('navigate', makeResult('timed out', true), true);
       expect(hint).not.toBeNull();
       expect(hint!.rule).toBe('progress-tracker-stuck');
-      expect(hint!.severity).toBe('critical');
+      expect(hint!.severity).toBe('warning'); // first fire = warning
+    });
+
+    it('escalates stuck severity to critical on 2nd fire', () => {
+      const tracker = makeTracker([
+        { toolName: 'navigate', result: 'error', error: 'timed out' },
+        { toolName: 'navigate', result: 'error', error: 'timed out' },
+      ]);
+      const engine = new HintEngine(tracker);
+
+      // First fire → warning
+      const hint1 = engine.getHint('navigate', makeResult('timed out', true), true);
+      expect(hint1!.severity).toBe('warning');
+
+      // Second fire → critical
+      const hint2 = engine.getHint('navigate', makeResult('timed out', true), true);
+      expect(hint2!.severity).toBe('critical');
     });
 
     it('returns stalling hint on 3 non-progress calls', () => {
