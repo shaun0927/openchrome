@@ -20,13 +20,16 @@ const NON_PROGRESS_SIGNALS = [
   'is stale',                        // Stale ref
   'timed out',                       // Timeout
   'No significant visual change',    // Screenshot unchanged
-  'not found',                       // Element not found
+  'element not found',               // Element not found (tightened from 'not found')
   'no longer available',             // Tab gone
   'Login page detected',             // Login redirect (from hint)
   'CAPTCHA',                         // CAPTCHA blocked
   '404',                             // Page not found
   'Access Denied',                   // Access denied
   'Forbidden',                       // 403
+  'net::ERR_',                       // Chromium network errors
+  'Navigation timeout',              // Puppeteer navigation timeout
+  'Protocol error',                  // CDP-level failures
 ];
 
 export class ProgressTracker {
@@ -41,7 +44,7 @@ export class ProgressTracker {
    */
   evaluate(
     recentCalls: ToolCallEvent[],
-    currentToolName: string,
+    _currentToolName: string,
     currentResultText: string,
     currentIsError: boolean,
   ): ProgressStatus {
@@ -62,10 +65,12 @@ export class ProgressTracker {
         const wasProgress = this.isLikelyProgressCall(call);
         if (!wasProgress) {
           consecutiveNonProgress++;
+          // Do NOT reset consecutiveErrors — a non-progress success
+          // is not evidence that the error streak ended
         } else {
+          consecutiveErrors = 0; // Only reset on genuine progress
           break; // Found progress, stop counting
         }
-        consecutiveErrors = 0; // Reset error streak on success
       }
     }
 
@@ -87,16 +92,20 @@ export class ProgressTracker {
    * Used for the CURRENT tool call where we have the full result text.
    */
   isProgressResult(resultText: string): boolean {
-    return !NON_PROGRESS_SIGNALS.some(signal => resultText.includes(signal));
+    if (!resultText || resultText.trim().length === 0) return false;
+    const lower = resultText.toLowerCase();
+    return !NON_PROGRESS_SIGNALS.some(signal => lower.includes(signal.toLowerCase()));
   }
 
   /**
    * Check if a completed tool call was likely progress-producing.
    * Used for PAST calls where we only have ToolCallEvent metadata.
    *
-   * Heuristic: successful calls are progress unless they errored,
-   * had very short duration (likely a non-progress response), or
-   * are known non-progress patterns.
+   * LIMITATION: For past calls with result='success' and no error field,
+   * this method returns true (progress) even if the actual result text
+   * contained non-progress signals. Only the CURRENT call's full result
+   * text is inspected by isProgressResult(). Past call evaluation is
+   * limited to the error field and tool metadata.
    */
   private isLikelyProgressCall(call: ToolCallEvent): boolean {
     // Errors are never progress
