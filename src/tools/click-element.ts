@@ -8,7 +8,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_VIEWPORT } from '../config/defaults';
+import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, DEFAULT_VIEWPORT } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
@@ -413,18 +413,24 @@ const handler: ToolHandler = async (
         // Timeout — fall through to fallback
         throw new Error('Screenshot timed out');
       } catch {
-        // Fall back to Puppeteer PNG if CDP session creation fails
-        const screenshot = await page.screenshot({
-          encoding: 'base64',
-          type: 'png',
-          fullPage: false,
-          clip: {
-            x: 0,
-            y: 0,
-            width: Math.min(page.viewport()?.width || DEFAULT_VIEWPORT.width, DEFAULT_VIEWPORT.width),
-            height: Math.min(page.viewport()?.height || DEFAULT_VIEWPORT.height, DEFAULT_VIEWPORT.height),
-          },
-        });
+        // Fall back to Puppeteer PNG with timeout to prevent hangs on dialog-blocked pages
+        let fallbackTimer: NodeJS.Timeout;
+        const screenshot = await Promise.race([
+          page.screenshot({
+            encoding: 'base64',
+            type: 'png',
+            fullPage: false,
+            clip: {
+              x: 0,
+              y: 0,
+              width: Math.min(page.viewport()?.width || DEFAULT_VIEWPORT.width, DEFAULT_VIEWPORT.width),
+              height: Math.min(page.viewport()?.height || DEFAULT_VIEWPORT.height, DEFAULT_VIEWPORT.height),
+            },
+          }).finally(() => clearTimeout(fallbackTimer)),
+          new Promise<never>((_, reject) => {
+            fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
+          }),
+        ]);
 
         return {
           content: [
