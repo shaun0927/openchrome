@@ -192,6 +192,7 @@ export interface ProfileState {
 
 export class ChromeLauncher {
   private instance: ChromeInstance | null = null;
+  private pendingProcess: ChildProcess | null = null;
   private port: number;
   private profileManager = new ProfileManager();
   private currentProfileType: ProfileType | undefined;
@@ -228,13 +229,44 @@ export class ChromeLauncher {
     const existingWs = await waitForDebugPort(port, 5000).catch(() => null);
     if (existingWs) {
       console.error(`[ChromeLauncher] Found existing Chrome on port ${port}`);
+      const pendingProc = this.pendingProcess;
+      this.pendingProcess = null; // Clear — our pending Chrome may be the one that responded
       this.instance = {
         wsEndpoint: existingWs,
         httpEndpoint: `http://127.0.0.1:${port}`,
+        ...(pendingProc && pendingProc.exitCode === null && { process: pendingProc }),
       };
       // Attached to user-started Chrome — assume real profile
       this.profileState = { type: 'real', extensionsAvailable: true };
       return this.instance;
+    }
+
+    // Reuse a still-starting Chrome process from a previous timed-out launch attempt.
+    // This prevents spawning duplicate Chrome instances (issue #171).
+    if (this.pendingProcess && this.pendingProcess.exitCode !== null) {
+      // Pending process has already exited — clean it up
+      this.pendingProcess = null;
+    }
+    if (this.pendingProcess && this.pendingProcess.exitCode === null) {
+      console.error('[ChromeLauncher] Reusing pending Chrome process from previous launch attempt...');
+      const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || '60000', 10);
+      const pendingProc = this.pendingProcess;
+      try {
+        const wsEndpoint = await waitForDebugPort(port, launchTimeout, pendingProc);
+        this.pendingProcess = null;
+        this.instance = {
+          wsEndpoint,
+          httpEndpoint: `http://127.0.0.1:${port}`,
+          process: pendingProc,
+        };
+        console.error(`[ChromeLauncher] Reused pending Chrome process, ready at ${wsEndpoint}`);
+        return this.instance;
+      } catch (err) {
+        // Pending process failed too — kill it and fall through to fresh launch
+        console.error('[ChromeLauncher] Pending Chrome process failed, will launch fresh');
+        try { pendingProc.kill(); } catch { /* ignore */ }
+        this.pendingProcess = null;
+      }
     }
 
     // If autoLaunch is false (default), don't start Chrome automatically
@@ -395,21 +427,37 @@ export class ChromeLauncher {
     // Log Chrome process exit for immediate diagnostics
     chromeProcess.once('exit', (code, signal) => {
       console.error(`[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal})`);
+      // Clear pendingProcess if this was the one we were tracking
+      if (this.pendingProcess === chromeProcess) {
+        this.pendingProcess = null;
+      }
     });
 
-    // Wait for debug port — pass chromeProcess for fast-fail on premature exit
-    const wsEndpoint = await waitForDebugPort(port, 30000, chromeProcess);
+    // Track as pending for retry reuse (issue #171)
+    this.pendingProcess = chromeProcess;
 
-    this.instance = {
-      wsEndpoint,
-      httpEndpoint: `http://127.0.0.1:${port}`,
-      process: chromeProcess,
-      userDataDir,
-      profileType,
-    };
+    const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || '60000', 10);
 
-    console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
-    return this.instance;
+    try {
+      // Wait for debug port — pass chromeProcess for fast-fail on premature exit
+      const wsEndpoint = await waitForDebugPort(port, launchTimeout, chromeProcess);
+      this.pendingProcess = null; // Success — no longer pending
+
+      this.instance = {
+        wsEndpoint,
+        httpEndpoint: `http://127.0.0.1:${port}`,
+        process: chromeProcess,
+        userDataDir,
+        profileType,
+      };
+
+      console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
+      return this.instance;
+    } catch (err) {
+      // Don't clear pendingProcess — next call can reuse the still-starting Chrome
+      // But DO re-throw so the caller sees the error
+      throw err;
+    }
   }
 
   /**
@@ -441,6 +489,10 @@ export class ChromeLauncher {
    * Close Chrome instance (only if we launched it)
    */
   async close(): Promise<void> {
+    if (this.pendingProcess) {
+      try { this.pendingProcess.kill(); } catch { /* ignore */ }
+      this.pendingProcess = null;
+    }
     if (this.instance?.process) {
       console.error('[ChromeLauncher] Closing Chrome...');
       if (process.platform === 'win32' && this.instance.process.pid) {
