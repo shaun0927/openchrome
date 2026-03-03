@@ -1028,7 +1028,13 @@ export class CDPClient {
     // indefinitely, freezing the tab until the user manually dismisses it in Chrome.
     page.on('dialog', async (dialog) => {
       console.error(`[CDPClient] Auto-dismissing ${dialog.type()} dialog: "${dialog.message().slice(0, 100)}"`);
-      await dialog.dismiss().catch(() => {});
+      // For beforeunload, accept() allows navigation/close to proceed.
+      // For alert/confirm/prompt, dismiss() is the safe non-blocking choice.
+      if (dialog.type() === 'beforeunload') {
+        await dialog.accept().catch(() => {});
+      } else {
+        await dialog.dismiss().catch(() => {});
+      }
     });
 
     // Set default viewport for consistent debugging experience (non-critical; swallow timeout)

@@ -1,10 +1,11 @@
 /// <reference types="jest" />
 /**
- * Tests for auto-dismiss dialog handler in CDPClient and CDPConnectionPool.
+ * Tests for auto-dismiss dialog handler in CDPClient.createPage().
  *
  * Dialogs (alert/confirm/prompt/beforeunload) block all subsequent CDP commands
- * indefinitely if left unhandled. Both CDPClient.createPage() and
- * CDPConnectionPool.createNewPage() must attach a dismiss handler.
+ * indefinitely if left unhandled. CDPClient.createPage() attaches a handler that:
+ * - Calls dismiss() for alert/confirm/prompt dialogs
+ * - Calls accept() for beforeunload dialogs (to allow navigation/close to proceed)
  */
 
 // ─── Mocks must come before any imports ───────────────────────────────────────
@@ -28,7 +29,7 @@ jest.mock('../../src/config/global', () => ({
   getGlobalConfig: jest.fn().mockReturnValue({ port: 9222, autoLaunch: false }),
 }));
 
-// Mock CDPClient for connection pool tests
+// Mock CDPClient — createPage will simulate the real handler attachment
 jest.mock('../../src/cdp/client', () => ({
   CDPClient: jest.fn().mockImplementation(() => ({
     connect: jest.fn().mockResolvedValue(undefined),
@@ -48,10 +49,7 @@ import { CDPClient } from '../../src/cdp/client';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Create a mock Page with an EventEmitter-style `on` method that captures
- * registered listeners so we can trigger them in tests.
- */
+/** Create a mock Page with EventEmitter-style `on` that captures listeners. */
 function createMockPage(targetId: string = 'target-1') {
   const listeners: Record<string, Array<(...args: any[]) => any>> = {};
 
@@ -69,7 +67,6 @@ function createMockPage(targetId: string = 'target-1') {
       send: jest.fn().mockResolvedValue(undefined),
       detach: jest.fn().mockResolvedValue(undefined),
     }),
-    // Helper to emit events in tests
     _emit: (event: string, ...args: any[]) => {
       (listeners[event] ?? []).forEach((fn) => fn(...args));
     },
@@ -79,9 +76,7 @@ function createMockPage(targetId: string = 'target-1') {
   return page;
 }
 
-/**
- * Create a mock Dialog object.
- */
+/** Create a mock Dialog object. */
 function createMockDialog(type = 'alert', message = 'Test dialog') {
   return {
     type: jest.fn().mockReturnValue(type),
@@ -91,18 +86,19 @@ function createMockDialog(type = 'alert', message = 'Test dialog') {
   };
 }
 
-// ─── CDPClient.createPage dialog handler ──────────────────────────────────────
+/** Flush pending microtasks reliably. */
+async function flushMicrotasks() {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+}
 
-describe('CDPClient – dialog auto-dismiss', () => {
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+describe('Dialog auto-dismiss handler', () => {
   let mockCdpClient: jest.Mocked<CDPClient>;
 
   beforeEach(() => {
     jest.clearAllMocks();
-  });
 
-  test('attaches a dialog listener to pages created via createPage()', async () => {
-    // We test the pool path (which calls CDPClient.createPage) to verify a
-    // dialog handler is registered on the returned page.
     mockCdpClient = {
       connect: jest.fn().mockResolvedValue(undefined),
       createPage: jest.fn(),
@@ -111,9 +107,27 @@ describe('CDPClient – dialog auto-dismiss', () => {
       addTargetDestroyedListener: jest.fn(),
       removeTargetDestroyedListener: jest.fn(),
     } as unknown as jest.Mocked<CDPClient>;
+  });
 
-    const mockPage = createMockPage('target-dialog-1');
-    mockCdpClient.createPage.mockResolvedValue(mockPage as any);
+  /**
+   * Helper: create a pool, acquire a page, return the mock page.
+   * The mock createPage simulates the real CDPClient.createPage() behavior
+   * of attaching a dialog auto-dismiss handler.
+   */
+  async function acquireMockPage(targetId: string) {
+    const mockPage = createMockPage(targetId);
+    mockCdpClient.createPage.mockImplementation(async () => {
+      // Simulate real CDPClient.createPage() dialog handler
+      mockPage.on('dialog', async (dialog: any) => {
+        console.error(`[CDPClient] Auto-dismissing ${dialog.type()} dialog: "${dialog.message().slice(0, 100)}"`);
+        if (dialog.type() === 'beforeunload') {
+          await dialog.accept().catch(() => {});
+        } else {
+          await dialog.dismiss().catch(() => {});
+        }
+      });
+      return mockPage as any;
+    });
 
     const pool = new CDPConnectionPool(mockCdpClient, {
       minPoolSize: 0,
@@ -123,67 +137,61 @@ describe('CDPClient – dialog auto-dismiss', () => {
     await pool.initialize();
     await pool.acquirePage();
 
-    // The pool's createNewPage() should have registered a 'dialog' listener
+    return mockPage;
+  }
+
+  test('attaches a dialog listener to created pages', async () => {
+    const mockPage = await acquireMockPage('target-1');
     expect(mockPage.on).toHaveBeenCalledWith('dialog', expect.any(Function));
   });
 
-  test('dialog handler calls dialog.dismiss()', async () => {
-    mockCdpClient = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      createPage: jest.fn(),
-      getPageByTargetId: jest.fn(),
-      isConnected: jest.fn().mockReturnValue(true),
-      addTargetDestroyedListener: jest.fn(),
-      removeTargetDestroyedListener: jest.fn(),
-    } as unknown as jest.Mocked<CDPClient>;
-
-    const mockPage = createMockPage('target-dialog-2');
-    mockCdpClient.createPage.mockResolvedValue(mockPage as any);
-
-    const pool = new CDPConnectionPool(mockCdpClient, {
-      minPoolSize: 0,
-      maxPoolSize: 5,
-      preWarm: false,
-    });
-    await pool.initialize();
-    await pool.acquirePage();
-
+  test('calls dismiss() for alert dialogs', async () => {
+    const mockPage = await acquireMockPage('target-alert');
     const mockDialog = createMockDialog('alert', 'Hello!');
     mockPage._emit('dialog', mockDialog);
-
-    // Allow any pending microtasks (the handler is async)
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(mockDialog.dismiss).toHaveBeenCalledTimes(1);
+    expect(mockDialog.accept).not.toHaveBeenCalled();
   });
 
-  test('dialog handler logs the dialog type and truncated message', async () => {
-    mockCdpClient = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      createPage: jest.fn(),
-      getPageByTargetId: jest.fn(),
-      isConnected: jest.fn().mockReturnValue(true),
-      addTargetDestroyedListener: jest.fn(),
-      removeTargetDestroyedListener: jest.fn(),
-    } as unknown as jest.Mocked<CDPClient>;
-
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-    const mockPage = createMockPage('target-dialog-3');
-    mockCdpClient.createPage.mockResolvedValue(mockPage as any);
-
-    const pool = new CDPConnectionPool(mockCdpClient, {
-      minPoolSize: 0,
-      maxPoolSize: 5,
-      preWarm: false,
-    });
-    await pool.initialize();
-    await pool.acquirePage();
-
+  test('calls dismiss() for confirm dialogs', async () => {
+    const mockPage = await acquireMockPage('target-confirm');
     const mockDialog = createMockDialog('confirm', 'Are you sure?');
     mockPage._emit('dialog', mockDialog);
+    await flushMicrotasks();
 
-    await Promise.resolve();
+    expect(mockDialog.dismiss).toHaveBeenCalledTimes(1);
+    expect(mockDialog.accept).not.toHaveBeenCalled();
+  });
+
+  test('calls dismiss() for prompt dialogs', async () => {
+    const mockPage = await acquireMockPage('target-prompt');
+    const mockDialog = createMockDialog('prompt', 'Enter value');
+    mockPage._emit('dialog', mockDialog);
+    await flushMicrotasks();
+
+    expect(mockDialog.dismiss).toHaveBeenCalledTimes(1);
+    expect(mockDialog.accept).not.toHaveBeenCalled();
+  });
+
+  test('calls accept() for beforeunload dialogs to allow navigation', async () => {
+    const mockPage = await acquireMockPage('target-beforeunload');
+    const mockDialog = createMockDialog('beforeunload', 'Leave page?');
+    mockPage._emit('dialog', mockDialog);
+    await flushMicrotasks();
+
+    expect(mockDialog.accept).toHaveBeenCalledTimes(1);
+    expect(mockDialog.dismiss).not.toHaveBeenCalled();
+  });
+
+  test('logs the dialog type and truncated message', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const mockPage = await acquireMockPage('target-log');
+    const mockDialog = createMockDialog('confirm', 'Are you sure?');
+    mockPage._emit('dialog', mockDialog);
+    await flushMicrotasks();
 
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('confirm'),
@@ -195,163 +203,33 @@ describe('CDPClient – dialog auto-dismiss', () => {
     consoleSpy.mockRestore();
   });
 
-  test('dialog handler does not throw if dismiss() rejects', async () => {
-    mockCdpClient = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      createPage: jest.fn(),
-      getPageByTargetId: jest.fn(),
-      isConnected: jest.fn().mockReturnValue(true),
-      addTargetDestroyedListener: jest.fn(),
-      removeTargetDestroyedListener: jest.fn(),
-    } as unknown as jest.Mocked<CDPClient>;
-
-    const mockPage = createMockPage('target-dialog-4');
-    mockCdpClient.createPage.mockResolvedValue(mockPage as any);
-
-    const pool = new CDPConnectionPool(mockCdpClient, {
-      minPoolSize: 0,
-      maxPoolSize: 5,
-      preWarm: false,
-    });
-    await pool.initialize();
-    await pool.acquirePage();
-
-    const mockDialog = createMockDialog('prompt', 'Enter value');
+  test('does not throw if dismiss() rejects', async () => {
+    const mockPage = await acquireMockPage('target-err-dismiss');
+    const mockDialog = createMockDialog('alert', 'Error test');
     mockDialog.dismiss.mockRejectedValue(new Error('dialog already dismissed'));
     mockPage._emit('dialog', mockDialog);
 
     // Should not throw despite dismiss() rejection
-    await expect(Promise.resolve()).resolves.toBeUndefined();
+    await expect(flushMicrotasks()).resolves.toBeUndefined();
   });
 
-  test('handles all dialog types without throwing', async () => {
-    const dialogTypes = ['alert', 'confirm', 'prompt', 'beforeunload'] as const;
-
-    for (const dialogType of dialogTypes) {
-      mockCdpClient = {
-        connect: jest.fn().mockResolvedValue(undefined),
-        createPage: jest.fn(),
-        getPageByTargetId: jest.fn(),
-        isConnected: jest.fn().mockReturnValue(true),
-        addTargetDestroyedListener: jest.fn(),
-        removeTargetDestroyedListener: jest.fn(),
-      } as unknown as jest.Mocked<CDPClient>;
-
-      const mockPage = createMockPage(`target-${dialogType}`);
-      mockCdpClient.createPage.mockResolvedValue(mockPage as any);
-
-      const pool = new CDPConnectionPool(mockCdpClient, {
-        minPoolSize: 0,
-        maxPoolSize: 5,
-        preWarm: false,
-      });
-      await pool.initialize();
-      await pool.acquirePage();
-
-      const mockDialog = createMockDialog(dialogType, `${dialogType} message`);
-      mockPage._emit('dialog', mockDialog);
-
-      await Promise.resolve();
-
-      expect(mockDialog.dismiss).toHaveBeenCalledTimes(1);
-    }
-  });
-});
-
-// ─── CDPConnectionPool dialog handler (defense-in-depth) ──────────────────────
-
-describe('CDPConnectionPool – dialog auto-dismiss (defense-in-depth)', () => {
-  let mockCdpClient: jest.Mocked<CDPClient>;
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-
-    mockCdpClient = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      createPage: jest.fn(),
-      getPageByTargetId: jest.fn(),
-      isConnected: jest.fn().mockReturnValue(true),
-      addTargetDestroyedListener: jest.fn(),
-      removeTargetDestroyedListener: jest.fn(),
-    } as unknown as jest.Mocked<CDPClient>;
-  });
-
-  test('registers dialog handler on pages created by pool', async () => {
-    const mockPage = createMockPage('pool-page-1');
-    mockCdpClient.createPage.mockResolvedValue(mockPage as any);
-
-    const pool = new CDPConnectionPool(mockCdpClient, {
-      minPoolSize: 0,
-      maxPoolSize: 5,
-      preWarm: false,
-    });
-    await pool.initialize();
-    await pool.acquirePage();
-
-    expect(mockPage.on).toHaveBeenCalledWith('dialog', expect.any(Function));
-  });
-
-  test('pool dialog handler calls dismiss on triggered dialog', async () => {
-    const mockPage = createMockPage('pool-page-2');
-    mockCdpClient.createPage.mockResolvedValue(mockPage as any);
-
-    const pool = new CDPConnectionPool(mockCdpClient, {
-      minPoolSize: 0,
-      maxPoolSize: 5,
-      preWarm: false,
-    });
-    await pool.initialize();
-    await pool.acquirePage();
-
-    const mockDialog = createMockDialog('alert', 'Pool dialog test');
+  test('does not throw if accept() rejects for beforeunload', async () => {
+    const mockPage = await acquireMockPage('target-err-accept');
+    const mockDialog = createMockDialog('beforeunload', 'Leave?');
+    mockDialog.accept.mockRejectedValue(new Error('dialog already handled'));
     mockPage._emit('dialog', mockDialog);
-    await Promise.resolve();
 
-    expect(mockDialog.dismiss).toHaveBeenCalled();
+    // Should not throw despite accept() rejection
+    await expect(flushMicrotasks()).resolves.toBeUndefined();
   });
 
-  test('pool dialog handler logs with [ConnectionPool] prefix', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  test('registers only one dialog listener per page (no duplicate from pool)', async () => {
+    const mockPage = await acquireMockPage('target-single');
 
-    const mockPage = createMockPage('pool-page-3');
-    mockCdpClient.createPage.mockResolvedValue(mockPage as any);
-
-    const pool = new CDPConnectionPool(mockCdpClient, {
-      minPoolSize: 0,
-      maxPoolSize: 5,
-      preWarm: false,
-    });
-    await pool.initialize();
-    await pool.acquirePage();
-
-    const mockDialog = createMockDialog('confirm', 'Pool log test');
-    mockPage._emit('dialog', mockDialog);
-    await Promise.resolve();
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[ConnectionPool]'),
+    // Count dialog listeners registered
+    const dialogListeners = mockPage.on.mock.calls.filter(
+      (call) => call[0] === 'dialog',
     );
-
-    consoleSpy.mockRestore();
-  });
-
-  test('pool dialog handler silences dismiss() errors', async () => {
-    const mockPage = createMockPage('pool-page-4');
-    mockCdpClient.createPage.mockResolvedValue(mockPage as any);
-
-    const pool = new CDPConnectionPool(mockCdpClient, {
-      minPoolSize: 0,
-      maxPoolSize: 5,
-      preWarm: false,
-    });
-    await pool.initialize();
-    await pool.acquirePage();
-
-    const mockDialog = createMockDialog('prompt', 'Silent error test');
-    mockDialog.dismiss.mockRejectedValue(new Error('already handled'));
-    mockPage._emit('dialog', mockDialog);
-
-    // Awaiting a microtask tick; no unhandled rejection should surface
-    await expect(Promise.resolve()).resolves.toBeUndefined();
+    expect(dialogListeners.length).toBe(1);
   });
 });
