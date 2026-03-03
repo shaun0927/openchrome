@@ -118,9 +118,10 @@ const handler: ToolHandler = async (
                     authRedirect: true,
                     redirectedFrom: authRedirect.from,
                     authRedirectHost: authRedirect.host,
-                  }) + '\n\nAuthentication required — the page redirected to ' + authRedirect.host + '. ' +
-                    'The user must log in manually in their Chrome browser, then retry. ' +
-                    'Do NOT attempt to authenticate programmatically (no cookies, tokens, or OAuth workarounds).',
+                    message: 'Authentication required — the page redirected to ' + authRedirect.host +
+                      '. The user must log in manually in their Chrome browser, then retry. ' +
+                      'Do NOT attempt to authenticate programmatically (no cookies, tokens, or OAuth workarounds).',
+                  }),
                 }],
                 isError: true,
               };
@@ -311,9 +312,10 @@ const handler: ToolHandler = async (
             authRedirect: true,
             redirectedFrom: authRedirect.from,
             authRedirectHost: authRedirect.host,
-          }) + '\n\nAuthentication required — the page redirected to ' + authRedirect.host + '. ' +
-            'The user must log in manually in their Chrome browser, then retry. ' +
-            'Do NOT attempt to authenticate programmatically (no cookies, tokens, or OAuth workarounds).',
+            message: 'Authentication required — the page redirected to ' + authRedirect.host +
+              '. The user must log in manually in their Chrome browser, then retry. ' +
+              'Do NOT attempt to authenticate programmatically (no cookies, tokens, or OAuth workarounds).',
+          }),
         }],
         isError: true,
       };

@@ -515,13 +515,11 @@ describe('NavigateTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      // The text contains JSON + plain text message; parse just the JSON portion
-      const jsonPart = result.content[0].text.split('\n\n')[0];
-      const parsed = JSON.parse(jsonPart);
+      const parsed = JSON.parse(result.content[0].text);
       expect(parsed.authRedirectHost).toBe('accounts.google.com');
       expect(parsed.redirectedFrom).toBe('https://app.com');
       expect(parsed.authRedirect).toBe(true);
-      expect(result.content[0].text).toContain('accounts.google.com');
+      expect(parsed.message).toContain('accounts.google.com');
     });
   });
 });
