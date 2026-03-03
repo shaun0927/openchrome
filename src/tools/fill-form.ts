@@ -7,6 +7,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
@@ -243,7 +244,7 @@ const handler: ToolHandler = async (
 
           // Click to focus
           await page.mouse.click(Math.round(bestMatch.rect.x), Math.round(bestMatch.rect.y));
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
           // Handle different field types
           if (bestMatch.type === 'checkbox' || bestMatch.type === 'radio') {
@@ -321,7 +322,7 @@ const handler: ToolHandler = async (
           if (submitButton) {
             await page.mouse.click(Math.round(submitButton.x), Math.round(submitButton.y));
             submitted = true;
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, DEFAULT_FORM_SUBMIT_SETTLE_MS));
           } else {
             errors.push(`Could not find submit button matching "${submit}"`);
           }

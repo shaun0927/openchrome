@@ -250,7 +250,7 @@ async function runStressTest(config: StressTestConfig): Promise<void> {
 
     for (let i = 0; i < config.sessionCount; i++) {
       const sessionId = `stress-session-${i}`;
-      const tabResponse = await client.callTool(sessionId, 'tabs_create_mcp', {});
+      const tabResponse = await client.callTool(sessionId, 'tabs_create', {});
 
       if ((tabResponse.result as { isError?: boolean })?.isError) {
         console.error(`Failed to create tab for session ${i}`);

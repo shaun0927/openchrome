@@ -256,7 +256,7 @@ describe('JavaScriptTool', () => {
       expect(result.content[0].text).toContain('tabId is required');
     });
 
-    test('returns error for missing text', async () => {
+    test('returns error for missing code', async () => {
       const handler = await getJavascriptHandler();
 
       const result = await handler(testSessionId, {
@@ -264,7 +264,7 @@ describe('JavaScriptTool', () => {
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('text');
+      expect(result.content[0].text).toContain('code is required');
     });
 
     test('returns error when tab not found', async () => {

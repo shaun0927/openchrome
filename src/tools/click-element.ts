@@ -8,7 +8,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_VIEWPORT } from '../config/defaults';
+import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_VIEWPORT } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
@@ -316,7 +316,7 @@ const handler: ToolHandler = async (
           backendNodeId: bestMatch.backendDOMNodeId,
         });
         // Small delay after scroll
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
         // Re-get position after scroll — use __clickIndex=0 on sorted best match
         // (best match was index 0 before sorting; use backendDOMNodeId instead to be precise)
@@ -399,7 +399,7 @@ const handler: ToolHandler = async (
               await cdpSession.detach().catch(() => {});
             }
           })(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
         ]);
 
         if (screenshotResult !== null) {

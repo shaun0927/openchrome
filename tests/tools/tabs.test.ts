@@ -31,7 +31,7 @@ describe('TabsContextTool', () => {
     };
 
     registerTabsContextTool(mockServer as unknown as Parameters<typeof registerTabsContextTool>[0]);
-    return tools.get('tabs_context_mcp')!.handler;
+    return tools.get('tabs_context')!.handler;
   };
 
   beforeEach(() => {
@@ -176,7 +176,7 @@ describe('TabsCreateTool', () => {
     };
 
     registerTabsCreateTool(mockServer as unknown as Parameters<typeof registerTabsCreateTool>[0]);
-    return tools.get('tabs_create_mcp')!.handler;
+    return tools.get('tabs_create')!.handler;
   };
 
   beforeEach(() => {
@@ -312,8 +312,8 @@ describe('Tabs Tools Integration', () => {
     registerTabsCreateTool(mockServer as unknown as Parameters<typeof registerTabsCreateTool>[0]);
 
     return {
-      tabsContext: tools.get('tabs_context_mcp')!.handler,
-      tabsCreate: tools.get('tabs_create_mcp')!.handler,
+      tabsContext: tools.get('tabs_context')!.handler,
+      tabsCreate: tools.get('tabs_create')!.handler,
     };
   };
 

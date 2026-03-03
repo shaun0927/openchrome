@@ -12,7 +12,7 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
   },
   {
     test: /tab[^a-z]*not found|invalid tab|no such tab/i,
-    hint: 'Hint: Use tabs_context_mcp to list valid tabIds.',
+    hint: 'Hint: Use tabs_context to list valid tabIds.',
   },
   {
     test: /selector[^a-z]*(failed|not found|no match)|querySelectorAll.*returned 0|no elements? match/i,

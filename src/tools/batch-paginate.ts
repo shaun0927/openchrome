@@ -10,7 +10,7 @@ import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { DEFAULT_SCREENSHOT_QUALITY, MAX_OUTPUT_CHARS } from '../config/defaults';
+import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'batch_paginate',
@@ -196,7 +196,7 @@ const handler: ToolHandler = async (
                 await cdpSession.detach().catch(() => {});
               }
             })(),
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
           ]);
           if (screenshotData !== null) {
             result.screenshot = screenshotData;
