@@ -10,7 +10,7 @@ import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
+import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'batch_paginate',
@@ -205,8 +205,13 @@ const handler: ToolHandler = async (
             throw new Error('Screenshot timed out');
           }
         } catch {
-          // Fallback to Puppeteer PNG
-          const screenshotData = await page.screenshot({ encoding: 'base64', type: 'png' });
+          // Fallback to Puppeteer PNG with timeout
+          const screenshotData = await Promise.race([
+            page.screenshot({ encoding: 'base64', type: 'png' }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS)
+            ),
+          ]);
           result.screenshot = screenshotData as string;
           result.screenshotMimeType = 'image/png';
         }
