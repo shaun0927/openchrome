@@ -17,6 +17,7 @@ import * as path from 'path';
 import type { ToolCallEvent } from '../dashboard/types';
 import type { ActivityTracker } from '../dashboard/activity-tracker';
 import { PatternLearner } from './pattern-learner';
+import { ProgressTracker } from './progress-tracker.js';
 import { errorRecoveryRules } from './rules/error-recovery';
 import { compositeSuggestionRules } from './rules/composite-suggestions';
 import { sequenceDetectionRules } from './rules/sequence-detection';
@@ -73,6 +74,7 @@ export class HintEngine {
   private rules: HintRule[];
   private activityTracker: ActivityTracker;
   private learner: PatternLearner;
+  private progressTracker = new ProgressTracker();
   private logFilePath: string | null = null;
   private hintEscalation: Map<string, number> = new Map(); // ruleName -> session fire count
   private missCounts: Map<string, number> = new Map(); // ruleName -> consecutive miss count
@@ -138,6 +140,38 @@ export class HintEngine {
   getHint(toolName: string, result: Record<string, unknown>, isError: boolean): HintResult | null {
     const resultText = this.extractText(result);
     const recentCalls = this.activityTracker.getRecentCalls(5);
+
+    // Priority 50: Progress tracking (highest priority, runs before all rules)
+    const status = this.progressTracker.evaluate(recentCalls, toolName, resultText, isError);
+
+    if (status === 'stuck') {
+      const fireCount = (this.hintEscalation.get('progress-tracker-stuck') || 0) + 1;
+      this.hintEscalation.set('progress-tracker-stuck', fireCount);
+      const rawHintText = 'STOP — you are stuck. The last several tool calls made no meaningful progress ' +
+        '(errors, stale refs, auth redirects, or timeouts). ' +
+        'Step back and try a completely different approach, or ask the user for help.';
+      return {
+        severity: 'critical',
+        rule: 'progress-tracker-stuck',
+        fireCount,
+        hint: this.formatHintMessage('critical', rawHintText, fireCount),
+        rawHint: rawHintText,
+      };
+    }
+
+    if (status === 'stalling') {
+      const fireCount = (this.hintEscalation.get('progress-tracker-stalling') || 0) + 1;
+      this.hintEscalation.set('progress-tracker-stalling', fireCount);
+      const rawHintText = 'Warning: recent tool calls are not making progress. ' +
+        'Consider trying a different approach before getting stuck.';
+      return {
+        severity: this.getSeverity(fireCount),
+        rule: 'progress-tracker-stalling',
+        fireCount,
+        hint: this.formatHintMessage(this.getSeverity(fireCount), rawHintText, fireCount),
+        rawHint: rawHintText,
+      };
+    }
 
     const ctx: HintContext = { toolName, resultText, isError, recentCalls, fireCounts: this.hintEscalation };
 
