@@ -10,7 +10,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
-import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
+import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 
 const definition: MCPToolDefinition = {
@@ -535,9 +535,15 @@ const handler: ToolHandler = async (
           throw new Error('CDP screenshot timed out');
         }
       } catch {
-        // Fallback to Puppeteer PNG
+        // Fallback to Puppeteer PNG with timeout
         try {
-          const screenshot = await page.screenshot({ encoding: 'base64', type: 'png', fullPage: false });
+          let fallbackTimer: NodeJS.Timeout;
+          const screenshot = await Promise.race([
+            page.screenshot({ encoding: 'base64', type: 'png', fullPage: false }).finally(() => clearTimeout(fallbackTimer)),
+            new Promise<never>((_, reject) => {
+              fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
+            }),
+          ]);
           screenshotContent = { type: 'image' as const, data: screenshot as unknown as string, mimeType: 'image/png' };
         } catch {
           // Screenshot failure is non-fatal

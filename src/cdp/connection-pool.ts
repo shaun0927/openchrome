@@ -342,6 +342,9 @@ export class CDPConnectionPool {
    */
   private async createNewPage(): Promise<Page> {
     const page = await this.cdpClient.createPage(undefined, undefined, true);
+
+    // Dialog auto-dismiss is handled by CDPClient.createPage() — no duplicate handler needed here.
+
     // Ensure viewport is set (cdpClient.createPage already sets it, but double-check)
     if (!page.viewport()) {
       await page.setViewport(CDPConnectionPool.DEFAULT_VIEWPORT);
