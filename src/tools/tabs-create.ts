@@ -9,7 +9,7 @@ import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
-  name: 'tabs_create_mcp',
+  name: 'tabs_create',
   description: 'Create a new tab with URL. workerId for parallel ops.',
   inputSchema: {
     type: 'object',
@@ -97,5 +97,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerTabsCreateTool(server: MCPServer): void {
-  server.registerTool('tabs_create_mcp', handler, definition);
+  server.registerTool('tabs_create', handler, definition);
 }

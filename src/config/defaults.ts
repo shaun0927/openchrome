@@ -100,3 +100,16 @@ export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 15000;
  *  If the connection hasn't been verified (by heartbeat or probe) within this window,
  *  connect() triggers an active CDP probe before returning. */
 export const DEFAULT_CONNECT_VERIFY_STALENESS_MS = 10000;
+
+/** Screenshot race timeout in milliseconds.
+ *  Used in computer/interact/click-element/batch-paginate as a safety net
+ *  when racing screenshot capture against a timeout. */
+export const DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS = 10000;
+
+/** Post-action DOM settle delay in milliseconds.
+ *  Brief pause after clicks/interactions to let the DOM update before reading state. */
+export const DEFAULT_DOM_SETTLE_DELAY_MS = 50;
+
+/** Form submit settle delay in milliseconds.
+ *  Longer pause after form submission to allow for potential navigation or re-render. */
+export const DEFAULT_FORM_SUBMIT_SETTLE_MS = 100;

@@ -7,7 +7,7 @@ import { SessionManager } from '../session-manager';
 
 export function createTabsTools(sessionManager: SessionManager) {
   return {
-    tabs_context_mcp: {
+    tabs_context: {
       handler: async (sessionId: string, params: Record<string, unknown>): Promise<MCPResult> => {
         const createIfEmpty = params.createIfEmpty as boolean ?? true;
 
@@ -54,7 +54,7 @@ export function createTabsTools(sessionManager: SessionManager) {
         };
       },
       definition: {
-        name: 'tabs_context_mcp',
+        name: 'tabs_context',
         description:
           "Get context information about the current MCP session's tabs. Returns all tab IDs inside the session's group.",
         inputSchema: {
@@ -75,7 +75,7 @@ export function createTabsTools(sessionManager: SessionManager) {
       } as MCPToolDefinition,
     },
 
-    tabs_create_mcp: {
+    tabs_create: {
       handler: async (sessionId: string, params: Record<string, unknown>): Promise<MCPResult> => {
         if (!sessionId) {
           return {
@@ -111,7 +111,7 @@ export function createTabsTools(sessionManager: SessionManager) {
         };
       },
       definition: {
-        name: 'tabs_create_mcp',
+        name: 'tabs_create',
         description: "Creates a new empty tab in the MCP session's tab group.",
         inputSchema: {
           type: 'object' as const,

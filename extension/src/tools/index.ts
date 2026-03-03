@@ -29,14 +29,14 @@ export function registerAllTools(mcpHandler: MCPHandler, sessionManager: Session
   // Tab tools
   const tabsTools = createTabsTools(sessionManager);
   mcpHandler.registerTool(
-    'tabs_context_mcp',
-    tabsTools.tabs_context_mcp.handler,
-    tabsTools.tabs_context_mcp.definition
+    'tabs_context',
+    tabsTools.tabs_context.handler,
+    tabsTools.tabs_context.definition
   );
   mcpHandler.registerTool(
-    'tabs_create_mcp',
-    tabsTools.tabs_create_mcp.handler,
-    tabsTools.tabs_create_mcp.definition
+    'tabs_create',
+    tabsTools.tabs_create.handler,
+    tabsTools.tabs_create.definition
   );
 
   // Navigation

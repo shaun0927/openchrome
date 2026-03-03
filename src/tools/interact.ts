@@ -10,6 +10,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
+import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 
 const definition: MCPToolDefinition = {
@@ -344,7 +345,7 @@ const handler: ToolHandler = async (
         await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
           backendNodeId: bestMatch.backendDOMNodeId,
         });
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
         // Re-get position after scroll
         const { result: boxResult } = await cdpClient.send<{
@@ -525,7 +526,7 @@ const handler: ToolHandler = async (
               await cdpSession.detach().catch(() => {});
             }
           })(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
         ]);
 
         if (screenshotResult) {

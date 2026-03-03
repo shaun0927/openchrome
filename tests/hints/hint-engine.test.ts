@@ -72,7 +72,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('tab not found: tab-xyz', true);
       const hint = engine.getHint('navigate', result, true);
-      expect(hint?.hint).toContain('tabs_context_mcp');
+      expect(hint?.hint).toContain('tabs_context');
     });
 
     it('should hint on CSS selector failures', () => {
