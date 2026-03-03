@@ -12,6 +12,9 @@ import { Page } from 'puppeteer-core';
 import { CDPClient } from './client';
 import { DEFAULT_SCREENSHOT_QUALITY } from '../config/defaults';
 
+/** Maximum time to wait in the screenshot queue before giving up (ms) */
+const SCREENSHOT_QUEUE_TIMEOUT_MS = 30_000;
+
 export interface ScreenshotOptions {
   format?: 'webp' | 'png' | 'jpeg';
   quality?: number;
@@ -57,9 +60,29 @@ export class ScreenshotScheduler {
   ): Promise<ScreenshotResult> {
     const queuedAt = Date.now();
 
-    // Wait for a slot if at capacity
+    // Wait for a slot if at capacity, with timeout to prevent indefinite starvation
     if (this.active >= this.concurrency) {
-      await new Promise<void>((resolve) => this.queue.push(resolve));
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          // Remove ourselves from the queue
+          const idx = this.queue.indexOf(wrappedResolve);
+          if (idx !== -1) this.queue.splice(idx, 1);
+          reject(new Error(`Screenshot queue wait timed out after ${SCREENSHOT_QUEUE_TIMEOUT_MS}ms`));
+        }, SCREENSHOT_QUEUE_TIMEOUT_MS);
+
+        const wrappedResolve = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        };
+
+        this.queue.push(wrappedResolve);
+      });
     }
 
     this.active++;
