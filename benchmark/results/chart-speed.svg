@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 520" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+  <defs>
+    <linearGradient id="bg1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+  </defs>
+  <rect width="880" height="520" fill="url(#bg1)" rx="16"/>
+
+  <!-- Title -->
+  <text x="440" y="38" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Simple Task Speed Comparison: 20 Twitter Profiles</text>
+  <text x="440" y="62" text-anchor="middle" font-size="13" fill="#94a3b8">Wall clock time in seconds (lower is better) — Each strategy measured in complete isolation</text>
+
+  <!-- Y-axis gridlines + labels -->
+  <line x1="90" y1="400" x2="830" y2="400" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="78" y="404" text-anchor="end" font-size="11" fill="#94a3b8">0s</text>
+  <line x1="90" y1="322" x2="830" y2="322" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="78" y="326" text-anchor="end" font-size="11" fill="#94a3b8">20s</text>
+  <line x1="90" y1="244" x2="830" y2="244" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="78" y="248" text-anchor="end" font-size="11" fill="#94a3b8">40s</text>
+  <line x1="90" y1="166" x2="830" y2="166" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="78" y="170" text-anchor="end" font-size="11" fill="#94a3b8">60s</text>
+  <line x1="90" y1="88" x2="830" y2="88" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="78" y="92" text-anchor="end" font-size="11" fill="#94a3b8">80s</text>
+
+  <!-- X-axis -->
+  <line x1="90" y1="400" x2="830" y2="400" stroke="#cbd5e1" stroke-width="2"/>
+
+  <!-- Bar 1: Playwright Sequential — 82.3s -->
+  <rect x="110" y="79.3" width="108" height="320.7" fill="#6366f1" opacity="0.85" rx="6"/>
+  <text x="164" y="436" text-anchor="middle" font-size="13" font-weight="600" fill="#475569">Playwright</text>
+  <text x="164" y="452" text-anchor="middle" font-size="12" fill="#94a3b8">Sequential</text>
+  <text x="164" y="100" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">82.3s</text>
+
+  <!-- Bar 2: OC Sequential — 82.4s -->
+  <rect x="248" y="79" width="108" height="321" fill="#fb923c" opacity="0.65" rx="6"/>
+  <text x="302" y="436" text-anchor="middle" font-size="13" font-weight="600" fill="#475569">OC</text>
+  <text x="302" y="452" text-anchor="middle" font-size="12" fill="#94a3b8">Sequential</text>
+  <text x="302" y="100" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">82.4s</text>
+
+  <!-- Bar 3: OC 5-batch — 28.7s -->
+  <rect x="386" y="288.1" width="108" height="111.9" fill="#f97316" opacity="0.85" rx="6"/>
+  <text x="440" y="436" text-anchor="middle" font-size="13" font-weight="600" fill="#475569">OC</text>
+  <text x="440" y="452" text-anchor="middle" font-size="12" fill="#94a3b8">5-tab batch</text>
+  <text x="440" y="278" text-anchor="middle" font-size="15" font-weight="700" fill="#1e293b">28.7s</text>
+  <text x="440" y="261" text-anchor="middle" font-size="11" font-weight="600" fill="#059669">2.9x faster</text>
+
+  <!-- Bar 4: OC 10-batch — 23.2s (BEST) -->
+  <rect x="524" y="309.6" width="108" height="90.4" fill="#ea580c" rx="6"/>
+  <text x="578" y="436" text-anchor="middle" font-size="13" font-weight="700" fill="#ea580c">OC</text>
+  <text x="578" y="452" text-anchor="middle" font-size="12" font-weight="600" fill="#ea580c">10-tab batch</text>
+  <text x="578" y="300" text-anchor="middle" font-size="15" font-weight="700" fill="#1e293b">23.2s</text>
+  <text x="578" y="283" text-anchor="middle" font-size="11" font-weight="600" fill="#059669">3.5x faster</text>
+
+  <!-- Star badge for fastest -->
+  <rect x="546" y="468" width="64" height="22" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5" rx="6"/>
+  <text x="578" y="483" text-anchor="middle" font-size="11" font-weight="700" fill="#ea580c">FASTEST</text>
+
+  <!-- Bar 5: OC 20-batch — 25.7s -->
+  <rect x="662" y="299.7" width="108" height="100.3" fill="#f97316" opacity="0.75" rx="6"/>
+  <text x="716" y="436" text-anchor="middle" font-size="13" font-weight="600" fill="#475569">OC</text>
+  <text x="716" y="452" text-anchor="middle" font-size="12" fill="#94a3b8">20-tab batch</text>
+  <text x="716" y="290" text-anchor="middle" font-size="15" font-weight="700" fill="#1e293b">25.7s</text>
+  <text x="716" y="273" text-anchor="middle" font-size="11" font-weight="600" fill="#059669">3.2x faster</text>
+
+  <!-- Legend -->
+  <rect x="90" y="495" width="12" height="12" fill="#6366f1" rx="2"/>
+  <text x="108" y="506" font-size="11" fill="#64748b">Playwright</text>
+  <rect x="180" y="495" width="12" height="12" fill="#f97316" rx="2"/>
+  <text x="198" y="506" font-size="11" fill="#64748b">OpenChrome</text>
+  <text x="830" y="506" text-anchor="end" font-size="11" fill="#94a3b8">All strategies: 95% success rate</text>
+</svg>

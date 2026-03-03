@@ -46,12 +46,15 @@ export const sequenceDetectionRules: HintRule[] = [
   },
   {
     name: 'navigate-to-login',
-    priority: 300,
+    priority: 150,  // Between error-recovery (100-108) and pagination (190)
     match(ctx) {
       if (ctx.toolName !== 'navigate') return null;
-      if (ctx.isError) return null;
-      if (/login|sign.?in|log.?in|auth/i.test(ctx.resultText)) {
-        return 'Hint: Login page detected. The user should already be logged in via their Chrome profile. If not, check that the correct Chrome profile is connected.';
+      if (ctx.isError) return null;  // isError paths already carry inline guidance
+      if (/login|sign.?in|log.?in|auth|oauth/i.test(ctx.resultText)) {
+        return 'Hint: Authentication required — login page detected. ' +
+          'The user must be logged in via their Chrome profile. ' +
+          'STOP trying to authenticate programmatically. ' +
+          'Ask the user to log in manually in Chrome, then retry.';
       }
       return null;
     },

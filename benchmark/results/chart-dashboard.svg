@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#fb923c"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="560" fill="url(#bg3)" rx="16"/>
+
+  <!-- Title -->
+  <text x="450" y="45" text-anchor="middle" font-size="26" font-weight="700" fill="#f8fafc">OpenChrome vs Playwright Benchmark</text>
+  <text x="450" y="72" text-anchor="middle" font-size="14" fill="#94a3b8">Real-world task: Crawl latest tweets from 20 Twitter/X celebrities</text>
+
+  <!-- 3 Key Metric Cards -->
+  <!-- Card 1: Speed -->
+  <rect x="40" y="100" width="260" height="180" fill="#1e293b" stroke="#334155" stroke-width="1" rx="12"/>
+  <text x="170" y="135" text-anchor="middle" font-size="13" fill="#94a3b8" font-weight="600">SPEED</text>
+  <text x="170" y="185" text-anchor="middle" font-size="48" font-weight="800" fill="url(#accent)">3.5x</text>
+  <text x="170" y="215" text-anchor="middle" font-size="14" fill="#cbd5e1">faster than Playwright</text>
+  <text x="170" y="240" text-anchor="middle" font-size="12" fill="#64748b">OC 23.2s vs PW 82.3s</text>
+  <text x="170" y="262" text-anchor="middle" font-size="11" fill="#475569">(10-tab parallel, isolated)</text>
+
+  <!-- Card 2: Tokens -->
+  <rect x="320" y="100" width="260" height="180" fill="#1e293b" stroke="#334155" stroke-width="1" rx="12"/>
+  <text x="450" y="135" text-anchor="middle" font-size="13" fill="#94a3b8" font-weight="600">TOKEN EFFICIENCY</text>
+  <text x="450" y="185" text-anchor="middle" font-size="48" font-weight="800" fill="url(#accent)">15.3x</text>
+  <text x="450" y="215" text-anchor="middle" font-size="14" fill="#cbd5e1">fewer tokens per page</text>
+  <text x="450" y="240" text-anchor="middle" font-size="12" fill="#64748b">OC ~12K tok vs PW ~178K tok</text>
+  <text x="450" y="262" text-anchor="middle" font-size="11" fill="#475569">(93.5% savings via compact DOM)</text>
+
+  <!-- Card 3: Data Quality -->
+  <rect x="600" y="100" width="260" height="180" fill="#1e293b" stroke="#334155" stroke-width="1" rx="12"/>
+  <text x="730" y="135" text-anchor="middle" font-size="13" fill="#94a3b8" font-weight="600">DATA QUALITY</text>
+  <text x="730" y="185" text-anchor="middle" font-size="48" font-weight="800" fill="url(#accent)">+14%</text>
+  <text x="730" y="215" text-anchor="middle" font-size="14" fill="#cbd5e1">more tweets extracted</text>
+  <text x="730" y="240" text-anchor="middle" font-size="12" fill="#64748b">OC 89 vs PW 78 tweets</text>
+  <text x="730" y="262" text-anchor="middle" font-size="11" fill="#475569">(same 20 profiles)</text>
+
+  <!-- Speed Bar Chart -->
+  <text x="40" y="320" font-size="15" font-weight="700" fill="#e2e8f0">Parallel Strategy Comparison</text>
+
+  <!-- PW Sequential -->
+  <text x="40" y="352" font-size="12" fill="#94a3b8">PW Sequential</text>
+  <rect x="170" y="340" width="560" height="20" fill="#6366f1" opacity="0.8" rx="4"/>
+  <text x="738" y="355" font-size="12" fill="#94a3b8" font-weight="600">82.3s</text>
+
+  <!-- OC Sequential -->
+  <text x="40" y="382" font-size="12" fill="#94a3b8">OC Sequential</text>
+  <rect x="170" y="370" width="560.6804374240584" height="20" fill="#f97316" opacity="0.5" rx="4"/>
+  <text x="738.6804374240584" y="385" font-size="12" fill="#94a3b8" font-weight="600">82.4s</text>
+
+  <!-- OC 5-batch -->
+  <text x="40" y="412" font-size="12" fill="#94a3b8">OC 5-batch</text>
+  <rect x="170" y="400" width="195.28554070473874" height="20" fill="#f97316" opacity="0.7" rx="4"/>
+  <text x="373.28554070473876" y="415" font-size="12" fill="#94a3b8" font-weight="600">28.7s</text>
+
+  <!-- OC 10-batch (BEST) -->
+  <text x="40" y="442" font-size="12" fill="#fb923c" font-weight="700">OC 10-batch ★</text>
+  <rect x="170" y="430" width="157.86148238153098" height="20" fill="#ea580c" rx="4"/>
+  <text x="335.861482381531" y="445" font-size="12" fill="#fb923c" font-weight="700">23.2s (3.5x faster)</text>
+
+  <!-- OC 20-batch -->
+  <text x="40" y="472" font-size="12" fill="#94a3b8">OC 20-batch</text>
+  <rect x="170" y="460" width="174.87241798298908" height="20" fill="#f97316" opacity="0.6" rx="4"/>
+  <text x="352.8724179829891" y="475" font-size="12" fill="#94a3b8" font-weight="600">25.7s</text>
+
+  <!-- Success rates -->
+  <text x="40" y="510" font-size="11" fill="#64748b">All strategies: 95% success rate (19/20 — @TimCook has 0 tweets across all approaches)</text>
+
+  <!-- Footer -->
+  <text x="450" y="545" text-anchor="middle" font-size="11" fill="#475569">Measured 2026-03-02 | Same Chrome v145 instance via CDP | Each strategy run in complete isolation</text>
+</svg>
