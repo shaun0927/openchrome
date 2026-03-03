@@ -438,26 +438,22 @@ export class ChromeLauncher {
 
     const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || '60000', 10);
 
-    try {
-      // Wait for debug port — pass chromeProcess for fast-fail on premature exit
-      const wsEndpoint = await waitForDebugPort(port, launchTimeout, chromeProcess);
-      this.pendingProcess = null; // Success — no longer pending
+    // Wait for debug port — pass chromeProcess for fast-fail on premature exit.
+    // On timeout, pendingProcess is intentionally kept set so the next call can
+    // reuse the still-starting Chrome instead of spawning a duplicate (issue #171).
+    const wsEndpoint = await waitForDebugPort(port, launchTimeout, chromeProcess);
+    this.pendingProcess = null; // Success — no longer pending
 
-      this.instance = {
-        wsEndpoint,
-        httpEndpoint: `http://127.0.0.1:${port}`,
-        process: chromeProcess,
-        userDataDir,
-        profileType,
-      };
+    this.instance = {
+      wsEndpoint,
+      httpEndpoint: `http://127.0.0.1:${port}`,
+      process: chromeProcess,
+      userDataDir,
+      profileType,
+    };
 
-      console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
-      return this.instance;
-    } catch (err) {
-      // Don't clear pendingProcess — next call can reuse the still-starting Chrome
-      // But DO re-throw so the caller sees the error
-      throw err;
-    }
+    console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
+    return this.instance;
   }
 
   /**
