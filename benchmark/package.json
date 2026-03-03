@@ -1,0 +1,21 @@
+{
+  "name": "openchrome-benchmark",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "OpenChrome vs Playwright benchmark suite",
+  "scripts": {
+    "playwright": "node playwright-benchmark.mjs",
+    "oc:seq": "node parallel-isolated.mjs 1",
+    "oc:batch5": "node parallel-isolated.mjs 5",
+    "oc:batch10": "node parallel-isolated.mjs 10",
+    "oc:batch20": "node parallel-isolated.mjs 20",
+    "svg": "node generate-svg.mjs",
+    "report": "node generate-report.mjs",
+    "all": "npm run playwright && npm run oc:seq && npm run oc:batch5 && npm run oc:batch10 && npm run oc:batch20 && npm run svg && npm run report"
+  },
+  "keywords": [],
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.58.2"
+  }
+}
