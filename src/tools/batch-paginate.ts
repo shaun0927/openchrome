@@ -206,11 +206,12 @@ const handler: ToolHandler = async (
           }
         } catch {
           // Fallback to Puppeteer PNG with timeout
+          let fallbackTimer: NodeJS.Timeout;
           const screenshotData = await Promise.race([
-            page.screenshot({ encoding: 'base64', type: 'png' }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS)
-            ),
+            page.screenshot({ encoding: 'base64', type: 'png' }).finally(() => clearTimeout(fallbackTimer)),
+            new Promise<never>((_, reject) => {
+              fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
+            }),
           ]);
           result.screenshot = screenshotData as string;
           result.screenshotMimeType = 'image/png';

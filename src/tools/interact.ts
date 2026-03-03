@@ -537,11 +537,12 @@ const handler: ToolHandler = async (
       } catch {
         // Fallback to Puppeteer PNG with timeout
         try {
+          let fallbackTimer: NodeJS.Timeout;
           const screenshot = await Promise.race([
-            page.screenshot({ encoding: 'base64', type: 'png', fullPage: false }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS)
-            ),
+            page.screenshot({ encoding: 'base64', type: 'png', fullPage: false }).finally(() => clearTimeout(fallbackTimer)),
+            new Promise<never>((_, reject) => {
+              fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
+            }),
           ]);
           screenshotContent = { type: 'image' as const, data: screenshot as unknown as string, mimeType: 'image/png' };
         } catch {

@@ -414,6 +414,7 @@ const handler: ToolHandler = async (
         throw new Error('Screenshot timed out');
       } catch {
         // Fall back to Puppeteer PNG with timeout to prevent hangs on dialog-blocked pages
+        let fallbackTimer: NodeJS.Timeout;
         const screenshot = await Promise.race([
           page.screenshot({
             encoding: 'base64',
@@ -425,10 +426,10 @@ const handler: ToolHandler = async (
               width: Math.min(page.viewport()?.width || DEFAULT_VIEWPORT.width, DEFAULT_VIEWPORT.width),
               height: Math.min(page.viewport()?.height || DEFAULT_VIEWPORT.height, DEFAULT_VIEWPORT.height),
             },
+          }).finally(() => clearTimeout(fallbackTimer)),
+          new Promise<never>((_, reject) => {
+            fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
           }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS)
-          ),
         ]);
 
         return {
