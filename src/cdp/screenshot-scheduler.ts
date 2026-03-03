@@ -12,8 +12,8 @@ import { Page } from 'puppeteer-core';
 import { CDPClient } from './client';
 import { DEFAULT_SCREENSHOT_QUALITY } from '../config/defaults';
 
-/** Maximum time to wait in the screenshot queue before giving up (ms) */
-const SCREENSHOT_QUEUE_TIMEOUT_MS = 30_000;
+/** Default maximum time to wait in the screenshot queue before giving up (ms) */
+const DEFAULT_SCREENSHOT_QUEUE_TIMEOUT_MS = 30_000;
 
 export interface ScreenshotOptions {
   format?: 'webp' | 'png' | 'jpeg';
@@ -46,7 +46,8 @@ export class ScreenshotScheduler {
   private totalCaptureMs = 0;
 
   constructor(
-    private readonly concurrency: number = 5
+    private readonly concurrency: number = 5,
+    private readonly queueTimeoutMs: number = DEFAULT_SCREENSHOT_QUEUE_TIMEOUT_MS
   ) {}
 
   /**
@@ -65,21 +66,30 @@ export class ScreenshotScheduler {
       await new Promise<void>((resolve, reject) => {
         let settled = false;
 
+        // Declare wrappedResolve before setTimeout to avoid closure-before-init
+        const wrappedResolve = () => {
+          if (settled) {
+            // This slot was handed to us but we already timed out.
+            // Pass it to the next waiter so the slot is not lost.
+            if (this.queue.length > 0) {
+              const next = this.queue.shift()!;
+              next();
+            }
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        };
+
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
           // Remove ourselves from the queue
           const idx = this.queue.indexOf(wrappedResolve);
           if (idx !== -1) this.queue.splice(idx, 1);
-          reject(new Error(`Screenshot queue wait timed out after ${SCREENSHOT_QUEUE_TIMEOUT_MS}ms`));
-        }, SCREENSHOT_QUEUE_TIMEOUT_MS);
-
-        const wrappedResolve = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve();
-        };
+          reject(new Error(`Screenshot queue wait timed out after ${this.queueTimeoutMs}ms`));
+        }, this.queueTimeoutMs);
 
         this.queue.push(wrappedResolve);
       });
@@ -145,8 +155,9 @@ let schedulerInstance: ScreenshotScheduler | null = null;
 
 export function getScreenshotScheduler(): ScreenshotScheduler {
   if (!schedulerInstance) {
-    const concurrency = parseInt(process.env.SCREENSHOT_CONCURRENCY || '5', 10);
-    schedulerInstance = new ScreenshotScheduler(concurrency);
+    const concurrency = Math.max(1, parseInt(process.env.SCREENSHOT_CONCURRENCY || '5', 10) || 5);
+    const queueTimeout = Math.max(1000, parseInt(process.env.SCREENSHOT_QUEUE_TIMEOUT_MS || String(DEFAULT_SCREENSHOT_QUEUE_TIMEOUT_MS), 10) || DEFAULT_SCREENSHOT_QUEUE_TIMEOUT_MS);
+    schedulerInstance = new ScreenshotScheduler(concurrency, queueTimeout);
   }
   return schedulerInstance;
 }
