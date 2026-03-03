@@ -103,7 +103,28 @@ const handler: ToolHandler = async (
         if (await sessionManager.isTargetValid(existingTabId)) {
           const page = await sessionManager.getPage(sessionId, existingTabId, undefined, 'navigate');
           if (page) {
-            await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+            const { authRedirect } = await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+            if (authRedirect) {
+              AdaptiveScreenshot.getInstance().reset(existingTabId);
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    action: 'navigate',
+                    url: page.url(),
+                    title: await safeTitle(page),
+                    tabId: existingTabId,
+                    workerId: resolvedWorkerId,
+                    authRedirect: true,
+                    redirectedFrom: authRedirect.from,
+                    authRedirectHost: authRedirect.host,
+                  }) + '\n\nAuthentication required — the page redirected to ' + authRedirect.host + '. ' +
+                    'The user must log in manually in their Chrome browser, then retry. ' +
+                    'Do NOT attempt to authenticate programmatically (no cookies, tokens, or OAuth workarounds).',
+                }],
+                isError: true,
+              };
+            }
             AdaptiveScreenshot.getInstance().reset(existingTabId);
             const summary = await generateVisualSummary(page);
             return {
@@ -277,6 +298,27 @@ const handler: ToolHandler = async (
     // Navigate with smart auth redirect detection
     const { authRedirect } = await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
 
+    // Auth redirect = fail-fast with clear error
+    if (authRedirect) {
+      AdaptiveScreenshot.getInstance().reset(tabId);
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            action: 'navigate',
+            url: page.url(),
+            title: await safeTitle(page),
+            authRedirect: true,
+            redirectedFrom: authRedirect.from,
+            authRedirectHost: authRedirect.host,
+          }) + '\n\nAuthentication required — the page redirected to ' + authRedirect.host + '. ' +
+            'The user must log in manually in their Chrome browser, then retry. ' +
+            'Do NOT attempt to authenticate programmatically (no cookies, tokens, or OAuth workarounds).',
+        }],
+        isError: true,
+      };
+    }
+
     AdaptiveScreenshot.getInstance().reset(tabId);
     const navSummary = await generateVisualSummary(page);
     return {
@@ -287,7 +329,6 @@ const handler: ToolHandler = async (
             action: 'navigate',
             url: page.url(),
             title: await safeTitle(page),
-            ...(authRedirect && { redirectedFrom: authRedirect.from, authRedirect: true }),
             ...(navSummary && { visualSummary: navSummary }),
           }),
         },

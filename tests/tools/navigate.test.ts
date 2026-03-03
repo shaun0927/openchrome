@@ -12,6 +12,19 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
+// Mock smart-goto: default implementation calls page.goto so existing tests pass
+import type { SmartGotoResult } from '../../src/utils/smart-goto';
+
+const mockSmartGotoFn = jest.fn<Promise<SmartGotoResult>, [any, string, any?]>(
+  async (page, url, opts) => {
+    await page.goto(url, opts);
+    return { response: null };
+  },
+);
+jest.mock('../../src/utils/smart-goto', () => ({
+  smartGoto: mockSmartGotoFn,
+}));
+
 import { getSessionManager } from '../../src/session-manager';
 
 describe('NavigateTool', () => {
@@ -25,6 +38,9 @@ describe('NavigateTool', () => {
     jest.resetModules();
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
+    }));
+    jest.doMock('../../src/utils/smart-goto', () => ({
+      smartGoto: mockSmartGotoFn,
     }));
     const { registerNavigateTool } = await import('../../src/tools/navigate');
 
@@ -369,18 +385,18 @@ describe('NavigateTool', () => {
   });
 
   describe('Navigation Options', () => {
-    test('uses domcontentloaded wait condition', async () => {
+    test('calls smartGoto with correct timeout', async () => {
       const handler = await getNavigateHandler();
-      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
       await handler(testSessionId, {
         tabId: testTargetId,
         url: 'https://example.com',
       });
 
-      expect(page.goto).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ waitUntil: 'domcontentloaded' })
+      expect(mockSmartGotoFn).toHaveBeenCalledWith(
+        expect.anything(),
+        'https://example.com',
+        expect.objectContaining({ timeout: 30000 })
       );
     });
 
@@ -426,6 +442,86 @@ describe('NavigateTool', () => {
         expect.stringMatching(/^https:\/\//),
         expect.any(Object)
       );
+    });
+  });
+
+  describe('Auth Redirect Handling', () => {
+    beforeEach(() => {
+      // Reset to default (no auth redirect) before each test
+      mockSmartGotoFn.mockResolvedValue({ response: null });
+    });
+
+    test('returns error when auth redirect detected', async () => {
+      mockSmartGotoFn.mockResolvedValue({
+        response: null,
+        authRedirect: {
+          from: 'https://app.com',
+          to: 'https://accounts.google.com/signin',
+          host: 'accounts.google.com',
+        },
+      });
+
+      const handler = await getNavigateHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.url as jest.Mock).mockReturnValue('https://accounts.google.com/signin');
+      (page.title as jest.Mock).mockResolvedValue('Sign in - Google Accounts');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        url: 'https://app.com',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Authentication required');
+    });
+
+    test('returns success when no auth redirect', async () => {
+      mockSmartGotoFn.mockResolvedValue({ response: null });
+
+      const handler = await getNavigateHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.url as jest.Mock).mockReturnValue('https://example.com');
+      (page.title as jest.Mock).mockResolvedValue('Example');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        url: 'https://example.com',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.action).toBe('navigate');
+      expect(parsed.authRedirect).toBeUndefined();
+    });
+
+    test('auth redirect error includes redirect host', async () => {
+      mockSmartGotoFn.mockResolvedValue({
+        response: null,
+        authRedirect: {
+          from: 'https://app.com',
+          to: 'https://accounts.google.com/signin',
+          host: 'accounts.google.com',
+        },
+      });
+
+      const handler = await getNavigateHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.url as jest.Mock).mockReturnValue('https://accounts.google.com/signin');
+      (page.title as jest.Mock).mockResolvedValue('Sign in - Google Accounts');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        url: 'https://app.com',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      // The text contains JSON + plain text message; parse just the JSON portion
+      const jsonPart = result.content[0].text.split('\n\n')[0];
+      const parsed = JSON.parse(jsonPart);
+      expect(parsed.authRedirectHost).toBe('accounts.google.com');
+      expect(parsed.redirectedFrom).toBe('https://app.com');
+      expect(parsed.authRedirect).toBe(true);
+      expect(result.content[0].text).toContain('accounts.google.com');
     });
   });
 });
