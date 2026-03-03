@@ -250,7 +250,7 @@ describe('HintEngine', () => {
       expect(hint).not.toBeNull();
     });
 
-    it('should detect same-tool error streak for unknown errors', () => {
+    it('should detect same-tool error streak for unknown errors (progress-tracker fires first)', () => {
       const tracker = makeTracker([
         { toolName: 'custom_tool', result: 'error', error: 'weird error' },
         { toolName: 'custom_tool', result: 'error', error: 'weird error' },
@@ -258,7 +258,10 @@ describe('HintEngine', () => {
       const engine = new HintEngine(tracker);
       const result = makeResult('another weird error', true);
       const hint = engine.getHint('custom_tool', result, true);
-      expect(hint?.hint).toContain('failed 3 times');
+      // ProgressTracker (priority 50) now fires before repetition detection (priority 250)
+      // on 3+ consecutive errors, catching the "stuck" condition
+      expect(hint).not.toBeNull();
+      expect(hint?.rule).toBe('progress-tracker-stuck');
       expect(hint?.hint).toContain('different approach');
     });
 
@@ -632,6 +635,74 @@ describe('HintEngine', () => {
       const hint3 = engine.getHint('click_element', errResult, true);
       expect(hint3!.fireCount).toBe(3);
       expect(hint3!.severity).toBe('warning');
+    });
+  });
+
+  describe('Progress Tracking Integration', () => {
+    it('returns stuck hint when 3+ consecutive errors', () => {
+      const tracker = makeTracker([
+        { toolName: 'navigate', result: 'error', error: 'timed out' },
+        { toolName: 'navigate', result: 'error', error: 'timed out' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('navigate', makeResult('timed out', true), true);
+      expect(hint).not.toBeNull();
+      expect(hint!.rule).toBe('progress-tracker-stuck');
+      expect(hint!.severity).toBe('warning'); // first fire = warning
+    });
+
+    it('escalates stuck severity to critical on 2nd fire', () => {
+      const tracker = makeTracker([
+        { toolName: 'navigate', result: 'error', error: 'timed out' },
+        { toolName: 'navigate', result: 'error', error: 'timed out' },
+      ]);
+      const engine = new HintEngine(tracker);
+
+      // First fire → warning
+      const hint1 = engine.getHint('navigate', makeResult('timed out', true), true);
+      expect(hint1!.severity).toBe('warning');
+
+      // Second fire → critical
+      const hint2 = engine.getHint('navigate', makeResult('timed out', true), true);
+      expect(hint2!.severity).toBe('critical');
+    });
+
+    it('returns stalling hint on 3 non-progress calls', () => {
+      const tracker = makeTracker([
+        { toolName: 'navigate', result: 'success', error: 'Login page detected' },
+        { toolName: 'navigate', result: 'success', error: 'Login page detected' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('navigate', makeResult('Login page detected'), false);
+      expect(hint).not.toBeNull();
+      expect(hint!.rule).toBe('progress-tracker-stalling');
+    });
+
+    it('returns null (falls through to rules) when progressing', () => {
+      const tracker = makeTracker([
+        { toolName: 'navigate', result: 'success' },
+        { toolName: 'read_page', result: 'success' },
+      ]);
+      const engine = new HintEngine(tracker);
+      // Clean current result, no errors → progressing → no progress hint
+      const hint = engine.getHint('read_page', makeResult('Page content here'), false);
+      // Should either be null or a non-progress-tracker rule
+      if (hint) {
+        expect(hint.rule).not.toMatch(/^progress-tracker/);
+      }
+    });
+
+    it('progress tracker takes priority over other rules', () => {
+      // With 3 errors, progress-tracker-stuck should fire even though
+      // error-recovery rules would also match
+      const tracker = makeTracker([
+        { toolName: 'computer', result: 'error', error: 'not found' },
+        { toolName: 'computer', result: 'error', error: 'not found' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('computer', makeResult('not found', true), true);
+      expect(hint).not.toBeNull();
+      expect(hint!.rule).toBe('progress-tracker-stuck');
     });
   });
 
