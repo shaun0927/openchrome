@@ -313,7 +313,7 @@ describe('PatternLearner', () => {
 
       // Static rule should still fire (error recovery has higher priority)
       const hint = engine.getHint('navigate', makeResult('tab not found', true), true);
-      expect(hint?.hint).toContain('tabs_context_mcp');
+      expect(hint?.hint).toContain('tabs_context');
     });
   });
 });

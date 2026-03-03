@@ -131,7 +131,7 @@ async function runTests() {
     console.log('Test 3: Create tab for session A');
     const tabAResponse = await client.send('tools/call', {
       sessionId: 'session-A',
-      name: 'tabs_create_mcp',
+      name: 'tabs_create',
       arguments: {},
     });
     console.log('  Response:', JSON.stringify(tabAResponse.result, null, 2));
@@ -146,7 +146,7 @@ async function runTests() {
     console.log('Test 4: Create tab for session B (parallel session)');
     const tabBResponse = await client.send('tools/call', {
       sessionId: 'session-B',
-      name: 'tabs_create_mcp',
+      name: 'tabs_create',
       arguments: {},
     });
     console.log('  Response:', JSON.stringify(tabBResponse.result, null, 2));

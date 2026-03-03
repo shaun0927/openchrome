@@ -7,7 +7,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { DEFAULT_SCREENSHOT_QUALITY } from '../config/defaults';
+import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
@@ -147,7 +147,7 @@ const handler: ToolHandler = async (
                   await cdpSession.detach().catch(() => {});
                 }
               })(),
-              new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
             ]);
             if (screenshotData === null) return null;
             return { data: screenshotData, mimeType: 'image/webp' };

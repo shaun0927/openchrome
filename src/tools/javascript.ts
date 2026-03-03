@@ -17,16 +17,20 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Tab ID to execute code in',
       },
-      text: {
+      code: {
         type: 'string',
         description: 'JS code to execute. Last expression returned.',
+      },
+      text: {
+        type: 'string',
+        description: 'Deprecated alias for "code". Use "code" instead.',
       },
       timeout: {
         type: 'number',
         description: 'Timeout in ms. Default: 30000',
       },
     },
-    required: ['text', 'tabId'],
+    required: ['tabId'],
   },
 };
 
@@ -112,7 +116,7 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
-  const code = args.text as string;
+  const code = (args.code as string) || (args.text as string);
   const timeout = (args.timeout as number) || 30000;
 
   const sessionManager = getSessionManager();
@@ -120,6 +124,13 @@ const handler: ToolHandler = async (
   if (!tabId) {
     return {
       content: [{ type: 'text', text: 'Error: tabId is required' }],
+      isError: true,
+    };
+  }
+
+  if (!code) {
+    return {
+      content: [{ type: 'text', text: 'Error: code is required (JS code to execute)' }],
       isError: true,
     };
   }

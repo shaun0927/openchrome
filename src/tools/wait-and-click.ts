@@ -8,6 +8,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
@@ -262,7 +263,7 @@ const handler: ToolHandler = async (
         await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
           backendNodeId: bestMatch.backendDOMNodeId,
         });
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
         // Re-get position after scroll
         const { result: posResult } = await cdpClient.send<{

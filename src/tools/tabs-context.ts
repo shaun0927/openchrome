@@ -8,7 +8,7 @@ import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
-  name: 'tabs_context_mcp',
+  name: 'tabs_context',
   description: 'Get session tab IDs grouped by worker.',
   inputSchema: {
     type: 'object',
@@ -138,5 +138,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerTabsContextTool(server: MCPServer): void {
-  server.registerTool('tabs_context_mcp', handler, definition);
+  server.registerTool('tabs_context', handler, definition);
 }

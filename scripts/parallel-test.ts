@@ -134,8 +134,8 @@ async function runParallelTest() {
     // Create tabs for two sessions
     console.log('Creating tabs for parallel sessions...');
 
-    const tabA = await client.callTool('session-A', 'tabs_create_mcp', {});
-    const tabB = await client.callTool('session-B', 'tabs_create_mcp', {});
+    const tabA = await client.callTool('session-A', 'tabs_create', {});
+    const tabB = await client.callTool('session-B', 'tabs_create', {});
 
     const tabAContent = (tabA.result as { content: { text: string }[] }).content[0].text;
     const tabBContent = (tabB.result as { content: { text: string }[] }).content[0].text;
