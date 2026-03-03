@@ -74,7 +74,7 @@ export class HintEngine {
   private rules: HintRule[];
   private activityTracker: ActivityTracker;
   private learner: PatternLearner;
-  private progressTracker = new ProgressTracker();
+  private progressTracker: ProgressTracker;
   private logFilePath: string | null = null;
   private hintEscalation: Map<string, number> = new Map(); // ruleName -> session fire count
   private missCounts: Map<string, number> = new Map(); // ruleName -> consecutive miss count
@@ -85,8 +85,9 @@ export class HintEngine {
   private flushTimer: NodeJS.Timeout | null = null;
   private static readonly FLUSH_INTERVAL = 200; // ms
 
-  constructor(activityTracker: ActivityTracker) {
+  constructor(activityTracker: ActivityTracker, progressTracker?: ProgressTracker) {
     this.activityTracker = activityTracker;
+    this.progressTracker = progressTracker ?? new ProgressTracker();
     this.learner = new PatternLearner();
 
     // Collect all rules and sort by priority (ascending = highest priority first)
@@ -142,6 +143,10 @@ export class HintEngine {
     const recentCalls = this.activityTracker.getRecentCalls(5);
 
     // Priority 50: Progress tracking (highest priority, runs before all rules)
+    // NOTE: ProgressTracker returns early before the rule loop. Miss-count decay
+    // for individual rules is intentionally frozen during stuck/stalling phases —
+    // we don't want to spuriously reset escalating rule fire counts while the
+    // agent is not making progress.
     const status = this.progressTracker.evaluate(recentCalls, toolName, resultText, isError);
 
     if (status === 'stuck') {
@@ -150,11 +155,13 @@ export class HintEngine {
       const rawHintText = 'STOP — you are stuck. The last several tool calls made no meaningful progress ' +
         '(errors, stale refs, auth redirects, or timeouts). ' +
         'Step back and try a completely different approach, or ask the user for help.';
+      const severity = fireCount >= 2 ? 'critical' as const : 'warning' as const;
+      this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stuck', hint: rawHintText, severity, fireCount });
       return {
-        severity: 'critical',
+        severity,
         rule: 'progress-tracker-stuck',
         fireCount,
-        hint: this.formatHintMessage('critical', rawHintText, fireCount),
+        hint: this.formatHintMessage(severity, rawHintText, fireCount),
         rawHint: rawHintText,
       };
     }
@@ -164,11 +171,13 @@ export class HintEngine {
       this.hintEscalation.set('progress-tracker-stalling', fireCount);
       const rawHintText = 'Warning: recent tool calls are not making progress. ' +
         'Consider trying a different approach before getting stuck.';
+      const severity = this.getSeverity(fireCount);
+      this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stalling', hint: rawHintText, severity, fireCount });
       return {
-        severity: this.getSeverity(fireCount),
+        severity,
         rule: 'progress-tracker-stalling',
         fireCount,
-        hint: this.formatHintMessage(this.getSeverity(fireCount), rawHintText, fireCount),
+        hint: this.formatHintMessage(severity, rawHintText, fireCount),
         rawHint: rawHintText,
       };
     }
