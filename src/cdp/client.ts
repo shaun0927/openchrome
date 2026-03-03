@@ -1023,6 +1023,14 @@ export class CDPClient {
     // Index page for O(1) target-to-page lookups (replaces eager targetcreated indexing)
     this.targetIdIndex.set(getTargetId(page.target()), page);
 
+    // Auto-dismiss native JavaScript dialogs (alert/confirm/prompt/beforeunload).
+    // Without this, any dialog fired by page JS blocks ALL subsequent CDP commands
+    // indefinitely, freezing the tab until the user manually dismisses it in Chrome.
+    page.on('dialog', async (dialog) => {
+      console.error(`[CDPClient] Auto-dismissing ${dialog.type()} dialog: "${dialog.message().slice(0, 100)}"`);
+      await dialog.dismiss().catch(() => {});
+    });
+
     // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
     await Promise.race([
       page.setViewport(CDPClient.DEFAULT_VIEWPORT),

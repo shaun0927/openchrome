@@ -2,7 +2,7 @@
  * CDP Connection Pool - Pre-allocate and manage page instances for faster session creation
  */
 
-import { Page } from 'puppeteer-core';
+import { Page, Dialog } from 'puppeteer-core';
 import { CDPClient, getCDPClient } from './client';
 import { DEFAULT_VIEWPORT } from '../config/defaults';
 
@@ -342,6 +342,14 @@ export class CDPConnectionPool {
    */
   private async createNewPage(): Promise<Page> {
     const page = await this.cdpClient.createPage(undefined, undefined, true);
+
+    // Auto-dismiss dialogs on pool pages (defense-in-depth; CDPClient.createPage
+    // already adds a handler, but pool pages may be recycled without going through createPage again)
+    page.on('dialog', async (dialog: Dialog) => {
+      console.error(`[ConnectionPool] Auto-dismissing ${dialog.type()} dialog: "${dialog.message().slice(0, 100)}"`);
+      await dialog.dismiss().catch(() => {});
+    });
+
     // Ensure viewport is set (cdpClient.createPage already sets it, but double-check)
     if (!page.viewport()) {
       await page.setViewport(CDPConnectionPool.DEFAULT_VIEWPORT);
