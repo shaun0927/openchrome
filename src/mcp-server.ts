@@ -18,6 +18,7 @@ import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import { HintEngine } from './hints';
+import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
 import { getCDPConnectionPool } from './cdp/connection-pool';
@@ -160,6 +161,7 @@ export class MCPServer {
     handler: ToolHandler,
     definition: MCPToolDefinition
   ): void {
+    validateToolSchema(name, definition.inputSchema);
     this.tools.set(name, { name, handler, definition });
     this.manifestVersion++;
   }
