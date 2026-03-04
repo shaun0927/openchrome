@@ -18,6 +18,7 @@ import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import { HintEngine } from './hints';
+import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
 import { getCDPConnectionPool } from './cdp/connection-pool';
@@ -160,6 +161,7 @@ export class MCPServer {
     handler: ToolHandler,
     definition: MCPToolDefinition
   ): void {
+    validateToolSchema(name, definition.inputSchema);
     this.tools.set(name, { name, handler, definition });
     this.manifestVersion++;
   }
@@ -397,8 +399,8 @@ export class MCPServer {
             type: 'object',
             properties: {
               tier: {
-                type: 'number',
-                enum: Array.from({ length: 3 - this.exposedTier }, (_, i) => this.exposedTier + 1 + i),
+                type: 'string',
+                enum: Array.from({ length: 3 - this.exposedTier }, (_, i) => String(this.exposedTier + 1 + i)),
                 description: 'Tool tier to expand to. 2=specialist, 3=all including orchestration',
               },
             },
@@ -478,7 +480,7 @@ export class MCPServer {
 
     // Handle the expand_tools meta-tool before normal tool lookup
     if (toolName === 'expand_tools') {
-      const tier = (toolArgs?.tier as number) || 2;
+      const tier = parseInt(String(toolArgs?.tier ?? '2'), 10) || 2;
       this.expandToolTier(Math.min(tier, 3) as ToolTier);
       const toolCount = Array.from(this.tools.values()).filter(
         r => getToolTier(r.definition.name) <= this.exposedTier
