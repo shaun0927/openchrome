@@ -385,6 +385,8 @@ export class ChromeLauncher {
       '--js-flags=--max-old-space-size=1024',
       '--disable-backgrounding-occluded-windows',
       '--disable-ipc-flooding-protection',
+      // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
+      '--disable-gpu-crash-limit',
     ];
 
     // Only disable background features for non-real profiles
