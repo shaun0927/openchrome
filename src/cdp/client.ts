@@ -1037,6 +1037,26 @@ export class CDPClient {
       }
     });
 
+    // Handle renderer crashes — evict the crashed page immediately.
+    // targetdestroyed does NOT fire for renderer crashes, so without this
+    // the zombie page stays in session maps and the next command hangs for 30s.
+    page.on('error', (err) => {
+      const targetId = getTargetId(page.target());
+      console.error(`[CDPClient] Page renderer crashed (${targetId}): ${err.message}`);
+      this.onTargetDestroyed(targetId);
+    });
+
+    // Suppress window.print() — native OS print dialog is NOT caught by
+    // page.on('dialog') and blocks the renderer indefinitely.
+    // Does not affect page.pdf() which uses CDP Page.printToPDF.
+    page.evaluateOnNewDocument(() => {
+      window.print = () => { console.warn('[OpenChrome] window.print() suppressed'); };
+    }).catch(() => {});
+
+    // Deny file downloads by default — Content-Disposition: attachment
+    // responses block the navigation promise indefinitely.
+    this.send(page, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
+
     // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
     await Promise.race([
       page.setViewport(CDPClient.DEFAULT_VIEWPORT),
