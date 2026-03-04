@@ -397,8 +397,8 @@ export class MCPServer {
             type: 'object',
             properties: {
               tier: {
-                type: 'number',
-                enum: Array.from({ length: 3 - this.exposedTier }, (_, i) => this.exposedTier + 1 + i),
+                type: 'string',
+                enum: Array.from({ length: 3 - this.exposedTier }, (_, i) => String(this.exposedTier + 1 + i)),
                 description: 'Tool tier to expand to. 2=specialist, 3=all including orchestration',
               },
             },
@@ -478,7 +478,7 @@ export class MCPServer {
 
     // Handle the expand_tools meta-tool before normal tool lookup
     if (toolName === 'expand_tools') {
-      const tier = (toolArgs?.tier as number) || 2;
+      const tier = parseInt(String(toolArgs?.tier ?? '2'), 10) || 2;
       this.expandToolTier(Math.min(tier, 3) as ToolTier);
       const toolCount = Array.from(this.tools.values()).filter(
         r => getToolTier(r.definition.name) <= this.exposedTier
