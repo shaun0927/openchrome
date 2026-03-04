@@ -74,7 +74,7 @@ import { getWorkflowEngine } from '../../src/orchestration/workflow-engine';
 
 // WorkflowEngine.initWorkflow() is async-heavy (acquireBatch + goto per worker).
 // Node 18 on slower CI runners (ubuntu/windows) exceeds Jest's default 10s timeout.
-jest.setTimeout(30_000);
+jest.setTimeout(60_000);
 
 describe('Orchestration MCP Tools', () => {
   let mockServer: Partial<MCPServer>;
