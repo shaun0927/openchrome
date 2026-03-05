@@ -103,7 +103,9 @@ const handler: ToolHandler = async (
 
     do { // --- polling loop start ---
     // Find elements matching the query
-    const results = await withTimeout(page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
+    let results: Omit<FoundElement, 'score'>[];
+    try {
+    results = await withTimeout(page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
       const elements: Omit<FoundElement, 'score'>[] = [];
       const domElements: Element[] = []; // Parallel array of DOM references for batched node ID resolution
       const maxResults = 30; // Get more candidates for better scoring
@@ -235,6 +237,14 @@ const handler: ToolHandler = async (
 
       return elements;
     }, queryLower), 10000, 'click_element');
+    } catch {
+      // CDP evaluate timed out — retry on next poll iteration if budget remains
+      if (maxWait > 0 && Date.now() - startTime < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        continue;
+      }
+      results = [];
+    }
 
     if (results.length === 0) {
       if (maxWait > 0 && Date.now() - startTime < maxWait) {

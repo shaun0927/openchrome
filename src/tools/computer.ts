@@ -779,7 +779,7 @@ async function getHitElementInfo(
         },
         x,
         y
-      ), 10000, 'computer');
+      ), 3000, 'computer');
     } catch { /* skip */ }
 
     // Build hit tag representation
@@ -823,7 +823,7 @@ async function getHitElementInfo(
           },
           x,
           y
-        ), 10000, 'computer');
+        ), 3000, 'computer');
 
         if (nearestInfo) {
           const absDx = Math.abs(nearestInfo.dx);

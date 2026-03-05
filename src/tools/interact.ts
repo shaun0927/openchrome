@@ -108,7 +108,9 @@ const handler: ToolHandler = async (
 
     do {
     // Find elements matching the query using same approach as click-element.ts
-    const results = await withTimeout(page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
+    let results: Omit<FoundElement, 'score'>[];
+    try {
+    results = await withTimeout(page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
       const elements: Omit<FoundElement, 'score'>[] = [];
       const domElements: Element[] = [];
       const maxResults = 30;
@@ -239,6 +241,14 @@ const handler: ToolHandler = async (
 
       return elements;
     }, queryLower), 10000, 'interact');
+    } catch {
+      // CDP evaluate timed out — retry if budget remains
+      if (maxWait > 0 && Date.now() - startTime < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        continue;
+      }
+      results = [];
+    }
 
       if (results.length === 0) {
         if (maxWait > 0 && Date.now() - startTime < maxWait) {

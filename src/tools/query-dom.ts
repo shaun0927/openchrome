@@ -247,7 +247,7 @@ async function handleCSS(
         },
         element,
         i
-      ), 15000, 'query_dom'
+      ), 2000, 'query_dom'
       );
       elementInfos.push(info);
     }

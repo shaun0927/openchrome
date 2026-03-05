@@ -103,6 +103,7 @@ const handler: ToolHandler = async (
 
     let formFields: FormField[] = [];
     do {
+      try {
       formFields = await withTimeout(page.evaluate((): FormField[] => {
         const fields: FormField[] = [];
 
@@ -178,6 +179,14 @@ const handler: ToolHandler = async (
 
         return fields;
       }), 10000, 'fill_form');
+      } catch {
+        // CDP evaluate timed out — retry if budget remains
+        if (maxWait > 0 && Date.now() - startTime < maxWait) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          continue;
+        }
+        break;
+      }
 
       if (formFields.length === 0 && maxWait > 0 && Date.now() - startTime < maxWait) {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
