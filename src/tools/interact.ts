@@ -12,6 +12,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
@@ -107,7 +108,9 @@ const handler: ToolHandler = async (
 
     do {
     // Find elements matching the query using same approach as click-element.ts
-    const results = await page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
+    let results: Omit<FoundElement, 'score'>[];
+    try {
+    results = await withTimeout(page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
       const elements: Omit<FoundElement, 'score'>[] = [];
       const domElements: Element[] = [];
       const maxResults = 30;
@@ -237,7 +240,15 @@ const handler: ToolHandler = async (
       }
 
       return elements;
-    }, queryLower);
+    }, queryLower), 10000, 'interact');
+    } catch {
+      // CDP evaluate timed out — retry if budget remains
+      if (maxWait > 0 && Date.now() - startTime < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        continue;
+      }
+      results = [];
+    }
 
       if (results.length === 0) {
         if (maxWait > 0 && Date.now() - startTime < maxWait) {
@@ -412,7 +423,7 @@ const handler: ToolHandler = async (
     const interactedLine = `Interacted: ${actionLabel} on <${bestMatch.tagName}> "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}`;
 
     // Gather state summary via page.evaluate
-    const stateSummary = await page.evaluate(() => {
+    const stateSummary = await withTimeout(page.evaluate(() => {
       const url = window.location.href;
       const title = document.title;
       const scrollX = Math.round(window.scrollX);
@@ -482,7 +493,7 @@ const handler: ToolHandler = async (
       }
 
       return { url, title, scrollX, scrollY, activeInfo, panels, headings };
-    });
+    }), 10000, 'interact');
 
     // Build the response
     const lines: string[] = [interactedLine];

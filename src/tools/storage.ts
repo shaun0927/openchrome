@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'storage',
@@ -91,14 +92,14 @@ const handler: ToolHandler = async (
       case 'get': {
         if (key) {
           // Get specific key
-          const result = await page.evaluate(
+          const result = await withTimeout(page.evaluate(
             (storage: string, k: string) => {
               const s = storage === 'localStorage' ? localStorage : sessionStorage;
               return s.getItem(k);
             },
             storageName,
             key
-          );
+          ), 5000, 'storage');
 
           return {
             content: [
@@ -116,7 +117,7 @@ const handler: ToolHandler = async (
           };
         } else {
           // Get all values
-          const result = await page.evaluate((storage: string) => {
+          const result = await withTimeout(page.evaluate((storage: string) => {
             const s = storage === 'localStorage' ? localStorage : sessionStorage;
             const items: Record<string, string | null> = {};
             for (let i = 0; i < s.length; i++) {
@@ -126,7 +127,7 @@ const handler: ToolHandler = async (
               }
             }
             return items;
-          }, storageName);
+          }, storageName), 5000, 'storage');
 
           return {
             content: [
@@ -158,7 +159,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.evaluate(
+        await withTimeout(page.evaluate(
           (storage: string, k: string, v: string) => {
             const s = storage === 'localStorage' ? localStorage : sessionStorage;
             s.setItem(k, v);
@@ -166,7 +167,7 @@ const handler: ToolHandler = async (
           storageName,
           key,
           value
-        );
+        ), 5000, 'storage');
 
         return {
           content: [
@@ -192,14 +193,14 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.evaluate(
+        await withTimeout(page.evaluate(
           (storage: string, k: string) => {
             const s = storage === 'localStorage' ? localStorage : sessionStorage;
             s.removeItem(k);
           },
           storageName,
           key
-        );
+        ), 5000, 'storage');
 
         return {
           content: [
@@ -217,15 +218,15 @@ const handler: ToolHandler = async (
       }
 
       case 'clear': {
-        const countBefore = await page.evaluate((storage: string) => {
+        const countBefore = await withTimeout(page.evaluate((storage: string) => {
           const s = storage === 'localStorage' ? localStorage : sessionStorage;
           return s.length;
-        }, storageName);
+        }, storageName), 5000, 'storage');
 
-        await page.evaluate((storage: string) => {
+        await withTimeout(page.evaluate((storage: string) => {
           const s = storage === 'localStorage' ? localStorage : sessionStorage;
           s.clear();
-        }, storageName);
+        }, storageName), 5000, 'storage');
 
         return {
           content: [
@@ -243,7 +244,7 @@ const handler: ToolHandler = async (
       }
 
       case 'keys': {
-        const keys = await page.evaluate((storage: string) => {
+        const keys = await withTimeout(page.evaluate((storage: string) => {
           const s = storage === 'localStorage' ? localStorage : sessionStorage;
           const result: string[] = [];
           for (let i = 0; i < s.length; i++) {
@@ -253,7 +254,7 @@ const handler: ToolHandler = async (
             }
           }
           return result;
-        }, storageName);
+        }, storageName), 5000, 'storage');
 
         return {
           content: [
