@@ -21,6 +21,14 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'What to find, e.g. "search bar", "login button"',
       },
+      waitForMs: {
+        type: 'number',
+        description: 'Max time to wait for element to appear. 0 = no waiting (default). Max 30000.',
+      },
+      pollInterval: {
+        type: 'number',
+        description: 'How often to retry while waiting, in ms. Default 200, range 50-2000.',
+      },
     },
     required: ['query', 'tabId'],
   },
@@ -32,6 +40,8 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const query = args.query as string;
+  const waitForMs = args.waitForMs as number | undefined;
+  const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -75,6 +85,12 @@ const handler: ToolHandler = async (
       score: number;
     }
 
+    // Optional polling for dynamic/lazy content
+    const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
+    const startTime = Date.now();
+    let output: string[] = [];
+
+    do { // --- polling loop start ---
     const results = await page.evaluate((searchQuery: string): FoundElement[] => {
       const elements: FoundElement[] = [];
       const domElements: Element[] = []; // Parallel array of DOM references for re-indexing
@@ -351,7 +367,7 @@ const handler: ToolHandler = async (
     }
 
     // Generate refs for found elements (already sorted by score)
-    const output: string[] = [];
+    output = [];
     for (const el of results) {
       if (el.backendDOMNodeId) {
         const refId = refIdManager.generateRef(
@@ -372,12 +388,33 @@ const handler: ToolHandler = async (
       }
     }
 
+    if (output.length > 0) {
+      break;
+    }
+
+    if (maxWait > 0 && Date.now() - startTime < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    } else {
+      break;
+    }
+    } while (Date.now() - startTime < maxWait); // --- polling loop end ---
+
     if (output.length === 0) {
+      let url = 'unknown', readyState = 'unknown', totalElements = 0;
+      try {
+        ({ url, readyState, totalElements } = await page.evaluate(() => ({
+          url: document.location.href,
+          readyState: document.readyState,
+          totalElements: document.querySelectorAll('*').length,
+        })));
+      } catch {
+        // Page may have navigated — use defaults
+      }
       return {
         content: [
           {
             type: 'text',
-            text: `No elements found matching "${query}"`,
+            text: `No elements found matching "${query}". Page: ${url} (${readyState}), ${totalElements} elements.`,
           },
         ],
         isError: true,

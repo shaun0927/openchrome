@@ -75,6 +75,82 @@ const definition: MCPToolDefinition = {
 };
 
 // ---------------------------------------------------------------------------
+// Diagnostics helper (reuses getPageDiagnostics from page-diagnostics.ts)
+// ---------------------------------------------------------------------------
+
+interface QueryDomDiagnostics {
+  url: string;
+  readyState: string;
+  totalElements: number;
+  framework: string | null;
+  closestMatch: string | null;
+}
+
+async function gatherDiagnostics(
+  page: import('puppeteer-core').Page,
+  selector: string
+): Promise<QueryDomDiagnostics | null> {
+  try {
+    // Single atomic evaluate to avoid race conditions if page navigates between calls
+    return await page.evaluate((sel: string) => {
+      const total = document.querySelectorAll('*').length;
+
+      let framework: string | null = null;
+      if (document.querySelector('[data-reactroot], #__next, #root[data-reactroot]')) framework = 'react';
+      else if (document.querySelector('[data-v-], #app[data-v-]')) framework = 'vue';
+      else if (document.querySelector('[ng-version], [_nghost]')) framework = 'angular';
+
+      // CSS-specific: find closest partial match for compound selectors
+      let closestMatch: string | null = null;
+      const parts = sel.split(' ');
+      if (parts.length > 1) {
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const partial = parts.slice(0, i).join(' ');
+          if (partial) {
+            try {
+              const count = document.querySelectorAll(partial).length;
+              if (count > 0) {
+                closestMatch = `"${partial}" (${count} matches)`;
+                break;
+              }
+            } catch {
+              // ignore invalid partial selectors
+            }
+          }
+        }
+      }
+
+      return {
+        url: location.href,
+        readyState: document.readyState,
+        totalElements: total,
+        framework,
+        closestMatch,
+      };
+    }, selector);
+  } catch (err) {
+    console.error('[query_dom] diagnostics failed:', err);
+    return null;
+  }
+}
+
+function formatDiagnosticsMessage(selector: string, diag: QueryDomDiagnostics | null, plural: boolean): string {
+  const base = plural
+    ? `No elements found matching "${selector}"`
+    : `No element found matching "${selector}"`;
+  if (!diag) return base;
+
+  const hostname = (() => {
+    try { return new URL(diag.url).hostname; } catch { return diag.url; }
+  })();
+  const frameworkPart = diag.framework ? `, ${diag.framework}` : '';
+  const statePart = `${hostname} (${diag.readyState}${frameworkPart}), ${diag.totalElements} elements`;
+  const closestPart = diag.closestMatch ? `. Closest: ${diag.closestMatch}` : '';
+
+  return `${base}. Page: ${statePart}${closestPart}`;
+}
+
+// ---------------------------------------------------------------------------
 // CSS handler
 // ---------------------------------------------------------------------------
 
@@ -106,6 +182,7 @@ async function handleCSS(
     const elements = await page.$$(selector);
 
     if (elements.length === 0) {
+      const diag = await gatherDiagnostics(page, selector);
       return {
         content: [
           {
@@ -117,7 +194,8 @@ async function handleCSS(
               multiple: true,
               elements: [],
               count: 0,
-              message: `No elements found matching "${selector}"`,
+              message: formatDiagnosticsMessage(selector, diag, true),
+              ...(diag && { diagnostics: diag }),
             }),
           },
         ],
@@ -191,6 +269,7 @@ async function handleCSS(
     const element = await page.$(selector);
 
     if (!element) {
+      const diag = await gatherDiagnostics(page, selector);
       return {
         content: [
           {
@@ -201,7 +280,8 @@ async function handleCSS(
               selector,
               multiple: false,
               element: null,
-              message: `No element found matching "${selector}"`,
+              message: formatDiagnosticsMessage(selector, diag, false),
+              ...(diag && { diagnostics: diag }),
             }),
           },
         ],
@@ -435,7 +515,7 @@ async function handleXPath(
               xpath,
               multiple: false,
               result: null,
-              message: 'No element found matching XPath',
+              message: `No element found matching XPath: ${xpath}`,
             }),
           },
         ],

@@ -40,6 +40,14 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Perform double-click instead of single',
       },
+      waitForMs: {
+        type: 'number',
+        description: 'Max time to wait for element to appear. 0 = no waiting (default). Max 30000.',
+      },
+      pollInterval: {
+        type: 'number',
+        description: 'How often to retry while waiting, in ms. Default 200, range 50-2000.',
+      },
     },
     required: ['tabId', 'query'],
   },
@@ -54,6 +62,8 @@ const handler: ToolHandler = async (
   const waitAfter = Math.min(Math.max((args.wait_after as number) || 100, 0), 5000);
   const verify = args.verify as boolean | undefined;
   const doubleClick = args.double_click as boolean | undefined;
+  const waitForMs = args.waitForMs as number | undefined;
+  const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -84,6 +94,13 @@ const handler: ToolHandler = async (
     const queryLower = query.toLowerCase();
     const queryTokens = tokenizeQuery(query);
 
+    // Optional polling for dynamic/lazy content
+    const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
+    let bestMatch: FoundElement | null = null;
+    const startTime = Date.now();
+    const cdpClient = sessionManager.getCDPClient();
+
+    do { // --- polling loop start ---
     // Find elements matching the query
     const results = await page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
       const elements: Omit<FoundElement, 'score'>[] = [];
@@ -219,11 +236,16 @@ const handler: ToolHandler = async (
     }, queryLower);
 
     if (results.length === 0) {
+      if (maxWait > 0 && Date.now() - startTime < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        continue;
+      }
+      const pageUrl = page.url();
       return {
         content: [
           {
             type: 'text',
-            text: `No clickable elements found matching "${query}"`,
+            text: `No clickable elements found matching "${query}" on ${pageUrl}`,
           },
         ],
         isError: true,
@@ -232,7 +254,6 @@ const handler: ToolHandler = async (
 
     // Get backend DOM node IDs — batched approach (single DOM walk + parallel DOM.describeNode)
     // Replaces per-candidate querySelectorAll('*').find() which is O(n) × candidates = O(30n)
-    const cdpClient = sessionManager.getCDPClient();
 
     // Step 1: Single Runtime.evaluate to collect all tagged elements in index order
     const { result: batchResult } = await cdpClient.send<{
@@ -290,8 +311,21 @@ const handler: ToolHandler = async (
       .map(el => ({ ...el, score: scoreElement(el as FoundElement, queryLower, queryTokens) }))
       .sort((a, b) => b.score - a.score);
 
-    // Get the best match
-    const bestMatch = scoredResults[0];
+    if (scoredResults.length > 0 && scoredResults[0].score >= 10) {
+      bestMatch = scoredResults[0];
+      break;
+    }
+
+    if (maxWait > 0 && Date.now() - startTime < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    } else {
+      // No polling or timeout reached — use best available even if low score
+      if (scoredResults.length > 0) {
+        bestMatch = scoredResults[0];
+      }
+      break;
+    }
+    } while (Date.now() - startTime < maxWait); // --- polling loop end ---
 
     if (!bestMatch || bestMatch.score < 10) {
       return {
