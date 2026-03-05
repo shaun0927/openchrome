@@ -193,6 +193,7 @@ export interface ProfileState {
 export class ChromeLauncher {
   private instance: ChromeInstance | null = null;
   private pendingProcess: ChildProcess | null = null;
+  private launchInFlight: Promise<ChromeInstance> | null = null;
   private port: number;
   private profileManager = new ProfileManager();
   private currentProfileType: ProfileType | undefined;
@@ -222,6 +223,27 @@ export class ChromeLauncher {
       console.error('[ChromeLauncher] Cached instance is stale, refreshing...');
       this.instance = null;
     }
+
+    // Deduplicate concurrent ensureChrome() calls — return in-flight promise if one exists
+    if (this.launchInFlight) {
+      return this.launchInFlight;
+    }
+
+    this.launchInFlight = this.launchChrome(options).finally(() => {
+      this.launchInFlight = null;
+    });
+    try {
+      return await this.launchInFlight;
+    } finally {
+      this.launchInFlight = null;
+    }
+  }
+
+  /**
+   * Internal launch logic — called by ensureChrome() once the in-flight guard is acquired.
+   */
+  private async launchChrome(options: LaunchOptions = {}): Promise<ChromeInstance> {
+    const port = options.port || this.port;
 
     // Check if Chrome is already running with debug port.
     // Use a brief retry window (5s) instead of a single-shot check, because Chrome
