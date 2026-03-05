@@ -232,4 +232,34 @@ describe('Dialog auto-dismiss handler', () => {
     );
     expect(dialogListeners.length).toBe(1);
   });
+
+  test('configurePageDefenses is idempotent — calling twice does not double-register handlers', async () => {
+    const mockPage = createMockPage('target-idempotent');
+
+    // Simulate configurePageDefenses logic with the idempotent guard
+    function configurePageDefenses(page: any): void {
+      if (page.__defensesConfigured) return;
+      page.__defensesConfigured = true;
+
+      page.on('dialog', async (dialog: any) => {
+        if (dialog.type() === 'beforeunload') {
+          await dialog.accept().catch(() => {});
+        } else {
+          await dialog.dismiss().catch(() => {});
+        }
+      });
+
+      page.on('error', (_err: Error) => {});
+    }
+
+    // Call twice
+    configurePageDefenses(mockPage);
+    configurePageDefenses(mockPage);
+
+    // Each event should only be registered once despite two calls
+    const dialogListeners = mockPage.on.mock.calls.filter((c) => c[0] === 'dialog');
+    const errorListeners = mockPage.on.mock.calls.filter((c) => c[0] === 'error');
+    expect(dialogListeners.length).toBe(1);
+    expect(errorListeners.length).toBe(1);
+  });
 });

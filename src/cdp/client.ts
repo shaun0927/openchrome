@@ -459,6 +459,7 @@ export class CDPClient {
           const page = await target.page();
           if (page) {
             this.targetIdIndex.set(targetId, page);
+            this.configurePageDefenses(page);
             console.error(`[CDPClient] Indexed popup target ${targetId} (URL: ${url})`);
           }
         } catch {
@@ -1023,6 +1024,38 @@ export class CDPClient {
     // Index page for O(1) target-to-page lookups (replaces eager targetcreated indexing)
     this.targetIdIndex.set(getTargetId(page.target()), page);
 
+    this.configurePageDefenses(page);
+
+    // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
+    await Promise.race([
+      page.setViewport(CDPClient.DEFAULT_VIEWPORT),
+      new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS)),
+    ]);
+
+    if (url) {
+      try {
+        await smartGoto(page, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+      } catch (err) {
+        // Close the page to prevent about:blank ghost tabs on navigation failure
+        const targetId = getTargetId(page.target());
+        this.targetIdIndex.delete(targetId);
+        await page.close().catch(() => {});
+        throw err;
+      }
+    }
+
+    return page;
+  }
+
+  /**
+   * Register defense handlers on a page: dialog auto-dismiss, crash eviction,
+   * print suppression, download deny. Idempotent — safe to call multiple times.
+   */
+  private configurePageDefenses(page: Page): void {
+    // Idempotent guard — prevent double-registration
+    if ((page as any).__defensesConfigured) return;
+    (page as any).__defensesConfigured = true;
+
     // Auto-dismiss native JavaScript dialogs (alert/confirm/prompt/beforeunload).
     // Without this, any dialog fired by page JS blocks ALL subsequent CDP commands
     // indefinitely, freezing the tab until the user manually dismisses it in Chrome.
@@ -1056,26 +1089,6 @@ export class CDPClient {
     // Deny file downloads by default — Content-Disposition: attachment
     // responses block the navigation promise indefinitely.
     this.send(page, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
-
-    // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
-    await Promise.race([
-      page.setViewport(CDPClient.DEFAULT_VIEWPORT),
-      new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS)),
-    ]);
-
-    if (url) {
-      try {
-        await smartGoto(page, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
-      } catch (err) {
-        // Close the page to prevent about:blank ghost tabs on navigation failure
-        const targetId = getTargetId(page.target());
-        this.targetIdIndex.delete(targetId);
-        await page.close().catch(() => {});
-        throw err;
-      }
-    }
-
-    return page;
   }
 
   /**
@@ -1136,6 +1149,7 @@ export class CDPClient {
         if (page) {
           // Populate index for future lookups
           this.targetIdIndex.set(targetId, page);
+          this.configurePageDefenses(page);
         }
         return page;
       }
