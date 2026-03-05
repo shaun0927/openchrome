@@ -10,6 +10,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',
@@ -88,7 +89,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    const scrollResult = await page.evaluate(
+    const scrollResult = await withTimeout(page.evaluate(
       (params: {
         direction: string;
         amount: number;
@@ -245,7 +246,7 @@ const handler: ToolHandler = async (
         scrollToEnd,
         waitAfterMs,
       }
-    );
+    ), 10000, 'lightweight_scroll');
 
     if (!scrollResult.success) {
       return {

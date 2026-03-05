@@ -10,6 +10,7 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'wait_and_click',
@@ -94,7 +95,9 @@ const handler: ToolHandler = async (
 
     // Poll for the element
     while (Date.now() - startTime < timeout) {
-      const result = await page.evaluate((searchQuery: string, tokens: string[]): FoundElement | null => {
+      let result: FoundElement | null = null;
+      try {
+      result = await withTimeout(page.evaluate((searchQuery: string, tokens: string[]): FoundElement | null => {
         function scoreElement(el: Element, rect: DOMRect): number {
           let score = 0;
           const inputEl = el as HTMLInputElement;
@@ -209,7 +212,12 @@ const handler: ToolHandler = async (
           },
           score: best.score,
         };
-      }, queryLower, queryTokens);
+      }, queryLower, queryTokens), 10000, 'wait_and_click');
+      } catch {
+        // CDP evaluate timed out (e.g. dialog blocked) — retry on next poll iteration
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        continue;
+      }
 
       if (result && result.score >= 20) {
         // Get backend DOM node ID
@@ -293,10 +301,10 @@ const handler: ToolHandler = async (
     const { delta } = await withDomDelta(page, () => page.mouse.click(clickX, clickY));
 
     // Clean up marker
-    await page.evaluate(() => {
+    await withTimeout(page.evaluate(() => {
       const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __waitClickTarget: boolean }).__waitClickTarget);
       if (el) delete (el as unknown as { __waitClickTarget?: boolean }).__waitClickTarget;
-    });
+    }), 10000, 'wait_and_click_cleanup');
 
     // Generate ref
     let refId = '';
