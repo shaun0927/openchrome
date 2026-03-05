@@ -9,6 +9,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
+import { withTimeout } from '../utils/with-timeout';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -125,7 +126,7 @@ const handler: ToolHandler = async (
     // CSS diagnostic mode — extracts computed styles, CSS variables, and framework info
     if (mode === 'css') {
       const targetSelector = args.selector as string | undefined;
-      const cssResult = await page.evaluate((sel: string | undefined) => {
+      const cssResult = await withTimeout(page.evaluate((sel: string | undefined) => {
         const output: {
           cssVariables: Record<string, string>;
           framework: { css: string; js: string };
@@ -245,7 +246,7 @@ const handler: ToolHandler = async (
         }
 
         return output;
-      }, targetSelector);
+      }, targetSelector), 15000, 'read_page');
 
       // Format output
       const lines: string[] = ['[CSS Diagnostic Report]', ''];
@@ -323,7 +324,7 @@ const handler: ToolHandler = async (
     }
 
     // Add page stats header for AX mode (matching DOM mode format)
-    const axPageStats = await page.evaluate(() => ({
+    const axPageStats = await withTimeout(page.evaluate(() => ({
       url: window.location.href,
       title: document.title,
       scrollX: Math.round(window.scrollX),
@@ -332,7 +333,7 @@ const handler: ToolHandler = async (
       scrollHeight: document.documentElement.scrollHeight,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
-    }));
+    })), 15000, 'read_page');
     const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
 
     // Get the accessibility tree

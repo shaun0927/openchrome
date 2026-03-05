@@ -8,6 +8,7 @@ import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'file_upload',
@@ -134,10 +135,10 @@ const handler: ToolHandler = async (
     }
 
     // Verify it's a file input
-    const isFileInput = await page.evaluate((sel) => {
+    const isFileInput = await withTimeout(page.evaluate((sel) => {
       const el = document.querySelector(sel);
       return el && el.tagName.toLowerCase() === 'input' && (el as HTMLInputElement).type === 'file';
-    }, selector);
+    }, selector), 10000, 'file_upload');
 
     if (!isFileInput) {
       return {
@@ -152,10 +153,10 @@ const handler: ToolHandler = async (
     }
 
     // Check if input accepts multiple files
-    const acceptsMultiple = await page.evaluate((sel) => {
+    const acceptsMultiple = await withTimeout(page.evaluate((sel) => {
       const el = document.querySelector(sel) as HTMLInputElement;
       return el?.multiple ?? false;
-    }, selector);
+    }, selector), 10000, 'file_upload');
 
     if (resolvedPaths.length > 1 && !acceptsMultiple) {
       return {
