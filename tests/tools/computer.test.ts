@@ -484,7 +484,7 @@ describe('ComputerTool', () => {
       });
     });
 
-    test('rejects scroll without coordinates', async () => {
+    test('scroll without coordinates falls back to viewport center', async () => {
       const handler = await getComputerHandler();
 
       const result = await handler(testSessionId, {
@@ -493,11 +493,11 @@ describe('ComputerTool', () => {
         scroll_direction: 'down',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('coordinate is required');
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Scrolled down');
     });
 
-    test('rejects scroll without direction', async () => {
+    test('scroll without direction defaults to down', async () => {
       const handler = await getComputerHandler();
 
       const result = await handler(testSessionId, {
@@ -506,8 +506,8 @@ describe('ComputerTool', () => {
         coordinate: [500, 500],
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('scroll_direction is required');
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Scrolled down');
     });
   });
 

@@ -11,6 +11,7 @@ import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { detectBlockingPage } from '../utils/page-diagnostics';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -39,7 +40,7 @@ const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
-  let tabId = args.tabId as string | undefined;
+  const tabId = args.tabId as string | undefined;
   const url = args.url as string;
   const workerId = args.workerId as string | undefined;
   const sessionManager = getSessionManager();
@@ -127,22 +128,22 @@ const handler: ToolHandler = async (
               };
             }
             AdaptiveScreenshot.getInstance().reset(existingTabId);
-            const summary = await generateVisualSummary(page);
+            const [summary, reuseBlocking] = await Promise.all([
+              generateVisualSummary(page),
+              detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (tab-reuse):', e); return null; }),
+            ]);
+            const reuseResultText = JSON.stringify({
+              action: 'navigate',
+              url: page.url(),
+              title: await safeTitle(page),
+              tabId: existingTabId,
+              workerId: resolvedWorkerId,
+              reused: true,
+              ...(summary && { visualSummary: summary }),
+              ...(reuseBlocking && { blockingPage: reuseBlocking }),
+            });
             return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    action: 'navigate',
-                    url: page.url(),
-                    title: await safeTitle(page),
-                    tabId: existingTabId,
-                    workerId: resolvedWorkerId,
-                    reused: true,
-                    ...(summary && { visualSummary: summary }),
-                  }),
-                },
-              ],
+              content: [{ type: 'text', text: reuseResultText }],
             };
           }
         }
@@ -152,22 +153,22 @@ const handler: ToolHandler = async (
       const { targetId, page, workerId: assignedWorkerId } = await sessionManager.createTarget(sessionId, targetUrl, workerId);
 
       AdaptiveScreenshot.getInstance().reset(targetId);
-      const summary = await generateVisualSummary(page);
+      const [newTabSummary, newTabBlocking] = await Promise.all([
+        generateVisualSummary(page),
+        detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (new-tab):', e); return null; }),
+      ]);
+      const newTabResultText = JSON.stringify({
+        action: 'navigate',
+        url: page.url(),
+        title: await safeTitle(page),
+        tabId: targetId,
+        workerId: assignedWorkerId,
+        created: true,
+        ...(newTabSummary && { visualSummary: newTabSummary }),
+        ...(newTabBlocking && { blockingPage: newTabBlocking }),
+      });
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              action: 'navigate',
-              url: page.url(),
-              title: await safeTitle(page),
-              tabId: targetId,
-              workerId: assignedWorkerId,
-              created: true,
-              ...(summary && { visualSummary: summary }),
-            }),
-          },
-        ],
+        content: [{ type: 'text', text: newTabResultText }],
       };
     } catch (error) {
       return {
@@ -211,38 +212,38 @@ const handler: ToolHandler = async (
     if (url === 'back') {
       await page.goBack({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       AdaptiveScreenshot.getInstance().reset(tabId);
-      const backSummary = await generateVisualSummary(page);
+      const [backSummary, backBlocking] = await Promise.all([
+        generateVisualSummary(page),
+        detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (back):', e); return null; }),
+      ]);
+      const backResultText = JSON.stringify({
+        action: 'back',
+        url: page.url(),
+        title: await safeTitle(page),
+        ...(backSummary && { visualSummary: backSummary }),
+        ...(backBlocking && { blockingPage: backBlocking }),
+      });
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              action: 'back',
-              url: page.url(),
-              title: await safeTitle(page),
-              ...(backSummary && { visualSummary: backSummary }),
-            }),
-          },
-        ],
+        content: [{ type: 'text', text: backResultText }],
       };
     }
 
     if (url === 'forward') {
       await page.goForward({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       AdaptiveScreenshot.getInstance().reset(tabId);
-      const fwdSummary = await generateVisualSummary(page);
+      const [fwdSummary, fwdBlocking] = await Promise.all([
+        generateVisualSummary(page),
+        detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (forward):', e); return null; }),
+      ]);
+      const fwdResultText = JSON.stringify({
+        action: 'forward',
+        url: page.url(),
+        title: await safeTitle(page),
+        ...(fwdSummary && { visualSummary: fwdSummary }),
+        ...(fwdBlocking && { blockingPage: fwdBlocking }),
+      });
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              action: 'forward',
-              url: page.url(),
-              title: await safeTitle(page),
-              ...(fwdSummary && { visualSummary: fwdSummary }),
-            }),
-          },
-        ],
+        content: [{ type: 'text', text: fwdResultText }],
       };
     }
 
@@ -322,19 +323,19 @@ const handler: ToolHandler = async (
     }
 
     AdaptiveScreenshot.getInstance().reset(tabId);
-    const navSummary = await generateVisualSummary(page);
+    const [navSummary, navBlocking] = await Promise.all([
+      generateVisualSummary(page),
+      detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (existing-tab):', e); return null; }),
+    ]);
+    const navResultText = JSON.stringify({
+      action: 'navigate',
+      url: page.url(),
+      title: await safeTitle(page),
+      ...(navSummary && { visualSummary: navSummary }),
+      ...(navBlocking && { blockingPage: navBlocking }),
+    });
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            action: 'navigate',
-            url: page.url(),
-            title: await safeTitle(page),
-            ...(navSummary && { visualSummary: navSummary }),
-          }),
-        },
-      ],
+      content: [{ type: 'text', text: navResultText }],
     };
   } catch (error) {
     return {
