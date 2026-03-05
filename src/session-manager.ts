@@ -88,6 +88,7 @@ export class SessionManager {
   private browserRouter: BrowserRouter | null = null;
   private storageStateManagers = new Map<string, StorageStateManager>();
   private storageStateConfig: StorageStateConfig | null = null;
+  private pendingCreations = new Map<string, Promise<Session>>();
 
   // TTL & Stats
   private config: Required<SessionManagerConfig>;
@@ -319,14 +320,23 @@ export class SessionManager {
    * Get or create a session
    */
   async getOrCreateSession(sessionId: string): Promise<Session> {
-    let session = this.sessions.get(sessionId);
-    if (!session) {
-      session = await this.createSession({ id: sessionId });
-    } else {
-      // Refresh TTL for existing sessions on every access
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
       this.touchSession(sessionId);
+      return existing;
     }
-    return session;
+
+    // Deduplicate concurrent creation requests for the same sessionId
+    const pending = this.pendingCreations.get(sessionId);
+    if (pending) {
+      return pending;
+    }
+
+    const creation = this.createSession({ id: sessionId }).finally(() => {
+      this.pendingCreations.delete(sessionId);
+    });
+    this.pendingCreations.set(sessionId, creation);
+    return creation;
   }
 
   /**
