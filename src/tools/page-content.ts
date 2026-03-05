@@ -5,7 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { MAX_OUTPUT_CHARS } from '../config/defaults';
+import { MAX_OUTPUT_CHARS, DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
@@ -107,7 +107,7 @@ const handler: ToolHandler = async (
       };
     } else {
       // Get full page content
-      let html = await page.content();
+      let html = await withTimeout(page.content(), DEFAULT_NAVIGATION_TIMEOUT_MS, 'page.content()');
 
       const originalLength = html.length;
       if (html.length > MAX_OUTPUT_CHARS) {
