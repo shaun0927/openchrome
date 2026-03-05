@@ -429,6 +429,8 @@ export class ChromeLauncher {
     // Log Chrome process exit for immediate diagnostics
     chromeProcess.once('exit', (code, signal) => {
       console.error(`[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal})`);
+      // Clear cached instance so next ensureChrome() knows Chrome is gone
+      this.instance = null;
       // Clear pendingProcess if this was the one we were tracking
       if (this.pendingProcess === chromeProcess) {
         this.pendingProcess = null;
