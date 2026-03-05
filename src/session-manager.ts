@@ -738,8 +738,8 @@ export class SessionManager {
             })(),
             new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS)),
           ]);
-        } catch {
-          console.error('[SessionManager] Cookie context copy timed out, continuing without cookies');
+        } catch (err) {
+          console.error(`[SessionManager] Cookie context copy failed, continuing without cookies: ${err instanceof Error ? err.message : String(err)}`);
         }
         page = poolPage;
         console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);
