@@ -187,8 +187,8 @@ export class WorkflowEngine {
             // Cookie bridging failure is non-fatal — page navigates without cookies
           }
 
-          await page.goto(step.url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }).catch(() => {
-            // Navigation may fail for some URLs; worker will retry
+          await page.goto(step.url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }).catch((err) => {
+            console.error(`[WorkflowEngine] Navigation to ${step.url} failed: ${err instanceof Error ? err.message : String(err)}`);
           });
         }
 

@@ -361,7 +361,7 @@ export class CDPClient {
           puppeteer.connect({
             browserWSEndpoint: instance.wsEndpoint,
             defaultViewport: null,
-            protocolTimeout: DEFAULT_PROTOCOL_TIMEOUT_MS,
+            protocolTimeout: parseInt(process.env.OPENCHROME_PROTOCOL_TIMEOUT_MS || '', 10) || DEFAULT_PROTOCOL_TIMEOUT_MS,
           }).finally(() => clearTimeout(wsConnectTid)),
           new Promise<never>((_, reject) => {
             wsConnectTid = setTimeout(
