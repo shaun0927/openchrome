@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'find',
@@ -91,7 +92,7 @@ const handler: ToolHandler = async (
     let output: string[] = [];
 
     do { // --- polling loop start ---
-    const results = await page.evaluate((searchQuery: string): FoundElement[] => {
+    const results = await withTimeout(page.evaluate((searchQuery: string): FoundElement[] => {
       const elements: FoundElement[] = [];
       const domElements: Element[] = []; // Parallel array of DOM references for re-indexing
       const maxResults = 30; // Collect more candidates for better scoring
@@ -310,7 +311,7 @@ const handler: ToolHandler = async (
       }
 
       return topIndexed.map(item => item.el);
-    }, queryLower);
+    }, queryLower), 10000, 'find');
 
     // Get backend DOM node IDs for the found elements using batched approach
     const cdpClient = sessionManager.getCDPClient();
@@ -402,11 +403,11 @@ const handler: ToolHandler = async (
     if (output.length === 0) {
       let url = 'unknown', readyState = 'unknown', totalElements = 0;
       try {
-        ({ url, readyState, totalElements } = await page.evaluate(() => ({
+        ({ url, readyState, totalElements } = await withTimeout(page.evaluate(() => ({
           url: document.location.href,
           readyState: document.readyState,
           totalElements: document.querySelectorAll('*').length,
-        })));
+        })), 5000, 'find'));
       } catch {
         // Page may have navigated — use defaults
       }

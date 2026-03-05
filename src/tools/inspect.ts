@@ -11,6 +11,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
@@ -138,7 +139,7 @@ const handler: ToolHandler = async (
       panels: categories.has('panels'),
     };
 
-    const inspectResult = await page.evaluate(
+    const inspectResult = await withTimeout(page.evaluate(
       (scopeArg: string, cats: Record<string, boolean>) => {
         const includeAll = scopeArg === 'all';
         const interactiveOnly = scopeArg === 'interactive';
@@ -355,7 +356,7 @@ const handler: ToolHandler = async (
       },
       scope,
       categoryFlags
-    );
+    ), 10000, 'inspect');
 
     // Format the output — only include sections for requested categories
     const lines: string[] = [`[Inspect: "${query}"]`];

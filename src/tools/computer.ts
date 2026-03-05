@@ -11,6 +11,7 @@ import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -105,7 +106,7 @@ const handler: ToolHandler = async (
       case 'screenshot': {
         // Phase 1: Page readiness guard
         try {
-          const readyState = await page.evaluate(() => document.readyState);
+          const readyState = await withTimeout(page.evaluate(() => document.readyState), 10000, 'computer');
           if (readyState !== 'complete') {
             await page.waitForFunction(() => document.readyState === 'complete', { timeout: 3000 }).catch(() => {});
           }
@@ -180,7 +181,7 @@ const handler: ToolHandler = async (
 
         // Phase 3: DOM fallback — always give the LLM page state
         try {
-          const pageInfo = await page.evaluate(() => {
+          const pageInfo = await withTimeout(page.evaluate(() => {
             const body = document.body;
             const text = body ? body.innerText.substring(0, 2000) : '';
             return {
@@ -189,7 +190,7 @@ const handler: ToolHandler = async (
               readyState: document.readyState,
               textPreview: text,
             };
-          });
+          }), 10000, 'computer');
 
           return {
             content: [{
@@ -771,14 +772,14 @@ async function getHitElementInfo(
     // Get textContent from page by querying the element at the click coordinates
     let textContent = '';
     try {
-      textContent = await page.evaluate(
+      textContent = await withTimeout(page.evaluate(
         (px: number, py: number) => {
           const el = document.elementFromPoint(px, py);
           return el ? (el.textContent || '').trim().substring(0, 50) : '';
         },
         x,
         y
-      );
+      ), 10000, 'computer');
     } catch { /* skip */ }
 
     // Build hit tag representation
@@ -791,7 +792,7 @@ async function getHitElementInfo(
     // If hit element is not interactive, find nearest interactive element
     if (!isHitInteractive) {
       try {
-        const nearestInfo = await page.evaluate(
+        const nearestInfo = await withTimeout(page.evaluate(
           (px: number, py: number) => {
             const offsets: [number, number][] = [
               [0, -20], [0, 20], [-20, 0], [20, 0],
@@ -822,7 +823,7 @@ async function getHitElementInfo(
           },
           x,
           y
-        );
+        ), 10000, 'computer');
 
         if (nearestInfo) {
           const absDx = Math.abs(nearestInfo.dx);

@@ -5,6 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'performance_metrics',
@@ -92,7 +93,7 @@ const handler: ToolHandler = async (
 
     // Navigation timing
     if (type === 'all' || type === 'navigation') {
-      const navigationTiming = await page.evaluate(() => {
+      const navigationTiming = await withTimeout(page.evaluate(() => {
         const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
         if (!nav) return null;
         return {
@@ -106,7 +107,7 @@ const handler: ToolHandler = async (
           loadEventEnd: nav.loadEventEnd,
           duration: nav.duration,
         };
-      });
+      }), 5000, 'performance_metrics');
       if (navigationTiming) {
         metrics.navigation = navigationTiming;
       }
@@ -114,20 +115,20 @@ const handler: ToolHandler = async (
 
     // Paint timing
     if (type === 'all' || type === 'paint') {
-      const paintTiming = await page.evaluate(() => {
+      const paintTiming = await withTimeout(page.evaluate(() => {
         const paints = performance.getEntriesByType('paint');
         const result: Record<string, number> = {};
         for (const paint of paints) {
           result[paint.name] = paint.startTime;
         }
         return result;
-      });
+      }), 5000, 'performance_metrics');
       metrics.paint = paintTiming;
     }
 
     // Resource timing
     if ((type === 'all' && includeResources) || type === 'resource') {
-      const resourceTiming = await page.evaluate(() => {
+      const resourceTiming = await withTimeout(page.evaluate(() => {
         const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
         return resources.slice(0, 50).map(r => ({
           name: r.name.split('?')[0].split('/').pop() || r.name,
@@ -135,7 +136,7 @@ const handler: ToolHandler = async (
           duration: Math.round(r.duration),
           size: r.transferSize || 0,
         }));
-      });
+      }), 5000, 'performance_metrics');
       metrics.resource = resourceTiming;
     }
 

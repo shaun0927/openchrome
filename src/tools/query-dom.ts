@@ -7,6 +7,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { withTimeout } from '../utils/with-timeout';
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -92,7 +93,7 @@ async function gatherDiagnostics(
 ): Promise<QueryDomDiagnostics | null> {
   try {
     // Single atomic evaluate to avoid race conditions if page navigates between calls
-    return await page.evaluate((sel: string) => {
+    return await withTimeout(page.evaluate((sel: string) => {
       const total = document.querySelectorAll('*').length;
 
       let framework: string | null = null;
@@ -127,7 +128,7 @@ async function gatherDiagnostics(
         framework,
         closestMatch,
       };
-    }, selector);
+    }, selector), 15000, 'query_dom');
   } catch (err) {
     console.error('[query_dom] diagnostics failed:', err);
     return null;
@@ -209,7 +210,7 @@ async function handleCSS(
 
     for (let i = 0; i < limitedElements.length; i++) {
       const element = limitedElements[i];
-      const info = await page.evaluate(
+      const info = await withTimeout(page.evaluate(
         (el: Element, index: number): CSSElementInfo => {
           const rect = el.getBoundingClientRect();
           const style = window.getComputedStyle(el);
@@ -246,6 +247,7 @@ async function handleCSS(
         },
         element,
         i
+      ), 15000, 'query_dom'
       );
       elementInfos.push(info);
     }
@@ -288,7 +290,7 @@ async function handleCSS(
       };
     }
 
-    const info = await page.evaluate((el: Element): CSSElementInfo => {
+    const info = await withTimeout(page.evaluate((el: Element): CSSElementInfo => {
       const rect = el.getBoundingClientRect();
       const style = window.getComputedStyle(el);
       const isVisible =
@@ -321,7 +323,7 @@ async function handleCSS(
               }
             : null,
       };
-    }, element);
+    }, element), 15000, 'query_dom');
 
     return {
       content: [
@@ -370,7 +372,7 @@ async function handleXPath(
   }
 
   if (multiple) {
-    const result = await page.evaluate(
+    const result = await withTimeout(page.evaluate(
       (xpathExpr: string, maxResults: number) => {
         function extractElementInfo(element: Element, xpathStr: string) {
           const tagName = element.tagName.toLowerCase();
@@ -431,7 +433,7 @@ async function handleXPath(
       },
       xpath,
       limit
-    );
+    ), 15000, 'query_dom');
 
     return {
       content: [
@@ -454,7 +456,7 @@ async function handleXPath(
       ],
     };
   } else {
-    const element = await page.evaluate((xpathExpr: string) => {
+    const element = await withTimeout(page.evaluate((xpathExpr: string) => {
       function extractElementInfo(el: Element, xpathStr: string) {
         const tagName = el.tagName.toLowerCase();
         const id = el.id || undefined;
@@ -502,7 +504,7 @@ async function handleXPath(
       }
 
       return extractElementInfo(node, xpathExpr);
-    }, xpath);
+    }, xpath), 15000, 'query_dom');
 
     if (!element) {
       return {

@@ -9,6 +9,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -102,7 +103,7 @@ const handler: ToolHandler = async (
 
     let formFields: FormField[] = [];
     do {
-      formFields = await page.evaluate((): FormField[] => {
+      formFields = await withTimeout(page.evaluate((): FormField[] => {
         const fields: FormField[] = [];
 
         // Helper to get associated label
@@ -176,7 +177,7 @@ const handler: ToolHandler = async (
         }
 
         return fields;
-      });
+      }), 10000, 'fill_form');
 
       if (formFields.length === 0 && maxWait > 0 && Date.now() - startTime < maxWait) {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
@@ -272,10 +273,10 @@ const handler: ToolHandler = async (
           // Handle different field types
           if (bestMatch.type === 'checkbox' || bestMatch.type === 'radio') {
             // For checkbox/radio, only click if needed to match desired state
-            const isChecked = await page.evaluate((idx: number) => {
+            const isChecked = await withTimeout(page.evaluate((idx: number) => {
               const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLInputElement;
               return el?.checked;
-            }, formFields.indexOf(bestMatch));
+            }, formFields.indexOf(bestMatch)), 10000, 'fill_form');
 
             const shouldBeChecked = fieldValue === true || fieldValue === 'true' || fieldValue === '1';
             if (isChecked !== shouldBeChecked) {
@@ -283,13 +284,13 @@ const handler: ToolHandler = async (
             }
           } else if (bestMatch.tagName === 'select') {
             // For select, use CDP to set value
-            await page.evaluate((idx: number, val: string) => {
+            await withTimeout(page.evaluate((idx: number, val: string) => {
               const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLSelectElement;
               if (el) {
                 el.value = val;
                 el.dispatchEvent(new Event('change', { bubbles: true }));
               }
-            }, formFields.indexOf(bestMatch), String(fieldValue));
+            }, formFields.indexOf(bestMatch), String(fieldValue)), 10000, 'fill_form');
           } else {
             // For text inputs/textareas
             if (clearFirst) {
@@ -315,7 +316,7 @@ const handler: ToolHandler = async (
           const submitLower = submit.toLowerCase();
 
           // Find submit button
-          const submitButton = await page.evaluate((query: string): { x: number; y: number } | null => {
+          const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number } | null => {
             const queryLower = query.toLowerCase();
             const selectors = [
               'button[type="submit"]',
@@ -340,7 +341,7 @@ const handler: ToolHandler = async (
               }
             }
             return null;
-          }, submitLower);
+          }, submitLower), 10000, 'fill_form');
 
           if (submitButton) {
             await page.mouse.click(Math.round(submitButton.x), Math.round(submitButton.y));

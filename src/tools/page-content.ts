@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'page_content',
@@ -77,13 +78,13 @@ const handler: ToolHandler = async (
         };
       }
 
-      let html = await page.evaluate(
+      let html = await withTimeout(page.evaluate(
         (el: Element, getOuter: boolean) => {
           return getOuter ? el.outerHTML : el.innerHTML;
         },
         element,
         outerHTML
-      );
+      ), 15000, 'page_content');
 
       const originalLength = html.length;
       if (html.length > MAX_OUTPUT_CHARS) {
