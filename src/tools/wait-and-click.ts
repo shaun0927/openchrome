@@ -95,7 +95,9 @@ const handler: ToolHandler = async (
 
     // Poll for the element
     while (Date.now() - startTime < timeout) {
-      const result = await withTimeout(page.evaluate((searchQuery: string, tokens: string[]): FoundElement | null => {
+      let result: FoundElement | null = null;
+      try {
+      result = await withTimeout(page.evaluate((searchQuery: string, tokens: string[]): FoundElement | null => {
         function scoreElement(el: Element, rect: DOMRect): number {
           let score = 0;
           const inputEl = el as HTMLInputElement;
@@ -211,6 +213,11 @@ const handler: ToolHandler = async (
           score: best.score,
         };
       }, queryLower, queryTokens), 10000, 'wait_and_click');
+      } catch {
+        // CDP evaluate timed out (e.g. dialog blocked) — retry on next poll iteration
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        continue;
+      }
 
       if (result && result.score >= 20) {
         // Get backend DOM node ID
