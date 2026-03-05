@@ -15,7 +15,7 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
     hint: 'Hint: Use tabs_context to list valid tabIds.',
   },
   {
-    test: /selector[^a-z]*(failed|not found|no match)|querySelectorAll.*returned 0|no elements? match/i,
+    test: /selector[^a-z]*(failed|not found|no match)|querySelectorAll.*returned 0|no elements? (found )?match/i,
     hint: 'Hint: Try find(query) with natural language instead.',
   },
   {

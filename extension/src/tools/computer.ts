@@ -368,19 +368,54 @@ export function createComputerTool(sessionManager: SessionManager) {
           }
 
           case 'scroll': {
-            if (!coordinate) {
-              return {
-                content: [{ type: 'text', text: 'Error: coordinate is required for scroll' }],
-                isError: true,
-              };
+            let scrollX: number;
+            let scrollY: number;
+            let usedViewportCenter = false;
+
+            if (coordinate) {
+              [scrollX, scrollY] = coordinate;
+            } else if (ref) {
+              // Resolve ref to coordinates via DOM box model
+              const refEntry = refIdManager.getRef(sessionId, tabId, ref);
+              if (!refEntry) {
+                return {
+                  content: [{ type: 'text', text: `Error: Element reference ${ref} not found. Please call read_page first to get current element references.` }],
+                  isError: true,
+                };
+              }
+              try {
+                await sessionManager.executeCDP(sessionId, tabId, 'DOM.scrollIntoViewIfNeeded', {
+                  backendNodeId: refEntry.backendDOMNodeId,
+                });
+                const boxResult = await sessionManager.executeCDP<{ model: { content: number[] } }>(
+                  sessionId, tabId, 'DOM.getBoxModel', { backendNodeId: refEntry.backendDOMNodeId }
+                );
+                scrollX = Math.round((boxResult.model.content[0] + boxResult.model.content[2]) / 2);
+                scrollY = Math.round((boxResult.model.content[1] + boxResult.model.content[5]) / 2);
+              } catch (e) {
+                return {
+                  content: [{ type: 'text', text: `Error: Could not get position for ${ref}: ${e instanceof Error ? e.message : String(e)}` }],
+                  isError: true,
+                };
+              }
+            } else {
+              // Fall back to viewport center
+              const layoutResult = await sessionManager.executeCDP<{ cssLayoutViewport: { clientWidth: number; clientHeight: number } }>(
+                sessionId, tabId, 'Page.getLayoutMetrics', {}
+              ).catch(() => null);
+              const w = layoutResult?.cssLayoutViewport?.clientWidth ?? 1280;
+              const h = layoutResult?.cssLayoutViewport?.clientHeight ?? 800;
+              scrollX = Math.floor(w / 2);
+              scrollY = Math.floor(h / 2);
+              usedViewportCenter = true;
             }
 
-            const [x, y] = coordinate;
+            const direction = scroll_direction || 'down';
             const amount = scroll_amount || 3;
             let deltaX = 0;
             let deltaY = 0;
 
-            switch (scroll_direction) {
+            switch (direction) {
               case 'up':
                 deltaY = -100 * amount;
                 break;
@@ -397,17 +432,18 @@ export function createComputerTool(sessionManager: SessionManager) {
 
             await sessionManager.executeCDP(sessionId, tabId, 'Input.dispatchMouseEvent', {
               type: 'mouseWheel',
-              x,
-              y,
+              x: scrollX,
+              y: scrollY,
               deltaX,
               deltaY,
             });
 
+            const centerNote = usedViewportCenter ? ' [viewport center]' : '';
             return {
               content: [
                 {
                   type: 'text',
-                  text: `Scrolled ${scroll_direction} at (${x}, ${y})`,
+                  text: `Scrolled ${direction} at (${scrollX}, ${scrollY})${centerNote}`,
                 },
               ],
             };

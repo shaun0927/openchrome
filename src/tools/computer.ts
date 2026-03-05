@@ -107,7 +107,7 @@ const handler: ToolHandler = async (
         try {
           const readyState = await page.evaluate(() => document.readyState);
           if (readyState !== 'complete') {
-            await page.waitForFunction(() => document.readyState === 'complete', { timeout: 5000 }).catch(() => {});
+            await page.waitForFunction(() => document.readyState === 'complete', { timeout: 3000 }).catch(() => {});
           }
         } catch {
           // Page may be navigating — proceed anyway
@@ -159,9 +159,9 @@ const handler: ToolHandler = async (
         // First attempt
         let screenshot = await attemptScreenshot();
 
-        // Retry once after 2s if failed
+        // Retry once after 500ms if failed
         if (!screenshot) {
-          await new Promise(r => setTimeout(r, 2000));
+          await new Promise(r => setTimeout(r, 500));
           screenshot = await attemptScreenshot();
         }
 
@@ -514,36 +514,45 @@ const handler: ToolHandler = async (
       }
 
       case 'scroll': {
-        if (!coordinate) {
-          return {
-            content: [{ type: 'text', text: 'Error: coordinate is required for scroll' }],
-            isError: true,
-          };
-        }
-        if (!scrollDirection) {
-          return {
-            content: [
-              { type: 'text', text: 'Error: scroll_direction is required for scroll' },
-            ],
-            isError: true,
-          };
+        let scrollCoord: [number, number] | undefined = coordinate;
+
+        if (ref && !coordinate) {
+          const resolved = await resolveRefToCoordinates(sessionId, tabId, ref, page, sessionManager);
+          if (resolved.error) return resolved.error;
+          scrollCoord = resolved.coord;
         }
 
-        const scrollValidation = await validateCoordinates(page, coordinate[0], coordinate[1]);
-        if (!scrollValidation.valid) {
-          return {
-            content: [{ type: 'text', text: `Error: ${scrollValidation.warning}` }],
-            isError: true,
-          };
+        let usedViewportCenter = false;
+        if (!scrollCoord) {
+          // Fall back to viewport center
+          const viewport = page.viewport();
+          scrollCoord = [
+            Math.floor((viewport?.width ?? 1280) / 2),
+            Math.floor((viewport?.height ?? 800) / 2),
+          ];
+          usedViewportCenter = true;
         }
 
-        await page.mouse.move(coordinate[0], coordinate[1]);
+        const direction = scrollDirection || 'down';
+
+        // Skip validation for viewport center fallback — it's always within bounds
+        if (!usedViewportCenter) {
+          const scrollValidation = await validateCoordinates(page, scrollCoord[0], scrollCoord[1]);
+          if (!scrollValidation.valid) {
+            return {
+              content: [{ type: 'text', text: `Error: ${scrollValidation.warning}` }],
+              isError: true,
+            };
+          }
+        }
+
+        await page.mouse.move(scrollCoord[0], scrollCoord[1]);
 
         const deltaMultiplier = 100;
         let deltaX = 0;
         let deltaY = 0;
 
-        switch (scrollDirection) {
+        switch (direction) {
           case 'up':
             deltaY = -scrollAmount * deltaMultiplier;
             break;
@@ -560,11 +569,12 @@ const handler: ToolHandler = async (
 
         await page.mouse.wheel({ deltaX, deltaY });
 
+        const centerNote = usedViewportCenter ? ' [viewport center]' : '';
         return {
           content: [
             {
               type: 'text',
-              text: `Scrolled ${scrollDirection} at (${coordinate[0]}, ${coordinate[1]})`,
+              text: `Scrolled ${direction} at (${scrollCoord[0]}, ${scrollCoord[1]})${centerNote}`,
             },
           ],
         };

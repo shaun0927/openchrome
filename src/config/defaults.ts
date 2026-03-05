@@ -104,7 +104,7 @@ export const DEFAULT_CONNECT_VERIFY_STALENESS_MS = 10000;
 /** Screenshot race timeout in milliseconds.
  *  Used in computer/interact/click-element/batch-paginate as a safety net
  *  when racing screenshot capture against a timeout. */
-export const DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS = 10000;
+export const DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS = 7000;
 
 /** Post-action DOM settle delay in milliseconds.
  *  Brief pause after clicks/interactions to let the DOM update before reading state. */
@@ -113,3 +113,9 @@ export const DEFAULT_DOM_SETTLE_DELAY_MS = 50;
 /** Form submit settle delay in milliseconds.
  *  Longer pause after form submission to allow for potential navigation or re-render. */
 export const DEFAULT_FORM_SUBMIT_SETTLE_MS = 100;
+
+/** fill_form: Max time to poll for form fields on SPA pages (ms). */
+export const DEFAULT_FILL_FORM_POLL_MS = 1500;
+
+/** fill_form: Interval between polls when waiting for form fields (ms). */
+export const DEFAULT_FILL_FORM_POLL_INTERVAL_MS = 300;

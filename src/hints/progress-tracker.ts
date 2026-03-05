@@ -30,6 +30,9 @@ const NON_PROGRESS_SIGNALS = [
   'net::ERR_',                       // Chromium network errors
   'Navigation timeout',              // Puppeteer navigation timeout
   'Protocol error',                  // CDP-level failures
+  'bot-check',                       // Bot verification page detected
+  'captcha detected',                // CAPTCHA page detected
+  'Blocking page detected',          // Any blocking page warning from navigate
 ];
 
 export class ProgressTracker {

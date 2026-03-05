@@ -35,6 +35,14 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Clear fields before filling. Default: true',
       },
+      waitForMs: {
+        type: 'number',
+        description: 'Max time to wait for form fields to appear (useful for SPAs). Default: 0 (no polling). Set to 1500 for SPA support.',
+      },
+      pollInterval: {
+        type: 'number',
+        description: 'Interval between polls in ms when waiting for fields (50-2000). Default: 300',
+      },
     },
     required: ['tabId', 'fields'],
   },
@@ -60,6 +68,8 @@ const handler: ToolHandler = async (
   const fields = args.fields as Record<string, string | boolean | number>;
   const submit = args.submit as string | undefined;
   const clearFirst = args.clear_first !== false; // Default to true
+  const waitForMs = args.waitForMs as number | undefined;
+  const pollInterval = Math.min(Math.max((args.pollInterval as number) || 300, 50), 2000);
 
   const sessionManager = getSessionManager();
 
@@ -86,82 +96,94 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get all form fields on the page
-    const formFields = await page.evaluate((): FormField[] => {
-      const fields: FormField[] = [];
+    // Get all form fields on the page, with optional polling for SPAs
+    const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
+    const startTime = Date.now();
 
-      // Helper to get associated label
-      function getLabel(el: Element): string | undefined {
-        const inputEl = el as HTMLInputElement;
-        // Check for explicit label
-        if (inputEl.id) {
-          const label = document.querySelector(`label[for="${inputEl.id}"]`);
-          if (label) return label.textContent?.trim();
-        }
-        // Check for wrapping label
-        const parent = el.closest('label');
-        if (parent) {
-          const labelText = parent.textContent?.trim() || '';
-          const inputText = el.textContent?.trim() || '';
-          return labelText.replace(inputText, '').trim();
-        }
-        // Check for preceding label sibling
-        const prev = el.previousElementSibling;
-        if (prev?.tagName === 'LABEL') {
-          return prev.textContent?.trim();
-        }
-        return undefined;
-      }
+    let formFields: FormField[] = [];
+    do {
+      formFields = await page.evaluate((): FormField[] => {
+        const fields: FormField[] = [];
 
-      // Find all input-like elements
-      const selectors = [
-        'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"])',
-        'textarea',
-        'select',
-        '[contenteditable="true"]',
-        '[role="textbox"]',
-        '[role="combobox"]',
-      ];
-
-      let index = 0;
-      for (const selector of selectors) {
-        try {
-          for (const el of document.querySelectorAll(selector)) {
-            const rect = el.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) continue;
-
-            const style = window.getComputedStyle(el);
-            if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') continue;
-
-            const inputEl = el as HTMLInputElement;
-
-            fields.push({
-              backendDOMNodeId: 0,
-              fieldName: getLabel(el) || inputEl.name || inputEl.placeholder || inputEl.getAttribute('aria-label') || `field_${index}`,
-              tagName: el.tagName.toLowerCase(),
-              type: inputEl.type,
-              name: inputEl.name,
-              placeholder: inputEl.placeholder,
-              ariaLabel: el.getAttribute('aria-label') || undefined,
-              label: getLabel(el),
-              rect: {
-                x: rect.x + rect.width / 2,
-                y: rect.y + rect.height / 2,
-                width: rect.width,
-                height: rect.height,
-              },
-            });
-
-            // Tag element for later reference
-            (el as unknown as { __formFieldIndex: number }).__formFieldIndex = index++;
+        // Helper to get associated label
+        function getLabel(el: Element): string | undefined {
+          const inputEl = el as HTMLInputElement;
+          // Check for explicit label
+          if (inputEl.id) {
+            const label = document.querySelector(`label[for="${inputEl.id}"]`);
+            if (label) return label.textContent?.trim();
           }
-        } catch {
-          // Invalid selector
+          // Check for wrapping label
+          const parent = el.closest('label');
+          if (parent) {
+            const labelText = parent.textContent?.trim() || '';
+            const inputText = el.textContent?.trim() || '';
+            return labelText.replace(inputText, '').trim();
+          }
+          // Check for preceding label sibling
+          const prev = el.previousElementSibling;
+          if (prev?.tagName === 'LABEL') {
+            return prev.textContent?.trim();
+          }
+          return undefined;
         }
-      }
 
-      return fields;
-    });
+        // Find all input-like elements
+        const selectors = [
+          'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"])',
+          'textarea',
+          'select',
+          '[contenteditable="true"]',
+          '[role="textbox"]',
+          '[role="combobox"]',
+        ];
+
+        let index = 0;
+        for (const selector of selectors) {
+          try {
+            for (const el of document.querySelectorAll(selector)) {
+              const rect = el.getBoundingClientRect();
+              if (rect.width === 0 || rect.height === 0) continue;
+
+              const style = window.getComputedStyle(el);
+              if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') continue;
+
+              const inputEl = el as HTMLInputElement;
+
+              fields.push({
+                backendDOMNodeId: 0,
+                fieldName: getLabel(el) || inputEl.name || inputEl.placeholder || inputEl.getAttribute('aria-label') || `field_${index}`,
+                tagName: el.tagName.toLowerCase(),
+                type: inputEl.type,
+                name: inputEl.name,
+                placeholder: inputEl.placeholder,
+                ariaLabel: el.getAttribute('aria-label') || undefined,
+                label: getLabel(el),
+                rect: {
+                  x: rect.x + rect.width / 2,
+                  y: rect.y + rect.height / 2,
+                  width: rect.width,
+                  height: rect.height,
+                },
+              });
+
+              // Tag element for later reference
+              (el as unknown as { __formFieldIndex: number }).__formFieldIndex = index++;
+            }
+          } catch {
+            // Invalid selector
+          }
+        }
+
+        return fields;
+      });
+
+      if (formFields.length === 0 && maxWait > 0 && Date.now() - startTime < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        continue;
+      }
+      break;
+    } while (Date.now() - startTime < maxWait);
 
     const filledFields: string[] = [];
     const errors: string[] = [];
@@ -230,7 +252,8 @@ const handler: ToolHandler = async (
         }
 
         if (!bestMatch || bestScore < 20) {
-          errors.push(`Could not find field matching "${fieldKey}"`);
+          const foundFieldNames = formFields.map(f => f.label || f.name || f.placeholder || f.ariaLabel).filter(Boolean) as string[];
+          errors.push(`Could not find field matching "${fieldKey}". Available fields: [${foundFieldNames.join(', ')}]`);
           continue;
         }
 
