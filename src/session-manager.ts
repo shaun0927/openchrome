@@ -905,7 +905,7 @@ export class SessionManager {
       // (we skip targetcreated indexing to prevent ghost tabs).
       const recovered = await this.tryRecoverTarget(sessionId, targetId, workerId);
       if (recovered) return recovered;
-      throw new Error(`Target ${targetId} not found in session ${sessionId}. Chrome may have been restarted. Use list_tabs or navigate to get fresh tab IDs.`);
+      throw new Error(this.buildStaleTargetError(sessionId, targetId));
     }
 
     if (workerId && ownerInfo.workerId !== workerId) {
@@ -1185,7 +1185,7 @@ export class SessionManager {
     params?: Record<string, unknown>
   ): Promise<T> {
     if (!this.validateTargetOwnership(sessionId, targetId)) {
-      throw new Error(`Target ${targetId} not found in session ${sessionId}. Chrome may have been restarted. Use list_tabs or navigate to get fresh tab IDs.`);
+      throw new Error(this.buildStaleTargetError(sessionId, targetId));
     }
 
     this.touchSession(sessionId);
@@ -1217,6 +1217,10 @@ export class SessionManager {
         if (worker) {
           worker.targets.delete(targetId);
         }
+
+        // Clean up ref IDs before removing from targetToWorker mapping
+        getRefIdManager().clearTargetRefs(ownerInfo.sessionId, targetId);
+
         this.targetToWorker.delete(targetId);
 
         this.emitEvent({
@@ -1228,6 +1232,29 @@ export class SessionManager {
         });
       }
     }
+  }
+
+  /**
+   * Build an enriched error message for stale target IDs, including available tab IDs
+   * so the LLM can select the correct one without an extra tabs_context round trip.
+   */
+  private buildStaleTargetError(sessionId: string, targetId: string): string {
+    const session = this.sessions.get(sessionId);
+    const availableTabIds: string[] = [];
+
+    if (session) {
+      for (const worker of session.workers.values()) {
+        for (const tid of worker.targets) {
+          availableTabIds.push(tid);
+        }
+      }
+    }
+
+    const tabInfo = availableTabIds.length > 0
+      ? ` Available tabIds: [${availableTabIds.map(id => `"${id}"`).join(', ')}]. Use tabs_context to see their URLs and titles.`
+      : ' No tabs available in this session. Use navigate to open a new page.';
+
+    return `Target ${targetId} not found in session ${sessionId}. The tab may have been closed or Chrome may have been restarted.${tabInfo}`;
   }
 
   /**
@@ -1316,8 +1343,9 @@ export class SessionManager {
           }
         }
 
-        // Migrate ref IDs from old target to new target
-        getRefIdManager().migrateTarget(ownerInfo.sessionId, targetId, newTargetId);
+        // Clear refs for old target — backendDOMNodeIds are invalidated after Chrome restart.
+        // The LLM will get fresh refs on the next read_page call.
+        getRefIdManager().clearTargetRefs(ownerInfo.sessionId, targetId);
 
         console.error(`[SessionManager] Re-mapped target ${targetId} → ${newTargetId} (URL: ${lastUrl})`);
         remapped++;
