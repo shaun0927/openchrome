@@ -172,7 +172,7 @@ describe('HintEngine', () => {
   describe('sequence detection rules', () => {
     it('should detect login page after navigate', () => {
       const engine = new HintEngine(new ActivityTracker());
-      const result = makeResult('{"action":"navigate","url":"https://app.com/login","title":"Login - App"}');
+      const result = makeResult('{"action":"navigate","url":"https://app.com/dashboard","title":"App","authRedirect":true}');
       const hint = engine.getHint('navigate', result, false);
       expect(hint?.hint).toContain('login');
       expect(hint?.hint).toContain('Chrome profile');
@@ -561,7 +561,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       engine.enableLogging(tmpDir);
 
-      engine.getHint('navigate', makeResult('login page'), false);
+      engine.getHint('navigate', makeResult('{"action":"navigate","url":"https://app.com","authRedirect":true}'), false);
       engine.getHint('find', makeResult('0 results'), false);
       engine.getHint('some_tool', makeResult('ok'), false);
 
@@ -628,7 +628,7 @@ describe('HintEngine', () => {
       const hint2 = engine.getHint('click_element', errResult, true);
       expect(hint2!.fireCount).toBe(2);
 
-      const navResult = makeResult('{"action":"navigate","url":"https://app.com/login","title":"Login - App"}');
+      const navResult = makeResult('{"action":"navigate","url":"https://app.com/dashboard","title":"App","authRedirect":true}');
       const loginHint = engine.getHint('navigate', navResult, false);
       expect(loginHint!.fireCount).toBe(1);
 
