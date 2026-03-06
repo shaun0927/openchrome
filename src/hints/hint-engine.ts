@@ -138,9 +138,9 @@ export class HintEngine {
    * - 3-4 firings: warning (⚠️ WARNING prefix)
    * - 5+ firings:  critical (🛑 CRITICAL prefix + action history)
    */
-  getHint(toolName: string, result: Record<string, unknown>, isError: boolean): HintResult | null {
+  getHint(toolName: string, result: Record<string, unknown>, isError: boolean, sessionId?: string): HintResult | null {
     const resultText = this.extractText(result);
-    const recentCalls = this.activityTracker.getRecentCalls(5);
+    const recentCalls = this.activityTracker.getRecentCalls(5, sessionId);
 
     // Priority 50: Progress tracking (highest priority, runs before all rules)
     // NOTE: ProgressTracker returns early before the rule loop. Miss-count decay
@@ -149,9 +149,14 @@ export class HintEngine {
     // agent is not making progress.
     const status = this.progressTracker.evaluate(recentCalls, toolName, resultText, isError);
 
+    // Scope escalation keys by sessionId when available to prevent cross-session pollution
+    const escalationKey = (ruleName: string) =>
+      sessionId !== undefined ? `${sessionId}:${ruleName}` : ruleName;
+
     if (status === 'stuck') {
-      const fireCount = (this.hintEscalation.get('progress-tracker-stuck') || 0) + 1;
-      this.hintEscalation.set('progress-tracker-stuck', fireCount);
+      const key = escalationKey('progress-tracker-stuck');
+      const fireCount = (this.hintEscalation.get(key) || 0) + 1;
+      this.hintEscalation.set(key, fireCount);
       const rawHintText = 'STOP — you are stuck. The last several tool calls made no meaningful progress ' +
         '(errors, stale refs, auth redirects, or timeouts). ' +
         'Step back and try a completely different approach, or ask the user for help.';
@@ -167,8 +172,9 @@ export class HintEngine {
     }
 
     if (status === 'stalling') {
-      const fireCount = (this.hintEscalation.get('progress-tracker-stalling') || 0) + 1;
-      this.hintEscalation.set('progress-tracker-stalling', fireCount);
+      const key = escalationKey('progress-tracker-stalling');
+      const fireCount = (this.hintEscalation.get(key) || 0) + 1;
+      this.hintEscalation.set(key, fireCount);
       const rawHintText = 'Warning: recent tool calls are not making progress. ' +
         'Consider trying a different approach before getting stuck.';
       const severity = this.getSeverity(fireCount);
@@ -200,7 +206,7 @@ export class HintEngine {
         const misses = (this.missCounts.get(rule.name) || 0) + 1;
         this.missCounts.set(rule.name, misses);
         if (misses >= 10) {
-          this.hintEscalation.set(rule.name, 0);
+          this.hintEscalation.set(escalationKey(rule.name), 0);
           this.missCounts.set(rule.name, 0);
         }
       }
@@ -216,9 +222,10 @@ export class HintEngine {
       return null;
     }
 
-    // Track fire count per rule (accumulates across session, never resets)
-    const fireCount = (this.hintEscalation.get(matchedRule) || 0) + 1;
-    this.hintEscalation.set(matchedRule, fireCount);
+    // Track fire count per rule, scoped by sessionId when available
+    const matchedKey = escalationKey(matchedRule);
+    const fireCount = (this.hintEscalation.get(matchedKey) || 0) + 1;
+    this.hintEscalation.set(matchedKey, fireCount);
 
     const severity = this.getSeverity(fireCount);
     let formattedHint = this.formatHintMessage(severity, rawHint, fireCount);

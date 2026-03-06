@@ -639,7 +639,7 @@ export class MCPServer {
 
       // Inject proactive hint into both _hint (backward compat) and content[] (guaranteed MCP delivery)
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false);
+        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
         if (hintResult) {
           (result as Record<string, unknown>)._hint = hintResult.hint;
           (result as Record<string, unknown>)._hintMeta = {
@@ -693,7 +693,7 @@ export class MCPServer {
 
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true);
+        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId);
         if (hintResult) {
           (errResult as Record<string, unknown>)._hint = hintResult.hint;
           (errResult as Record<string, unknown>)._hintMeta = {
