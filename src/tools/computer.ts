@@ -12,6 +12,7 @@ import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { withTimeout } from '../utils/with-timeout';
+import { retryWithFallback } from '../utils/retry-with-fallback';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -568,14 +569,29 @@ const handler: ToolHandler = async (
             break;
         }
 
-        await page.mouse.wheel({ deltaX, deltaY });
+        // Primary: CDP mouse wheel scroll
+        const primaryWheel = () => page.mouse.wheel({ deltaX, deltaY });
+
+        // Fallback: JS window.scrollBy (works even when CDP input is busy)
+        const fallbackWheel = () => withTimeout(
+          page.evaluate((dx: number, dy: number) => window.scrollBy(dx, dy), deltaX, deltaY),
+          5000,
+          'scroll-fallback'
+        );
+
+        const { recovered: scrollRecovered, method: scrollMethod } = await retryWithFallback(
+          primaryWheel,
+          [fallbackWheel],
+          { label: 'computer_scroll', retryDelayMs: 500 }
+        );
 
         const centerNote = usedViewportCenter ? ' [viewport center]' : '';
+        const recoveryNote = scrollRecovered ? ` [recovered:${scrollMethod}]` : '';
         return {
           content: [
             {
               type: 'text',
-              text: `Scrolled ${direction} at (${scrollCoord[0]}, ${scrollCoord[1]})${centerNote}`,
+              text: `Scrolled ${direction} at (${scrollCoord[0]}, ${scrollCoord[1]})${centerNote}${recoveryNote}`,
             },
           ],
         };

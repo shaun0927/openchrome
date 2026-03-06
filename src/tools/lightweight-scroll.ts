@@ -11,6 +11,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
+import { retryWithFallback } from '../utils/retry-with-fallback';
 
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',
@@ -89,7 +90,20 @@ const handler: ToolHandler = async (
       };
     }
 
-    const scrollResult = await withTimeout(page.evaluate(
+    type ScrollResult = {
+      success: boolean;
+      scrollX: number;
+      scrollY: number;
+      scrollHeight: number;
+      scrollWidth: number;
+      clientHeight: number;
+      clientWidth: number;
+      atEnd: boolean;
+      error?: string;
+    };
+
+    // Primary: page.evaluate scroll (JS-based, fast path)
+    const primaryScroll = (): Promise<ScrollResult> => withTimeout(page.evaluate(
       (params: {
         direction: string;
         amount: number;
@@ -97,17 +111,7 @@ const handler: ToolHandler = async (
         selector: string | null;
         scrollToEnd: boolean;
         waitAfterMs: number;
-      }): Promise<{
-        success: boolean;
-        scrollX: number;
-        scrollY: number;
-        scrollHeight: number;
-        scrollWidth: number;
-        clientHeight: number;
-        clientWidth: number;
-        atEnd: boolean;
-        error?: string;
-      }> => {
+      }): Promise<ScrollResult> => {
         return new Promise((resolve) => {
           try {
             const target = params.selector
@@ -248,6 +252,58 @@ const handler: ToolHandler = async (
       }
     ), 10000, 'lightweight_scroll');
 
+    // Fallback: Input.dispatchMouseEvent mouseWheel via CDP
+    const fallbackScroll = async (): Promise<ScrollResult> => {
+      const cdpClient = sessionManager.getCDPClient();
+      const viewport = page.viewport();
+      const x = viewport ? viewport.width / 2 : 512;
+      const y = viewport ? viewport.height / 2 : 384;
+
+      let deltaX = 0;
+      let deltaY = 0;
+      switch (direction) {
+        case 'down': deltaY = amount; break;
+        case 'up': deltaY = -amount; break;
+        case 'right': deltaX = amount; break;
+        case 'left': deltaX = -amount; break;
+      }
+
+      await withTimeout(
+        cdpClient.send(page, 'Input.dispatchMouseEvent', {
+          type: 'mouseWheel',
+          x, y,
+          deltaX, deltaY,
+        }),
+        5000,
+        'scroll-fallback'
+      );
+
+      // Wait briefly for scroll to take effect
+      await new Promise(r => setTimeout(r, 100));
+
+      // Read back scroll position
+      const positions = await withTimeout(page.evaluate(() => ({
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        scrollHeight: document.documentElement.scrollHeight,
+        scrollWidth: document.documentElement.scrollWidth,
+        clientHeight: document.documentElement.clientHeight,
+        clientWidth: document.documentElement.clientWidth,
+      })), 5000, 'scroll-position-read');
+
+      return {
+        success: true,
+        ...positions,
+        atEnd: false, // approximate — position read is accurate but atEnd calc is skipped
+      };
+    };
+
+    const { result: scrollResult, recovered, method: recoveryMethod } = await retryWithFallback(
+      primaryScroll,
+      [fallbackScroll],
+      { label: 'lightweight_scroll', retryDelayMs: 500 }
+    );
+
     if (!scrollResult.success) {
       return {
         content: [{ type: 'text', text: `Scroll error: ${scrollResult.error}` }],
@@ -257,13 +313,14 @@ const handler: ToolHandler = async (
 
     const targetDesc = selector ? ` (${selector})` : '';
     const endIndicator = scrollResult.atEnd ? ' [END REACHED]' : '';
+    const recoveryNote = recovered ? ` [recovered:${recoveryMethod}]` : '';
 
     return {
       content: [
         {
           type: 'text',
           text: JSON.stringify({
-            scrolled: `${direction} ${scrollToEnd ? 'to end' : amount + 'px'}${targetDesc}${endIndicator}`,
+            scrolled: `${direction} ${scrollToEnd ? 'to end' : amount + 'px'}${targetDesc}${endIndicator}${recoveryNote}`,
             position: {
               x: scrollResult.scrollX,
               y: scrollResult.scrollY,
