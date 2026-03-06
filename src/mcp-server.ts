@@ -54,11 +54,6 @@ export function isConnectionError(error: unknown): boolean {
     'cdpsession connection closed',
     'puppeteer.connect() timed out',
     'session initialization timed out',
-    'does not belong to session',
-    'not found in session',
-    'frame was detached',
-    'most likely the page has been closed',
-    'page has been closed',
   ];
   const lowerMessage = message.toLowerCase();
   return patterns.some(pattern => lowerMessage.includes(pattern));
@@ -71,7 +66,7 @@ const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status']);
 const RECONNECTION_GUIDANCE =
   '\n\nNote: The browser connection was lost and auto-reconnect was attempted. ' +
   'Simply retry your operation — Chrome will be re-launched automatically if needed. ' +
-  'If the error persists, use list_tabs to get fresh tab IDs.';
+  'If the error persists, use tabs_context to get fresh tab IDs.';
 
 export interface MCPServerOptions {
   dashboard?: boolean;
@@ -592,7 +587,8 @@ export class MCPServer {
             try {
               await this.sessionManager.reconcileAfterReconnect();
             } catch (reconcileErr) {
-              console.error('[MCPServer] Post-reconnect reconciliation failed:', reconcileErr);
+              console.error('[MCPServer] Post-reconnect reconciliation failed, aborting retry:', reconcileErr);
+              throw handlerError; // Abort retry — stale state would cause wrong-target errors
             }
             let tid2: ReturnType<typeof setTimeout>;
             result = await Promise.race([
