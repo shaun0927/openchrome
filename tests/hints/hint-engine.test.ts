@@ -291,6 +291,24 @@ describe('HintEngine', () => {
       expect(hint).not.toBeNull();
     });
 
+    it('should NOT trigger same-tool-same-result for batch-exempt tools (tabs_create, navigate, tabs_close)', () => {
+      for (const tool of ['tabs_create', 'navigate', 'tabs_close']) {
+        const tracker = makeTracker([
+          { toolName: tool },
+          { toolName: tool },
+          { toolName: tool },
+          { toolName: tool },
+        ]);
+        const engine = new HintEngine(tracker);
+        const result = makeResult(`{"tabId":"abc","url":"https://example.com"}`);
+        const hint = engine.getHint(tool, result, false);
+        // Should not match same-tool-same-result; may match other rules (e.g. pagination for navigate)
+        if (hint) {
+          expect(hint.rule).not.toBe('same-tool-same-result');
+        }
+      }
+    });
+
     it('should not trigger on mixed tool calls', () => {
       // makeTracker reverses input, so first element becomes most recent in getRecentCalls.
       // Put 'find' first so recentCalls[0]='find' — not an action trigger for state-check-after-action.
