@@ -678,16 +678,10 @@ describe('HintEngine', () => {
     });
 
     it('should not escalate beyond maxSeverity cap', () => {
-      // The getSeverity method with maxSeverity='warning' should cap at warning.
-      // We test this by checking that rules with maxSeverity exist in the interface.
-      // The actual rule-level caps are added in subsequent PRs per rule file.
       const engine = new HintEngine(new ActivityTracker());
       const rules = engine.getRules();
 
-      // Verify the HintRule interface supports maxSeverity
-      // All existing rules currently have maxSeverity undefined
       for (const rule of rules) {
-        // maxSeverity is optional — undefined means no cap (defaults to critical)
         expect(rule.maxSeverity === undefined || ['info', 'warning', 'critical'].includes(rule.maxSeverity)).toBe(true);
       }
     });
@@ -712,6 +706,31 @@ describe('HintEngine', () => {
       expect(lastHint!.fireCount).toBeGreaterThanOrEqual(5);
       expect(lastHint!.severity).toBe('warning');
       expect(lastHint!.hint).not.toContain('CRITICAL');
+    });
+
+    it('should cap navigate-to-demo at info severity', () => {
+      const tracker = makeTracker([]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('{"url":"http://localhost:3000/page","title":"Dev App"}');
+
+      let lastHint;
+      for (let i = 0; i < 10; i++) {
+        lastHint = engine.getHint('navigate', result, false);
+      }
+
+      if (lastHint && lastHint.rule === 'navigate-to-demo') {
+        expect(lastHint.severity).toBe('info');
+        expect(lastHint.hint).not.toContain('WARNING');
+        expect(lastHint.hint).not.toContain('CRITICAL');
+      }
+    });
+
+    it('should not have duplicate repeated-read-page rules', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const rules = engine.getRules();
+      const readPageRules = rules.filter(r => r.name === 'repeated-read-page');
+      expect(readPageRules).toHaveLength(1);
+      expect(readPageRules[0].priority).toBe(207);
     });
   });
 

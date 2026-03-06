@@ -8,19 +8,11 @@ function lastToolWas(ctx: HintContext, name: string): boolean {
   return ctx.recentCalls.length > 0 && ctx.recentCalls[0].toolName === name;
 }
 
-function consecutiveCount(ctx: HintContext, name: string): number {
-  let count = 0;
-  for (const call of ctx.recentCalls) {
-    if (call.toolName === name) count++;
-    else break;
-  }
-  return count;
-}
-
 export const sequenceDetectionRules: HintRule[] = [
   {
     name: 'post-scroll-click',
     priority: 299, // Just before existing sequence rules (300-304)
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'computer') return null;
 
@@ -47,6 +39,7 @@ export const sequenceDetectionRules: HintRule[] = [
   {
     name: 'navigate-to-login',
     priority: 150,  // Between error-recovery (100-108) and pagination (190)
+    // No maxSeverity cap — genuine auth detection, critical escalation is appropriate
     match(ctx) {
       if (ctx.toolName !== 'navigate') return null;
       if (ctx.isError) return null;  // isError paths already carry inline guidance
@@ -63,19 +56,9 @@ export const sequenceDetectionRules: HintRule[] = [
     },
   },
   {
-    name: 'repeated-read-page',
-    priority: 301,
-    match(ctx) {
-      if (ctx.toolName !== 'read_page') return null;
-      if (consecutiveCount(ctx, 'read_page') >= 2) {
-        return 'Hint: Use find(query) or javascript_tool for specific elements.';
-      }
-      return null;
-    },
-  },
-  {
     name: 'navigate-then-screenshot',
     priority: 302,
+    maxSeverity: 'info',
     match(ctx) {
       if (ctx.toolName !== 'computer') return null;
       if (!ctx.resultText.includes('screenshot')) return null;
@@ -86,6 +69,7 @@ export const sequenceDetectionRules: HintRule[] = [
   {
     name: 'modal-close-failure',
     priority: 303,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'find' && ctx.toolName !== 'read_page') return null;
       if (!lastToolWas(ctx, 'click_element')) return null;
@@ -98,6 +82,7 @@ export const sequenceDetectionRules: HintRule[] = [
   {
     name: 'navigate-to-demo',
     priority: 304,
+    maxSeverity: 'info',
     match(ctx) {
       if (ctx.toolName !== 'navigate') return null;
       if (ctx.isError) return null;
