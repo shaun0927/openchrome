@@ -1316,8 +1316,9 @@ export class SessionManager {
           }
         }
 
-        // Migrate ref IDs from old target to new target
-        getRefIdManager().migrateTarget(ownerInfo.sessionId, targetId, newTargetId);
+        // Clear refs for old target — backendDOMNodeIds are invalidated after Chrome restart.
+        // The LLM will get fresh refs on the next read_page call.
+        getRefIdManager().clearTargetRefs(ownerInfo.sessionId, targetId);
 
         console.error(`[SessionManager] Re-mapped target ${targetId} → ${newTargetId} (URL: ${lastUrl})`);
         remapped++;
