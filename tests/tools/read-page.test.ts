@@ -502,13 +502,15 @@ describe('ReadPageTool', () => {
       });
 
       // Check that refs were generated with correct session and target
-      expect(mockRefIdManager.generateRef).toHaveBeenCalledWith(
-        testSessionId,
-        testTargetId,
-        expect.any(Number),
-        expect.any(String),
-        expect.anything()
+      // generateRef is called with (sessionId, targetId, backendDOMNodeId, role, name, tagName)
+      // tagName may be string or undefined depending on the AX role mapping
+      const calls = mockRefIdManager.generateRef.mock.calls;
+      const matchingCall = calls.find(
+        (c: unknown[]) => c[0] === testSessionId && c[1] === testTargetId
       );
+      expect(matchingCall).toBeDefined();
+      expect(typeof matchingCall![2]).toBe('number');
+      expect(typeof matchingCall![3]).toBe('string');
     });
   });
 
