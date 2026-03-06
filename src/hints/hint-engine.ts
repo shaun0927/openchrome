@@ -39,6 +39,7 @@ export interface HintContext {
 export interface HintRule {
   name: string;
   priority: number;
+  maxSeverity?: HintSeverity;
   match(ctx: HintContext): string | null;
 }
 
@@ -194,12 +195,14 @@ export class HintEngine {
 
     let matchedRule: string | null = null;
     let rawHint: string | null = null;
+    let matchedMaxSeverity: HintSeverity | undefined;
 
     for (const rule of this.rules) {
       const h = rule.match(ctx);
       if (h) {
         matchedRule = rule.name;
         rawHint = h;
+        matchedMaxSeverity = rule.maxSeverity;
         // Reset miss count on match
         this.missCounts.set(rule.name, 0);
         break;
@@ -229,7 +232,7 @@ export class HintEngine {
     const fireCount = (this.hintEscalation.get(matchedKey) || 0) + 1;
     this.hintEscalation.set(matchedKey, fireCount);
 
-    const severity = this.getSeverity(fireCount);
+    const severity = this.getSeverity(fireCount, matchedMaxSeverity);
     let formattedHint = this.formatHintMessage(severity, rawHint, fireCount);
 
     // Context-aware: extract element/coordinate info from result
@@ -270,10 +273,11 @@ export class HintEngine {
     return hintResult;
   }
 
-  private getSeverity(fireCount: number): HintSeverity {
-    if (fireCount <= 2) return 'info';
-    if (fireCount <= 4) return 'warning';
-    return 'critical';
+  private getSeverity(fireCount: number, maxSeverity?: HintSeverity): HintSeverity {
+    const raw: HintSeverity = fireCount <= 2 ? 'info' : fireCount <= 4 ? 'warning' : 'critical';
+    if (!maxSeverity) return raw;
+    const order: HintSeverity[] = ['info', 'warning', 'critical'];
+    return order.indexOf(raw) <= order.indexOf(maxSeverity) ? raw : maxSeverity;
   }
 
   private formatHintMessage(severity: HintSeverity, rawHint: string, fireCount: number): string {
