@@ -123,9 +123,9 @@ export class SessionManager {
 
     // Validate stale targets after reconnection
     this.cdpClient.addConnectionListener((event) => {
-      if (event.type === 'reconnected' || event.type === 'connected') {
+      if (event.type === 'reconnected') {
         this.validateTargetsAfterReconnect().catch((err) => {
-          console.error('[SessionManager] Post-connect target validation failed:', err);
+          console.error('[SessionManager] Post-reconnect target validation failed:', err);
         });
       }
       if (event.type === 'reconnect_failed') {
@@ -133,6 +133,8 @@ export class SessionManager {
         console.error('[SessionManager] Reconnect failed, clearing stale target mappings');
         for (const targetId of Array.from(this.targetToWorker.keys())) {
           this.onTargetClosed(targetId);
+          // Safety: force-delete in case session is already gone and onTargetClosed skipped it
+          this.targetToWorker.delete(targetId);
         }
       }
     });
