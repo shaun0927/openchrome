@@ -569,8 +569,8 @@ describe('MCPServer', () => {
 
       expect(response.result!.isError).toBe(true);
       expect(response.result!.content![0].text).toContain('Connection closed');
-      expect(response.result!.content![0].text).toContain('/mcp');
-      expect(response.result!.content![0].text).toContain('Do NOT run');
+      expect(response.result!.content![0].text).toContain('auto-reconnect was attempted');
+      expect(response.result!.content![0].text).toContain('tabs_context');
       expect(mockForceReconnect).toHaveBeenCalledTimes(1);
     });
 
@@ -643,7 +643,7 @@ describe('MCPServer', () => {
   });
 
   describe('Reconnection Instructions', () => {
-    test('connection error responses include /mcp recovery guidance', async () => {
+    test('connection error responses include retry reconnection guidance', async () => {
       const handler = jest.fn().mockRejectedValue(
         new Error('Connection closed')
       );
@@ -665,8 +665,8 @@ describe('MCPServer', () => {
       const response = (await server.handleRequest(request)) as MCPResultResponse;
 
       expect(response.result!.isError).toBe(true);
-      expect(response.result!.content![0].text).toContain('/mcp');
-      expect(response.result!.content![0].text).toContain('Do NOT run');
+      expect(response.result!.content![0].text).toContain('auto-reconnect was attempted');
+      expect(response.result!.content![0].text).toContain('tabs_context');
     });
   });
 });
