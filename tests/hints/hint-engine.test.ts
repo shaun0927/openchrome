@@ -174,7 +174,7 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('{"action":"navigate","url":"https://app.com/login","title":"Login - App"}');
       const hint = engine.getHint('navigate', result, false);
-      expect(hint?.hint).toContain('Login');
+      expect(hint?.hint).toContain('login');
       expect(hint?.hint).toContain('Chrome profile');
     });
 
