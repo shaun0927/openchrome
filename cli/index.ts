@@ -306,16 +306,48 @@ program
     console.log('Checking installation status...\n');
 
     // Core checks (required for CDP mode)
+    const portCheck = await checkChromeDebugPort();
     const coreChecks = {
       'Node.js version (>=18)': checkNodeVersion(),
       '.claude.json health': await checkClaudeConfigHealth(),
-      'Chrome debugging port': await checkChromeDebugPort(),
+      'Chrome debugging port': portCheck.available,
     };
 
     console.log('Core Requirements:');
     for (const [name, passed] of Object.entries(coreChecks)) {
       const status = passed ? '✅' : '❌';
       console.log(`  ${status} ${name}`);
+    }
+
+    // Chrome binary detection
+    console.log('\nChrome Detection:');
+    const platform = os.platform();
+    const chromePaths: string[] = [];
+    if (platform === 'darwin') {
+      chromePaths.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    } else if (platform === 'win32') {
+      const envProgramFiles = process.env['PROGRAMFILES'];
+      const envLocalAppData = process.env['LOCALAPPDATA'];
+      if (envProgramFiles) chromePaths.push(path.join(envProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+      if (envLocalAppData) chromePaths.push(path.join(envLocalAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+    } else {
+      chromePaths.push('/usr/bin/google-chrome-stable', '/usr/bin/google-chrome', '/snap/bin/chromium');
+    }
+    if (process.env.CHROME_PATH) {
+      console.log(`  CHROME_PATH: ${process.env.CHROME_PATH} ${fs.existsSync(process.env.CHROME_PATH) ? '✅' : '❌ not found'}`);
+    } else {
+      let found = false;
+      for (const p of chromePaths) {
+        if (fs.existsSync(p)) {
+          console.log(`  ✅ Found: ${p}`);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        console.log('  ❌ Chrome not found in standard locations');
+        console.log('  Set CHROME_PATH environment variable to your Chrome binary');
+      }
     }
 
     const allPassed = Object.values(coreChecks).every(Boolean);
@@ -330,8 +362,11 @@ program
       console.log('  3. Restart Claude Code');
     } else {
       if (!coreChecks['Chrome debugging port']) {
-        console.log('Chrome is not running with debugging port.');
-        console.log('Start Chrome with: chrome --remote-debugging-port=9222');
+        console.log(`Chrome debugging port issue: ${portCheck.details || 'Unknown'}`);
+        if (portCheck.details?.includes('Nothing is listening')) {
+          console.log('Start Chrome with: chrome --remote-debugging-port=9222');
+          console.log('Or enable auto-launch: set autoLaunch=true in openchrome config');
+        }
       }
       if (!coreChecks['.claude.json health']) {
         console.log('Run "openchrome recover" to fix .claude.json');
@@ -838,24 +873,72 @@ function checkNodeVersion(): boolean {
   return major >= 18;
 }
 
+interface PortCheckResult {
+  available: boolean;
+  details?: string;
+}
+
 /**
  * Check if Chrome is running with debugging port
  */
-async function checkChromeDebugPort(port: number = 9222): Promise<boolean> {
+async function checkChromeDebugPort(port: number = 9222): Promise<PortCheckResult> {
   try {
     const http = await import('http');
-    return new Promise((resolve) => {
-      const req = http.get(`http://localhost:${port}/json/version`, (res) => {
-        resolve(res.statusCode === 200);
+    const net = await import('net');
+
+    // First: check if anything is listening on the port
+    const portInUse = await new Promise<boolean>((resolve) => {
+      const socket = new net.Socket();
+      socket.setTimeout(2000);
+      socket.on('connect', () => {
+        socket.destroy();
+        resolve(true);
       });
-      req.on('error', () => resolve(false));
+      socket.on('timeout', () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.on('error', () => {
+        resolve(false);
+      });
+      socket.connect(port, '127.0.0.1');
+    });
+
+    if (!portInUse) {
+      return { available: false, details: `Nothing is listening on port ${port}. Start Chrome with: chrome --remote-debugging-port=${port}` };
+    }
+
+    // Port is in use — check if it's Chrome DevTools
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+        if (res.statusCode === 200) {
+          let data = '';
+          res.on('data', (chunk: string) => data += chunk);
+          res.on('end', () => {
+            try {
+              const json = JSON.parse(data);
+              resolve({
+                available: true,
+                details: `Chrome ${json.Browser || 'unknown'} responding on port ${port}`
+              });
+            } catch {
+              resolve({ available: true, details: `Port ${port} responding but could not parse version info` });
+            }
+          });
+        } else {
+          resolve({ available: false, details: `Port ${port} is in use but not responding as Chrome DevTools (HTTP ${res.statusCode})` });
+        }
+      });
+      req.on('error', () => {
+        resolve({ available: false, details: `Port ${port} is in use but not responding to HTTP (may not be Chrome)` });
+      });
       req.setTimeout(2000, () => {
         req.destroy();
-        resolve(false);
+        resolve({ available: false, details: `Port ${port} is in use but timed out (may be blocked by firewall)` });
       });
     });
   } catch {
-    return false;
+    return { available: false, details: 'Failed to check port' };
   }
 }
 

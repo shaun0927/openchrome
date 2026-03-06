@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
 import { getGlobalConfig } from '../config/global';
-import { DEFAULT_VIEWPORT } from '../config/defaults';
+import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS } from '../config/defaults';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
 export type { ProfileType } from './profile-manager';
@@ -179,7 +179,7 @@ async function waitForDebugPort(
     await new Promise((r) => setTimeout(r, 500));
   }
 
-  throw new Error(`Chrome debug port ${port} not available after ${timeout}ms`);
+  throw new Error(`Chrome debug port ${port} not available after ${timeout}ms. Chrome may still be starting, or the port may be blocked.`);
 }
 
 export interface ProfileState {
@@ -271,7 +271,7 @@ export class ChromeLauncher {
     }
     if (this.pendingProcess && this.pendingProcess.exitCode === null) {
       console.error('[ChromeLauncher] Reusing pending Chrome process from previous launch attempt...');
-      const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || '60000', 10);
+      const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || String(DEFAULT_CHROME_LAUNCH_TIMEOUT_MS), 10);
       const pendingProc = this.pendingProcess;
       try {
         const wsEndpoint = await waitForDebugPort(port, launchTimeout, pendingProc);
@@ -439,9 +439,20 @@ export class ChromeLauncher {
 
     const chromeProcess = spawn(chromePath, args, {
       detached: true,
-      stdio: ['ignore', 'ignore', 'ignore'],
+      stdio: ['ignore', 'ignore', 'pipe'],
       // shell: false is safe on all platforms; avoids cmd.exe injection risks on Windows
     });
+
+    // Capture stderr for diagnostics (Chrome writes "DevTools listening on ws://..." and errors here)
+    const stderrChunks: string[] = [];
+    if (chromeProcess.stderr) {
+      chromeProcess.stderr.setEncoding('utf8');
+      chromeProcess.stderr.on('data', (data: string) => {
+        stderrChunks.push(data);
+        // Keep only last 20 lines to bound memory
+        if (stderrChunks.length > 20) stderrChunks.shift();
+      });
+    }
 
     chromeProcess.unref();
     // Note: On Windows, detached processes create a new process group.
@@ -462,12 +473,37 @@ export class ChromeLauncher {
     // Track as pending for retry reuse (issue #171)
     this.pendingProcess = chromeProcess;
 
-    const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || '60000', 10);
+    const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || String(DEFAULT_CHROME_LAUNCH_TIMEOUT_MS), 10);
 
     // Wait for debug port — pass chromeProcess for fast-fail on premature exit.
     // On timeout, pendingProcess is intentionally kept set so the next call can
     // reuse the still-starting Chrome instead of spawning a duplicate (issue #171).
-    const wsEndpoint = await waitForDebugPort(port, launchTimeout, chromeProcess);
+    let wsEndpoint: string;
+    try {
+      wsEndpoint = await waitForDebugPort(port, launchTimeout, chromeProcess);
+    } catch (err) {
+      const stderr = stderrChunks.join('').trim();
+      const diagnostics = [
+        `Chrome debug port ${port} not available after ${launchTimeout}ms`,
+        `  OS: ${os.platform()} ${os.arch()} ${os.release()}`,
+        `  Chrome: ${chromePath}`,
+        `  Profile: ${userDataDir} (${profileType})`,
+        `  PID: ${chromeProcess.pid ?? 'unknown'}`,
+        `  Exit code: ${chromeProcess.exitCode ?? 'still running'}`,
+      ];
+      if (stderr) {
+        diagnostics.push(`  Stderr: ${stderr.slice(-500)}`);
+      } else {
+        diagnostics.push('  Stderr: (empty — Chrome may have failed to start)');
+      }
+      diagnostics.push('');
+      diagnostics.push('Common causes:');
+      diagnostics.push('  - Another Chrome instance is using the same --user-data-dir (profile lock)');
+      diagnostics.push('  - Port conflict: another process is bound to port ' + port);
+      diagnostics.push('  - Firewall/antivirus blocking localhost connections');
+      diagnostics.push('  - Chrome 136+: requires --user-data-dir with --remote-debugging-port');
+      throw new Error(diagnostics.join('\n'));
+    }
     this.pendingProcess = null; // Success — no longer pending
 
     this.instance = {

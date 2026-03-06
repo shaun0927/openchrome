@@ -86,9 +86,14 @@ export const DEFAULT_OPERATION_GATE_TIMEOUT_MS = 300000;
  *  Without this, a listening but unresponsive Chrome can block for OS TCP timeout (60-120s). */
 export const DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS = 15000;
 
+/** Chrome launch timeout in milliseconds. How long to wait for debug port after spawning Chrome.
+ *  Override with CHROME_LAUNCH_TIMEOUT_MS environment variable. */
+export const DEFAULT_CHROME_LAUNCH_TIMEOUT_MS = 60000;
+
 /** Session initialization timeout when autoLaunch is enabled (ms).
- *  Accounts for: port probe (5s) + Chrome launch (30s) + puppeteer connect (15s). */
-export const DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS = 45000;
+ *  Must be LONGER than DEFAULT_CHROME_LAUNCH_TIMEOUT_MS (60s) to allow the launcher's
+ *  own error (with stderr diagnostics) to propagate instead of a generic timeout. */
+export const DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS = 75000;
 
 /** Heartbeat active ping timeout in milliseconds.
  *  Sends Browser.getVersion to detect half-open WebSocket connections
