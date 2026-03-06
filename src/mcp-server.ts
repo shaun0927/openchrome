@@ -52,6 +52,8 @@ export function isConnectionError(error: unknown): boolean {
     'cannot find context with specified id',
     'inspected target navigated or closed',
     'cdpsession connection closed',
+    'puppeteer.connect() timed out',
+    'session initialization timed out',
   ];
   const lowerMessage = message.toLowerCase();
   return patterns.some(pattern => lowerMessage.includes(pattern));
