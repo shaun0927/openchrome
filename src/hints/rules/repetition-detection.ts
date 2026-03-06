@@ -33,9 +33,20 @@ function detectOscillation(ctx: HintContext): boolean {
 }
 
 /**
+ * Tools where sequential repeated calls are expected batch behavior,
+ * not a sign of being stuck. These are exempt from same-tool-same-result.
+ */
+const BATCH_EXEMPT_TOOLS = new Set([
+  'tabs_create',
+  'tabs_close',
+  'navigate',
+]);
+
+/**
  * Detect same tool called repeatedly with same result (non-error).
  */
 function sameToolSameResult(ctx: HintContext): boolean {
+  if (BATCH_EXEMPT_TOOLS.has(ctx.toolName)) return false;
   if (ctx.recentCalls.length < 2) return false;
   const prev = ctx.recentCalls[0];
   const prevPrev = ctx.recentCalls[1];
