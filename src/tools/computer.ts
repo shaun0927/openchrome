@@ -12,6 +12,7 @@ import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { withTimeout } from '../utils/with-timeout';
+import { retryWithFallback } from '../utils/retry-with-fallback';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -568,14 +569,29 @@ const handler: ToolHandler = async (
             break;
         }
 
-        await page.mouse.wheel({ deltaX, deltaY });
+        // Primary: CDP mouse wheel scroll
+        const primaryWheel = () => page.mouse.wheel({ deltaX, deltaY });
+
+        // Fallback: JS window.scrollBy (works even when CDP input is busy)
+        const fallbackWheel = () => withTimeout(
+          page.evaluate((dx: number, dy: number) => window.scrollBy(dx, dy), deltaX, deltaY),
+          5000,
+          'scroll-fallback'
+        );
+
+        const { recovered: scrollRecovered, method: scrollMethod } = await retryWithFallback(
+          primaryWheel,
+          [fallbackWheel],
+          { label: 'computer_scroll', retryDelayMs: 500 }
+        );
 
         const centerNote = usedViewportCenter ? ' [viewport center]' : '';
+        const recoveryNote = scrollRecovered ? ` [recovered:${scrollMethod}]` : '';
         return {
           content: [
             {
               type: 'text',
-              text: `Scrolled ${direction} at (${scrollCoord[0]}, ${scrollCoord[1]})${centerNote}`,
+              text: `Scrolled ${direction} at (${scrollCoord[0]}, ${scrollCoord[1]})${centerNote}${recoveryNote}`,
             },
           ],
         };
@@ -646,7 +662,7 @@ async function resolveRefToCoordinates(
   sessionManager: ReturnType<typeof getSessionManager>
 ): Promise<{ coord: [number, number]; error?: never } | { coord?: never; error: MCPResult }> {
   const refIdManager = getRefIdManager();
-  const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+  let backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
 
   if (backendNodeId === undefined) {
     return {
@@ -673,15 +689,25 @@ async function resolveRefToCoordinates(
         );
 
         if (!validation.valid && validation.stale) {
-          return {
-            error: {
-              content: [{
-                type: 'text',
-                text: `Error: ${ref} is stale — ${validation.reason}. The DOM has changed since the element was found. Run find or read_page again to get fresh refs.`,
-              }],
-              isError: true,
-            },
-          };
+          // Attempt transparent recovery: re-find the element using stored metadata
+          const relocated = await refIdManager.tryRelocateRef(
+            sessionId, tabId, ref, page, cdpClient
+          );
+
+          if (relocated) {
+            console.error(`[ref-recovery] ${ref} was stale, re-located as ${relocated.newRef}`);
+            backendNodeId = relocated.backendNodeId;
+          } else {
+            return {
+              error: {
+                content: [{
+                  type: 'text',
+                  text: `Error: ${ref} is stale — ${validation.reason}. Element could not be re-located. Run find or read_page again to get fresh refs.`,
+                }],
+                isError: true,
+              },
+            };
+          }
         }
       } catch {
         // If validation CDP calls fail, proceed with the click
@@ -691,7 +717,7 @@ async function resolveRefToCoordinates(
     // Log staleness warning (non-blocking)
     if (refEntry && refIdManager.isRefStale(sessionId, tabId, ref)) {
       const age = Math.round((Date.now() - refEntry.createdAt) / 1000);
-      console.warn(`[ref-validation] ${ref} is ${age}s old — may be stale`);
+      console.error(`[ref-validation] ${ref} is ${age}s old — may be stale`);
     }
 
     await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {

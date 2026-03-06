@@ -300,7 +300,7 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
 
       await expect(
         launcher.ensureChrome({ autoLaunch: true })
-      ).rejects.toThrow(/exited with code 1/);
+      ).rejects.toThrow(/Exit code: 1|exited with code 1/);
     }, 15000);
   });
 

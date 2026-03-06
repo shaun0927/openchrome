@@ -48,6 +48,58 @@ interface CDPEvalResult {
   };
 }
 
+export function wrapInIIFE(code: string): string {
+  const trimmed = code.trim();
+
+  // Single expression without semicolons, newlines, or return: evaluate as-is
+  // so the expression value is returned naturally by Runtime.evaluate.
+  if (!trimmed.includes('\n') && !trimmed.includes(';') && !/\breturn\b/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Multi-statement code or code with explicit return: wrap in async IIFE.
+  // This fixes two common LLM errors:
+  //   1. SyntaxError: Illegal return statement  (return outside a function)
+  //   2. SyntaxError: Identifier 'x' has already been declared  (let/const redeclaration)
+  //
+  // If there is no explicit `return`, try to auto-return the last expression so
+  // that `let x = 5;\nx` still returns 5 instead of undefined.
+  if (!/\breturn\b/.test(trimmed)) {
+    const lines = trimmed.split('\n').filter((l) => l.trim());
+    const lastLine = lines[lines.length - 1]?.trim() ?? '';
+
+    // Auto-return the last line if it looks like an expression (not a
+    // declaration, control-flow statement, closing brace, or comment).
+    const isAutoReturnable =
+      lastLine.length > 0 &&
+      !lastLine.startsWith('let ') &&
+      !lastLine.startsWith('const ') &&
+      !lastLine.startsWith('var ') &&
+      !lastLine.startsWith('function ') &&
+      !lastLine.startsWith('class ') &&
+      !lastLine.startsWith('if') &&
+      !lastLine.startsWith('else') &&
+      !lastLine.startsWith('for') &&
+      !lastLine.startsWith('while') &&
+      !lastLine.startsWith('do') &&
+      !lastLine.startsWith('switch') &&
+      !lastLine.startsWith('try') &&
+      !lastLine.startsWith('catch') &&
+      !lastLine.startsWith('finally') &&
+      !lastLine.startsWith('//') &&
+      !lastLine.startsWith('/*') &&
+      !lastLine.startsWith('}');
+
+    if (isAutoReturnable) {
+      const bodyLines = lines.slice(0, -1).join('\n');
+      const body = bodyLines ? `${bodyLines}\nreturn ${lastLine}` : `return ${lastLine}`;
+      return `(async () => { ${body}\n})()`;
+    }
+  }
+
+  return `(async () => { ${code}\n})()`;
+}
+
 function formatCDPResult(evalResult: CDPEvalResult['result']): string {
   const { type, subtype, value, description, className } = evalResult;
 
@@ -160,7 +212,7 @@ const handler: ToolHandler = async (
     const cdpResult = await Promise.race([
       cdpClient
         .send<CDPEvalResult>(page, 'Runtime.evaluate', {
-          expression: code,
+          expression: wrapInIIFE(code),
           returnByValue: true,
           awaitPromise: true,
           userGesture: true,
