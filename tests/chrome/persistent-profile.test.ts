@@ -4,7 +4,7 @@
  * Covers:
  * 1. ProfileManager.getOrCreatePersistentProfile() — directory creation
  * 2. ProfileManager.needsSync() — freshness-based sync decision
- * 3. ProfileManager.syncCookies() — atomic SQLite backup + fallback
+ * 3. ProfileManager.syncProfileData() — atomic SQLite backup + fallback
  * 4. ProfileManager.getSyncMetadata() / updateSyncMetadata() — metadata persistence
  * 5. ProfileManager.resolveProfile() — profile selection priority
  */
@@ -183,10 +183,10 @@ describe('ProfileManager', () => {
   });
 
   // =========================================================================
-  // syncCookies()
+  // syncProfileData()
   // =========================================================================
 
-  describe('syncCookies()', () => {
+  describe('syncProfileData()', () => {
     let sourceDir: string;
     let destDir: string;
 
@@ -216,7 +216,7 @@ describe('ProfileManager', () => {
       });
 
       const manager = new ProfileManager();
-      const result = manager.syncCookies(sourceDir, destDir);
+      const result = manager.syncProfileData(sourceDir, destDir);
 
       expect(result.atomic).toBe(true);
     });
@@ -233,7 +233,7 @@ describe('ProfileManager', () => {
       });
 
       const manager = new ProfileManager();
-      const result = manager.syncCookies(sourceDir, destDir);
+      const result = manager.syncProfileData(sourceDir, destDir);
 
       expect(result.atomic).toBe(false);
       // Cookies should have been copied via fs.copyFileSync
@@ -260,7 +260,7 @@ describe('ProfileManager', () => {
       });
 
       const manager = new ProfileManager();
-      manager.syncCookies(sourceDir, destDir);
+      manager.syncProfileData(sourceDir, destDir);
 
       // WAL/SHM/journal should be cleaned up
       expect(fs.existsSync(path.join(destDir, 'Default', 'Cookies-wal'))).toBe(false);
@@ -286,7 +286,7 @@ describe('ProfileManager', () => {
       });
 
       const manager = new ProfileManager();
-      manager.syncCookies(sourceDir, destDir);
+      manager.syncProfileData(sourceDir, destDir);
 
       const destPrefsPath = path.join(destDir, 'Default', 'Preferences');
       expect(fs.existsSync(destPrefsPath)).toBe(true);
@@ -310,7 +310,7 @@ describe('ProfileManager', () => {
       });
 
       const manager = new ProfileManager();
-      manager.syncCookies(sourceDir, destDir);
+      manager.syncProfileData(sourceDir, destDir);
 
       expect(fs.existsSync(path.join(destDir, 'Local State'))).toBe(true);
       expect(fs.readFileSync(path.join(destDir, 'Local State'), 'utf8')).toBe(
@@ -328,7 +328,7 @@ describe('ProfileManager', () => {
       });
 
       const manager = new ProfileManager();
-      expect(() => manager.syncCookies(sourceDir, destDir)).not.toThrow();
+      expect(() => manager.syncProfileData(sourceDir, destDir)).not.toThrow();
     });
 
     it('should update sync metadata after successful sync', () => {
@@ -342,7 +342,7 @@ describe('ProfileManager', () => {
       });
 
       const manager = new ProfileManager();
-      manager.syncCookies(sourceDir, destDir);
+      manager.syncProfileData(sourceDir, destDir);
 
       const metadata = manager.getSyncMetadata();
       expect(metadata).not.toBeNull();
@@ -505,7 +505,7 @@ describe('ProfileManager', () => {
     it('should return persistent profile with sync when locked and stale', () => {
       const manager = new ProfileManager();
       jest.spyOn(manager, 'needsSync').mockReturnValue(true);
-      jest.spyOn(manager, 'syncCookies').mockReturnValue({ atomic: true, success: true });
+      jest.spyOn(manager, 'syncProfileData').mockReturnValue({ atomic: true, success: true });
       jest.spyOn(manager, 'getOrCreatePersistentProfile').mockReturnValue('/mock/persistent');
 
       const result = manager.resolveProfile({
@@ -516,13 +516,13 @@ describe('ProfileManager', () => {
       expect(result.profileType).toBe('persistent');
       expect(result.userDataDir).toBe('/mock/persistent');
       expect(result.syncPerformed).toBe(true);
-      expect(manager.syncCookies).toHaveBeenCalledWith('/real/chrome/profile', '/mock/persistent');
+      expect(manager.syncProfileData).toHaveBeenCalledWith('/real/chrome/profile', '/mock/persistent');
     });
 
     it('should return persistent profile without sync when locked but fresh', () => {
       const manager = new ProfileManager();
       jest.spyOn(manager, 'needsSync').mockReturnValue(false);
-      jest.spyOn(manager, 'syncCookies');
+      jest.spyOn(manager, 'syncProfileData');
       jest.spyOn(manager, 'getOrCreatePersistentProfile').mockReturnValue('/mock/persistent');
 
       const result = manager.resolveProfile({
@@ -533,7 +533,7 @@ describe('ProfileManager', () => {
       expect(result.profileType).toBe('persistent');
       expect(result.userDataDir).toBe('/mock/persistent');
       expect(result.syncPerformed).toBe(false);
-      expect(manager.syncCookies).not.toHaveBeenCalled();
+      expect(manager.syncProfileData).not.toHaveBeenCalled();
     });
 
     it('should return persistent profile when no real profile dir exists', () => {
