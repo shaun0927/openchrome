@@ -3,6 +3,8 @@
  * Ported from extension
  */
 
+import { Page } from 'puppeteer-core';
+
 /** TTL for ref staleness warning (30 seconds) */
 export const REF_TTL_MS = 30_000;
 
@@ -178,6 +180,143 @@ export class RefIdManager {
         sessionCounters.set(newTargetId, counter);
         sessionCounters.delete(oldTargetId);
       }
+    }
+  }
+
+  /**
+   * Attempt to relocate a stale ref by searching for an element that matches the
+   * stored metadata (tagName + name/aria-label or textContent).
+   *
+   * Returns { backendNodeId, newRef } if the element is found and a new ref is
+   * registered for it, or null if the element cannot be located.
+   *
+   * This is used by computer and form_input to recover transparently from stale
+   * refs without surfacing an error to the LLM.
+   */
+  async tryRelocateRef(
+    sessionId: string,
+    tabId: string,
+    ref: string,
+    page: Page,
+    cdpClient: { send: (page: Page, method: string, params?: Record<string, unknown>) => Promise<unknown> }
+  ): Promise<{ backendNodeId: number; newRef: string } | null> {
+    const entry = this.getRef(sessionId, tabId, ref);
+    if (!entry) return null;
+
+    const { tagName, name, textContent, role } = entry;
+
+    // Build a selector from stored metadata. We need at least a tagName to proceed.
+    if (!tagName) return null;
+
+    try {
+      // Use page.evaluate to search for a matching element quickly.
+      // Strategy 1: tagName + aria-label/title exact match (most reliable).
+      // Strategy 2: tagName + text content prefix match.
+      // Strategy 3: tagName alone (only if role is unique enough, e.g. input types).
+      const foundNodeId = await page.evaluate(
+        (tag: string, elName: string | undefined, elText: string | undefined, elRole: string | undefined): number => {
+          const selector = tag;
+          const candidates = Array.from(document.querySelectorAll(selector));
+
+          // Helper: check visibility
+          function isVisible(el: Element): boolean {
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return false;
+            const style = window.getComputedStyle(el);
+            return style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+          }
+
+          const textPrefix = elText ? elText.slice(0, 30).trim() : '';
+          const nameLower = elName ? elName.toLowerCase() : '';
+
+          for (const el of candidates) {
+            if (!isVisible(el)) continue;
+
+            const inputEl = el as HTMLInputElement;
+
+            // Strategy 1: aria-label or title match
+            if (nameLower) {
+              const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+              const titleAttr = (el.getAttribute('title') || '').toLowerCase();
+              const placeholder = (inputEl.placeholder || '').toLowerCase();
+              if (ariaLabel === nameLower || titleAttr === nameLower || placeholder === nameLower) {
+                (el as unknown as { __relocateTarget: boolean }).__relocateTarget = true;
+                return 1;
+              }
+            }
+
+            // Strategy 2: textContent prefix match
+            if (textPrefix) {
+              const currentText = (el.textContent || '').trim().slice(0, 30);
+              if (currentText === textPrefix) {
+                (el as unknown as { __relocateTarget: boolean }).__relocateTarget = true;
+                return 1;
+              }
+            }
+          }
+
+          // Strategy 3: role-only match — only use for inputs/buttons with no text/name
+          if (!nameLower && !textPrefix && elRole) {
+            const roleLower = elRole.toLowerCase();
+            for (const el of candidates) {
+              if (!isVisible(el)) continue;
+              const inputEl = el as HTMLInputElement;
+              const elRoleAttr = (el.getAttribute('role') || '').toLowerCase();
+              const inferredRole = el.tagName === 'BUTTON' ? 'button'
+                : el.tagName === 'A' ? 'link'
+                : el.tagName === 'INPUT' ? (inputEl.type || 'textbox')
+                : elRoleAttr;
+              if (inferredRole === roleLower) {
+                (el as unknown as { __relocateTarget: boolean }).__relocateTarget = true;
+                return 1;
+              }
+            }
+          }
+
+          return 0;
+        },
+        tagName,
+        name,
+        textContent,
+        role
+      );
+
+      if (!foundNodeId) return null;
+
+      // Get the backend node ID via CDP
+      const { result: batchResult } = await cdpClient.send(page, 'Runtime.evaluate', {
+        expression: `(() => {
+          const el = document.querySelector('*.__relocateTarget') ||
+            Array.from(document.querySelectorAll('*')).find(e => e.__relocateTarget);
+          if (el) { delete el.__relocateTarget; }
+          return el || null;
+        })()`,
+        returnByValue: false,
+      }) as { result: { objectId?: string } };
+
+      if (!batchResult?.objectId) return null;
+
+      const { node } = await cdpClient.send(page, 'DOM.describeNode', {
+        objectId: batchResult.objectId,
+      }) as { node: { backendNodeId: number } };
+
+      if (!node?.backendNodeId) return null;
+
+      // Register a new ref for the re-located element
+      const newRef = this.generateRef(
+        sessionId,
+        tabId,
+        node.backendNodeId,
+        entry.role,
+        entry.name,
+        entry.tagName,
+        entry.textContent
+      );
+
+      return { backendNodeId: node.backendNodeId, newRef };
+    } catch {
+      // Any CDP or evaluate failure means we cannot relocate
+      return null;
     }
   }
 

@@ -73,7 +73,7 @@ const handler: ToolHandler = async (
     }
 
     // Get the backend node ID
-    const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+    let backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
     if (backendNodeId === undefined) {
       return {
         content: [
@@ -102,13 +102,23 @@ const handler: ToolHandler = async (
         );
 
         if (!validation.valid && validation.stale) {
-          return {
-            content: [{
-              type: 'text',
-              text: `Error: ${ref} is stale — ${validation.reason}. The DOM has changed since the element was found. Run find or read_page again to get fresh refs.`,
-            }],
-            isError: true,
-          };
+          // Attempt transparent recovery: re-find the element using stored metadata
+          const relocated = await refIdManager.tryRelocateRef(
+            sessionId, tabId, ref, page, cdpClient
+          );
+
+          if (relocated) {
+            console.error(`[ref-recovery] ${ref} was stale, re-located as ${relocated.newRef}`);
+            backendNodeId = relocated.backendNodeId;
+          } else {
+            return {
+              content: [{
+                type: 'text',
+                text: `Error: ${ref} is stale — ${validation.reason}. Element could not be re-located. Run find or read_page again to get fresh refs.`,
+              }],
+              isError: true,
+            };
+          }
         }
       } catch {
         // If validation fails, proceed — DOM.resolveNode will catch removed elements
