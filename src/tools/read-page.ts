@@ -409,9 +409,6 @@ const handler: ToolHandler = async (
           searchbox: 'input',
           checkbox: 'input',
           radio: 'input',
-          combobox: 'select',
-          listbox: 'select',
-          heading: 'h1',
           image: 'img',
           table: 'table',
           row: 'tr',
@@ -425,7 +422,7 @@ const handler: ToolHandler = async (
           article: 'article',
           section: 'section',
         };
-        const tagName = AX_ROLE_TO_TAG[role] ?? role.toLowerCase();
+        const tagName: string | undefined = AX_ROLE_TO_TAG[role];
         refId = refIdManager.generateRef(
           sessionId,
           tabId,
