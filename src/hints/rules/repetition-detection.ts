@@ -51,6 +51,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'slow-page-warning',
     priority: 93,
+    maxSeverity: 'warning',
     match(ctx: HintContext): string | null {
       // Fire when current tool is 'computer' (screenshot) and a recent call was slow
       if (ctx.toolName !== 'computer') return null;
@@ -110,6 +111,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'screenshot-verification-loop',
     priority: 91,
+    maxSeverity: 'warning',
     match(ctx) {
       // Detect click-screenshot alternation pattern from recentCalls
       if (ctx.toolName !== 'computer') return null;
@@ -163,6 +165,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'js-escalation-ladder',
     priority: 92,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'javascript_tool') return null;
 
@@ -201,6 +204,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'same-tool-same-result',
     priority: 252,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.isError) return null;
       if (!sameToolSameResult(ctx)) return null;
@@ -210,6 +214,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'url-pagination-pattern',
     priority: 245,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'navigate') return null;
 
