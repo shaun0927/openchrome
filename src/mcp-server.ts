@@ -54,6 +54,11 @@ export function isConnectionError(error: unknown): boolean {
     'cdpsession connection closed',
     'puppeteer.connect() timed out',
     'session initialization timed out',
+    'does not belong to session',
+    'not found in session',
+    'frame was detached',
+    'most likely the page has been closed',
+    'page has been closed',
   ];
   const lowerMessage = message.toLowerCase();
   return patterns.some(pattern => lowerMessage.includes(pattern));
@@ -64,9 +69,9 @@ export function isConnectionError(error: unknown): boolean {
 const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status']);
 
 const RECONNECTION_GUIDANCE =
-  '\n\n⚠️ CONNECTION RECOVERY: The browser connection was lost. ' +
-  'To reconnect, run /mcp in Claude Code. ' +
-  'Do NOT run "claude mcp remove" or "claude mcp add" — this will break the MCP configuration.';
+  '\n\nNote: The browser connection was lost and auto-reconnect was attempted. ' +
+  'Simply retry your operation — Chrome will be re-launched automatically if needed. ' +
+  'If the error persists, use list_tabs to get fresh tab IDs.';
 
 export interface MCPServerOptions {
   dashboard?: boolean;
@@ -583,6 +588,12 @@ export class MCPServer {
               }),
             ]);
             console.error(`[MCPServer] Reconnected, retrying ${toolName}...`);
+            // Wait for session state reconciliation before retrying
+            try {
+              await this.sessionManager.reconcileAfterReconnect();
+            } catch (reconcileErr) {
+              console.error('[MCPServer] Post-reconnect reconciliation failed:', reconcileErr);
+            }
             let tid2: ReturnType<typeof setTimeout>;
             result = await Promise.race([
               Promise.resolve(tool.handler(sessionId, toolArgs)).finally(() => clearTimeout(tid2)),
