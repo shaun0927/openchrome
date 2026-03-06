@@ -337,10 +337,10 @@ const handler: ToolHandler = async (
     const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
 
     // Get the accessibility tree
-    const { nodes } = await cdpClient.send<{ nodes: AXNode[] }>(
-      page,
-      'Accessibility.getFullAXTree',
-      { depth: fetchDepth }
+    const { nodes } = await withTimeout(
+      cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
+      15000,
+      'Accessibility.getFullAXTree'
     );
 
     // Clear previous refs for this target
@@ -401,12 +401,35 @@ const handler: ToolHandler = async (
       // Generate ref ID if element has a backend DOM node
       let refId = '';
       if (node.backendDOMNodeId) {
+        // Map AX roles to approximate HTML tag names for ref validation
+        const AX_ROLE_TO_TAG: Record<string, string> = {
+          button: 'button',
+          link: 'a',
+          textbox: 'input',
+          searchbox: 'input',
+          checkbox: 'input',
+          radio: 'input',
+          image: 'img',
+          table: 'table',
+          row: 'tr',
+          cell: 'td',
+          list: 'ul',
+          listitem: 'li',
+          form: 'form',
+          dialog: 'dialog',
+          navigation: 'nav',
+          main: 'main',
+          article: 'article',
+          section: 'section',
+        };
+        const tagName: string | undefined = AX_ROLE_TO_TAG[role];
         refId = refIdManager.generateRef(
           sessionId,
           tabId,
           node.backendDOMNodeId,
           role,
-          name
+          name,
+          tagName
         );
       }
 

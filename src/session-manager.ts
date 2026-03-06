@@ -128,6 +128,15 @@ export class SessionManager {
           console.error('[SessionManager] Post-reconnect target validation failed:', err);
         });
       }
+      if (event.type === 'reconnect_failed') {
+        // Chrome is gone — purge all stale target mappings
+        console.error('[SessionManager] Reconnect failed, clearing stale target mappings');
+        for (const targetId of Array.from(this.targetToWorker.keys())) {
+          this.onTargetClosed(targetId);
+          // Safety: force-delete in case session is already gone and onTargetClosed skipped it
+          this.targetToWorker.delete(targetId);
+        }
+      }
     });
 
     // Store storage state config if enabled
@@ -896,7 +905,7 @@ export class SessionManager {
       // (we skip targetcreated indexing to prevent ghost tabs).
       const recovered = await this.tryRecoverTarget(sessionId, targetId, workerId);
       if (recovered) return recovered;
-      throw new Error(`Target ${targetId} does not belong to session ${sessionId}`);
+      throw new Error(`Target ${targetId} not found in session ${sessionId}. Chrome may have been restarted. Use list_tabs or navigate to get fresh tab IDs.`);
     }
 
     if (workerId && ownerInfo.workerId !== workerId) {
@@ -1176,7 +1185,7 @@ export class SessionManager {
     params?: Record<string, unknown>
   ): Promise<T> {
     if (!this.validateTargetOwnership(sessionId, targetId)) {
-      throw new Error(`Target ${targetId} does not belong to session ${sessionId}`);
+      throw new Error(`Target ${targetId} not found in session ${sessionId}. Chrome may have been restarted. Use list_tabs or navigate to get fresh tab IDs.`);
     }
 
     this.touchSession(sessionId);
@@ -1219,6 +1228,14 @@ export class SessionManager {
         });
       }
     }
+  }
+
+  /**
+   * Public wrapper for validateTargetsAfterReconnect().
+   * Called by MCP server before retrying a tool after reconnect.
+   */
+  async reconcileAfterReconnect(): Promise<void> {
+    await this.validateTargetsAfterReconnect();
   }
 
   /**

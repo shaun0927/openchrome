@@ -96,6 +96,19 @@ export class RefIdManager {
     this.counters.delete(sessionId);
   }
 
+  clearTargetRefsAllSessions(targetId: string): void {
+    for (const [, sessionRefs] of this.refs) {
+      if (sessionRefs.has(targetId)) {
+        sessionRefs.delete(targetId);
+      }
+    }
+    for (const [, sessionCounters] of this.counters) {
+      if (sessionCounters.has(targetId)) {
+        sessionCounters.set(targetId, 0);
+      }
+    }
+  }
+
   getTargetRefs(sessionId: string, targetId: string): RefEntry[] {
     const targetRefs = this.refs.get(sessionId)?.get(targetId);
     if (!targetRefs) {
