@@ -50,7 +50,10 @@ export const sequenceDetectionRules: HintRule[] = [
     match(ctx) {
       if (ctx.toolName !== 'navigate') return null;
       if (ctx.isError) return null;  // isError paths already carry inline guidance
-      if (/login|sign.?in|log.?in|auth|oauth/i.test(ctx.resultText)) {
+      // Check for the structured authRedirect field from navigate response,
+      // not broad regex matching which causes false positives on pages
+      // containing "auth" keywords (e.g., Cloudflare Turnstile, OAuth docs).
+      if (/"authRedirect"\s*:\s*true/i.test(ctx.resultText)) {
         return 'Hint: Authentication required — login page detected. ' +
           'The user must be logged in via their Chrome profile. ' +
           'STOP trying to authenticate programmatically. ' +

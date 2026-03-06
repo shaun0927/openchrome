@@ -138,7 +138,8 @@ export class ProfileManager {
   }
 
   /**
-   * Synchronise cookies (and Preferences) from `sourceDir` into `destDir`.
+   * Synchronise cookies, localStorage, IndexedDB, and Preferences from
+   * `sourceDir` into `destDir`.
    *
    * Uses the `sqlite3` CLI `.backup` command for an atomic, consistent
    * snapshot of the Cookies database. Falls back to a plain file copy when
@@ -151,7 +152,7 @@ export class ProfileManager {
    *          `{ atomic: false, success: true }` when the plain-copy fallback was used,
    *          `{ atomic: false, success: false }` when all methods failed.
    */
-  syncCookies(
+  syncProfileData(
     sourceDir: string,
     destDir: string
   ): { atomic: boolean; success: boolean } {
@@ -230,6 +231,28 @@ export class ProfileManager {
         }
       }
 
+      // --- 2b. Copy Local Storage (LevelDB) ----------------------------------
+      const localStorageSrc = path.join(sourceDir, 'Default', 'Local Storage');
+      const localStorageDest = path.join(destDefault, 'Local Storage');
+      if (fs.existsSync(localStorageSrc)) {
+        try {
+          this._copyDirectoryRecursive(localStorageSrc, localStorageDest);
+        } catch (err) {
+          console.error('[ProfileManager] Local Storage copy failed (non-fatal):', err);
+        }
+      }
+
+      // --- 2c. Copy IndexedDB -------------------------------------------------
+      const indexedDBSrc = path.join(sourceDir, 'Default', 'IndexedDB');
+      const indexedDBDest = path.join(destDefault, 'IndexedDB');
+      if (fs.existsSync(indexedDBSrc)) {
+        try {
+          this._copyDirectoryRecursive(indexedDBSrc, indexedDBDest);
+        } catch (err) {
+          console.error('[ProfileManager] IndexedDB copy failed (non-fatal):', err);
+        }
+      }
+
       // --- 3. Copy and patch Preferences ------------------------------------
       const prefsSrc = path.join(sourceDir, 'Default', 'Preferences');
       if (fs.existsSync(prefsSrc)) {
@@ -262,12 +285,12 @@ export class ProfileManager {
       this.updateSyncMetadata(sourceDir);
 
       console.error(
-        `[ProfileManager] Cookie sync complete (atomic=${atomic}) from ${sourceDir} → ${destDir}`
+        `[ProfileManager] Profile data sync complete (atomic=${atomic}) from ${sourceDir} → ${destDir}`
       );
       return { atomic, success: true };
     } catch (err) {
       console.error(
-        '[ProfileManager] syncCookies failed (non-fatal):',
+        '[ProfileManager] syncProfileData failed (non-fatal):',
         err
       );
       return { atomic: false, success: false };
@@ -398,8 +421,8 @@ export class ProfileManager {
         };
       }
 
-      // Stale — sync cookies from real profile into persistent profile
-      const syncResult = this.syncCookies(realProfileDir, persistentDir);
+      // Stale — sync profile data from real profile into persistent profile
+      const syncResult = this.syncProfileData(realProfileDir, persistentDir);
       return {
         userDataDir: persistentDir,
         profileType: 'persistent',
@@ -419,6 +442,24 @@ export class ProfileManager {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Recursively copy a directory. Overwrites existing files.
+   * Used for copying Local Storage (LevelDB) and IndexedDB directories.
+   */
+  private _copyDirectoryRecursive(src: string, dest: string): void {
+    fs.mkdirSync(dest, { recursive: true });
+    const entries = fs.readdirSync(src, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+      if (entry.isDirectory()) {
+        this._copyDirectoryRecursive(srcPath, destPath);
+      } else {
+        fs.copyFileSync(srcPath, destPath);
+      }
+    }
+  }
 
   /** Check whether the `sqlite3` CLI is available on PATH. */
   private _isSqlite3Available(): boolean {
