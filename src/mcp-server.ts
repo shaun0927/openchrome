@@ -69,6 +69,7 @@ const RECONNECTION_GUIDANCE =
 export interface MCPServerOptions {
   dashboard?: boolean;
   dashboardRefreshInterval?: number;
+  initialToolTier?: ToolTier;
 }
 
 export class MCPServer {
@@ -88,6 +89,10 @@ export class MCPServer {
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
     this.options = options;
+
+    if (options.initialToolTier) {
+      this.exposedTier = options.initialToolTier;
+    }
 
     // Register built-in resources
     this.registerResource(usageGuideResource);
@@ -480,13 +485,29 @@ export class MCPServer {
 
     // Handle the expand_tools meta-tool before normal tool lookup
     if (toolName === 'expand_tools') {
+      const oldTier = this.exposedTier;
       const tier = parseInt(String(toolArgs?.tier ?? '2'), 10) || 2;
       this.expandToolTier(Math.min(tier, 3) as ToolTier);
+
+      // Collect newly-exposed tool definitions for clients that don't support list_changed
+      const newTools = Array.from(this.tools.values())
+        .filter(r => {
+          const t = getToolTier(r.definition.name);
+          return t <= this.exposedTier && t > oldTier;
+        })
+        .map(r => r.definition);
+
       const toolCount = Array.from(this.tools.values()).filter(
         r => getToolTier(r.definition.name) <= this.exposedTier
       ).length;
+
+      let text = `Tool tier expanded to ${this.exposedTier}. Now exposing ${toolCount} tools.`;
+      if (newTools.length > 0) {
+        text += `\n\nNewly available tools:\n${JSON.stringify(newTools, null, 2)}\n\nYou can now call these tools directly by name.`;
+      }
+
       return {
-        content: [{ type: 'text', text: `Tool tier expanded to ${this.exposedTier}. Now exposing ${toolCount} tools. Call tools/list to see the updated list.` }],
+        content: [{ type: 'text', text }],
       };
     }
 

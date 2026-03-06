@@ -8,9 +8,10 @@
  */
 
 import { Command } from 'commander';
-import { getMCPServer } from './mcp-server';
+import { getMCPServer, setMCPServerOptions } from './mcp-server';
 import { registerAllTools } from './tools';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
+import { ToolTier } from './config/tool-tiers';
 import { writePidFile } from './utils/pid-manager';
 import { getVersion } from './version';
 
@@ -45,8 +46,9 @@ program
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
   .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
   .option('--audit-log', 'Enable security audit logging (default: false)')
+  .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; serverMode?: boolean }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; allTools?: boolean; serverMode?: boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -126,6 +128,16 @@ program
         security: { ...existing, audit_log: true },
       });
       console.error('[openchrome] Audit logging: enabled');
+    }
+
+    // Tool tier configuration
+    const envTier = parseInt(process.env.OPENCHROME_TOOL_TIER || '', 10);
+    if (options.allTools || envTier >= 3) {
+      setMCPServerOptions({ initialToolTier: 3 as ToolTier });
+      console.error('[openchrome] All tools exposed from startup');
+    } else if (envTier === 2) {
+      setMCPServerOptions({ initialToolTier: 2 as ToolTier });
+      console.error('[openchrome] Tier 2 tools exposed from startup');
     }
 
     const server = getMCPServer();
