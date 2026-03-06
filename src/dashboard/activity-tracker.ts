@@ -114,9 +114,21 @@ export class ActivityTracker extends EventEmitter {
   }
 
   /**
-   * Get recent completed calls
+   * Get recent completed calls.
+   * When sessionId is provided, only returns calls matching that session,
+   * preventing cross-session pollution in parallel worker scenarios.
    */
-  getRecentCalls(limit: number = 20): ToolCallEvent[] {
+  getRecentCalls(limit: number = 20, sessionId?: string): ToolCallEvent[] {
+    if (sessionId !== undefined) {
+      const filtered: ToolCallEvent[] = [];
+      for (const call of this.completedCalls) {
+        if (call.sessionId === sessionId) {
+          filtered.push(call);
+          if (filtered.length >= limit) break;
+        }
+      }
+      return filtered;
+    }
     return this.completedCalls.slice(0, limit);
   }
 
