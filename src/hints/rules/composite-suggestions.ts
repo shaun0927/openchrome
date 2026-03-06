@@ -16,6 +16,7 @@ export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'find-then-click',
     priority: 200,
+    maxSeverity: 'info',
     match(ctx) {
       if (ctx.toolName !== 'computer' && ctx.toolName !== 'click') return null;
       if (!lastToolWas(ctx, 'find')) return null;
@@ -25,6 +26,7 @@ export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'multiple-form-input',
     priority: 201,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'form_input') return null;
       if (recentToolCount(ctx, 'form_input') >= 1) {
@@ -36,6 +38,7 @@ export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'navigate-then-click',
     priority: 202,
+    maxSeverity: 'info',
     match(ctx) {
       if (ctx.toolName !== 'computer' && ctx.toolName !== 'click' && ctx.toolName !== 'click_element') return null;
       if (!lastToolWas(ctx, 'navigate')) return null;
@@ -47,6 +50,7 @@ export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'read-page-truncated',
     priority: 203,
+    maxSeverity: 'info',
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
       if (ctx.isError) return null;
@@ -59,6 +63,7 @@ export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'contenteditable-click-hint',
     priority: 204, // After existing composite rules (200-203)
+    maxSeverity: 'info',
     match(ctx) {
       if (ctx.toolName !== 'computer') return null;
       if (ctx.isError) return null;
@@ -79,6 +84,7 @@ export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'coordinate-click-after-read',
     priority: 205,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'computer') return null;
       if (ctx.isError) return null;
@@ -97,6 +103,7 @@ export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'state-check-after-action',
     priority: 206,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
       if (
@@ -113,6 +120,7 @@ export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'repeated-read-page',
     priority: 207,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
       if (recentToolCount(ctx, 'read_page') >= 2) {
