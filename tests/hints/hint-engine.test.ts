@@ -673,6 +673,28 @@ describe('HintEngine', () => {
         expect(rule.maxSeverity === undefined || ['info', 'warning', 'critical'].includes(rule.maxSeverity)).toBe(true);
       }
     });
+
+    it('should cap repetition-detection advisory rules at warning', () => {
+      // js-escalation-ladder has maxSeverity: 'warning'
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('data extracted');
+
+      // Fire 10 times to exceed critical threshold
+      let lastHint;
+      for (let i = 0; i < 10; i++) {
+        lastHint = engine.getHint('javascript_tool', result, false);
+      }
+
+      expect(lastHint).not.toBeNull();
+      expect(lastHint!.rule).toBe('js-escalation-ladder');
+      expect(lastHint!.fireCount).toBeGreaterThanOrEqual(5);
+      expect(lastHint!.severity).toBe('warning');
+      expect(lastHint!.hint).not.toContain('CRITICAL');
+    });
   });
 
   describe('Progress Tracking Integration', () => {
