@@ -450,5 +450,7 @@ export function createMockRefIdManager() {
 
       return { valid: true, stale: Date.now() - entry.createdAt > 30_000 };
     }),
+
+    tryRelocateRef: jest.fn().mockResolvedValue(null),
   };
 }
