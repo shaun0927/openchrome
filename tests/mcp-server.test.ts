@@ -570,7 +570,7 @@ describe('MCPServer', () => {
       expect(response.result!.isError).toBe(true);
       expect(response.result!.content![0].text).toContain('Connection closed');
       expect(response.result!.content![0].text).toContain('auto-reconnect was attempted');
-      expect(response.result!.content![0].text).toContain('list_tabs');
+      expect(response.result!.content![0].text).toContain('tabs_context');
       expect(mockForceReconnect).toHaveBeenCalledTimes(1);
     });
 
@@ -666,7 +666,7 @@ describe('MCPServer', () => {
 
       expect(response.result!.isError).toBe(true);
       expect(response.result!.content![0].text).toContain('auto-reconnect was attempted');
-      expect(response.result!.content![0].text).toContain('list_tabs');
+      expect(response.result!.content![0].text).toContain('tabs_context');
     });
   });
 });
