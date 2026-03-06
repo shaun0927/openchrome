@@ -32,6 +32,7 @@ const handler: ToolHandler = async (
     const capabilities = {
       extensions: state.extensionsAvailable,
       savedPasswords: state.type === 'real',
+      localStorageSynced: state.type === 'real',
       localStorage: state.type === 'real' || state.type === 'persistent',
       bookmarks: state.type === 'real',
       formAutofill: state.type === 'real',
@@ -61,7 +62,7 @@ const handler: ToolHandler = async (
       if (state.cookieCopiedAt) {
         lines.push(`Cookie sync age: ${formatAge(state.cookieCopiedAt)}`);
       }
-      lines.push('Available: synced cookies, localStorage, IndexedDB, service workers (persist across sessions)');
+      lines.push('Available: synced cookies, localStorage, IndexedDB (persist across sessions)');
       lines.push('Not available: extensions, saved passwords, bookmarks, form autofill');
       lines.push('');
       lines.push('Tip: Cookies are synced from the real profile. If authentication fails, a fresh sync will happen on next launch.');
