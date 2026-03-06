@@ -41,7 +41,7 @@ interface XPathElementInfo {
 const definition: MCPToolDefinition = {
   name: 'query_dom',
   description:
-    'Query DOM elements via CSS selectors or XPath. Returns tag, attributes, text, and position.',
+    'Query DOM elements via CSS selectors or XPath. Returns tag, attributes, text, and position. CSS results include a ref field (el_0, el_1, ...) for referencing elements in subsequent tool calls.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -227,7 +227,7 @@ async function handleCSS(
           }
 
           return {
-            ref: `ref_${index}`,
+            ref: `el_${index}`,
             tagName: el.tagName.toLowerCase(),
             id: el.id || null,
             className: el.className,
@@ -306,7 +306,7 @@ async function handleCSS(
       }
 
       return {
-        ref: 'ref_0',
+        ref: 'el_0',
         tagName: el.tagName.toLowerCase(),
         id: el.id || null,
         className: el.className,
