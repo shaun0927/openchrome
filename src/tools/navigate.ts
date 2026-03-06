@@ -130,7 +130,10 @@ const handler: ToolHandler = async (
             AdaptiveScreenshot.getInstance().reset(existingTabId);
             const [summary, reuseBlocking] = await Promise.all([
               generateVisualSummary(page),
-              detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (tab-reuse):', e); return null; }),
+              Promise.race([
+                detectBlockingPage(page),
+                new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
+              ]).catch(e => { console.error('[navigate] detectBlockingPage error (tab-reuse):', e); return null; }),
             ]);
             const reuseResultText = JSON.stringify({
               action: 'navigate',
@@ -155,7 +158,10 @@ const handler: ToolHandler = async (
       AdaptiveScreenshot.getInstance().reset(targetId);
       const [newTabSummary, newTabBlocking] = await Promise.all([
         generateVisualSummary(page),
-        detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (new-tab):', e); return null; }),
+        Promise.race([
+          detectBlockingPage(page),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
+        ]).catch(e => { console.error('[navigate] detectBlockingPage error (new-tab):', e); return null; }),
       ]);
       const newTabResultText = JSON.stringify({
         action: 'navigate',
@@ -214,7 +220,10 @@ const handler: ToolHandler = async (
       AdaptiveScreenshot.getInstance().reset(tabId);
       const [backSummary, backBlocking] = await Promise.all([
         generateVisualSummary(page),
-        detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (back):', e); return null; }),
+        Promise.race([
+          detectBlockingPage(page),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
+        ]).catch(e => { console.error('[navigate] detectBlockingPage error (back):', e); return null; }),
       ]);
       const backResultText = JSON.stringify({
         action: 'back',
@@ -233,7 +242,10 @@ const handler: ToolHandler = async (
       AdaptiveScreenshot.getInstance().reset(tabId);
       const [fwdSummary, fwdBlocking] = await Promise.all([
         generateVisualSummary(page),
-        detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (forward):', e); return null; }),
+        Promise.race([
+          detectBlockingPage(page),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
+        ]).catch(e => { console.error('[navigate] detectBlockingPage error (forward):', e); return null; }),
       ]);
       const fwdResultText = JSON.stringify({
         action: 'forward',
@@ -325,7 +337,10 @@ const handler: ToolHandler = async (
     AdaptiveScreenshot.getInstance().reset(tabId);
     const [navSummary, navBlocking] = await Promise.all([
       generateVisualSummary(page),
-      detectBlockingPage(page).catch(e => { console.error('[navigate] detectBlockingPage error (existing-tab):', e); return null; }),
+      Promise.race([
+        detectBlockingPage(page),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
+      ]).catch(e => { console.error('[navigate] detectBlockingPage error (existing-tab):', e); return null; }),
     ]);
     const navResultText = JSON.stringify({
       action: 'navigate',

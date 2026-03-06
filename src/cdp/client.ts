@@ -7,6 +7,7 @@ import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
 import { getTargetId } from '../utils/puppeteer-helpers';
+import { getRefIdManager } from '../utils/ref-id-manager';
 import {
   DEFAULT_VIEWPORT,
   DEFAULT_NAVIGATION_TIMEOUT_MS,
@@ -1089,6 +1090,18 @@ export class CDPClient {
     // Deny file downloads by default — Content-Disposition: attachment
     // responses block the navigation promise indefinitely.
     this.send(page, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
+
+    // Clear refs when main frame navigates (SPA navigation invalidates all backendDOMNodeIds)
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) {
+        try {
+          const targetId = getTargetId(page.target());
+          getRefIdManager().clearTargetRefsAllSessions(targetId);
+        } catch {
+          // Ignore errors during cleanup
+        }
+      }
+    });
   }
 
   /**
