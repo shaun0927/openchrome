@@ -97,4 +97,35 @@ describe('expand_tools schema (Gemini compatibility)', () => {
     const text = (result as any).content?.[0]?.text;
     expect(text).toContain('Tool tier expanded');
   });
+
+  test('expand_tools response includes newly available tool definitions', async () => {
+    // Register a tool that is mapped to tier 2 in TOOL_TIERS
+    server.registerTool('click_element', jest.fn(), {
+      name: 'click_element',
+      description: 'Click an element by selector',
+      inputSchema: { type: 'object', properties: {} },
+    });
+
+    // @ts-expect-error - accessing private method for testing
+    const result = await server.handleToolsCall({ name: 'expand_tools', arguments: { tier: '2' } });
+
+    const text = (result as any).content?.[0]?.text;
+    expect(text).toContain('Tool tier expanded');
+    expect(text).toContain('Newly available tools:');
+    expect(text).toContain('You can now call these tools directly by name.');
+  });
+
+  test('expand_tools response omits newly available section when no new tools', async () => {
+    // Expand to tier 2 first
+    // @ts-expect-error - accessing private method for testing
+    await server.handleToolsCall({ name: 'expand_tools', arguments: { tier: '2' } });
+
+    // Expand to tier 2 again (no change)
+    // @ts-expect-error - accessing private method for testing
+    const result = await server.handleToolsCall({ name: 'expand_tools', arguments: { tier: '2' } });
+
+    const text = (result as any).content?.[0]?.text;
+    expect(text).toContain('Tool tier expanded');
+    expect(text).not.toContain('Newly available tools:');
+  });
 });
