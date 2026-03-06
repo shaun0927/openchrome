@@ -317,6 +317,8 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       return sessions.size;
     },
 
+    reconcileAfterReconnect: jest.fn().mockResolvedValue(undefined),
+
     addEventListener: jest.fn(),
     removeEventListener: jest.fn(),
 
