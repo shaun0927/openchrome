@@ -19,6 +19,7 @@ import type { ActivityTracker } from '../dashboard/activity-tracker';
 import { PatternLearner } from './pattern-learner';
 import { ProgressTracker } from './progress-tracker.js';
 import { errorRecoveryRules } from './rules/error-recovery';
+import { blockingPageRules } from './rules/blocking-page';
 import { compositeSuggestionRules } from './rules/composite-suggestions';
 import { sequenceDetectionRules } from './rules/sequence-detection';
 import { repetitionDetectionRules } from './rules/repetition-detection';
@@ -95,6 +96,7 @@ export class HintEngine {
     this.rules = [
       ...setupHintRules,             // priority 90
       ...errorRecoveryRules,         // priority 100-108
+      ...blockingPageRules,          // priority 120-122
       ...paginationDetectionRules,   // priority 190-192
       ...compositeSuggestionRules,   // priority 200-203
       ...repetitionDetectionRules,   // priority 245-252
