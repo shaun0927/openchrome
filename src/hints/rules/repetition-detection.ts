@@ -33,9 +33,20 @@ function detectOscillation(ctx: HintContext): boolean {
 }
 
 /**
+ * Tools where sequential repeated calls are expected batch behavior,
+ * not a sign of being stuck. These are exempt from same-tool-same-result.
+ */
+const BATCH_EXEMPT_TOOLS = new Set([
+  'tabs_create',
+  'tabs_close',
+  'navigate',
+]);
+
+/**
  * Detect same tool called repeatedly with same result (non-error).
  */
 function sameToolSameResult(ctx: HintContext): boolean {
+  if (BATCH_EXEMPT_TOOLS.has(ctx.toolName)) return false;
   if (ctx.recentCalls.length < 2) return false;
   const prev = ctx.recentCalls[0];
   const prevPrev = ctx.recentCalls[1];
@@ -51,6 +62,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'slow-page-warning',
     priority: 93,
+    maxSeverity: 'warning',
     match(ctx: HintContext): string | null {
       // Fire when current tool is 'computer' (screenshot) and a recent call was slow
       if (ctx.toolName !== 'computer') return null;
@@ -110,6 +122,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'screenshot-verification-loop',
     priority: 91,
+    maxSeverity: 'warning',
     match(ctx) {
       // Detect click-screenshot alternation pattern from recentCalls
       if (ctx.toolName !== 'computer') return null;
@@ -163,6 +176,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'js-escalation-ladder',
     priority: 92,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'javascript_tool') return null;
 
@@ -201,6 +215,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'same-tool-same-result',
     priority: 252,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.isError) return null;
       if (!sameToolSameResult(ctx)) return null;
@@ -210,6 +225,7 @@ export const repetitionDetectionRules: HintRule[] = [
   {
     name: 'url-pagination-pattern',
     priority: 245,
+    maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'navigate') return null;
 

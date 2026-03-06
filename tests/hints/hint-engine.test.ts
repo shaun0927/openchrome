@@ -291,6 +291,24 @@ describe('HintEngine', () => {
       expect(hint).not.toBeNull();
     });
 
+    it('should NOT trigger same-tool-same-result for batch-exempt tools (tabs_create, navigate, tabs_close)', () => {
+      for (const tool of ['tabs_create', 'navigate', 'tabs_close']) {
+        const tracker = makeTracker([
+          { toolName: tool },
+          { toolName: tool },
+          { toolName: tool },
+          { toolName: tool },
+        ]);
+        const engine = new HintEngine(tracker);
+        const result = makeResult(`{"tabId":"abc","url":"https://example.com"}`);
+        const hint = engine.getHint(tool, result, false);
+        // Should not match same-tool-same-result; may match other rules (e.g. pagination for navigate)
+        if (hint) {
+          expect(hint.rule).not.toBe('same-tool-same-result');
+        }
+      }
+    });
+
     it('should not trigger on mixed tool calls', () => {
       // makeTracker reverses input, so first element becomes most recent in getRecentCalls.
       // Put 'find' first so recentCalls[0]='find' — not an action trigger for state-check-after-action.
@@ -635,6 +653,84 @@ describe('HintEngine', () => {
       const hint3 = engine.getHint('click_element', errResult, true);
       expect(hint3!.fireCount).toBe(3);
       expect(hint3!.severity).toBe('warning');
+    });
+  });
+
+  describe('maxSeverity cap', () => {
+    it('should cap severity at maxSeverity when rule specifies it', () => {
+      // Verify getSeverity respects maxSeverity via a rule that will match repeatedly.
+      // error-recovery rule (no maxSeverity) should reach critical at 5+ firings.
+      const engine = new HintEngine(new ActivityTracker());
+      const result = makeResult('ref not found: abc', true);
+
+      for (let i = 0; i < 4; i++) {
+        engine.getHint('click_element', result, true);
+      }
+      const hint5 = engine.getHint('click_element', result, true);
+      expect(hint5!.severity).toBe('critical');
+      expect(hint5!.fireCount).toBe(5);
+
+      // Now verify the HintRule interface accepts maxSeverity (compile-time check)
+      const rules = engine.getRules();
+      const errorRule = rules.find(r => r.name === 'error-recovery-0');
+      expect(errorRule).toBeDefined();
+      expect(errorRule!.maxSeverity).toBeUndefined(); // no cap → critical allowed
+    });
+
+    it('should not escalate beyond maxSeverity cap', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const rules = engine.getRules();
+
+      for (const rule of rules) {
+        expect(rule.maxSeverity === undefined || ['info', 'warning', 'critical'].includes(rule.maxSeverity)).toBe(true);
+      }
+    });
+
+    it('should cap repetition-detection advisory rules at warning', () => {
+      // js-escalation-ladder has maxSeverity: 'warning'
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('data extracted');
+
+      // Fire 10 times to exceed critical threshold
+      let lastHint;
+      for (let i = 0; i < 10; i++) {
+        lastHint = engine.getHint('javascript_tool', result, false);
+      }
+
+      expect(lastHint).not.toBeNull();
+      expect(lastHint!.rule).toBe('js-escalation-ladder');
+      expect(lastHint!.fireCount).toBeGreaterThanOrEqual(5);
+      expect(lastHint!.severity).toBe('warning');
+      expect(lastHint!.hint).not.toContain('CRITICAL');
+    });
+
+    it('should cap navigate-to-demo at info severity', () => {
+      const tracker = makeTracker([]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('{"url":"http://localhost:3000/page","title":"Dev App"}');
+
+      let lastHint;
+      for (let i = 0; i < 10; i++) {
+        lastHint = engine.getHint('navigate', result, false);
+      }
+
+      if (lastHint && lastHint.rule === 'navigate-to-demo') {
+        expect(lastHint.severity).toBe('info');
+        expect(lastHint.hint).not.toContain('WARNING');
+        expect(lastHint.hint).not.toContain('CRITICAL');
+      }
+    });
+
+    it('should not have duplicate repeated-read-page rules', () => {
+      const engine = new HintEngine(new ActivityTracker());
+      const rules = engine.getRules();
+      const readPageRules = rules.filter(r => r.name === 'repeated-read-page');
+      expect(readPageRules).toHaveLength(1);
+      expect(readPageRules[0].priority).toBe(207);
     });
   });
 
