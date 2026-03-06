@@ -1217,6 +1217,10 @@ export class SessionManager {
         if (worker) {
           worker.targets.delete(targetId);
         }
+
+        // Clean up ref IDs before removing from targetToWorker mapping
+        getRefIdManager().clearTargetRefs(ownerInfo.sessionId, targetId);
+
         this.targetToWorker.delete(targetId);
 
         this.emitEvent({
