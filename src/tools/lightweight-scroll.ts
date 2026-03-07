@@ -92,6 +92,7 @@ const handler: ToolHandler = async (
 
     type ScrollResult = {
       success: boolean;
+      positionKnown: boolean;
       scrollX: number;
       scrollY: number;
       scrollHeight: number;
@@ -121,6 +122,7 @@ const handler: ToolHandler = async (
             if (params.selector && !target) {
               resolve({
                 success: false,
+                positionKnown: false,
                 scrollX: 0,
                 scrollY: 0,
                 scrollHeight: 0,
@@ -211,6 +213,7 @@ const handler: ToolHandler = async (
 
               resolve({
                 success: true,
+                positionKnown: true,
                 scrollX: Math.round(sx),
                 scrollY: Math.round(sy),
                 scrollHeight: sh,
@@ -230,6 +233,7 @@ const handler: ToolHandler = async (
           } catch (e) {
             resolve({
               success: false,
+              positionKnown: false,
               scrollX: 0,
               scrollY: 0,
               scrollHeight: 0,
@@ -282,8 +286,9 @@ const handler: ToolHandler = async (
       // Return success with position unknown indicator.
       return {
         success: true,
-        scrollX: -1,
-        scrollY: -1,
+        positionKnown: false,
+        scrollX: 0,
+        scrollY: 0,
         scrollHeight: 0,
         scrollWidth: 0,
         clientHeight: 0,
@@ -308,7 +313,7 @@ const handler: ToolHandler = async (
     const targetDesc = selector ? ` (${selector})` : '';
     const endIndicator = scrollResult.atEnd ? ' [END REACHED]' : '';
     const recoveryNote = recovered ? ` [recovered:${recoveryMethod}]` : '';
-    const positionUnknown = scrollResult.scrollX === -1 && scrollResult.scrollY === -1;
+    const positionUnknown = !scrollResult.positionKnown;
 
     return {
       content: [

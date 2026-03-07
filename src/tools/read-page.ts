@@ -345,6 +345,11 @@ const handler: ToolHandler = async (
     })), 15000, 'read_page');
     const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
 
+    // Snapshot ref entry BEFORE clearing refs (needed for post-clear recovery)
+    const refEntrySnapshot = refIdParam
+      ? refIdManager.getRef(sessionId, tabId, refIdParam)
+      : undefined;
+
     // Get the accessibility tree
     const { nodes } = await withTimeout(
       cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
@@ -479,21 +484,26 @@ const handler: ToolHandler = async (
     let startNodes: AXNode[];
     if (scopedBackendNodeId !== undefined) {
       let scopedNode = nodes.find((n) => n.backendDOMNodeId === scopedBackendNodeId);
+      if (!scopedNode && refEntrySnapshot) {
+        // Refs were cleared — use snapshot to search by element attributes
+        // tryRelocateRef won't work here because clearTargetRefs already deleted the entry
+        const { tagName, name, role } = refEntrySnapshot;
+        scopedNode = nodes.find((n) => {
+          if (!n.backendDOMNodeId) return false;
+          const nodeRole = n.role?.value;
+          const nodeName = n.name?.value;
+          // Match by role + name (accessibility attributes survive DOM mutations)
+          return (
+            (role && nodeRole === role) &&
+            (name && nodeName === name)
+          );
+        });
+      }
       if (!scopedNode) {
-        // Attempt transparent stale ref recovery
-        const cdpClientForRecovery = sessionManager.getCDPClient();
-        const relocated = await refIdManager.tryRelocateRef(
-          sessionId, tabId, refIdParam!, page, cdpClientForRecovery
-        );
-        if (relocated) {
-          scopedNode = nodes.find((n) => n.backendDOMNodeId === relocated.backendNodeId);
-        }
-        if (!scopedNode) {
-          return {
-            content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
-            isError: true,
-          };
-        }
+        return {
+          content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
+          isError: true,
+        };
       }
       startNodes = [scopedNode];
     } else {
