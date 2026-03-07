@@ -63,7 +63,7 @@ const handler: ToolHandler = async (
     }
 
     lines.push('');
-    lines.push('To use a specific profile, specify the directory name (e.g., "Profile 1") in your next navigate or tabs_create call.');
+    lines.push('To use a specific profile, restart the server with --profile-directory "<directory>" (e.g., --profile-directory "Profile 1").');
 
     return {
       content: [
