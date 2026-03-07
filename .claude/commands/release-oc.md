@@ -87,13 +87,30 @@ This spawns 3 specialist agents in parallel:
 
 Merge the findings from both 4a and 4b. Use the higher-confidence finding when duplicates exist.
 
-### 4c. Check for file conflicts with other PRs
+### 4c. Check Greptile review (if available)
+
+Greptile AI automatically reviews PRs via GitHub App. Fetch its review:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/<N>/reviews \
+  --jq '[.[] | select(.user.login == "greptile-apps[bot]") | {state: .state, body: .body}]'
+```
+
+If Greptile posted a review:
+- Cross-reference findings with 4a/4b results
+- Add any **NEW** issues Greptile found that our agents missed
+- Greptile-only findings default to P2 unless clearly a bug or security issue
+- If Greptile requested changes, address them before merging
+
+If no Greptile review yet, proceed — it may arrive later.
+
+### 4d. Check for file conflicts with other PRs
 
 ```bash
 gh pr view <N> --json files
 ```
 
-### 4d. Take action based on ownership + verdict
+### 4e. Take action based on ownership + verdict
 
 **MY PR with P0s**:
 1. `git checkout <branch>`
@@ -283,6 +300,7 @@ After verification, the user must **restart Claude Code** for the new MCP server
 
 - [ ] Every open PR has a GitHub review comment posted
 - [ ] Every PR passed deep code review (`/code-review-oc`) including platform specialist
+- [ ] Greptile review checked and new findings addressed (if review available)
 - [ ] All MY PRs: P0 = 0, P1 = 0, merged
 - [ ] All OTHER's PRs: reviewed and commented (NOT merged)
 - [ ] Pre-merge platform anti-pattern grep: all clean
