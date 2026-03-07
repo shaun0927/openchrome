@@ -38,6 +38,7 @@ program
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: false)')
   .option('--user-data-dir <dir>', 'Chrome user data directory (default: real Chrome profile on macOS)')
+  .option('--profile-directory <name>', 'Chrome profile directory name (e.g., "Profile 1", "Default")')
   .option('--chrome-binary <path>', 'Path to Chrome binary (e.g., chrome-headless-shell)')
   .option('--headless-shell', 'Use chrome-headless-shell if available (default: false)')
   .option('--visible', 'Show Chrome window (default: headless when auto-launch)')
@@ -48,7 +49,7 @@ program
   .option('--audit-log', 'Enable security audit logging (default: false)')
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; allTools?: boolean; serverMode?: boolean }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; allTools?: boolean; serverMode?: boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -62,6 +63,7 @@ program
       console.error('[openchrome] Server mode: enabled (headless, no cookie bridge)');
     }
     const userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
+    const profileDirectory = options.profileDirectory || process.env.CHROME_PROFILE_DIRECTORY || undefined;
     const chromeBinary = options.chromeBinary || process.env.CHROME_BINARY || undefined;
     const useHeadlessShell = options.headlessShell || false;
     const restartChrome = options.restartChrome || false;
@@ -71,6 +73,9 @@ program
     console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
     if (userDataDir) {
       console.error(`[openchrome] User data dir: ${userDataDir}`);
+    }
+    if (profileDirectory) {
+      console.error(`[openchrome] Profile directory: ${profileDirectory}`);
     }
     if (chromeBinary) {
       console.error(`[openchrome] Chrome binary: ${chromeBinary}`);
@@ -86,7 +91,7 @@ program
     }
 
     // Set global config before initializing anything
-    setGlobalConfig({ port, autoLaunch, userDataDir, chromeBinary, useHeadlessShell, headless, restartChrome });
+    setGlobalConfig({ port, autoLaunch, userDataDir, profileDirectory, chromeBinary, useHeadlessShell, headless, restartChrome });
     if (restartChrome) {
       console.error(`[openchrome] Restart Chrome mode: enabled (will quit existing Chrome)`);
     }

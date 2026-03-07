@@ -29,6 +29,19 @@ export interface ProfileResolution {
   userDataDir: string;
   profileType: ProfileType;
   syncPerformed: boolean;
+  /** The resolved profile directory name (e.g., "Default", "Profile 1") */
+  profileDirectory?: string;
+}
+
+export interface ChromeProfileInfo {
+  /** Internal directory name (e.g., "Default", "Profile 1", "Profile 2") */
+  directory: string;
+  /** User-visible display name (e.g., "Personal", "Work") */
+  name: string;
+  /** User name / email associated with the profile (if available) */
+  userName?: string;
+  /** Whether this is the active/last-used profile */
+  isActive?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +87,64 @@ export class ProfileManager {
   // -------------------------------------------------------------------------
 
   /**
+   * Get the default Chrome user data directory for the current platform.
+   * Returns null if Chrome data directory is not found.
+   */
+  getDefaultUserDataDir(): string | null {
+    const platform = os.platform();
+    const home = os.homedir();
+
+    if (platform === 'darwin') {
+      const dir = path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+      if (fs.existsSync(dir)) return dir;
+    } else if (platform === 'win32') {
+      const localAppData = process.env['LOCALAPPDATA'] || path.join(home, 'AppData', 'Local');
+      const dir = path.join(localAppData, 'Google', 'Chrome', 'User Data');
+      if (fs.existsSync(dir)) return dir;
+    } else {
+      const candidates = [
+        path.join(home, '.config', 'google-chrome'),
+        path.join(home, '.config', 'chromium'),
+        path.join(home, 'snap', 'chromium', 'current', '.config', 'chromium'),
+      ];
+      for (const dir of candidates) {
+        if (fs.existsSync(dir)) return dir;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * List available Chrome profiles by reading the Local State file.
+   * Returns profile info sorted by directory name.
+   */
+  listProfiles(userDataDir?: string): ChromeProfileInfo[] {
+    const dir = userDataDir || this.getDefaultUserDataDir();
+    if (!dir) return [];
+
+    const localStatePath = path.join(dir, 'Local State');
+    try {
+      const raw = fs.readFileSync(localStatePath, 'utf8');
+      const localState = JSON.parse(raw);
+      const infoCache = localState?.profile?.info_cache;
+      if (!infoCache || typeof infoCache !== 'object') return [];
+
+      const lastUsed = localState?.profile?.last_used;
+
+      return Object.entries(infoCache)
+        .map(([directory, info]: [string, any]) => ({
+          directory,
+          name: info?.name || directory,
+          ...(info?.user_name && { userName: info.user_name }),
+          ...(lastUsed === directory && { isActive: true }),
+        }))
+        .sort((a, b) => a.directory.localeCompare(b.directory));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Return the persistent profile directory, creating it (including the
    * `Default/` subdirectory) if it does not already exist.
    */
@@ -105,7 +176,7 @@ export class ProfileManager {
    *   mtime or size), OR
    * - The last sync is older than `COOKIE_FRESHNESS_MS`.
    */
-  needsSync(sourceDir: string): boolean {
+  needsSync(sourceDir: string, profileSubdir: string = 'Default'): boolean {
     const metadata = this.getSyncMetadata();
 
     if (!metadata) {
@@ -113,7 +184,7 @@ export class ProfileManager {
     }
 
     // Compute current hash of the source Cookies file
-    const sourceCookiesPath = path.join(sourceDir, 'Default', 'Cookies');
+    const sourceCookiesPath = path.join(sourceDir, profileSubdir, 'Cookies');
     let currentHash: string;
     try {
       const stat = fs.statSync(sourceCookiesPath);
@@ -154,10 +225,11 @@ export class ProfileManager {
    */
   syncProfileData(
     sourceDir: string,
-    destDir: string
+    destDir: string,
+    profileSubdir: string = 'Default'
   ): { atomic: boolean; success: boolean } {
     try {
-      const destDefault = path.join(destDir, 'Default');
+      const destDefault = path.join(destDir, profileSubdir);
       fs.mkdirSync(destDefault, { recursive: true });
 
       // --- 1. Copy Local State -----------------------------------------------
@@ -167,7 +239,7 @@ export class ProfileManager {
       }
 
       // --- 2. Sync Cookies (atomic via sqlite3, or plain copy fallback) ------
-      const sourceCookiesPath = path.join(sourceDir, 'Default', 'Cookies');
+      const sourceCookiesPath = path.join(sourceDir, profileSubdir, 'Cookies');
       const destCookiesPath = path.join(destDefault, 'Cookies');
       let atomic = false;
 
@@ -217,7 +289,7 @@ export class ProfileManager {
             'Cookies-journal',
           ];
           for (const file of cookieFiles) {
-            const src = path.join(sourceDir, 'Default', file);
+            const src = path.join(sourceDir, profileSubdir, file);
             if (fs.existsSync(src)) {
               try {
                 fs.copyFileSync(src, path.join(destDefault, file));
@@ -232,7 +304,7 @@ export class ProfileManager {
       }
 
       // --- 2b. Copy Local Storage (LevelDB) ----------------------------------
-      const localStorageSrc = path.join(sourceDir, 'Default', 'Local Storage');
+      const localStorageSrc = path.join(sourceDir, profileSubdir, 'Local Storage');
       const localStorageDest = path.join(destDefault, 'Local Storage');
       if (fs.existsSync(localStorageSrc)) {
         try {
@@ -243,7 +315,7 @@ export class ProfileManager {
       }
 
       // --- 2c. Copy IndexedDB -------------------------------------------------
-      const indexedDBSrc = path.join(sourceDir, 'Default', 'IndexedDB');
+      const indexedDBSrc = path.join(sourceDir, profileSubdir, 'IndexedDB');
       const indexedDBDest = path.join(destDefault, 'IndexedDB');
       if (fs.existsSync(indexedDBSrc)) {
         try {
@@ -254,7 +326,7 @@ export class ProfileManager {
       }
 
       // --- 3. Copy and patch Preferences ------------------------------------
-      const prefsSrc = path.join(sourceDir, 'Default', 'Preferences');
+      const prefsSrc = path.join(sourceDir, profileSubdir, 'Preferences');
       if (fs.existsSync(prefsSrc)) {
         try {
           const prefsContent = fs.readFileSync(prefsSrc, 'utf8');
@@ -282,7 +354,7 @@ export class ProfileManager {
       }
 
       // --- 4. Update metadata -----------------------------------------------
-      this.updateSyncMetadata(sourceDir);
+      this.updateSyncMetadata(sourceDir, profileSubdir);
 
       console.error(
         `[ProfileManager] Profile data sync complete (atomic=${atomic}) from ${sourceDir} → ${destDir}`
@@ -316,10 +388,10 @@ export class ProfileManager {
    * Persist sync metadata for `sourceDir` using a temp-file + rename pattern
    * to prevent corruption on concurrent writes.
    */
-  updateSyncMetadata(sourceDir: string): void {
+  updateSyncMetadata(sourceDir: string, profileSubdir: string = 'Default'): void {
     try {
       // Compute source hash
-      const sourceCookiesPath = path.join(sourceDir, 'Default', 'Cookies');
+      const sourceCookiesPath = path.join(sourceDir, profileSubdir, 'Cookies');
       let sourceProfileHash = '';
       try {
         const stat = fs.statSync(sourceCookiesPath);
@@ -371,6 +443,7 @@ export class ProfileManager {
     explicitUserDataDir?: string;
     useTempProfile?: boolean;
     usingHeadlessShell?: boolean;
+    profileDirectory?: string;
   }): ProfileResolution {
     const {
       realProfileDir,
@@ -378,6 +451,7 @@ export class ProfileManager {
       explicitUserDataDir,
       useTempProfile,
       usingHeadlessShell,
+      profileDirectory,
     } = options;
 
     // 1. Explicit user-data-dir
@@ -386,6 +460,7 @@ export class ProfileManager {
         userDataDir: explicitUserDataDir,
         profileType: 'explicit',
         syncPerformed: false,
+        ...(profileDirectory && { profileDirectory }),
       };
     }
 
@@ -396,6 +471,7 @@ export class ProfileManager {
         userDataDir: tempDir,
         profileType: 'temp',
         syncPerformed: false,
+        ...(profileDirectory && { profileDirectory }),
       };
     }
 
@@ -405,6 +481,7 @@ export class ProfileManager {
         userDataDir: realProfileDir,
         profileType: 'real',
         syncPerformed: false,
+        ...(profileDirectory && { profileDirectory }),
       };
     }
 
@@ -418,6 +495,7 @@ export class ProfileManager {
           userDataDir: persistentDir,
           profileType: 'persistent',
           syncPerformed: false,
+          ...(profileDirectory && { profileDirectory }),
         };
       }
 
@@ -427,6 +505,7 @@ export class ProfileManager {
         userDataDir: persistentDir,
         profileType: 'persistent',
         syncPerformed: syncResult.atomic || syncResult.success,
+        ...(profileDirectory && { profileDirectory }),
       };
     }
 
@@ -436,6 +515,7 @@ export class ProfileManager {
       userDataDir: persistentDir,
       profileType: 'persistent',
       syncPerformed: false,
+      ...(profileDirectory && { profileDirectory }),
     };
   }
 

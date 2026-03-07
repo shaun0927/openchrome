@@ -119,12 +119,13 @@ const handler: ToolHandler = async (
                     authRedirect: true,
                     redirectedFrom: authRedirect.from,
                     authRedirectHost: authRedirect.host,
-                    message: 'Authentication required — the page redirected to ' + authRedirect.host +
-                      '. The user must log in manually in their Chrome browser, then retry. ' +
-                      'Do NOT attempt to authenticate programmatically (no cookies, tokens, or OAuth workarounds).',
+                    message: 'ACTION_REQUIRED: Authentication redirect detected — page redirected from ' + authRedirect.from + ' to ' + authRedirect.host +
+                      '. The user must log in manually in their Chrome browser. ' +
+                      'Inform the user and wait for confirmation before retrying navigation. ' +
+                      'Do NOT attempt to authenticate programmatically.',
                   }),
                 }],
-                isError: true,
+                isError: false,
               };
             }
             AdaptiveScreenshot.getInstance().reset(existingTabId);
@@ -325,12 +326,13 @@ const handler: ToolHandler = async (
             authRedirect: true,
             redirectedFrom: authRedirect.from,
             authRedirectHost: authRedirect.host,
-            message: 'Authentication required — the page redirected to ' + authRedirect.host +
-              '. The user must log in manually in their Chrome browser, then retry. ' +
-              'Do NOT attempt to authenticate programmatically (no cookies, tokens, or OAuth workarounds).',
+            message: 'ACTION_REQUIRED: Authentication redirect detected — page redirected from ' + authRedirect.from + ' to ' + authRedirect.host +
+              '. The user must log in manually in their Chrome browser. ' +
+              'Inform the user and wait for confirmation before retrying navigation. ' +
+              'Do NOT attempt to authenticate programmatically.',
           }),
         }],
-        isError: true,
+        isError: false,
       };
     }
 
