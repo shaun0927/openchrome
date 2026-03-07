@@ -31,6 +31,8 @@ export interface LaunchOptions {
   useTempProfile?: boolean;
   /** If true, quit running Chrome to reuse the real profile (default: false — uses temp profile instead) */
   restartChrome?: boolean;
+  /** Chrome profile directory name (e.g., "Profile 1"). Passed as --profile-directory flag */
+  profileDirectory?: string;
 }
 
 const DEFAULT_PORT = 9222;
@@ -188,6 +190,7 @@ export interface ProfileState {
   extensionsAvailable: boolean;
   sourceProfile?: string;        // path to the real profile (if synced from)
   userDataDir?: string;          // actual userDataDir being used
+  profileDirectory?: string;     // Chrome profile directory name (e.g., "Profile 1", "Default")
 }
 
 export class ChromeLauncher {
@@ -369,6 +372,8 @@ export class ChromeLauncher {
     const profileType = resolution.profileType;
     this.currentProfileType = profileType;
 
+    const profileDirectory = options.profileDirectory || globalConfig.profileDirectory;
+
     // Track profile state for MCP consumers
     this.profileState = {
       type: profileType,
@@ -376,6 +381,7 @@ export class ChromeLauncher {
       ...(resolution.syncPerformed && { cookieCopiedAt: Date.now() }),
       ...(realProfileDir && profileType === 'persistent' && { sourceProfile: realProfileDir }),
       userDataDir,
+      ...(profileDirectory && { profileDirectory }),
     };
 
     if (resolution.syncPerformed) {
@@ -395,6 +401,14 @@ export class ChromeLauncher {
     const args = [
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${userDataDir}`,
+    ];
+
+    if (profileDirectory) {
+      args.push(`--profile-directory=${profileDirectory}`);
+      console.error(`[ChromeLauncher] Using profile directory: ${profileDirectory}`);
+    }
+
+    args.push(
       '--no-first-run',
       '--no-default-browser-check',
       '--no-restore-last-session',
@@ -409,7 +423,7 @@ export class ChromeLauncher {
       '--disable-ipc-flooding-protection',
       // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
       '--disable-gpu-crash-limit',
-    ];
+    );
 
     // Only disable background features for non-real profiles
     if (profileType !== 'real') {

@@ -9,6 +9,8 @@ export interface GlobalConfig {
   autoLaunch: boolean;
   /** Custom user data directory for Chrome (default: uses real Chrome profile on macOS, temp dir elsewhere) */
   userDataDir?: string;
+  /** Chrome profile directory name (e.g., "Profile 1", "Default"). Used with --profile-directory flag */
+  profileDirectory?: string;
   /** Path to custom Chrome binary (e.g., chrome-headless-shell) */
   chromeBinary?: string;
   /** Use chrome-headless-shell if available (default: false) */

@@ -58,6 +58,7 @@ import { registerQueryDomTool } from './query-dom';
 // Lifecycle tools
 import { registerShutdownTool } from './shutdown';
 import { registerProfileStatusTool } from './profile-status';
+import { registerListProfilesTool } from './list-profiles';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -120,6 +121,7 @@ export function registerAllTools(server: MCPServer): void {
   // Lifecycle tools
   registerShutdownTool(server);
   registerProfileStatusTool(server);
+  registerListProfilesTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
