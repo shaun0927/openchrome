@@ -312,9 +312,9 @@ describe('NavigateTool', () => {
         url: 'https://slow-site.com',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Navigation error');
-      expect(result.content[0].text).toContain('timeout');
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toContain('Navigation timed out');
+      expect(result.content[0].text).toContain('read_page');
     });
 
     test('handles network errors', async () => {

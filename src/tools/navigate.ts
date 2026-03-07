@@ -178,14 +178,18 @@ const handler: ToolHandler = async (
         content: [{ type: 'text', text: newTabResultText }],
       };
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const isTimeout = errMsg.includes('timeout') || errMsg.includes('Timeout');
       return {
         content: [
           {
             type: 'text',
-            text: `Error creating tab: ${error instanceof Error ? error.message : String(error)}`,
+            text: isTimeout
+              ? `Navigation timed out — the page at ${url} did not finish loading within 30s. The page may still be loading. Try read_page to check if content is available, or retry navigation.`
+              : `Error creating tab: ${errMsg}`,
           },
         ],
-        isError: true,
+        isError: !isTimeout,
       };
     }
   }
@@ -355,14 +359,18 @@ const handler: ToolHandler = async (
       content: [{ type: 'text', text: navResultText }],
     };
   } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const isTimeout = errMsg.includes('timeout') || errMsg.includes('Timeout');
     return {
       content: [
         {
           type: 'text',
-          text: `Navigation error: ${error instanceof Error ? error.message : String(error)}`,
+          text: isTimeout
+            ? `Navigation timed out — the page did not finish loading within 30s. The page may still be loading or the server may be unresponsive. Try read_page to check if content is available, or retry navigation.`
+            : `Navigation error: ${errMsg}`,
         },
       ],
-      isError: true,
+      isError: !isTimeout,
     };
   }
 };
