@@ -18,7 +18,7 @@ import * as path from 'path';
 jest.unmock('../../src/chrome/profile-manager');
 
 import { ProfileManager } from '../../src/chrome/profile-manager';
-import type { SyncMetadata } from '../../src/chrome/profile-manager';
+import type { SyncMetadata, ChromeProfileInfo } from '../../src/chrome/profile-manager';
 
 jest.mock('child_process', () => {
   const actual = jest.requireActual('child_process');
@@ -548,6 +548,84 @@ describe('ProfileManager', () => {
       expect(result.profileType).toBe('persistent');
       expect(result.userDataDir).toBe('/mock/persistent');
       expect(result.syncPerformed).toBe(false);
+    });
+  });
+
+  // =========================================================================
+  // listProfiles()
+  // =========================================================================
+
+  describe('listProfiles', () => {
+    it('should parse Local State and return profile info', () => {
+      const listTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-profile-test-'));
+      const localState = {
+        profile: {
+          info_cache: {
+            'Default': { name: 'Person 1', user_name: 'user@gmail.com' },
+            'Profile 1': { name: 'Work', user_name: 'work@company.com' },
+            'Profile 2': { name: 'Side Project' },
+          },
+          last_used: 'Profile 1',
+        },
+      };
+      fs.writeFileSync(path.join(listTmpDir, 'Local State'), JSON.stringify(localState));
+
+      const pm = new ProfileManager();
+      const profiles = pm.listProfiles(listTmpDir);
+
+      expect(profiles).toHaveLength(3);
+      expect(profiles[0]).toEqual({ directory: 'Default', name: 'Person 1', userName: 'user@gmail.com' });
+      expect(profiles[1]).toEqual({ directory: 'Profile 1', name: 'Work', userName: 'work@company.com', isActive: true });
+      expect(profiles[2]).toEqual({ directory: 'Profile 2', name: 'Side Project' });
+
+      fs.rmSync(listTmpDir, { recursive: true, force: true });
+    });
+
+    it('should return empty array when Local State is missing', () => {
+      const pm = new ProfileManager();
+      const profiles = pm.listProfiles('/nonexistent/path');
+      expect(profiles).toEqual([]);
+    });
+
+    it('should return empty array when profile info_cache is missing', () => {
+      const listTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-profile-test-'));
+      fs.writeFileSync(path.join(listTmpDir, 'Local State'), JSON.stringify({ other: 'data' }));
+
+      const pm = new ProfileManager();
+      const profiles = pm.listProfiles(listTmpDir);
+      expect(profiles).toEqual([]);
+
+      fs.rmSync(listTmpDir, { recursive: true, force: true });
+    });
+  });
+
+  // =========================================================================
+  // dynamic profile subdirectory
+  // =========================================================================
+
+  describe('dynamic profile subdirectory', () => {
+    it('needsSync should use custom profileSubdir', () => {
+      const pm = new ProfileManager();
+      const syncTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-sync-test-'));
+      const profileDir = path.join(syncTmpDir, 'Profile 1');
+      fs.mkdirSync(profileDir, { recursive: true });
+      fs.writeFileSync(path.join(profileDir, 'Cookies'), 'test');
+
+      // Should look for Cookies in "Profile 1" subdir, not "Default"
+      const result = pm.needsSync(syncTmpDir, 'Profile 1');
+      expect(result).toBe(true); // true because no prior sync metadata
+
+      fs.rmSync(syncTmpDir, { recursive: true, force: true });
+    });
+
+    it('resolveProfile should pass through profileDirectory', () => {
+      const pm = new ProfileManager();
+      const result = pm.resolveProfile({
+        realProfileDir: null,
+        isProfileLocked: false,
+        profileDirectory: 'Profile 1',
+      });
+      expect(result.profileDirectory).toBe('Profile 1');
     });
   });
 });

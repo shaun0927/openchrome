@@ -51,12 +51,19 @@ const handler: ToolHandler = async (
         cookieAge: Date.now() - state.cookieCopiedAt,
         cookieAgeFormatted: formatAge(state.cookieCopiedAt),
       }),
+      ...(state.profileDirectory && {
+        profileDirectory: state.profileDirectory,
+      }),
     };
 
     const lines: string[] = [];
+    const profileDirectory = state.profileDirectory;
     if (state.type === 'real') {
       lines.push('Profile: Real Chrome profile (full capability)');
       lines.push('All browser features available: extensions, saved passwords, localStorage, bookmarks, form autofill.');
+      if (profileDirectory && profileDirectory !== 'Default') {
+        lines.push(`Profile directory: ${profileDirectory}`);
+      }
     } else if (state.type === 'persistent') {
       lines.push('Profile: Persistent OpenChrome profile (synced cookies from real profile)');
       if (state.cookieCopiedAt) {
@@ -74,6 +81,9 @@ const handler: ToolHandler = async (
     } else if (state.type === 'explicit') {
       lines.push('Profile: User-specified custom profile directory');
       lines.push('Capabilities depend on the profile contents.');
+      if (profileDirectory && profileDirectory !== 'Default') {
+        lines.push(`Profile directory: ${profileDirectory}`);
+      }
     } else {
       lines.push('Profile: Unknown (Chrome may not be launched yet)');
     }
