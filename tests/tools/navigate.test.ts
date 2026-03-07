@@ -471,8 +471,8 @@ describe('NavigateTool', () => {
         url: 'https://app.com',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Authentication required');
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toContain('ACTION_REQUIRED');
     });
 
     test('returns success when no auth redirect', async () => {
@@ -514,7 +514,7 @@ describe('NavigateTool', () => {
         url: 'https://app.com',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(true);
+      expect(result.isError).toBe(false);
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.authRedirectHost).toBe('accounts.google.com');
       expect(parsed.redirectedFrom).toBe('https://app.com');

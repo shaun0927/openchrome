@@ -278,23 +278,17 @@ const handler: ToolHandler = async (
         'scroll-fallback'
       );
 
-      // Wait briefly for scroll to take effect
-      await new Promise(r => setTimeout(r, 100));
-
-      // Read back scroll position
-      const positions = await withTimeout(page.evaluate(() => ({
-        scrollX: window.scrollX,
-        scrollY: window.scrollY,
-        scrollHeight: document.documentElement.scrollHeight,
-        scrollWidth: document.documentElement.scrollWidth,
-        clientHeight: document.documentElement.clientHeight,
-        clientWidth: document.documentElement.clientWidth,
-      })), 5000, 'scroll-position-read');
-
+      // Do NOT call page.evaluate here — it has the same failure mode as primary.
+      // Return success with position unknown indicator.
       return {
         success: true,
-        ...positions,
-        atEnd: false, // approximate — position read is accurate but atEnd calc is skipped
+        scrollX: -1,
+        scrollY: -1,
+        scrollHeight: 0,
+        scrollWidth: 0,
+        clientHeight: 0,
+        clientWidth: 0,
+        atEnd: false,
       };
     };
 
@@ -314,6 +308,7 @@ const handler: ToolHandler = async (
     const targetDesc = selector ? ` (${selector})` : '';
     const endIndicator = scrollResult.atEnd ? ' [END REACHED]' : '';
     const recoveryNote = recovered ? ` [recovered:${recoveryMethod}]` : '';
+    const positionUnknown = scrollResult.scrollX === -1 && scrollResult.scrollY === -1;
 
     return {
       content: [
@@ -321,30 +316,35 @@ const handler: ToolHandler = async (
           type: 'text',
           text: JSON.stringify({
             scrolled: `${direction} ${scrollToEnd ? 'to end' : amount + 'px'}${targetDesc}${endIndicator}${recoveryNote}`,
-            position: {
-              x: scrollResult.scrollX,
-              y: scrollResult.scrollY,
-            },
-            dimensions: {
-              scrollHeight: scrollResult.scrollHeight,
-              scrollWidth: scrollResult.scrollWidth,
-              clientHeight: scrollResult.clientHeight,
-              clientWidth: scrollResult.clientWidth,
-            },
+            position: positionUnknown
+              ? { unknown: true, note: 'Position unavailable after fallback scroll. Use read_page to check current state.' }
+              : { x: scrollResult.scrollX, y: scrollResult.scrollY },
+            dimensions: positionUnknown
+              ? undefined
+              : {
+                  scrollHeight: scrollResult.scrollHeight,
+                  scrollWidth: scrollResult.scrollWidth,
+                  clientHeight: scrollResult.clientHeight,
+                  clientWidth: scrollResult.clientWidth,
+                },
             atEnd: scrollResult.atEnd,
           }),
         },
       ],
     };
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const isTimeout = errorMsg.includes('timed out');
     return {
       content: [
         {
           type: 'text',
-          text: `Lightweight scroll error: ${error instanceof Error ? error.message : String(error)}`,
+          text: isTimeout
+            ? `Scroll may not have completed — page appears busy or unresponsive. Use read_page to verify current scroll position.`
+            : `Lightweight scroll error: ${errorMsg}`,
         },
       ],
-      isError: true,
+      isError: !isTimeout,
     };
   }
 };

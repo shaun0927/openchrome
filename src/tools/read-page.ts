@@ -316,10 +316,19 @@ const handler: ToolHandler = async (
     if (refIdParam) {
       scopedBackendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, refIdParam);
       if (scopedBackendNodeId === undefined) {
-        return {
-          content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
-          isError: true,
-        };
+        // Attempt transparent stale ref recovery
+        const cdpClientForRecovery = sessionManager.getCDPClient();
+        const relocated = await refIdManager.tryRelocateRef(
+          sessionId, tabId, refIdParam, page, cdpClientForRecovery
+        );
+        if (relocated) {
+          scopedBackendNodeId = relocated.backendNodeId;
+        } else {
+          return {
+            content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
+            isError: true,
+          };
+        }
       }
     }
 
@@ -469,12 +478,22 @@ const handler: ToolHandler = async (
     // Start from root nodes (or scoped subtree if ref_id provided)
     let startNodes: AXNode[];
     if (scopedBackendNodeId !== undefined) {
-      const scopedNode = nodes.find((n) => n.backendDOMNodeId === scopedBackendNodeId);
+      let scopedNode = nodes.find((n) => n.backendDOMNodeId === scopedBackendNodeId);
       if (!scopedNode) {
-        return {
-          content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
-          isError: true,
-        };
+        // Attempt transparent stale ref recovery
+        const cdpClientForRecovery = sessionManager.getCDPClient();
+        const relocated = await refIdManager.tryRelocateRef(
+          sessionId, tabId, refIdParam!, page, cdpClientForRecovery
+        );
+        if (relocated) {
+          scopedNode = nodes.find((n) => n.backendDOMNodeId === relocated.backendNodeId);
+        }
+        if (!scopedNode) {
+          return {
+            content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
+            isError: true,
+          };
+        }
       }
       startNodes = [scopedNode];
     } else {
