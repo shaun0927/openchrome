@@ -355,7 +355,10 @@ export class ChromeLauncher {
     // Priority: explicit > temp/headless > real unlocked > persistent (with sync) > persistent (no sync)
     const realProfileDir = this.getRealChromeProfileDir();
     const explicitUserDataDir = options.userDataDir || globalConfig.userDataDir;
-    // Skip expensive isProfileLocked check when result won't be used
+    // Skip expensive isProfileLocked check when result won't be used:
+    // explicit dir, temp profile, headless-shell, or no real profile.
+    // Note: isAutoLaunch routes to persistent profile regardless of lock state,
+    // but the lock check is still useful for cookie sync decisions in resolveProfile.
     const isLocked = (!explicitUserDataDir && !options.useTempProfile && !usingHeadlessShell && realProfileDir)
       ? this.isProfileLocked(realProfileDir)
       : false;
@@ -366,6 +369,7 @@ export class ChromeLauncher {
       explicitUserDataDir,
       useTempProfile: options.useTempProfile,
       usingHeadlessShell,
+      isAutoLaunch: true,  // Chrome 136+: force non-default --user-data-dir
     });
 
     const userDataDir = resolution.userDataDir;
