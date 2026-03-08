@@ -21,12 +21,21 @@ const mockEnsureChrome = jest.fn();
 jest.mock('../../src/chrome/launcher', () => ({
   getChromeLauncher: jest.fn().mockReturnValue({
     ensureChrome: mockEnsureChrome,
+    invalidateInstance: jest.fn(),
   }),
 }));
 
 jest.mock('../../src/config/global', () => ({
   getGlobalConfig: jest.fn().mockReturnValue({ port: 9222, autoLaunch: false }),
 }));
+
+jest.mock('../../src/config/defaults', () => {
+  const actual = jest.requireActual('../../src/config/defaults');
+  return {
+    ...actual,
+    DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS: 500, // Short timeout for test speed
+  };
+});
 
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
@@ -66,7 +75,7 @@ describe('CDPClient – connection coalescing', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     const launcherMock = require('../../src/chrome/launcher');
-    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome });
+    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome, invalidateInstance: jest.fn() });
     mockEnsureChrome.mockResolvedValue({
       wsEndpoint: 'ws://localhost:9222/devtools/browser/abc',
       httpEndpoint: 'http://127.0.0.1:9222',
@@ -191,7 +200,7 @@ describe('CDPClient – puppeteer.connect timeout', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     const launcherMock = require('../../src/chrome/launcher');
-    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome });
+    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome, invalidateInstance: jest.fn() });
     mockEnsureChrome.mockResolvedValue({
       wsEndpoint: 'ws://localhost:9222/devtools/browser/abc',
       httpEndpoint: 'http://127.0.0.1:9222',
@@ -245,7 +254,7 @@ describe('CDPClient – forceReconnect invalidates pending connects', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     const launcherMock = require('../../src/chrome/launcher');
-    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome });
+    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome, invalidateInstance: jest.fn() });
     mockEnsureChrome.mockResolvedValue({
       wsEndpoint: 'ws://localhost:9222/devtools/browser/abc',
       httpEndpoint: 'http://127.0.0.1:9222',

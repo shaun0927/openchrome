@@ -9,7 +9,7 @@
  * and are covered by manual testing on those platforms.
  */
 
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import * as fs from 'fs';
 
 // Override the global mock from tests/setup.ts that replaces ChromeLauncher
@@ -22,6 +22,7 @@ jest.mock('child_process', () => {
   return {
     ...actual,
     execSync: jest.fn(),
+    execFileSync: jest.fn(),
     spawn: jest.fn(() => ({
       unref: jest.fn(),
       pid: 12345,
@@ -64,6 +65,7 @@ jest.mock('fs', () => {
 const mockExistsSync = fs.existsSync as jest.MockedFunction<typeof fs.existsSync>;
 
 const mockExecSync = execSync as jest.MockedFunction<typeof execSync>;
+const mockExecFileSync = execFileSync as jest.MockedFunction<typeof execFileSync>;
 
 describe('ChromeLauncher graceful restart', () => {
   let launcher: ChromeLauncher;
@@ -73,6 +75,7 @@ describe('ChromeLauncher graceful restart', () => {
     launcher = new ChromeLauncher(9222);
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     mockExecSync.mockReset();
+    mockExecFileSync.mockReset();
   });
 
   afterEach(() => {
@@ -82,18 +85,19 @@ describe('ChromeLauncher graceful restart', () => {
   describe('isChromeRunning()', () => {
     it('should return true when pgrep finds Chrome (macOS)', () => {
       // pgrep exits 0 → Chrome is running
-      mockExecSync.mockReturnValue(Buffer.from('12345'));
+      mockExecFileSync.mockReturnValue(Buffer.from('12345'));
 
       expect((launcher as any).isChromeRunning()).toBe(true);
-      expect(mockExecSync).toHaveBeenCalledWith(
-        'pgrep -x "Google Chrome"',
+      expect(mockExecFileSync).toHaveBeenCalledWith(
+        'pgrep',
+        ['-x', 'Google Chrome'],
         { stdio: 'ignore' }
       );
     });
 
     it('should return false when pgrep finds no Chrome (macOS)', () => {
       // pgrep exits non-zero → throws
-      mockExecSync.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         throw new Error('No matching processes');
       });
 
@@ -101,7 +105,7 @@ describe('ChromeLauncher graceful restart', () => {
     });
 
     it('should return false on unexpected errors', () => {
-      mockExecSync.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         throw new Error('Command not found');
       });
 
@@ -118,7 +122,11 @@ describe('ChromeLauncher graceful restart', () => {
           quitCalled = true;
           return Buffer.from('');
         }
-        if (cmdStr.includes('pgrep')) {
+        return Buffer.from('');
+      });
+      mockExecFileSync.mockImplementation((_cmd: unknown, args: unknown) => {
+        const argsArr = args as string[];
+        if (argsArr && argsArr.includes('Google Chrome')) {
           // After quit, Chrome is gone
           if (quitCalled) {
             throw new Error('No matching processes');
@@ -140,9 +148,10 @@ describe('ChromeLauncher graceful restart', () => {
         if (cmdStr.includes('osascript')) {
           return Buffer.from('');
         }
-        // pgrep always succeeds → Chrome never exits
-        return Buffer.from('12345');
+        return Buffer.from('');
       });
+      // pgrep always succeeds → Chrome never exits
+      mockExecFileSync.mockReturnValue(Buffer.from('12345'));
 
       const result = await (launcher as any).quitRunningChrome(1000);
       expect(result).toBe(false);
@@ -154,7 +163,10 @@ describe('ChromeLauncher graceful restart', () => {
         if (cmdStr.includes('osascript')) {
           throw new Error('osascript failed');
         }
-        // Chrome is not running
+        return Buffer.from('');
+      });
+      // Chrome is not running — pgrep throws
+      mockExecFileSync.mockImplementation(() => {
         throw new Error('No matching processes');
       });
 
@@ -178,7 +190,11 @@ describe('ChromeLauncher graceful restart', () => {
           try { fs.unlinkSync(`${tmpDir}/SingletonLock`); } catch { /* ignore */ }
           return Buffer.from('');
         }
-        if (cmdStr.includes('pgrep')) {
+        return Buffer.from('');
+      });
+      mockExecFileSync.mockImplementation((_cmd: unknown, args: unknown) => {
+        const argsArr = args as string[];
+        if (argsArr && argsArr.includes('Google Chrome')) {
           if (quitCalled) throw new Error('No matching processes');
           return Buffer.from('12345');
         }
@@ -196,7 +212,7 @@ describe('ChromeLauncher graceful restart', () => {
       fs.writeFileSync(`${tmpDir}/SingletonLock`, '');
 
       // pgrep always succeeds → Chrome never quits
-      mockExecSync.mockReturnValue(Buffer.from('12345'));
+      mockExecFileSync.mockReturnValue(Buffer.from('12345'));
 
       const result = await (launcher as any).quitAndUnlockProfile(tmpDir, 1000, 1000);
       expect(result).toBe(false);
@@ -216,7 +232,11 @@ describe('ChromeLauncher graceful restart', () => {
           // Don't remove lock — simulate stale lock
           return Buffer.from('');
         }
-        if (cmdStr.includes('pgrep')) {
+        return Buffer.from('');
+      });
+      mockExecFileSync.mockImplementation((_cmd: unknown, args: unknown) => {
+        const argsArr = args as string[];
+        if (argsArr && argsArr.includes('Google Chrome')) {
           if (quitCalled) throw new Error('No matching processes');
           return Buffer.from('12345');
         }
@@ -253,8 +273,9 @@ describe('ChromeLauncher graceful restart', () => {
 
     it('should skip restart by default (no restartChrome flag)', async () => {
       let pgrepCalled = false;
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        if (String(cmd).includes('pgrep')) pgrepCalled = true;
+      mockExecFileSync.mockImplementation((_cmd: unknown, args: unknown) => {
+        const argsArr = args as string[];
+        if (argsArr && argsArr.includes('Google Chrome')) pgrepCalled = true;
         throw new Error('not found');
       });
 
@@ -269,8 +290,9 @@ describe('ChromeLauncher graceful restart', () => {
 
     it('should skip restart when useTempProfile is true', async () => {
       let pgrepCalled = false;
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        if (String(cmd).includes('pgrep')) pgrepCalled = true;
+      mockExecFileSync.mockImplementation((_cmd: unknown, args: unknown) => {
+        const argsArr = args as string[];
+        if (argsArr && argsArr.includes('Google Chrome')) pgrepCalled = true;
         throw new Error('not found');
       });
 
@@ -290,8 +312,9 @@ describe('ChromeLauncher graceful restart', () => {
       jest.spyOn(launcher as any, 'quitAndUnlockProfile').mockResolvedValue(false);
 
       let pgrepCalled = false;
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        if (String(cmd).includes('pgrep')) {
+      mockExecFileSync.mockImplementation((_cmd: unknown, args: unknown) => {
+        const argsArr = args as string[];
+        if (argsArr && argsArr.includes('Google Chrome')) {
           pgrepCalled = true;
           return Buffer.from('12345');
         }
@@ -309,8 +332,9 @@ describe('ChromeLauncher graceful restart', () => {
 
     it('should not kill Chrome when restartChrome is false (explicit)', async () => {
       let pgrepCalled = false;
-      mockExecSync.mockImplementation((cmd: unknown) => {
-        if (String(cmd).includes('pgrep')) pgrepCalled = true;
+      mockExecFileSync.mockImplementation((_cmd: unknown, args: unknown) => {
+        const argsArr = args as string[];
+        if (argsArr && argsArr.includes('Google Chrome')) pgrepCalled = true;
         throw new Error('not found');
       });
 

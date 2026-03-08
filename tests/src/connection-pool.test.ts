@@ -60,6 +60,8 @@ describe('CDPConnectionPool', () => {
       createPage: jest.fn(),
       getPageByTargetId: jest.fn(),
       isConnected: jest.fn().mockReturnValue(true),
+      addTargetDestroyedListener: jest.fn(),
+      removeTargetDestroyedListener: jest.fn(),
     } as unknown as jest.Mocked<CDPClient>;
 
     pool = new CDPConnectionPool(mockCdpClient, {

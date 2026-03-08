@@ -415,8 +415,12 @@ describe('ComputerTool', () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
-      // Mock mouse.wheel to throw timeout error
-      (page.mouse.wheel as jest.Mock).mockRejectedValueOnce(
+      // Mock mouse.wheel to throw timeout error on all attempts
+      (page.mouse.wheel as jest.Mock).mockRejectedValue(
+        new Error('Input.dispatchMouseEvent timed out')
+      );
+      // Also make the JS fallback (page.evaluate) fail so error propagates
+      (page.evaluate as jest.Mock).mockRejectedValue(
         new Error('Input.dispatchMouseEvent timed out')
       );
 
@@ -658,9 +662,10 @@ describe('ComputerTool', () => {
       // Make CDP session fail both attempts (via target.createCDPSession)
       const target = (page as any).target();
       (target.createCDPSession as jest.Mock).mockRejectedValue(new Error('CDP unavailable'));
-      // But page.evaluate works (page is responsive) — first call is readyState, second is DOM fallback
+      // page.evaluate call order: readyState check, AdaptiveScreenshot scroll position, DOM fallback
       (page.evaluate as jest.Mock)
         .mockResolvedValueOnce('complete')
+        .mockResolvedValueOnce({ scrollTop: 0, scrollLeft: 0 })
         .mockResolvedValueOnce({
           url: 'https://example.com',
           title: 'Test',
@@ -749,9 +754,10 @@ describe('ComputerTool', () => {
       const target = (page as any).target();
       (target.createCDPSession as jest.Mock).mockRejectedValue(new Error('CDP unavailable'));
 
-      // readyState check + DOM fallback evaluate
+      // page.evaluate call order: readyState check, AdaptiveScreenshot scroll position, DOM fallback
       (page.evaluate as jest.Mock)
         .mockResolvedValueOnce('complete')
+        .mockResolvedValueOnce({ scrollTop: 0, scrollLeft: 0 })
         .mockResolvedValueOnce({
           url: 'https://example.com',
           title: 'Example',
@@ -793,9 +799,10 @@ describe('ComputerTool', () => {
       const target = (page as any).target();
       (target.createCDPSession as jest.Mock).mockRejectedValue(new Error('CDP unavailable'));
 
-      // readyState + DOM fallback succeed
+      // page.evaluate call order: readyState check, AdaptiveScreenshot scroll position, DOM fallback
       (page.evaluate as jest.Mock)
         .mockResolvedValueOnce('complete')
+        .mockResolvedValueOnce({ scrollTop: 0, scrollLeft: 0 })
         .mockResolvedValueOnce({
           url: 'https://example.com',
           title: 'Test Page',
