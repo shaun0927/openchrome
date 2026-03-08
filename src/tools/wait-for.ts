@@ -283,8 +283,17 @@ const handler: ToolHandler = async (
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // Check for timeout errors
-    if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+    // Detect timeout errors including Puppeteer's "Waiting failed: Xms exceeded" format
+    const isTimeout =
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('Timeout') ||
+      errorMessage.includes('timed out') ||
+      /waiting failed:.*exceeded/i.test(errorMessage);
+
+    if (isTimeout) {
+      // Navigation timeout may leave useful partial state (DOM partially loaded).
+      // Selector/function/url_match timeout = condition definitively not met = hard failure.
+      const isRecoverable = type === 'navigation';
       return {
         content: [
           {
@@ -294,10 +303,13 @@ const handler: ToolHandler = async (
               type,
               error: 'timeout',
               message: `Wait timed out after ${timeout}ms`,
+              ...(isRecoverable && {
+                hint: 'Navigation timeout — the page may be partially loaded. Try read_page to check available content.',
+              }),
             }),
           },
         ],
-        isError: true,
+        isError: !isRecoverable,
       };
     }
 
