@@ -283,8 +283,17 @@ const handler: ToolHandler = async (
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // Check for timeout errors
-    if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+    // Detect timeout errors including Puppeteer's "Waiting failed: Xms exceeded" format
+    const isTimeout =
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('Timeout') ||
+      errorMessage.includes('timed out') ||
+      /waiting failed:.*exceeded/i.test(errorMessage);
+
+    if (isTimeout) {
+      // Navigation timeout may leave useful partial state (DOM partially loaded).
+      // All wait_for timeouts are isError:true (condition not met), but navigation
+      // includes a recoverable hint so the LLM can try read_page for partial content.
       return {
         content: [
           {
@@ -294,6 +303,10 @@ const handler: ToolHandler = async (
               type,
               error: 'timeout',
               message: `Wait timed out after ${timeout}ms`,
+              ...(type === 'navigation' && {
+                recoverable: true,
+                hint: 'Navigation timeout — the page may be partially loaded. Try read_page to check available content.',
+              }),
             }),
           },
         ],
