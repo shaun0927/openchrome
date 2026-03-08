@@ -292,8 +292,8 @@ const handler: ToolHandler = async (
 
     if (isTimeout) {
       // Navigation timeout may leave useful partial state (DOM partially loaded).
-      // Selector/function/url_match timeout = condition definitively not met = hard failure.
-      const isRecoverable = type === 'navigation';
+      // All wait_for timeouts are isError:true (condition not met), but navigation
+      // includes a recoverable hint so the LLM can try read_page for partial content.
       return {
         content: [
           {
@@ -303,13 +303,14 @@ const handler: ToolHandler = async (
               type,
               error: 'timeout',
               message: `Wait timed out after ${timeout}ms`,
-              ...(isRecoverable && {
+              ...(type === 'navigation' && {
+                recoverable: true,
                 hint: 'Navigation timeout — the page may be partially loaded. Try read_page to check available content.',
               }),
             }),
           },
         ],
-        isError: !isRecoverable,
+        isError: true,
       };
     }
 
