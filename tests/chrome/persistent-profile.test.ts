@@ -626,6 +626,21 @@ describe('ProfileManager', () => {
       expect(result.profileType).toBe('explicit');
       expect(result.userDataDir).toBe('/my/custom/dir');
     });
+
+    it('should return persistent profile when isAutoLaunch is true and profile is also locked', () => {
+      const manager = new ProfileManager();
+      jest.spyOn(manager, 'needsSync').mockReturnValue(false);
+      jest.spyOn(manager, 'getOrCreatePersistentProfile').mockReturnValue('/mock/persistent');
+
+      const result = manager.resolveProfile({
+        realProfileDir: '/real/chrome/profile',
+        isProfileLocked: true,
+        isAutoLaunch: true,
+      });
+
+      expect(result.profileType).toBe('persistent');
+      expect(result.userDataDir).toBe('/mock/persistent');
+    });
   });
 
   // =========================================================================
