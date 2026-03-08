@@ -432,9 +432,10 @@ export class ProfileManager {
    * Priority order:
    * 1. `explicitUserDataDir` — caller has specified an exact directory.
    * 2. `useTempProfile` or `usingHeadlessShell` — create a fresh temp dir.
-   * 3. `realProfileDir` exists and **not** locked — use real profile directly.
-   * 4. `realProfileDir` exists and **is** locked — use persistent profile,
-   *    syncing cookies from the real profile when stale.
+   * 3. `realProfileDir` exists, **not** locked, and `isAutoLaunch` is false —
+   *    use real profile directly.
+   * 4. `realProfileDir` exists and is **locked**, OR `isAutoLaunch` is true —
+   *    use persistent profile, syncing cookies from the real profile when stale.
    * 5. No `realProfileDir` — use persistent profile without a sync.
    */
   resolveProfile(options: {
@@ -444,6 +445,7 @@ export class ProfileManager {
     useTempProfile?: boolean;
     usingHeadlessShell?: boolean;
     profileDirectory?: string;
+    isAutoLaunch?: boolean;
   }): ProfileResolution {
     const {
       realProfileDir,
@@ -452,6 +454,7 @@ export class ProfileManager {
       useTempProfile,
       usingHeadlessShell,
       profileDirectory,
+      isAutoLaunch,
     } = options;
 
     // 1. Explicit user-data-dir
@@ -476,7 +479,9 @@ export class ProfileManager {
     }
 
     // 3. Real profile available and NOT locked
-    if (realProfileDir && !isProfileLocked) {
+    // Skip when auto-launching: Chrome 136+ rejects --remote-debugging-port with the
+    // default --user-data-dir. Fall through to persistent profile with cookie sync.
+    if (realProfileDir && !isProfileLocked && !isAutoLaunch) {
       return {
         userDataDir: realProfileDir,
         profileType: 'real',
@@ -485,8 +490,10 @@ export class ProfileManager {
       };
     }
 
-    // 4. Real profile exists but IS locked — use persistent profile
-    if (realProfileDir && isProfileLocked) {
+    // 4. Real profile exists but IS locked (or auto-launch) — use persistent profile
+    //    When isAutoLaunch is true, Chrome 136+ requires a non-default --user-data-dir,
+    //    so we use the persistent profile even when the real profile is not locked.
+    if (realProfileDir && (isProfileLocked || isAutoLaunch)) {
       const persistentDir = this.getOrCreatePersistentProfile();
 
       if (!this.needsSync(realProfileDir)) {

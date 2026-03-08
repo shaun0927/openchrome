@@ -552,6 +552,98 @@ describe('ProfileManager', () => {
   });
 
   // =========================================================================
+  // resolveProfile() — isAutoLaunch (Chrome 136+ compatibility)
+  // =========================================================================
+
+  describe('resolveProfile() with isAutoLaunch', () => {
+    it('should return persistent profile (not real) when isAutoLaunch is true and profile is unlocked', () => {
+      const manager = new ProfileManager();
+      jest.spyOn(manager, 'needsSync').mockReturnValue(false);
+      jest.spyOn(manager, 'getOrCreatePersistentProfile').mockReturnValue('/mock/persistent');
+
+      const result = manager.resolveProfile({
+        realProfileDir: '/real/chrome/profile',
+        isProfileLocked: false,
+        isAutoLaunch: true,
+      });
+
+      expect(result.profileType).toBe('persistent');
+      expect(result.userDataDir).toBe('/mock/persistent');
+    });
+
+    it('should perform cookie sync when isAutoLaunch is true and cookies are stale', () => {
+      const manager = new ProfileManager();
+      jest.spyOn(manager, 'needsSync').mockReturnValue(true);
+      jest.spyOn(manager, 'syncProfileData').mockReturnValue({ atomic: true, success: true });
+      jest.spyOn(manager, 'getOrCreatePersistentProfile').mockReturnValue('/mock/persistent');
+
+      const result = manager.resolveProfile({
+        realProfileDir: '/real/chrome/profile',
+        isProfileLocked: false,
+        isAutoLaunch: true,
+      });
+
+      expect(result.profileType).toBe('persistent');
+      expect(result.syncPerformed).toBe(true);
+      expect(manager.syncProfileData).toHaveBeenCalledWith('/real/chrome/profile', '/mock/persistent');
+    });
+
+    it('should return real profile when isAutoLaunch is false and profile is unlocked (backward compat)', () => {
+      const manager = new ProfileManager();
+
+      const result = manager.resolveProfile({
+        realProfileDir: '/real/chrome/profile',
+        isProfileLocked: false,
+        isAutoLaunch: false,
+      });
+
+      expect(result.profileType).toBe('real');
+      expect(result.userDataDir).toBe('/real/chrome/profile');
+    });
+
+    it('should return real profile when isAutoLaunch is omitted and profile is unlocked (backward compat)', () => {
+      const manager = new ProfileManager();
+
+      const result = manager.resolveProfile({
+        realProfileDir: '/real/chrome/profile',
+        isProfileLocked: false,
+      });
+
+      expect(result.profileType).toBe('real');
+      expect(result.userDataDir).toBe('/real/chrome/profile');
+    });
+
+    it('should prioritize explicit --user-data-dir over isAutoLaunch', () => {
+      const manager = new ProfileManager();
+
+      const result = manager.resolveProfile({
+        realProfileDir: '/real/chrome/profile',
+        isProfileLocked: false,
+        explicitUserDataDir: '/my/custom/dir',
+        isAutoLaunch: true,
+      });
+
+      expect(result.profileType).toBe('explicit');
+      expect(result.userDataDir).toBe('/my/custom/dir');
+    });
+
+    it('should return persistent profile when isAutoLaunch is true and profile is also locked', () => {
+      const manager = new ProfileManager();
+      jest.spyOn(manager, 'needsSync').mockReturnValue(false);
+      jest.spyOn(manager, 'getOrCreatePersistentProfile').mockReturnValue('/mock/persistent');
+
+      const result = manager.resolveProfile({
+        realProfileDir: '/real/chrome/profile',
+        isProfileLocked: true,
+        isAutoLaunch: true,
+      });
+
+      expect(result.profileType).toBe('persistent');
+      expect(result.userDataDir).toBe('/mock/persistent');
+    });
+  });
+
+  // =========================================================================
   // listProfiles()
   // =========================================================================
 
