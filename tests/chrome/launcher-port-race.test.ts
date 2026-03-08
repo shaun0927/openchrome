@@ -162,6 +162,156 @@ describe('ChromeLauncher port race condition fixes', () => {
     });
   });
 
+  describe('Windows isProfileLocked() process verification', () => {
+    // isProfileLocked accepts an optional _platform parameter for testing,
+    // since os.platform is a non-configurable getter that cannot be mocked.
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('should return true when lockfile exists on Windows', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-test-'));
+      fs.writeFileSync(path.join(tmpDir, 'lockfile'), '');
+
+      const result = (launcher as any).isProfileLocked(tmpDir, 'win32');
+      expect(result).toBe(true);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Profile locked')
+      );
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return true when no lockfile but wmic finds chrome.exe with profile dir', () => {
+      // Use real temp dir (no lockfile inside) so fs.existsSync naturally returns false
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-win-test-'));
+
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (typeof cmd === 'string' && cmd.includes('wmic')) {
+          return `CommandLine\nchrome.exe --user-data-dir="${tmpDir}" --flag\n`;
+        }
+        throw new Error('unexpected command');
+      });
+
+      const result = (launcher as any).isProfileLocked(tmpDir, 'win32');
+      expect(result).toBe(true);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('chrome.exe running with')
+      );
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return false when no lockfile and no chrome.exe running', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-win-test-'));
+
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (typeof cmd === 'string' && cmd.includes('wmic')) {
+          return 'CommandLine\n\n';
+        }
+        throw new Error('unexpected command');
+      });
+
+      const result = (launcher as any).isProfileLocked(tmpDir, 'win32');
+      expect(result).toBe(false);
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should fall back to PowerShell when wmic fails', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-win-test-'));
+
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (typeof cmd === 'string' && cmd.includes('wmic')) {
+          throw new Error('wmic not found');
+        }
+        if (typeof cmd === 'string' && cmd.includes('powershell')) {
+          return `chrome.exe --user-data-dir="${tmpDir}" --type=renderer\n`;
+        }
+        throw new Error('unexpected command');
+      });
+
+      const result = (launcher as any).isProfileLocked(tmpDir, 'win32');
+      expect(result).toBe(true);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('PowerShell')
+      );
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should fall back to tasklist when both wmic and PowerShell fail', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-win-test-'));
+
+      const getRealSpy = jest.spyOn(launcher as any, 'getRealChromeProfileDir')
+        .mockReturnValue(tmpDir);
+
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (typeof cmd === 'string' && cmd.includes('wmic')) {
+          throw new Error('wmic not found');
+        }
+        if (typeof cmd === 'string' && cmd.includes('powershell')) {
+          throw new Error('powershell restricted');
+        }
+        if (typeof cmd === 'string' && cmd.includes('tasklist')) {
+          return 'chrome.exe                    1234 Console                    1    150,000 K\n';
+        }
+        throw new Error('unexpected command');
+      });
+
+      const result = (launcher as any).isProfileLocked(tmpDir, 'win32');
+      expect(result).toBe(true);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Profile likely locked')
+      );
+
+      getRealSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return false from tasklist fallback when profileDir is not the default', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-win-test-'));
+      const defaultDir = path.join(os.tmpdir(), 'oc-win-test-default-chrome');
+
+      const getRealSpy = jest.spyOn(launcher as any, 'getRealChromeProfileDir')
+        .mockReturnValue(defaultDir);
+
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (typeof cmd === 'string' && cmd.includes('wmic')) {
+          throw new Error('wmic not found');
+        }
+        if (typeof cmd === 'string' && cmd.includes('powershell')) {
+          throw new Error('powershell restricted');
+        }
+        if (typeof cmd === 'string' && cmd.includes('tasklist')) {
+          return 'chrome.exe                    1234 Console                    1    150,000 K\n';
+        }
+        throw new Error('unexpected command');
+      });
+
+      const result = (launcher as any).isProfileLocked(tmpDir, 'win32');
+      // Chrome is running but profileDir is not the default — can't confirm lock
+      expect(result).toBe(false);
+
+      getRealSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return false when all process checks fail', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-win-test-'));
+
+      mockExecSync.mockImplementation(() => {
+        throw new Error('command not found');
+      });
+
+      const result = (launcher as any).isProfileLocked(tmpDir, 'win32');
+      expect(result).toBe(false);
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+  });
+
   describe('ensureChrome() retry window', () => {
     it('should use retry window (not single-shot) for existing Chrome detection', async () => {
       // This test verifies that ensureChrome uses waitForDebugPort (5s retry)
