@@ -522,4 +522,99 @@ describe('NavigateTool', () => {
       expect(parsed.message).toContain('accounts.google.com');
     });
   });
+
+  describe('Element Count (SPA Readiness)', () => {
+    beforeEach(() => {
+      mockSmartGotoFn.mockResolvedValue({ response: null });
+    });
+
+    test('navigate response includes elementCount field', async () => {
+      const handler = await getNavigateHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.url as jest.Mock).mockReturnValue('https://example.com');
+      (page.title as jest.Mock).mockResolvedValue('Example');
+      (page.evaluate as jest.Mock).mockResolvedValue(42);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        url: 'https://example.com',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.elementCount).toBeDefined();
+      expect(typeof parsed.elementCount).toBe('number');
+    });
+
+    test('elementCount value appears in response text', async () => {
+      const handler = await getNavigateHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.url as jest.Mock).mockReturnValue('https://example.com');
+      (page.title as jest.Mock).mockResolvedValue('Example');
+      (page.evaluate as jest.Mock).mockResolvedValue(1234);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        url: 'https://example.com',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.elementCount).toBe(1234);
+      expect(result.content[0].text).toContain('1234');
+    });
+
+    test('navigate succeeds even when page.evaluate throws for elementCount', async () => {
+      const handler = await getNavigateHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.url as jest.Mock).mockReturnValue('https://example.com');
+      (page.title as jest.Mock).mockResolvedValue('Example');
+      (page.evaluate as jest.Mock).mockRejectedValue(new Error('Execution context was destroyed'));
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        url: 'https://example.com',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      // Navigation must still succeed
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.action).toBe('navigate');
+      // elementCount falls back to 0 on failure
+      expect(parsed.elementCount).toBe(0);
+    });
+
+    test('back navigation response includes elementCount', async () => {
+      const handler = await getNavigateHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.url as jest.Mock).mockReturnValue('https://previous.example.com');
+      (page.title as jest.Mock).mockResolvedValue('Previous');
+      (page.evaluate as jest.Mock).mockResolvedValue(55);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        url: 'back',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.action).toBe('back');
+      expect(parsed.elementCount).toBe(55);
+    });
+
+    test('forward navigation response includes elementCount', async () => {
+      const handler = await getNavigateHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.url as jest.Mock).mockReturnValue('https://next.example.com');
+      (page.title as jest.Mock).mockResolvedValue('Next');
+      (page.evaluate as jest.Mock).mockResolvedValue(77);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        url: 'forward',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.action).toBe('forward');
+      expect(parsed.elementCount).toBe(77);
+    });
+  });
 });
