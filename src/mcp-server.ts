@@ -525,27 +525,27 @@ export class MCPServer {
       this.expandToolTier(toolTier);
     }
 
-    // Ensure session exists.
-    // Use a longer timeout when autoLaunch is enabled because Chrome launch (up to 30s)
-    // + puppeteer.connect (up to 15s) can exceed the default 30s session init timeout.
-    if (sessionId && !SKIP_SESSION_INIT_TOOLS.has(toolName)) {
-      const globalConfig = getGlobalConfig();
-      const sessionInitTimeout = globalConfig.autoLaunch
-        ? DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS
-        : DEFAULT_SESSION_INIT_TIMEOUT_MS;
-      let sessionInitTid: ReturnType<typeof setTimeout>;
-      await Promise.race([
-        this.sessionManager.getOrCreateSession(sessionId).finally(() => clearTimeout(sessionInitTid)),
-        new Promise<never>((_, reject) => {
-          sessionInitTid = setTimeout(() => reject(new Error(`Session initialization timed out after ${sessionInitTimeout}ms`)), sessionInitTimeout);
-        }),
-      ]);
-    }
-
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
 
     try {
+      // Ensure session exists.
+      // Use a longer timeout when autoLaunch is enabled because Chrome launch (up to 30s)
+      // + puppeteer.connect (up to 15s) can exceed the default 30s session init timeout.
+      if (sessionId && !SKIP_SESSION_INIT_TOOLS.has(toolName)) {
+        const globalConfig = getGlobalConfig();
+        const sessionInitTimeout = globalConfig.autoLaunch
+          ? DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS
+          : DEFAULT_SESSION_INIT_TIMEOUT_MS;
+        let sessionInitTid: ReturnType<typeof setTimeout>;
+        await Promise.race([
+          this.sessionManager.getOrCreateSession(sessionId).finally(() => clearTimeout(sessionInitTid)),
+          new Promise<never>((_, reject) => {
+            sessionInitTid = setTimeout(() => reject(new Error(`Session initialization timed out after ${sessionInitTimeout}ms`)), sessionInitTimeout);
+          }),
+        ]);
+      }
+
       // Wait at gate if paused
       if (this.operationController) {
         let gateTid: ReturnType<typeof setTimeout>;
