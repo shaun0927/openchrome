@@ -537,7 +537,7 @@ export class ProfileManager {
    *
    * Also patches Preferences to prevent "Chrome didn't shut down correctly" prompt.
    */
-  cleanStaleLocks(profileDir: string): void {
+  cleanStaleLocks(profileDir: string, profileSubdir: string = 'Default'): void {
     const lockFiles = [
       'SingletonLock',
       'SingletonSocket',
@@ -548,17 +548,21 @@ export class ProfileManager {
     for (const lockName of lockFiles) {
       const lockPath = path.join(profileDir, lockName);
       try {
-        // Use lstatSync to detect symlinks (SingletonLock is a symlink on Unix)
         fs.lstatSync(lockPath);
-        fs.unlinkSync(lockPath);
-        console.error(`[ProfileManager] Removed stale lock: ${lockPath}`);
       } catch {
         // File doesn't exist — nothing to clean
+        continue;
+      }
+      try {
+        fs.unlinkSync(lockPath);
+        console.error(`[ProfileManager] Removed stale lock: ${lockPath}`);
+      } catch (err) {
+        console.error(`[ProfileManager] Failed to remove stale lock ${lockPath}: ${err}`);
       }
     }
 
     // Patch Preferences to prevent "Chrome didn't shut down correctly" restore prompt
-    this.patchPreferencesExitType(profileDir);
+    this.patchPreferencesExitType(profileDir, profileSubdir);
   }
 
   // -------------------------------------------------------------------------
@@ -577,15 +581,18 @@ export class ProfileManager {
       const raw = fs.readFileSync(prefsPath, 'utf8');
       const prefs = JSON.parse(raw);
 
-      if (prefs.profile) {
-        prefs.profile.exit_type = 'Normal';
-        prefs.profile.exited_cleanly = true;
-      }
+      if (!prefs.profile) prefs.profile = {};
+      prefs.profile.exit_type = 'Normal';
+      prefs.profile.exited_cleanly = true;
 
       // Suppress session restore
       if (!prefs.session) prefs.session = {};
       prefs.session.restore_on_startup = 5;
       delete prefs.session.startup_urls;
+
+      // Remove HMAC checksums so Chrome regenerates them on next write,
+      // otherwise Chrome silently resets patched values to defaults.
+      delete prefs.protection_macs;
 
       fs.writeFileSync(prefsPath, JSON.stringify(prefs));
       console.error('[ProfileManager] Patched Preferences: exit_type=Normal');

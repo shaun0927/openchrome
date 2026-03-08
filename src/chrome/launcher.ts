@@ -379,8 +379,14 @@ export class ChromeLauncher {
     // Clean stale locks from persistent profile before launching Chrome.
     // After oc_stop force-kills Chrome, stale locks and crashed exit_type
     // can leave the profile in a degraded state.
+    // Non-fatal: a stale lock is better than a failed launch.
     if (profileType === 'persistent') {
-      this.profileManager.cleanStaleLocks(userDataDir);
+      try {
+        const profileSubdir = options.profileDirectory || globalConfig.profileDirectory || 'Default';
+        this.profileManager.cleanStaleLocks(userDataDir, profileSubdir);
+      } catch (err) {
+        console.error('[ChromeLauncher] cleanStaleLocks failed (non-fatal):', err);
+      }
     }
 
     const profileDirectory = options.profileDirectory || globalConfig.profileDirectory;
