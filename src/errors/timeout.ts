@@ -12,6 +12,7 @@ export class OpenChromeTimeoutError extends Error {
 
   constructor(label: string, timeoutMs: number, recoverable = false) {
     super(`${label} timed out after ${timeoutMs}ms`);
+    Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'OpenChromeTimeoutError';
     this.label = label;
     this.timeoutMs = timeoutMs;
@@ -29,7 +30,6 @@ export function isTimeoutError(error: unknown): error is OpenChromeTimeoutError 
   if (error instanceof Error) {
     const msg = error.message.toLowerCase();
     return (
-      msg.includes('timeout') ||
       msg.includes('timed out') ||
       /waiting failed:.*exceeded/i.test(error.message)
     );

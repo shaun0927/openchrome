@@ -167,10 +167,11 @@ export class MCPServer {
   registerTool(
     name: string,
     handler: ToolHandler,
-    definition: MCPToolDefinition
+    definition: MCPToolDefinition,
+    options?: { timeoutRecoverable?: boolean }
   ): void {
     validateToolSchema(name, definition.inputSchema);
-    this.tools.set(name, { name, handler, definition });
+    this.tools.set(name, { name, handler, definition, ...options });
     this.manifestVersion++;
   }
 
