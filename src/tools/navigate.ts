@@ -376,5 +376,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerNavigateTool(server: MCPServer): void {
-  server.registerTool('navigate', handler, definition);
+  server.registerTool('navigate', handler, definition, { timeoutRecoverable: true });
 }

@@ -60,6 +60,8 @@ export interface ToolRegistry {
   name: string;
   handler: ToolHandler;
   definition: MCPToolDefinition;
+  /** When true, timeout errors return isError:false (tool produced useful partial state). */
+  timeoutRecoverable?: boolean;
 }
 
 export const MCPErrorCodes = {
