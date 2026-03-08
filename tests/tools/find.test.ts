@@ -226,6 +226,7 @@ describe('FindTool', () => {
       await handler(testSessionId, {
         tabId: testTargetId,
         query: 'BUTTON',
+        waitForMs: 0, // disable polling so the test exits immediately
       });
 
       expect(page.evaluate).toHaveBeenCalled();
@@ -318,6 +319,7 @@ describe('FindTool', () => {
       const result = await handler(testSessionId, {
         tabId: testTargetId,
         query: 'nonexistent element',
+        waitForMs: 0, // disable polling so the test exits immediately
       }) as { content: Array<{ type: string; text: string }> };
 
       expect(result.content[0].text).toContain('No elements found');
@@ -373,6 +375,97 @@ describe('FindTool', () => {
         'button',
         undefined
       );
+    });
+  });
+
+  describe('waitForMs Default Behavior', () => {
+    test('uses 3000ms polling timeout when waitForMs is not provided', async () => {
+      const handler = await getFindHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // First call returns empty (simulating element not yet rendered),
+      // second call returns a result (element appeared after polling).
+      (page.evaluate as jest.Mock)
+        .mockResolvedValueOnce([]) // first poll: nothing found
+        .mockResolvedValueOnce([  // second poll: element appears
+          {
+            backendDOMNodeId: 0,
+            role: 'button',
+            name: 'Lazy Button',
+            tagName: 'button',
+            rect: { x: 100, y: 100, width: 80, height: 30 },
+          },
+        ]);
+
+      // CDP mocks for the second (successful) iteration
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({ result: {} })            // first iteration batch (no objectId)
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        .mockResolvedValueOnce({ result: [{ name: '0', value: { objectId: 'el-obj-0' } }] })
+        .mockResolvedValueOnce({ node: { backendNodeId: 55001 } });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        query: 'lazy button',
+        // waitForMs intentionally omitted — should default to 3000
+        pollInterval: 10, // fast poll so the test doesn't take 3 seconds
+      }) as { content: Array<{ type: string; text: string }> };
+
+      // evaluate was called at least twice (polling occurred)
+      expect((page.evaluate as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(result.content[0].text).toContain('Found');
+    });
+
+    test('does not poll when waitForMs is explicitly 0', async () => {
+      const handler = await getFindHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Always returns empty — but with waitForMs:0 we should exit after one attempt
+      (page.evaluate as jest.Mock).mockResolvedValue([]);
+
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({ result: {} }); // batch evaluate with no objectId
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        query: 'nonexistent',
+        waitForMs: 0,
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      // Only one element-search evaluate call before the diagnostic evaluate — no retry loop
+      // The handler calls evaluate a second time for page diagnostics (url/readyState/totalElements)
+      expect((page.evaluate as jest.Mock).mock.calls.length).toBe(2);
+      expect(result.content[0].text).toContain('No elements found');
+    });
+
+    test('uses explicitly provided waitForMs value (5000ms)', async () => {
+      const handler = await getFindHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      // Element found on first poll
+      (page.evaluate as jest.Mock).mockResolvedValue([
+        {
+          backendDOMNodeId: 0,
+          role: 'link',
+          name: 'Go',
+          tagName: 'a',
+          rect: { x: 10, y: 10, width: 50, height: 20 },
+        },
+      ]);
+
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
+        .mockResolvedValueOnce({ result: [{ name: '0', value: { objectId: 'el-obj-0' } }] })
+        .mockResolvedValueOnce({ node: { backendNodeId: 55002 } });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        query: 'go link',
+        waitForMs: 5000,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('Found');
+      // Max wait is capped at 30000, so 5000 passes through unchanged
     });
   });
 
