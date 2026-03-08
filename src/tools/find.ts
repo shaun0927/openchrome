@@ -24,7 +24,7 @@ const definition: MCPToolDefinition = {
       },
       waitForMs: {
         type: 'number',
-        description: 'Max time to wait for element to appear. 0 = no waiting (default). Max 30000.',
+        description: 'Polling timeout in ms for dynamic/SPA content (default: 3000). Set to 0 to disable polling.',
       },
       pollInterval: {
         type: 'number',
@@ -86,8 +86,8 @@ const handler: ToolHandler = async (
       score: number;
     }
 
-    // Optional polling for dynamic/lazy content
-    const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
+    // Optional polling for dynamic/lazy content (default 3000ms; pass 0 to disable)
+    const maxWait = Math.min(Math.max(waitForMs ?? 3000, 0), 30000);
     const startTime = Date.now();
     let output: string[] = [];
 

@@ -12,6 +12,7 @@ import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { detectBlockingPage } from '../utils/page-diagnostics';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -136,6 +137,16 @@ const handler: ToolHandler = async (
                 new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
               ]).catch(e => { console.error('[navigate] detectBlockingPage error (tab-reuse):', e); return null; }),
             ]);
+            // Get element count for SPA readiness visibility
+            let reuseElementCount = 0;
+            try {
+              reuseElementCount = await withTimeout(
+                page.evaluate(() => document.querySelectorAll('*').length),
+                3000, 'elementCount'
+              );
+            } catch {
+              // Non-critical — proceed without count
+            }
             const reuseResultText = JSON.stringify({
               action: 'navigate',
               url: page.url(),
@@ -143,6 +154,7 @@ const handler: ToolHandler = async (
               tabId: existingTabId,
               workerId: resolvedWorkerId,
               reused: true,
+              elementCount: reuseElementCount,
               ...(summary && { visualSummary: summary }),
               ...(reuseBlocking && { blockingPage: reuseBlocking }),
             });
@@ -164,6 +176,16 @@ const handler: ToolHandler = async (
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
         ]).catch(e => { console.error('[navigate] detectBlockingPage error (new-tab):', e); return null; }),
       ]);
+      // Get element count for SPA readiness visibility
+      let newTabElementCount = 0;
+      try {
+        newTabElementCount = await withTimeout(
+          page.evaluate(() => document.querySelectorAll('*').length),
+          3000, 'elementCount'
+        );
+      } catch {
+        // Non-critical — proceed without count
+      }
       const newTabResultText = JSON.stringify({
         action: 'navigate',
         url: page.url(),
@@ -171,6 +193,7 @@ const handler: ToolHandler = async (
         tabId: targetId,
         workerId: assignedWorkerId,
         created: true,
+        elementCount: newTabElementCount,
         ...(newTabSummary && { visualSummary: newTabSummary }),
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
       });
@@ -230,10 +253,21 @@ const handler: ToolHandler = async (
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
         ]).catch(e => { console.error('[navigate] detectBlockingPage error (back):', e); return null; }),
       ]);
+      // Get element count for SPA readiness visibility
+      let backElementCount = 0;
+      try {
+        backElementCount = await withTimeout(
+          page.evaluate(() => document.querySelectorAll('*').length),
+          3000, 'elementCount'
+        );
+      } catch {
+        // Non-critical — proceed without count
+      }
       const backResultText = JSON.stringify({
         action: 'back',
         url: page.url(),
         title: await safeTitle(page),
+        elementCount: backElementCount,
         ...(backSummary && { visualSummary: backSummary }),
         ...(backBlocking && { blockingPage: backBlocking }),
       });
@@ -252,10 +286,21 @@ const handler: ToolHandler = async (
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
         ]).catch(e => { console.error('[navigate] detectBlockingPage error (forward):', e); return null; }),
       ]);
+      // Get element count for SPA readiness visibility
+      let fwdElementCount = 0;
+      try {
+        fwdElementCount = await withTimeout(
+          page.evaluate(() => document.querySelectorAll('*').length),
+          3000, 'elementCount'
+        );
+      } catch {
+        // Non-critical — proceed without count
+      }
       const fwdResultText = JSON.stringify({
         action: 'forward',
         url: page.url(),
         title: await safeTitle(page),
+        elementCount: fwdElementCount,
         ...(fwdSummary && { visualSummary: fwdSummary }),
         ...(fwdBlocking && { blockingPage: fwdBlocking }),
       });
@@ -348,10 +393,21 @@ const handler: ToolHandler = async (
         new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
       ]).catch(e => { console.error('[navigate] detectBlockingPage error (existing-tab):', e); return null; }),
     ]);
+    // Get element count for SPA readiness visibility
+    let navElementCount = 0;
+    try {
+      navElementCount = await withTimeout(
+        page.evaluate(() => document.querySelectorAll('*').length),
+        3000, 'elementCount'
+      );
+    } catch {
+      // Non-critical — proceed without count
+    }
     const navResultText = JSON.stringify({
       action: 'navigate',
       url: page.url(),
       title: await safeTitle(page),
+      elementCount: navElementCount,
       ...(navSummary && { visualSummary: navSummary }),
       ...(navBlocking && { blockingPage: navBlocking }),
     });
