@@ -692,6 +692,107 @@ describe('ProfileManager', () => {
   });
 
   // =========================================================================
+  // cleanStaleLocks()
+  // =========================================================================
+
+  describe('cleanStaleLocks()', () => {
+    let profileDir: string;
+
+    beforeEach(() => {
+      profileDir = path.join(tmpDir, 'stale-profile');
+      fs.mkdirSync(path.join(profileDir, 'Default'), { recursive: true });
+    });
+
+    it('should remove SingletonLock, SingletonSocket, SingletonCookie files', () => {
+      // Create the lock files
+      fs.writeFileSync(path.join(profileDir, 'SingletonLock'), '');
+      fs.writeFileSync(path.join(profileDir, 'SingletonSocket'), '');
+      fs.writeFileSync(path.join(profileDir, 'SingletonCookie'), '');
+
+      const manager = new ProfileManager();
+      manager.cleanStaleLocks(profileDir);
+
+      expect(fs.existsSync(path.join(profileDir, 'SingletonLock'))).toBe(false);
+      expect(fs.existsSync(path.join(profileDir, 'SingletonSocket'))).toBe(false);
+      expect(fs.existsSync(path.join(profileDir, 'SingletonCookie'))).toBe(false);
+    });
+
+    it('should remove lockfile (Windows)', () => {
+      fs.writeFileSync(path.join(profileDir, 'lockfile'), '');
+
+      const manager = new ProfileManager();
+      manager.cleanStaleLocks(profileDir);
+
+      expect(fs.existsSync(path.join(profileDir, 'lockfile'))).toBe(false);
+    });
+
+    it('should handle symlinks (SingletonLock is a symlink on Unix)', () => {
+      // SingletonLock on Unix is a symlink pointing to "hostname-pid"
+      const symlinkPath = path.join(profileDir, 'SingletonLock');
+      fs.symlinkSync('localhost-12345', symlinkPath);
+
+      // Verify the symlink exists via lstat (existsSync would return false for dangling symlinks)
+      expect(() => fs.lstatSync(symlinkPath)).not.toThrow();
+
+      const manager = new ProfileManager();
+      manager.cleanStaleLocks(profileDir);
+
+      // Symlink should be removed
+      expect(() => fs.lstatSync(symlinkPath)).toThrow();
+    });
+
+    it('should patch Preferences exit_type to "Normal"', () => {
+      const prefs = {
+        profile: { exit_type: 'Crashed', exited_cleanly: false, name: 'Default' },
+        session: { startup_urls: ['https://example.com'], restore_on_startup: 1 },
+      };
+      fs.writeFileSync(
+        path.join(profileDir, 'Default', 'Preferences'),
+        JSON.stringify(prefs)
+      );
+
+      const manager = new ProfileManager();
+      manager.cleanStaleLocks(profileDir);
+
+      const patched = JSON.parse(
+        fs.readFileSync(path.join(profileDir, 'Default', 'Preferences'), 'utf8')
+      );
+      expect(patched.profile.exit_type).toBe('Normal');
+      expect(patched.profile.exited_cleanly).toBe(true);
+      expect(patched.profile.name).toBe('Default'); // Other fields preserved
+      expect(patched.session.restore_on_startup).toBe(5);
+      expect(patched.session.startup_urls).toBeUndefined();
+    });
+
+    it('should handle missing Preferences file gracefully', () => {
+      // No Preferences file exists
+      const manager = new ProfileManager();
+      expect(() => manager.cleanStaleLocks(profileDir)).not.toThrow();
+    });
+
+    it('should handle corrupt Preferences JSON gracefully', () => {
+      fs.writeFileSync(
+        path.join(profileDir, 'Default', 'Preferences'),
+        'not valid json {{{'
+      );
+
+      const manager = new ProfileManager();
+      expect(() => manager.cleanStaleLocks(profileDir)).not.toThrow();
+    });
+
+    it('should be a no-op when no lock files exist', () => {
+      // profileDir exists but has no lock files and no Preferences
+      const manager = new ProfileManager();
+      expect(() => manager.cleanStaleLocks(profileDir)).not.toThrow();
+      // Verify no console.error about removing locks was called
+      const removeLockCalls = consoleErrorSpy.mock.calls.filter(
+        (call: unknown[]) => String(call[0]).includes('Removed stale lock')
+      );
+      expect(removeLockCalls).toHaveLength(0);
+    });
+  });
+
+  // =========================================================================
   // dynamic profile subdirectory
   // =========================================================================
 
