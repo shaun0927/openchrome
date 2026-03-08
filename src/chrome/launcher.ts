@@ -675,14 +675,66 @@ export class ChromeLauncher {
    * On Unix, validates SingletonLock symlink targets by checking if the PID is alive,
    * so stale lock files from crashed Chrome instances are correctly ignored.
    */
-  private isProfileLocked(profileDir: string): boolean {
-    if (os.platform() === 'win32') {
+  private isProfileLocked(profileDir: string, _platform?: string): boolean {
+    const platform = _platform || os.platform();
+    if (platform === 'win32') {
       // Windows Chrome uses a 'lockfile' in the user data directory
       const lockFile = path.join(profileDir, 'lockfile');
       if (fs.existsSync(lockFile)) {
         console.error(`[ChromeLauncher] Profile locked: ${lockFile} exists`);
         return true;
       }
+
+      // Lockfile may not exist even when Chrome is running (race condition
+      // or different Chrome version behavior). Cross-check by looking for
+      // chrome.exe processes that have this profile directory open.
+      try {
+        const output = execSync(
+          'wmic process where "name=\'chrome.exe\'" get CommandLine 2>nul',
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }
+        );
+        // Normalize path separators for comparison
+        const normalizedProfileDir = profileDir.replace(/\\/g, '\\\\').toLowerCase();
+        if (output.toLowerCase().includes(normalizedProfileDir)) {
+          console.error(`[ChromeLauncher] Profile locked: chrome.exe running with ${profileDir}`);
+          return true;
+        }
+      } catch {
+        // wmic failed or not available (Windows 11 removed wmic) — try PowerShell fallback
+        try {
+          const psOutput = execSync(
+            'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name=\'chrome.exe\'\\" | Select-Object -ExpandProperty CommandLine"',
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 }
+          );
+          if (psOutput.toLowerCase().includes(profileDir.toLowerCase())) {
+            console.error(`[ChromeLauncher] Profile locked: chrome.exe running with ${profileDir} (PowerShell)`);
+            return true;
+          }
+        } catch {
+          // Both wmic and PowerShell failed — fall back to simple process check.
+          // This is less precise (can't verify the specific profile) but better
+          // than nothing: if Chrome is running at all, the default profile is likely locked.
+          try {
+            const tasklistOutput = execSync('tasklist /FI "IMAGENAME eq chrome.exe" /NH', {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore'],
+              timeout: 5000,
+            });
+            if (tasklistOutput.toLowerCase().includes('chrome.exe')) {
+              // Chrome is running but we can't determine which profile.
+              // If profileDir is the default Chrome directory, assume locked.
+              const defaultDir = this.getRealChromeProfileDir();
+              if (defaultDir && path.normalize(profileDir).toLowerCase() === path.normalize(defaultDir).toLowerCase()) {
+                console.error(`[ChromeLauncher] Profile likely locked: chrome.exe running and profileDir is the default Chrome directory`);
+                return true;
+              }
+            }
+          } catch {
+            // tasklist also failed — cannot determine, assume not locked
+          }
+        }
+      }
+
       return false;
     }
 
