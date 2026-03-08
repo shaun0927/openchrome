@@ -1094,7 +1094,6 @@ export class CDPClient {
     page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
-        configurable: true,
       });
     }).catch(() => {});
 

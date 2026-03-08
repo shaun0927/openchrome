@@ -440,12 +440,16 @@ export class ChromeLauncher {
       '--disable-ipc-flooding-protection',
       // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
       '--disable-gpu-crash-limit',
-      // Prevent Blink from setting navigator.webdriver = true when CDP is connected.
-      // Without this, anti-automation systems (e.g., Cloudflare Turnstile) detect the
-      // browser as automated and refuse to function — even for manual human interaction.
-      // This is an official Chrome flag, not a stealth hack. (#247)
-      '--disable-blink-features=AutomationControlled',
     );
+
+    // Prevent Blink from setting navigator.webdriver = true when CDP is connected.
+    // Without this, anti-automation systems (e.g., Cloudflare Turnstile) detect the
+    // browser as automated and refuse to function — even for manual human interaction.
+    // This is an official Chrome flag, not a stealth hack. (#247)
+    // Skipped for chrome-headless-shell which may not support this flag.
+    if (!usingHeadlessShell) {
+      args.push('--disable-blink-features=AutomationControlled');
+    }
 
     // Only disable background features for non-real profiles
     if (profileType !== 'real') {
