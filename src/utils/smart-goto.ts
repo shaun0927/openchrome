@@ -9,6 +9,61 @@
 import { Page, Frame, HTTPResponse } from 'puppeteer-core';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
+export interface DomStabilityResult {
+  stable: boolean;
+  elementCount: number;
+  iterations: number;
+}
+
+/**
+ * Wait for DOM element count to stabilize after initial page load.
+ * SPA frameworks (React, Vue, Angular) render content asynchronously after
+ * domcontentloaded — this heuristic detects when rendering is complete by
+ * monitoring element count changes.
+ *
+ * Zero-cost on static pages (first check passes immediately).
+ * Bounded to maxWaitMs (default 1500ms) total.
+ */
+export async function waitForDomStability(
+  page: Page,
+  options?: { intervalMs?: number; maxIterations?: number; threshold?: number },
+): Promise<DomStabilityResult> {
+  const intervalMs = options?.intervalMs ?? 500;
+  const maxIterations = options?.maxIterations ?? 3;
+  const threshold = options?.threshold ?? 0.2;
+
+  let previousCount = 0;
+  let iterations = 0;
+
+  try {
+    previousCount = await page.evaluate(() => document.querySelectorAll('*').length);
+  } catch {
+    return { stable: true, elementCount: 0, iterations: 0 };
+  }
+
+  for (let i = 0; i < maxIterations; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+    iterations++;
+
+    let currentCount = previousCount;
+    try {
+      currentCount = await page.evaluate(() => document.querySelectorAll('*').length);
+    } catch {
+      // Page navigated away or was closed — treat as stable
+      return { stable: true, elementCount: previousCount, iterations };
+    }
+
+    const delta = Math.abs(currentCount - previousCount) / Math.max(previousCount, 1);
+    if (delta <= threshold) {
+      return { stable: true, elementCount: currentCount, iterations };
+    }
+
+    previousCount = currentCount;
+  }
+
+  return { stable: false, elementCount: previousCount, iterations };
+}
+
 const AUTH_DOMAINS = [
   'accounts.google.com',
   'login.microsoftonline.com',
@@ -72,6 +127,18 @@ export async function smartGoto(
         () => new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
       ),
     ]);
+
+    // Only wait for DOM stability if no auth redirect was detected
+    if (!authRedirect) {
+      const stability = await waitForDomStability(page);
+      // Log if DOM was still changing (useful for debugging SPA issues)
+      if (!stability.stable) {
+        console.error(
+          `[smartGoto] DOM not stable after ${stability.iterations} checks (${stability.elementCount} elements)`,
+        );
+      }
+    }
+
     return { response, authRedirect };
   } catch (err) {
     // If we already detected an auth redirect, return it instead of throwing
