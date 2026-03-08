@@ -255,6 +255,13 @@ const handler: ToolHandler = async (
           if (keyLower.includes(labelLower) && labelLower.length > 2) score += 30;
           if (keyLower.includes(nameLower) && nameLower.length > 2) score += 25;
 
+          // Type attribute tie-breaker (lower priority than label/name/placeholder)
+          const typeLower = field.type?.toLowerCase() || '';
+          if (typeLower && typeLower !== 'text') { // 'text' is too generic to match
+            if (typeLower === keyLower) score += 20;
+            else if (keyLower.includes(typeLower) || typeLower.includes(keyLower)) score += 10;
+          }
+
           if (score > bestScore) {
             bestScore = score;
             bestMatch = field;
@@ -262,7 +269,7 @@ const handler: ToolHandler = async (
         }
 
         if (!bestMatch || bestScore < 20) {
-          const foundFieldNames = formFields.map(f => f.label || f.name || f.placeholder || f.ariaLabel).filter(Boolean) as string[];
+          const foundFieldNames = formFields.map(f => f.label || f.name || f.placeholder || f.ariaLabel || (f.type && f.type !== 'text' ? `[type=${f.type}]` : null)).filter(Boolean) as string[];
           errors.push(`Could not find field matching "${fieldKey}". Available fields: [${foundFieldNames.join(', ')}]`);
           continue;
         }
