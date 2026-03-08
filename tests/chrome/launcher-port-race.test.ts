@@ -163,7 +163,7 @@ describe('ChromeLauncher port race condition fixes', () => {
   });
 
   describe('Windows isProfileLocked() process verification', () => {
-    // isProfileLocked accepts an optional _platform parameter for testing,
+    // isProfileLocked accepts an optional platformOverride parameter for testing,
     // since os.platform is a non-configurable getter that cannot be mocked.
 
     afterEach(() => {

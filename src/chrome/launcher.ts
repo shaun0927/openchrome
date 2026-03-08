@@ -675,8 +675,8 @@ export class ChromeLauncher {
    * On Unix, validates SingletonLock symlink targets by checking if the PID is alive,
    * so stale lock files from crashed Chrome instances are correctly ignored.
    */
-  private isProfileLocked(profileDir: string, _platform?: string): boolean {
-    const platform = _platform || os.platform();
+  private isProfileLocked(profileDir: string, platformOverride?: string): boolean {
+    const platform = platformOverride || os.platform();
     if (platform === 'win32') {
       // Windows Chrome uses a 'lockfile' in the user data directory
       const lockFile = path.join(profileDir, 'lockfile');
@@ -693,9 +693,10 @@ export class ChromeLauncher {
           'wmic process where "name=\'chrome.exe\'" get CommandLine 2>nul',
           { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }
         );
-        // Normalize path separators for comparison
-        const normalizedProfileDir = profileDir.replace(/\\/g, '\\\\').toLowerCase();
-        if (output.toLowerCase().includes(normalizedProfileDir)) {
+        // Normalize path separators for comparison (forward-slash on both sides)
+        const normalizedProfileDir = profileDir.replace(/\\/g, '/').toLowerCase();
+        const normalizedOutput = output.replace(/\\/g, '/').toLowerCase();
+        if (normalizedOutput.includes(normalizedProfileDir)) {
           console.error(`[ChromeLauncher] Profile locked: chrome.exe running with ${profileDir}`);
           return true;
         }
