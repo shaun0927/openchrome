@@ -30,6 +30,7 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { logAuditEntry } from './security/audit-logger';
 import { getVersion } from './version';
+import { isTimeoutError } from './errors/timeout';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -669,9 +670,13 @@ export class MCPServer {
         ? message + RECONNECTION_GUIDANCE
         : message;
 
+      // Timeout errors on tools with timeoutRecoverable=true return isError:false
+      // so the LLM can continue with partial state (e.g., partially loaded DOM).
+      const errorIsError = !(isTimeoutError(error) && tool.timeoutRecoverable);
+
       const errResult: MCPResult = {
         content: [{ type: 'text', text: `Error: ${displayMessage}` }],
-        isError: true,
+        isError: errorIsError,
       };
 
       if (callId) {
