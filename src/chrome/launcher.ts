@@ -366,6 +366,7 @@ export class ChromeLauncher {
       explicitUserDataDir,
       useTempProfile: options.useTempProfile,
       usingHeadlessShell,
+      isAutoLaunch: true,  // Chrome 136+: force non-default --user-data-dir
     });
 
     const userDataDir = resolution.userDataDir;
