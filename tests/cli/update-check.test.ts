@@ -33,7 +33,7 @@ describe('update-check', () => {
       destroy: jest.fn(),
     };
 
-    (https.get as jest.Mock).mockImplementation((_url: string, _opts: unknown, callback: (res: unknown) => void) => {
+    (jest.requireMock('https').get as jest.Mock).mockImplementation((_url: string, _opts: unknown, callback: (res: unknown) => void) => {
       // Simulate readable stream synchronously
       const mockResponse = {
         on: jest.fn().mockReturnThis(),
@@ -69,7 +69,7 @@ describe('update-check', () => {
       destroy: jest.fn(),
     };
 
-    (https.get as jest.Mock).mockReturnValue(mockRequest);
+    (jest.requireMock('https').get as jest.Mock).mockReturnValue(mockRequest);
   }
 
   it('should warn when a newer version is available', async () => {
@@ -155,7 +155,7 @@ describe('update-check', () => {
     await checkForUpdates('1.0.0');
 
     // Should have called https.get once for re-verification (not for initial fetch)
-    expect(https.get).toHaveBeenCalledTimes(1);
+    expect(jest.requireMock('https').get).toHaveBeenCalledTimes(1);
 
     // Should still warn based on cached version
     const output = consoleErrorSpy.mock.calls.map((c: unknown[]) => c[0]).join('\n');

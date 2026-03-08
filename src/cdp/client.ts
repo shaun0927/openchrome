@@ -1087,6 +1087,16 @@ export class CDPClient {
       window.print = () => { console.warn('[OpenChrome] window.print() suppressed'); };
     }).catch(() => {});
 
+    // Remove navigator.webdriver flag that CDP sets automatically.
+    // Anti-automation systems (e.g., Cloudflare Turnstile) check this flag and refuse
+    // to function even for manual human interaction. Defense-in-depth alongside the
+    // --disable-blink-features=AutomationControlled launch flag. (#247)
+    page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+      });
+    }).catch(() => {});
+
     // Deny file downloads by default — Content-Disposition: attachment
     // responses block the navigation promise indefinitely.
     this.send(page, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});

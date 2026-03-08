@@ -5,6 +5,6 @@
     "noEmit": true,
     "types": ["node", "jest", "chrome"]
   },
-  "include": ["src/**/*", "extension/src/**/*", "tests/**/*"],
+  "include": ["src/**/*", "extension/src/**/*", "cli/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist"]
 }

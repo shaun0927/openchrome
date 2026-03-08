@@ -33,6 +33,7 @@ const mockCdpClientInstance = {
   closePage: jest.fn().mockResolvedValue(undefined),
   getPageByTargetId: jest.fn().mockReturnValue(null),
   isConnected: jest.fn().mockReturnValue(true),
+  addConnectionListener: jest.fn(),
   addTargetDestroyedListener: jest.fn(),
   createBrowserContext: jest.fn().mockResolvedValue(mockBrowserContext),
   closeBrowserContext: jest.fn().mockResolvedValue(undefined),

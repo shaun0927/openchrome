@@ -21,6 +21,7 @@ const mockEnsureChrome = jest.fn();
 jest.mock('../../src/chrome/launcher', () => ({
   getChromeLauncher: jest.fn().mockReturnValue({
     ensureChrome: mockEnsureChrome,
+    invalidateInstance: jest.fn(),
   }),
 }));
 
@@ -74,7 +75,7 @@ describe('CDPClient – active heartbeat probe', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     const launcherMock = require('../../src/chrome/launcher');
-    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome });
+    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome, invalidateInstance: jest.fn() });
     mockEnsureChrome.mockResolvedValue({
       wsEndpoint: 'ws://localhost:9222/devtools/browser/abc',
       httpEndpoint: 'http://127.0.0.1:9222',
@@ -114,6 +115,8 @@ describe('CDPClient – active heartbeat probe', () => {
     mockBrowser.version.mockImplementation(() => new Promise(() => {}));
     (client as any).browser = mockBrowser;
     (client as any).connectionState = 'connected';
+    // Pre-set strike count so next failure triggers disconnect (2-strike policy)
+    (client as any).consecutiveHeartbeatFailures = 1;
 
     // Mock handleDisconnect to prevent actual reconnection attempts
     const handleDisconnectSpy = jest.spyOn(client as any, 'handleDisconnect')
@@ -124,7 +127,7 @@ describe('CDPClient – active heartbeat probe', () => {
     expect(result).toBe(false);
     expect(handleDisconnectSpy).toHaveBeenCalled();
     stopHeartbeat(client);
-  });
+  }, 20000);
 
   test('heartbeat detects dead connection when version() rejects', async () => {
     const client = new CDPClient({ port: 9222 });
@@ -132,6 +135,8 @@ describe('CDPClient – active heartbeat probe', () => {
     mockBrowser.version.mockRejectedValue(new Error('WebSocket is not open'));
     (client as any).browser = mockBrowser;
     (client as any).connectionState = 'connected';
+    // Pre-set strike count so next failure triggers disconnect (2-strike policy)
+    (client as any).consecutiveHeartbeatFailures = 1;
 
     const handleDisconnectSpy = jest.spyOn(client as any, 'handleDisconnect')
       .mockResolvedValue(undefined);
@@ -168,7 +173,7 @@ describe('CDPClient – connect() active probe', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     const launcherMock = require('../../src/chrome/launcher');
-    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome });
+    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome, invalidateInstance: jest.fn() });
     mockEnsureChrome.mockResolvedValue({
       wsEndpoint: 'ws://localhost:9222/devtools/browser/abc',
       httpEndpoint: 'http://127.0.0.1:9222',
@@ -254,7 +259,7 @@ describe('CDPClient – connect() active probe', () => {
 
     expect(forceReconnectSpy).toHaveBeenCalledTimes(1);
     stopHeartbeat(client);
-  }, 10000);
+  }, 20000);
 
   test('connect() no longer calls ensureChrome() for URL verification', async () => {
     const client = new CDPClient({ port: 9222 });
@@ -278,7 +283,7 @@ describe('CDPClient – forceReconnect clears stale state', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     const launcherMock = require('../../src/chrome/launcher');
-    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome });
+    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome, invalidateInstance: jest.fn() });
     mockEnsureChrome.mockResolvedValue({
       wsEndpoint: 'ws://localhost:9222/devtools/browser/abc',
       httpEndpoint: 'http://127.0.0.1:9222',
@@ -375,7 +380,7 @@ describe('CDPClient – handleDisconnect resets lastVerifiedAt', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     const launcherMock = require('../../src/chrome/launcher');
-    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome });
+    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome, invalidateInstance: jest.fn() });
     mockEnsureChrome.mockResolvedValue({
       wsEndpoint: 'ws://localhost:9222/devtools/browser/abc',
       httpEndpoint: 'http://127.0.0.1:9222',

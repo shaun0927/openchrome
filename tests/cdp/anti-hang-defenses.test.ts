@@ -5,6 +5,8 @@
  * 2. window.print() override — suppresses native OS print dialog
  * 3. Page.setDownloadBehavior('deny') — prevents download-triggered navigation hang
  * 4. --disable-gpu-crash-limit Chrome flag — prevents cascading browser death
+ * 5. navigator.webdriver override — removes CDP automation signal (#247)
+ * 6. --disable-blink-features=AutomationControlled Chrome flag (#247)
  */
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
@@ -121,6 +123,14 @@ describe('Anti-hang defenses in createPage()', () => {
         window.print = () => { console.warn('[OpenChrome] window.print() suppressed'); };
       }).catch(() => {});
 
+      // Fix 5: navigator.webdriver override (#247)
+      mockPage.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined,
+          configurable: true,
+        });
+      }).catch(() => {});
+
       // Fix 4: Download behavior deny
       (mockCdpClient as any).send(mockPage, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
 
@@ -191,7 +201,8 @@ describe('Anti-hang defenses in createPage()', () => {
   describe('window.print() override', () => {
     test('calls evaluateOnNewDocument on created pages', async () => {
       const mockPage = await acquireMockPage('target-print');
-      expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledTimes(1);
+      // 2 calls: window.print suppression + navigator.webdriver override
+      expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledTimes(2);
       expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledWith(
         expect.any(Function),
       );
@@ -204,6 +215,47 @@ describe('Anti-hang defenses in createPage()', () => {
       mockCdpClient.createPage.mockImplementation(async () => {
         mockPage.on('dialog', async () => {});
         mockPage.on('error', () => {});
+        mockPage.evaluateOnNewDocument(() => {}).catch(() => {});
+        (mockCdpClient as any).send(mockPage, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
+        return mockPage as any;
+      });
+
+      const pool = new CDPConnectionPool(mockCdpClient, {
+        minPoolSize: 0,
+        maxPoolSize: 5,
+        preWarm: false,
+      });
+      await pool.initialize();
+
+      // Should not throw
+      await expect(pool.acquirePage()).resolves.toBeDefined();
+    });
+  });
+
+  // ── Fix 5: navigator.webdriver override (#247) ──────────────────────────
+
+  describe('navigator.webdriver override', () => {
+    test('calls evaluateOnNewDocument for webdriver override', async () => {
+      const mockPage = await acquireMockPage('target-webdriver');
+      // Second evaluateOnNewDocument call is the webdriver override
+      expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledTimes(2);
+      const calls = mockPage.evaluateOnNewDocument.mock.calls;
+      // Both calls should pass a function
+      expect(typeof calls[0][0]).toBe('function');
+      expect(typeof calls[1][0]).toBe('function');
+    });
+
+    test('does not throw if webdriver override fails', async () => {
+      const mockPage = createMockPage('target-webdriver-fail');
+      // Fail on second call (webdriver override), succeed on first (print)
+      mockPage.evaluateOnNewDocument
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('context destroyed'));
+
+      mockCdpClient.createPage.mockImplementation(async () => {
+        mockPage.on('dialog', async () => {});
+        mockPage.on('error', () => {});
+        mockPage.evaluateOnNewDocument(() => {}).catch(() => {});
         mockPage.evaluateOnNewDocument(() => {}).catch(() => {});
         (mockCdpClient as any).send(mockPage, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
         return mockPage as any;
@@ -258,5 +310,20 @@ describe('--disable-gpu-crash-limit Chrome flag', () => {
     const source = fs.readFileSync(launcherPath, 'utf8');
 
     expect(source).toContain('--disable-gpu-crash-limit');
+  });
+});
+
+// ── Fix 6: --disable-blink-features=AutomationControlled Chrome flag (#247)
+
+describe('--disable-blink-features=AutomationControlled Chrome flag', () => {
+  jest.unmock('../../src/chrome/launcher');
+
+  test('flag is present in launcher source', async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const launcherPath = path.join(__dirname, '../../src/chrome/launcher.ts');
+    const source = fs.readFileSync(launcherPath, 'utf8');
+
+    expect(source).toContain('--disable-blink-features=AutomationControlled');
   });
 });

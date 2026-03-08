@@ -355,7 +355,10 @@ export class ChromeLauncher {
     // Priority: explicit > temp/headless > real unlocked > persistent (with sync) > persistent (no sync)
     const realProfileDir = this.getRealChromeProfileDir();
     const explicitUserDataDir = options.userDataDir || globalConfig.userDataDir;
-    // Skip expensive isProfileLocked check when result won't be used
+    // Skip expensive isProfileLocked check when result won't be used:
+    // explicit dir, temp profile, headless-shell, or no real profile.
+    // Note: isAutoLaunch routes to persistent profile regardless of lock state,
+    // but the lock check is still useful for cookie sync decisions in resolveProfile.
     const isLocked = (!explicitUserDataDir && !options.useTempProfile && !usingHeadlessShell && realProfileDir)
       ? this.isProfileLocked(realProfileDir)
       : false;
@@ -366,11 +369,25 @@ export class ChromeLauncher {
       explicitUserDataDir,
       useTempProfile: options.useTempProfile,
       usingHeadlessShell,
+      isAutoLaunch: true,  // Chrome 136+: force non-default --user-data-dir
     });
 
     const userDataDir = resolution.userDataDir;
     const profileType = resolution.profileType;
     this.currentProfileType = profileType;
+
+    // Clean stale locks from persistent profile before launching Chrome.
+    // After oc_stop force-kills Chrome, stale locks and crashed exit_type
+    // can leave the profile in a degraded state.
+    // Non-fatal: a stale lock is better than a failed launch.
+    if (profileType === 'persistent') {
+      try {
+        const profileSubdir = options.profileDirectory || globalConfig.profileDirectory || 'Default';
+        this.profileManager.cleanStaleLocks(userDataDir, profileSubdir);
+      } catch (err) {
+        console.error('[ChromeLauncher] cleanStaleLocks failed (non-fatal):', err);
+      }
+    }
 
     const profileDirectory = options.profileDirectory || globalConfig.profileDirectory;
 
@@ -424,6 +441,15 @@ export class ChromeLauncher {
       // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
       '--disable-gpu-crash-limit',
     );
+
+    // Prevent Blink from setting navigator.webdriver = true when CDP is connected.
+    // Without this, anti-automation systems (e.g., Cloudflare Turnstile) detect the
+    // browser as automated and refuse to function — even for manual human interaction.
+    // This is an official Chrome flag, not a stealth hack. (#247)
+    // Skipped for chrome-headless-shell which may not support this flag.
+    if (!usingHeadlessShell) {
+      args.push('--disable-blink-features=AutomationControlled');
+    }
 
     // Only disable background features for non-real profiles
     if (profileType !== 'real') {
@@ -658,14 +684,67 @@ export class ChromeLauncher {
    * On Unix, validates SingletonLock symlink targets by checking if the PID is alive,
    * so stale lock files from crashed Chrome instances are correctly ignored.
    */
-  private isProfileLocked(profileDir: string): boolean {
-    if (os.platform() === 'win32') {
+  private isProfileLocked(profileDir: string, platformOverride?: string): boolean {
+    const platform = platformOverride || os.platform();
+    if (platform === 'win32') {
       // Windows Chrome uses a 'lockfile' in the user data directory
       const lockFile = path.join(profileDir, 'lockfile');
       if (fs.existsSync(lockFile)) {
         console.error(`[ChromeLauncher] Profile locked: ${lockFile} exists`);
         return true;
       }
+
+      // Lockfile may not exist even when Chrome is running (race condition
+      // or different Chrome version behavior). Cross-check by looking for
+      // chrome.exe processes that have this profile directory open.
+      try {
+        const output = execSync(
+          'wmic process where "name=\'chrome.exe\'" get CommandLine 2>nul',
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }
+        );
+        // Normalize path separators for comparison (forward-slash on both sides)
+        const normalizedProfileDir = profileDir.replace(/\\/g, '/').toLowerCase();
+        const normalizedOutput = output.replace(/\\/g, '/').toLowerCase();
+        if (normalizedOutput.includes(normalizedProfileDir)) {
+          console.error(`[ChromeLauncher] Profile locked: chrome.exe running with ${profileDir}`);
+          return true;
+        }
+      } catch {
+        // wmic failed or not available (Windows 11 removed wmic) — try PowerShell fallback
+        try {
+          const psOutput = execSync(
+            'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name=\'chrome.exe\'\\" | Select-Object -ExpandProperty CommandLine"',
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 }
+          );
+          if (psOutput.toLowerCase().includes(profileDir.toLowerCase())) {
+            console.error(`[ChromeLauncher] Profile locked: chrome.exe running with ${profileDir} (PowerShell)`);
+            return true;
+          }
+        } catch {
+          // Both wmic and PowerShell failed — fall back to simple process check.
+          // This is less precise (can't verify the specific profile) but better
+          // than nothing: if Chrome is running at all, the default profile is likely locked.
+          try {
+            const tasklistOutput = execSync('tasklist /FI "IMAGENAME eq chrome.exe" /NH', {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore'],
+              timeout: 5000,
+            });
+            if (tasklistOutput.toLowerCase().includes('chrome.exe')) {
+              // Chrome is running but we can't determine which profile.
+              // If profileDir is the default Chrome directory, assume locked.
+              const defaultDir = this.getRealChromeProfileDir();
+              if (defaultDir && path.normalize(profileDir).toLowerCase() === path.normalize(defaultDir).toLowerCase()) {
+                console.error(`[ChromeLauncher] Profile likely locked: chrome.exe running and profileDir is the default Chrome directory`);
+                return true;
+              }
+            }
+          } catch {
+            // tasklist also failed — cannot determine, assume not locked
+          }
+        }
+      }
+
       return false;
     }
 
