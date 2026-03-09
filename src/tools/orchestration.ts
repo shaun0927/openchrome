@@ -559,7 +559,7 @@ const workerCompleteHandler: ToolHandler = async (
 
 const workflowCollectPartialDefinition: MCPToolDefinition = {
   name: 'workflow_collect_partial',
-  description: 'Collect results from completed workers without waiting for all. Use to stream results as available.',
+  description: 'Collect results from completed workers without waiting for all to finish.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -661,7 +661,7 @@ const executePlanDefinition: MCPToolDefinition = {
     properties: {
       planId: {
         type: 'string',
-        description: 'Plan ID, e.g. "x-tweet-extraction-v1"',
+        description: 'Plan ID to execute',
       },
       tabId: {
         type: 'string',
