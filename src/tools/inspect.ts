@@ -146,13 +146,13 @@ const handler: ToolHandler = async (
 
         // Deep querySelectorAll that pierces open shadow roots
         function deepQSA(root: Element | Document | ShadowRoot, sel: string): Element[] {
-          var results: Element[] = [];
-          try { var m = root.querySelectorAll(sel); for (var i = 0; i < m.length; i++) results.push(m[i]); } catch(e) {}
-          var all = root.querySelectorAll('*');
-          for (var j = 0; j < all.length; j++) {
+          let results: Element[] = [];
+          try { let m = root.querySelectorAll(sel); for (let i = 0; i < m.length; i++) results.push(m[i]); } catch(e) {}
+          let all = root.querySelectorAll('*');
+          for (let j = 0; j < all.length; j++) {
             if (all[j].shadowRoot) {
-              var sr = deepQSA(all[j].shadowRoot!, sel);
-              for (var k = 0; k < sr.length; k++) results.push(sr[k]);
+              let sr = deepQSA(all[j].shadowRoot!, sel);
+              for (let k = 0; k < sr.length; k++) results.push(sr[k]);
             }
           }
           return results;

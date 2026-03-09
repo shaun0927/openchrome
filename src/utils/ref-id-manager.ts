@@ -230,13 +230,13 @@ export class RefIdManager {
         (tag: string, elName: string | undefined, elText: string | undefined, elRole: string | undefined): number => {
           // Deep querySelectorAll that pierces open shadow roots
           function deepQSA(root: Element | Document | ShadowRoot, sel: string): Element[] {
-            var results: Element[] = [];
-            try { var m = root.querySelectorAll(sel); for (var i = 0; i < m.length; i++) results.push(m[i]); } catch(e) {}
-            var all = root.querySelectorAll('*');
-            for (var j = 0; j < all.length; j++) {
+            let results: Element[] = [];
+            try { let m = root.querySelectorAll(sel); for (let i = 0; i < m.length; i++) results.push(m[i]); } catch(e) {}
+            let all = root.querySelectorAll('*');
+            for (let j = 0; j < all.length; j++) {
               if ((all[j] as any).shadowRoot) {
-                var sr = deepQSA((all[j] as any).shadowRoot, sel);
-                for (var k = 0; k < sr.length; k++) results.push(sr[k]);
+                let sr = deepQSA((all[j] as any).shadowRoot, sel);
+                for (let k = 0; k < sr.length; k++) results.push(sr[k]);
               }
             }
             return results;
@@ -315,19 +315,19 @@ export class RefIdManager {
       const { result: batchResult } = await cdpClient.send(page, 'Runtime.evaluate', {
         expression: `(() => {
           function deepFind(root) {
-            var el = root.querySelector ? root.querySelector('*.__relocateTarget') : null;
+            let el = root.querySelector ? root.querySelector('*.__relocateTarget') : null;
             if (el) return el;
-            var all = root.querySelectorAll ? root.querySelectorAll('*') : [];
-            for (var i = 0; i < all.length; i++) {
+            let all = root.querySelectorAll ? root.querySelectorAll('*') : [];
+            for (let i = 0; i < all.length; i++) {
               if (all[i].__relocateTarget) return all[i];
               if (all[i].shadowRoot) {
-                var found = deepFind(all[i].shadowRoot);
+                let found = deepFind(all[i].shadowRoot);
                 if (found) return found;
               }
             }
             return null;
           }
-          var el = deepFind(document);
+          let el = deepFind(document);
           if (el) { delete el.__relocateTarget; }
           return el || null;
         })()`,
