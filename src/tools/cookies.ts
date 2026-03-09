@@ -10,11 +10,12 @@ import { assertDomainAllowed } from '../security/domain-guard';
 type CookieTier = 'auth' | 'functional' | 'tracking';
 
 const AUTH_PATTERNS = /^(session|token|jwt|csrf|auth|sid|ssid|connect\.sid|__Host-|__Secure-|XSRF|_csrf)/i;
-const TRACKING_PATTERNS = /^(_ga|_gid|_gat|_fbp|_fbc|__utm|NID|IDE|DSID|APISID|SAPISID|HSID|SSID|SID|__gads|_gcl|fr|tr|_pin|_tt_|hubspot|_hj|_clck|_clsk|mp_|ajs_|amplitude|optimizely|__cf)/i;
+const TRACKING_PATTERNS = /^(_ga|_gid|_gat|_fbp|_fbc|__utm|NID|IDE|DSID|APISID|SAPISID|HSID|__gads|_gcl|_pin|_tt_|hubspot|_hj|_clck|_clsk|mp_|ajs_|amplitude|optimizely)/i;
+const TRACKING_EXACT = new Set(['fr', 'tr']); // Facebook/Twitter pixel cookies — exact name only
 
 function classifyCookie(name: string): CookieTier {
   if (AUTH_PATTERNS.test(name)) return 'auth';
-  if (TRACKING_PATTERNS.test(name)) return 'tracking';
+  if (TRACKING_PATTERNS.test(name) || TRACKING_EXACT.has(name.toLowerCase())) return 'tracking';
   return 'functional';
 }
 
