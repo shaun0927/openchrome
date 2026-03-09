@@ -10,7 +10,7 @@
 import { Page } from 'puppeteer-core';
 import { CDPClient } from '../cdp/client';
 import { FoundElement } from './element-finder';
-import { discoverShadowElements } from './shadow-dom';
+import { discoverShadowElements, DEEP_WALK_ELEMENTS_JS } from './shadow-dom';
 import { withTimeout } from './with-timeout';
 
 /**
@@ -96,6 +96,38 @@ export async function discoverElements(
           .filter(t => t.length > 1)
           .filter(t => !['the', 'a', 'an', 'to', 'for', 'of', 'in', 'on', 'at', 'and', 'or'].includes(t));
 
+        // Deep traversal helpers for open shadow roots
+        function deepQuerySelectorAll(root: DocumentOrShadowRoot | Document, selector: string): Element[] {
+          const results: Element[] = [];
+          try {
+            const matched = (root as Document).querySelectorAll(selector);
+            for (let i = 0; i < matched.length; i++) results.push(matched[i]);
+          } catch { /* invalid selector */ }
+          const allEls = (root as Document).querySelectorAll('*');
+          for (let j = 0; j < allEls.length; j++) {
+            if (allEls[j].shadowRoot) {
+              const sr = deepQuerySelectorAll(allEls[j].shadowRoot!, selector);
+              for (let k = 0; k < sr.length; k++) results.push(sr[k]);
+            }
+          }
+          return results;
+        }
+
+        function deepWalkElements(root: Node): Element[] {
+          const elems: Element[] = [];
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          let n = walker.nextNode();
+          while (n) {
+            elems.push(n as Element);
+            if ((n as Element).shadowRoot) {
+              const shadowEls = deepWalkElements((n as Element).shadowRoot!);
+              for (let i = 0; i < shadowEls.length; i++) elems.push(shadowEls[i]);
+            }
+            n = walker.nextNode();
+          }
+          return elems;
+        }
+
         function getElementInfo(el: Element): RawElement | null {
           const rect = el.getBoundingClientRect();
           if (rect.width === 0 || rect.height === 0) return null;
@@ -170,11 +202,11 @@ export async function discoverElements(
 
         const seen = new Set<Element>();
 
-        // First pass: interactive elements matching query text
+        // First pass: interactive elements matching query text (pierces open shadow roots)
         for (const selector of interactiveSelectors) {
           if (elements.length >= maxRes) break;
           try {
-            for (const el of document.querySelectorAll(selector)) {
+            for (const el of deepQuerySelectorAll(document, selector)) {
               if (seen.has(el) || elements.length >= maxRes) continue;
               const info = getElementInfo(el);
               if (info) {
@@ -195,11 +227,10 @@ export async function discoverElements(
           }
         }
 
-        // Second pass: text content search on all elements via TreeWalker
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-        let node = walker.nextNode();
-        while (node && elements.length < maxRes) {
-          const el = node as Element;
+        // Second pass: text content search on all elements (pierces open shadow roots)
+        const allElements = deepWalkElements(document.body);
+        for (let idx = 0; idx < allElements.length && elements.length < maxRes; idx++) {
+          const el = allElements[idx];
           if (!seen.has(el)) {
             const info = getElementInfo(el);
             if (info) {
@@ -215,7 +246,6 @@ export async function discoverElements(
               }
             }
           }
-          node = walker.nextNode();
         }
 
         return elements;
@@ -286,6 +316,23 @@ export async function discoverFormFields(
     page.evaluate((tagProp: string): FormField[] => {
       const fields: FormField[] = [];
 
+      // Deep traversal for open shadow roots
+      function deepQuerySelectorAll(root: DocumentOrShadowRoot | Document, selector: string): Element[] {
+        const results: Element[] = [];
+        try {
+          const matched = (root as Document).querySelectorAll(selector);
+          for (let i = 0; i < matched.length; i++) results.push(matched[i]);
+        } catch { /* invalid selector */ }
+        const allEls = (root as Document).querySelectorAll('*');
+        for (let j = 0; j < allEls.length; j++) {
+          if (allEls[j].shadowRoot) {
+            const sr = deepQuerySelectorAll(allEls[j].shadowRoot!, selector);
+            for (let k = 0; k < sr.length; k++) results.push(sr[k]);
+          }
+        }
+        return results;
+      }
+
       function getLabel(el: Element): string | undefined {
         const inputEl = el as HTMLInputElement;
         if (inputEl.id) {
@@ -314,13 +361,10 @@ export async function discoverFormFields(
         '[role="combobox"]',
       ];
 
-      const seen = new Set<Element>();
       let index = 0;
       for (const selector of selectors) {
         try {
-          for (const el of document.querySelectorAll(selector)) {
-            if (seen.has(el)) continue;
-            seen.add(el);
+          for (const el of deepQuerySelectorAll(document, selector)) {
             const rect = el.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) continue;
 
@@ -392,21 +436,22 @@ export async function resolveBackendNodeIds(
   if (results.every(r => r.backendDOMNodeId > 0)) return;
 
   // Step 1: Single Runtime.evaluate to collect tagged elements in index order
+  // Uses deep walk to find elements inside open shadow roots
   const { result: batchResult } = await cdpClient.send<{
     result: { objectId?: string };
   }>(page, 'Runtime.evaluate', {
     expression: `(() => {
-      const indexedEls = [];
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-      let node;
-      while (node = walker.nextNode()) {
-        const el = node;
+      ${DEEP_WALK_ELEMENTS_JS}
+      var indexedEls = [];
+      var allElements = deepWalkElements(document.body);
+      for (var i = 0; i < allElements.length; i++) {
+        var el = allElements[i];
         if (el.${tagProperty} !== undefined) {
-          indexedEls.push({ el, index: el.${tagProperty} });
+          indexedEls.push({ el: el, index: el.${tagProperty} });
         }
       }
-      indexedEls.sort((a, b) => a.index - b.index);
-      return indexedEls.map(e => e.el);
+      indexedEls.sort(function(a, b) { return a.index - b.index; });
+      return indexedEls.map(function(e) { return e.el; });
     })()`,
     returnByValue: false,
   });
@@ -458,16 +503,17 @@ export async function getTaggedElementRect(
   tagIndex: number,
   useCenter: boolean = true,
 ): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  // Uses deep walk to find elements inside open shadow roots
   const { result } = await cdpClient.send<{
     result: { value: { x: number; y: number; width: number; height: number } | null };
   }>(page, 'Runtime.evaluate', {
     expression: `(() => {
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-      let node;
-      while (node = walker.nextNode()) {
-        const el = node;
+      ${DEEP_WALK_ELEMENTS_JS}
+      var allElements = deepWalkElements(document.body);
+      for (var i = 0; i < allElements.length; i++) {
+        var el = allElements[i];
         if (el.${tagProperty} === ${tagIndex}) {
-          const rect = el.getBoundingClientRect();
+          var rect = el.getBoundingClientRect();
           return {
             x: ${useCenter ? 'rect.x + rect.width / 2' : 'rect.x'},
             y: ${useCenter ? 'rect.y + rect.height / 2' : 'rect.y'},
@@ -494,15 +540,22 @@ export async function cleanupTags(
   tagProperty: string,
 ): Promise<void> {
   await page.evaluate((prop: string) => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-    let node = walker.nextNode();
-    while (node) {
-      const el = node as unknown as Record<string, unknown>;
-      if (el[prop] !== undefined) {
-        delete el[prop];
+    // Deep walk to also clean tags inside open shadow roots
+    function deepWalk(root: Node): void {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let node = walker.nextNode();
+      while (node) {
+        const el = node as unknown as Record<string, unknown>;
+        if (el[prop] !== undefined) {
+          delete el[prop];
+        }
+        if ((node as Element).shadowRoot) {
+          deepWalk((node as Element).shadowRoot!);
+        }
+        node = walker.nextNode();
       }
-      node = walker.nextNode();
     }
+    deepWalk(document.body);
   }, tagProperty).catch(() => {
     // Non-fatal: page may have navigated
   });
