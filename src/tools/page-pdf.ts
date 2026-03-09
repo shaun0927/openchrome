@@ -66,11 +66,11 @@ const definition: MCPToolDefinition = {
       },
       headerTemplate: {
         type: 'string',
-        description: 'Header HTML template',
+        description: 'Header HTML template (needs displayHeaderFooter)',
       },
       footerTemplate: {
         type: 'string',
-        description: 'Footer HTML template',
+        description: 'Footer HTML template (needs displayHeaderFooter)',
       },
     },
     required: ['tabId'],

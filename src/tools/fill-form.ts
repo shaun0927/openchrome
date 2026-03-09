@@ -23,7 +23,7 @@ const definition: MCPToolDefinition = {
       },
       fields: {
         type: 'object',
-        description: 'Field label/name/placeholder to value map',
+        description: 'Field label/name/placeholder to value map. Checkboxes: "true"/"false"',
         additionalProperties: {
           type: 'string',
         },
