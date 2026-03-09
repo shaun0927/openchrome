@@ -1097,6 +1097,74 @@ export class CDPClient {
       });
     }).catch(() => {});
 
+    // Mask Chrome automation artifacts that anti-bot systems scan for.
+    // These cover the most common fingerprinting vectors after navigator.webdriver.
+    page.evaluateOnNewDocument(() => {
+      // 1. Ensure chrome.runtime exists with expected shape (real Chrome has it even without extensions)
+      if ((window as any).chrome) {
+        const originalChrome = (window as any).chrome;
+        // chrome.runtime should exist in real Chrome but have specific shape
+        if (!originalChrome.runtime) {
+          // In real Chrome, chrome.runtime exists but has limited properties without extensions
+          Object.defineProperty(originalChrome, 'runtime', {
+            get: () => ({ id: undefined }),
+            configurable: true,
+          });
+        }
+      }
+
+      // 2. Override Permissions API to prevent "denied" responses that flag automation
+      if (navigator.permissions) {
+        const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+        Object.defineProperty(navigator.permissions, 'query', {
+          value: (params: { name: string }) => {
+            // Notifications permission is commonly checked by anti-bot
+            if (params.name === 'notifications') {
+              return Promise.resolve(Object.assign(new EventTarget(), { state: 'prompt', onchange: null }) as any);
+            }
+            return originalQuery(params as PermissionDescriptor);
+          },
+          writable: true,
+          configurable: true,
+        });
+      }
+
+      // 3. Ensure plugins array is non-empty (headless Chrome has 0 plugins).
+      // Individual entries are plain objects, not Plugin instances — sophisticated
+      // detectors using instanceof Plugin will see through this. Turnstile and
+      // most anti-bot systems only check plugins.length > 0.
+      if (navigator.plugins.length === 0) {
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => {
+            const plugins = [
+              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+            ];
+            // Mimic PluginArray behavior
+            const arr = Object.create(PluginArray.prototype);
+            for (let i = 0; i < plugins.length; i++) {
+              arr[i] = plugins[i];
+            }
+            Object.defineProperty(arr, 'length', { value: plugins.length });
+            arr.item = (i: number) => arr[i] || null;
+            arr.namedItem = (name: string) => plugins.find(p => p.name === name) || null;
+            arr.refresh = () => {};
+            return arr;
+          },
+          configurable: true,
+        });
+      }
+
+      // 4. Ensure languages array is populated
+      if (!navigator.languages || navigator.languages.length === 0) {
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['en-US', 'en'],
+          configurable: true,
+        });
+      }
+    }).catch(() => {});
+
     // Deny file downloads by default — Content-Disposition: attachment
     // responses block the navigation promise indefinitely.
     this.send(page, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});

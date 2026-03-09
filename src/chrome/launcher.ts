@@ -437,7 +437,6 @@ export class ChromeLauncher {
       '--renderer-process-limit=16',
       '--js-flags=--max-old-space-size=1024',
       '--disable-backgrounding-occluded-windows',
-      '--disable-ipc-flooding-protection',
       // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
       '--disable-gpu-crash-limit',
     );
@@ -451,16 +450,15 @@ export class ChromeLauncher {
       args.push('--disable-blink-features=AutomationControlled');
     }
 
-    // Only disable background features for non-real profiles
+    // Only disable background features for non-real profiles.
+    // Several flags previously included here were removed as known bot-detection signals
+    // per Patchright's stealth analysis (issue #257). Specifically omitted: metrics
+    // recording, extension disabling, component extension pages, and default apps flags.
     if (profileType !== 'real') {
       args.push(
         '--disable-background-networking',
         '--disable-sync',
         '--disable-translate',
-        '--metrics-recording-only',
-        '--disable-extensions',
-        '--disable-component-extensions-with-background-pages',
-        '--disable-default-apps',
       );
     }
 
