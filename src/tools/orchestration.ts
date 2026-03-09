@@ -655,7 +655,7 @@ const workflowCollectPartialHandler: ToolHandler = async (
 
 const executePlanDefinition: MCPToolDefinition = {
   name: 'execute_plan',
-  description: 'Execute a cached plan by ID, bypassing per-step LLM calls.',
+  description: 'Execute a cached plan by ID, bypassing per-step LLM calls. Falls back gracefully on failure for manual retry.',
   inputSchema: {
     type: 'object',
     properties: {
