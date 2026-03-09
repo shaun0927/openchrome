@@ -39,8 +39,31 @@ const INJECT_OBSERVER_SCRIPT = `(() => {
 
   const IGNORE_TAGS = new Set(['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT']);
   const MAX_MUTATIONS = 15;
+  const observerConfig = {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeOldValue: true,
+    attributeFilter: ['class', 'style', 'hidden', 'disabled', 'aria-expanded',
+                       'aria-hidden', 'open', 'checked', 'value', 'src', 'href']
+  };
+  var shadowObservers = [];
 
-  const observer = new MutationObserver((records) => {
+  function observeShadowRoot(sr) {
+    var obs = new MutationObserver(handleRecords);
+    obs.observe(sr, observerConfig);
+    shadowObservers.push(obs);
+  }
+
+  function checkForNewShadowRoots(node) {
+    if (node.shadowRoot) observeShadowRoot(node.shadowRoot);
+    var desc = node.querySelectorAll ? node.querySelectorAll('*') : [];
+    for (var i = 0; i < desc.length; i++) {
+      if (desc[i].shadowRoot) observeShadowRoot(desc[i].shadowRoot);
+    }
+  }
+
+  function handleRecords(records) {
     if (delta.mutations.length >= MAX_MUTATIONS) return;
 
     for (const r of records) {
@@ -51,6 +74,8 @@ const INJECT_OBSERVER_SCRIPT = `(() => {
           if (delta.mutations.length >= MAX_MUTATIONS) break;
           if (n.nodeType !== 1) continue;
           const el = n;
+          // Detect new open shadow roots on added elements
+          checkForNewShadowRoots(el);
           if (IGNORE_TAGS.has(el.tagName)) continue;
           const role = el.getAttribute && el.getAttribute('role');
           const tag = el.tagName.toLowerCase();
@@ -100,24 +125,37 @@ const INJECT_OBSERVER_SCRIPT = `(() => {
         delta.mutations.push({ type: 'attribute', label, attr, oldVal: oldStr, newVal: newStr });
       }
     }
-  });
+  }
 
-  // Disconnect any previous observer to avoid global collision on concurrent calls
+  const observer = new MutationObserver(handleRecords);
+
+  // Disconnect any previous observers to avoid global collision on concurrent calls
   if (window.__ocObserver) {
     try { window.__ocObserver.disconnect(); } catch(e) {}
   }
+  if (window.__ocShadowObservers) {
+    for (var i = 0; i < window.__ocShadowObservers.length; i++) {
+      try { window.__ocShadowObservers[i].disconnect(); } catch(e) {}
+    }
+  }
 
-  observer.observe(document.body || document.documentElement, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeOldValue: true,
-    attributeFilter: ['class', 'style', 'hidden', 'disabled', 'aria-expanded',
-                       'aria-hidden', 'open', 'checked', 'value', 'src', 'href']
-  });
+  observer.observe(document.body || document.documentElement, observerConfig);
+
+  // Walk existing open shadow roots and observe them
+  function walkForShadowRoots(root) {
+    var allEls = root.querySelectorAll('*');
+    for (var i = 0; i < allEls.length; i++) {
+      if (allEls[i].shadowRoot) {
+        observeShadowRoot(allEls[i].shadowRoot);
+        walkForShadowRoots(allEls[i].shadowRoot);
+      }
+    }
+  }
+  walkForShadowRoots(document);
 
   window.__ocDelta = delta;
   window.__ocObserver = observer;
+  window.__ocShadowObservers = shadowObservers;
 })()`;
 
 // Script to collect mutations after action
@@ -125,6 +163,12 @@ const COLLECT_DELTA_SCRIPT = `(() => {
   try {
     if (!window.__ocObserver) return null;
     window.__ocObserver.disconnect();
+    // Disconnect shadow root observers
+    if (window.__ocShadowObservers) {
+      for (var i = 0; i < window.__ocShadowObservers.length; i++) {
+        try { window.__ocShadowObservers[i].disconnect(); } catch(e) {}
+      }
+    }
     const d = window.__ocDelta;
     if (!d) return null;
 
@@ -142,6 +186,7 @@ const COLLECT_DELTA_SCRIPT = `(() => {
     // Cleanup
     delete window.__ocDelta;
     delete window.__ocObserver;
+    delete window.__ocShadowObservers;
 
     return result;
   } catch (e) {
@@ -270,7 +315,7 @@ export async function withDomDelta<T>(
   } catch (e) {
     page.off('framenavigated', onNav);
     // Try to disconnect observer on failure
-    try { await page.evaluate('window.__ocObserver && window.__ocObserver.disconnect()'); } catch {}
+    try { await page.evaluate('window.__ocObserver && window.__ocObserver.disconnect(); if (window.__ocShadowObservers) { for (var i = 0; i < window.__ocShadowObservers.length; i++) { try { window.__ocShadowObservers[i].disconnect(); } catch(e) {} } }'); } catch {}
     throw e;
   }
 
