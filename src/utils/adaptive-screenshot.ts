@@ -114,6 +114,22 @@ export class AdaptiveScreenshot {
   }
 
   /**
+   * Returns the recommended screenshot quality for a given adaptive mode.
+   * Used to automatically downgrade quality on repeated screenshots at the same position.
+   *
+   * - 'full': normal quality (first capture)
+   * - 'annotated': low quality (repeated capture — reduce payload)
+   * - 'text_only': low quality (screenshot rarely taken in this mode)
+   */
+  getQualityForMode(mode: 'full' | 'annotated' | 'text_only'): 'high' | 'normal' | 'low' {
+    switch (mode) {
+      case 'full': return 'normal';
+      case 'annotated': return 'low';
+      case 'text_only': return 'low';
+    }
+  }
+
+  /**
    * Clear screenshot history for a tab (call on navigation).
    */
   reset(tabId: string): void {
