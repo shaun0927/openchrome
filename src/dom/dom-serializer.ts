@@ -16,6 +16,7 @@ export interface DOMSerializerOptions {
   // none: no sibling dedup or container collapse (backward compat)
   // light (default): sibling dedup threshold=4, container collapse enabled
   // aggressive: sibling dedup threshold=3
+  includeUserAgentShadowDOM?: boolean;  // default: false
 }
 
 export interface PageStats {
@@ -45,6 +46,8 @@ interface DOMNode {
   children?: DOMNode[];
   contentDocument?: DOMNode;
   nodeValue?: string;
+  shadowRoots?: DOMNode[];
+  shadowRootType?: 'open' | 'closed' | 'user-agent';
 }
 
 // Node types
@@ -271,6 +274,7 @@ interface SerializeContext {
   pierceIframes: boolean;
   interactiveOnly: boolean;
   compression: 'none' | 'light' | 'aggressive';
+  includeUserAgentShadowDOM: boolean;
 }
 
 /**
@@ -440,6 +444,39 @@ function serializeNode(
       if (ctx.truncated) return;
     }
   }
+
+  // Traverse shadow roots (CDP returns these separately from children)
+  if (node.shadowRoots && node.shadowRoots.length > 0) {
+    for (const shadowRoot of node.shadowRoots) {
+      if (ctx.truncated) return;
+
+      // Skip user-agent shadow roots unless explicitly included
+      if (!ctx.includeUserAgentShadowDOM && shadowRoot.shadowRootType === 'user-agent') continue;
+
+      // Add shadow root boundary marker (similar to --page-separator-- for iframes)
+      const shadowIndent = '  '.repeat(depth + 1);
+      const rootType = shadowRoot.shadowRootType || 'open';
+      const marker = `${shadowIndent}--shadow-root-- (${rootType})\n`;
+
+      if (ctx.totalChars + marker.length > ctx.maxOutputChars) {
+        const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
+        ctx.lines.push(truncationMsg);
+        ctx.truncated = true;
+        return;
+      }
+
+      ctx.lines.push(marker);
+      ctx.totalChars += marker.length;
+
+      // Serialize shadow root children at increased depth
+      if (shadowRoot.children) {
+        for (const child of shadowRoot.children) {
+          serializeNode(child, depth + 2, ctx);
+          if (ctx.truncated) return;
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -456,6 +493,7 @@ export async function serializeDOM(
   const pierceIframes = options?.pierceIframes ?? true;
   const interactiveOnly = (options?.interactiveOnly ?? false) || options?.filter === 'interactive';
   const compression = options?.compression ?? 'light';  // default to 'light'
+  const includeUserAgentShadowDOM = options?.includeUserAgentShadowDOM ?? false;
 
   // Get page stats via page.evaluate
   const pageStats = await page.evaluate(() => ({
@@ -493,6 +531,7 @@ export async function serializeDOM(
     pierceIframes,
     interactiveOnly,
     compression,
+    includeUserAgentShadowDOM,
   };
 
   // Serialize from root

@@ -613,3 +613,282 @@ describe('DOM Serializer', () => {
     );
   });
 });
+
+// ─── Shadow DOM Tests ─────────────────────────────────────────────────────────
+
+describe('DOM Serializer - Shadow DOM', () => {
+  // Shadow DOM tree: <body> -> <div#host> -> shadowRoot(open) -> <button>Click</button>
+  const shadowDoc = {
+    nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+    children: [{
+      nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+      attributes: [],
+      children: [{
+        nodeId: 3, backendNodeId: 300, nodeType: 1, nodeName: 'DIV', localName: 'div',
+        attributes: ['id', 'host'],
+        shadowRoots: [{
+          nodeId: 10, backendNodeId: 10, nodeType: 11, nodeName: '#document-fragment', localName: '',
+          shadowRootType: 'open',
+          children: [{
+            nodeId: 11, backendNodeId: 301, nodeType: 1, nodeName: 'BUTTON', localName: 'button',
+            attributes: [],
+            children: [{
+              nodeId: 12, backendNodeId: 12, nodeType: 3, nodeName: '#text', localName: '',
+              nodeValue: 'Shadow Click',
+            }],
+          }],
+        }],
+        children: [],
+      }],
+    }],
+  };
+
+  test('renders open shadow root with boundary marker', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(shadowDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+
+    expect(result.content).toContain('--shadow-root-- (open)');
+    expect(result.content).toContain('[301]<button');
+    expect(result.content).toContain('Shadow Click');
+  });
+
+  test('renders closed shadow root with boundary marker', async () => {
+    const closedShadowDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 400, nodeType: 1, nodeName: 'DIV', localName: 'div',
+          attributes: ['id', 'closed-host'],
+          shadowRoots: [{
+            nodeId: 10, backendNodeId: 10, nodeType: 11, nodeName: '#document-fragment', localName: '',
+            shadowRootType: 'closed',
+            children: [{
+              nodeId: 11, backendNodeId: 401, nodeType: 1, nodeName: 'SPAN', localName: 'span',
+              attributes: [],
+              children: [{
+                nodeId: 12, backendNodeId: 12, nodeType: 3, nodeName: '#text', localName: '',
+                nodeValue: 'Hidden content',
+              }],
+            }],
+          }],
+          children: [],
+        }],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(closedShadowDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+
+    expect(result.content).toContain('--shadow-root-- (closed)');
+    expect(result.content).toContain('[401]<span');
+    expect(result.content).toContain('Hidden content');
+  });
+
+  test('skips user-agent shadow roots by default', async () => {
+    const uaShadowDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 500, nodeType: 1, nodeName: 'INPUT', localName: 'input',
+          attributes: ['type', 'text'],
+          shadowRoots: [{
+            nodeId: 10, backendNodeId: 10, nodeType: 11, nodeName: '#document-fragment', localName: '',
+            shadowRootType: 'user-agent',
+            children: [{
+              nodeId: 11, backendNodeId: 501, nodeType: 1, nodeName: 'DIV', localName: 'div',
+              attributes: [],
+              children: [],
+            }],
+          }],
+          children: [],
+        }],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(uaShadowDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+
+    expect(result.content).toContain('[500]<input');
+    expect(result.content).not.toContain('--shadow-root--');
+    expect(result.content).not.toContain('[501]');
+  });
+
+  test('includes user-agent shadow roots when includeUserAgentShadowDOM is true', async () => {
+    const uaShadowDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 600, nodeType: 1, nodeName: 'INPUT', localName: 'input',
+          attributes: ['type', 'text'],
+          shadowRoots: [{
+            nodeId: 10, backendNodeId: 10, nodeType: 11, nodeName: '#document-fragment', localName: '',
+            shadowRootType: 'user-agent',
+            children: [{
+              nodeId: 11, backendNodeId: 601, nodeType: 1, nodeName: 'DIV', localName: 'div',
+              attributes: ['id', 'inner-input'],
+              children: [],
+            }],
+          }],
+          children: [],
+        }],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(uaShadowDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, {
+      includePageStats: false,
+      includeUserAgentShadowDOM: true,
+    });
+
+    expect(result.content).toContain('--shadow-root-- (user-agent)');
+    expect(result.content).toContain('[601]<div');
+  });
+
+  test('renders nested shadow roots correctly', async () => {
+    const nestedShadowDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 700, nodeType: 1, nodeName: 'DIV', localName: 'div',
+          attributes: ['id', 'outer-host'],
+          shadowRoots: [{
+            nodeId: 10, backendNodeId: 10, nodeType: 11, nodeName: '#document-fragment', localName: '',
+            shadowRootType: 'open',
+            children: [{
+              nodeId: 11, backendNodeId: 701, nodeType: 1, nodeName: 'DIV', localName: 'div',
+              attributes: ['id', 'inner-host'],
+              shadowRoots: [{
+                nodeId: 20, backendNodeId: 20, nodeType: 11, nodeName: '#document-fragment', localName: '',
+                shadowRootType: 'open',
+                children: [{
+                  nodeId: 21, backendNodeId: 702, nodeType: 1, nodeName: 'P', localName: 'p',
+                  attributes: [],
+                  children: [{
+                    nodeId: 22, backendNodeId: 22, nodeType: 3, nodeName: '#text', localName: '',
+                    nodeValue: 'Deeply nested',
+                  }],
+                }],
+              }],
+              children: [],
+            }],
+          }],
+          children: [],
+        }],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(nestedShadowDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+
+    // Both shadow root markers should appear
+    const shadowMarkers = result.content.match(/--shadow-root--/g) || [];
+    expect(shadowMarkers.length).toBe(2);
+
+    // Nested content should be present
+    expect(result.content).toContain('[701]<div');
+    expect(result.content).toContain('[702]<p');
+    expect(result.content).toContain('Deeply nested');
+  });
+
+  test('shadow root content respects depth limiting', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(shadowDoc);
+
+    // host div is at depth 1, shadow marker at depth 2, button at depth 3
+    // maxDepth=1 should only show body(0) and host div(1), no shadow content
+    const result = await serializeDOM(page as never, cdpClient as never, {
+      includePageStats: false,
+      maxDepth: 1,
+    });
+
+    expect(result.content).toContain('[300]<div');
+    // Shadow root content should not appear due to depth limit
+    expect(result.content).not.toContain('[301]');
+  });
+
+  test('shadow root content respects output truncation', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(shadowDoc);
+
+    // Very small limit to trigger truncation
+    const result = await serializeDOM(page as never, cdpClient as never, {
+      includePageStats: false,
+      maxOutputChars: 50,
+    });
+
+    expect(result.truncated).toBe(true);
+  });
+
+  test('host element with both shadow root and light DOM children', async () => {
+    const mixedDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 800, nodeType: 1, nodeName: 'DIV', localName: 'div',
+          attributes: ['id', 'mixed-host'],
+          shadowRoots: [{
+            nodeId: 10, backendNodeId: 10, nodeType: 11, nodeName: '#document-fragment', localName: '',
+            shadowRootType: 'open',
+            children: [{
+              nodeId: 11, backendNodeId: 801, nodeType: 1, nodeName: 'SPAN', localName: 'span',
+              attributes: [],
+              children: [{
+                nodeId: 12, backendNodeId: 12, nodeType: 3, nodeName: '#text', localName: '',
+                nodeValue: 'Shadow content',
+              }],
+            }],
+          }],
+          children: [{
+            nodeId: 13, backendNodeId: 802, nodeType: 1, nodeName: 'P', localName: 'p',
+            attributes: [],
+            children: [{
+              nodeId: 14, backendNodeId: 14, nodeType: 3, nodeName: '#text', localName: '',
+              nodeValue: 'Light content',
+            }],
+          }],
+        }],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(mixedDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+
+    // Both light DOM and shadow DOM content should appear
+    expect(result.content).toContain('[801]<span');
+    expect(result.content).toContain('Shadow content');
+    expect(result.content).toContain('[802]<p');
+    expect(result.content).toContain('Light content');
+    expect(result.content).toContain('--shadow-root-- (open)');
+  });
+
+  test('element without shadow roots has no shadow markers', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+
+    expect(result.content).not.toContain('--shadow-root--');
+  });
+});
