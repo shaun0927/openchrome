@@ -32,15 +32,97 @@ interface CaptureState {
 // Module-level state storage
 const captureStates: Map<string, CaptureState> = new Map();
 
+// Deduplicated log entry (returned in get responses)
+interface DedupedLogEntry {
+  type: string;
+  text: string;
+  count: number;
+  firstTimestamp?: number;
+  lastTimestamp?: number;
+  location?: {
+    url?: string;
+    lineNumber?: number;
+    columnNumber?: number;
+  };
+  args?: string[];
+}
+
+/**
+ * Collapse consecutive identical log messages into single entries with a count.
+ * Error and warning types are NEVER deduplicated — always shown individually.
+ * Only groups of 3+ identical consecutive messages are collapsed.
+ */
+function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
+  const result: DedupedLogEntry[] = [];
+  let i = 0;
+  while (i < logs.length) {
+    const current = logs[i];
+
+    // NEVER deduplicate error or warning types — always show individually
+    if (current.type === 'error' || current.type === 'warning') {
+      result.push({
+        type: current.type,
+        text: current.text,
+        count: 1,
+        firstTimestamp: current.timestamp,
+        lastTimestamp: current.timestamp,
+        location: current.location,
+        args: current.args,
+      });
+      i++;
+      continue;
+    }
+
+    // Count consecutive identical messages (same text AND same type)
+    let count = 1;
+    while (
+      i + count < logs.length &&
+      logs[i + count].text === current.text &&
+      logs[i + count].type === current.type
+    ) {
+      count++;
+    }
+
+    if (count >= 3) {
+      // Collapse into single entry with count
+      result.push({
+        text: current.text,
+        type: current.type,
+        count,
+        firstTimestamp: current.timestamp,
+        lastTimestamp: logs[i + count - 1].timestamp,
+        location: current.location,
+        args: current.args,
+      });
+    } else {
+      // Show individually
+      for (let j = 0; j < count; j++) {
+        const entry = logs[i + j];
+        result.push({
+          type: entry.type,
+          text: entry.text,
+          count: 1,
+          firstTimestamp: entry.timestamp,
+          lastTimestamp: entry.timestamp,
+          location: entry.location,
+          args: entry.args,
+        });
+      }
+    }
+    i += count;
+  }
+  return result;
+}
+
 const definition: MCPToolDefinition = {
   name: 'console_capture',
-  description: 'Capture and retrieve browser console output (start, stop, get, clear).',
+  description: 'Capture browser console output (start, stop, get, clear).',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to capture console logs from',
+        description: 'Tab ID',
       },
       action: {
         type: 'string',
@@ -280,10 +362,14 @@ const handler: ToolHandler = async (
           logs = logs.slice(-limit);
         }
 
+        // Deduplicate consecutive identical log messages
+        const deduplicatedLogs = deduplicateLogs(logs);
+
         // Calculate stats
         const stats = {
           total: state.logs.length,
-          returned: logs.length,
+          returned: deduplicatedLogs.length,
+          beforeDedup: logs.length,
           byType: {} as Record<string, number>,
         };
         for (const log of state.logs) {
@@ -297,7 +383,7 @@ const handler: ToolHandler = async (
               text: JSON.stringify({
                 action: 'get',
                 status: 'running',
-                logs,
+                logs: deduplicatedLogs,
                 stats,
                 durationMs: Date.now() - state.startedAt,
               }),

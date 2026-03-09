@@ -397,12 +397,14 @@ describe('FindTool', () => {
           },
         ]);
 
-      // CDP mocks for the second (successful) iteration
+      // CDP mocks:
+      // Iteration 1 (empty JS results): resolveBackendNodeIds skips, but shadow search calls DOM.getDocument
+      // Iteration 2 (successful): resolveBackendNodeIds needs 3 calls, then shadow search calls DOM.getDocument
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: {} })            // first iteration batch (no objectId)
-        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
-        .mockResolvedValueOnce({ result: [{ name: '0', value: { objectId: 'el-obj-0' } }] })
-        .mockResolvedValueOnce({ node: { backendNodeId: 55001 } });
+        .mockResolvedValueOnce({ root: { nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '' } }) // iter 1: shadow DOM.getDocument (no shadow roots)
+        .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })   // iter 2: resolve Runtime.evaluate
+        .mockResolvedValueOnce({ result: [{ name: '0', value: { objectId: 'el-obj-0' } }] }) // iter 2: resolve Runtime.getProperties
+        .mockResolvedValueOnce({ node: { backendNodeId: 55001 } });     // iter 2: resolve DOM.describeNode
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
@@ -424,7 +426,7 @@ describe('FindTool', () => {
       (page.evaluate as jest.Mock).mockResolvedValue([]);
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: {} }); // batch evaluate with no objectId
+        .mockResolvedValueOnce({ root: { nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '' } }); // shadow DOM.getDocument (no shadow roots)
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
@@ -432,9 +434,8 @@ describe('FindTool', () => {
         waitForMs: 0,
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      // Only one element-search evaluate call before the diagnostic evaluate — no retry loop
-      // The handler calls evaluate a second time for page diagnostics (url/readyState/totalElements)
-      expect((page.evaluate as jest.Mock).mock.calls.length).toBe(2);
+      // 1: element-search evaluate, 2: page diagnostics, 3: cleanupTags — no retry loop
+      expect((page.evaluate as jest.Mock).mock.calls.length).toBe(3);
       expect(result.content[0].text).toContain('No elements found');
     });
 

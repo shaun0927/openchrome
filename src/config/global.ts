@@ -55,11 +55,32 @@ export interface GlobalConfig {
       intervalMs?: number;
     };
   };
+  /** Response compression settings */
+  compression?: {
+    /** Enable compression (default: true) */
+    enabled: boolean;
+    /** Compression aggressiveness level (default: 'light') */
+    level: 'none' | 'light' | 'aggressive';
+    /** Controls which metadata fields are injected into responses (default: 'normal') */
+    verbosity: 'compact' | 'normal' | 'verbose';
+    /** Per-tool compression level overrides */
+    tools?: Record<string, {
+      level?: 'none' | 'light' | 'aggressive';
+    }>;
+    /** Track token savings in _compression metadata (default: false) */
+    trackSavings?: boolean;
+  };
 }
 
 const config: GlobalConfig = {
   port: 9222,
   autoLaunch: false,
+  compression: {
+    enabled: true,
+    level: 'light',
+    verbosity: 'normal',
+    trackSavings: false,
+  },
 };
 
 /**

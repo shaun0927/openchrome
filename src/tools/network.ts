@@ -45,13 +45,13 @@ const NETWORK_PRESETS: Record<
 
 const definition: MCPToolDefinition = {
   name: 'network',
-  description: 'Simulate network conditions (throttling, latency, offline).',
+  description: 'Simulate network conditions.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to apply conditions to',
+        description: 'Tab ID',
       },
       preset: {
         type: 'string',

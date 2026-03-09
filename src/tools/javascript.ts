@@ -9,7 +9,7 @@ import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
-  description: 'Execute JavaScript in page context. Supports top-level await.',
+  description: 'Execute JavaScript in page context. Supports await.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -19,11 +19,11 @@ const definition: MCPToolDefinition = {
       },
       code: {
         type: 'string',
-        description: 'JS code to execute. Last expression returned.',
+        description: 'JS code. Last expression returned',
       },
       text: {
         type: 'string',
-        description: 'Deprecated alias for "code". Use "code" instead.',
+        description: 'Deprecated. Use "code" instead',
       },
       timeout: {
         type: 'number',

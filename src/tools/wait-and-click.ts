@@ -10,11 +10,12 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
-import { withTimeout } from '../utils/with-timeout';
+import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
+import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 
 const definition: MCPToolDefinition = {
   name: 'wait_and_click',
-  description: 'Wait for an element to appear, then click it. For dynamic/lazy content.',
+  description: 'Wait for element to appear, then click it.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -24,7 +25,7 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Element to wait for and click (natural language)',
+        description: 'Element to find and click (natural language)',
       },
       timeout: {
         type: 'number',
@@ -38,16 +39,6 @@ const definition: MCPToolDefinition = {
     required: ['tabId', 'query'],
   },
 };
-
-interface FoundElement {
-  backendDOMNodeId: number;
-  role: string;
-  name: string;
-  tagName: string;
-  textContent?: string;
-  rect: { x: number; y: number; width: number; height: number };
-  score: number;
-}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -85,165 +76,34 @@ const handler: ToolHandler = async (
     }
 
     const queryLower = query.toLowerCase();
-    const queryTokens = queryLower
-      .split(/\s+/)
-      .filter(t => t.length > 1)
-      .filter(t => !['the', 'a', 'an', 'to', 'for', 'of', 'in', 'on', 'at', 'and', 'or'].includes(t));
+    const queryTokens = tokenizeQuery(query);
 
     const startTime = Date.now();
-    let bestMatch: FoundElement | null = null;
+    let bestMatch: (FoundElement & { _origIdx: number }) | null = null;
+
+    const cdpClient = sessionManager.getCDPClient();
 
     // Poll for the element
     while (Date.now() - startTime < timeout) {
-      let result: FoundElement | null = null;
       try {
-      result = await withTimeout(page.evaluate((searchQuery: string, tokens: string[]): FoundElement | null => {
-        function scoreElement(el: Element, rect: DOMRect): number {
-          let score = 0;
-          const inputEl = el as HTMLInputElement;
-          const text = el.textContent?.toLowerCase() || '';
-          const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || '';
-          const name = ariaLabel || el.getAttribute('title')?.toLowerCase() || text.slice(0, 100);
-          const role = el.getAttribute('role') ||
-            (el.tagName === 'BUTTON' ? 'button' : el.tagName === 'A' ? 'link' : el.tagName.toLowerCase());
+        const results = await discoverElements(page, cdpClient, queryLower, {
+          maxResults: 30,
+          useCenter: true,
+          timeout: 10000,
+          toolName: 'wait_and_click',
+        });
 
-          const searchLower = searchQuery.toLowerCase();
+        // Score and find best match
+        const scored = results
+          .map((el, i) => ({ ...el, score: scoreElement(el as FoundElement, queryLower, queryTokens), _origIdx: i }))
+          .sort((a, b) => b.score - a.score);
 
-          // Exact match
-          if (name === searchLower || text.trim() === searchLower) score += 100;
-
-          // Contains full query
-          if (name.includes(searchLower) || text.includes(searchLower)) score += 50;
-          if (ariaLabel.includes(searchLower)) score += 45;
-
-          // Token matching
-          const combinedText = `${name} ${text} ${ariaLabel}`;
-          for (const token of tokens) {
-            if (combinedText.includes(token)) score += 15;
-          }
-
-          // Role matching
-          if (searchLower.includes('button') && (role === 'button' || el.tagName === 'BUTTON')) score += 30;
-          if (searchLower.includes('link') && (role === 'link' || el.tagName === 'A')) score += 30;
-
-          // Interactive bonus
-          if (['button', 'link', 'menuitem', 'tab'].includes(role)) score += 20;
-
-          // Size bonus
-          if (rect.width > 50 && rect.height > 20) score += 10;
-
-          return score;
+        if (scored.length > 0 && scored[0].score >= 20) {
+          bestMatch = scored[0] as FoundElement & { _origIdx: number };
+          break;
         }
-
-        const selectors = [
-          'button',
-          '[role="button"]',
-          'a',
-          '[role="link"]',
-          'input[type="submit"]',
-          'input[type="button"]',
-          '[role="menuitem"]',
-          '[role="tab"]',
-          '[onclick]',
-        ];
-
-        let best: { el: Element; rect: DOMRect; score: number } | null = null;
-
-        // First pass: interactive elements
-        for (const selector of selectors) {
-          try {
-            for (const el of document.querySelectorAll(selector)) {
-              const rect = el.getBoundingClientRect();
-              if (rect.width === 0 || rect.height === 0) continue;
-
-              const style = window.getComputedStyle(el);
-              if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') continue;
-
-              const score = scoreElement(el, rect);
-              if (score > 20 && (!best || score > best.score)) {
-                best = { el, rect, score };
-              }
-            }
-          } catch {
-            // Skip invalid selector
-          }
-        }
-
-        // Second pass: any element with matching text
-        if (!best || best.score < 50) {
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-          let node = walker.nextNode();
-          while (node) {
-            const el = node as Element;
-            const rect = el.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0) {
-              const style = window.getComputedStyle(el);
-              if (style.visibility !== 'hidden' && style.display !== 'none') {
-                const score = scoreElement(el, rect);
-                if (score > 40 && (!best || score > best.score)) {
-                  best = { el, rect, score };
-                }
-              }
-            }
-            node = walker.nextNode();
-          }
-        }
-
-        if (!best || best.score < 20) return null;
-
-        // Tag the element for CDP reference
-        (best.el as unknown as { __waitClickTarget: boolean }).__waitClickTarget = true;
-
-        const inputEl = best.el as HTMLInputElement;
-        return {
-          backendDOMNodeId: 0,
-          role: best.el.getAttribute('role') ||
-            (best.el.tagName === 'BUTTON' ? 'button' : best.el.tagName === 'A' ? 'link' : best.el.tagName.toLowerCase()),
-          name: best.el.getAttribute('aria-label') ||
-            best.el.getAttribute('title') ||
-            best.el.textContent?.trim().slice(0, 100) || '',
-          tagName: best.el.tagName.toLowerCase(),
-          textContent: best.el.textContent?.trim().slice(0, 50),
-          rect: {
-            x: best.rect.x + best.rect.width / 2,
-            y: best.rect.y + best.rect.height / 2,
-            width: best.rect.width,
-            height: best.rect.height,
-          },
-          score: best.score,
-        };
-      }, queryLower, queryTokens), 10000, 'wait_and_click');
       } catch {
         // CDP evaluate timed out (e.g. dialog blocked) — retry on next poll iteration
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        continue;
-      }
-
-      if (result && result.score >= 20) {
-        // Get backend DOM node ID
-        const cdpClient = sessionManager.getCDPClient();
-        try {
-          const { result: objResult } = await cdpClient.send<{
-            result: { objectId?: string };
-          }>(page, 'Runtime.evaluate', {
-            expression: `document.querySelectorAll('*').find(el => el.__waitClickTarget === true)`,
-            returnByValue: false,
-          });
-
-          if (objResult.objectId) {
-            const { node } = await cdpClient.send<{
-              node: { backendNodeId: number };
-            }>(page, 'DOM.describeNode', {
-              objectId: objResult.objectId,
-            });
-            result.backendDOMNodeId = node.backendNodeId;
-          }
-        } catch {
-          // Continue without backend node ID
-        }
-
-        bestMatch = result;
-        break;
       }
 
       // Wait before next poll
@@ -265,7 +125,6 @@ const handler: ToolHandler = async (
     const waitTime = Date.now() - startTime;
 
     // Scroll into view if needed
-    const cdpClient = sessionManager.getCDPClient();
     if (bestMatch.backendDOMNodeId) {
       try {
         await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
@@ -274,21 +133,10 @@ const handler: ToolHandler = async (
         await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
         // Re-get position after scroll
-        const { result: posResult } = await cdpClient.send<{
-          result: { value: { x: number; y: number } | null };
-        }>(page, 'Runtime.evaluate', {
-          expression: `(() => {
-            const el = document.querySelectorAll('*').find(el => el.__waitClickTarget === true);
-            if (!el) return null;
-            const rect = el.getBoundingClientRect();
-            return { x: rect.x + rect.width/2, y: rect.y + rect.height/2 };
-          })()`,
-          returnByValue: true,
-        });
-
-        if (posResult.value) {
-          bestMatch.rect.x = posResult.value.x;
-          bestMatch.rect.y = posResult.value.y;
+        const newRect = await getTaggedElementRect(page, cdpClient, DISCOVERY_TAG, bestMatch._origIdx, true);
+        if (newRect) {
+          bestMatch.rect.x = newRect.x;
+          bestMatch.rect.y = newRect.y;
         }
       } catch {
         // Continue with original coordinates
@@ -300,11 +148,8 @@ const handler: ToolHandler = async (
     const clickY = Math.round(bestMatch.rect.y);
     const { delta } = await withDomDelta(page, () => page.mouse.click(clickX, clickY));
 
-    // Clean up marker
-    await withTimeout(page.evaluate(() => {
-      const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __waitClickTarget: boolean }).__waitClickTarget);
-      if (el) delete (el as unknown as { __waitClickTarget?: boolean }).__waitClickTarget;
-    }), 10000, 'wait_and_click_cleanup');
+    // Clean up discovery tags
+    await cleanupTags(page, DISCOVERY_TAG);
 
     // Generate ref
     let refId = '';
@@ -320,11 +165,14 @@ const handler: ToolHandler = async (
       );
     }
 
+    const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
+    const textPart = textSample ? ` "${textSample}"` : '';
+    const refPart = refId ? ` [${refId}]` : '';
     return {
       content: [
         {
           type: 'text',
-          text: `Waited ${waitTime}ms, then clicked ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${clickX}, ${clickY})${refId ? ` [${refId}]` : ''}${delta}`,
+          text: `\u2713 Waited ${waitTime}ms, clicked ${bestMatch.tagName}${textPart}${refPart}${delta}`,
         },
       ],
     };

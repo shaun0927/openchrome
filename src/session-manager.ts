@@ -846,6 +846,59 @@ export class SessionManager {
   }
 
   /**
+   * CDP-free stealth navigation: opens a new tab via Chrome's HTTP debug API without
+   * attaching Puppeteer/CDP during page load, letting anti-bot checks (e.g. Cloudflare
+   * Turnstile) complete without CDP signals present. CDP attaches after settleMs.
+   *
+   * @param sessionId  Session to register the new target under
+   * @param url        URL to navigate to
+   * @param workerId   Optional worker ID (uses default worker if omitted)
+   * @param settleMs   How long to wait before attaching CDP (default 5000, range 1000-30000)
+   * @returns          Registered targetId, Page, and workerId
+   */
+  async createTargetStealth(
+    sessionId: string,
+    url: string,
+    workerId?: string,
+    settleMs: number = 5000
+  ): Promise<{ targetId: string; page: Page; workerId: string }> {
+    await this.ensureConnected();
+
+    const worker = await this.getOrCreateWorker(sessionId, workerId);
+
+    // Enforce per-worker tab limit: close oldest tab when limit reached
+    if (worker.targets.size >= this.config.maxTargetsPerWorker) {
+      const oldestTargetId = worker.targets.values().next().value;
+      if (oldestTargetId) {
+        console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest tab ${oldestTargetId}`);
+        await this.closeTarget(sessionId, oldestTargetId);
+      }
+    }
+
+    // Use the worker's CDPClient (may be on a different Chrome instance)
+    const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
+
+    // Open tab without CDP, wait for settle, then attach
+    const { page, targetId } = await cdpClient.createTargetStealth(url, settleMs);
+
+    worker.targets.add(targetId);
+    worker.lastActivityAt = Date.now();
+    this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
+
+    this.emitEvent({
+      type: 'session:target-added',
+      sessionId,
+      workerId: worker.id,
+      targetId,
+      timestamp: Date.now(),
+    });
+
+    this.touchSession(sessionId);
+
+    return { targetId, page, workerId: worker.id };
+  }
+
+  /**
    * Register a pre-acquired page as a target for a worker.
    * Used by workflow engine when pages are batch-acquired from the pool
    * to avoid per-page replenishment (about:blank proliferation fix).

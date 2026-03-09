@@ -95,7 +95,10 @@ describe('update-check', () => {
     expect(output).toContain('Update available');
     expect(output).toContain('1.0.0');
     expect(output).toContain('9.9.9');
-    expect(output).toContain('npx openchrome-mcp@latest setup');
+    // clearNpxCache may or may not succeed depending on environment
+    const hasSetupMsg = output.includes('npx openchrome-mcp@latest setup');
+    const hasCacheMsg = output.includes('Cache cleared');
+    expect(hasSetupMsg || hasCacheMsg).toBe(true);
   });
 
   it('should not warn when already on latest version', async () => {

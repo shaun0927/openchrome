@@ -22,7 +22,7 @@ const definition: MCPToolDefinition = {
       },
       name: {
         type: 'string',
-        description: '(create) Worker name, e.g. "login-worker"',
+        description: '(create) Worker name',
       },
       id: {
         type: 'string',

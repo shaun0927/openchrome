@@ -83,13 +83,13 @@ const DEVICE_PRESETS: Record<string, DevicePreset> = {
 
 const definition: MCPToolDefinition = {
   name: 'emulate_device',
-  description: 'Emulate device viewport and user agent via preset or custom dimensions.',
+  description: 'Emulate device viewport and UA via preset or custom.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to emulate device on',
+        description: 'Tab ID',
       },
       preset: {
         type: 'string',
@@ -98,11 +98,11 @@ const definition: MCPToolDefinition = {
       },
       width: {
         type: 'number',
-        description: 'Custom viewport width (overrides preset)',
+        description: 'Custom width (overrides preset)',
       },
       height: {
         type: 'number',
-        description: 'Custom viewport height (overrides preset)',
+        description: 'Custom height (overrides preset)',
       },
       deviceScaleFactor: {
         type: 'number',
@@ -118,7 +118,7 @@ const definition: MCPToolDefinition = {
       },
       userAgent: {
         type: 'string',
-        description: 'Custom user agent (overrides preset)',
+        description: 'Custom UA string (overrides preset)',
       },
     },
     required: ['tabId'],

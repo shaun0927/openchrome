@@ -10,7 +10,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'page_content',
-  description: 'Get HTML content from page or a specific element.',
+  description: 'Get HTML content from page or element.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,7 +20,7 @@ const definition: MCPToolDefinition = {
       },
       selector: {
         type: 'string',
-        description: 'CSS selector for specific element. Omit for full page',
+        description: 'CSS selector. Omit for full page',
       },
       outerHTML: {
         type: 'boolean',

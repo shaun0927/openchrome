@@ -7,7 +7,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
+import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
@@ -16,13 +16,13 @@ import { retryWithFallback } from '../utils/retry-with-fallback';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
-  description: 'Perform mouse, keyboard, and screenshot actions on a browser tab.',
+  description: 'Mouse, keyboard, and screenshot actions on a tab.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to execute the action on',
+        description: 'Tab ID',
       },
       action: {
         type: 'string',
@@ -44,7 +44,7 @@ const definition: MCPToolDefinition = {
       coordinate: {
         type: 'array',
         items: { type: 'number' },
-        description: '(x, y) coordinates for click/scroll actions',
+        description: '[x, y] for click/scroll actions',
       },
       text: {
         type: 'string',
@@ -61,11 +61,20 @@ const definition: MCPToolDefinition = {
       },
       scroll_amount: {
         type: 'number',
-        description: 'Number of scroll wheel ticks',
+        description: 'Scroll wheel ticks. Default: 3',
       },
       ref: {
         type: 'string',
-        description: 'ref_N from read_page or backendNodeId from DOM mode',
+        description: 'Element ref or backendNodeId',
+      },
+      screenshotQuality: {
+        type: 'string',
+        enum: ['high', 'normal', 'low'],
+        description: 'Screenshot quality. low: reduced resolution and quality for smaller payload.',
+      },
+      includeUserAgentShadowDOM: {
+        type: 'boolean',
+        description: 'Include user-agent shadow DOM in hit detection. Default: false',
       },
     },
     required: ['action', 'tabId'],
@@ -84,6 +93,7 @@ const handler: ToolHandler = async (
   const scrollDirection = args.scroll_direction as string | undefined;
   const scrollAmount = (args.scroll_amount as number) || 3;
   const ref = args.ref as string | undefined;
+  const includeUAShadow = (args.includeUserAgentShadowDOM as boolean) ?? false;
 
   const sessionManager = getSessionManager();
 
@@ -115,9 +125,24 @@ const handler: ToolHandler = async (
           // Page may be navigating — proceed anyway
         }
 
+        // Quality presets for screenshot compression
+        const QUALITY_PRESETS = {
+          high:   { quality: 85 },
+          normal: { quality: 60 },
+          low:    { quality: 40 },
+        } as const;
+
         // Phase 1.5: Adaptive screenshot — decide response mode based on repetition
         const adaptive = AdaptiveScreenshot.getInstance();
         const screenshotMode = await adaptive.evaluate(page, tabId);
+
+        // Determine effective quality: explicit arg overrides adaptive suggestion
+        const qualityArg = args.screenshotQuality as string | undefined;
+        const effectiveQuality: 'high' | 'normal' | 'low' =
+          (qualityArg === 'high' || qualityArg === 'normal' || qualityArg === 'low')
+            ? qualityArg
+            : adaptive.getQualityForMode(screenshotMode);
+        const preset = QUALITY_PRESETS[effectiveQuality];
 
         // text_only mode: skip expensive screenshot, return visual summary
         if (screenshotMode === 'text_only') {
@@ -141,7 +166,7 @@ const handler: ToolHandler = async (
                 try {
                   const { data } = await cdpSession.send('Page.captureScreenshot', {
                     format: 'webp',
-                    quality: DEFAULT_SCREENSHOT_QUALITY,
+                    quality: preset.quality,
                     optimizeForSpeed: true,
                   });
                   return data as string;
@@ -256,7 +281,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
+        const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
         const { delta: leftDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
 
         // Internal fallback: if hit non-interactive element, suggest but don't auto-retry
@@ -305,7 +330,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const rightClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
+        const rightClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
         const { delta: rightDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' }));
 
         const rightClickText = rightClickValidation.warning
@@ -351,7 +376,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const doubleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
+        const doubleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
         const { delta: doubleDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 }));
 
         const doubleClickText = doubleClickValidation.warning
@@ -397,7 +422,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const tripleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
+        const tripleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
         const { delta: tripleDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 }));
 
         const tripleClickText = tripleClickValidation.warning
@@ -752,13 +777,14 @@ async function getHitElementInfo(
   page: import('puppeteer-core').Page,
   cdpClient: ReturnType<ReturnType<typeof getSessionManager>['getCDPClient']>,
   x: number,
-  y: number
+  y: number,
+  includeUserAgentShadowDOM = false,
 ): Promise<string> {
   try {
     const locationResult = await cdpClient.send<{ backendNodeId: number; nodeId: number }>(
       page,
       'DOM.getNodeForLocation',
-      { x, y, includeUserAgentShadowDOM: false }
+      { x, y, includeUserAgentShadowDOM }
     );
 
     const backendNodeId = locationResult?.backendNodeId;

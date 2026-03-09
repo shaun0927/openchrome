@@ -16,13 +16,13 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
-  description: 'Navigate to URL or go forward/back. No tabId = new tab. workerId for parallel ops.',
+  description: 'Navigate to URL or go forward/back. Omit tabId for new tab.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to navigate. No tabId = new tab',
+        description: 'Tab ID. Omit for new tab',
       },
       url: {
         type: 'string',
@@ -31,6 +31,14 @@ const definition: MCPToolDefinition = {
       workerId: {
         type: 'string',
         description: 'Worker ID for parallel ops. Default: default',
+      },
+      stealth: {
+        type: 'boolean',
+        description: 'CDP-free mode: opens tab via Chrome debug API without CDP attachment during page load. Use for Cloudflare Turnstile or similar anti-bot pages. CDP attaches after page settles.',
+      },
+      stealthSettleMs: {
+        type: 'number',
+        description: 'How long to wait (ms) before attaching CDP in stealth mode. Default: 5000. Range: 1000-30000.',
       },
     },
     required: ['url'],
@@ -44,6 +52,8 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string | undefined;
   const url = args.url as string;
   const workerId = args.workerId as string | undefined;
+  const stealth = args.stealth as boolean | undefined;
+  const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 5000, 1000), 30000);
   const sessionManager = getSessionManager();
 
   if (!url) {
@@ -166,7 +176,10 @@ const handler: ToolHandler = async (
       }
 
       // Create new tab with URL directly (in specified worker or default)
-      const { targetId, page, workerId: assignedWorkerId } = await sessionManager.createTarget(sessionId, targetUrl, workerId);
+      // Use stealth mode (CDP-free load) when requested, e.g. for Cloudflare Turnstile pages
+      const { targetId, page, workerId: assignedWorkerId } = stealth
+        ? await sessionManager.createTargetStealth(sessionId, targetUrl, workerId, stealthSettleMs)
+        : await sessionManager.createTarget(sessionId, targetUrl, workerId);
 
       AdaptiveScreenshot.getInstance().reset(targetId);
       const [newTabSummary, newTabBlocking] = await Promise.all([

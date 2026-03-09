@@ -25,13 +25,13 @@ const LOCATION_PRESETS: Record<
 
 const definition: MCPToolDefinition = {
   name: 'geolocation',
-  description: 'Set or clear geolocation via preset city or custom coordinates.',
+  description: 'Set or clear geolocation override.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to set geolocation for',
+        description: 'Tab ID',
       },
       preset: {
         type: 'string',

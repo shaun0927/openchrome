@@ -19,11 +19,11 @@ const definition: MCPToolDefinition = {
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to perform drag and drop on',
+        description: 'Tab ID',
       },
       sourceSelector: {
         type: 'string',
-        description: 'Source element CSS selector',
+        description: 'Source CSS selector',
       },
       sourceX: {
         type: 'number',
@@ -35,7 +35,7 @@ const definition: MCPToolDefinition = {
       },
       targetSelector: {
         type: 'string',
-        description: 'Target drop zone CSS selector',
+        description: 'Target CSS selector',
       },
       targetX: {
         type: 'number',
