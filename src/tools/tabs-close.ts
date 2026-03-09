@@ -23,7 +23,7 @@ const definition: MCPToolDefinition = {
       },
       workerId: {
         type: 'string',
-        description: 'Close all tabs in this worker',
+        description: 'Close all tabs in this worker (worker preserved)',
       },
     },
   },
