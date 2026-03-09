@@ -13,7 +13,7 @@ import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
-import { discoverElements, getTaggedElementRect, DISCOVERY_TAG } from '../utils/element-discovery';
+import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 
 const definition: MCPToolDefinition = {
   name: 'click_element',
@@ -219,6 +219,9 @@ const handler: ToolHandler = async (
         bestMatch.textContent
       );
     }
+
+    // Clean up discovery tags to prevent stale properties
+    await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
     // Reset adaptive screenshot on click (page state changes)
     AdaptiveScreenshot.getInstance().reset(tabId);

@@ -280,10 +280,13 @@ export async function discoverFormFields(
         '[role="combobox"]',
       ];
 
+      const seen = new Set<Element>();
       let index = 0;
       for (const selector of selectors) {
         try {
           for (const el of document.querySelectorAll(selector)) {
+            if (seen.has(el)) continue;
+            seen.add(el);
             const rect = el.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) continue;
 

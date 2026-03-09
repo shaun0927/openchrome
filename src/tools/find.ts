@@ -7,7 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
-import { discoverElements } from '../utils/element-discovery';
+import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 
 const definition: MCPToolDefinition = {
@@ -138,6 +138,9 @@ const handler: ToolHandler = async (
       break;
     }
     } while (Date.now() - startTime < maxWait); // --- polling loop end ---
+
+    // Clean up discovery tags to prevent stale properties
+    await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
     if (output.length === 0) {
       let url = 'unknown', readyState = 'unknown', totalElements = 0;

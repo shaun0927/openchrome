@@ -12,7 +12,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
-import { discoverElements, getTaggedElementRect, DISCOVERY_TAG } from '../utils/element-discovery';
+import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
@@ -223,6 +223,9 @@ const handler: ToolHandler = async (
         bestMatch.textContent
       );
     }
+
+    // Clean up discovery tags to prevent stale properties
+    await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
     // Build action label
     const actionLabel = action === 'double_click' ? 'double-clicked' : action === 'hover' ? 'hovered' : 'clicked';
