@@ -432,9 +432,8 @@ describe('FindTool', () => {
         waitForMs: 0,
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      // Only one element-search evaluate call before the diagnostic evaluate — no retry loop
-      // The handler calls evaluate a second time for page diagnostics (url/readyState/totalElements)
-      expect((page.evaluate as jest.Mock).mock.calls.length).toBe(2);
+      // 1: element-search evaluate, 2: page diagnostics, 3: cleanupTags — no retry loop
+      expect((page.evaluate as jest.Mock).mock.calls.length).toBe(3);
       expect(result.content[0].text).toContain('No elements found');
     });
 
