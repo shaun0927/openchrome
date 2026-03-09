@@ -373,15 +373,21 @@ const handler: ToolHandler = async (
       return { submitted };
     }, { settleMs: 200 });
 
-    // Build result message
+    // Build compact result message
     const resultParts: string[] = [];
 
     if (filledFields.length > 0) {
-      resultParts.push(`Filled ${filledFields.length} field(s): ${filledFields.join(', ')}`);
-    }
-
-    if (formResult.submitted) {
-      resultParts.push(`Submitted form via "${submit}"`);
+      const submittedSuffix = formResult.submitted ? ', submitted' : '';
+      resultParts.push(`\u2713 Filled ${filledFields.length} field${filledFields.length !== 1 ? 's' : ''}${submittedSuffix}`);
+      // One line per field: "  fieldName: "value" → ✓"
+      for (const [fieldKey, fieldValue] of Object.entries(fields)) {
+        const valueStr = String(fieldValue);
+        const maskedValue = fieldKey.toLowerCase().includes('password') ? '***' : valueStr.slice(0, 50);
+        const filled = !errors.some(e => e.includes(`"${fieldKey}"`));
+        if (filled) {
+          resultParts.push(`  ${fieldKey}: "${maskedValue}" \u2192 \u2713`);
+        }
+      }
     }
 
     if (errors.length > 0) {
@@ -392,7 +398,7 @@ const handler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: resultParts.join('\n') + delta,
+          text: resultParts.join('\n') + (delta || ''),
         },
       ],
       isError: errors.length > 0 && filledFields.length === 0,
