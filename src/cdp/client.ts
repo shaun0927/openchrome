@@ -1097,6 +1097,69 @@ export class CDPClient {
       });
     }).catch(() => {});
 
+    // Mask Chrome automation artifacts that anti-bot systems scan for.
+    // These cover the most common fingerprinting vectors after navigator.webdriver.
+    page.evaluateOnNewDocument(() => {
+      // 1. Hide chrome.csi and chrome.loadTimes which behave differently under automation
+      if ((window as any).chrome) {
+        const originalChrome = (window as any).chrome;
+        // chrome.runtime should exist in real Chrome but have specific shape
+        if (!originalChrome.runtime) {
+          // In real Chrome, chrome.runtime exists but has limited properties without extensions
+          Object.defineProperty(originalChrome, 'runtime', {
+            get: () => ({ id: undefined }),
+            configurable: true,
+          });
+        }
+      }
+
+      // 2. Override Permissions API to prevent "denied" responses that flag automation
+      if (navigator.permissions) {
+        const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+        Object.defineProperty(navigator.permissions, 'query', {
+          value: (params: { name: string }) => {
+            // Notifications permission is commonly checked by anti-bot
+            if (params.name === 'notifications') {
+              return Promise.resolve({ state: 'prompt', onchange: null } as any);
+            }
+            return originalQuery(params as PermissionDescriptor);
+          },
+          writable: true,
+          configurable: true,
+        });
+      }
+
+      // 3. Ensure plugins array is non-empty (headless Chrome has 0 plugins)
+      if (navigator.plugins.length === 0) {
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => {
+            const plugins = [
+              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+            ];
+            // Mimic PluginArray behavior
+            const arr = Object.create(PluginArray.prototype);
+            for (let i = 0; i < plugins.length; i++) {
+              arr[i] = plugins[i];
+            }
+            Object.defineProperty(arr, 'length', { value: plugins.length });
+            arr.item = (i: number) => arr[i] || null;
+            arr.namedItem = (name: string) => plugins.find(p => p.name === name) || null;
+            arr.refresh = () => {};
+            return arr;
+          },
+        });
+      }
+
+      // 4. Ensure languages array is populated
+      if (!navigator.languages || navigator.languages.length === 0) {
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['en-US', 'en'],
+        });
+      }
+    }).catch(() => {});
+
     // Deny file downloads by default — Content-Disposition: attachment
     // responses block the navigation promise indefinitely.
     this.send(page, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
