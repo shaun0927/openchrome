@@ -10,6 +10,7 @@
 import { Page } from 'puppeteer-core';
 import { CDPClient } from '../cdp/client';
 import { FoundElement } from './element-finder';
+import { discoverShadowElements } from './shadow-dom';
 import { withTimeout } from './with-timeout';
 
 /**
@@ -231,6 +232,39 @@ export async function discoverElements(
   // Step 2: Resolve backend DOM node IDs via batched CDP
   await resolveBackendNodeIds(page, cdpClient, DISCOVERY_TAG, results);
 
+  // Step 3: CDP shadow root element search
+  // Only runs when there are remaining slots — avoids overhead on non-shadow pages
+  const remainingSlots = maxResults - results.length;
+  if (remainingSlots > 0) {
+    try {
+      const jsBackendIds = new Set(
+        results.filter(r => r.backendDOMNodeId > 0).map(r => r.backendDOMNodeId),
+      );
+      const shadowElements = await discoverShadowElements(page, cdpClient, query, {
+        maxResults: remainingSlots,
+        useCenter,
+        excludeBackendIds: jsBackendIds,
+      });
+
+      for (const sel of shadowElements) {
+        if (results.length >= maxResults) break;
+        results.push({
+          backendDOMNodeId: sel.backendDOMNodeId,
+          role: sel.role,
+          name: sel.name,
+          tagName: sel.tagName,
+          type: sel.type,
+          placeholder: sel.placeholder,
+          ariaLabel: sel.ariaLabel,
+          textContent: sel.textContent,
+          rect: sel.rect,
+        });
+      }
+    } catch {
+      // Shadow search failure is non-fatal — JS results are still valid
+    }
+  }
+
   return results;
 }
 
@@ -354,6 +388,9 @@ export async function resolveBackendNodeIds(
 ): Promise<void> {
   if (results.length === 0) return;
 
+  // Skip if all elements already have valid backendDOMNodeIds (e.g., from CDP path)
+  if (results.every(r => r.backendDOMNodeId > 0)) return;
+
   // Step 1: Single Runtime.evaluate to collect tagged elements in index order
   const { result: batchResult } = await cdpClient.send<{
     result: { objectId?: string };
@@ -389,6 +426,7 @@ export async function resolveBackendNodeIds(
   for (const prop of properties) {
     const index = parseInt(prop.name, 10);
     if (isNaN(index) || index >= results.length || !prop.value?.objectId) continue;
+    if (results[index].backendDOMNodeId > 0) continue; // already resolved
 
     describePromises.push(
       cdpClient
