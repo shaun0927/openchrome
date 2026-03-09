@@ -159,7 +159,7 @@ export class ActivityTracker extends EventEmitter {
     call.compression = {
       originalChars,
       compressedChars,
-      estimatedTokensSaved: Math.round((originalChars - compressedChars) / 4),
+      estimatedTokensSaved: Math.max(0, Math.round((originalChars - compressedChars) / 4)),
       strategy,
     };
   }
@@ -198,8 +198,7 @@ export class ActivityTracker extends EventEmitter {
     };
 
     // Aggregate compression stats from all completed calls
-    const allCalls = this.completedCalls;
-    const compressionCalls = allCalls.filter(c => c.compression);
+    const compressionCalls = this.completedCalls.filter(c => c.compression);
     if (compressionCalls.length > 0) {
       const totalOriginalChars = compressionCalls.reduce((sum, c) => sum + (c.compression?.originalChars || 0), 0);
       const totalCompressedChars = compressionCalls.reduce((sum, c) => sum + (c.compression?.compressedChars || 0), 0);
