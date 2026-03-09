@@ -1100,7 +1100,7 @@ export class CDPClient {
     // Mask Chrome automation artifacts that anti-bot systems scan for.
     // These cover the most common fingerprinting vectors after navigator.webdriver.
     page.evaluateOnNewDocument(() => {
-      // 1. Hide chrome.csi and chrome.loadTimes which behave differently under automation
+      // 1. Ensure chrome.runtime exists with expected shape (real Chrome has it even without extensions)
       if ((window as any).chrome) {
         const originalChrome = (window as any).chrome;
         // chrome.runtime should exist in real Chrome but have specific shape
@@ -1120,7 +1120,7 @@ export class CDPClient {
           value: (params: { name: string }) => {
             // Notifications permission is commonly checked by anti-bot
             if (params.name === 'notifications') {
-              return Promise.resolve({ state: 'prompt', onchange: null } as any);
+              return Promise.resolve(Object.assign(new EventTarget(), { state: 'prompt', onchange: null }) as any);
             }
             return originalQuery(params as PermissionDescriptor);
           },
@@ -1149,6 +1149,7 @@ export class CDPClient {
             arr.refresh = () => {};
             return arr;
           },
+          configurable: true,
         });
       }
 

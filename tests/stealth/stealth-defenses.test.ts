@@ -4,9 +4,12 @@
  *
  * Verifies:
  * 1. Known automation-signal Chrome flags are absent from launcher args
- * 2. Anti-fingerprinting evaluateOnNewDocument calls are made in configurePageDefenses
+ * 2. configurePageDefenses has correct evaluateOnNewDocument calls in source
  * 3. --disable-blink-features=AutomationControlled is present for non-headless-shell
  */
+
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ─── Launcher flag tests (source-level) ──────────────────────────────────────
 
@@ -14,8 +17,6 @@ describe('Stealth: removed automation-signal Chrome flags', () => {
   let launcherSource: string;
 
   beforeAll(() => {
-    const fs = require('fs');
-    const path = require('path');
     const launcherPath = path.join(__dirname, '../../src/chrome/launcher.ts');
     launcherSource = fs.readFileSync(launcherPath, 'utf8');
   });
@@ -51,123 +52,61 @@ describe('Stealth: removed automation-signal Chrome flags', () => {
   });
 });
 
-// ─── configurePageDefenses evaluateOnNewDocument call count ──────────────────
+// ─── configurePageDefenses source verification ──────────────────────────────
 
-jest.mock('puppeteer-core', () => ({
-  default: { connect: jest.fn() },
-}));
+describe('Stealth: configurePageDefenses source verification', () => {
+  let clientSource: string;
+  let defenseBlock: string;
 
-jest.mock('../../src/chrome/launcher', () => ({
-  getChromeLauncher: jest.fn().mockReturnValue({
-    ensureChrome: jest.fn().mockResolvedValue({ wsEndpoint: 'ws://localhost:9222' }),
-  }),
-}));
-
-jest.mock('../../src/config/global', () => ({
-  getGlobalConfig: jest.fn().mockReturnValue({ port: 9222, autoLaunch: false }),
-}));
-
-jest.mock('../../src/cdp/client', () => ({
-  CDPClient: jest.fn().mockImplementation(() => ({
-    connect: jest.fn().mockResolvedValue(undefined),
-    createPage: jest.fn(),
-    getPageByTargetId: jest.fn(),
-    isConnected: jest.fn().mockReturnValue(true),
-    addTargetDestroyedListener: jest.fn(),
-    removeTargetDestroyedListener: jest.fn(),
-    send: jest.fn().mockResolvedValue(undefined),
-  })),
-  getCDPClient: jest.fn(),
-}));
-
-import { CDPConnectionPool } from '../../src/cdp/connection-pool';
-import { CDPClient } from '../../src/cdp/client';
-
-function createMockPage(targetId: string = 'target-1') {
-  return {
-    on: jest.fn(),
-    target: jest.fn().mockReturnValue({ _targetId: targetId }),
-    viewport: jest.fn().mockReturnValue({ width: 1920, height: 1080 }),
-    setViewport: jest.fn().mockResolvedValue(undefined),
-    close: jest.fn().mockResolvedValue(undefined),
-    url: jest.fn().mockReturnValue('about:blank'),
-    evaluateOnNewDocument: jest.fn().mockResolvedValue(undefined),
-    createCDPSession: jest.fn().mockResolvedValue({
-      send: jest.fn().mockResolvedValue(undefined),
-      detach: jest.fn().mockResolvedValue(undefined),
-    }),
-  };
-}
-
-describe('Stealth: configurePageDefenses evaluateOnNewDocument calls', () => {
-  let mockCdpClient: jest.Mocked<CDPClient>;
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-
-    mockCdpClient = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      createPage: jest.fn(),
-      getPageByTargetId: jest.fn(),
-      isConnected: jest.fn().mockReturnValue(true),
-      addTargetDestroyedListener: jest.fn(),
-      removeTargetDestroyedListener: jest.fn(),
-      send: jest.fn().mockResolvedValue(undefined),
-    } as unknown as jest.Mocked<CDPClient>;
-  });
-
-  async function acquireMockPage(targetId: string, evalCallCount: number) {
-    const mockPage = createMockPage(targetId);
-
-    mockCdpClient.createPage.mockImplementation(async () => {
-      // Simulate configurePageDefenses: dialog + error listeners
-      mockPage.on('dialog', async () => {});
-      mockPage.on('error', () => {});
-
-      // window.print() suppression
-      mockPage.evaluateOnNewDocument(() => {}).catch(() => {});
-      // navigator.webdriver override
-      mockPage.evaluateOnNewDocument(() => {}).catch(() => {});
-      // Additional stealth fingerprinting defenses (this PR)
-      mockPage.evaluateOnNewDocument(() => {}).catch(() => {});
-
-      (mockCdpClient as any).send(mockPage, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
-      return mockPage as any;
-    });
-
-    const pool = new CDPConnectionPool(mockCdpClient, {
-      minPoolSize: 0,
-      maxPoolSize: 5,
-      preWarm: false,
-    });
-    await pool.initialize();
-    await pool.acquirePage();
-    return mockPage;
-  }
-
-  test('evaluateOnNewDocument is called 3 times (print, webdriver, stealth fingerprinting)', async () => {
-    const mockPage = await acquireMockPage('target-stealth', 3);
-    expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledTimes(3);
-  });
-
-  test('all evaluateOnNewDocument calls pass a function', async () => {
-    const mockPage = await acquireMockPage('target-stealth-fns', 3);
-    const calls = mockPage.evaluateOnNewDocument.mock.calls;
-    calls.forEach((call) => {
-      expect(typeof call[0]).toBe('function');
-    });
-  });
-
-  test('stealth script is present in CDPClient source', () => {
-    const fs = require('fs');
-    const path = require('path');
+  beforeAll(() => {
     const clientPath = path.join(__dirname, '../../src/cdp/client.ts');
-    const source = fs.readFileSync(clientPath, 'utf8');
+    clientSource = fs.readFileSync(clientPath, 'utf8');
 
-    // Verify key stealth additions are present
-    expect(source).toContain('navigator.plugins');
-    expect(source).toContain('navigator.languages');
-    expect(source).toContain('navigator.permissions');
-    expect(source).toContain("params.name === 'notifications'");
+    // Extract the configurePageDefenses method definition body
+    const methodSignature = 'configurePageDefenses(page: Page)';
+    const methodStart = clientSource.indexOf(methodSignature);
+    if (methodStart === -1) {
+      throw new Error('configurePageDefenses method not found in client.ts');
+    }
+    const nextMethodComment = clientSource.indexOf('\n  /**', methodStart + methodSignature.length);
+    defenseBlock = nextMethodComment > methodStart
+      ? clientSource.slice(methodStart, nextMethodComment)
+      : clientSource.slice(methodStart);
+  });
+
+  test('configurePageDefenses has exactly 3 evaluateOnNewDocument calls', () => {
+    const evalCalls = (defenseBlock.match(/evaluateOnNewDocument/g) || []).length;
+    expect(evalCalls).toBe(3);
+  });
+
+  test('stealth script covers all key fingerprinting vectors', () => {
+    expect(defenseBlock).toContain('navigator.webdriver');
+    expect(defenseBlock).toContain('navigator.plugins');
+    expect(defenseBlock).toContain('navigator.languages');
+    expect(defenseBlock).toContain('navigator.permissions');
+    expect(defenseBlock).toContain('window.print');
+  });
+
+  test('comment accurately describes chrome.runtime patching', () => {
+    expect(defenseBlock).not.toContain('chrome.csi');
+    expect(defenseBlock).not.toContain('chrome.loadTimes');
+    expect(defenseBlock).toContain('chrome.runtime');
+  });
+
+  test('Permissions API returns EventTarget-based PermissionStatus', () => {
+    expect(defenseBlock).toContain('new EventTarget()');
+    expect(defenseBlock).toContain("state: 'prompt'");
+  });
+
+  test('navigator.plugins override has configurable: true', () => {
+    const pluginsStart = defenseBlock.indexOf("navigator, 'plugins'");
+    expect(pluginsStart).toBeGreaterThan(-1);
+    const pluginsEnd = defenseBlock.indexOf('// 4.', pluginsStart);
+    const pluginsBlock = defenseBlock.slice(pluginsStart, pluginsEnd);
+    expect(pluginsBlock).toContain('configurable: true');
+  });
+
+  test('notifications permission check is present', () => {
+    expect(defenseBlock).toContain("params.name === 'notifications'");
   });
 });
