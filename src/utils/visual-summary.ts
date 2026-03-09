@@ -10,6 +10,20 @@ import type { Page } from 'puppeteer-core';
 // Script injected into the page to extract visible state in one evaluate call
 const EXTRACT_STATE_SCRIPT = `(() => {
   try {
+    // Deep querySelectorAll that pierces open shadow roots
+    function deepQSA(root, sel) {
+      var results = [];
+      try { var m = root.querySelectorAll(sel); for (var i = 0; i < m.length; i++) results.push(m[i]); } catch(e) {}
+      var all = root.querySelectorAll('*');
+      for (var j = 0; j < all.length; j++) {
+        if (all[j].shadowRoot) {
+          var sr = deepQSA(all[j].shadowRoot, sel);
+          for (var k = 0; k < sr.length; k++) results.push(sr[k]);
+        }
+      }
+      return results;
+    }
+
     const url = location.href;
     const title = document.title;
 
@@ -19,10 +33,13 @@ const EXTRACT_STATE_SCRIPT = `(() => {
     const scrollHeight = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
     const clientHeight = document.documentElement.clientHeight || window.innerHeight || 0;
 
-    // Active/focused element
+    // Active/focused element (follows shadow root chain)
     let activeEl = null;
     try {
-      const el = document.activeElement;
+      let el = document.activeElement;
+      while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+        el = el.shadowRoot.activeElement;
+      }
       if (el && el !== document.body && el !== document.documentElement) {
         const tag = el.tagName.toLowerCase();
         const label =
@@ -50,7 +67,7 @@ const EXTRACT_STATE_SCRIPT = `(() => {
     for (const sel of panelSelectors) {
       if (panels.length >= 3) break;
       let found;
-      try { found = document.querySelectorAll(sel); } catch (e) { continue; }
+      try { found = deepQSA(document, sel); } catch (e) { continue; }
       for (const el of found) {
         if (panels.length >= 3) break;
         if (seenPanels.has(el)) continue;
@@ -67,7 +84,7 @@ const EXTRACT_STATE_SCRIPT = `(() => {
     // Active tab/button states (aria-selected, aria-current, .active)
     const activeStates = [];
     try {
-      const candidates = document.querySelectorAll(
+      const candidates = deepQSA(document,
         '[aria-selected="true"], [aria-current], .active, [class*="tab--active"], [class*="tab-active"]'
       );
       for (const el of candidates) {
@@ -86,7 +103,7 @@ const EXTRACT_STATE_SCRIPT = `(() => {
     // Visible form state (inputs, selects, checkboxes)
     const formState = [];
     try {
-      const inputs = document.querySelectorAll('input:not([type="hidden"]), select, textarea');
+      const inputs = deepQSA(document, 'input:not([type="hidden"]), select, textarea');
       for (const el of inputs) {
         if (formState.length >= 5) break;
         const rect = el.getBoundingClientRect();
@@ -111,7 +128,7 @@ const EXTRACT_STATE_SCRIPT = `(() => {
     // Visible headings for section context
     const headings = [];
     try {
-      const hEls = document.querySelectorAll('h1, h2, h3, h4');
+      const hEls = deepQSA(document, 'h1, h2, h3, h4');
       for (const el of hEls) {
         if (headings.length >= 4) break;
         const rect = el.getBoundingClientRect();

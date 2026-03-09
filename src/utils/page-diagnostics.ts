@@ -25,10 +25,22 @@ export async function getPageDiagnostics(page: Page): Promise<PageDiagnostics> {
       else if (document.querySelector('[data-v-], #app[data-v-]')) framework = 'vue';
       else if (document.querySelector('[ng-version], [_nghost]')) framework = 'angular';
 
+      // Count elements including those inside open shadow roots
+      function deepElementCount(root: Element | Document | ShadowRoot): number {
+        var count = root.querySelectorAll('*').length;
+        var allEls = root.querySelectorAll('*');
+        for (var i = 0; i < allEls.length; i++) {
+          if ((allEls[i] as any).shadowRoot) {
+            count += deepElementCount((allEls[i] as any).shadowRoot);
+          }
+        }
+        return count;
+      }
+
       return {
         url: location.href,
         readyState: document.readyState,
-        totalElements: document.querySelectorAll('*').length,
+        totalElements: deepElementCount(document),
         framework,
         title: document.title.substring(0, 100),
       };
