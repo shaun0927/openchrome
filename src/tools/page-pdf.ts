@@ -21,7 +21,7 @@ const definition: MCPToolDefinition = {
       },
       path: {
         type: 'string',
-        description: 'Save path (absolute/relative to home). Omit for base64',
+        description: 'Save path. Omit for base64',
       },
       format: {
         type: 'string',
@@ -34,7 +34,7 @@ const definition: MCPToolDefinition = {
       },
       printBackground: {
         type: 'boolean',
-        description: 'Print background graphics. Default: true',
+        description: 'Print backgrounds. Default: true',
       },
       scale: {
         type: 'number',
@@ -66,11 +66,11 @@ const definition: MCPToolDefinition = {
       },
       headerTemplate: {
         type: 'string',
-        description: 'Header HTML (needs displayHeaderFooter)',
+        description: 'Header HTML template',
       },
       footerTemplate: {
         type: 'string',
-        description: 'Footer HTML (needs displayHeaderFooter)',
+        description: 'Footer HTML template',
       },
     },
     required: ['tabId'],

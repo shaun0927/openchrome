@@ -10,7 +10,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'find',
-  description: 'Find elements by natural language query. Returns up to 20 matches with refs.',
+  description: 'Find elements by query. Returns up to 20 matches with refs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,15 +20,15 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'What to find, e.g. "search bar", "login button"',
+        description: 'What to find (natural language)',
       },
       waitForMs: {
         type: 'number',
-        description: 'Polling timeout in ms for dynamic/SPA content (default: 3000). Set to 0 to disable polling.',
+        description: 'Poll timeout in ms. Default: 3000. 0 to disable',
       },
       pollInterval: {
         type: 'number',
-        description: 'How often to retry while waiting, in ms. Default 200, range 50-2000.',
+        description: 'Poll interval in ms. Default: 200',
       },
     },
     required: ['query', 'tabId'],

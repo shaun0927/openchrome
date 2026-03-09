@@ -16,13 +16,13 @@ import { retryWithFallback } from '../utils/retry-with-fallback';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
-  description: 'Perform mouse, keyboard, and screenshot actions on a browser tab.',
+  description: 'Mouse, keyboard, and screenshot actions on a tab.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to execute the action on',
+        description: 'Tab ID',
       },
       action: {
         type: 'string',
@@ -44,7 +44,7 @@ const definition: MCPToolDefinition = {
       coordinate: {
         type: 'array',
         items: { type: 'number' },
-        description: '(x, y) coordinates for click/scroll actions',
+        description: '[x, y] for click/scroll actions',
       },
       text: {
         type: 'string',
@@ -61,11 +61,11 @@ const definition: MCPToolDefinition = {
       },
       scroll_amount: {
         type: 'number',
-        description: 'Number of scroll wheel ticks',
+        description: 'Scroll wheel ticks. Default: 3',
       },
       ref: {
         type: 'string',
-        description: 'ref_N from read_page or backendNodeId from DOM mode',
+        description: 'Element ref or backendNodeId',
       },
     },
     required: ['action', 'tabId'],

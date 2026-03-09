@@ -13,7 +13,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
-  description: 'Fill multiple form fields at once and optionally submit.',
+  description: 'Fill form fields and optionally submit.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -23,26 +23,26 @@ const definition: MCPToolDefinition = {
       },
       fields: {
         type: 'object',
-        description: 'Map of field labels/names/placeholders to values (string). For checkboxes use "true"/"false".',
+        description: 'Field label/name/placeholder to value map',
         additionalProperties: {
           type: 'string',
         },
       },
       submit: {
         type: 'string',
-        description: 'Submit button query, e.g. "Login", "Save"',
+        description: 'Submit button query after fill',
       },
       clear_first: {
         type: 'boolean',
-        description: 'Clear fields before filling. Default: true',
+        description: 'Clear before fill. Default: true',
       },
       waitForMs: {
         type: 'number',
-        description: 'Max time to wait for form fields to appear (useful for SPAs). Default: 0 (no polling). Set to 1500 for SPA support.',
+        description: 'Poll timeout for dynamic fields in ms. Default: 0',
       },
       pollInterval: {
         type: 'number',
-        description: 'Interval between polls in ms when waiting for fields (50-2000). Default: 300',
+        description: 'Poll interval in ms (50-2000). Default: 300',
       },
     },
     required: ['tabId', 'fields'],

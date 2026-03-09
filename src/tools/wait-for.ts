@@ -9,7 +9,7 @@ import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'wait_for',
-  description: 'Wait for a condition (selector, function, navigation, timeout) before proceeding.',
+  description: 'Wait for a condition before proceeding.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -24,7 +24,7 @@ const definition: MCPToolDefinition = {
       },
       value: {
         type: 'string',
-        description: 'CSS selector, JS function, URL pattern, or ms as string',
+        description: 'Selector, JS function, URL pattern, or ms',
       },
       timeout: {
         type: 'number',
@@ -32,7 +32,7 @@ const definition: MCPToolDefinition = {
       },
       visible: {
         type: 'boolean',
-        description: 'Wait for visibility (selector type). Default: false',
+        description: 'Require visibility (selector). Default: false',
       },
     },
     required: ['tabId', 'type'],

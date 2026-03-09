@@ -15,13 +15,13 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'batch_paginate',
-  description: 'Extract content from paginated viewers (PDF, slides, articles) in a single call.',
+  description: 'Extract content from paginated viewers in one call.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID of the paginated viewer',
+        description: 'Tab ID',
       },
       strategy: {
         type: 'string',
@@ -30,7 +30,7 @@ const definition: MCPToolDefinition = {
       },
       totalPages: {
         type: 'number',
-        description: 'Pages to capture. Required for keyboard/click',
+        description: 'Total pages. Required for keyboard/click',
       },
       startPage: {
         type: 'number',
@@ -43,15 +43,15 @@ const definition: MCPToolDefinition = {
       },
       keyAction: {
         type: 'string',
-        description: 'Key for next page (keyboard). Default: ArrowRight',
+        description: 'Next-page key. Default: ArrowRight',
       },
       nextSelector: {
         type: 'string',
-        description: 'Next-page button selector (click strategy)',
+        description: 'Next button selector (click)',
       },
       urlTemplate: {
         type: 'string',
-        description: 'URL with {N}/{page}/{offset} placeholder (url strategy)',
+        description: 'URL with {N}/{page}/{offset} placeholder',
       },
       waitBetweenPages: {
         type: 'number',
@@ -59,7 +59,7 @@ const definition: MCPToolDefinition = {
       },
       scrollAmount: {
         type: 'number',
-        description: 'Viewport heights per scroll step. Default: 1',
+        description: 'Viewports per scroll. Default: 1',
       },
       maxScrolls: {
         type: 'number',

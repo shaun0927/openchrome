@@ -16,13 +16,13 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
-  description: 'Navigate to URL or go forward/back. No tabId = new tab. workerId for parallel ops.',
+  description: 'Navigate to URL or go forward/back. Omit tabId for new tab.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to navigate. No tabId = new tab',
+        description: 'Tab ID. Omit for new tab',
       },
       url: {
         type: 'string',
