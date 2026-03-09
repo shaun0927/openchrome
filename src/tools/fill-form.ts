@@ -189,7 +189,7 @@ const handler: ToolHandler = async (
             const isChecked = await withTimeout(page.evaluate((idx: number, tagProp: string) => {
               const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
               let node;
-              while (node = walker.nextNode()) {
+              while ((node = walker.nextNode()) !== null) {
                 const el = node as HTMLInputElement;
                 if ((el as any)[tagProp] === idx) {
                   return el.checked;
@@ -207,7 +207,7 @@ const handler: ToolHandler = async (
             await withTimeout(page.evaluate((idx: number, val: string, tagProp: string) => {
               const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
               let node;
-              while (node = walker.nextNode()) {
+              while ((node = walker.nextNode()) !== null) {
                 const el = node as HTMLSelectElement;
                 if ((el as any)[tagProp] === idx) {
                   el.value = val;
