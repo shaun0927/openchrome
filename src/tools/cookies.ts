@@ -7,6 +7,59 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
 
+type CookieTier = 'auth' | 'functional' | 'tracking';
+
+const AUTH_PATTERNS = /^(session|token|jwt|csrf|auth|sid|ssid|connect\.sid|__Host-|__Secure-|XSRF|_csrf)/i;
+const TRACKING_PATTERNS = /^(_ga|_gid|_gat|_fbp|_fbc|__utm|NID|IDE|DSID|APISID|SAPISID|HSID|__gads|_gcl|_pin|_tt_|hubspot|_hj|_clck|_clsk|mp_|ajs_|amplitude|optimizely)/i;
+const TRACKING_EXACT = new Set(['fr', 'tr']); // Facebook/Twitter pixel cookies — exact name only
+
+function classifyCookie(name: string): CookieTier {
+  if (AUTH_PATTERNS.test(name)) return 'auth';
+  if (TRACKING_PATTERNS.test(name) || TRACKING_EXACT.has(name.toLowerCase())) return 'tracking';
+  return 'functional';
+}
+
+function formatCookiesCompact(cookies: any[]): string {
+  const auth: any[] = [];
+  const functional: any[] = [];
+  const tracking: { name: string; domain: string }[] = [];
+
+  for (const cookie of cookies) {
+    const tier = classifyCookie(cookie.name);
+    if (tier === 'auth') {
+      auth.push(cookie); // Full attributes
+    } else if (tier === 'functional') {
+      functional.push({ name: cookie.name, value: cookie.value, domain: cookie.domain });
+    } else {
+      tracking.push({ name: cookie.name, domain: cookie.domain });
+    }
+  }
+
+  const sections: string[] = [];
+
+  if (auth.length > 0) {
+    sections.push(`Auth cookies (${auth.length}):\n${JSON.stringify(auth, null, 2)}`);
+  }
+
+  if (functional.length > 0) {
+    sections.push(`Functional cookies (${functional.length}):\n${JSON.stringify(functional, null, 2)}`);
+  }
+
+  if (tracking.length > 0) {
+    // Summary only — group by domain
+    const domainCounts = new Map<string, number>();
+    for (const t of tracking) {
+      domainCounts.set(t.domain, (domainCounts.get(t.domain) || 0) + 1);
+    }
+    const domainSummary = Array.from(domainCounts.entries())
+      .map(([domain, count]) => `${domain}: ${count}`)
+      .join(', ');
+    sections.push(`Tracking cookies: ${tracking.length} total (${domainSummary})`);
+  }
+
+  return sections.join('\n\n');
+}
+
 const definition: MCPToolDefinition = {
   name: 'cookies',
   description: 'Manage browser cookies for the current page (get, set, delete, clear).',
@@ -55,6 +108,10 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Expiration as Unix timestamp in seconds',
       },
+      raw: {
+        type: 'boolean',
+        description: 'Return all cookies with full attributes, bypassing classification.',
+      },
     },
     required: ['tabId', 'action'],
   },
@@ -74,6 +131,7 @@ const handler: ToolHandler = async (
   const httpOnly = args.httpOnly as boolean | undefined;
   const sameSite = args.sameSite as 'Strict' | 'Lax' | 'None' | undefined;
   const expires = args.expires as number | undefined;
+  const raw = args.raw as boolean | undefined;
 
   const sessionManager = getSessionManager();
 
@@ -141,15 +199,28 @@ const handler: ToolHandler = async (
         }
 
         // Get all cookies
+        if (raw === true) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'get',
+                  cookies,
+                  count: cookies.length,
+                }),
+              },
+            ],
+          };
+        }
+
+        // Classified format (default)
+        const formatted = formatCookiesCompact(cookies);
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({
-                action: 'get',
-                cookies,
-                count: cookies.length,
-              }),
+              text: formatted.length > 0 ? formatted : 'No cookies found',
             },
           ],
         };
