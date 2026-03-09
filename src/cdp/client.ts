@@ -3,6 +3,7 @@
  */
 
 import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'puppeteer-core';
+import * as http from 'http';
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
@@ -1046,6 +1047,63 @@ export class CDPClient {
     }
 
     return page;
+  }
+
+  /**
+   * Open a new tab via Chrome's HTTP debug API without attaching CDP during load.
+   * This avoids the Runtime.enable serialization artifacts that Cloudflare Turnstile
+   * and similar anti-bot systems detect. The tab loads (and Turnstile runs) with no
+   * CDP observer attached. CDP is attached only after the settle window expires.
+   *
+   * @param url      URL to open in the new tab
+   * @param settleMs Milliseconds to wait before attaching CDP (default 5000, range 1000-30000)
+   * @returns        The Puppeteer Page and its targetId
+   */
+  async createTargetStealth(url: string, settleMs: number = 5000): Promise<{ page: Page; targetId: string }> {
+    const browser = this.getBrowser();
+
+    // Step 1: Create tab via HTTP debug API (no CDP attachment during this request)
+    const targetInfo = await new Promise<{ id: string; url: string }>((resolve, reject) => {
+      const reqUrl = `http://localhost:${this.port}/json/new?${encodeURIComponent(url)}`;
+      http.get(reqUrl, (res) => {
+        let data = '';
+        res.on('data', (chunk: Buffer) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data) as { id: string; url: string });
+          } catch (e) {
+            reject(new Error(`Failed to parse Chrome debug API response: ${data}`));
+          }
+        });
+      }).on('error', reject);
+    });
+
+    console.error(`[CDPClient] Stealth tab created: ${targetInfo.id}, settling for ${settleMs}ms`);
+
+    // Step 2: Wait for the page to load without CDP (Turnstile runs during this window)
+    await new Promise<void>(resolve => setTimeout(resolve, settleMs));
+
+    // Step 3: Find the page in Puppeteer's target list by matching targetId
+    const pages = await browser.pages();
+    let page: Page | undefined;
+    for (const p of pages) {
+      const tid = getTargetId(p.target());
+      if (tid === targetInfo.id) {
+        page = p;
+        break;
+      }
+    }
+
+    if (!page) {
+      throw new Error(`Stealth navigation: could not find tab ${targetInfo.id} after ${settleMs}ms settle period`);
+    }
+
+    // Step 4: Index the page and configure defenses (CDP commands flow from here)
+    this.targetIdIndex.set(targetInfo.id, page);
+    this.configurePageDefenses(page);
+
+    console.error(`[CDPClient] Stealth tab ${targetInfo.id} attached after settle period`);
+    return { page, targetId: targetInfo.id };
   }
 
   /**
