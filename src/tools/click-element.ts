@@ -10,7 +10,6 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, DEFAULT_VIEWPORT } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
-import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { withTimeout } from '../utils/with-timeout';
@@ -422,10 +421,11 @@ const handler: ToolHandler = async (
     AdaptiveScreenshot.getInstance().reset(tabId);
 
     const clickType = doubleClick ? 'Double-clicked' : 'Clicked';
+    const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
+    const textPart = textSample ? ` "${textSample}"` : '';
+    const refPart = refId ? ` [${refId}]` : '';
     const confidenceNote = bestMatch.score < 50 ? ` (low confidence: ${bestMatch.score}/100)` : '';
-    const summary = await generateVisualSummary(page);
-    const summaryText = summary ? `\n${summary}` : '';
-    const resultText = `${clickType} ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}${confidenceNote}${delta}${summaryText}`;
+    const resultText = `\u2713 ${clickType} ${bestMatch.tagName}${textPart}${refPart}${confidenceNote}${delta}`;
 
     // Optional verification screenshot — WebP via CDP for speed and consistency
     if (verify) {
