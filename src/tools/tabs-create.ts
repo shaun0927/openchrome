@@ -10,7 +10,7 @@ import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_create',
-  description: 'Create a new tab with URL. workerId for parallel ops.',
+  description: 'Create a new tab with URL.',
   inputSchema: {
     type: 'object',
     properties: {

@@ -17,7 +17,7 @@ import { getChromeLauncher } from '../chrome/launcher';
 
 const definition: MCPToolDefinition = {
   name: 'oc_stop',
-  description: 'Shut down OpenChrome and close Chrome. Auto-relaunched on next tool call.',
+  description: 'Shut down OpenChrome and close Chrome.',
   inputSchema: {
     type: 'object',
     properties: {

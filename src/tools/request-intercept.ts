@@ -59,13 +59,13 @@ function matchesPattern(url: string, pattern: string): boolean {
 
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
-  description: 'Intercept and monitor network requests (log, block, modify).',
+  description: 'Intercept network requests (log, block, modify).',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to intercept requests for',
+        description: 'Tab ID',
       },
       action: {
         type: 'string',
@@ -74,11 +74,11 @@ const definition: MCPToolDefinition = {
       },
       rule: {
         type: 'object',
-        description: 'Rule for addRule action',
+        description: 'Rule definition (addRule)',
         properties: {
           pattern: {
             type: 'string',
-            description: 'URL glob pattern, e.g. "*://example.com/*"',
+            description: 'URL glob pattern',
           },
           resourceTypes: {
             type: 'array',
@@ -88,11 +88,11 @@ const definition: MCPToolDefinition = {
           action: {
             type: 'string',
             enum: ['block', 'modify', 'log'],
-            description: 'Action for matched requests',
+            description: 'Rule action',
           },
           modifyOptions: {
             type: 'object',
-            description: 'Modify action options',
+            description: 'Modify options',
             properties: {
               status: { type: 'number' },
               headers: { type: 'object' },
@@ -103,11 +103,11 @@ const definition: MCPToolDefinition = {
       },
       ruleId: {
         type: 'string',
-        description: 'Rule ID for removeRule action',
+        description: 'Rule ID (removeRule)',
       },
       limit: {
         type: 'number',
-        description: 'Maximum logs to return for getLogs action',
+        description: 'Max logs to return (getLogs)',
       },
     },
     required: ['tabId', 'action'],

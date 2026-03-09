@@ -9,13 +9,13 @@ import { assertDomainAllowed } from '../security/domain-guard';
 
 const definition: MCPToolDefinition = {
   name: 'cookies',
-  description: 'Manage browser cookies for the current page (get, set, delete, clear).',
+  description: 'Manage browser cookies (get, set, delete, clear).',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to manage cookies for',
+        description: 'Tab ID',
       },
       action: {
         type: 'string',
@@ -53,7 +53,7 @@ const definition: MCPToolDefinition = {
       },
       expires: {
         type: 'number',
-        description: 'Expiration as Unix timestamp in seconds',
+        description: 'Expiration Unix timestamp (seconds)',
       },
     },
     required: ['tabId', 'action'],

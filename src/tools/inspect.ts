@@ -15,7 +15,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
-  description: 'Extract focused page state by query. Use instead of read_page + screenshot for targeted questions.',
+  description: 'Extract focused page state by query.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -25,7 +25,7 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'What to inspect, e.g. "active tabs", "form values"',
+        description: 'What to inspect (natural language)',
       },
       scope: {
         type: 'string',

@@ -17,7 +17,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'click_element',
-  description: 'Find and click an element by natural language query in one call.',
+  description: 'Find and click an element by query in one call.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -27,15 +27,15 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Element to click, e.g. "Login button"',
+        description: 'Element to click (natural language)',
       },
       wait_after: {
         type: 'number',
-        description: 'Wait after click in ms. Default: 100, max: 5000',
+        description: 'Wait after click in ms. Default: 100',
       },
       verify: {
         type: 'boolean',
-        description: 'Return screenshot after click for verification',
+        description: 'Return screenshot after click',
       },
       double_click: {
         type: 'boolean',
@@ -43,11 +43,11 @@ const definition: MCPToolDefinition = {
       },
       waitForMs: {
         type: 'number',
-        description: 'Max time to wait for element to appear. 0 = no waiting (default). Max 30000.',
+        description: 'Poll timeout for element in ms. Default: 0',
       },
       pollInterval: {
         type: 'number',
-        description: 'How often to retry while waiting, in ms. Default 200, range 50-2000.',
+        description: 'Poll interval in ms. Default: 200',
       },
     },
     required: ['tabId', 'query'],

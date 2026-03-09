@@ -26,7 +26,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description: 'Get page content as compact DOM (default), accessibility tree (ax), or CSS diagnostics (css). Use css mode BEFORE javascript_tool for style inspection.',
+  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -41,15 +41,15 @@ const definition: MCPToolDefinition = {
       filter: {
         type: 'string',
         enum: ['interactive', 'all'],
-        description: 'Filter: "interactive" for buttons/links/inputs only',
+        description: 'Filter: interactive for form/button/link only',
       },
       ref_id: {
         type: 'string',
-        description: 'Parent element ref for subtree scoping',
+        description: 'Parent ref for subtree scoping',
       },
       selector: {
         type: 'string',
-        description: 'CSS selector to inspect (css mode only)',
+        description: 'CSS selector (css mode only)',
       },
       mode: {
         type: 'string',
