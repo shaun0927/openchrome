@@ -398,8 +398,8 @@ describe('FindTool', () => {
         ]);
 
       // CDP mocks for the second (successful) iteration
+      // Note: first iteration returns [] so resolveBackendNodeIds skips CDP calls entirely
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ result: {} })            // first iteration batch (no objectId)
         .mockResolvedValueOnce({ result: { objectId: 'batch-obj' } })
         .mockResolvedValueOnce({ result: [{ name: '0', value: { objectId: 'el-obj-0' } }] })
         .mockResolvedValueOnce({ node: { backendNodeId: 55001 } });

@@ -10,6 +10,7 @@ import { getSessionManager } from '../session-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
+import { discoverFormFields, FormField, FORM_FIELD_TAG } from '../utils/element-discovery';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -49,17 +50,6 @@ const definition: MCPToolDefinition = {
   },
 };
 
-interface FormField {
-  backendDOMNodeId: number;
-  fieldName: string;
-  tagName: string;
-  type?: string;
-  name?: string;
-  placeholder?: string;
-  ariaLabel?: string;
-  label?: string;
-  rect: { x: number; y: number; width: number; height: number };
-}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -101,84 +91,15 @@ const handler: ToolHandler = async (
     const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
     const startTime = Date.now();
 
+    const cdpClient = sessionManager.getCDPClient();
+
     let formFields: FormField[] = [];
     do {
       try {
-      formFields = await withTimeout(page.evaluate((): FormField[] => {
-        const fields: FormField[] = [];
-
-        // Helper to get associated label
-        function getLabel(el: Element): string | undefined {
-          const inputEl = el as HTMLInputElement;
-          // Check for explicit label
-          if (inputEl.id) {
-            const label = document.querySelector(`label[for="${inputEl.id}"]`);
-            if (label) return label.textContent?.trim();
-          }
-          // Check for wrapping label
-          const parent = el.closest('label');
-          if (parent) {
-            const labelText = parent.textContent?.trim() || '';
-            const inputText = el.textContent?.trim() || '';
-            return labelText.replace(inputText, '').trim();
-          }
-          // Check for preceding label sibling
-          const prev = el.previousElementSibling;
-          if (prev?.tagName === 'LABEL') {
-            return prev.textContent?.trim();
-          }
-          return undefined;
-        }
-
-        // Find all input-like elements
-        const selectors = [
-          'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"])',
-          'textarea',
-          'select',
-          '[contenteditable="true"]',
-          '[role="textbox"]',
-          '[role="combobox"]',
-        ];
-
-        let index = 0;
-        for (const selector of selectors) {
-          try {
-            for (const el of document.querySelectorAll(selector)) {
-              const rect = el.getBoundingClientRect();
-              if (rect.width === 0 || rect.height === 0) continue;
-
-              const style = window.getComputedStyle(el);
-              if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') continue;
-
-              const inputEl = el as HTMLInputElement;
-
-              fields.push({
-                backendDOMNodeId: 0,
-                fieldName: getLabel(el) || inputEl.name || inputEl.placeholder || inputEl.getAttribute('aria-label') || `field_${index}`,
-                tagName: el.tagName.toLowerCase(),
-                type: inputEl.type,
-                name: inputEl.name,
-                placeholder: inputEl.placeholder,
-                ariaLabel: el.getAttribute('aria-label') || undefined,
-                label: getLabel(el),
-                rect: {
-                  x: rect.x + rect.width / 2,
-                  y: rect.y + rect.height / 2,
-                  width: rect.width,
-                  height: rect.height,
-                },
-              });
-
-              // Tag element for later reference
-              (el as unknown as { __formFieldIndex: number }).__formFieldIndex = index++;
-            }
-          } catch {
-            // Invalid selector
-          }
-        }
-
-        return fields;
-      }), 10000, 'fill_form');
+        formFields = await discoverFormFields(page, cdpClient, {
+          timeout: 10000,
+          toolName: 'fill_form',
+        });
       } catch {
         // CDP evaluate timed out — retry if budget remains
         if (maxWait > 0 && Date.now() - startTime < maxWait) {
@@ -197,30 +118,6 @@ const handler: ToolHandler = async (
 
     const filledFields: string[] = [];
     const errors: string[] = [];
-    const cdpClient = sessionManager.getCDPClient();
-
-    // Get backend node IDs
-    for (let i = 0; i < formFields.length; i++) {
-      try {
-        const { result } = await cdpClient.send<{
-          result: { objectId?: string };
-        }>(page, 'Runtime.evaluate', {
-          expression: `document.querySelectorAll('*').find(el => el.__formFieldIndex === ${i})`,
-          returnByValue: false,
-        });
-
-        if (result.objectId) {
-          const { node } = await cdpClient.send<{
-            node: { backendNodeId: number };
-          }>(page, 'DOM.describeNode', {
-            objectId: result.objectId,
-          });
-          formFields[i].backendDOMNodeId = node.backendNodeId;
-        }
-      } catch {
-        // Skip
-      }
-    }
 
     const { delta, result: formResult } = await withDomDelta(page, async () => {
       let submitted = false;
@@ -289,10 +186,17 @@ const handler: ToolHandler = async (
           // Handle different field types
           if (bestMatch.type === 'checkbox' || bestMatch.type === 'radio') {
             // For checkbox/radio, only click if needed to match desired state
-            const isChecked = await withTimeout(page.evaluate((idx: number) => {
-              const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLInputElement;
-              return el?.checked;
-            }, formFields.indexOf(bestMatch)), 10000, 'fill_form');
+            const isChecked = await withTimeout(page.evaluate((idx: number, tagProp: string) => {
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+              let node;
+              while (node = walker.nextNode()) {
+                const el = node as HTMLInputElement;
+                if ((el as any)[tagProp] === idx) {
+                  return el.checked;
+                }
+              }
+              return false;
+            }, formFields.indexOf(bestMatch), FORM_FIELD_TAG), 10000, 'fill_form');
 
             const shouldBeChecked = fieldValue === true || fieldValue === 'true' || fieldValue === '1';
             if (isChecked !== shouldBeChecked) {
@@ -300,13 +204,18 @@ const handler: ToolHandler = async (
             }
           } else if (bestMatch.tagName === 'select') {
             // For select, use CDP to set value
-            await withTimeout(page.evaluate((idx: number, val: string) => {
-              const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLSelectElement;
-              if (el) {
-                el.value = val;
-                el.dispatchEvent(new Event('change', { bubbles: true }));
+            await withTimeout(page.evaluate((idx: number, val: string, tagProp: string) => {
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+              let node;
+              while (node = walker.nextNode()) {
+                const el = node as HTMLSelectElement;
+                if ((el as any)[tagProp] === idx) {
+                  el.value = val;
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  break;
+                }
               }
-            }, formFields.indexOf(bestMatch), String(fieldValue)), 10000, 'fill_form');
+            }, formFields.indexOf(bestMatch), String(fieldValue), FORM_FIELD_TAG), 10000, 'fill_form');
           } else {
             // For text inputs/textareas
             if (clearFirst) {
