@@ -17,7 +17,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find element, act, wait for stability, return state summary in one call.',
+  description: 'Find element, act, wait, return state summary.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -27,7 +27,7 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Element to interact with (natural language)',
+        description: 'Element to act on (natural language)',
       },
       action: {
         type: 'string',
@@ -36,7 +36,7 @@ const definition: MCPToolDefinition = {
       },
       waitAfter: {
         type: 'number',
-        description: 'Wait for DOM settle in ms. Default: 500',
+        description: 'DOM settle wait in ms. Default: 500',
       },
       returnFormat: {
         type: 'string',
@@ -45,15 +45,15 @@ const definition: MCPToolDefinition = {
       },
       verify: {
         type: 'boolean',
-        description: 'Return screenshot after action for visual verification',
+        description: 'Return screenshot after action',
       },
       waitForMs: {
         type: 'number',
-        description: 'Poll for element before acting (for dynamic/lazy content). Max: 30000',
+        description: 'Poll timeout for element in ms. Max: 30000',
       },
       pollInterval: {
         type: 'number',
-        description: 'Poll interval when using waitForMs. Default: 200',
+        description: 'Poll interval in ms. Default: 200',
       },
     },
     required: ['tabId', 'query'],

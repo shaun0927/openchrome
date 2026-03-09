@@ -32,13 +32,13 @@ const USER_AGENT_PRESETS: Record<string, string> = {
 
 const definition: MCPToolDefinition = {
   name: 'user_agent',
-  description: 'Set or reset browser user agent via preset or custom string.',
+  description: 'Set or reset browser user agent.',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to change user agent for',
+        description: 'Tab ID',
       },
       preset: {
         type: 'string',

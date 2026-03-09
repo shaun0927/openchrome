@@ -16,7 +16,7 @@ const definition: MCPToolDefinition = {
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to manage storage for',
+        description: 'Tab ID',
       },
       storageType: {
         type: 'string',
@@ -34,7 +34,7 @@ const definition: MCPToolDefinition = {
       },
       value: {
         type: 'string',
-        description: 'Value to store. JSON-stringify objects',
+        description: 'Value to store (string)',
       },
     },
     required: ['tabId', 'storageType', 'action'],

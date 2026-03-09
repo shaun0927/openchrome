@@ -15,7 +15,7 @@ import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-find
 
 const definition: MCPToolDefinition = {
   name: 'wait_and_click',
-  description: 'Wait for an element to appear, then click it. For dynamic/lazy content.',
+  description: 'Wait for element to appear, then click it.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -25,7 +25,7 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Element to wait for and click (natural language)',
+        description: 'Element to find and click (natural language)',
       },
       timeout: {
         type: 'number',
