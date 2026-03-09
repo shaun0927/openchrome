@@ -10,6 +10,7 @@ import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
+import { SnapshotStore } from '../compression/snapshot-store';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -59,6 +60,11 @@ const definition: MCPToolDefinition = {
       includePagination: {
         type: 'boolean',
         description: 'Include pagination info. Default: true',
+      },
+      compression: {
+        type: 'string',
+        enum: ['none', 'light', 'delta'],
+        description: 'Response compression. delta: return only changes since last read.',
       },
     },
     required: ['tabId'],
@@ -289,6 +295,7 @@ const handler: ToolHandler = async (
       try {
         const refId = args.ref_id as string | undefined;
         const depth = args.depth as number | undefined;
+        const compression = args.compression as string | undefined;
         const result = await serializeDOM(page, cdpClient, {
           maxDepth: depth ?? -1,
           filter: filter,
@@ -298,6 +305,30 @@ const handler: ToolHandler = async (
         let outputText = result.content;
         if (refId) {
           outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
+        }
+
+        // Delta compression: compare against cached snapshot
+        if (compression === 'delta') {
+          const snapshotStore = SnapshotStore.getInstance();
+          const deltaResult = snapshotStore.computeDelta(
+            sessionId,
+            tabId,
+            outputText,
+            result.pageStats.url,
+          );
+
+          if (deltaResult.isDelta) {
+            const includePaginationDelta = args.includePagination !== false;
+            const deltaPaginationSection = includePaginationDelta ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+            return {
+              content: [{ type: 'text', text: deltaResult.summary + deltaPaginationSection }],
+            };
+          }
+          // Fallback to full — deltaResult.content is the full DOM
+        } else if (compression !== 'none') {
+          // Cache the snapshot for future delta calls (even when not in delta mode)
+          const snapshotStore = SnapshotStore.getInstance();
+          snapshotStore.computeDelta(sessionId, tabId, outputText, result.pageStats.url);
         }
 
         const includePaginationDom = args.includePagination !== false;
