@@ -12,6 +12,10 @@ export interface DOMSerializerOptions {
   pierceIframes?: boolean;     // default: true
   interactiveOnly?: boolean;   // default: false
   filter?: string;             // 'interactive' | 'all', default: 'all'
+  compression?: 'none' | 'light' | 'aggressive';
+  // none: no sibling dedup or container collapse (backward compat)
+  // light (default): sibling dedup threshold=4, container collapse enabled
+  // aggressive: sibling dedup threshold=3
 }
 
 export interface PageStats {
@@ -74,6 +78,16 @@ const INTERACTIVE_ROLES = new Set([
   'listbox', 'menu', 'menuitem', 'tab', 'switch', 'slider',
 ]);
 
+// Compression constants
+const SIBLING_COLLAPSE_THRESHOLD_LIGHT = 4;
+const SIBLING_COLLAPSE_THRESHOLD_AGGRESSIVE = 3;
+const SIBLING_SAMPLE_COUNT = 3;
+const MAX_CONTAINER_CHAIN = 8;
+
+const CONTAINER_TAGS = new Set([
+  'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span',
+]);
+
 /**
  * Parse flat attributes array into a map
  */
@@ -93,6 +107,23 @@ function isInteractive(tagName: string, attrMap: Map<string, string>): boolean {
   if (INTERACTIVE_TAGS.has(tagName)) return true;
   const role = attrMap.get('role');
   if (role && INTERACTIVE_ROLES.has(role)) return true;
+  return false;
+}
+
+/**
+ * Check if a DOM node or any descendant contains interactive elements.
+ * Prevents sibling dedup from collapsing groups with clickable elements.
+ */
+function containsInteractive(node: DOMNode): boolean {
+  if (node.nodeType !== NODE_TYPE_ELEMENT) return false;
+  const tag = (node.localName || node.nodeName).toLowerCase();
+  const attrMap = parseAttributes(node.attributes);
+  if (isInteractive(tag, attrMap)) return true;
+  if (node.children) {
+    for (const child of node.children) {
+      if (containsInteractive(child)) return true;
+    }
+  }
   return false;
 }
 
@@ -138,6 +169,99 @@ function formatElement(
   return line;
 }
 
+/**
+ * Check if a node is a collapsible container:
+ * - Is a container tag (div, section, etc.)
+ * - Has exactly 1 element child
+ * - Has no meaningful text content
+ * - Is NOT interactive
+ */
+function isCollapsibleContainer(node: DOMNode): boolean {
+  if (!node.children) return false;
+  const tagName = (node.localName || node.nodeName).toLowerCase();
+  if (!CONTAINER_TAGS.has(tagName)) return false;
+
+  const attrMap = parseAttributes(node.attributes);
+  if (isInteractive(tagName, attrMap)) return false;
+
+  const text = getDirectTextContent(node);
+  if (text.length > 0) return false;
+
+  const elementChildren = node.children.filter(c => c.nodeType === NODE_TYPE_ELEMENT && !SKIP_TAGS.has(c.nodeName.toUpperCase()));
+  return elementChildren.length === 1;
+}
+
+/**
+ * Collect a chain of single-child containers starting from node.
+ * Returns the chain nodes and the leaf (first non-container or multi-child node).
+ */
+function collectContainerChain(node: DOMNode): { chain: DOMNode[], leaf: DOMNode } {
+  const chain: DOMNode[] = [node];
+  let current = node;
+
+  while (chain.length < MAX_CONTAINER_CHAIN) {
+    const elementChildren = (current.children || []).filter(
+      c => c.nodeType === NODE_TYPE_ELEMENT && !SKIP_TAGS.has(c.nodeName.toUpperCase())
+    );
+    if (elementChildren.length !== 1) break;
+
+    const child = elementChildren[0];
+    const childTag = (child.localName || child.nodeName).toLowerCase();
+    if (!CONTAINER_TAGS.has(childTag)) break;
+
+    const childAttrMap = parseAttributes(child.attributes);
+    if (isInteractive(childTag, childAttrMap)) break;
+    if (getDirectTextContent(child).length > 0) break;
+
+    chain.push(child);
+    current = child;
+  }
+
+  // The leaf is the deepest container's single element child, or the last container itself
+  const lastChildren = (current.children || []).filter(
+    c => c.nodeType === NODE_TYPE_ELEMENT && !SKIP_TAGS.has(c.nodeName.toUpperCase())
+  );
+  const leaf = lastChildren.length === 1 ? lastChildren[0] : current;
+
+  // If leaf is same as last chain entry, the chain didn't find a true leaf
+  if (leaf === current) {
+    return { chain: [], leaf: node }; // no collapse
+  }
+
+  return { chain, leaf };
+}
+
+interface SiblingGroup {
+  tag: string;
+  nodes: DOMNode[];
+}
+
+/**
+ * Group consecutive children by tag name for sibling deduplication
+ */
+function groupConsecutiveSiblings(children: DOMNode[]): SiblingGroup[] {
+  const groups: SiblingGroup[] = [];
+  let currentGroup: SiblingGroup | null = null;
+
+  for (const child of children) {
+    if (child.nodeType !== NODE_TYPE_ELEMENT) continue;
+    const tagUpper = child.nodeName.toUpperCase();
+    if (SKIP_TAGS.has(tagUpper)) continue;
+
+    const tag = (child.localName || child.nodeName).toLowerCase();
+
+    if (currentGroup && currentGroup.tag === tag) {
+      currentGroup.nodes.push(child);
+    } else {
+      if (currentGroup) groups.push(currentGroup);
+      currentGroup = { tag, nodes: [child] };
+    }
+  }
+  if (currentGroup) groups.push(currentGroup);
+
+  return groups;
+}
+
 interface SerializeContext {
   lines: string[];
   totalChars: number;
@@ -146,6 +270,7 @@ interface SerializeContext {
   maxDepth: number;
   pierceIframes: boolean;
   interactiveOnly: boolean;
+  compression: 'none' | 'light' | 'aggressive';
 }
 
 /**
@@ -186,6 +311,45 @@ function serializeNode(
 
   const indent = '  '.repeat(depth);
 
+  // Container chain collapse (only in non-'none' compression mode, non-interactive containers)
+  if (ctx.compression !== 'none' && !interactive && isCollapsibleContainer(node)) {
+    const { chain, leaf } = collectContainerChain(node);
+    if (chain.length >= 2) {
+      // Build chain prefix: [10]div>[11]section>[12]div>
+      const chainPrefix = chain.map(n => {
+        const nTag = (n.localName || n.nodeName).toLowerCase();
+        return `[${n.backendNodeId}]${nTag}`;
+      }).join('>') + '> ';
+
+      // Serialize the leaf: format its line but with chain prefix prepended
+      const leafTag = leaf.localName || leaf.nodeName.toLowerCase();
+      const leafAttrMap = parseAttributes(leaf.attributes);
+      const leafInteractive = isInteractive(leafTag, leafAttrMap);
+      const leafText = getDirectTextContent(leaf);
+      const leafLine = formatElement(leaf, leafAttrMap, '', leafText, leafInteractive);
+      const fullLine = `${indent}${chainPrefix}${leafLine}\n`;
+
+      if (ctx.totalChars + fullLine.length > ctx.maxOutputChars) {
+        const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
+        ctx.lines.push(truncationMsg);
+        ctx.truncated = true;
+        return;
+      }
+
+      ctx.lines.push(fullLine);
+      ctx.totalChars += fullLine.length;
+
+      // Recurse into leaf's children
+      if (leaf.children) {
+        for (const child of leaf.children) {
+          serializeNode(child, depth + 1, ctx);
+          if (ctx.truncated) return;
+        }
+      }
+      return; // skip normal emission for the chain nodes
+    }
+  }
+
   if (!ctx.interactiveOnly || interactive) {
     const textContent = getDirectTextContent(node);
     const line = formatElement(node, attrMap, indent, textContent, interactive);
@@ -216,7 +380,61 @@ function serializeNode(
   }
 
   // Recurse into children
-  if (node.children) {
+  if (node.children && ctx.compression !== 'none') {
+    const groups = groupConsecutiveSiblings(node.children);
+    const threshold = ctx.compression === 'aggressive'
+      ? SIBLING_COLLAPSE_THRESHOLD_AGGRESSIVE
+      : SIBLING_COLLAPSE_THRESHOLD_LIGHT;
+
+    for (const group of groups) {
+      if (ctx.truncated) return;
+
+      // Skip dedup for groups containing interactive elements to avoid
+      // hiding clickable buttons/links/inputs from the LLM
+      const groupHasInteractive = group.nodes.some(n => containsInteractive(n));
+
+      if (group.nodes.length >= threshold && !groupHasInteractive) {
+        // Emit first SIBLING_SAMPLE_COUNT with full detail
+        const samples = group.nodes.slice(0, SIBLING_SAMPLE_COUNT);
+        for (const sampleNode of samples) {
+          serializeNode(sampleNode, depth + 1, ctx);
+          if (ctx.truncated) return;
+        }
+
+        // Emit summary line
+        const firstRef = group.nodes[0].backendNodeId;
+        const lastRef = group.nodes[group.nodes.length - 1].backendNodeId;
+        const groupIndent = '  '.repeat(depth + 1);
+        const summaryLine = `${groupIndent}[${firstRef}-${lastRef}] ${group.tag} \u00d7${group.nodes.length} (showing ${SIBLING_SAMPLE_COUNT} of ${group.nodes.length})\n`;
+
+        if (ctx.totalChars + summaryLine.length <= ctx.maxOutputChars) {
+          ctx.lines.push(summaryLine);
+          ctx.totalChars += summaryLine.length;
+        }
+
+        // Emit last node if not already shown
+        if (group.nodes.length > SIBLING_SAMPLE_COUNT) {
+          const lastNode = group.nodes[group.nodes.length - 1];
+          serializeNode(lastNode, depth + 1, ctx);
+        }
+      } else {
+        // Small group — emit all normally
+        for (const groupNode of group.nodes) {
+          serializeNode(groupNode, depth + 1, ctx);
+          if (ctx.truncated) return;
+        }
+      }
+    }
+
+    // Also handle text nodes that groupConsecutiveSiblings skipped
+    for (const child of node.children) {
+      if (child.nodeType === NODE_TYPE_TEXT && child.nodeValue) {
+        // Text nodes are handled inline via getDirectTextContent on parent,
+        // so we skip them here to avoid double-rendering
+      }
+    }
+  } else if (node.children) {
+    // Original behavior when compression is 'none'
     for (const child of node.children) {
       serializeNode(child, depth + 1, ctx);
       if (ctx.truncated) return;
@@ -237,6 +455,7 @@ export async function serializeDOM(
   const includePageStats = options?.includePageStats ?? true;
   const pierceIframes = options?.pierceIframes ?? true;
   const interactiveOnly = (options?.interactiveOnly ?? false) || options?.filter === 'interactive';
+  const compression = options?.compression ?? 'light';  // default to 'light'
 
   // Get page stats via page.evaluate
   const pageStats = await page.evaluate(() => ({
@@ -273,6 +492,7 @@ export async function serializeDOM(
     maxDepth,
     pierceIframes,
     interactiveOnly,
+    compression,
   };
 
   // Serialize from root
