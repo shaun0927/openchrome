@@ -22,12 +22,12 @@ const definition: MCPToolDefinition = {
       },
       selector: {
         type: 'string',
-        description: 'CSS selector for the file input element (e.g., "input[type=file]")',
+        description: 'CSS selector for the file input element',
       },
       filePaths: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Array of file paths to upload (absolute or relative to home)',
+        description: 'File paths to upload (absolute or ~/relative)',
       },
     },
     required: ['tabId', 'selector', 'filePaths'],
