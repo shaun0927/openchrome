@@ -707,18 +707,29 @@ export class MCPServer {
       if (callId) {
         const timing = this.activityTracker!.getCall(callId);
         if (timing?.duration !== undefined) {
-          (errResult as Record<string, unknown>)._timing = {
-            durationMs: timing.duration,
-            startTime: timing.startTime,
-            endTime: timing.endTime,
-          };
+          const verbosityErr = getGlobalConfig().compression?.verbosity ?? 'normal';
+          if (verbosityErr === 'verbose') {
+            (errResult as Record<string, unknown>)._timing = {
+              durationMs: timing.duration,
+              startTime: timing.startTime,
+              endTime: timing.endTime,
+            };
+          } else if (verbosityErr === 'normal') {
+            (errResult as Record<string, unknown>)._timing = {
+              durationMs: timing.duration,
+            };
+          }
+          // compact: skip _timing entirely
         }
       }
 
       // Inject profile state (no warning on error responses)
-      const profileInfoErr = this.buildProfileInfo();
-      if (profileInfoErr) {
-        (errResult as Record<string, unknown>)._profile = profileInfoErr.profile;
+      const verbosityErr = getGlobalConfig().compression?.verbosity ?? 'normal';
+      if (verbosityErr !== 'compact') {
+        const profileInfoErr = this.buildProfileInfo();
+        if (profileInfoErr) {
+          (errResult as Record<string, unknown>)._profile = profileInfoErr.profile;
+        }
       }
 
       // Inject proactive hint for errors into both _hint and content[]

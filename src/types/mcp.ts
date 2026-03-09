@@ -73,4 +73,4 @@ export const MCPErrorCodes = {
 } as const;
 
 /** LLM-side override for compression level on individual tool calls */
-export type CompressionOverride = 'none' | 'light' | 'aggressive' | 'delta';
+export type CompressionOverride = 'none' | 'light' | 'aggressive';
