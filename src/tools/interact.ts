@@ -12,11 +12,12 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
+import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find element, act, wait for stability, return state summary in one call.',
+  description: 'Find element, act, wait, return state summary.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -26,7 +27,7 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Element to interact with (natural language)',
+        description: 'Element to act on (natural language)',
       },
       action: {
         type: 'string',
@@ -35,7 +36,7 @@ const definition: MCPToolDefinition = {
       },
       waitAfter: {
         type: 'number',
-        description: 'Wait for DOM settle in ms. Default: 500',
+        description: 'DOM settle wait in ms. Default: 500',
       },
       returnFormat: {
         type: 'string',
@@ -44,15 +45,15 @@ const definition: MCPToolDefinition = {
       },
       verify: {
         type: 'boolean',
-        description: 'Return screenshot after action for visual verification',
+        description: 'Return screenshot after action',
       },
       waitForMs: {
         type: 'number',
-        description: 'Poll for element before acting (for dynamic/lazy content). Max: 30000',
+        description: 'Poll timeout for element in ms. Max: 30000',
       },
       pollInterval: {
         type: 'number',
-        description: 'Poll interval when using waitForMs. Default: 200',
+        description: 'Poll interval in ms. Default: 200',
       },
     },
     required: ['tabId', 'query'],
@@ -103,144 +104,20 @@ const handler: ToolHandler = async (
 
     // Optional polling for dynamic/lazy content
     const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
-    let bestElement: FoundElement | null = null;
+    let bestElement: (FoundElement & { _origIdx: number }) | null = null;
     const startTime = Date.now();
+    const cdpClient = sessionManager.getCDPClient();
 
     do {
-    // Find elements matching the query using same approach as click-element.ts
+    // Find elements matching the query using the shared discovery module
     let results: Omit<FoundElement, 'score'>[];
     try {
-    results = await withTimeout(page.evaluate((searchQuery: string): Omit<FoundElement, 'score'>[] => {
-      const elements: Omit<FoundElement, 'score'>[] = [];
-      const domElements: Element[] = [];
-      const maxResults = 30;
-
-      function getElementInfo(el: Element): Omit<FoundElement, 'score'> | null {
-        const rect = el.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return null;
-
-        const style = window.getComputedStyle(el);
-        if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') {
-          return null;
-        }
-
-        const inputEl = el as HTMLInputElement;
-        const isContentEditable = el.getAttribute('contenteditable') === 'true';
-        const role =
-          el.getAttribute('role') ||
-          (el.tagName === 'BUTTON'
-            ? 'button'
-            : el.tagName === 'A'
-              ? 'link'
-              : el.tagName === 'INPUT'
-                ? inputEl.type || 'textbox'
-                : isContentEditable
-                  ? 'textbox'
-                  : el.tagName.toLowerCase());
-
-        return {
-          backendDOMNodeId: 0,
-          role,
-          name:
-            el.getAttribute('aria-label') ||
-            el.getAttribute('title') ||
-            el.textContent?.trim().slice(0, 100) ||
-            '',
-          tagName: el.tagName.toLowerCase(),
-          type: inputEl.type,
-          placeholder: inputEl.placeholder,
-          ariaLabel: el.getAttribute('aria-label') || undefined,
-          textContent: el.textContent?.trim().slice(0, 50),
-          rect: {
-            x: rect.x + rect.width / 2,
-            y: rect.y + rect.height / 2,
-            width: rect.width,
-            height: rect.height,
-          },
-        };
-      }
-
-      const searchLower = searchQuery.toLowerCase();
-      const queryTokens = searchLower
-        .split(/\s+/)
-        .filter(t => t.length > 1)
-        .filter(t => !['the', 'a', 'an', 'to', 'for', 'of', 'in', 'on', 'at', 'and', 'or'].includes(t));
-
-      const interactiveSelectors = [
-        'button',
-        '[role="button"]',
-        'a',
-        '[role="link"]',
-        'input[type="submit"]',
-        'input[type="button"]',
-        'input[type="radio"]',
-        'input[type="checkbox"]',
-        '[role="radio"]',
-        '[role="checkbox"]',
-        '[role="menuitem"]',
-        '[role="tab"]',
-        '[role="option"]',
-        '[onclick]',
-        '[tabindex]',
-        '[contenteditable="true"]',
-        '[role="combobox"]',
-        '[role="listbox"]',
-        '[role="switch"]',
-        '[role="slider"]',
-        '[role="treeitem"]',
-        '[role="dialog"] [aria-label]',
-        '[role="alertdialog"] [aria-label]',
-        '[data-testid]',
-      ];
-
-      const seen = new Set<Element>();
-
-      // First pass: interactive elements
-      for (const selector of interactiveSelectors) {
-        if (elements.length >= maxResults) break;
-        try {
-          for (const el of document.querySelectorAll(selector)) {
-            if (seen.has(el) || elements.length >= maxResults) continue;
-            const info = getElementInfo(el);
-            if (info) {
-              const combinedText =
-                `${info.name} ${info.textContent || ''} ${info.ariaLabel || ''} ${info.placeholder || ''}`.toLowerCase();
-              if (queryTokens.some(token => combinedText.includes(token)) || combinedText.includes(searchLower)) {
-                seen.add(el);
-                (el as unknown as { __interactIndex: number }).__interactIndex = elements.length;
-                domElements.push(el);
-                elements.push(info);
-              }
-            }
-          }
-        } catch {
-          // Invalid selector
-        }
-      }
-
-      // Second pass: text content search on all elements
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-      let node = walker.nextNode();
-      while (node && elements.length < maxResults) {
-        const el = node as Element;
-        if (!seen.has(el)) {
-          const info = getElementInfo(el);
-          if (info) {
-            const combinedText =
-              `${info.name} ${info.textContent || ''} ${info.ariaLabel || ''} ${info.placeholder || ''}`.toLowerCase();
-            if (combinedText.includes(searchLower) || queryTokens.some(token => combinedText.includes(token))) {
-              seen.add(el);
-              (el as unknown as { __interactIndex: number }).__interactIndex = elements.length;
-              domElements.push(el);
-              elements.push(info);
-            }
-          }
-        }
-        node = walker.nextNode();
-      }
-
-      return elements;
-    }, queryLower), 10000, 'interact');
+      results = await discoverElements(page, cdpClient, queryLower, {
+        maxResults: 30,
+        useCenter: true,
+        timeout: 10000,
+        toolName: 'interact',
+      });
     } catch {
       // CDP evaluate timed out — retry if budget remains
       if (maxWait > 0 && Date.now() - startTime < maxWait) {
@@ -261,61 +138,9 @@ const handler: ToolHandler = async (
         };
       }
 
-      // Get backend DOM node IDs via batched CDP approach
-      const cdpClient = sessionManager.getCDPClient();
-
-      const { result: batchResult } = await cdpClient.send<{
-        result: { objectId?: string };
-      }>(page, 'Runtime.evaluate', {
-        expression: `(() => {
-          const indexedEls = [];
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-          let node;
-          while (node = walker.nextNode()) {
-            const el = node;
-            if (el.__interactIndex !== undefined) {
-              indexedEls.push({ el, index: el.__interactIndex });
-            }
-          }
-          indexedEls.sort((a, b) => a.index - b.index);
-          return indexedEls.map(e => e.el);
-        })()`,
-        returnByValue: false,
-      });
-
-      if (batchResult.objectId) {
-        const { result: properties } = await cdpClient.send<{
-          result: Array<{ name: string; value: { objectId?: string } }>;
-        }>(page, 'Runtime.getProperties', {
-          objectId: batchResult.objectId,
-          ownProperties: true,
-        });
-
-        const describePromises: Promise<void>[] = [];
-        for (const prop of properties) {
-          const index = parseInt(prop.name, 10);
-          if (isNaN(index) || index >= results.length || !prop.value?.objectId) continue;
-
-          describePromises.push(
-            cdpClient
-              .send<{ node: { backendNodeId: number } }>(page, 'DOM.describeNode', {
-                objectId: prop.value.objectId,
-              })
-              .then(({ node }) => {
-                results[index].backendDOMNodeId = node.backendNodeId;
-              })
-              .catch(() => {
-                // Skip if we can't get the backend node ID
-              })
-          );
-        }
-
-        await Promise.all(describePromises);
-      }
-
-      // Score and sort
-      const scoredResults: FoundElement[] = results
-        .map(el => ({ ...el, score: scoreElement(el as FoundElement, queryLower, queryTokens) }))
+      // Score and sort, preserving original index for tagged element re-lookup
+      const scoredResults: (FoundElement & { _origIdx: number })[] = results
+        .map((el, i) => ({ ...el, score: scoreElement(el as FoundElement, queryLower, queryTokens), _origIdx: i }))
         .sort((a, b) => b.score - a.score);
 
       if (scoredResults.length > 0 && scoredResults[0].score >= 10) {
@@ -348,8 +173,6 @@ const handler: ToolHandler = async (
       };
     }
 
-    const cdpClient = sessionManager.getCDPClient();
-
     // Scroll into view first if needed
     if (bestMatch.backendDOMNodeId) {
       try {
@@ -358,28 +181,11 @@ const handler: ToolHandler = async (
         });
         await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
-        // Re-get position after scroll
-        const { result: boxResult } = await cdpClient.send<{
-          result: { value: { x: number; y: number; width: number; height: number } | null };
-        }>(page, 'Runtime.evaluate', {
-          expression: `(() => {
-            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-            let node;
-            while (node = walker.nextNode()) {
-              const el = node;
-              if (el.__interactIndex === 0) {
-                const rect = el.getBoundingClientRect();
-                return { x: rect.x + rect.width/2, y: rect.y + rect.height/2, width: rect.width, height: rect.height };
-              }
-            }
-            return null;
-          })()`,
-          returnByValue: true,
-        });
-
-        if (boxResult.value) {
-          bestMatch.rect.x = boxResult.value.x;
-          bestMatch.rect.y = boxResult.value.y;
+        // Re-get position after scroll using the shared utility
+        const newRect = await getTaggedElementRect(page, cdpClient, DISCOVERY_TAG, bestMatch._origIdx, true);
+        if (newRect) {
+          bestMatch.rect.x = newRect.x;
+          bestMatch.rect.y = newRect.y;
         }
       } catch {
         // Continue with original coordinates
@@ -418,9 +224,15 @@ const handler: ToolHandler = async (
       );
     }
 
-    // Build action label
-    const actionLabel = action === 'double_click' ? 'double-clicked' : action === 'hover' ? 'hovered' : 'clicked';
-    const interactedLine = `Interacted: ${actionLabel} on <${bestMatch.tagName}> "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}`;
+    // Clean up discovery tags to prevent stale properties
+    await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
+
+    // Build compact action label
+    const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+    const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
+    const textPart = textSample ? ` "${textSample}"` : '';
+    const refPart = refId ? ` [${refId}]` : '';
+    const interactedLine = `\u2713 ${actionVerb} ${bestMatch.tagName}${textPart}${refPart}`;
 
     // Gather state summary via page.evaluate
     const stateSummary = await withTimeout(page.evaluate(() => {
@@ -495,7 +307,7 @@ const handler: ToolHandler = async (
       return { url, title, scrollX, scrollY, activeInfo, panels, headings };
     }), 10000, 'interact');
 
-    // Build the response
+    // Build the response — compact success format
     const lines: string[] = [interactedLine];
 
     if (returnFormat === 'dom_delta' || returnFormat === 'both') {

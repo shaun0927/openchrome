@@ -263,6 +263,12 @@ Cookies and localStorage are saved atomically every 30 seconds and restored on s
 
 ---
 
+## Anti-Bot & Turnstile Support
+
+OpenChrome includes built-in defenses against Cloudflare Turnstile and similar anti-bot systems, with additional stealth navigation planned for a future release. See [Turnstile Guide](docs/turnstile-guide.md) for details.
+
+---
+
 ## Benchmarks
 
 Measure token efficiency and parallel performance:

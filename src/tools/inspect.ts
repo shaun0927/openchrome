@@ -15,7 +15,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
-  description: 'Extract focused page state by query. Use instead of read_page + screenshot for targeted questions.',
+  description: 'Extract focused page state by query.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -25,7 +25,7 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'What to inspect, e.g. "active tabs", "form values"',
+        description: 'What to inspect (natural language)',
       },
       scope: {
         type: 'string',
@@ -144,6 +144,20 @@ const handler: ToolHandler = async (
         const includeAll = scopeArg === 'all';
         const interactiveOnly = scopeArg === 'interactive';
 
+        // Deep querySelectorAll that pierces open shadow roots
+        function deepQSA(root: Element | Document | ShadowRoot, sel: string): Element[] {
+          let results: Element[] = [];
+          try { let m = root.querySelectorAll(sel); for (let i = 0; i < m.length; i++) results.push(m[i]); } catch(e) {}
+          let all = root.querySelectorAll('*');
+          for (let j = 0; j < all.length; j++) {
+            if (all[j].shadowRoot) {
+              let sr = deepQSA(all[j].shadowRoot!, sel);
+              for (let k = 0; k < sr.length; k++) results.push(sr[k]);
+            }
+          }
+          return results;
+        }
+
         function isVisible(el: Element): boolean {
           const rect = el.getBoundingClientRect();
           if (rect.width === 0 || rect.height === 0) return false;
@@ -183,7 +197,7 @@ const handler: ToolHandler = async (
         const tabs: TabInfo[] = [];
         if (cats.tabs) {
           let tabIndex = 0;
-          for (const el of document.querySelectorAll('[role="tab"]')) {
+          for (const el of deepQSA(document, '[role="tab"]')) {
             if (!isVisible(el)) continue;
             const label =
               el.getAttribute('aria-label') || el.textContent?.trim().slice(0, 60) || '';
@@ -217,7 +231,7 @@ const handler: ToolHandler = async (
           for (const sel of interactiveSelectors) {
             try {
               let count = 0;
-              for (const el of document.querySelectorAll(sel)) {
+              for (const el of deepQSA(document, sel)) {
                 if (includeAll || isVisible(el)) count++;
               }
               if (count > 0) {
@@ -243,7 +257,7 @@ const handler: ToolHandler = async (
         }
         const formFields: FormField[] = [];
         if (cats.form && !interactiveOnly) {
-          for (const el of document.querySelectorAll('input, textarea, select')) {
+          for (const el of deepQSA(document, 'input, textarea, select')) {
             if (!includeAll && !isVisible(el)) continue;
             const inputEl = el as HTMLInputElement;
             const type = inputEl.type || el.tagName.toLowerCase();
@@ -266,7 +280,7 @@ const handler: ToolHandler = async (
         // ---- Heading hierarchy ----
         const headings: Array<{ level: number; text: string }> = [];
         if (cats.headings) {
-          for (const el of document.querySelectorAll('h1, h2, h3, h4, [role="heading"]')) {
+          for (const el of deepQSA(document, 'h1, h2, h3, h4, [role="heading"]')) {
             if (!includeAll && !isVisible(el)) continue;
             const level = parseInt(el.tagName.replace('H', '') || '2', 10);
             const text = el.textContent?.trim().slice(0, 80) || '';
@@ -282,7 +296,7 @@ const handler: ToolHandler = async (
         }
         const errors: ErrorMessage[] = [];
         if (cats.errors) {
-          for (const el of document.querySelectorAll(
+          for (const el of deepQSA(document,
             '[role="alert"], [role="alertdialog"], [role="status"], [aria-live="assertive"], [aria-live="polite"]'
           )) {
             if (!isVisible(el)) continue;
@@ -292,7 +306,7 @@ const handler: ToolHandler = async (
             }
           }
           if (errors.length < 5) {
-            for (const el of document.querySelectorAll(
+            for (const el of deepQSA(document,
               '.error, .alert, .warning, [class*="error"], [class*="alert"], [class*="warning"]'
             )) {
               if (!isVisible(el)) continue;
@@ -325,7 +339,7 @@ const handler: ToolHandler = async (
           for (const sel of containerSelectors) {
             if (visiblePanels.length >= 5) break;
             try {
-              for (const el of document.querySelectorAll(sel)) {
+              for (const el of deepQSA(document, sel)) {
                 if (!isVisible(el) || visiblePanels.length >= 5) continue;
                 const text = el.textContent?.trim().slice(0, 120) || '';
                 if (text.length > 20) {

@@ -10,6 +10,7 @@ import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
+import { SnapshotStore } from '../compression/snapshot-store';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -26,7 +27,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description: 'Get page content as compact DOM (default), accessibility tree (ax), or CSS diagnostics (css). Use css mode BEFORE javascript_tool for style inspection.',
+  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -41,15 +42,15 @@ const definition: MCPToolDefinition = {
       filter: {
         type: 'string',
         enum: ['interactive', 'all'],
-        description: 'Filter: "interactive" for buttons/links/inputs only',
+        description: 'Filter: interactive for form/button/link only',
       },
       ref_id: {
         type: 'string',
-        description: 'Parent element ref for subtree scoping',
+        description: 'Parent ref for subtree scoping',
       },
       selector: {
         type: 'string',
-        description: 'CSS selector to inspect (css mode only)',
+        description: 'CSS selector (css mode only)',
       },
       mode: {
         type: 'string',
@@ -59,6 +60,11 @@ const definition: MCPToolDefinition = {
       includePagination: {
         type: 'boolean',
         description: 'Include pagination info. Default: true',
+      },
+      compression: {
+        type: 'string',
+        enum: ['none', 'delta'],
+        description: 'Compression mode. "delta" returns only changes since last read.',
       },
     },
     required: ['tabId'],
@@ -298,6 +304,34 @@ const handler: ToolHandler = async (
         let outputText = result.content;
         if (refId) {
           outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
+        }
+
+        // Delta compression: cache DOM and return diff if applicable
+        const compression = args.compression as string | undefined;
+        if (compression === 'delta') {
+          const snapshotStore = SnapshotStore.getInstance();
+          const currentUrl = result.pageStats.url;
+          const previous = snapshotStore.get(sessionId, tabId);
+
+          if (previous) {
+            const delta = snapshotStore.computeDelta(previous, outputText, currentUrl);
+            // Always update cache with current content
+            snapshotStore.set(sessionId, tabId, outputText, currentUrl);
+
+            if (delta.isDelta) {
+              // Return delta instead of full content, but keep page stats header
+              const statsLine = `[page_stats] url: ${result.pageStats.url} | title: ${result.pageStats.title} | scroll: ${result.pageStats.scrollX},${result.pageStats.scrollY} | viewport: ${result.pageStats.viewportWidth}x${result.pageStats.viewportHeight} | docSize: ${result.pageStats.scrollWidth}x${result.pageStats.scrollHeight}\n\n`;
+              const includePaginationDom = args.includePagination !== false;
+              const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+              return {
+                content: [{ type: 'text', text: statsLine + delta.content + domPaginationSection }],
+              };
+            }
+            // If not delta (too many changes), fall through to full response
+          } else {
+            // First call or cache miss: cache and fall through to full response
+            snapshotStore.set(sessionId, tabId, outputText, currentUrl);
+          }
         }
 
         const includePaginationDom = args.includePagination !== false;

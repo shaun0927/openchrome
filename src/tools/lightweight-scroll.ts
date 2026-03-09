@@ -15,7 +15,7 @@ import { retryWithFallback } from '../utils/retry-with-fallback';
 
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',
-  description: 'Scroll page via JS without screenshot. Returns new scroll position.',
+  description: 'Scroll page via JS. Returns new scroll position.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -34,11 +34,11 @@ const definition: MCPToolDefinition = {
       },
       smooth: {
         type: 'boolean',
-        description: 'Smooth scrolling animation. Default: false',
+        description: 'Smooth scroll. Default: false',
       },
       selector: {
         type: 'string',
-        description: 'Element to scroll (CSS selector). Default: window',
+        description: 'Scrollable element selector. Default: window',
       },
       scrollToEnd: {
         type: 'boolean',
@@ -46,7 +46,7 @@ const definition: MCPToolDefinition = {
       },
       waitAfterMs: {
         type: 'number',
-        description: 'Wait after scroll for lazy content in ms. Default: 0',
+        description: 'Wait after scroll in ms. Default: 0',
       },
     },
     required: ['tabId', 'direction'],

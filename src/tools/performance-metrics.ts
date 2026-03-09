@@ -9,7 +9,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'performance_metrics',
-  description: 'Get page performance metrics (timing, paint, heap, resources).',
+  description: 'Get page performance metrics.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -24,7 +24,7 @@ const definition: MCPToolDefinition = {
       },
       includeResources: {
         type: 'boolean',
-        description: 'Include resource timing (can be large)',
+        description: 'Include resource timing entries',
       },
     },
     required: ['tabId'],

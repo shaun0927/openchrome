@@ -43,6 +43,121 @@ interface InterceptState {
 // Module-level state storage
 const interceptStates: Map<string, InterceptState> = new Map();
 
+// Headers to keep when stripping request/response headers for compression
+const KEEP_HEADERS = new Set([
+  'content-type',
+  'authorization',
+  'x-request-id',
+  'cache-control',
+]);
+
+// Resource types considered static assets (eligible for grouping)
+const ASSET_TYPES = new Set(['image', 'font', 'stylesheet', 'media']);
+
+interface AssetGroup {
+  domain: string;
+  type: string;
+  count: number;
+  urls: string[];
+}
+
+interface CompressedLogs {
+  apiLogs: RequestLogEntry[];
+  failedLogs: RequestLogEntry[];
+  assetGroups: AssetGroup[];
+}
+
+/**
+ * Strip headers to only keep the whitelist entries.
+ */
+function stripHeaders(headers: Record<string, string>): Record<string, string> {
+  const stripped: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (KEEP_HEADERS.has(key.toLowerCase())) {
+      stripped[key] = value;
+    }
+  }
+  return stripped;
+}
+
+/**
+ * Group static asset requests by domain, keeping API calls and failures individually.
+ */
+function groupAssetRequests(logs: RequestLogEntry[]): CompressedLogs {
+  const apiLogs: RequestLogEntry[] = [];
+  const failedLogs: RequestLogEntry[] = [];
+  const assetGroups = new Map<string, AssetGroup>();
+
+  for (const log of logs) {
+    // Failures always shown in full detail (only error field is available at request phase)
+    if ((log as RequestLogEntry & { error?: string }).error) {
+      failedLogs.push(log);
+    } else if (ASSET_TYPES.has(log.resourceType.toLowerCase())) {
+      // Group static assets by domain + type
+      let hostname = log.url;
+      try {
+        hostname = new URL(log.url).hostname;
+      } catch {
+        // URL parse failed — use raw url as key
+      }
+      const key = `${hostname}:${log.resourceType}`;
+      const group = assetGroups.get(key) || {
+        domain: hostname,
+        type: log.resourceType,
+        count: 0,
+        urls: [],
+      };
+      group.count++;
+      if (group.urls.length < 3) {
+        group.urls.push(log.url);
+      }
+      assetGroups.set(key, group);
+    } else {
+      // API/XHR and everything else shown individually
+      apiLogs.push(log);
+    }
+  }
+
+  return { apiLogs, failedLogs, assetGroups: Array.from(assetGroups.values()) };
+}
+
+/**
+ * Format compressed network logs into a human-readable string section.
+ */
+function formatCompressedLogs(compressed: CompressedLogs): string {
+  const lines: string[] = [];
+
+  if (compressed.failedLogs.length > 0) {
+    lines.push(`Failed requests (${compressed.failedLogs.length}):`);
+    for (const log of compressed.failedLogs) {
+      lines.push(`  [${log.method}] ${log.url} (${log.resourceType})`);
+    }
+  }
+
+  if (compressed.apiLogs.length > 0) {
+    lines.push(`API/XHR requests (${compressed.apiLogs.length}):`);
+    for (const log of compressed.apiLogs) {
+      lines.push(`  [${log.method}] ${log.url}`);
+    }
+  }
+
+  if (compressed.assetGroups.length > 0) {
+    // Group by domain for display
+    const byDomain = new Map<string, string[]>();
+    for (const group of compressed.assetGroups) {
+      const parts = byDomain.get(group.domain) || [];
+      parts.push(`${group.count} ${group.type.toLowerCase()}${group.count !== 1 ? 's' : ''}`);
+      byDomain.set(group.domain, parts);
+    }
+    lines.push(`Asset requests:`);
+    for (const [domain, parts] of byDomain) {
+      lines.push(`  ${domain}: ${parts.join(', ')}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 // Helper function to match URL patterns (glob-like)
 function matchesPattern(url: string, pattern: string): boolean {
   // Convert glob pattern to regex
@@ -59,13 +174,13 @@ function matchesPattern(url: string, pattern: string): boolean {
 
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
-  description: 'Intercept and monitor network requests (log, block, modify).',
+  description: 'Intercept network requests (log, block, modify).',
   inputSchema: {
     type: 'object',
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to intercept requests for',
+        description: 'Tab ID',
       },
       action: {
         type: 'string',
@@ -74,11 +189,11 @@ const definition: MCPToolDefinition = {
       },
       rule: {
         type: 'object',
-        description: 'Rule for addRule action',
+        description: 'Rule definition (addRule)',
         properties: {
           pattern: {
             type: 'string',
-            description: 'URL glob pattern, e.g. "*://example.com/*"',
+            description: 'URL glob pattern',
           },
           resourceTypes: {
             type: 'array',
@@ -88,11 +203,11 @@ const definition: MCPToolDefinition = {
           action: {
             type: 'string',
             enum: ['block', 'modify', 'log'],
-            description: 'Action for matched requests',
+            description: 'Rule action',
           },
           modifyOptions: {
             type: 'object',
-            description: 'Modify action options',
+            description: 'Modify options',
             properties: {
               status: { type: 'number' },
               headers: { type: 'object' },
@@ -103,11 +218,11 @@ const definition: MCPToolDefinition = {
       },
       ruleId: {
         type: 'string',
-        description: 'Rule ID for removeRule action',
+        description: 'Rule ID (removeRule)',
       },
       limit: {
         type: 'number',
-        description: 'Maximum logs to return for getLogs action',
+        description: 'Max logs to return (getLogs)',
       },
     },
     required: ['tabId', 'action'],
@@ -440,16 +555,29 @@ const handler: ToolHandler = async (
           logs = logs.slice(-limit);
         }
 
+        // Strip headers to whitelist before building response
+        const logsWithStrippedHeaders = logs.map((log) => ({
+          ...log,
+          headers: stripHeaders(log.headers),
+          headersStripped: true,
+        }));
+
+        // Group asset requests, keep API/failures individually
+        const compressed = groupAssetRequests(logsWithStrippedHeaders);
+
         // Calculate stats
         const stats = {
           total: state.loggedRequests.length,
           returned: logs.length,
           blocked: state.loggedRequests.filter(l => l.matched).length,
           byType: {} as Record<string, number>,
+          assetGroupsCount: compressed.assetGroups.length,
         };
         for (const log of state.loggedRequests) {
           stats.byType[log.resourceType] = (stats.byType[log.resourceType] || 0) + 1;
         }
+
+        const summary = formatCompressedLogs(compressed);
 
         return {
           content: [
@@ -457,8 +585,12 @@ const handler: ToolHandler = async (
               type: 'text',
               text: JSON.stringify({
                 action: 'getLogs',
-                logs,
+                apiLogs: compressed.apiLogs,
+                failedLogs: compressed.failedLogs,
+                assetGroups: compressed.assetGroups,
+                summary,
                 stats,
+                headersStripped: true,
               }),
             },
           ],

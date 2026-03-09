@@ -19,11 +19,11 @@ const definition: MCPToolDefinition = {
       tabIds: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Array of tab IDs to close (for batch closing)',
+        description: 'Tab IDs to batch close',
       },
       workerId: {
         type: 'string',
-        description: 'Close all tabs in this worker (worker itself is preserved)',
+        description: 'Close all tabs in this worker (worker preserved)',
       },
     },
   },

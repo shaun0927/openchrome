@@ -23,6 +23,12 @@ export interface ToolCallEvent {
   duration?: number;
   result: ToolCallResult;
   error?: string;
+  compression?: {
+    originalChars: number;
+    compressedChars: number;
+    estimatedTokensSaved: number;  // rough: chars / 4
+    strategy: string;              // e.g., 'sibling-dedup', 'delta', 'verbosity', 'log-dedup', 'cookie-classify'
+  };
 }
 
 export interface DashboardStats {
@@ -33,6 +39,18 @@ export interface DashboardStats {
   memoryUsage: number;
   uptime: number;
   status: 'running' | 'paused' | 'stopped';
+  compression?: {
+    totalOriginalChars: number;
+    totalCompressedChars: number;
+    totalTokensSaved: number;
+    compressionRatio: number;        // e.g., 0.65 = 65% reduction
+    callsCompressed: number;
+    topSavers: Array<{
+      toolName: string;
+      tokensSaved: number;
+      calls: number;
+    }>;
+  };
 }
 
 export interface SessionInfo {

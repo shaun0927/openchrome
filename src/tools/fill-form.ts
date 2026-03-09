@@ -10,10 +10,11 @@ import { getSessionManager } from '../session-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
+import { discoverFormFields, FormField, FORM_FIELD_TAG } from '../utils/element-discovery';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
-  description: 'Fill multiple form fields at once and optionally submit.',
+  description: 'Fill form fields and optionally submit.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -23,43 +24,32 @@ const definition: MCPToolDefinition = {
       },
       fields: {
         type: 'object',
-        description: 'Map of field labels/names/placeholders to values (string). For checkboxes use "true"/"false".',
+        description: 'Field label/name/placeholder to value map. Checkboxes: "true"/"false"',
         additionalProperties: {
           type: 'string',
         },
       },
       submit: {
         type: 'string',
-        description: 'Submit button query, e.g. "Login", "Save"',
+        description: 'Submit button query after fill',
       },
       clear_first: {
         type: 'boolean',
-        description: 'Clear fields before filling. Default: true',
+        description: 'Clear before fill. Default: true',
       },
       waitForMs: {
         type: 'number',
-        description: 'Max time to wait for form fields to appear (useful for SPAs). Default: 0 (no polling). Set to 1500 for SPA support.',
+        description: 'Poll timeout for dynamic fields in ms. Default: 0',
       },
       pollInterval: {
         type: 'number',
-        description: 'Interval between polls in ms when waiting for fields (50-2000). Default: 300',
+        description: 'Poll interval in ms (50-2000). Default: 300',
       },
     },
     required: ['tabId', 'fields'],
   },
 };
 
-interface FormField {
-  backendDOMNodeId: number;
-  fieldName: string;
-  tagName: string;
-  type?: string;
-  name?: string;
-  placeholder?: string;
-  ariaLabel?: string;
-  label?: string;
-  rect: { x: number; y: number; width: number; height: number };
-}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -101,84 +91,15 @@ const handler: ToolHandler = async (
     const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
     const startTime = Date.now();
 
+    const cdpClient = sessionManager.getCDPClient();
+
     let formFields: FormField[] = [];
     do {
       try {
-      formFields = await withTimeout(page.evaluate((): FormField[] => {
-        const fields: FormField[] = [];
-
-        // Helper to get associated label
-        function getLabel(el: Element): string | undefined {
-          const inputEl = el as HTMLInputElement;
-          // Check for explicit label
-          if (inputEl.id) {
-            const label = document.querySelector(`label[for="${inputEl.id}"]`);
-            if (label) return label.textContent?.trim();
-          }
-          // Check for wrapping label
-          const parent = el.closest('label');
-          if (parent) {
-            const labelText = parent.textContent?.trim() || '';
-            const inputText = el.textContent?.trim() || '';
-            return labelText.replace(inputText, '').trim();
-          }
-          // Check for preceding label sibling
-          const prev = el.previousElementSibling;
-          if (prev?.tagName === 'LABEL') {
-            return prev.textContent?.trim();
-          }
-          return undefined;
-        }
-
-        // Find all input-like elements
-        const selectors = [
-          'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"])',
-          'textarea',
-          'select',
-          '[contenteditable="true"]',
-          '[role="textbox"]',
-          '[role="combobox"]',
-        ];
-
-        let index = 0;
-        for (const selector of selectors) {
-          try {
-            for (const el of document.querySelectorAll(selector)) {
-              const rect = el.getBoundingClientRect();
-              if (rect.width === 0 || rect.height === 0) continue;
-
-              const style = window.getComputedStyle(el);
-              if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') continue;
-
-              const inputEl = el as HTMLInputElement;
-
-              fields.push({
-                backendDOMNodeId: 0,
-                fieldName: getLabel(el) || inputEl.name || inputEl.placeholder || inputEl.getAttribute('aria-label') || `field_${index}`,
-                tagName: el.tagName.toLowerCase(),
-                type: inputEl.type,
-                name: inputEl.name,
-                placeholder: inputEl.placeholder,
-                ariaLabel: el.getAttribute('aria-label') || undefined,
-                label: getLabel(el),
-                rect: {
-                  x: rect.x + rect.width / 2,
-                  y: rect.y + rect.height / 2,
-                  width: rect.width,
-                  height: rect.height,
-                },
-              });
-
-              // Tag element for later reference
-              (el as unknown as { __formFieldIndex: number }).__formFieldIndex = index++;
-            }
-          } catch {
-            // Invalid selector
-          }
-        }
-
-        return fields;
-      }), 10000, 'fill_form');
+        formFields = await discoverFormFields(page, cdpClient, {
+          timeout: 10000,
+          toolName: 'fill_form',
+        });
       } catch {
         // CDP evaluate timed out — retry if budget remains
         if (maxWait > 0 && Date.now() - startTime < maxWait) {
@@ -197,30 +118,6 @@ const handler: ToolHandler = async (
 
     const filledFields: string[] = [];
     const errors: string[] = [];
-    const cdpClient = sessionManager.getCDPClient();
-
-    // Get backend node IDs
-    for (let i = 0; i < formFields.length; i++) {
-      try {
-        const { result } = await cdpClient.send<{
-          result: { objectId?: string };
-        }>(page, 'Runtime.evaluate', {
-          expression: `document.querySelectorAll('*').find(el => el.__formFieldIndex === ${i})`,
-          returnByValue: false,
-        });
-
-        if (result.objectId) {
-          const { node } = await cdpClient.send<{
-            node: { backendNodeId: number };
-          }>(page, 'DOM.describeNode', {
-            objectId: result.objectId,
-          });
-          formFields[i].backendDOMNodeId = node.backendNodeId;
-        }
-      } catch {
-        // Skip
-      }
-    }
 
     const { delta, result: formResult } = await withDomDelta(page, async () => {
       let submitted = false;
@@ -289,10 +186,17 @@ const handler: ToolHandler = async (
           // Handle different field types
           if (bestMatch.type === 'checkbox' || bestMatch.type === 'radio') {
             // For checkbox/radio, only click if needed to match desired state
-            const isChecked = await withTimeout(page.evaluate((idx: number) => {
-              const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLInputElement;
-              return el?.checked;
-            }, formFields.indexOf(bestMatch)), 10000, 'fill_form');
+            const isChecked = await withTimeout(page.evaluate((idx: number, tagProp: string) => {
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+              let node;
+              while ((node = walker.nextNode()) !== null) {
+                const el = node as HTMLInputElement;
+                if ((el as any)[tagProp] === idx) {
+                  return el.checked;
+                }
+              }
+              return false;
+            }, formFields.indexOf(bestMatch), FORM_FIELD_TAG), 10000, 'fill_form');
 
             const shouldBeChecked = fieldValue === true || fieldValue === 'true' || fieldValue === '1';
             if (isChecked !== shouldBeChecked) {
@@ -300,13 +204,18 @@ const handler: ToolHandler = async (
             }
           } else if (bestMatch.tagName === 'select') {
             // For select, use CDP to set value
-            await withTimeout(page.evaluate((idx: number, val: string) => {
-              const el = Array.from(document.querySelectorAll('*')).find((e: Element) => (e as unknown as { __formFieldIndex: number }).__formFieldIndex === idx) as HTMLSelectElement;
-              if (el) {
-                el.value = val;
-                el.dispatchEvent(new Event('change', { bubbles: true }));
+            await withTimeout(page.evaluate((idx: number, val: string, tagProp: string) => {
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+              let node;
+              while ((node = walker.nextNode()) !== null) {
+                const el = node as HTMLSelectElement;
+                if ((el as any)[tagProp] === idx) {
+                  el.value = val;
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  break;
+                }
               }
-            }, formFields.indexOf(bestMatch), String(fieldValue)), 10000, 'fill_form');
+            }, formFields.indexOf(bestMatch), String(fieldValue), FORM_FIELD_TAG), 10000, 'fill_form');
           } else {
             // For text inputs/textareas
             if (clearFirst) {
@@ -373,15 +282,21 @@ const handler: ToolHandler = async (
       return { submitted };
     }, { settleMs: 200 });
 
-    // Build result message
+    // Build compact result message
     const resultParts: string[] = [];
 
     if (filledFields.length > 0) {
-      resultParts.push(`Filled ${filledFields.length} field(s): ${filledFields.join(', ')}`);
-    }
-
-    if (formResult.submitted) {
-      resultParts.push(`Submitted form via "${submit}"`);
+      const submittedSuffix = formResult.submitted ? ', submitted' : '';
+      resultParts.push(`\u2713 Filled ${filledFields.length} field${filledFields.length !== 1 ? 's' : ''}${submittedSuffix}`);
+      // One line per field: "  fieldName: "value" → ✓"
+      for (const [fieldKey, fieldValue] of Object.entries(fields)) {
+        const valueStr = String(fieldValue);
+        const maskedValue = fieldKey.toLowerCase().includes('password') ? '***' : valueStr.slice(0, 50);
+        const filled = !errors.some(e => e.includes(`"${fieldKey}"`));
+        if (filled) {
+          resultParts.push(`  ${fieldKey}: "${maskedValue}" \u2192 \u2713`);
+        }
+      }
     }
 
     if (errors.length > 0) {
@@ -392,7 +307,7 @@ const handler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: resultParts.join('\n') + delta,
+          text: resultParts.join('\n') + (delta || ''),
         },
       ],
       isError: errors.length > 0 && filledFields.length === 0,

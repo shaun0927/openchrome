@@ -616,25 +616,37 @@ export class MCPServer {
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
 
+      const compressionConfig = getGlobalConfig().compression;
+      const verbosity = compressionConfig?.verbosity ?? 'normal';
+
       if (callId) {
         const timing = this.activityTracker!.getCall(callId);
         if (timing?.duration !== undefined) {
-          (result as Record<string, unknown>)._timing = {
-            durationMs: timing.duration,
-            startTime: timing.startTime,
-            endTime: timing.endTime,
-          };
+          if (verbosity === 'verbose') {
+            (result as Record<string, unknown>)._timing = {
+              durationMs: timing.duration,
+              startTime: timing.startTime,
+              endTime: timing.endTime,
+            };
+          } else if (verbosity === 'normal') {
+            (result as Record<string, unknown>)._timing = {
+              durationMs: timing.duration,
+            };
+          }
+          // compact: skip _timing entirely
         }
       }
 
       // Inject profile state
-      const profileInfo = this.buildProfileInfo();
-      if (profileInfo) {
-        (result as Record<string, unknown>)._profile = profileInfo.profile;
-        if (profileInfo.warning) {
-          const content = (result as Record<string, unknown>).content;
-          if (Array.isArray(content)) {
-            content.unshift({ type: 'text', text: profileInfo.warning });
+      if (verbosity !== 'compact') {
+        const profileInfo = this.buildProfileInfo();
+        if (profileInfo) {
+          (result as Record<string, unknown>)._profile = profileInfo.profile;
+          if (profileInfo.warning) {
+            const content = (result as Record<string, unknown>).content;
+            if (Array.isArray(content)) {
+              content.unshift({ type: 'text', text: profileInfo.warning });
+            }
           }
         }
       }
@@ -643,20 +655,32 @@ export class MCPServer {
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
         if (hintResult) {
-          (result as Record<string, unknown>)._hint = hintResult.hint;
-          (result as Record<string, unknown>)._hintMeta = {
-            severity: hintResult.severity,
-            rule: hintResult.rule,
-            fireCount: hintResult.fireCount,
-            ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
-            ...(hintResult.context && { context: hintResult.context }),
-          };
-          const content = (result as Record<string, unknown>).content;
-          if (Array.isArray(content)) {
-            // Hint appended after tool result (may follow image blobs for verify:true tools)
-            content.push({ type: 'text', text: `\n${hintResult.hint}` });
+          const injectHint =
+            verbosity !== 'compact' ||
+            hintResult.severity === 'critical';
+          if (injectHint) {
+            (result as Record<string, unknown>)._hint = hintResult.hint;
+            (result as Record<string, unknown>)._hintMeta = {
+              severity: hintResult.severity,
+              rule: hintResult.rule,
+              fireCount: hintResult.fireCount,
+              ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+              ...(hintResult.context && { context: hintResult.context }),
+            };
+            const content = (result as Record<string, unknown>).content;
+            if (Array.isArray(content)) {
+              // Hint appended after tool result (may follow image blobs for verify:true tools)
+              content.push({ type: 'text', text: `\n${hintResult.hint}` });
+            }
           }
         }
+      }
+
+      if (compressionConfig?.enabled && compressionConfig?.trackSavings) {
+        (result as Record<string, unknown>)._compression = {
+          level: compressionConfig.level ?? 'light',
+          verbosity,
+        };
       }
 
       return result;
@@ -683,18 +707,29 @@ export class MCPServer {
       if (callId) {
         const timing = this.activityTracker!.getCall(callId);
         if (timing?.duration !== undefined) {
-          (errResult as Record<string, unknown>)._timing = {
-            durationMs: timing.duration,
-            startTime: timing.startTime,
-            endTime: timing.endTime,
-          };
+          const verbosityErr = getGlobalConfig().compression?.verbosity ?? 'normal';
+          if (verbosityErr === 'verbose') {
+            (errResult as Record<string, unknown>)._timing = {
+              durationMs: timing.duration,
+              startTime: timing.startTime,
+              endTime: timing.endTime,
+            };
+          } else if (verbosityErr === 'normal') {
+            (errResult as Record<string, unknown>)._timing = {
+              durationMs: timing.duration,
+            };
+          }
+          // compact: skip _timing entirely
         }
       }
 
       // Inject profile state (no warning on error responses)
-      const profileInfoErr = this.buildProfileInfo();
-      if (profileInfoErr) {
-        (errResult as Record<string, unknown>)._profile = profileInfoErr.profile;
+      const verbosityErr = getGlobalConfig().compression?.verbosity ?? 'normal';
+      if (verbosityErr !== 'compact') {
+        const profileInfoErr = this.buildProfileInfo();
+        if (profileInfoErr) {
+          (errResult as Record<string, unknown>)._profile = profileInfoErr.profile;
+        }
       }
 
       // Inject proactive hint for errors into both _hint and content[]

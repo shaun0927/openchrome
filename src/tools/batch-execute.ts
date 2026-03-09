@@ -13,27 +13,27 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'batch_execute',
-  description: 'Execute JavaScript across multiple tabs in parallel.',
+  description: 'Execute JS across multiple tabs in parallel.',
   inputSchema: {
     type: 'object',
     properties: {
       tasks: {
         type: 'array',
-        description: 'Array of tasks to execute in parallel',
+        description: 'Tasks to execute in parallel',
         items: {
           type: 'object',
           properties: {
             tabId: {
               type: 'string',
-              description: 'Tab ID to execute the script in',
+              description: 'Tab ID',
             },
             workerId: {
               type: 'string',
-              description: 'Worker ID for result identification',
+              description: 'Worker ID for result tracking',
             },
             script: {
               type: 'string',
-              description: 'JS code to execute. Promises auto-awaited.',
+              description: 'JS code. Promises auto-awaited',
             },
             timeout: {
               type: 'number',
