@@ -7,7 +7,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
+import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
@@ -67,6 +67,11 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'ref_N from read_page or backendNodeId from DOM mode',
       },
+      screenshotQuality: {
+        type: 'string',
+        enum: ['high', 'normal', 'low'],
+        description: 'Screenshot quality. low: reduced resolution and quality for smaller payload.',
+      },
     },
     required: ['action', 'tabId'],
   },
@@ -115,9 +120,24 @@ const handler: ToolHandler = async (
           // Page may be navigating — proceed anyway
         }
 
+        // Quality presets for screenshot compression
+        const QUALITY_PRESETS = {
+          high:   { quality: 85 },
+          normal: { quality: 70 },
+          low:    { quality: 40 },
+        } as const;
+
         // Phase 1.5: Adaptive screenshot — decide response mode based on repetition
         const adaptive = AdaptiveScreenshot.getInstance();
         const screenshotMode = await adaptive.evaluate(page, tabId);
+
+        // Determine effective quality: explicit arg overrides adaptive suggestion
+        const qualityArg = args.screenshotQuality as string | undefined;
+        const effectiveQuality: 'high' | 'normal' | 'low' =
+          (qualityArg === 'high' || qualityArg === 'normal' || qualityArg === 'low')
+            ? qualityArg
+            : adaptive.getQualityForMode(screenshotMode);
+        const preset = QUALITY_PRESETS[effectiveQuality];
 
         // text_only mode: skip expensive screenshot, return visual summary
         if (screenshotMode === 'text_only') {
@@ -141,7 +161,7 @@ const handler: ToolHandler = async (
                 try {
                   const { data } = await cdpSession.send('Page.captureScreenshot', {
                     format: 'webp',
-                    quality: DEFAULT_SCREENSHOT_QUALITY,
+                    quality: preset.quality,
                     optimizeForSpeed: true,
                   });
                   return data as string;
