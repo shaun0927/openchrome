@@ -149,6 +149,22 @@ export class ActivityTracker extends EventEmitter {
   }
 
   /**
+   * Record compression metrics for a tool call.
+   * Called after compression is applied, before response is returned.
+   */
+  recordCompression(callId: string, originalChars: number, compressedChars: number, strategy: string): void {
+    const call = this.getCall(callId);
+    if (!call) return;
+
+    call.compression = {
+      originalChars,
+      compressedChars,
+      estimatedTokensSaved: Math.round((originalChars - compressedChars) / 4),
+      strategy,
+    };
+  }
+
+  /**
    * Get statistics
    */
   getStats(): {
@@ -157,6 +173,14 @@ export class ActivityTracker extends EventEmitter {
     successCount: number;
     errorCount: number;
     avgDuration: number;
+    compression?: {
+      totalOriginalChars: number;
+      totalCompressedChars: number;
+      totalTokensSaved: number;
+      compressionRatio: number;
+      callsCompressed: number;
+      topSavers: Array<{ toolName: string; tokensSaved: number; calls: number }>;
+    };
   } {
     const successCount = this.completedCalls.filter(c => c.result === 'success').length;
     const errorCount = this.completedCalls.filter(c => c.result === 'error').length;
@@ -165,13 +189,47 @@ export class ActivityTracker extends EventEmitter {
       ? totalDuration / this.completedCalls.length
       : 0;
 
-    return {
+    const stats: ReturnType<ActivityTracker['getStats']> = {
       activeCount: this.calls.size,
       totalCompleted: this.completedCalls.length,
       successCount,
       errorCount,
       avgDuration: Math.round(avgDuration),
     };
+
+    // Aggregate compression stats from all completed calls
+    const allCalls = this.completedCalls;
+    const compressionCalls = allCalls.filter(c => c.compression);
+    if (compressionCalls.length > 0) {
+      const totalOriginalChars = compressionCalls.reduce((sum, c) => sum + (c.compression?.originalChars || 0), 0);
+      const totalCompressedChars = compressionCalls.reduce((sum, c) => sum + (c.compression?.compressedChars || 0), 0);
+      const totalTokensSaved = compressionCalls.reduce((sum, c) => sum + (c.compression?.estimatedTokensSaved || 0), 0);
+
+      // Top savers by tool name
+      const byTool = new Map<string, { tokensSaved: number; calls: number }>();
+      for (const call of compressionCalls) {
+        const existing = byTool.get(call.toolName) || { tokensSaved: 0, calls: 0 };
+        existing.tokensSaved += call.compression?.estimatedTokensSaved || 0;
+        existing.calls++;
+        byTool.set(call.toolName, existing);
+      }
+
+      const topSavers = Array.from(byTool.entries())
+        .map(([toolName, data]) => ({ toolName, ...data }))
+        .sort((a, b) => b.tokensSaved - a.tokensSaved)
+        .slice(0, 5);
+
+      stats.compression = {
+        totalOriginalChars,
+        totalCompressedChars,
+        totalTokensSaved,
+        compressionRatio: totalOriginalChars > 0 ? 1 - (totalCompressedChars / totalOriginalChars) : 0,
+        callsCompressed: compressionCalls.length,
+        topSavers,
+      };
+    }
+
+    return stats;
   }
 
   /**
