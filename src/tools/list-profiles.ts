@@ -13,13 +13,13 @@ import { getChromeLauncher } from '../chrome/launcher';
 
 const definition: MCPToolDefinition = {
   name: 'list_profiles',
-  description: 'List available Chrome profiles. Returns profile names and directory IDs for use with profileDirectory parameter.',
+  description: 'List available Chrome profiles with names and directory IDs.',
   inputSchema: {
     type: 'object',
     properties: {
       userDataDir: {
         type: 'string',
-        description: 'Custom Chrome user data directory. Omit to use default Chrome location.',
+        description: 'Custom Chrome user data dir. Default: system Chrome location.',
       },
     },
     required: [],

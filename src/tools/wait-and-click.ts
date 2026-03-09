@@ -165,11 +165,14 @@ const handler: ToolHandler = async (
       );
     }
 
+    const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
+    const textPart = textSample ? ` "${textSample}"` : '';
+    const refPart = refId ? ` [${refId}]` : '';
     return {
       content: [
         {
           type: 'text',
-          text: `Waited ${waitTime}ms, then clicked ${bestMatch.role} "${bestMatch.name.slice(0, 50)}" at (${clickX}, ${clickY})${refId ? ` [${refId}]` : ''}${delta}`,
+          text: `\u2713 Waited ${waitTime}ms, clicked ${bestMatch.tagName}${textPart}${refPart}${delta}`,
         },
       ],
     };

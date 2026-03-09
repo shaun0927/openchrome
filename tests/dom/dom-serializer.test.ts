@@ -413,13 +413,13 @@ describe('DOM Serializer', () => {
   // 8. Output truncation
   test('truncates output at maxOutputChars', async () => {
     // Build a large DOM with many nodes
-    const manyChildren = Array.from({ length: 50 }, (_, i) => ({
+    const manyChildren = Array.from({ length: 100 }, (_, i) => ({
       nodeId: 100 + i, backendNodeId: 1000 + i, nodeType: 1,
       nodeName: 'P', localName: 'p', attributes: ['id', `para-${i}`],
       children: [{
         nodeId: 200 + i, backendNodeId: 200 + i, nodeType: 3,
         nodeName: '#text', localName: '',
-        nodeValue: 'This is a moderately long paragraph text content that takes up space.',
+        nodeValue: `This is paragraph number ${i} with unique long text content to prevent sibling deduplication compression.`,
       }],
     }));
 

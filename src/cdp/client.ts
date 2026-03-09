@@ -1049,6 +1049,98 @@ export class CDPClient {
   }
 
   /**
+   * Open a new tab via Chrome's HTTP debug API without attaching CDP during load.
+   * This avoids the Runtime.enable serialization artifacts that Cloudflare Turnstile
+   * and similar anti-bot systems detect. The tab loads (and Turnstile runs) with no
+   * CDP observer attached. CDP is attached only after the settle window expires.
+   *
+   * @param url      URL to open in the new tab
+   * @param settleMs Milliseconds to wait before attaching CDP (default 5000, range 1000-30000)
+   * @returns        The Puppeteer Page and its targetId
+   */
+  async createTargetStealth(url: string, settleMs: number = 5000): Promise<{ page: Page; targetId: string }> {
+    const browser = this.getBrowser();
+
+    // Step 1: Create target via CDP Target.createTarget.
+    // Puppeteer's ChromeTargetManager uses Target.setAutoAttach with { exclude: true }
+    // for page targets, so the new tab is added to #discoveredTargetsByTargetId but NOT
+    // #attachedTargetsByTargetId. This means browser.pages() will never find it.
+    // We use a CDP session on the browser target to issue the command directly.
+    const cdp = await browser.target().createCDPSession();
+    let targetId: string;
+    try {
+      const result = await cdp.send('Target.createTarget', { url }) as { targetId: string };
+      targetId = result.targetId;
+    } catch (createErr) {
+      await cdp.detach().catch(() => {});
+      throw new Error(`Stealth navigation: failed to create target: ${createErr instanceof Error ? createErr.message : String(createErr)}`);
+    }
+
+    console.error(`[CDPClient] Stealth tab created: ${targetId}, settling for ${settleMs}ms`);
+
+    // Step 2: Wait for the page to load without CDP observation (Turnstile runs here)
+    await new Promise<void>(resolve => setTimeout(resolve, settleMs));
+
+    // Step 3: Attach to the target via CDP to bring it into Puppeteer's attached set
+    try {
+      await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    } catch (attachErr) {
+      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+      await cdp.detach().catch(() => {});
+      throw new Error(`Stealth navigation: failed to attach to target ${targetId}: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+    }
+
+    // Step 4: Use browser.waitForTarget() to reliably find the target.
+    // After attachToTarget, Puppeteer's internal ChromeTargetManager processes the
+    // attachment asynchronously. browser.targets().find() may miss it due to a race
+    // condition. waitForTarget() listens for the target event and handles timing.
+    let target: Target;
+    try {
+      target = await browser.waitForTarget(
+        t => getTargetId(t) === targetId,
+        { timeout: 5000 }
+      );
+    } catch {
+      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+      await cdp.detach().catch(() => {});
+      throw new Error(`Stealth navigation: target ${targetId} not found after attach (waitForTarget timed out)`);
+    }
+
+    let page: Page | null;
+    try {
+      page = await target.page();
+    } catch {
+      page = null;
+    }
+
+    if (!page) {
+      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+      await cdp.detach().catch(() => {});
+      throw new Error(`Stealth navigation: could not get page for target ${targetId}`);
+    }
+
+    // Clean up the helper session — the page now has its own CDP session managed by Puppeteer
+    await cdp.detach().catch(() => {});
+
+    // Step 5: Index the page and configure defenses (CDP commands flow from here)
+    this.targetIdIndex.set(targetId, page);
+    this.configurePageDefenses(page);
+
+    // Step 6: Apply critical stealth defenses immediately to the already-loaded page.
+    // configurePageDefenses() registers evaluateOnNewDocument scripts that only run on
+    // future navigations. The current page loaded without CDP, so we must patch it now.
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    }).catch(() => {});
+
+    console.error(`[CDPClient] Stealth tab ${targetId} attached after settle period`);
+    return { page, targetId };
+  }
+
+  /**
    * Register defense handlers on a page: dialog auto-dismiss, crash eviction,
    * print suppression, download deny. Idempotent — safe to call multiple times.
    */
@@ -1095,6 +1187,74 @@ export class CDPClient {
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
       });
+    }).catch(() => {});
+
+    // Mask Chrome automation artifacts that anti-bot systems scan for.
+    // These cover the most common fingerprinting vectors after navigator.webdriver.
+    page.evaluateOnNewDocument(() => {
+      // 1. Ensure chrome.runtime exists with expected shape (real Chrome has it even without extensions)
+      if ((window as any).chrome) {
+        const originalChrome = (window as any).chrome;
+        // chrome.runtime should exist in real Chrome but have specific shape
+        if (!originalChrome.runtime) {
+          // In real Chrome, chrome.runtime exists but has limited properties without extensions
+          Object.defineProperty(originalChrome, 'runtime', {
+            get: () => ({ id: undefined }),
+            configurable: true,
+          });
+        }
+      }
+
+      // 2. Override Permissions API to prevent "denied" responses that flag automation
+      if (navigator.permissions) {
+        const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+        Object.defineProperty(navigator.permissions, 'query', {
+          value: (params: { name: string }) => {
+            // Notifications permission is commonly checked by anti-bot
+            if (params.name === 'notifications') {
+              return Promise.resolve(Object.assign(new EventTarget(), { state: 'prompt', onchange: null }) as any);
+            }
+            return originalQuery(params as PermissionDescriptor);
+          },
+          writable: true,
+          configurable: true,
+        });
+      }
+
+      // 3. Ensure plugins array is non-empty (headless Chrome has 0 plugins).
+      // Individual entries are plain objects, not Plugin instances — sophisticated
+      // detectors using instanceof Plugin will see through this. Turnstile and
+      // most anti-bot systems only check plugins.length > 0.
+      if (navigator.plugins.length === 0) {
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => {
+            const plugins = [
+              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+            ];
+            // Mimic PluginArray behavior
+            const arr = Object.create(PluginArray.prototype);
+            for (let i = 0; i < plugins.length; i++) {
+              arr[i] = plugins[i];
+            }
+            Object.defineProperty(arr, 'length', { value: plugins.length });
+            arr.item = (i: number) => arr[i] || null;
+            arr.namedItem = (name: string) => plugins.find(p => p.name === name) || null;
+            arr.refresh = () => {};
+            return arr;
+          },
+          configurable: true,
+        });
+      }
+
+      // 4. Ensure languages array is populated
+      if (!navigator.languages || navigator.languages.length === 0) {
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['en-US', 'en'],
+          configurable: true,
+        });
+      }
     }).catch(() => {});
 
     // Deny file downloads by default — Content-Disposition: attachment
