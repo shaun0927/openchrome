@@ -71,3 +71,6 @@ export const MCPErrorCodes = {
   INVALID_PARAMS: -32602,
   INTERNAL_ERROR: -32603,
 } as const;
+
+/** LLM-side override for compression level on individual tool calls */
+export type CompressionOverride = 'none' | 'light' | 'aggressive';
