@@ -265,7 +265,7 @@ Cookies and localStorage are saved atomically every 30 seconds and restored on s
 
 ## Anti-Bot & Turnstile Support
 
-OpenChrome includes stealth defenses against Cloudflare Turnstile and similar anti-bot systems. Use `stealth: true` in the navigate tool for protected pages. See [Turnstile Guide](docs/turnstile-guide.md) for details.
+OpenChrome includes built-in defenses against Cloudflare Turnstile and similar anti-bot systems, with additional stealth navigation planned for a future release. See [Turnstile Guide](docs/turnstile-guide.md) for details.
 
 ---
 
