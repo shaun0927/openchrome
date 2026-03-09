@@ -3,7 +3,6 @@
  */
 
 import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'puppeteer-core';
-import * as http from 'http';
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
@@ -1062,48 +1061,47 @@ export class CDPClient {
   async createTargetStealth(url: string, settleMs: number = 5000): Promise<{ page: Page; targetId: string }> {
     const browser = this.getBrowser();
 
-    // Step 1: Create tab via HTTP debug API (no CDP attachment during this request)
-    const targetInfo = await new Promise<{ id: string; url: string }>((resolve, reject) => {
-      const reqUrl = `http://localhost:${this.port}/json/new?${encodeURIComponent(url)}`;
-      http.get(reqUrl, (res) => {
-        let data = '';
-        res.on('data', (chunk: Buffer) => { data += chunk; });
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data) as { id: string; url: string });
-          } catch (e) {
-            reject(new Error(`Failed to parse Chrome debug API response: ${data}`));
-          }
-        });
-      }).on('error', reject);
-    });
+    // Step 1: Create target via CDP Target.createTarget.
+    // Puppeteer's ChromeTargetManager uses Target.setAutoAttach with { exclude: true }
+    // for page targets, so the new tab is added to #discoveredTargetsByTargetId but NOT
+    // #attachedTargetsByTargetId. This means browser.pages() will never find it.
+    // We use a CDP session on the browser target to issue the command directly.
+    const cdp = await browser.target().createCDPSession();
+    const { targetId } = await cdp.send('Target.createTarget', { url }) as { targetId: string };
 
-    console.error(`[CDPClient] Stealth tab created: ${targetInfo.id}, settling for ${settleMs}ms`);
+    console.error(`[CDPClient] Stealth tab created: ${targetId}, settling for ${settleMs}ms`);
 
-    // Step 2: Wait for the page to load without CDP (Turnstile runs during this window)
+    // Step 2: Wait for the page to load without CDP observation (Turnstile runs here)
     await new Promise<void>(resolve => setTimeout(resolve, settleMs));
 
-    // Step 3: Find the page in Puppeteer's target list by matching targetId
-    const pages = await browser.pages();
-    let page: Page | undefined;
-    for (const p of pages) {
-      const tid = getTargetId(p.target());
-      if (tid === targetInfo.id) {
-        page = p;
-        break;
-      }
+    // Step 3: Attach to the target via CDP to bring it into Puppeteer's attached set
+    await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+
+    // Step 4: Find the target in browser.targets() — after attachToTarget, Puppeteer's
+    // internal ChromeTargetManager moves it to #attachedTargetsByTargetId and exposes it
+    const targets = browser.targets();
+    const target = targets.find(t => (t as any)._targetId === targetId);
+
+    if (!target) {
+      await cdp.detach().catch(() => {});
+      throw new Error(`Stealth navigation: target ${targetId} not found after attach`);
     }
 
+    const page = await target.page();
     if (!page) {
-      throw new Error(`Stealth navigation: could not find tab ${targetInfo.id} after ${settleMs}ms settle period`);
+      await cdp.detach().catch(() => {});
+      throw new Error(`Stealth navigation: could not get page for target ${targetId}`);
     }
 
-    // Step 4: Index the page and configure defenses (CDP commands flow from here)
-    this.targetIdIndex.set(targetInfo.id, page);
+    // Clean up the helper session — the page now has its own CDP session managed by Puppeteer
+    await cdp.detach().catch(() => {});
+
+    // Step 5: Index the page and configure defenses (CDP commands flow from here)
+    this.targetIdIndex.set(targetId, page);
     this.configurePageDefenses(page);
 
-    console.error(`[CDPClient] Stealth tab ${targetInfo.id} attached after settle period`);
-    return { page, targetId: targetInfo.id };
+    console.error(`[CDPClient] Stealth tab ${targetId} attached after settle period`);
+    return { page, targetId };
   }
 
   /**
