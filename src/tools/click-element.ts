@@ -424,7 +424,8 @@ const handler: ToolHandler = async (
     const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
     const textPart = textSample ? ` "${textSample}"` : '';
     const refPart = refId ? ` [${refId}]` : '';
-    const resultText = `\u2713 ${clickType} ${bestMatch.tagName}${textPart}${refPart}${delta}`;
+    const confidenceNote = bestMatch.score < 50 ? ` (low confidence: ${bestMatch.score}/100)` : '';
+    const resultText = `\u2713 ${clickType} ${bestMatch.tagName}${textPart}${refPart}${confidenceNote}${delta}`;
 
     // Optional verification screenshot — WebP via CDP for speed and consistency
     if (verify) {

@@ -507,8 +507,20 @@ const handler: ToolHandler = async (
       }
     }
 
-    // State summary suppressed in compact mode; stateSummary still gathered above
-    // (kept for future use / delta context) but not emitted in text response
+    if (returnFormat === 'state_summary' || returnFormat === 'both') {
+      lines.push(
+        `[State Summary] url: ${stateSummary.url} | scroll: ${stateSummary.scrollX},${stateSummary.scrollY} | active: ${stateSummary.activeInfo}`
+      );
+
+      if (stateSummary.headings.length > 0) {
+        lines.push(`[Headings] ${stateSummary.headings.map(h => `"${h}"`).join(' | ')}`);
+      }
+
+      if (stateSummary.panels.length > 0) {
+        const panelParts = stateSummary.panels.map((p, i) => `Panel ${i + 1}: "${p}"`);
+        lines.push(`[Visible] ${panelParts.join(' | ')}`);
+      }
+    }
 
     // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG
     let screenshotContent: { type: 'image'; data: string; mimeType: string } | null = null;
