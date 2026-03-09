@@ -125,3 +125,12 @@ export const DEFAULT_FILL_FORM_POLL_MS = 1500;
 
 /** fill_form: Interval between polls when waiting for form fields (ms). */
 export const DEFAULT_FILL_FORM_POLL_INTERVAL_MS = 300;
+
+/** Default compression level for response compression. */
+export const DEFAULT_COMPRESSION_LEVEL = 'light';
+
+/** Default verbosity level for metadata injection in responses. */
+export const DEFAULT_VERBOSITY = 'normal';
+
+/** Minimum response size in bytes before compression is applied. */
+export const COMPRESSION_MIN_BYTES = 500;
