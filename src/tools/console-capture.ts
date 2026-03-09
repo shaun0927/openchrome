@@ -92,6 +92,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
         firstTimestamp: current.timestamp,
         lastTimestamp: logs[i + count - 1].timestamp,
         location: current.location,
+        args: current.args,
       });
     } else {
       // Show individually
@@ -367,8 +368,8 @@ const handler: ToolHandler = async (
         // Calculate stats
         const stats = {
           total: state.logs.length,
-          returned: logs.length,
-          deduplicated: deduplicatedLogs.length,
+          returned: deduplicatedLogs.length,
+          beforeDedup: logs.length,
           byType: {} as Record<string, number>,
         };
         for (const log of state.logs) {

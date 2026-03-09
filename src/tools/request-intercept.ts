@@ -47,8 +47,6 @@ const interceptStates: Map<string, InterceptState> = new Map();
 const KEEP_HEADERS = new Set([
   'content-type',
   'authorization',
-  'set-cookie',
-  'location',
   'x-request-id',
   'cache-control',
 ]);
@@ -91,10 +89,8 @@ function groupAssetRequests(logs: RequestLogEntry[]): CompressedLogs {
   const assetGroups = new Map<string, AssetGroup>();
 
   for (const log of logs) {
-    // Failures always shown in full detail
-    if ((log as RequestLogEntry & { status?: number; error?: string }).status !== undefined &&
-        ((log as RequestLogEntry & { status?: number }).status ?? 0) >= 400 ||
-        (log as RequestLogEntry & { error?: string }).error) {
+    // Failures always shown in full detail (only error field is available at request phase)
+    if ((log as RequestLogEntry & { error?: string }).error) {
       failedLogs.push(log);
     } else if (ASSET_TYPES.has(log.resourceType.toLowerCase())) {
       // Group static assets by domain + type
@@ -112,7 +108,9 @@ function groupAssetRequests(logs: RequestLogEntry[]): CompressedLogs {
         urls: [],
       };
       group.count++;
-      group.urls.push(log.url);
+      if (group.urls.length < 3) {
+        group.urls.push(log.url);
+      }
       assetGroups.set(key, group);
     } else {
       // API/XHR and everything else shown individually
