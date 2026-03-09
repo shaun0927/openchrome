@@ -122,11 +122,8 @@ export class AdaptiveScreenshot {
    * - 'text_only': low quality (screenshot rarely taken in this mode)
    */
   getQualityForMode(mode: 'full' | 'annotated' | 'text_only'): 'high' | 'normal' | 'low' {
-    switch (mode) {
-      case 'full': return 'normal';
-      case 'annotated': return 'low';
-      case 'text_only': return 'low';
-    }
+    // text_only exits before screenshot, so only full/annotated matter in practice
+    return mode === 'full' ? 'normal' : 'low';
   }
 
   /**

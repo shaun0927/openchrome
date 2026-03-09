@@ -123,7 +123,7 @@ const handler: ToolHandler = async (
         // Quality presets for screenshot compression
         const QUALITY_PRESETS = {
           high:   { quality: 85 },
-          normal: { quality: 70 },
+          normal: { quality: 60 },
           low:    { quality: 40 },
         } as const;
 
