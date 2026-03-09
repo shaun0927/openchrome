@@ -418,9 +418,12 @@ const handler: ToolHandler = async (
       );
     }
 
-    // Build action label
-    const actionLabel = action === 'double_click' ? 'double-clicked' : action === 'hover' ? 'hovered' : 'clicked';
-    const interactedLine = `Interacted: ${actionLabel} on <${bestMatch.tagName}> "${bestMatch.name.slice(0, 50)}" at (${finalX}, ${finalY})${refId ? ` [${refId}]` : ''}`;
+    // Build compact action label
+    const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+    const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
+    const textPart = textSample ? ` "${textSample}"` : '';
+    const refPart = refId ? ` [${refId}]` : '';
+    const interactedLine = `\u2713 ${actionVerb} ${bestMatch.tagName}${textPart}${refPart}`;
 
     // Gather state summary via page.evaluate
     const stateSummary = await withTimeout(page.evaluate(() => {
@@ -495,7 +498,7 @@ const handler: ToolHandler = async (
       return { url, title, scrollX, scrollY, activeInfo, panels, headings };
     }), 10000, 'interact');
 
-    // Build the response
+    // Build the response — compact success format
     const lines: string[] = [interactedLine];
 
     if (returnFormat === 'dom_delta' || returnFormat === 'both') {
