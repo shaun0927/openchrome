@@ -1067,7 +1067,14 @@ export class CDPClient {
     // #attachedTargetsByTargetId. This means browser.pages() will never find it.
     // We use a CDP session on the browser target to issue the command directly.
     const cdp = await browser.target().createCDPSession();
-    const { targetId } = await cdp.send('Target.createTarget', { url }) as { targetId: string };
+    let targetId: string;
+    try {
+      const result = await cdp.send('Target.createTarget', { url }) as { targetId: string };
+      targetId = result.targetId;
+    } catch (createErr) {
+      await cdp.detach().catch(() => {});
+      throw new Error(`Stealth navigation: failed to create target: ${createErr instanceof Error ? createErr.message : String(createErr)}`);
+    }
 
     console.error(`[CDPClient] Stealth tab created: ${targetId}, settling for ${settleMs}ms`);
 
@@ -1075,20 +1082,42 @@ export class CDPClient {
     await new Promise<void>(resolve => setTimeout(resolve, settleMs));
 
     // Step 3: Attach to the target via CDP to bring it into Puppeteer's attached set
-    await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-
-    // Step 4: Find the target in browser.targets() — after attachToTarget, Puppeteer's
-    // internal ChromeTargetManager moves it to #attachedTargetsByTargetId and exposes it
-    const targets = browser.targets();
-    const target = targets.find(t => (t as any)._targetId === targetId);
-
-    if (!target) {
+    try {
+      await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    } catch (attachErr) {
+      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
       await cdp.detach().catch(() => {});
-      throw new Error(`Stealth navigation: target ${targetId} not found after attach`);
+      throw new Error(`Stealth navigation: failed to attach to target ${targetId}: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
     }
 
-    const page = await target.page();
+    // Step 4: Use browser.waitForTarget() to reliably find the target.
+    // After attachToTarget, Puppeteer's internal ChromeTargetManager processes the
+    // attachment asynchronously. browser.targets().find() may miss it due to a race
+    // condition. waitForTarget() listens for the target event and handles timing.
+    let target: Target;
+    try {
+      target = await browser.waitForTarget(
+        t => getTargetId(t) === targetId,
+        { timeout: 5000 }
+      );
+    } catch {
+      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+      await cdp.detach().catch(() => {});
+      throw new Error(`Stealth navigation: target ${targetId} not found after attach (waitForTarget timed out)`);
+    }
+
+    let page: Page | null;
+    try {
+      page = await target.page();
+    } catch {
+      page = null;
+    }
+
     if (!page) {
+      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
       await cdp.detach().catch(() => {});
       throw new Error(`Stealth navigation: could not get page for target ${targetId}`);
     }
@@ -1099,6 +1128,13 @@ export class CDPClient {
     // Step 5: Index the page and configure defenses (CDP commands flow from here)
     this.targetIdIndex.set(targetId, page);
     this.configurePageDefenses(page);
+
+    // Step 6: Apply critical stealth defenses immediately to the already-loaded page.
+    // configurePageDefenses() registers evaluateOnNewDocument scripts that only run on
+    // future navigations. The current page loaded without CDP, so we must patch it now.
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    }).catch(() => {});
 
     console.error(`[CDPClient] Stealth tab ${targetId} attached after settle period`);
     return { page, targetId };
