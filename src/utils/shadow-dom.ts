@@ -423,6 +423,52 @@ function matchesQuery(combinedText: string, searchLower: string, queryTokens: st
   return combinedText.includes(searchLower) || queryTokens.some(token => combinedText.includes(token));
 }
 
+// ─── JS Deep Traversal Utilities (for page.evaluate / Runtime.evaluate injection) ───
+
+/**
+ * JS source for deepQuerySelectorAll — recursively queries through open shadow roots.
+ *
+ * Injectable into Runtime.evaluate expressions as a string.
+ * For page.evaluate callbacks, define the function inline instead.
+ *
+ * NOTE: Only works for OPEN shadow roots. Closed roots require CDP (Phase 2).
+ */
+export const DEEP_QUERY_SELECTOR_ALL_JS = `function deepQuerySelectorAll(root, selector) {
+  var results = [];
+  try { var matched = root.querySelectorAll(selector); for (var i = 0; i < matched.length; i++) results.push(matched[i]); } catch(e) {}
+  var allEls = root.querySelectorAll('*');
+  for (var j = 0; j < allEls.length; j++) {
+    if (allEls[j].shadowRoot) {
+      var sr = deepQuerySelectorAll(allEls[j].shadowRoot, selector);
+      for (var k = 0; k < sr.length; k++) results.push(sr[k]);
+    }
+  }
+  return results;
+}`;
+
+/**
+ * JS source for deepWalkElements — walks all elements including those in open shadow roots.
+ *
+ * Injectable into Runtime.evaluate expressions as a string.
+ * Returns a flat array for compatibility (no generators).
+ *
+ * NOTE: Only works for OPEN shadow roots. Closed roots require CDP (Phase 2).
+ */
+export const DEEP_WALK_ELEMENTS_JS = `function deepWalkElements(root) {
+  var elements = [];
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  var node = walker.nextNode();
+  while (node) {
+    elements.push(node);
+    if (node.shadowRoot) {
+      var shadowEls = deepWalkElements(node.shadowRoot);
+      for (var i = 0; i < shadowEls.length; i++) elements.push(shadowEls[i]);
+    }
+    node = walker.nextNode();
+  }
+  return elements;
+}`;
+
 /**
  * Infer semantic role from tag name and attributes.
  */
