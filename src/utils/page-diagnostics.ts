@@ -27,9 +27,9 @@ export async function getPageDiagnostics(page: Page): Promise<PageDiagnostics> {
 
       // Count elements including those inside open shadow roots
       function deepElementCount(root: Element | Document | ShadowRoot): number {
-        var count = root.querySelectorAll('*').length;
-        var allEls = root.querySelectorAll('*');
-        for (var i = 0; i < allEls.length; i++) {
+        let count = root.querySelectorAll('*').length;
+        const allEls = root.querySelectorAll('*');
+        for (let i = 0; i < allEls.length; i++) {
           if ((allEls[i] as any).shadowRoot) {
             count += deepElementCount((allEls[i] as any).shadowRoot);
           }
