@@ -8,6 +8,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
+import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -65,6 +66,10 @@ const definition: MCPToolDefinition = {
       multiple: {
         type: 'boolean',
         description: 'Return all matches. Default: false',
+      },
+      pierceShadow: {
+        type: 'boolean',
+        description: 'Search inside shadow DOM when no results in light DOM. Default: true',
       },
       limit: {
         type: 'number',
@@ -151,6 +156,74 @@ function formatDiagnosticsMessage(selector: string, diag: QueryDomDiagnostics | 
   return `${base}. Page: ${statePart}${closestPart}`;
 }
 
+/**
+ * Shadow DOM fallback for CSS queries.
+ * Searches inside shadow roots via CDP when light DOM returns no results.
+ */
+async function shadowCSSFallback(
+  page: import('puppeteer-core').Page,
+  selector: string,
+  multiple: boolean,
+): Promise<CSSElementInfo[] | null> {
+  const sessionManager = getSessionManager();
+  const cdpClient = sessionManager.getCDPClient();
+  try {
+    const { shadowRoots } = await getAllShadowRoots(page, cdpClient);
+    if (shadowRoots.length === 0) return null;
+
+    const backendNodeIds = await querySelectorInShadowRoots(page, cdpClient, selector, shadowRoots);
+    if (backendNodeIds.length === 0) return null;
+
+    const MAX = multiple ? 50 : 1;
+    const results: CSSElementInfo[] = [];
+
+    for (let i = 0; i < Math.min(backendNodeIds.length, MAX); i++) {
+      try {
+        const { object } = await cdpClient.send<{ object: { objectId?: string } }>(
+          page, 'DOM.resolveNode', { backendNodeId: backendNodeIds[i] },
+        );
+        if (!object?.objectId) continue;
+
+        const { result } = await cdpClient.send<{ result: { value?: CSSElementInfo } }>(
+          page, 'Runtime.callFunctionOn', {
+            objectId: object.objectId,
+            functionDeclaration: `function() {
+              var el = this;
+              var rect = el.getBoundingClientRect();
+              var style = window.getComputedStyle(el);
+              var isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0;
+              var attributes = {};
+              for (var j = 0; j < el.attributes.length; j++) { attributes[el.attributes[j].name] = el.attributes[j].value; }
+              return {
+                ref: '',
+                tagName: el.tagName.toLowerCase(),
+                id: el.id || null,
+                className: typeof el.className === 'string' ? el.className : '',
+                attributes: attributes,
+                textContent: (el.textContent || '').trim().slice(0, 100),
+                isVisible: isVisible,
+                boundingBox: rect.width > 0 && rect.height > 0 ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) } : null,
+              };
+            }`,
+            returnByValue: true,
+          },
+        );
+
+        if (result?.value) {
+          result.value.ref = `el_${i}`;
+          results.push(result.value);
+        }
+      } catch {
+        // skip elements that can't be resolved
+      }
+    }
+
+    return results.length > 0 ? results : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CSS handler
 // ---------------------------------------------------------------------------
@@ -162,6 +235,7 @@ async function handleCSS(
   const tabId = args.tabId as string;
   const selector = args.selector as string;
   const multiple = (args.multiple as boolean) ?? false;
+  const pierceShadow = (args.pierceShadow as boolean) ?? true;
 
   if (!selector) {
     return {
@@ -183,6 +257,29 @@ async function handleCSS(
     const elements = await page.$$(selector);
 
     if (elements.length === 0) {
+      // Shadow DOM fallback: search inside shadow roots via CDP
+      if (pierceShadow) {
+        const shadowResults = await shadowCSSFallback(page, selector, true);
+        if (shadowResults) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'query_dom',
+                  method: 'css',
+                  selector,
+                  multiple: true,
+                  elements: shadowResults,
+                  count: shadowResults.length,
+                  shadowDOM: true,
+                }),
+              },
+            ],
+          };
+        }
+      }
+
       const diag = await gatherDiagnostics(page, selector);
       return {
         content: [
@@ -271,6 +368,28 @@ async function handleCSS(
     const element = await page.$(selector);
 
     if (!element) {
+      // Shadow DOM fallback: search inside shadow roots via CDP
+      if (pierceShadow) {
+        const shadowResults = await shadowCSSFallback(page, selector, false);
+        if (shadowResults && shadowResults.length > 0) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'query_dom',
+                  method: 'css',
+                  selector,
+                  multiple: false,
+                  element: shadowResults[0],
+                  shadowDOM: true,
+                }),
+              },
+            ],
+          };
+        }
+      }
+
       const diag = await gatherDiagnostics(page, selector);
       return {
         content: [
@@ -407,28 +526,50 @@ async function handleXPath(
           };
         }
 
-        const xpathResult = document.evaluate(
-          xpathExpr,
-          document,
-          null,
-          XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
-          null
-        );
+        // Collect from light DOM
+        const allNodes: Element[] = [];
+        try {
+          const xpathResult = document.evaluate(
+            xpathExpr, document, null,
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+          );
+          for (let i = 0; i < xpathResult.snapshotLength; i++) {
+            const node = xpathResult.snapshotItem(i);
+            if (node instanceof Element) allNodes.push(node);
+          }
+        } catch { /* invalid xpath */ }
 
-        const elements: ReturnType<typeof extractElementInfo>[] = [];
-        const count = Math.min(xpathResult.snapshotLength, maxResults);
-
-        for (let i = 0; i < count; i++) {
-          const node = xpathResult.snapshotItem(i);
-          if (node instanceof Element) {
-            const simpleXpath = `(${xpathExpr})[${i + 1}]`;
-            elements.push(extractElementInfo(node, simpleXpath));
+        // Deep search: open shadow roots
+        const shadowXPath = xpathExpr.startsWith('//') ? '.' + xpathExpr : xpathExpr;
+        function walkShadowRoots(root: Element | Document | ShadowRoot) {
+          const allEls = root.querySelectorAll('*');
+          for (let j = 0; j < allEls.length; j++) {
+            if (allEls[j].shadowRoot) {
+              try {
+                const sr = allEls[j].shadowRoot!;
+                const srResult = document.evaluate(
+                  shadowXPath, sr, null,
+                  XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+                );
+                for (let k = 0; k < srResult.snapshotLength; k++) {
+                  const srNode = srResult.snapshotItem(k);
+                  if (srNode instanceof Element) allNodes.push(srNode);
+                }
+                walkShadowRoots(sr);
+              } catch { /* skip */ }
+            }
           }
         }
+        walkShadowRoots(document);
+
+        const limited = allNodes.slice(0, maxResults);
+        const elements: ReturnType<typeof extractElementInfo>[] = limited.map(
+          (el, idx) => extractElementInfo(el, `(${xpathExpr})[${idx + 1}]`)
+        );
 
         return {
           elements,
-          totalCount: xpathResult.snapshotLength,
+          totalCount: allNodes.length,
         };
       },
       xpath,
@@ -490,20 +631,41 @@ async function handleXPath(
         };
       }
 
+      // Light DOM first
       const xpathResult = document.evaluate(
-        xpathExpr,
-        document,
-        null,
-        XPathResult.FIRST_ORDERED_NODE_TYPE,
-        null
+        xpathExpr, document, null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE, null
       );
-
       const node = xpathResult.singleNodeValue;
-      if (!node || !(node instanceof Element)) {
-        return null;
+      if (node && node instanceof Element) {
+        return extractElementInfo(node, xpathExpr);
       }
 
-      return extractElementInfo(node, xpathExpr);
+      // Deep search: open shadow roots
+      const shadowXPath = xpathExpr.startsWith('//') ? '.' + xpathExpr : xpathExpr;
+      function findInShadowRoots(root: Element | Document | ShadowRoot): Element | null {
+        const allEls = root.querySelectorAll('*');
+        for (let j = 0; j < allEls.length; j++) {
+          if (allEls[j].shadowRoot) {
+            try {
+              const sr = allEls[j].shadowRoot!;
+              const srResult = document.evaluate(
+                shadowXPath, sr, null,
+                XPathResult.FIRST_ORDERED_NODE_TYPE, null
+              );
+              const srNode = srResult.singleNodeValue;
+              if (srNode && srNode instanceof Element) return srNode as Element;
+              const deeper = findInShadowRoots(sr);
+              if (deeper) return deeper;
+            } catch { /* skip */ }
+          }
+        }
+        return null;
+      }
+      const shadowNode = findInShadowRoots(document);
+      if (shadowNode) return extractElementInfo(shadowNode, xpathExpr);
+
+      return null;
     }, xpath), 15000, 'query_dom');
 
     if (!element) {
