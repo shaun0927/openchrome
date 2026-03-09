@@ -63,7 +63,7 @@ const definition: MCPToolDefinition = {
       },
       compression: {
         type: 'string',
-        enum: ['none', 'light', 'delta'],
+        enum: ['none', 'delta'],
         description: 'Compression mode. "delta" returns only changes since last read.',
       },
     },

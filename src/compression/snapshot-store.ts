@@ -114,28 +114,25 @@ export class SnapshotStore {
     const prevLines = previous.content.split('\n');
     const currLines = currentContent.split('\n');
 
-    // Build a set of previous lines for fast lookup
+    // Build a set of previous lines for fast lookup (preserve indentation for structural comparison)
     const prevSet = new Map<string, number>();
     for (const line of prevLines) {
-      const trimmed = line.trim();
-      if (trimmed) prevSet.set(trimmed, (prevSet.get(trimmed) || 0) + 1);
+      if (line.trim()) prevSet.set(line, (prevSet.get(line) || 0) + 1);
     }
 
     const currSet = new Map<string, number>();
     for (const line of currLines) {
-      const trimmed = line.trim();
-      if (trimmed) currSet.set(trimmed, (currSet.get(trimmed) || 0) + 1);
+      if (line.trim()) currSet.set(line, (currSet.get(line) || 0) + 1);
     }
 
     // Find added lines (in current but not in previous)
     const added: string[] = [];
     const tempPrev = new Map(prevSet);
     for (const line of currLines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const prevCount = tempPrev.get(trimmed) || 0;
+      if (!line.trim()) continue;
+      const prevCount = tempPrev.get(line) || 0;
       if (prevCount > 0) {
-        tempPrev.set(trimmed, prevCount - 1);
+        tempPrev.set(line, prevCount - 1);
       } else {
         added.push(line);
       }
@@ -145,11 +142,10 @@ export class SnapshotStore {
     const removed: string[] = [];
     const tempCurr = new Map(currSet);
     for (const line of prevLines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const currCount = tempCurr.get(trimmed) || 0;
+      if (!line.trim()) continue;
+      const currCount = tempCurr.get(line) || 0;
       if (currCount > 0) {
-        tempCurr.set(trimmed, currCount - 1);
+        tempCurr.set(line, currCount - 1);
       } else {
         removed.push(line);
       }
