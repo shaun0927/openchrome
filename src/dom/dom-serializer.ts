@@ -111,6 +111,23 @@ function isInteractive(tagName: string, attrMap: Map<string, string>): boolean {
 }
 
 /**
+ * Check if a DOM node or any descendant contains interactive elements.
+ * Prevents sibling dedup from collapsing groups with clickable elements.
+ */
+function containsInteractive(node: DOMNode): boolean {
+  if (node.nodeType !== NODE_TYPE_ELEMENT) return false;
+  const tag = (node.localName || node.nodeName).toLowerCase();
+  const attrMap = parseAttributes(node.attributes);
+  if (isInteractive(tag, attrMap)) return true;
+  if (node.children) {
+    for (const child of node.children) {
+      if (containsInteractive(child)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Get direct text content from immediate text node children (not deep)
  */
 function getDirectTextContent(node: DOMNode): string {
@@ -372,7 +389,11 @@ function serializeNode(
     for (const group of groups) {
       if (ctx.truncated) return;
 
-      if (group.nodes.length >= threshold) {
+      // Skip dedup for groups containing interactive elements to avoid
+      // hiding clickable buttons/links/inputs from the LLM
+      const groupHasInteractive = group.nodes.some(n => containsInteractive(n));
+
+      if (group.nodes.length >= threshold && !groupHasInteractive) {
         // Emit first SIBLING_SAMPLE_COUNT with full detail
         const samples = group.nodes.slice(0, SIBLING_SAMPLE_COUNT);
         for (const sampleNode of samples) {
