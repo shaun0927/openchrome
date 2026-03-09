@@ -6,12 +6,13 @@ import type { Page } from 'puppeteer-core';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 
 export interface DOMSerializerOptions {
-  maxDepth?: number;           // default: -1 (unlimited)
-  maxOutputChars?: number;     // default: 50000
-  includePageStats?: boolean;  // default: true
-  pierceIframes?: boolean;     // default: true
-  interactiveOnly?: boolean;   // default: false
-  filter?: string;             // 'interactive' | 'all', default: 'all'
+  maxDepth?: number;                    // default: -1 (unlimited)
+  maxOutputChars?: number;              // default: 50000
+  includePageStats?: boolean;           // default: true
+  pierceIframes?: boolean;              // default: true
+  interactiveOnly?: boolean;            // default: false
+  filter?: string;                      // 'interactive' | 'all', default: 'all'
+  includeUserAgentShadowDOM?: boolean;  // default: false
 }
 
 export interface PageStats {
@@ -41,6 +42,8 @@ interface DOMNode {
   children?: DOMNode[];
   contentDocument?: DOMNode;
   nodeValue?: string;
+  shadowRoots?: DOMNode[];
+  shadowRootType?: 'open' | 'closed' | 'user-agent';
 }
 
 // Node types
@@ -146,6 +149,7 @@ interface SerializeContext {
   maxDepth: number;
   pierceIframes: boolean;
   interactiveOnly: boolean;
+  includeUserAgentShadowDOM: boolean;
 }
 
 /**
@@ -215,7 +219,39 @@ function serializeNode(
     return; // children are inside contentDocument
   }
 
-  // Recurse into children
+  // Handle shadow roots (before regular children to match DOM rendering order)
+  if (node.shadowRoots && node.shadowRoots.length > 0) {
+    for (const shadowRoot of node.shadowRoots) {
+      if (ctx.truncated) return;
+
+      // Skip user-agent shadow roots unless explicitly requested
+      if (!ctx.includeUserAgentShadowDOM && shadowRoot.shadowRootType === 'user-agent') continue;
+
+      const shadowType = shadowRoot.shadowRootType || 'open';
+      const childIndent = '  '.repeat(depth + 1);
+      const separator = `${childIndent}--shadow-root-- (${shadowType})\n`;
+
+      if (ctx.totalChars + separator.length > ctx.maxOutputChars) {
+        const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
+        ctx.lines.push(truncationMsg);
+        ctx.truncated = true;
+        return;
+      }
+
+      ctx.lines.push(separator);
+      ctx.totalChars += separator.length;
+
+      // Shadow root children at depth+2 (inside shadow root boundary)
+      if (shadowRoot.children) {
+        for (const child of shadowRoot.children) {
+          serializeNode(child, depth + 2, ctx);
+          if (ctx.truncated) return;
+        }
+      }
+    }
+  }
+
+  // Recurse into children (light DOM)
   if (node.children) {
     for (const child of node.children) {
       serializeNode(child, depth + 1, ctx);
@@ -237,6 +273,7 @@ export async function serializeDOM(
   const includePageStats = options?.includePageStats ?? true;
   const pierceIframes = options?.pierceIframes ?? true;
   const interactiveOnly = (options?.interactiveOnly ?? false) || options?.filter === 'interactive';
+  const includeUserAgentShadowDOM = options?.includeUserAgentShadowDOM ?? false;
 
   // Get page stats via page.evaluate
   const pageStats = await page.evaluate(() => ({
@@ -273,6 +310,7 @@ export async function serializeDOM(
     maxDepth,
     pierceIframes,
     interactiveOnly,
+    includeUserAgentShadowDOM,
   };
 
   // Serialize from root
