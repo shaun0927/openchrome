@@ -1129,7 +1129,10 @@ export class CDPClient {
         });
       }
 
-      // 3. Ensure plugins array is non-empty (headless Chrome has 0 plugins)
+      // 3. Ensure plugins array is non-empty (headless Chrome has 0 plugins).
+      // Individual entries are plain objects, not Plugin instances — sophisticated
+      // detectors using instanceof Plugin will see through this. Turnstile and
+      // most anti-bot systems only check plugins.length > 0.
       if (navigator.plugins.length === 0) {
         Object.defineProperty(navigator, 'plugins', {
           get: () => {
@@ -1157,6 +1160,7 @@ export class CDPClient {
       if (!navigator.languages || navigator.languages.length === 0) {
         Object.defineProperty(navigator, 'languages', {
           get: () => ['en-US', 'en'],
+          configurable: true,
         });
       }
     }).catch(() => {});
