@@ -72,6 +72,10 @@ const definition: MCPToolDefinition = {
         enum: ['high', 'normal', 'low'],
         description: 'Screenshot quality. low: reduced resolution and quality for smaller payload.',
       },
+      includeUserAgentShadowDOM: {
+        type: 'boolean',
+        description: 'Include user-agent shadow DOM in hit detection. Default: false',
+      },
     },
     required: ['action', 'tabId'],
   },
@@ -89,6 +93,7 @@ const handler: ToolHandler = async (
   const scrollDirection = args.scroll_direction as string | undefined;
   const scrollAmount = (args.scroll_amount as number) || 3;
   const ref = args.ref as string | undefined;
+  const includeUAShadow = (args.includeUserAgentShadowDOM as boolean) ?? false;
 
   const sessionManager = getSessionManager();
 
@@ -276,7 +281,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
+        const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
         const { delta: leftDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
 
         // Internal fallback: if hit non-interactive element, suggest but don't auto-retry
@@ -325,7 +330,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const rightClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
+        const rightClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
         const { delta: rightDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' }));
 
         const rightClickText = rightClickValidation.warning
@@ -371,7 +376,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const doubleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
+        const doubleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
         const { delta: doubleDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 }));
 
         const doubleClickText = doubleClickValidation.warning
@@ -417,7 +422,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const tripleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1]);
+        const tripleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
         const { delta: tripleDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 }));
 
         const tripleClickText = tripleClickValidation.warning
@@ -772,13 +777,14 @@ async function getHitElementInfo(
   page: import('puppeteer-core').Page,
   cdpClient: ReturnType<ReturnType<typeof getSessionManager>['getCDPClient']>,
   x: number,
-  y: number
+  y: number,
+  includeUserAgentShadowDOM = false,
 ): Promise<string> {
   try {
     const locationResult = await cdpClient.send<{ backendNodeId: number; nodeId: number }>(
       page,
       'DOM.getNodeForLocation',
-      { x, y, includeUserAgentShadowDOM: false }
+      { x, y, includeUserAgentShadowDOM }
     );
 
     const backendNodeId = locationResult?.backendNodeId;
