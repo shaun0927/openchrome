@@ -131,6 +131,11 @@ describe('Anti-hang defenses in createPage()', () => {
         });
       }).catch(() => {});
 
+      // Fix 6: Chrome automation artifacts override (#257)
+      mockPage.evaluateOnNewDocument(() => {
+        // Combined block: chrome.runtime, Permissions API, navigator.plugins, navigator.languages
+      }).catch(() => {});
+
       // Fix 4: Download behavior deny
       (mockCdpClient as any).send(mockPage, 'Page.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
 
@@ -201,8 +206,8 @@ describe('Anti-hang defenses in createPage()', () => {
   describe('window.print() override', () => {
     test('calls evaluateOnNewDocument on created pages', async () => {
       const mockPage = await acquireMockPage('target-print');
-      // 2 calls: window.print suppression + navigator.webdriver override
-      expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledTimes(2);
+      // 3 calls: window.print suppression + navigator.webdriver override + stealth artifacts
+      expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledTimes(3);
       expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledWith(
         expect.any(Function),
       );
@@ -238,7 +243,7 @@ describe('Anti-hang defenses in createPage()', () => {
     test('calls evaluateOnNewDocument for webdriver override', async () => {
       const mockPage = await acquireMockPage('target-webdriver');
       // Second evaluateOnNewDocument call is the webdriver override
-      expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledTimes(2);
+      expect(mockPage.evaluateOnNewDocument).toHaveBeenCalledTimes(3);
       const calls = mockPage.evaluateOnNewDocument.mock.calls;
       // Both calls should pass a function
       expect(typeof calls[0][0]).toBe('function');
