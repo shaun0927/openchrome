@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shadow DOM E2E Test</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    .section { margin: 20px 0; padding: 16px; border: 1px solid #ccc; border-radius: 8px; }
+    h2 { margin-top: 0; }
+    #results { margin-top: 20px; padding: 12px; background: #f0f0f0; min-height: 40px; }
+  </style>
+</head>
+<body>
+  <h1>Shadow DOM E2E Test Page</h1>
+
+  <!-- Section 1: Light DOM (baseline) -->
+  <div class="section" id="light-dom-section">
+    <h2>Light DOM</h2>
+    <button id="light-button">Light Button</button>
+    <input id="light-input" type="text" placeholder="Light input field">
+  </div>
+
+  <!-- Section 2: Open Shadow DOM -->
+  <div class="section" id="open-shadow-section">
+    <h2>Open Shadow DOM</h2>
+    <div id="open-shadow-host"></div>
+  </div>
+
+  <!-- Section 3: Closed Shadow DOM -->
+  <div class="section" id="closed-shadow-section">
+    <h2>Closed Shadow DOM</h2>
+    <div id="closed-shadow-host"></div>
+  </div>
+
+  <!-- Section 4: Nested Shadow DOM -->
+  <div class="section" id="nested-shadow-section">
+    <h2>Nested Shadow DOM</h2>
+    <div id="nested-shadow-host"></div>
+  </div>
+
+  <!-- Result display -->
+  <div id="results">Click results appear here</div>
+
+  <script>
+    const results = document.getElementById('results');
+    function logResult(msg) {
+      results.textContent = msg;
+    }
+
+    // === Open Shadow DOM ===
+    const openHost = document.getElementById('open-shadow-host');
+    const openShadow = openHost.attachShadow({ mode: 'open' });
+    openShadow.innerHTML = `
+      <style>button { background: #4CAF50; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin: 4px; }</style>
+      <button id="open-shadow-btn" onclick="document.getElementById('results').textContent = 'Open shadow button clicked!'">Open Shadow Button</button>
+      <input id="open-shadow-input" type="text" placeholder="Open shadow input">
+      <p id="open-shadow-text">This text is inside an open shadow root</p>
+    `;
+
+    // === Closed Shadow DOM ===
+    const closedHost = document.getElementById('closed-shadow-host');
+    const closedShadow = closedHost.attachShadow({ mode: 'closed' });
+    closedShadow.innerHTML = `
+      <style>button { background: #f44336; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin: 4px; }</style>
+      <button id="closed-shadow-btn" onclick="document.getElementById('results').textContent = 'Closed shadow button clicked!'">Closed Shadow Button</button>
+      <input id="closed-shadow-input" type="text" placeholder="Closed shadow input">
+      <p id="closed-shadow-text">This text is inside a closed shadow root</p>
+    `;
+
+    // === Nested Shadow DOM (shadow inside shadow) ===
+    const nestedHost = document.getElementById('nested-shadow-host');
+    const outerShadow = nestedHost.attachShadow({ mode: 'open' });
+    outerShadow.innerHTML = `
+      <style>div { padding: 8px; border: 1px dashed #999; margin: 4px; }</style>
+      <p id="outer-shadow-text">Outer shadow level</p>
+      <div id="inner-shadow-host"></div>
+    `;
+    const innerHost = outerShadow.getElementById('inner-shadow-host');
+    const innerShadow = innerHost.attachShadow({ mode: 'closed' });
+    innerShadow.innerHTML = `
+      <style>button { background: #FF9800; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }</style>
+      <button id="nested-inner-btn" onclick="document.getElementById('results').textContent = 'Nested inner button clicked!'">Nested Inner Button</button>
+      <p id="nested-inner-text">This is deeply nested (open > closed)</p>
+    `;
+  </script>
+</body>
+</html>
