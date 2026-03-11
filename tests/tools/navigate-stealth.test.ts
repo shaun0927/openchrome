@@ -216,4 +216,137 @@ describe('NavigateTool - Stealth Mode', () => {
       );
     });
   });
+
+  describe('stealth bypasses tab reuse (#286)', () => {
+    test('stealth=true skips tab reuse when worker has 1 existing tab', async () => {
+      // Setup: create a session with an existing tab in the default worker
+      await mockSessionManager.createTarget(testSessionId, 'https://already-open.com');
+
+      const handler = await getNavigateHandler();
+
+      await handler(testSessionId, {
+        url: 'https://turnstile-protected.com',
+        stealth: true,
+      });
+
+      // Should use createTargetStealth, NOT smartGoto (tab reuse)
+      expect((mockSessionManager as any).createTargetStealth).toHaveBeenCalledTimes(1);
+      expect((mockSessionManager as any).createTargetStealth).toHaveBeenCalledWith(
+        testSessionId,
+        'https://turnstile-protected.com',
+        undefined,
+        5000
+      );
+      expect(mockSmartGotoFn).not.toHaveBeenCalled();
+    });
+
+    test('stealth=false still reuses existing tab (tab reuse unchanged)', async () => {
+      // Setup: create a session with an existing tab in the default worker
+      await mockSessionManager.createTarget(testSessionId, 'https://already-open.com');
+
+      const handler = await getNavigateHandler();
+
+      await handler(testSessionId, {
+        url: 'https://normal-page.com',
+        // stealth not set — should reuse existing tab
+      });
+
+      // Should reuse tab via smartGoto, NOT create new target
+      expect(mockSmartGotoFn).toHaveBeenCalledTimes(1);
+      expect((mockSessionManager as any).createTargetStealth).not.toHaveBeenCalled();
+      // createTarget should NOT be called again (reuse path)
+      expect(mockSessionManager.createTarget).toHaveBeenCalledTimes(1); // only the setup call
+    });
+
+    test('stealth=true with custom settleMs skips tab reuse', async () => {
+      await mockSessionManager.createTarget(testSessionId, 'https://already-open.com');
+
+      const handler = await getNavigateHandler();
+
+      await handler(testSessionId, {
+        url: 'https://turnstile-protected.com',
+        stealth: true,
+        stealthSettleMs: 15000,
+      });
+
+      expect((mockSessionManager as any).createTargetStealth).toHaveBeenCalledWith(
+        testSessionId,
+        'https://turnstile-protected.com',
+        undefined,
+        15000
+      );
+      expect(mockSmartGotoFn).not.toHaveBeenCalled();
+    });
+
+    test('stealth=true with specific workerId skips tab reuse on that worker', async () => {
+      // Create a worker with an existing tab
+      await mockSessionManager.createWorker(testSessionId, { id: 'worker-stealth' });
+      await mockSessionManager.createTarget(testSessionId, 'https://already-open.com', 'worker-stealth');
+
+      const handler = await getNavigateHandler();
+
+      await handler(testSessionId, {
+        url: 'https://turnstile-protected.com',
+        stealth: true,
+        workerId: 'worker-stealth',
+      });
+
+      expect((mockSessionManager as any).createTargetStealth).toHaveBeenCalledWith(
+        testSessionId,
+        'https://turnstile-protected.com',
+        'worker-stealth',
+        5000
+      );
+      expect(mockSmartGotoFn).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ─── Stealth defense source verification (#286) ──────────────────────────────
+
+describe('Stealth: navigator.webdriver configurable property (#286)', () => {
+  let clientSource: string;
+
+  beforeAll(() => {
+    const clientPath = require('path').join(__dirname, '../../src/cdp/client.ts');
+    clientSource = require('fs').readFileSync(clientPath, 'utf8');
+  });
+
+  test('configurePageDefenses webdriver override includes configurable: true', () => {
+    // Extract the configurePageDefenses method body
+    const methodStart = clientSource.indexOf('configurePageDefenses(page: Page)');
+    expect(methodStart).toBeGreaterThan(-1);
+
+    const nextMethod = clientSource.indexOf('\n  /**', methodStart + 50);
+    const defenseBlock = clientSource.slice(methodStart, nextMethod > methodStart ? nextMethod : undefined);
+
+    // Find the webdriver defineProperty block specifically
+    const webdriverStart = defenseBlock.indexOf("navigator, 'webdriver'");
+    expect(webdriverStart).toBeGreaterThan(-1);
+
+    // Get the surrounding block (up to closing })
+    const blockEnd = defenseBlock.indexOf('}).catch', webdriverStart);
+    const webdriverBlock = defenseBlock.slice(webdriverStart, blockEnd);
+
+    expect(webdriverBlock).toContain('configurable: true');
+  });
+
+  test('createTargetStealth post-attach webdriver override includes configurable: true', () => {
+    // Extract the createTargetStealth method body
+    const methodStart = clientSource.indexOf('createTargetStealth(');
+    expect(methodStart).toBeGreaterThan(-1);
+
+    const methodEnd = clientSource.indexOf('\n  /**', methodStart + 50);
+    const stealthBlock = clientSource.slice(methodStart, methodEnd > methodStart ? methodEnd : undefined);
+
+    // Find the page.evaluate webdriver override
+    const evalStart = stealthBlock.indexOf('page.evaluate');
+    expect(evalStart).toBeGreaterThan(-1);
+
+    const evalEnd = stealthBlock.indexOf('.catch', evalStart);
+    const evalBlock = stealthBlock.slice(evalStart, evalEnd);
+
+    expect(evalBlock).toContain("navigator, 'webdriver'");
+    expect(evalBlock).toContain('configurable: true');
+  });
 });
