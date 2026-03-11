@@ -76,6 +76,10 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include user-agent shadow DOM in hit detection. Default: false',
       },
+      force: {
+        type: 'boolean',
+        description: 'Only for action "screenshot". Force full screenshot, bypassing adaptive degradation. Default: false.',
+      },
     },
     required: ['action', 'tabId'],
   },
@@ -133,19 +137,27 @@ const handler: ToolHandler = async (
         } as const;
 
         // Phase 1.5: Adaptive screenshot — decide response mode based on repetition
+        const force = (args.force as boolean) ?? false;
         const adaptive = AdaptiveScreenshot.getInstance();
+
+        // Force mode: reset adaptive history to prevent degradation spiral
+        if (force) {
+          adaptive.reset(tabId);
+        }
+
         const screenshotMode = await adaptive.evaluate(page, tabId);
+        const effectiveMode = force ? 'full' : screenshotMode;
 
         // Determine effective quality: explicit arg overrides adaptive suggestion
         const qualityArg = args.screenshotQuality as string | undefined;
         const effectiveQuality: 'high' | 'normal' | 'low' =
           (qualityArg === 'high' || qualityArg === 'normal' || qualityArg === 'low')
             ? qualityArg
-            : adaptive.getQualityForMode(screenshotMode);
+            : adaptive.getQualityForMode(effectiveMode);
         const preset = QUALITY_PRESETS[effectiveQuality];
 
         // text_only mode: skip expensive screenshot, return visual summary
-        if (screenshotMode === 'text_only') {
+        if (effectiveMode === 'text_only') {
           const summary = await generateVisualSummary(page);
           return {
             content: [{
@@ -198,7 +210,7 @@ const handler: ToolHandler = async (
           ];
 
           // annotated mode: append note about repeated screenshot
-          if (screenshotMode === 'annotated') {
+          if (effectiveMode === 'annotated') {
             content.push({ type: 'text', text: adaptive.getAnnotation() });
           }
 

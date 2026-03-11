@@ -10,7 +10,7 @@
 import { Page } from 'puppeteer-core';
 import { CDPClient } from '../cdp/client';
 import { FoundElement } from './element-finder';
-import { discoverShadowElements, DEEP_WALK_ELEMENTS_JS } from './shadow-dom';
+import { discoverShadowElements, DEEP_WALK_ELEMENTS_JS, getAllShadowRoots, querySelectorInShadowRoots } from './shadow-dom';
 import { withTimeout } from './with-timeout';
 
 /**
@@ -410,6 +410,71 @@ export async function discoverFormFields(
 
   // Resolve backend node IDs via batched CDP
   await resolveBackendNodeIds(page, cdpClient, FORM_FIELD_TAG, results);
+
+  // CDP shadow root form field discovery (handles closed shadow roots)
+  try {
+    const jsBackendIds = new Set(
+      results.filter(r => r.backendDOMNodeId > 0).map(r => r.backendDOMNodeId),
+    );
+    const { shadowRoots } = await getAllShadowRoots(page, cdpClient);
+    const formSelectors = [
+      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"])',
+      'textarea',
+      'select',
+      '[contenteditable="true"]',
+      '[role="textbox"]',
+      '[role="combobox"]',
+    ];
+    for (const selector of formSelectors) {
+      const shadowMatches = await querySelectorInShadowRoots(page, cdpClient, selector, shadowRoots);
+      for (const backendId of shadowMatches) {
+        if (jsBackendIds.has(backendId)) continue;
+        try {
+          const { node } = await cdpClient.send<{
+            node: { localName: string; nodeName: string; attributes?: string[] };
+          }>(page, 'DOM.describeNode', { backendNodeId: backendId, depth: 0 });
+          const { model } = await cdpClient.send<{
+            model: { content: number[] };
+          }>(page, 'DOM.getBoxModel', { backendNodeId: backendId });
+          const x = model.content[0];
+          const y = model.content[1];
+          const width = model.content[2] - x;
+          const height = model.content[5] - y;
+          if (width <= 0 || height <= 0) continue;
+          const attrs = new Map<string, string>();
+          const rawAttrs = node.attributes ?? [];
+          for (let i = 0; i < rawAttrs.length - 1; i += 2) {
+            attrs.set(rawAttrs[i], rawAttrs[i + 1]);
+          }
+          jsBackendIds.add(backendId);
+          results.push({
+            backendDOMNodeId: backendId,
+            fieldName:
+              attrs.get('aria-label') ||
+              attrs.get('name') ||
+              attrs.get('placeholder') ||
+              `field_${results.length}`,
+            tagName: node.localName || node.nodeName.toLowerCase(),
+            type: attrs.get('type'),
+            name: attrs.get('name'),
+            placeholder: attrs.get('placeholder'),
+            ariaLabel: attrs.get('aria-label') || undefined,
+            label: undefined,
+            rect: {
+              x: x + width / 2,
+              y: y + height / 2,
+              width,
+              height,
+            },
+          });
+        } catch {
+          // Individual node resolution failure is non-fatal
+        }
+      }
+    }
+  } catch {
+    // Shadow discovery is non-fatal — JS results are still valid
+  }
 
   return results;
 }

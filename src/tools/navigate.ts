@@ -54,6 +54,7 @@ const handler: ToolHandler = async (
   const workerId = args.workerId as string | undefined;
   const stealth = args.stealth as boolean | undefined;
   const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 5000, 1000), 30000);
+  const stealthIgnoredWarning = stealth && tabId ? 'stealth mode only works when creating new tabs (omit tabId). The stealth parameter was ignored for this navigation.' : undefined;
   const sessionManager = getSessionManager();
 
   if (!url) {
@@ -110,7 +111,7 @@ const handler: ToolHandler = async (
       // Tab reuse: if worker has exactly 1 existing tab, reuse it instead of creating new
       const resolvedWorkerId = workerId || 'default';
       const existingTargets = sessionManager.getWorkerTargetIds(sessionId, resolvedWorkerId);
-      if (existingTargets.length === 1) {
+      if (existingTargets.length === 1 && !stealth) {
         const existingTabId = existingTargets[0];
         if (await sessionManager.isTargetValid(existingTabId)) {
           const page = await sessionManager.getPage(sessionId, existingTabId, undefined, 'navigate');
@@ -283,6 +284,7 @@ const handler: ToolHandler = async (
         elementCount: backElementCount,
         ...(backSummary && { visualSummary: backSummary }),
         ...(backBlocking && { blockingPage: backBlocking }),
+        ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       });
       return {
         content: [{ type: 'text', text: backResultText }],
@@ -316,6 +318,7 @@ const handler: ToolHandler = async (
         elementCount: fwdElementCount,
         ...(fwdSummary && { visualSummary: fwdSummary }),
         ...(fwdBlocking && { blockingPage: fwdBlocking }),
+        ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       });
       return {
         content: [{ type: 'text', text: fwdResultText }],
@@ -423,6 +426,7 @@ const handler: ToolHandler = async (
       elementCount: navElementCount,
       ...(navSummary && { visualSummary: navSummary }),
       ...(navBlocking && { blockingPage: navBlocking }),
+      ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
     });
     return {
       content: [{ type: 'text', text: navResultText }],
