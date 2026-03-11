@@ -78,7 +78,7 @@ const definition: MCPToolDefinition = {
       },
       force: {
         type: 'boolean',
-        description: 'Force full screenshot, bypassing adaptive degradation.',
+        description: 'Only for action "screenshot". Force full screenshot, bypassing adaptive degradation. Default: false.',
       },
     },
     required: ['action', 'tabId'],
@@ -98,7 +98,6 @@ const handler: ToolHandler = async (
   const scrollAmount = (args.scroll_amount as number) || 3;
   const ref = args.ref as string | undefined;
   const includeUAShadow = (args.includeUserAgentShadowDOM as boolean) ?? false;
-  const force = (args.force as boolean) ?? false;
 
   const sessionManager = getSessionManager();
 
@@ -138,10 +137,15 @@ const handler: ToolHandler = async (
         } as const;
 
         // Phase 1.5: Adaptive screenshot — decide response mode based on repetition
+        const force = (args.force as boolean) ?? false;
         const adaptive = AdaptiveScreenshot.getInstance();
-        const screenshotMode = await adaptive.evaluate(page, tabId);
 
-        // Force mode: bypass adaptive degradation
+        // Force mode: reset adaptive history to prevent degradation spiral
+        if (force) {
+          adaptive.reset(tabId);
+        }
+
+        const screenshotMode = await adaptive.evaluate(page, tabId);
         const effectiveMode = force ? 'full' : screenshotMode;
 
         // Determine effective quality: explicit arg overrides adaptive suggestion
