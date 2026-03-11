@@ -76,6 +76,10 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include user-agent shadow DOM in hit detection. Default: false',
       },
+      force: {
+        type: 'boolean',
+        description: 'Force full screenshot, bypassing adaptive degradation.',
+      },
     },
     required: ['action', 'tabId'],
   },
@@ -94,6 +98,7 @@ const handler: ToolHandler = async (
   const scrollAmount = (args.scroll_amount as number) || 3;
   const ref = args.ref as string | undefined;
   const includeUAShadow = (args.includeUserAgentShadowDOM as boolean) ?? false;
+  const force = (args.force as boolean) ?? false;
 
   const sessionManager = getSessionManager();
 
@@ -136,16 +141,19 @@ const handler: ToolHandler = async (
         const adaptive = AdaptiveScreenshot.getInstance();
         const screenshotMode = await adaptive.evaluate(page, tabId);
 
+        // Force mode: bypass adaptive degradation
+        const effectiveMode = force ? 'full' : screenshotMode;
+
         // Determine effective quality: explicit arg overrides adaptive suggestion
         const qualityArg = args.screenshotQuality as string | undefined;
         const effectiveQuality: 'high' | 'normal' | 'low' =
           (qualityArg === 'high' || qualityArg === 'normal' || qualityArg === 'low')
             ? qualityArg
-            : adaptive.getQualityForMode(screenshotMode);
+            : adaptive.getQualityForMode(effectiveMode);
         const preset = QUALITY_PRESETS[effectiveQuality];
 
         // text_only mode: skip expensive screenshot, return visual summary
-        if (screenshotMode === 'text_only') {
+        if (effectiveMode === 'text_only') {
           const summary = await generateVisualSummary(page);
           return {
             content: [{
@@ -198,7 +206,7 @@ const handler: ToolHandler = async (
           ];
 
           // annotated mode: append note about repeated screenshot
-          if (screenshotMode === 'annotated') {
+          if (effectiveMode === 'annotated') {
             content.push({ type: 'text', text: adaptive.getAnnotation() });
           }
 
