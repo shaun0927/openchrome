@@ -12,6 +12,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
+import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
@@ -371,6 +372,84 @@ const handler: ToolHandler = async (
       scope,
       categoryFlags
     ), 10000, 'inspect');
+
+    // CDP pass: supplement with closed shadow root elements
+    try {
+      const cdpClient = sessionManager.getCDPClient();
+      const { shadowRoots } = await getAllShadowRoots(page, cdpClient);
+      const closedRoots = shadowRoots.filter(sr => sr.shadowRootType !== 'open');
+
+      if (closedRoots.length > 0) {
+        // Supplement interactive counts from closed shadow roots
+        if (categories.has('interactive')) {
+          const selectorToLabel: [string, string][] = [
+            ['button', 'button'],
+            ['[role="button"]', 'button'],
+            ['a[href]', 'link'],
+            ['input', 'input'],
+            ['textarea', 'textarea'],
+            ['select', 'select'],
+            ['[role="combobox"]', 'combobox'],
+            ['[role="listbox"]', 'listbox'],
+            ['[role="checkbox"]', 'checkbox'],
+            ['[role="radio"]', 'radio'],
+            ['[role="switch"]', 'switch'],
+            ['[role="slider"]', 'slider'],
+            ['[role="tab"]', 'tab'],
+            ['[role="menuitem"]', 'menuitem'],
+          ];
+          for (const [selector, label] of selectorToLabel) {
+            const ids = await querySelectorInShadowRoots(page, cdpClient, selector, closedRoots);
+            if (ids.length > 0) {
+              inspectResult.interactiveCounts[label] = (inspectResult.interactiveCounts[label] || 0) + ids.length;
+            }
+          }
+        }
+
+        // Supplement form fields from closed shadow roots
+        if (categories.has('form') && scope !== 'interactive') {
+          const formSelectors = [
+            'input:not([type="hidden"]):not([type="submit"]):not([type="button"])',
+            'textarea',
+            'select',
+          ];
+          for (const selector of formSelectors) {
+            const ids = await querySelectorInShadowRoots(page, cdpClient, selector, closedRoots);
+            for (const backendNodeId of ids) {
+              try {
+                const { node } = await cdpClient.send<{
+                  node: { localName: string; nodeName: string; attributes?: string[] };
+                }>(page, 'DOM.describeNode', { backendNodeId, depth: 0 });
+
+                const { model } = await cdpClient.send<{
+                  model: { content: number[] };
+                }>(page, 'DOM.getBoxModel', { backendNodeId });
+
+                if (!model?.content || model.content.length < 8) continue;
+
+                const attrs = new Map<string, string>();
+                const rawAttrs = node.attributes || [];
+                for (let i = 0; i < rawAttrs.length - 1; i += 2) {
+                  attrs.set(rawAttrs[i], rawAttrs[i + 1]);
+                }
+
+                const tagName = node.localName || node.nodeName.toLowerCase();
+                const type = attrs.get('type') || tagName;
+                if (type === 'hidden' || type === 'password') continue;
+                const name = attrs.get('placeholder') || attrs.get('aria-label') || attrs.get('name') || attrs.get('id') || '';
+                const id = attrs.get('id') || '';
+
+                inspectResult.formFields.push({ type, name: name.slice(0, 40), value: '', id });
+              } catch {
+                // non-fatal — stale node or no box model
+              }
+            }
+          }
+        }
+      }
+    } catch (cdpErr) {
+      console.error('[inspect] CDP shadow pass error (non-fatal):', cdpErr);
+    }
 
     // Format the output — only include sections for requested categories
     const lines: string[] = [`[Inspect: "${query}"]`];
