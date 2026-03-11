@@ -20,7 +20,7 @@ Cloudflare Turnstile detects browser automation through multiple signals:
 
 ### Stealth Navigation Mode
 
-> **Available since v1.7.12.** Use the `stealth` parameter on the `navigate` tool to bypass Cloudflare Turnstile and similar anti-bot challenges.
+> **Available since v1.7.13.** Use the `stealth` parameter on the `navigate` tool to bypass Cloudflare Turnstile and similar anti-bot challenges.
 
 The `stealth` parameter on the `navigate` tool will open tabs via Chrome's HTTP debug API **without attaching CDP**, allowing Turnstile challenges to complete without detecting automation:
 

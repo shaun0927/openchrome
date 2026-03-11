@@ -1171,7 +1171,7 @@ export class CDPClient {
               { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
               { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
             ];
-            const arr = Object.create(PluginArray.prototype);
+            const arr = typeof PluginArray !== 'undefined' ? Object.create(PluginArray.prototype) : [];
             for (let i = 0; i < plugins.length; i++) {
               arr[i] = plugins[i];
             }
@@ -1292,8 +1292,8 @@ export class CDPClient {
               { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
               { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
             ];
-            // Mimic PluginArray behavior
-            const arr = Object.create(PluginArray.prototype);
+            // Mimic PluginArray behavior (guard for environments where PluginArray is unavailable)
+            const arr = typeof PluginArray !== 'undefined' ? Object.create(PluginArray.prototype) : [];
             for (let i = 0; i < plugins.length; i++) {
               arr[i] = plugins[i];
             }
