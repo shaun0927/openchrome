@@ -1129,11 +1129,69 @@ export class CDPClient {
     this.targetIdIndex.set(targetId, page);
     this.configurePageDefenses(page);
 
-    // Step 6: Apply critical stealth defenses immediately to the already-loaded page.
+    // Step 6: Apply all stealth defenses immediately to the already-loaded page.
     // configurePageDefenses() registers evaluateOnNewDocument scripts that only run on
     // future navigations. The current page loaded without CDP, so we must patch it now.
     await page.evaluate(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      // 1. navigator.webdriver
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+
+      // 2. chrome.runtime shape
+      if ((window as any).chrome) {
+        const originalChrome = (window as any).chrome;
+        if (!originalChrome.runtime) {
+          Object.defineProperty(originalChrome, 'runtime', {
+            get: () => ({ id: undefined }),
+            configurable: true,
+          });
+        }
+      }
+
+      // 3. Permissions API — prevent "denied" responses that flag automation
+      if (navigator.permissions) {
+        const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+        Object.defineProperty(navigator.permissions, 'query', {
+          value: (params: { name: string }) => {
+            if (params.name === 'notifications') {
+              return Promise.resolve(Object.assign(new EventTarget(), { state: 'prompt', onchange: null }) as any);
+            }
+            return originalQuery(params as PermissionDescriptor);
+          },
+          writable: true,
+          configurable: true,
+        });
+      }
+
+      // 4. navigator.plugins — headless Chrome has 0 plugins
+      if (navigator.plugins.length === 0) {
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => {
+            const plugins = [
+              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+            ];
+            const arr = typeof PluginArray !== 'undefined' ? Object.create(PluginArray.prototype) : [];
+            for (let i = 0; i < plugins.length; i++) {
+              arr[i] = plugins[i];
+            }
+            Object.defineProperty(arr, 'length', { value: plugins.length });
+            arr.item = (i: number) => arr[i] || null;
+            arr.namedItem = (name: string) => plugins.find(p => p.name === name) || null;
+            arr.refresh = () => {};
+            return arr;
+          },
+          configurable: true,
+        });
+      }
+
+      // 5. navigator.languages — ensure populated
+      if (!navigator.languages || navigator.languages.length === 0) {
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['en-US', 'en'],
+          configurable: true,
+        });
+      }
     }).catch(() => {});
 
     console.error(`[CDPClient] Stealth tab ${targetId} attached after settle period`);
@@ -1186,6 +1244,7 @@ export class CDPClient {
     page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
+        configurable: true,
       });
     }).catch(() => {});
 
@@ -1233,8 +1292,8 @@ export class CDPClient {
               { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
               { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
             ];
-            // Mimic PluginArray behavior
-            const arr = Object.create(PluginArray.prototype);
+            // Mimic PluginArray behavior (guard for environments where PluginArray is unavailable)
+            const arr = typeof PluginArray !== 'undefined' ? Object.create(PluginArray.prototype) : [];
             for (let i = 0; i < plugins.length; i++) {
               arr[i] = plugins[i];
             }
