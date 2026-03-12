@@ -11,6 +11,14 @@ import type { ToolCallEvent } from '../dashboard/types.js';
 export type ProgressStatus = 'progressing' | 'stalling' | 'stuck';
 
 /**
+ * Tools that are purely observational — the LLM uses them to check state,
+ * not to make progress. Successful calls to these tools should NOT reset
+ * the consecutive error counter, because the "try → observe → retry" loop
+ * is the most common hang pattern.
+ */
+const OBSERVATION_TOOLS = new Set(['computer', 'read_page', 'tabs_context']);
+
+/**
  * Signals in tool results that indicate NO meaningful progress was made,
  * even if the tool call technically "succeeded".
  */
@@ -61,6 +69,12 @@ export class ProgressTracker {
     for (const call of recentCalls) {
       if (call.result === 'error') {
         consecutiveErrors++;
+        consecutiveNonProgress++;
+      } else if (OBSERVATION_TOOLS.has(call.toolName) && !call.error) {
+        // Observation-only tools (screenshot, read_page, tabs_context) are the LLM
+        // checking state between retries. They should NOT reset the error counter
+        // or count as progress — the "try → observe → retry" loop is the most
+        // common hang pattern that previously went undetected.
         consecutiveNonProgress++;
       } else {
         // Check if the successful call had non-progress signals
