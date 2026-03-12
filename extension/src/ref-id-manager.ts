@@ -94,10 +94,9 @@ export class RefIdManager {
       sessionRefs.delete(tabId);
     }
 
-    const sessionCounters = this.counters.get(sessionId);
-    if (sessionCounters) {
-      sessionCounters.set(tabId, 0);
-    }
+    // Do NOT reset counter to 0 — monotonically increasing counters prevent
+    // ref aliasing where a new ref_1 could collide with a previous ref_1
+    // that the LLM still has in its context window.
   }
 
   /**
