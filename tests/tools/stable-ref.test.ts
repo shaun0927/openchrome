@@ -144,10 +144,12 @@ describe('Stable Ref Formats', () => {
       const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 12345, 'textbox', 'Email');
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ object: { objectId: 'obj-1' } })
-        .mockResolvedValueOnce({
-          result: { value: { success: true, message: 'Set value to "hello"' } },
-        });
+        .mockResolvedValueOnce({ object: { objectId: 'obj-1' } }) // DOM.resolveNode
+        .mockResolvedValueOnce({ result: { value: { tagName: 'input', type: 'text', disabled: false, readOnly: false, contentEditable: false } } }) // element info
+        .mockResolvedValueOnce({}) // DOM.focus
+        .mockResolvedValueOnce({}) // Input.dispatchKeyEvent keyDown
+        .mockResolvedValueOnce({}) // Input.dispatchKeyEvent keyUp
+        .mockResolvedValueOnce({}); // Input.insertText
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
@@ -164,10 +166,12 @@ describe('Stable Ref Formats', () => {
       const handler = await getFormInputHandler();
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ object: { objectId: 'obj-2' } })
-        .mockResolvedValueOnce({
-          result: { value: { success: true, message: 'Set value to "world"' } },
-        });
+        .mockResolvedValueOnce({ object: { objectId: 'obj-2' } }) // DOM.resolveNode
+        .mockResolvedValueOnce({ result: { value: { tagName: 'input', type: 'text', disabled: false, readOnly: false, contentEditable: false } } }) // element info
+        .mockResolvedValueOnce({}) // DOM.focus
+        .mockResolvedValueOnce({}) // Input.dispatchKeyEvent keyDown
+        .mockResolvedValueOnce({}) // Input.dispatchKeyEvent keyUp
+        .mockResolvedValueOnce({}); // Input.insertText
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
@@ -184,10 +188,12 @@ describe('Stable Ref Formats', () => {
       const handler = await getFormInputHandler();
 
       mockSessionManager.mockCDPClient.send
-        .mockResolvedValueOnce({ object: { objectId: 'obj-3' } })
-        .mockResolvedValueOnce({
-          result: { value: { success: true, message: 'Set value to "test"' } },
-        });
+        .mockResolvedValueOnce({ object: { objectId: 'obj-3' } }) // DOM.resolveNode
+        .mockResolvedValueOnce({ result: { value: { tagName: 'input', type: 'text', disabled: false, readOnly: false, contentEditable: false } } }) // element info
+        .mockResolvedValueOnce({}) // DOM.focus
+        .mockResolvedValueOnce({}) // Input.dispatchKeyEvent keyDown
+        .mockResolvedValueOnce({}) // Input.dispatchKeyEvent keyUp
+        .mockResolvedValueOnce({}); // Input.insertText
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
