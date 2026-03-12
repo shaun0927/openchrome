@@ -92,6 +92,77 @@ export function createComputerTool(sessionManager: SessionManager) {
     });
   }
 
+  /**
+   * Normalize a key name to the standard DOM key value used by CDP Input.dispatchKeyEvent.
+   * Handles common aliases from macOS, Windows/Linux, and casual naming conventions.
+   */
+  function normalizeKey(key: string): string {
+    const keyMap: Record<string, string> = {
+      // Modifiers
+      ctrl: 'Control',
+      cmd: 'Meta',
+      meta: 'Meta',
+      alt: 'Alt',
+      shift: 'Shift',
+      // Common keys
+      enter: 'Enter',
+      tab: 'Tab',
+      escape: 'Escape',
+      esc: 'Escape',
+      backspace: 'Backspace',
+      delete: 'Delete',
+      // Arrow keys
+      up: 'ArrowUp',
+      down: 'ArrowDown',
+      left: 'ArrowLeft',
+      right: 'ArrowRight',
+      // Navigation keys
+      home: 'Home',
+      end: 'End',
+      pageup: 'PageUp',
+      pagedown: 'PageDown',
+      // macOS conventions
+      return: 'Enter',
+      option: 'Alt',
+      command: 'Meta',
+      // Windows/Linux conventions
+      super: 'Meta',
+      win: 'Meta',
+      windows: 'Meta',
+      // Common key names
+      space: 'Space',
+      spacebar: 'Space',
+      del: 'Delete',
+      ins: 'Insert',
+      insert: 'Insert',
+      pgup: 'PageUp',
+      pgdn: 'PageDown',
+      prtsc: 'PrintScreen',
+      printscreen: 'PrintScreen',
+      apps: 'ContextMenu',
+      contextmenu: 'ContextMenu',
+      // Lock keys
+      capslock: 'CapsLock',
+      numlock: 'NumLock',
+      scrolllock: 'ScrollLock',
+      numpadenter: 'NumpadEnter',
+    };
+
+    const mapped = keyMap[key.toLowerCase()];
+    if (mapped) return mapped;
+
+    // Single characters are always valid
+    if (key.length === 1) return key;
+
+    // For multi-character keys, provide a helpful error
+    const commonKeys = 'Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, F1-F12';
+    const commonModifiers = 'ctrl, alt, shift, cmd/meta/command, option';
+    throw new Error(
+      `Unknown key: "${key}". Common keys: ${commonKeys}. Modifiers: ${commonModifiers}. ` +
+      `Single characters (a-z, 0-9) are used directly.`
+    );
+  }
+
   function parseModifiers(modifierString?: string): number {
     if (!modifierString) return 0;
 
@@ -99,20 +170,18 @@ export function createComputerTool(sessionManager: SessionManager) {
     const parts = modifierString.toLowerCase().split('+');
 
     for (const part of parts) {
-      switch (part.trim()) {
-        case 'alt':
+      const normalized = normalizeKey(part.trim());
+      switch (normalized) {
+        case 'Alt':
           modifiers |= 1;
           break;
-        case 'ctrl':
-        case 'control':
+        case 'Control':
           modifiers |= 2;
           break;
-        case 'meta':
-        case 'cmd':
-        case 'command':
+        case 'Meta':
           modifiers |= 4;
           break;
-        case 'shift':
+        case 'Shift':
           modifiers |= 8;
           break;
       }
@@ -300,7 +369,7 @@ export function createComputerTool(sessionManager: SessionManager) {
               for (const key of keys) {
                 // Handle key combinations
                 const parts = key.split('+');
-                const mainKey = parts[parts.length - 1];
+                const mainKey = normalizeKey(parts[parts.length - 1]);
                 const keyModifiers = parts.slice(0, -1);
 
                 let modifierFlags = 0;
