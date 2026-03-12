@@ -85,10 +85,9 @@ export class RefIdManager {
       sessionRefs.delete(targetId);
     }
 
-    const sessionCounters = this.counters.get(sessionId);
-    if (sessionCounters) {
-      sessionCounters.set(targetId, 0);
-    }
+    // Do NOT reset counter to 0 — monotonically increasing counters prevent
+    // ref aliasing where a new ref_1 could collide with a previous ref_1
+    // that the LLM still has in its context window.
   }
 
   clearSessionRefs(sessionId: string): void {
@@ -102,11 +101,7 @@ export class RefIdManager {
         sessionRefs.delete(targetId);
       }
     }
-    for (const [, sessionCounters] of this.counters) {
-      if (sessionCounters.has(targetId)) {
-        sessionCounters.set(targetId, 0);
-      }
-    }
+    // Do NOT reset counters — prevent ref aliasing across generations
   }
 
   getTargetRefs(sessionId: string, targetId: string): RefEntry[] {
