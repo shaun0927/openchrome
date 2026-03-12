@@ -24,6 +24,21 @@
   <img src="assets/chart-tokens.svg" alt="Token Efficiency: OpenChrome vs Playwright" width="100%">
 </p>
 
+### How OpenChrome compares
+
+|  | OpenChrome | Playwright MCP | Chrome DevTools MCP | Vercel agent-browser |
+|---|:---:|:---:|:---:|:---:|
+| **Architecture** | MCP → CDP (direct) | MCP → Playwright → CDP | MCP → Puppeteer → CDP | CLI → Daemon → Playwright → CDP |
+| **RAM (20 parallel)** | **~300 MB** | ~5 GB+ | impractical | impractical |
+| **Bot detection** | **invisible** (real Chrome) | detected (TLS fingerprint) | detected (CDP signals) | detected (local) / cloud only |
+| **Chrome login reuse** | **built-in** | extension mode only | manual | manual state files |
+| **LLM hang prevention** | **hint engine** (17 rules) | none | none | error rewrite (5 patterns) |
+| **Shadow DOM** | **supported** | invisible | invisible | invisible |
+| **MCP native** | **yes** | yes | yes | no (CLI only) |
+| **Parallel sessions** | **1 Chrome, N tabs** | N browsers | manual tabs | N daemons |
+
+> **tl;dr** — OpenChrome talks directly to Chrome via CDP with zero middleware, reuses your real login sessions (making bot detection irrelevant), and is the only tool with a hint engine that stops LLM agents from wandering.
+
 ---
 
 ## What is OpenChrome?
