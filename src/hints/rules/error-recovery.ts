@@ -7,15 +7,15 @@ import type { HintRule } from '../hint-engine';
 
 const patterns: Array<{ test: RegExp; hint: string }> = [
   {
-    test: /ref[^a-z]*not found|invalid ref|stale ref/i,
+    test: /ref\b.+not found|invalid ref|stale ref/i,
     hint: 'Hint: Refs expire after page changes. Use read_page or find for fresh refs.',
   },
   {
-    test: /tab[^a-z]*not found|target[^a-z]*not found|invalid tab|no such tab/i,
+    test: /tab\b.+not found|target\b.+not found|invalid tab|no such tab/i,
     hint: 'Hint: Use tabs_context to list valid tabIds, or navigate to open a new page.',
   },
   {
-    test: /selector[^a-z]*(failed|not found|no match)|querySelectorAll.*returned 0|no elements? (found )?match/i,
+    test: /selector\b.*(failed|not found|no match)|querySelectorAll.*returned 0|no elements? (found )?match/i,
     hint: 'Hint: Try find(query) with natural language instead.',
   },
   {
