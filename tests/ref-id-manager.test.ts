@@ -115,14 +115,14 @@ describe('RefIdManager', () => {
       expect(manager.getRef('session-1', 1, 'ref_2')).toBeUndefined();
     });
 
-    test('should reset counter for tab', () => {
+    test('should NOT reset counter for tab (prevents ref aliasing)', () => {
       manager.generateRef('session-1', 1, 100, 'button');
       manager.generateRef('session-1', 1, 101, 'link');
 
       manager.clearTabRefs('session-1', 1);
 
       const newRef = manager.generateRef('session-1', 1, 200, 'button');
-      expect(newRef).toBe('ref_1'); // Counter reset
+      expect(newRef).toBe('ref_3'); // Counter continues, no aliasing
     });
 
     test('should not affect other tabs', () => {
