@@ -322,20 +322,18 @@ describe('ComputerTool', () => {
       expect(page.keyboard.press).toHaveBeenCalledWith('0');
     });
 
-    test('invalid multi-character key throws actionable error', async () => {
+    test('unknown multi-character keys pass through as-is (e.g., F13, NumpadAdd)', async () => {
       const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
         action: 'key',
-        text: 'InvalidKey',
+        text: 'F13',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Unknown key');
-      expect(result.content[0].text).toContain('InvalidKey');
-      expect(result.content[0].text).toContain('Common keys');
-      expect(result.content[0].text).toContain('Modifiers');
+      expect(result.isError).toBeFalsy();
+      expect(page.keyboard.press).toHaveBeenCalledWith('F13');
     });
 
     test.each([
