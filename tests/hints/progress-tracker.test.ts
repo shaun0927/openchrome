@@ -12,6 +12,7 @@ const mockCall = (
   toolName: string,
   result: 'success' | 'error' = 'success',
   error?: string,
+  args?: Record<string, unknown>,
 ): ToolCallEvent => ({
   id: `call-${Date.now()}-${++_idCounter}`,
   toolName,
@@ -21,6 +22,7 @@ const mockCall = (
   duration: 1000,
   result,
   ...(error && { error }),
+  ...(args && { args }),
 });
 
 describe('ProgressTracker', () => {
@@ -301,18 +303,19 @@ describe('ProgressTracker', () => {
   });
 
   describe('evaluate() — mixed calls', () => {
-    it('returns progressing when progress calls interrupt non-progress streak', () => {
+    it('returns stalling when observation tools (read_page) do NOT break the error streak', () => {
       const recent = [
         mockCall('navigate', 'error', 'timed out'),
-        mockCall('read_page', 'success'), // progress → breaks streak
+        mockCall('read_page', 'success'), // observation tool → does NOT break streak
         mockCall('find', 'error', 'element not found'),
       ];
       // current: success, clean → nonProgress = 0
-      // recent[0]: error → nonProgress = 1
-      // recent[1]: success no error → progress → break
-      // nonProgress = 1 → progressing
+      // recent[0]: error → nonProgress = 1, errors = 1
+      // recent[1]: read_page is observation → nonProgress = 2 (no break, no error reset)
+      // recent[2]: error → nonProgress = 3, errors = 2
+      // nonProgress = 3 → stalling
       const status = tracker.evaluate(recent, 'click_element', 'Clicked successfully', false);
-      expect(status).toBe('progressing');
+      expect(status).toBe('stalling');
     });
 
     it('returns stalling when non-progress calls include both errors and non-progress successes', () => {
@@ -343,6 +346,54 @@ describe('ProgressTracker', () => {
       // nonProgress=5 → stuck
       const status = tracker.evaluate(recent, 'navigate', 'element not found', true);
       expect(status).toBe('stuck');
+    });
+  });
+
+  describe('evaluate() — observation tool skip', () => {
+    it('detects stuck when errors are interleaved with screenshots', () => {
+      // The most common hang pattern: form_input → screenshot → form_input → screenshot → ...
+      const recent = [
+        mockCall('computer', 'success', undefined, { action: 'screenshot' }),  // screenshot (observation)
+        mockCall('form_input', 'error', 'timed out'),
+        mockCall('computer', 'success', undefined, { action: 'screenshot' }),  // screenshot (observation)
+        mockCall('form_input', 'error', 'timed out'),
+      ];
+      // current: form_input error → errors=1, nonProgress=1
+      // recent[0]: computer success (observation) → nonProgress=2 (no break)
+      // recent[1]: form_input error → errors=2, nonProgress=3
+      // recent[2]: computer success (observation) → nonProgress=4 (no break)
+      // recent[3]: form_input error → errors=3, nonProgress=5
+      // consecutiveErrors=3 → stuck
+      const status = tracker.evaluate(recent, 'form_input', 'Runtime.callFunctionOn timed out', true);
+      expect(status).toBe('stuck');
+    });
+
+    it('non-observation tools still break the error streak', () => {
+      const recent = [
+        mockCall('form_input', 'error', 'timed out'),
+        mockCall('click_element', 'success'),     // NOT observation → breaks streak
+        mockCall('form_input', 'error', 'timed out'),
+      ];
+      // current: error → errors=1, nonProgress=1
+      // recent[0]: error → errors=2, nonProgress=2
+      // recent[1]: click_element success → isLikelyProgressCall = true → break
+      // consecutiveErrors=2 → progressing
+      const status = tracker.evaluate(recent, 'form_input', 'timed out', true);
+      expect(status).toBe('progressing');
+    });
+
+    it('computer with left_click (not screenshot) breaks the error streak', () => {
+      const recent = [
+        mockCall('form_input', 'error', 'timed out'),
+        mockCall('computer', 'success', undefined, { action: 'left_click' }),  // click = progress
+        mockCall('form_input', 'error', 'timed out'),
+      ];
+      // current: error → errors=1, nonProgress=1
+      // recent[0]: error → errors=2, nonProgress=2
+      // recent[1]: computer left_click → NOT observation → isLikelyProgressCall = true → break
+      // consecutiveErrors=2 → progressing
+      const status = tracker.evaluate(recent, 'form_input', 'timed out', true);
+      expect(status).toBe('progressing');
     });
   });
 
