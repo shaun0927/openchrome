@@ -292,11 +292,16 @@ describe('form_input tool stale ref auto-recovery', () => {
 
     // DOM.describeNode (stale check) -> tag changed
     // DOM.resolveNode (after recovery) -> success
-    // Runtime.callFunctionOn -> success
+    // Runtime.callFunctionOn (element info) -> input type text
+    // DOM.focus, Input.dispatchKeyEvent x2, Input.insertText (CDP native input)
     mockSessionManager.mockCDPClient.send
       .mockResolvedValueOnce({ node: { localName: 'div' } }) // DOM.describeNode for stale check
       .mockResolvedValueOnce({ object: { objectId: 'obj-recovered' } }) // DOM.resolveNode with recovered backendNodeId
-      .mockResolvedValueOnce({ result: { value: { success: true, message: 'Set value to "test@example.com"' } } }); // Runtime.callFunctionOn
+      .mockResolvedValueOnce({ result: { value: { tagName: 'input', type: 'text', disabled: false, readOnly: false, contentEditable: false } } }) // element info
+      .mockResolvedValueOnce({}) // DOM.focus
+      .mockResolvedValueOnce({}) // Input.dispatchKeyEvent keyDown
+      .mockResolvedValueOnce({}) // Input.dispatchKeyEvent keyUp
+      .mockResolvedValueOnce({}); // Input.insertText
 
     mockRefIdManager.validateRef.mockReturnValue({ valid: false, stale: true, reason: 'Element tag changed: expected <input>, found <div>' });
 

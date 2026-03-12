@@ -34,18 +34,30 @@ const definition: MCPToolDefinition = {
   },
 };
 
-interface CDPEvalResult {
+export interface CDPEvalResult {
   result: {
     type: string;
     subtype?: string;
     value?: unknown;
     description?: string;
     className?: string;
+    objectId?: string;
   };
   exceptionDetails?: {
     text: string;
     exception?: { description?: string };
   };
+}
+
+/**
+ * Interface for the CDP client needed by formatCDPResult to do lazy value fetching.
+ */
+export interface CDPSender {
+  send<T = unknown>(
+    page: unknown,
+    method: string,
+    params?: Record<string, unknown>
+  ): Promise<T>;
 }
 
 export function wrapInIIFE(code: string): string {
@@ -100,8 +112,12 @@ export function wrapInIIFE(code: string): string {
   return `(async () => { ${code}\n})()`;
 }
 
-function formatCDPResult(evalResult: CDPEvalResult['result']): string {
-  const { type, subtype, value, description, className } = evalResult;
+export async function formatCDPResult(
+  evalResult: CDPEvalResult['result'],
+  cdpClient?: CDPSender,
+  page?: unknown
+): Promise<string> {
+  const { type, subtype, value, description, className, objectId } = evalResult;
 
   if (type === 'undefined') {
     return 'undefined';
@@ -119,9 +135,35 @@ function formatCDPResult(evalResult: CDPEvalResult['result']): string {
     return description || '[Symbol]';
   }
 
+  // NodeList / HTMLCollection / DOMTokenList / Map / Set — non-serializable collections.
+  // IMPORTANT: This check must come BEFORE the DOM element check because
+  // HTMLCollection starts with "HTML" and would match className?.startsWith('HTML').
+  if (
+    className === 'NodeList' ||
+    className === 'HTMLCollection' ||
+    className === 'DOMTokenList' ||
+    className === 'Map' ||
+    className === 'Set'
+  ) {
+    if (objectId) {
+      releaseObject(cdpClient, page, objectId);
+    }
+    if (description) {
+      // description is like "NodeList(3)" or "Map(2)" — extract count
+      const countMatch = description.match(/\((\d+)\)/);
+      if (countMatch) {
+        return `[${countMatch[1]} elements]`;
+      }
+    }
+    return description || `[${className}]`;
+  }
+
   // DOM element: returnByValue can't serialize nodes, use description
   // description for DOM nodes is like "div#id.class" — reformat to match old output
   if (subtype === 'node' || className?.startsWith('HTML')) {
+    if (objectId) {
+      releaseObject(cdpClient, page, objectId);
+    }
     if (description) {
       // description format from V8: "div#myId.myClass" or "span.foo.bar"
       const match = description.match(/^([a-z][a-z0-9]*)(#[^\s.>]*)?(\.[^\s>]*)?$/i);
@@ -137,18 +179,40 @@ function formatCDPResult(evalResult: CDPEvalResult['result']): string {
     return `[${className || type}]`;
   }
 
-  // NodeList / HTMLCollection
-  if (className === 'NodeList' || className === 'HTMLCollection') {
-    if (description) {
-      // description is like "NodeList(3)" — extract count
-      const countMatch = description.match(/\((\d+)\)/);
-      if (countMatch) {
-        return `[${countMatch[1]} elements]`;
-      }
+  // Primitives: with returnByValue: false, primitives still have value populated
+  if (type === 'number' || type === 'string' || type === 'boolean' || type === 'bigint') {
+    if (objectId) {
+      releaseObject(cdpClient, page, objectId);
     }
-    return description || `[${className}]`;
+    if (value !== undefined) {
+      return String(value);
+    }
+    return description || `[${type}]`;
   }
 
+  // Plain objects and arrays: lazy-fetch via CDP callFunctionOn to serialize
+  if (type === 'object' && objectId && cdpClient && page) {
+    try {
+      const serialized = await cdpClient.send<{ result: { value?: unknown } }>(
+        page,
+        'Runtime.callFunctionOn',
+        {
+          objectId,
+          functionDeclaration:
+            'function() { try { return JSON.stringify(this, null, 2); } catch(e) { return String(this); } }',
+          returnByValue: true,
+        }
+      );
+      releaseObject(cdpClient, page, objectId);
+      if (serialized.result?.value !== undefined) {
+        return String(serialized.result.value);
+      }
+    } catch {
+      releaseObject(cdpClient, page, objectId);
+    }
+  }
+
+  // Fallback: if value is still populated (e.g. returnByValue was true), use it
   if (value !== undefined) {
     if (typeof value === 'object' && value !== null) {
       try {
@@ -160,7 +224,26 @@ function formatCDPResult(evalResult: CDPEvalResult['result']): string {
     return String(value);
   }
 
+  if (objectId) {
+    releaseObject(cdpClient, page, objectId);
+  }
   return description || `[${type}]`;
+}
+
+/**
+ * Release a remote object reference to prevent memory leaks.
+ * Fire-and-forget: errors are silently ignored.
+ */
+function releaseObject(
+  cdpClient: CDPSender | undefined,
+  page: unknown,
+  objectId: string
+): void {
+  if (cdpClient && page && objectId) {
+    cdpClient
+      .send(page, 'Runtime.releaseObject', { objectId })
+      .catch(() => {});
+  }
 }
 
 const handler: ToolHandler = async (
@@ -213,7 +296,7 @@ const handler: ToolHandler = async (
       cdpClient
         .send<CDPEvalResult>(page, 'Runtime.evaluate', {
           expression: wrapInIIFE(code),
-          returnByValue: true,
+          returnByValue: false,
           awaitPromise: true,
           userGesture: true,
           replMode: true,
@@ -238,7 +321,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    const output = formatCDPResult(cdpResult.result);
+    const output = await formatCDPResult(cdpResult.result, cdpClient, page);
 
     return {
       content: [{ type: 'text', text: output }],

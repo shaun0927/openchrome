@@ -951,28 +951,66 @@ async function validateCoordinates(
 
 function normalizeKey(key: string): KeyInput {
   const keyMap: Record<string, KeyInput> = {
+    // Modifiers
     ctrl: 'Control',
     cmd: 'Meta',
     meta: 'Meta',
     alt: 'Alt',
     shift: 'Shift',
+    // Common keys
     enter: 'Enter',
     tab: 'Tab',
     escape: 'Escape',
     esc: 'Escape',
     backspace: 'Backspace',
     delete: 'Delete',
+    // Arrow keys
     up: 'ArrowUp',
     down: 'ArrowDown',
     left: 'ArrowLeft',
     right: 'ArrowRight',
+    // Navigation keys
     home: 'Home',
     end: 'End',
     pageup: 'PageUp',
     pagedown: 'PageDown',
+    // macOS conventions
+    return: 'Enter',
+    option: 'Alt',
+    command: 'Meta',
+    // Windows/Linux conventions
+    super: 'Meta',
+    win: 'Meta',
+    windows: 'Meta',
+    // Common key names
+    space: 'Space',
+    spacebar: 'Space',
+    del: 'Delete',
+    ins: 'Insert',
+    insert: 'Insert',
+    pgup: 'PageUp',
+    pgdn: 'PageDown',
+    prtsc: 'PrintScreen',
+    printscreen: 'PrintScreen',
+    apps: 'ContextMenu',
+    contextmenu: 'ContextMenu',
+    // Lock keys (case-sensitive names destroyed by toLowerCase)
+    capslock: 'CapsLock',
+    numlock: 'NumLock',
+    scrolllock: 'ScrollLock',
+    numpadenter: 'NumpadEnter',
   };
 
-  return keyMap[key.toLowerCase()] || (key as KeyInput);
+  const mapped = keyMap[key.toLowerCase()];
+  if (mapped) return mapped;
+
+  // Single characters are always valid (a-z, 0-9, punctuation)
+  if (key.length === 1) return key as KeyInput;
+
+  // Pass through unknown multi-character keys (e.g., F13-F24, Numpad keys,
+  // lateralized modifiers like ShiftLeft/ControlRight, media keys).
+  // These are valid CDP/DOM key values not covered by the alias map.
+  return key as KeyInput;
 }
 
 export function registerComputerTool(server: MCPServer): void {

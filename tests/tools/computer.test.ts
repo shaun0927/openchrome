@@ -296,17 +296,129 @@ describe('ComputerTool', () => {
       expect(page.keyboard.press).toHaveBeenCalledWith(expected);
     });
 
-    test('handles unknown keys by passing through', async () => {
+    test('single character keys pass through directly', async () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
 
       await handler(testSessionId, {
         tabId: testTargetId,
         action: 'key',
-        text: 'F12',
+        text: 'a',
+      });
+      expect(page.keyboard.press).toHaveBeenCalledWith('a');
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'A',
+      });
+      expect(page.keyboard.press).toHaveBeenCalledWith('A');
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: '0',
+      });
+      expect(page.keyboard.press).toHaveBeenCalledWith('0');
+    });
+
+    test('unknown multi-character keys pass through as-is (e.g., F13, NumpadAdd)', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'F13',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeFalsy();
+      expect(page.keyboard.press).toHaveBeenCalledWith('F13');
+    });
+
+    test.each([
+      ['ENTER', 'Enter'],
+      ['Enter', 'Enter'],
+      ['enter', 'Enter'],
+      ['ESCAPE', 'Escape'],
+      ['Escape', 'Escape'],
+      ['TAB', 'Tab'],
+    ])('case-insensitive normalization: %s -> %s', async (input, expected) => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: input,
       });
 
-      expect(page.keyboard.press).toHaveBeenCalledWith('F12');
+      expect(page.keyboard.press).toHaveBeenCalledWith(expected);
+    });
+
+    test('macOS aliases: Return, Option, Command', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'Return',
+      });
+      expect(page.keyboard.press).toHaveBeenCalledWith('Enter');
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'command+a',
+      });
+      expect(page.keyboard.down).toHaveBeenCalledWith('Meta');
+      expect(page.keyboard.press).toHaveBeenCalledWith('a');
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'option+a',
+      });
+      expect(page.keyboard.down).toHaveBeenCalledWith('Alt');
+    });
+
+    test('Space key alias works', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'space',
+      });
+      expect(page.keyboard.press).toHaveBeenCalledWith('Space');
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'spacebar',
+      });
+      expect(page.keyboard.press).toHaveBeenCalledWith('Space');
+    });
+
+    test('Windows/Linux aliases: super, win', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'super+a',
+      });
+      expect(page.keyboard.down).toHaveBeenCalledWith('Meta');
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'key',
+        text: 'win+a',
+      });
+      expect(page.keyboard.down).toHaveBeenCalledWith('Meta');
     });
 
     test('rejects type without text', async () => {

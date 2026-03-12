@@ -203,15 +203,22 @@ const handler: ToolHandler = async (
               await page.mouse.click(Math.round(bestMatch.rect.x), Math.round(bestMatch.rect.y));
             }
           } else if (bestMatch.tagName === 'select') {
-            // For select, use CDP to set value
+            // For select, use native setter for React/framework compatibility
             await withTimeout(page.evaluate((idx: number, val: string, tagProp: string) => {
               const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
               let node;
               while ((node = walker.nextNode()) !== null) {
                 const el = node as HTMLSelectElement;
                 if ((el as any)[tagProp] === idx) {
-                  el.value = val;
-                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  const selectSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLSelectElement.prototype, 'value'
+                  )?.set;
+                  if (selectSetter) {
+                    selectSetter.call(el, val);
+                  } else {
+                    el.value = val;
+                  }
+                  el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
                   break;
                 }
               }
