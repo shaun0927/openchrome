@@ -10,6 +10,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { formatCDPResult, CDPEvalResult } from './javascript';
 
 const definition: MCPToolDefinition = {
   name: 'batch_execute',
@@ -148,20 +149,7 @@ const handler: ToolHandler = async (
       // Execute via CDP Runtime.evaluate with full await support
       let tid: ReturnType<typeof setTimeout>;
       const cdpResult = await Promise.race([
-        cdpClient.send<{
-          result: {
-            type: string;
-            subtype?: string;
-            value?: unknown;
-            description?: string;
-            className?: string;
-            objectId?: string;
-          };
-          exceptionDetails?: {
-            text: string;
-            exception?: { description?: string };
-          };
-        }>(page, 'Runtime.evaluate', {
+        cdpClient.send<CDPEvalResult>(page, 'Runtime.evaluate', {
           expression: task.script,
           returnByValue: false,
           awaitPromise: true,
@@ -187,71 +175,8 @@ const handler: ToolHandler = async (
         };
       }
 
-      // Format result value
-      const evalResult = cdpResult.result;
-      let resultValue: string;
-      if (evalResult.type === 'undefined') {
-        resultValue = 'undefined';
-      } else if (
-        evalResult.subtype === 'node' ||
-        evalResult.className?.startsWith('HTML') ||
-        evalResult.className === 'NodeList' ||
-        evalResult.className === 'HTMLCollection' ||
-        evalResult.className === 'DOMTokenList' ||
-        evalResult.className === 'Map' ||
-        evalResult.className === 'Set'
-      ) {
-        // Non-serializable DOM/collection types: use description
-        if (evalResult.objectId) {
-          cdpClient.send(page, 'Runtime.releaseObject', { objectId: evalResult.objectId }).catch(() => {});
-        }
-        if (evalResult.description) {
-          const countMatch = evalResult.description.match(/\((\d+)\)/);
-          if (countMatch && (evalResult.className === 'NodeList' || evalResult.className === 'HTMLCollection' || evalResult.className === 'DOMTokenList' || evalResult.className === 'Map' || evalResult.className === 'Set')) {
-            resultValue = `[${countMatch[1]} elements]`;
-          } else {
-            resultValue = evalResult.description;
-          }
-        } else {
-          resultValue = `[${evalResult.className || evalResult.type}]`;
-        }
-      } else if (evalResult.type === 'number' || evalResult.type === 'string' || evalResult.type === 'boolean' || evalResult.type === 'bigint') {
-        // Primitives still have value populated with returnByValue: false
-        if (evalResult.objectId) {
-          cdpClient.send(page, 'Runtime.releaseObject', { objectId: evalResult.objectId }).catch(() => {});
-        }
-        resultValue = evalResult.value !== undefined ? String(evalResult.value) : (evalResult.description || `[${evalResult.type}]`);
-      } else if (evalResult.type === 'object' && evalResult.objectId) {
-        // Plain objects/arrays: lazy-fetch via callFunctionOn
-        try {
-          const serialized = await cdpClient.send<{ result: { value?: unknown } }>(
-            page,
-            'Runtime.callFunctionOn',
-            {
-              objectId: evalResult.objectId,
-              functionDeclaration:
-                'function() { try { return JSON.stringify(this, null, 2); } catch(e) { return String(this); } }',
-              returnByValue: true,
-            }
-          );
-          resultValue = serialized.result?.value !== undefined
-            ? String(serialized.result.value)
-            : (evalResult.description || `[${evalResult.type}]`);
-        } catch {
-          resultValue = evalResult.description || `[${evalResult.type}]`;
-        }
-        cdpClient.send(page, 'Runtime.releaseObject', { objectId: evalResult.objectId }).catch(() => {});
-      } else if (evalResult.value !== undefined) {
-        if (typeof evalResult.value === 'object') {
-          resultValue = JSON.stringify(evalResult.value, null, 2);
-        } else {
-          resultValue = String(evalResult.value);
-        }
-      } else if (evalResult.description) {
-        resultValue = evalResult.description;
-      } else {
-        resultValue = `[${evalResult.type}]`;
-      }
+      // Format result value using shared formatter (same as javascript_tool)
+      const resultValue = await formatCDPResult(cdpResult.result, cdpClient, page);
 
       // Parse JSON result back if possible
       let data: unknown = resultValue;

@@ -34,7 +34,7 @@ const definition: MCPToolDefinition = {
   },
 };
 
-interface CDPEvalResult {
+export interface CDPEvalResult {
   result: {
     type: string;
     subtype?: string;
@@ -52,7 +52,7 @@ interface CDPEvalResult {
 /**
  * Interface for the CDP client needed by formatCDPResult to do lazy value fetching.
  */
-interface CDPSender {
+export interface CDPSender {
   send<T = unknown>(
     page: unknown,
     method: string,
@@ -112,7 +112,7 @@ export function wrapInIIFE(code: string): string {
   return `(async () => { ${code}\n})()`;
 }
 
-async function formatCDPResult(
+export async function formatCDPResult(
   evalResult: CDPEvalResult['result'],
   cdpClient?: CDPSender,
   page?: unknown
