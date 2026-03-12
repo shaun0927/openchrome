@@ -146,6 +146,16 @@ export function createComputerTool(sessionManager: SessionManager) {
       numlock: 'NumLock',
       scrolllock: 'ScrollLock',
       numpadenter: 'NumpadEnter',
+      // Arrow key canonical DOM names (lowercased)
+      arrowup: 'ArrowUp',
+      arrowdown: 'ArrowDown',
+      arrowleft: 'ArrowLeft',
+      arrowright: 'ArrowRight',
+      // Modifier full names
+      control: 'Control',
+      // Function keys
+      f1: 'F1', f2: 'F2', f3: 'F3', f4: 'F4', f5: 'F5', f6: 'F6',
+      f7: 'F7', f8: 'F8', f9: 'F9', f10: 'F10', f11: 'F11', f12: 'F12',
     };
 
     const mapped = keyMap[key.toLowerCase()];
@@ -154,13 +164,10 @@ export function createComputerTool(sessionManager: SessionManager) {
     // Single characters are always valid
     if (key.length === 1) return key;
 
-    // For multi-character keys, provide a helpful error
-    const commonKeys = 'Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, F1-F12';
-    const commonModifiers = 'ctrl, alt, shift, cmd/meta/command, option';
-    throw new Error(
-      `Unknown key: "${key}". Common keys: ${commonKeys}. Modifiers: ${commonModifiers}. ` +
-      `Single characters (a-z, 0-9) are used directly.`
-    );
+    // Pass through unknown multi-character keys (e.g., F13-F24, Numpad keys,
+    // lateralized modifiers like ShiftLeft/ControlRight, media keys).
+    // These are valid CDP/DOM key values not covered by the alias map.
+    return key;
   }
 
   function parseModifiers(modifierString?: string): number {

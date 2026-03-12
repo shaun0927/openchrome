@@ -1007,13 +1007,10 @@ function normalizeKey(key: string): KeyInput {
   // Single characters are always valid (a-z, 0-9, punctuation)
   if (key.length === 1) return key as KeyInput;
 
-  // For multi-character keys, provide a helpful error instead of silently passing invalid keys
-  const commonKeys = 'Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, F1-F12';
-  const commonModifiers = 'ctrl, alt, shift, cmd/meta/command, option';
-  throw new Error(
-    `Unknown key: "${key}". Common keys: ${commonKeys}. Modifiers: ${commonModifiers}. ` +
-    `Single characters (a-z, 0-9) are used directly.`
-  );
+  // Pass through unknown multi-character keys (e.g., F13-F24, Numpad keys,
+  // lateralized modifiers like ShiftLeft/ControlRight, media keys).
+  // These are valid CDP/DOM key values not covered by the alias map.
+  return key as KeyInput;
 }
 
 export function registerComputerTool(server: MCPServer): void {
