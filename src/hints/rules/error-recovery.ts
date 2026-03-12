@@ -11,8 +11,8 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
     hint: 'Hint: Refs expire after page changes. Use read_page or find for fresh refs.',
   },
   {
-    test: /tab[^a-z]*not found|invalid tab|no such tab/i,
-    hint: 'Hint: Use tabs_context to list valid tabIds.',
+    test: /tab[^a-z]*not found|target[^a-z]*not found|invalid tab|no such tab/i,
+    hint: 'Hint: Use tabs_context to list valid tabIds, or navigate to open a new page.',
   },
   {
     test: /selector[^a-z]*(failed|not found|no match)|querySelectorAll.*returned 0|no elements? (found )?match/i,
@@ -45,6 +45,14 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
   {
     test: /await is only valid in async/i,
     hint: 'Hint: Top-level await is not supported in javascript_tool. Use Promise chaining instead: new Promise(r => setTimeout(r, ms)).then(() => yourCode). Or wrap in async IIFE: (async () => { await ...; return result; })()',
+  },
+  {
+    test: /not editable|is not editable/i,
+    hint: 'Hint: This element is not a form input (e.g., SVG, div, span). Use find to locate the correct input field, or javascript_tool to set the value directly.',
+  },
+  {
+    test: /layout object|could not get position/i,
+    hint: 'Hint: Element is hidden (display:none or detached). Use find to locate a visible equivalent, or javascript_tool to interact programmatically.',
   },
 ];
 
