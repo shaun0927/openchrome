@@ -92,6 +92,84 @@ export function createComputerTool(sessionManager: SessionManager) {
     });
   }
 
+  /**
+   * Normalize a key name to the standard DOM key value used by CDP Input.dispatchKeyEvent.
+   * Handles common aliases from macOS, Windows/Linux, and casual naming conventions.
+   */
+  function normalizeKey(key: string): string {
+    const keyMap: Record<string, string> = {
+      // Modifiers
+      ctrl: 'Control',
+      cmd: 'Meta',
+      meta: 'Meta',
+      alt: 'Alt',
+      shift: 'Shift',
+      // Common keys
+      enter: 'Enter',
+      tab: 'Tab',
+      escape: 'Escape',
+      esc: 'Escape',
+      backspace: 'Backspace',
+      delete: 'Delete',
+      // Arrow keys
+      up: 'ArrowUp',
+      down: 'ArrowDown',
+      left: 'ArrowLeft',
+      right: 'ArrowRight',
+      // Navigation keys
+      home: 'Home',
+      end: 'End',
+      pageup: 'PageUp',
+      pagedown: 'PageDown',
+      // macOS conventions
+      return: 'Enter',
+      option: 'Alt',
+      command: 'Meta',
+      // Windows/Linux conventions
+      super: 'Meta',
+      win: 'Meta',
+      windows: 'Meta',
+      // Common key names
+      space: 'Space',
+      spacebar: 'Space',
+      del: 'Delete',
+      ins: 'Insert',
+      insert: 'Insert',
+      pgup: 'PageUp',
+      pgdn: 'PageDown',
+      prtsc: 'PrintScreen',
+      printscreen: 'PrintScreen',
+      apps: 'ContextMenu',
+      contextmenu: 'ContextMenu',
+      // Lock keys
+      capslock: 'CapsLock',
+      numlock: 'NumLock',
+      scrolllock: 'ScrollLock',
+      numpadenter: 'NumpadEnter',
+      // Arrow key canonical DOM names (lowercased)
+      arrowup: 'ArrowUp',
+      arrowdown: 'ArrowDown',
+      arrowleft: 'ArrowLeft',
+      arrowright: 'ArrowRight',
+      // Modifier full names
+      control: 'Control',
+      // Function keys
+      f1: 'F1', f2: 'F2', f3: 'F3', f4: 'F4', f5: 'F5', f6: 'F6',
+      f7: 'F7', f8: 'F8', f9: 'F9', f10: 'F10', f11: 'F11', f12: 'F12',
+    };
+
+    const mapped = keyMap[key.toLowerCase()];
+    if (mapped) return mapped;
+
+    // Single characters are always valid
+    if (key.length === 1) return key;
+
+    // Pass through unknown multi-character keys (e.g., F13-F24, Numpad keys,
+    // lateralized modifiers like ShiftLeft/ControlRight, media keys).
+    // These are valid CDP/DOM key values not covered by the alias map.
+    return key;
+  }
+
   function parseModifiers(modifierString?: string): number {
     if (!modifierString) return 0;
 
@@ -99,20 +177,18 @@ export function createComputerTool(sessionManager: SessionManager) {
     const parts = modifierString.toLowerCase().split('+');
 
     for (const part of parts) {
-      switch (part.trim()) {
-        case 'alt':
+      const normalized = normalizeKey(part.trim());
+      switch (normalized) {
+        case 'Alt':
           modifiers |= 1;
           break;
-        case 'ctrl':
-        case 'control':
+        case 'Control':
           modifiers |= 2;
           break;
-        case 'meta':
-        case 'cmd':
-        case 'command':
+        case 'Meta':
           modifiers |= 4;
           break;
-        case 'shift':
+        case 'Shift':
           modifiers |= 8;
           break;
       }
@@ -300,7 +376,7 @@ export function createComputerTool(sessionManager: SessionManager) {
               for (const key of keys) {
                 // Handle key combinations
                 const parts = key.split('+');
-                const mainKey = parts[parts.length - 1];
+                const mainKey = normalizeKey(parts[parts.length - 1]);
                 const keyModifiers = parts.slice(0, -1);
 
                 let modifierFlags = 0;
