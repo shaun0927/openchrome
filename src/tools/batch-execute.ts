@@ -10,6 +10,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { formatCDPResult, CDPEvalResult } from './javascript';
 
 const definition: MCPToolDefinition = {
   name: 'batch_execute',
@@ -148,21 +149,9 @@ const handler: ToolHandler = async (
       // Execute via CDP Runtime.evaluate with full await support
       let tid: ReturnType<typeof setTimeout>;
       const cdpResult = await Promise.race([
-        cdpClient.send<{
-          result: {
-            type: string;
-            subtype?: string;
-            value?: unknown;
-            description?: string;
-            className?: string;
-          };
-          exceptionDetails?: {
-            text: string;
-            exception?: { description?: string };
-          };
-        }>(page, 'Runtime.evaluate', {
+        cdpClient.send<CDPEvalResult>(page, 'Runtime.evaluate', {
           expression: task.script,
-          returnByValue: true,
+          returnByValue: false,
           awaitPromise: true,
           userGesture: true,
         }).finally(() => clearTimeout(tid)),
@@ -186,22 +175,8 @@ const handler: ToolHandler = async (
         };
       }
 
-      // Format result value
-      const evalResult = cdpResult.result;
-      let resultValue: string;
-      if (evalResult.type === 'undefined') {
-        resultValue = 'undefined';
-      } else if (evalResult.value !== undefined) {
-        if (typeof evalResult.value === 'object') {
-          resultValue = JSON.stringify(evalResult.value, null, 2);
-        } else {
-          resultValue = String(evalResult.value);
-        }
-      } else if (evalResult.description) {
-        resultValue = evalResult.description;
-      } else {
-        resultValue = `[${evalResult.type}]`;
-      }
+      // Format result value using shared formatter (same as javascript_tool)
+      const resultValue = await formatCDPResult(cdpResult.result, cdpClient, page);
 
       // Parse JSON result back if possible
       let data: unknown = resultValue;

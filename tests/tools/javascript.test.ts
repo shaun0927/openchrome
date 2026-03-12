@@ -67,7 +67,7 @@ describe('JavaScriptTool', () => {
         'Runtime.evaluate',
         expect.objectContaining({
           expression: '1 + 1',
-          returnByValue: true,
+          returnByValue: false,
           awaitPromise: true,
           userGesture: true,
         })
@@ -109,9 +109,17 @@ describe('JavaScriptTool', () => {
     test('returns object result as JSON', async () => {
       const handler = await getJavascriptHandler();
 
-      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
-        result: { type: 'object', value: { name: 'test', value: 123 } },
-      });
+      // With returnByValue: false, objects come back with objectId instead of value
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: { type: 'object', objectId: 'obj-1', description: 'Object', className: 'Object' },
+        })
+        // callFunctionOn to serialize
+        .mockResolvedValueOnce({
+          result: { value: '{\n  "name": "test",\n  "value": 123\n}' },
+        })
+        // releaseObject
+        .mockResolvedValueOnce({});
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
@@ -125,9 +133,17 @@ describe('JavaScriptTool', () => {
     test('returns array result as JSON', async () => {
       const handler = await getJavascriptHandler();
 
-      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
-        result: { type: 'object', subtype: 'array', value: [1, 2, 3] },
-      });
+      // With returnByValue: false, arrays come back with objectId
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: { type: 'object', subtype: 'array', objectId: 'arr-1', description: 'Array(3)', className: 'Array' },
+        })
+        // callFunctionOn to serialize
+        .mockResolvedValueOnce({
+          result: { value: '[\n  1,\n  2,\n  3\n]' },
+        })
+        // releaseObject
+        .mockResolvedValueOnce({});
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
@@ -171,14 +187,18 @@ describe('JavaScriptTool', () => {
     test('returns DOM element description', async () => {
       const handler = await getJavascriptHandler();
 
-      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
-        result: {
-          type: 'object',
-          subtype: 'node',
-          className: 'HTMLDivElement',
-          description: 'div#test.container',
-        },
-      });
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: {
+            type: 'object',
+            subtype: 'node',
+            className: 'HTMLDivElement',
+            description: 'div#test.container',
+            objectId: 'node-1',
+          },
+        })
+        // releaseObject
+        .mockResolvedValueOnce({});
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
@@ -187,6 +207,144 @@ describe('JavaScriptTool', () => {
 
       // Source reformats "div#test.container" → '<div id="test" class="container">'
       expect(result.content[0].text).toContain('<div');
+    });
+
+    test('returns DOM element with id and classes (regression)', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: {
+            type: 'object',
+            subtype: 'node',
+            className: 'HTMLSpanElement',
+            description: 'span#info.highlight.bold',
+            objectId: 'node-2',
+          },
+        })
+        .mockResolvedValueOnce({});
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        code: 'document.querySelector("span#info")',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toBe('<span id="info" class="highlight bold">');
+    });
+
+    test('returns NodeList with element count (previously returned {})', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: {
+            type: 'object',
+            subtype: 'array',
+            className: 'NodeList',
+            description: 'NodeList(5)',
+            objectId: 'nodelist-1',
+          },
+        })
+        // releaseObject
+        .mockResolvedValueOnce({});
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        code: 'document.querySelectorAll("div")',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toBe('[5 elements]');
+    });
+
+    test('returns HTMLCollection with element count (previously returned {})', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: {
+            type: 'object',
+            subtype: 'array',
+            className: 'HTMLCollection',
+            description: 'HTMLCollection(3)',
+            objectId: 'htmlcol-1',
+          },
+        })
+        .mockResolvedValueOnce({});
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        code: 'document.getElementsByTagName("p")',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toBe('[3 elements]');
+    });
+
+    test('returns DOMTokenList with element count (previously returned {})', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: {
+            type: 'object',
+            className: 'DOMTokenList',
+            description: 'DOMTokenList(2)',
+            objectId: 'dtl-1',
+          },
+        })
+        .mockResolvedValueOnce({});
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        code: 'document.body.classList',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toBe('[2 elements]');
+    });
+
+    test('returns Map with element count (previously returned {})', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: {
+            type: 'object',
+            subtype: 'map',
+            className: 'Map',
+            description: 'Map(4)',
+            objectId: 'map-1',
+          },
+        })
+        .mockResolvedValueOnce({});
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        code: 'new Map([["a",1],["b",2],["c",3],["d",4]])',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toBe('[4 elements]');
+    });
+
+    test('returns Set with element count (previously returned {})', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({
+          result: {
+            type: 'object',
+            subtype: 'set',
+            className: 'Set',
+            description: 'Set(2)',
+            objectId: 'set-1',
+          },
+        })
+        .mockResolvedValueOnce({});
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        code: 'new Set([1, 2])',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toBe('[2 elements]');
     });
   });
 
