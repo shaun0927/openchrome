@@ -15,8 +15,21 @@ export type ProgressStatus = 'progressing' | 'stalling' | 'stuck';
  * not to make progress. Successful calls to these tools should NOT reset
  * the consecutive error counter, because the "try → observe → retry" loop
  * is the most common hang pattern.
+ *
+ * Note: `computer` tool is only observational when action is 'screenshot'.
+ * Click/type actions via `computer` ARE progress and should break the streak.
  */
-const OBSERVATION_TOOLS = new Set(['computer', 'read_page', 'tabs_context']);
+const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context']);
+
+/**
+ * Check if a tool call is purely observational (state-checking, not progress-making).
+ */
+function isObservationCall(call: ToolCallEvent): boolean {
+  if (OBSERVATION_TOOLS.has(call.toolName)) return true;
+  // computer tool: only screenshots are observation; clicks/typing are progress
+  if (call.toolName === 'computer' && call.args?.action === 'screenshot') return true;
+  return false;
+}
 
 /**
  * Signals in tool results that indicate NO meaningful progress was made,
@@ -70,7 +83,7 @@ export class ProgressTracker {
       if (call.result === 'error') {
         consecutiveErrors++;
         consecutiveNonProgress++;
-      } else if (OBSERVATION_TOOLS.has(call.toolName) && !call.error) {
+      } else if (isObservationCall(call) && !call.error) {
         // Observation-only tools (screenshot, read_page, tabs_context) are the LLM
         // checking state between retries. They should NOT reset the error counter
         // or count as progress — the "try → observe → retry" loop is the most
