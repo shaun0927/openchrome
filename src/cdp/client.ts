@@ -957,7 +957,15 @@ export class CDPClient {
       }
 
     } catch (error) {
-      console.error('[CDPClient] Error in copyCookiesViaCDP:', error);
+      const msg = error instanceof Error ? error.message : String(error);
+      // Distinguish connection-level errors (browser disconnected, WebSocket closed)
+      // from benign cases (no cookies, target not found) for diagnostic clarity.
+      const isConnectionLevel = /disconnect|websocket|not connected|protocol error|session closed/i.test(msg);
+      if (isConnectionLevel) {
+        console.error(`[CDPClient] copyCookiesViaCDP failed due to connection error (cookies will be missing): ${msg}`);
+      } else {
+        console.error(`[CDPClient] copyCookiesViaCDP failed (proceeding without cookies): ${msg}`);
+      }
       return 0;
     }
   }
