@@ -11,6 +11,8 @@ import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
+import { sanitizeContent } from '../security/content-sanitizer';
+import { getGlobalConfig } from '../config/global';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -608,6 +610,35 @@ const handler: ToolHandler = async (
   }
 };
 
+/**
+ * Wrapper that applies content sanitization to read_page output.
+ * Strips invisible characters, HTML comments, and flags suspicious
+ * instruction-like patterns to mitigate indirect prompt injection.
+ */
+const sanitizedHandler: ToolHandler = async (sessionId, args) => {
+  const result = await handler(sessionId, args);
+
+  // Skip sanitization if disabled, if the result is an error, or if no content
+  const config = getGlobalConfig();
+  if (config.security?.sanitize_content === false || result.isError || !result.content) {
+    return result;
+  }
+
+  // Sanitize all text content blocks
+  const sanitizedContent = result.content.map((block) => {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      const sanitized = sanitizeContent(block.text);
+      return {
+        ...block,
+        text: sanitized.text + sanitized.sanitizationNote,
+      };
+    }
+    return block;
+  });
+
+  return { ...result, content: sanitizedContent };
+};
+
 export function registerReadPageTool(server: MCPServer): void {
-  server.registerTool('read_page', handler, definition);
+  server.registerTool('read_page', sanitizedHandler, definition);
 }

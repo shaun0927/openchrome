@@ -47,9 +47,10 @@ program
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
   .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
   .option('--audit-log', 'Enable security audit logging (default: false)')
+  .option('--no-sanitize-content', 'Disable content sanitization for prompt injection defense (default: enabled)')
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; allTools?: boolean; serverMode?: boolean }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -133,6 +134,15 @@ program
         security: { ...existing, audit_log: true },
       });
       console.error('[openchrome] Audit logging: enabled');
+    }
+
+    // Configure content sanitization (enabled by default, --no-sanitize-content to disable)
+    if (options.sanitizeContent === false) {
+      const existing = getGlobalConfig().security || {};
+      setGlobalConfig({
+        security: { ...existing, sanitize_content: false },
+      });
+      console.error('[openchrome] Content sanitization: disabled');
     }
 
     // Tool tier configuration
