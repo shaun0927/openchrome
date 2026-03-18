@@ -302,8 +302,18 @@ export class CDPConnectionPool {
       // Ignore URL parsing errors
     }
 
-    // Navigate to blank page to clear state
-    await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
+    // Navigate to blank page to clear state.
+    // If this fails (page being torn down, Chrome under pressure), the page is
+    // unusable — close it and don't return it to the pool. Without this try/catch
+    // the page becomes orphaned: removed from inUsePages but never added to
+    // availablePages, causing a slow memory leak over many release cycles.
+    try {
+      await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
+    } catch (err) {
+      console.error(`[ConnectionPool] goto about:blank failed during cleanup, discarding page: ${err instanceof Error ? err.message : String(err)}`);
+      await page.close().catch(() => {});
+      return;
+    }
 
     // Clear cookies and storage via CDP session (with proper cleanup in finally)
     const client = await page.createCDPSession();
