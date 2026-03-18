@@ -222,11 +222,11 @@ const handler: ToolHandler = async (
           {
             type: 'text',
             text: isTimeout
-              ? `Navigation timed out — the page at ${url} did not finish loading within 30s. The page may still be loading. Try read_page to check if content is available, or retry navigation.`
+              ? `Navigation timed out — the page at ${url} did not finish loading within 30s. The page may still be partially loaded. Try read_page to check if content is available, or retry navigation.`
               : `Error creating tab: ${errMsg}`,
           },
         ],
-        isError: !isTimeout,
+        isError: true,
       };
     }
   }
@@ -439,11 +439,11 @@ const handler: ToolHandler = async (
         {
           type: 'text',
           text: isTimeout
-            ? `Navigation timed out — the page did not finish loading within 30s. The page may still be loading or the server may be unresponsive. Try read_page to check if content is available, or retry navigation.`
+            ? `Navigation timed out — the page did not finish loading within 30s. The page may still be partially loaded or the server may be unresponsive. Try read_page to check if content is available, or retry navigation.`
             : `Navigation error: ${errMsg}`,
         },
       ],
-      isError: !isTimeout,
+      isError: true,
     };
   }
 };

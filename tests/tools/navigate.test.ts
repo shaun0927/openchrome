@@ -312,7 +312,8 @@ describe('NavigateTool', () => {
         url: 'https://slow-site.com',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-      expect(result.isError).toBe(false);
+      // Timeouts should report isError: true so the LLM knows the page state is indeterminate
+      expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Navigation timed out');
       expect(result.content[0].text).toContain('read_page');
     });
