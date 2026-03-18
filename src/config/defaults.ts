@@ -134,3 +134,9 @@ export const DEFAULT_VERBOSITY = 'normal';
 
 /** Minimum response size in bytes before compression is applied. */
 export const COMPRESSION_MIN_BYTES = 500;
+
+/** Completion lock acquisition timeout in milliseconds.
+ *  Safety net for the promise-based mutex in WorkflowEngine.
+ *  If a previous lock holder's release() is never called (e.g. due to an
+ *  unhandled exception outside the try/finally), this prevents permanent deadlock. */
+export const DEFAULT_COMPLETION_LOCK_TIMEOUT_MS = 30000;

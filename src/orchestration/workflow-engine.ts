@@ -9,7 +9,7 @@ import { getCDPConnectionPool } from '../cdp/connection-pool';
 import { getCDPClient } from '../cdp/client';
 import { ToolEntry } from '../types/tool-manifest';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
-import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_COMPLETION_LOCK_TIMEOUT_MS } from '../config/defaults';
 import { getGlobalConfig } from '../config/global';
 import { getTargetId } from '../utils/puppeteer-helpers';
 
@@ -124,6 +124,12 @@ export class WorkflowEngine {
   /**
    * Acquire the completion lock. Returns a release function.
    * All completeWorker calls are serialized through this lock.
+   *
+   * Includes a timeout safety net: if the previous lock holder never calls
+   * release() (e.g. due to an unhandled exception bypassing the finally block),
+   * the await will reject after DEFAULT_COMPLETION_LOCK_TIMEOUT_MS instead of
+   * hanging forever. On timeout, the lock chain is reset to prevent permanent
+   * deadlock of all subsequent completeWorker calls.
    */
   private async acquireLock(): Promise<() => void> {
     let release!: () => void;
@@ -132,7 +138,30 @@ export class WorkflowEngine {
     });
     const prev = this.completionLock;
     this.completionLock = next;
-    await prev;
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        prev,
+        new Promise<void>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error(
+              `Completion lock acquisition timed out after ${DEFAULT_COMPLETION_LOCK_TIMEOUT_MS}ms — ` +
+              `previous lock holder may have failed without calling release()`
+            ));
+          }, DEFAULT_COMPLETION_LOCK_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (err) {
+      // Lock timed out — the previous holder is presumed dead.
+      // Reset the lock chain so future acquireLock() calls don't pile up
+      // behind the same dead promise.
+      console.error(`[WorkflowEngine] ${err instanceof Error ? err.message : String(err)}`);
+      this.completionLock = next;
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+
     return release;
   }
 
@@ -187,9 +216,22 @@ export class WorkflowEngine {
             // Cookie bridging failure is non-fatal — page navigates without cookies
           }
 
-          await page.goto(step.url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }).catch((err) => {
-            console.error(`[WorkflowEngine] Navigation to ${step.url} failed: ${err instanceof Error ? err.message : String(err)}`);
-          });
+          try {
+            await page.goto(step.url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+          } catch (navErr) {
+            const msg = navErr instanceof Error ? navErr.message : String(navErr);
+            console.error(`[WorkflowEngine] Navigation to ${step.url} failed for worker "${step.workerName}": ${msg}`);
+            const pool = getCDPConnectionPool();
+            await pool.releasePage(page).catch(() => {});
+            return {
+              workerId: worker.id,
+              workerName: step.workerName,
+              tabId: '',
+              task: step.task,
+              navigationFailed: true,
+              navigationError: msg,
+            };
+          }
         }
 
         // Register the page as a target in the session manager
@@ -201,9 +243,21 @@ export class WorkflowEngine {
           workerName: step.workerName,
           tabId: targetId,
           task: step.task,
+          navigationFailed: false,
         };
       })
     );
+
+    // Separate successfully navigated workers from navigation failures
+    const successfulWorkers = workers.filter(w => !w.navigationFailed);
+    const failedNavWorkers = workers.filter(w => w.navigationFailed);
+
+    if (failedNavWorkers.length > 0) {
+      console.error(
+        `[WorkflowEngine] ${failedNavWorkers.length}/${workers.length} workers failed navigation: ` +
+        failedNavWorkers.map(w => `${w.workerName} (${(w as any).navigationError})`).join(', ')
+      );
+    }
 
     // Initialize file-based orchestration state (for scratchpads / debugging)
     await this.stateManager.initOrchestration(
@@ -215,7 +269,14 @@ export class WorkflowEngine {
     // Initialize in-memory state — this is the authoritative source for completion tracking
     const workerStatuses = new Map<string, { status: WorkerState['status']; resultSummary: string }>();
     for (const w of workers) {
-      workerStatuses.set(w.workerName, { status: 'INIT', resultSummary: '' });
+      if (w.navigationFailed) {
+        workerStatuses.set(w.workerName, {
+          status: 'FAIL',
+          resultSummary: `Navigation failed: ${(w as any).navigationError}`,
+        });
+      } else {
+        workerStatuses.set(w.workerName, { status: 'INIT', resultSummary: '' });
+      }
     }
 
     const workerTimeoutMs = workflow.timeout || 60_000;
@@ -227,7 +288,7 @@ export class WorkflowEngine {
       createdAt: Date.now(),
       totalWorkers: workers.length,
       completedWorkers: 0,
-      failedWorkers: 0,
+      failedWorkers: failedNavWorkers.length,
       workerStatuses,
       overallStatus: 'INIT',
       allDone: false,
@@ -237,8 +298,8 @@ export class WorkflowEngine {
     };
     this.workflowStates.set(orchestrationId, memState);
 
-    // Initialize per-worker runtime state and set up timeouts
-    for (const w of workers) {
+    // Initialize per-worker runtime state and set up timeouts (only for successful workers)
+    for (const w of successfulWorkers) {
       const runtimeState: WorkerRuntimeState = {
         workerName: w.workerName,
         startTime: Date.now(),
@@ -266,7 +327,10 @@ export class WorkflowEngine {
     globalHandle.unref();
     this.globalTimeoutHandles.set(orchestrationId, globalHandle);
 
-    console.error(`[WorkflowEngine] Initialized workflow ${orchestrationId} with ${workers.length} workers (timeout: ${workerTimeoutMs}ms/worker, ${memState.globalTimeoutMs}ms global)`);
+    const navFailNote = failedNavWorkers.length > 0
+      ? ` (${failedNavWorkers.length} failed navigation)`
+      : '';
+    console.error(`[WorkflowEngine] Initialized workflow ${orchestrationId} with ${workers.length} workers${navFailNote} (timeout: ${workerTimeoutMs}ms/worker, ${memState.globalTimeoutMs}ms global)`);
 
     return {
       orchestrationId,
@@ -274,6 +338,7 @@ export class WorkflowEngine {
         workerId: w.workerId,
         workerName: w.workerName,
         tabId: w.tabId,
+        ...(w.navigationFailed ? { navigationFailed: true, navigationError: (w as any).navigationError } : {}),
       })),
     };
   }

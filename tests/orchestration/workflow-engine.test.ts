@@ -603,6 +603,305 @@ describe('WorkflowEngine', () => {
     });
   });
 
+  describe('acquireLock deadlock prevention', () => {
+    test('should recover from a stuck lock via timeout', async () => {
+      // Simulate a stuck lock by setting completionLock to a promise that never resolves
+      // @ts-expect-error - accessing private property for testing
+      engine.completionLock = new Promise<void>(() => {
+        // intentionally never resolves
+      });
+
+      // Override the timeout to something short for testing
+      const originalTimeout = require('../../src/config/defaults').DEFAULT_COMPLETION_LOCK_TIMEOUT_MS;
+      jest.replaceProperty(
+        require('../../src/config/defaults'),
+        'DEFAULT_COMPLETION_LOCK_TIMEOUT_MS',
+        500
+      );
+
+      const startTime = Date.now();
+
+      // This should NOT hang forever — it should time out and recover
+      const release = await (engine as any).acquireLock();
+      const elapsed = Date.now() - startTime;
+
+      // Should have waited approximately the timeout duration
+      expect(elapsed).toBeGreaterThanOrEqual(400);
+      expect(elapsed).toBeLessThan(5000);
+
+      // Release should still be a callable function
+      expect(typeof release).toBe('function');
+      release();
+
+      // Restore original timeout
+      jest.replaceProperty(
+        require('../../src/config/defaults'),
+        'DEFAULT_COMPLETION_LOCK_TIMEOUT_MS',
+        originalTimeout
+      );
+    });
+
+    test('should allow subsequent lock acquisitions after timeout recovery', async () => {
+      // Simulate a stuck lock
+      // @ts-expect-error - accessing private property for testing
+      engine.completionLock = new Promise<void>(() => {});
+
+      jest.replaceProperty(
+        require('../../src/config/defaults'),
+        'DEFAULT_COMPLETION_LOCK_TIMEOUT_MS',
+        200
+      );
+
+      // First acquisition: times out and recovers
+      const release1 = await (engine as any).acquireLock();
+      release1();
+
+      // Second acquisition: should succeed immediately (lock chain was reset)
+      const startTime = Date.now();
+      const release2 = await (engine as any).acquireLock();
+      const elapsed = Date.now() - startTime;
+
+      // Should be near-instant since the previous lock was properly released
+      expect(elapsed).toBeLessThan(100);
+      release2();
+
+      // Restore
+      jest.replaceProperty(
+        require('../../src/config/defaults'),
+        'DEFAULT_COMPLETION_LOCK_TIMEOUT_MS',
+        30000
+      );
+    });
+
+    test('completeWorker should succeed after lock timeout recovery', async () => {
+      const workflow: WorkflowDefinition = {
+        id: 'wf-lock-test',
+        name: 'Lock Test',
+        steps: [
+          { workerId: 'w1', workerName: 'lock-worker', url: 'https://example.com', task: 'Test', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+      await engine.initWorkflow(testSessionId, workflow);
+
+      // Poison the lock
+      // @ts-expect-error - accessing private property for testing
+      engine.completionLock = new Promise<void>(() => {});
+
+      jest.replaceProperty(
+        require('../../src/config/defaults'),
+        'DEFAULT_COMPLETION_LOCK_TIMEOUT_MS',
+        200
+      );
+
+      // completeWorker should recover via timeout, not hang
+      await engine.completeWorker('lock-worker', 'SUCCESS', 'Done after lock recovery', { result: 'ok' });
+
+      const orch = await engine.getOrchestrationStatus();
+      expect(orch?.status).toBe('COMPLETED');
+
+      const workerStatus = orch?.workers.find(w => w.workerName === 'lock-worker');
+      expect(workerStatus?.status).toBe('SUCCESS');
+
+      // Restore
+      jest.replaceProperty(
+        require('../../src/config/defaults'),
+        'DEFAULT_COMPLETION_LOCK_TIMEOUT_MS',
+        30000
+      );
+    });
+
+    test('normal lock acquisition should not be affected by timeout', async () => {
+      // Normal flow: lock is free (resolved promise)
+      const startTime = Date.now();
+      const release = await (engine as any).acquireLock();
+      const elapsed = Date.now() - startTime;
+
+      // Should acquire near-instantly
+      expect(elapsed).toBeLessThan(50);
+      expect(typeof release).toBe('function');
+      release();
+    });
+  });
+
+  describe('navigation failure handling', () => {
+    test('should mark worker as navigationFailed when page.goto rejects', async () => {
+      const { getCDPConnectionPool } = require('../../src/cdp/connection-pool');
+      const mockPool = getCDPConnectionPool();
+
+      mockPool.acquireBatch.mockImplementationOnce((count: number) => {
+        return Promise.resolve(
+          Array.from({ length: count }, () => {
+            const id = `nav-fail-${++batchPageCounter}`;
+            return {
+              target: () => ({ _targetId: id }),
+              goto: jest.fn().mockRejectedValue(new Error('net::ERR_NAME_NOT_RESOLVED')),
+              close: jest.fn().mockResolvedValue(undefined),
+              url: jest.fn().mockReturnValue('about:blank'),
+              on: jest.fn(),
+              off: jest.fn(),
+            };
+          })
+        );
+      });
+
+      const workflow: WorkflowDefinition = {
+        id: 'wf-nav-fail',
+        name: 'Nav Fail Test',
+        steps: [
+          { workerId: 'w1', workerName: 'fail-worker', url: 'https://nonexistent.invalid', task: 'Task', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+
+      const result = await engine.initWorkflow(testSessionId, workflow);
+
+      expect(result.workers[0].workerName).toBe('fail-worker');
+      expect((result.workers[0] as any).navigationFailed).toBe(true);
+      expect((result.workers[0] as any).navigationError).toContain('net::ERR_NAME_NOT_RESOLVED');
+      expect(result.workers[0].tabId).toBe('');
+      expect(mockPool.releasePage).toHaveBeenCalled();
+    });
+
+    test('should mark failed worker as FAIL in orchestration state', async () => {
+      const { getCDPConnectionPool } = require('../../src/cdp/connection-pool');
+      const mockPool = getCDPConnectionPool();
+
+      mockPool.acquireBatch.mockImplementationOnce((count: number) => {
+        return Promise.resolve(
+          Array.from({ length: count }, () => {
+            const id = `nav-fail-state-${++batchPageCounter}`;
+            return {
+              target: () => ({ _targetId: id }),
+              goto: jest.fn().mockRejectedValue(new Error('Navigation timeout')),
+              close: jest.fn().mockResolvedValue(undefined),
+              url: jest.fn().mockReturnValue('about:blank'),
+              on: jest.fn(),
+              off: jest.fn(),
+            };
+          })
+        );
+      });
+
+      const workflow: WorkflowDefinition = {
+        id: 'wf-nav-fail-state',
+        name: 'Nav Fail State Test',
+        steps: [
+          { workerId: 'w1', workerName: 'state-fail-worker', url: 'https://timeout.invalid', task: 'Task', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+
+      await engine.initWorkflow(testSessionId, workflow);
+
+      const orch = await engine.getOrchestrationStatus();
+      expect(orch).not.toBeNull();
+      expect(orch?.failedWorkers).toBe(1);
+      const workerStatus = orch?.workers.find(w => w.workerName === 'state-fail-worker');
+      expect(workerStatus?.status).toBe('FAIL');
+      expect(workerStatus?.resultSummary).toContain('Navigation failed');
+    });
+
+    test('should not register failed worker as target in session manager', async () => {
+      const { getCDPConnectionPool } = require('../../src/cdp/connection-pool');
+      const mockPool = getCDPConnectionPool();
+
+      mockPool.acquireBatch.mockImplementationOnce((count: number) => {
+        return Promise.resolve(
+          Array.from({ length: count }, () => {
+            const id = `nav-fail-noreg-${++batchPageCounter}`;
+            return {
+              target: () => ({ _targetId: id }),
+              goto: jest.fn().mockRejectedValue(new Error('Connection refused')),
+              close: jest.fn().mockResolvedValue(undefined),
+              url: jest.fn().mockReturnValue('about:blank'),
+              on: jest.fn(),
+              off: jest.fn(),
+            };
+          })
+        );
+      });
+
+      mockSessionManager.registerExistingTarget.mockClear();
+
+      const workflow: WorkflowDefinition = {
+        id: 'wf-nav-fail-noreg',
+        name: 'Nav Fail No Register',
+        steps: [
+          { workerId: 'w1', workerName: 'noreg-worker', url: 'https://fail.invalid', task: 'Task', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+
+      await engine.initWorkflow(testSessionId, workflow);
+
+      expect(mockSessionManager.registerExistingTarget).not.toHaveBeenCalled();
+    });
+
+    test('should handle mixed success and failure workers', async () => {
+      const { getCDPConnectionPool } = require('../../src/cdp/connection-pool');
+      const mockPool = getCDPConnectionPool();
+
+      let callCount = 0;
+      mockPool.acquireBatch.mockImplementationOnce((count: number) => {
+        return Promise.resolve(
+          Array.from({ length: count }, () => {
+            callCount++;
+            const id = `mixed-${++batchPageCounter}`;
+            return {
+              target: () => ({ _targetId: id }),
+              goto: callCount === 1
+                ? jest.fn().mockResolvedValue(null)
+                : jest.fn().mockRejectedValue(new Error('Timeout')),
+              close: jest.fn().mockResolvedValue(undefined),
+              url: jest.fn().mockReturnValue('about:blank'),
+              on: jest.fn(),
+              off: jest.fn(),
+            };
+          })
+        );
+      });
+
+      mockSessionManager.registerExistingTarget.mockClear();
+
+      const workflow: WorkflowDefinition = {
+        id: 'wf-mixed',
+        name: 'Mixed Test',
+        steps: [
+          { workerId: 'w1', workerName: 'ok-worker', url: 'https://good.com', task: 'Task 1', successCriteria: 'Done' },
+          { workerId: 'w2', workerName: 'bad-worker', url: 'https://bad.invalid', task: 'Task 2', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+
+      const result = await engine.initWorkflow(testSessionId, workflow);
+
+      const okWorker = result.workers.find(w => w.workerName === 'ok-worker');
+      const badWorker = result.workers.find(w => w.workerName === 'bad-worker');
+
+      expect((okWorker as any).navigationFailed).toBeUndefined();
+      expect(okWorker?.tabId).not.toBe('');
+
+      expect((badWorker as any).navigationFailed).toBe(true);
+      expect(badWorker?.tabId).toBe('');
+
+      expect(mockSessionManager.registerExistingTarget).toHaveBeenCalledTimes(1);
+
+      const orch = await engine.getOrchestrationStatus();
+      expect(orch?.failedWorkers).toBe(1);
+    });
+  });
+
   describe('getWorkflowEngine singleton', () => {
     test('should return the same instance', () => {
       const instance1 = getWorkflowEngine();
