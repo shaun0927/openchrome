@@ -5,6 +5,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as puppeteer from 'puppeteer-core';
 import type { Browser } from 'puppeteer-core';
+import { DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS } from '../config/defaults';
 
 export interface LightpandaLauncherConfig {
   port: number;
@@ -114,12 +115,25 @@ export class LightpandaLauncher {
   }
 
   /**
-   * Connect via puppeteer-core and return Browser instance
+   * Connect via puppeteer-core and return Browser instance.
+   * Includes a timeout to prevent hanging if Lightpanda is listening but unresponsive
+   * (mirrors the timeout pattern used in CDPClient.connectInternal()).
    */
   async connect(): Promise<Browser> {
-    this.browser = await puppeteer.connect({
-      browserWSEndpoint: `ws://localhost:${this.port}`,
-    });
+    let connectTimeout: ReturnType<typeof setTimeout> | undefined;
+    this.browser = await Promise.race([
+      puppeteer.connect({
+        browserWSEndpoint: `ws://localhost:${this.port}`,
+      }).finally(() => {
+        if (connectTimeout !== undefined) clearTimeout(connectTimeout);
+      }),
+      new Promise<never>((_, reject) => {
+        connectTimeout = setTimeout(
+          () => reject(new Error(`Lightpanda puppeteer.connect() timed out after ${DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS}ms`)),
+          DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS
+        );
+      }),
+    ]);
     return this.browser;
   }
 
@@ -141,11 +155,14 @@ export class LightpandaLauncher {
   }
 
   /**
-   * Health check - verify Lightpanda is responsive
+   * Health check - verify Lightpanda is responsive.
+   * Uses AbortSignal.timeout to prevent hanging on unresponsive processes.
    */
   private async healthCheck(): Promise<boolean> {
     try {
-      await fetch(`http://localhost:${this.port}/json/version`);
+      await fetch(`http://localhost:${this.port}/json/version`, {
+        signal: AbortSignal.timeout(5000),
+      });
       return true;
     } catch {
       return false;
