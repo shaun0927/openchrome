@@ -38,6 +38,10 @@ export interface GlobalConfig {
     audit_log?: boolean;
     /** Custom audit log path (default: ~/.openchrome/audit.log) */
     audit_log_path?: string;
+    /** Sanitize page content to mitigate prompt injection (default: true).
+     *  Removes invisible characters, HTML comments, and flags suspicious
+     *  instruction-like patterns in read_page output. */
+    sanitize_content?: boolean;
   };
   /** Hybrid mode settings (Lightpanda + Chrome routing) */
   hybrid?: {
