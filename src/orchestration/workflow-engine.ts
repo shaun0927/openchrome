@@ -9,7 +9,7 @@ import { getCDPConnectionPool } from '../cdp/connection-pool';
 import { getCDPClient } from '../cdp/client';
 import { ToolEntry } from '../types/tool-manifest';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
-import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_COMPLETION_LOCK_TIMEOUT_MS } from '../config/defaults';
 import { getGlobalConfig } from '../config/global';
 import { getTargetId } from '../utils/puppeteer-helpers';
 
@@ -124,6 +124,12 @@ export class WorkflowEngine {
   /**
    * Acquire the completion lock. Returns a release function.
    * All completeWorker calls are serialized through this lock.
+   *
+   * Includes a timeout safety net: if the previous lock holder never calls
+   * release() (e.g. due to an unhandled exception bypassing the finally block),
+   * the await will reject after DEFAULT_COMPLETION_LOCK_TIMEOUT_MS instead of
+   * hanging forever. On timeout, the lock chain is reset to prevent permanent
+   * deadlock of all subsequent completeWorker calls.
    */
   private async acquireLock(): Promise<() => void> {
     let release!: () => void;
@@ -132,7 +138,30 @@ export class WorkflowEngine {
     });
     const prev = this.completionLock;
     this.completionLock = next;
-    await prev;
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        prev,
+        new Promise<void>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error(
+              `Completion lock acquisition timed out after ${DEFAULT_COMPLETION_LOCK_TIMEOUT_MS}ms — ` +
+              `previous lock holder may have failed without calling release()`
+            ));
+          }, DEFAULT_COMPLETION_LOCK_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (err) {
+      // Lock timed out — the previous holder is presumed dead.
+      // Reset the lock chain so future acquireLock() calls don't pile up
+      // behind the same dead promise.
+      console.error(`[WorkflowEngine] ${err instanceof Error ? err.message : String(err)}`);
+      this.completionLock = next;
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+
     return release;
   }
 
