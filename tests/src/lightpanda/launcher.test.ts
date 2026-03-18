@@ -137,7 +137,7 @@ describe('LightpandaLauncher', () => {
 
       await startPromise;
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:9333/json/version');
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:9333/json/version', expect.objectContaining({ signal: expect.anything() }));
       expect(launcher.isRunning()).toBe(true);
     });
 
