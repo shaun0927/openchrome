@@ -726,6 +726,182 @@ describe('WorkflowEngine', () => {
     });
   });
 
+  describe('navigation failure handling', () => {
+    test('should mark worker as navigationFailed when page.goto rejects', async () => {
+      const { getCDPConnectionPool } = require('../../src/cdp/connection-pool');
+      const mockPool = getCDPConnectionPool();
+
+      mockPool.acquireBatch.mockImplementationOnce((count: number) => {
+        return Promise.resolve(
+          Array.from({ length: count }, () => {
+            const id = `nav-fail-${++batchPageCounter}`;
+            return {
+              target: () => ({ _targetId: id }),
+              goto: jest.fn().mockRejectedValue(new Error('net::ERR_NAME_NOT_RESOLVED')),
+              close: jest.fn().mockResolvedValue(undefined),
+              url: jest.fn().mockReturnValue('about:blank'),
+              on: jest.fn(),
+              off: jest.fn(),
+            };
+          })
+        );
+      });
+
+      const workflow: WorkflowDefinition = {
+        id: 'wf-nav-fail',
+        name: 'Nav Fail Test',
+        steps: [
+          { workerId: 'w1', workerName: 'fail-worker', url: 'https://nonexistent.invalid', task: 'Task', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+
+      const result = await engine.initWorkflow(testSessionId, workflow);
+
+      expect(result.workers[0].workerName).toBe('fail-worker');
+      expect((result.workers[0] as any).navigationFailed).toBe(true);
+      expect((result.workers[0] as any).navigationError).toContain('net::ERR_NAME_NOT_RESOLVED');
+      expect(result.workers[0].tabId).toBe('');
+      expect(mockPool.releasePage).toHaveBeenCalled();
+    });
+
+    test('should mark failed worker as FAIL in orchestration state', async () => {
+      const { getCDPConnectionPool } = require('../../src/cdp/connection-pool');
+      const mockPool = getCDPConnectionPool();
+
+      mockPool.acquireBatch.mockImplementationOnce((count: number) => {
+        return Promise.resolve(
+          Array.from({ length: count }, () => {
+            const id = `nav-fail-state-${++batchPageCounter}`;
+            return {
+              target: () => ({ _targetId: id }),
+              goto: jest.fn().mockRejectedValue(new Error('Navigation timeout')),
+              close: jest.fn().mockResolvedValue(undefined),
+              url: jest.fn().mockReturnValue('about:blank'),
+              on: jest.fn(),
+              off: jest.fn(),
+            };
+          })
+        );
+      });
+
+      const workflow: WorkflowDefinition = {
+        id: 'wf-nav-fail-state',
+        name: 'Nav Fail State Test',
+        steps: [
+          { workerId: 'w1', workerName: 'state-fail-worker', url: 'https://timeout.invalid', task: 'Task', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+
+      await engine.initWorkflow(testSessionId, workflow);
+
+      const orch = await engine.getOrchestrationStatus();
+      expect(orch).not.toBeNull();
+      expect(orch?.failedWorkers).toBe(1);
+      const workerStatus = orch?.workers.find(w => w.workerName === 'state-fail-worker');
+      expect(workerStatus?.status).toBe('FAIL');
+      expect(workerStatus?.resultSummary).toContain('Navigation failed');
+    });
+
+    test('should not register failed worker as target in session manager', async () => {
+      const { getCDPConnectionPool } = require('../../src/cdp/connection-pool');
+      const mockPool = getCDPConnectionPool();
+
+      mockPool.acquireBatch.mockImplementationOnce((count: number) => {
+        return Promise.resolve(
+          Array.from({ length: count }, () => {
+            const id = `nav-fail-noreg-${++batchPageCounter}`;
+            return {
+              target: () => ({ _targetId: id }),
+              goto: jest.fn().mockRejectedValue(new Error('Connection refused')),
+              close: jest.fn().mockResolvedValue(undefined),
+              url: jest.fn().mockReturnValue('about:blank'),
+              on: jest.fn(),
+              off: jest.fn(),
+            };
+          })
+        );
+      });
+
+      mockSessionManager.registerExistingTarget.mockClear();
+
+      const workflow: WorkflowDefinition = {
+        id: 'wf-nav-fail-noreg',
+        name: 'Nav Fail No Register',
+        steps: [
+          { workerId: 'w1', workerName: 'noreg-worker', url: 'https://fail.invalid', task: 'Task', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+
+      await engine.initWorkflow(testSessionId, workflow);
+
+      expect(mockSessionManager.registerExistingTarget).not.toHaveBeenCalled();
+    });
+
+    test('should handle mixed success and failure workers', async () => {
+      const { getCDPConnectionPool } = require('../../src/cdp/connection-pool');
+      const mockPool = getCDPConnectionPool();
+
+      let callCount = 0;
+      mockPool.acquireBatch.mockImplementationOnce((count: number) => {
+        return Promise.resolve(
+          Array.from({ length: count }, () => {
+            callCount++;
+            const id = `mixed-${++batchPageCounter}`;
+            return {
+              target: () => ({ _targetId: id }),
+              goto: callCount === 1
+                ? jest.fn().mockResolvedValue(null)
+                : jest.fn().mockRejectedValue(new Error('Timeout')),
+              close: jest.fn().mockResolvedValue(undefined),
+              url: jest.fn().mockReturnValue('about:blank'),
+              on: jest.fn(),
+              off: jest.fn(),
+            };
+          })
+        );
+      });
+
+      mockSessionManager.registerExistingTarget.mockClear();
+
+      const workflow: WorkflowDefinition = {
+        id: 'wf-mixed',
+        name: 'Mixed Test',
+        steps: [
+          { workerId: 'w1', workerName: 'ok-worker', url: 'https://good.com', task: 'Task 1', successCriteria: 'Done' },
+          { workerId: 'w2', workerName: 'bad-worker', url: 'https://bad.invalid', task: 'Task 2', successCriteria: 'Done' },
+        ],
+        parallel: true,
+        maxRetries: 3,
+        timeout: 300000,
+      };
+
+      const result = await engine.initWorkflow(testSessionId, workflow);
+
+      const okWorker = result.workers.find(w => w.workerName === 'ok-worker');
+      const badWorker = result.workers.find(w => w.workerName === 'bad-worker');
+
+      expect((okWorker as any).navigationFailed).toBeUndefined();
+      expect(okWorker?.tabId).not.toBe('');
+
+      expect((badWorker as any).navigationFailed).toBe(true);
+      expect(badWorker?.tabId).toBe('');
+
+      expect(mockSessionManager.registerExistingTarget).toHaveBeenCalledTimes(1);
+
+      const orch = await engine.getOrchestrationStatus();
+      expect(orch?.failedWorkers).toBe(1);
+    });
+  });
+
   describe('getWorkflowEngine singleton', () => {
     test('should return the same instance', () => {
       const instance1 = getWorkflowEngine();
