@@ -837,8 +837,10 @@ export class SessionManager {
           intervalMs,
           filePath,
         });
-      } catch {
-        // Best-effort: don't block session creation on storage state errors
+      } catch (err) {
+        console.error(`[SessionManager] Storage state restore failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+        // Clean up the inconsistent manager entry so deleteSession doesn't operate on an uninitialized manager
+        this.storageStateManagers.delete(sessionId);
       }
     }
 
@@ -996,6 +998,7 @@ export class SessionManager {
       )) {
         throw error;
       }
+      console.error(`[SessionManager] getPage failed for target ${targetId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       this.onTargetClosed(targetId);
       return null;
     }
@@ -1039,7 +1042,8 @@ export class SessionManager {
       console.error(`[SessionManager] Recovered untracked target ${targetId.slice(0, 8)} (${pageUrl.slice(0, 50)}) into session ${sessionId} worker ${resolvedWorkerId}`);
 
       return page;
-    } catch {
+    } catch (err) {
+      console.error(`[SessionManager] tryRecoverTarget failed for ${targetId.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
   }
