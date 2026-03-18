@@ -591,25 +591,60 @@ export class ChromeLauncher {
     }
     if (this.instance?.process) {
       console.error('[ChromeLauncher] Closing Chrome...');
-      if (process.platform === 'win32' && this.instance.process.pid) {
+      const proc = this.instance.process;
+      const userDataDir = this.instance.userDataDir;
+      const profileType = this.currentProfileType;
+
+      if (process.platform === 'win32' && proc.pid) {
         try {
           // On Windows, kill the entire process tree to clean up renderer/GPU children
-          execSync(`taskkill /T /F /PID ${this.instance.process.pid}`, { stdio: 'ignore' });
-          console.error(`[ChromeLauncher] Windows: killed process tree for PID ${this.instance.process.pid}`);
+          execSync(`taskkill /T /F /PID ${proc.pid}`, { stdio: 'ignore' });
+          console.error(`[ChromeLauncher] Windows: killed process tree for PID ${proc.pid}`);
         } catch {
           // Fallback to regular kill if taskkill fails
-          this.instance.process.kill();
+          proc.kill();
         }
       } else {
-        this.instance.process.kill();
+        proc.kill();
       }
+
+      // Wait for the process to actually exit before clearing state.
+      // This prevents port conflicts on rapid stop/restart cycles where
+      // the old Chrome may still be binding the debug port when a new
+      // instance starts.
+      await new Promise<void>((resolve) => {
+        const forceKillTimer = setTimeout(() => {
+          try {
+            if (process.platform === 'win32') {
+              proc.kill();
+            } else {
+              proc.kill('SIGKILL');
+            }
+          } catch {
+            // Process may have already exited
+          }
+          resolve();
+        }, 5000);
+        forceKillTimer.unref();
+
+        proc.once('exit', () => {
+          clearTimeout(forceKillTimer);
+          resolve();
+        });
+
+        // If the process already exited (exitCode is set), resolve immediately
+        if (proc.exitCode !== null || proc.killed) {
+          clearTimeout(forceKillTimer);
+          resolve();
+        }
+      });
 
       // Clean up user data dir — only delete temp profiles.
       // Persistent profiles survive across sessions; real/explicit profiles are never ours to delete.
-      if (this.instance.userDataDir && this.currentProfileType === 'temp') {
+      if (userDataDir && profileType === 'temp') {
         try {
-          fs.rmSync(this.instance.userDataDir, { recursive: true, force: true });
-          console.error(`[ChromeLauncher] Cleaned up temp profile: ${this.instance.userDataDir}`);
+          fs.rmSync(userDataDir, { recursive: true, force: true });
+          console.error(`[ChromeLauncher] Cleaned up temp profile: ${userDataDir}`);
         } catch {
           // Ignore cleanup errors
         }
