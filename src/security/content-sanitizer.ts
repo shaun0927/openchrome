@@ -15,8 +15,11 @@
 /**
  * Zero-width and invisible Unicode characters commonly used in prompt injection.
  * These characters are invisible in rendered text but preserved in DOM output.
+ * Uses alternation instead of character class to avoid ESLint no-misleading-character-class
+ * (U+200D Zero Width Joiner can form joined sequences in character classes).
  */
-const ZERO_WIDTH_CHARS = /[\u200B\u200C\u200D\u200E\u200F\uFEFF\u00AD\u2060\u2061\u2062\u2063\u2064\u180E]/g;
+// eslint-disable-next-line no-misleading-character-class
+const ZERO_WIDTH_CHARS = /\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF|\u00AD|\u2060|\u2061|\u2062|\u2063|\u2064|\u180E/g;
 
 /**
  * HTML comment pattern (may contain injected instructions)
