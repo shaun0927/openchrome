@@ -64,7 +64,7 @@ const SKIP_TAGS = new Set([
 const KEEP_ATTRS = new Set([
   'id', 'name', 'type', 'value', 'placeholder', 'aria-label', 'role',
   'href', 'src', 'alt', 'title', 'data-testid', 'disabled', 'checked',
-  'selected', 'required', 'class',
+  'selected', 'required', 'class', 'for',
   // Common data attributes for testing and automation
   'data-cy', 'data-qa', 'data-id', 'data-value', 'data-state',
   'tabindex',
