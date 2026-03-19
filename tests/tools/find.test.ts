@@ -13,6 +13,12 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
   getRefIdManager: jest.fn(),
 }));
 
+jest.mock('../../src/utils/ax-element-resolver', () => ({
+  resolveElementsByAXTree: jest.fn().mockResolvedValue([]),
+  invalidateAXCache: jest.fn(),
+  clearAXCache: jest.fn(),
+}));
+
 import { getSessionManager } from '../../src/session-manager';
 import { getRefIdManager } from '../../src/utils/ref-id-manager';
 

@@ -12,6 +12,8 @@ import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
+import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement } from '../utils/ax-element-resolver';
+import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
   name: 'wait_and_click',
@@ -83,8 +85,21 @@ const handler: ToolHandler = async (
 
     const cdpClient = sessionManager.getCDPClient();
 
-    // Poll for the element
+    // Poll for the element (AX-first, CSS fallback)
+    let axMatch: AXResolvedElement | null = null;
     while (Date.now() - startTime < timeout) {
+      // Try AX tree first
+      try {
+        const axMatches = await resolveElementsByAXTree(page, cdpClient, query, {
+          useCenter: true, maxResults: 1,
+        });
+        if (axMatches.length > 0 && axMatches[0].axScore >= 60) {
+          axMatch = axMatches[0];
+          break;
+        }
+      } catch { /* AX non-fatal */ }
+
+      // CSS fallback
       try {
         const results = await discoverElements(page, cdpClient, queryLower, {
           maxResults: 30,
@@ -93,7 +108,6 @@ const handler: ToolHandler = async (
           toolName: 'wait_and_click',
         });
 
-        // Score and find best match
         const scored = results
           .map((el, i) => ({ ...el, score: scoreElement(el as FoundElement, queryLower, queryTokens), _origIdx: i }))
           .sort((a, b) => b.score - a.score);
@@ -103,11 +117,42 @@ const handler: ToolHandler = async (
           break;
         }
       } catch {
-        // CDP evaluate timed out (e.g. dialog blocked) — retry on next poll iteration
+        // CDP evaluate timed out — retry on next poll iteration
       }
 
-      // Wait before next poll
       await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    // ─── AX Match Path ───
+    if (axMatch) {
+      const waitTime = Date.now() - startTime;
+      try {
+        await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: axMatch.backendDOMNodeId });
+        await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+        const { model } = await cdpClient.send<{ model: { content: number[] } }>(
+          page, 'DOM.getBoxModel', { backendNodeId: axMatch.backendDOMNodeId }
+        );
+        if (model?.content && model.content.length >= 8) {
+          const bx = model.content[0], by = model.content[1];
+          const bw = model.content[2] - bx, bh = model.content[5] - by;
+          if (bw > 0 && bh > 0) axMatch.rect = { x: bx + bw / 2, y: by + bh / 2, width: bw, height: bh };
+        }
+      } catch { /* use original coords */ }
+
+      const axX = Math.round(axMatch.rect.x), axY = Math.round(axMatch.rect.y);
+      const { delta: axDelta } = await withDomDelta(page, () => page.mouse.click(axX, axY));
+
+      invalidateAXCache(getTargetId(page.target()));
+      await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
+
+      const axRef = refIdManager.generateRef(sessionId, tabId, axMatch.backendDOMNodeId, axMatch.role, axMatch.name, undefined, undefined);
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `\u2713 Clicked ${axMatch.role} "${axMatch.name}" [${axRef}] [via AX tree, score: ${axMatch.axScore}/100] (waited ${waitTime}ms)${axDelta}`,
+        }],
+      };
     }
 
     if (!bestMatch) {

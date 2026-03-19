@@ -14,6 +14,8 @@ import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAUL
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { withTimeout } from '../utils/with-timeout';
+import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-resolver';
+import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
@@ -108,6 +110,103 @@ const handler: ToolHandler = async (
     const startTime = Date.now();
     const cdpClient = sessionManager.getCDPClient();
 
+    // ─── AX-First Resolution ───
+    // Try AX tree first — the browser's accessibility engine understands all UI frameworks
+    try {
+      const axMatches = await resolveElementsByAXTree(page, cdpClient, query, {
+        useCenter: true,
+        maxResults: 3,
+      });
+      if (axMatches.length > 0 && axMatches[0].axScore >= 60) {
+        const ax = axMatches[0];
+
+        // Scroll into view
+        try {
+          await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
+            backendNodeId: ax.backendDOMNodeId,
+          });
+          await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+          // Re-resolve coordinates after scroll
+          const { model } = await cdpClient.send<{ model: { content: number[] } }>(
+            page, 'DOM.getBoxModel', { backendNodeId: ax.backendDOMNodeId }
+          );
+          if (model?.content && model.content.length >= 8) {
+            const bx = model.content[0], by = model.content[1];
+            const bw = model.content[2] - bx, bh = model.content[5] - by;
+            if (bw > 0 && bh > 0) {
+              ax.rect = { x: bx + bw / 2, y: by + bh / 2, width: bw, height: bh };
+            }
+          }
+        } catch { /* use original coordinates */ }
+
+        const axX = Math.round(ax.rect.x);
+        const axY = Math.round(ax.rect.y);
+
+        // Perform action with DOM delta
+        const { delta: axDelta } = await withDomDelta(page, async () => {
+          if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
+          else if (action === 'hover') await page.mouse.move(axX, axY);
+          else await page.mouse.click(axX, axY);
+        }, { settleMs: Math.max(150, waitAfter) });
+
+        // Invalidate AX cache after interaction
+        invalidateAXCache(getTargetId(page.target()));
+
+        // Generate ref
+        const axRef = refIdManager.generateRef(
+          sessionId, tabId, ax.backendDOMNodeId,
+          ax.role, ax.name, undefined, undefined
+        );
+
+        // Clean up any leftover tags
+        await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
+
+        // Build response with AX provenance + confidence score
+        const axVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+        const axLine = `\u2713 ${axVerb} ${ax.role} "${ax.name}" [${axRef}] [via AX tree, score: ${ax.axScore}/100]`;
+
+        // Gather state summary (same as CSS path)
+        const axState = await withTimeout(page.evaluate(() => {
+          const url = window.location.href;
+          const title = document.title;
+          const active = document.activeElement;
+          let activeInfo = 'none';
+          if (active && active !== document.body) {
+            const tag = active.tagName.toLowerCase();
+            const role = active.getAttribute('role') || tag;
+            const name = active.getAttribute('aria-label') || (active as HTMLInputElement).value?.slice(0, 30) || active.textContent?.slice(0, 30) || '';
+            activeInfo = `${role}: "${name}"`;
+          }
+          return { url, title, activeInfo };
+        }), 3000, 'state-summary').catch(() => ({ url: '', title: '', activeInfo: 'unknown' }));
+
+        const lines: string[] = [axLine];
+        if (axDelta) lines.push('', '[DOM Delta]', axDelta);
+        if (axState.activeInfo !== 'none') lines.push('', `[Focused] ${axState.activeInfo}`);
+
+        const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+          { type: 'text' as const, text: lines.join('\n') },
+        ];
+
+        // Optional screenshot (verify mode)
+        if (verify) {
+          try {
+            const screenshotBuf = await withTimeout(
+              page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
+              DEFAULT_SCREENSHOT_TIMEOUT_MS,
+              'verify-screenshot'
+            ) as string;
+            resultContent.push({ type: 'image' as const, data: screenshotBuf, mimeType: 'image/webp' });
+          } catch { /* screenshot failed, non-fatal */ }
+        }
+
+        return { content: resultContent };
+      }
+    } catch {
+      // AX resolution failed — fall through to CSS discovery
+    }
+
+    // ─── CSS Fallback (existing logic) ───
     do {
     // Find elements matching the query using the shared discovery module
     let results: Omit<FoundElement, 'score'>[];
@@ -227,12 +326,16 @@ const handler: ToolHandler = async (
     // Clean up discovery tags to prevent stale properties
     await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
-    // Build compact action label
+    // Invalidate AX cache after CSS-path interaction too
+    invalidateAXCache(getTargetId(page.target()));
+
+    // Build compact action label with confidence score
     const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
     const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
     const textPart = textSample ? ` "${textSample}"` : '';
     const refPart = refId ? ` [${refId}]` : '';
-    const interactedLine = `\u2713 ${actionVerb} ${bestMatch.tagName}${textPart}${refPart}`;
+    const confidencePart = bestMatch.score < 50 ? ` \u26a0 LOW CONFIDENCE [via CSS, score: ${bestMatch.score}/100]` : ` [via CSS, score: ${bestMatch.score}/100]`;
+    const interactedLine = `\u2713 ${actionVerb} ${bestMatch.tagName}${textPart}${refPart}${confidencePart}`;
 
     // Gather state summary via page.evaluate
     const stateSummary = await withTimeout(page.evaluate(() => {

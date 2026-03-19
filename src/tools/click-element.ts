@@ -13,6 +13,8 @@ import { withDomDelta } from '../utils/dom-delta';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
+import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-resolver';
+import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
   name: 'click_element',
@@ -100,6 +102,63 @@ const handler: ToolHandler = async (
     const startTime = Date.now();
     const cdpClient = sessionManager.getCDPClient();
 
+    // ─── AX-First Resolution ───
+    try {
+      const axMatches = await resolveElementsByAXTree(page, cdpClient, query, {
+        useCenter: true, maxResults: 3,
+      });
+      if (axMatches.length > 0 && axMatches[0].axScore >= 60) {
+        const ax = axMatches[0];
+
+        // Scroll into view and re-resolve coordinates
+        try {
+          await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: ax.backendDOMNodeId });
+          await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+          const { model } = await cdpClient.send<{ model: { content: number[] } }>(
+            page, 'DOM.getBoxModel', { backendNodeId: ax.backendDOMNodeId }
+          );
+          if (model?.content && model.content.length >= 8) {
+            const bx = model.content[0], by = model.content[1];
+            const bw = model.content[2] - bx, bh = model.content[5] - by;
+            if (bw > 0 && bh > 0) ax.rect = { x: bx + bw / 2, y: by + bh / 2, width: bw, height: bh };
+          }
+        } catch { /* use original coords */ }
+
+        const axX = Math.round(ax.rect.x), axY = Math.round(ax.rect.y);
+
+        const { delta: axDelta } = await withDomDelta(page, async () => {
+          if (doubleClick) await page.mouse.click(axX, axY, { clickCount: 2 });
+          else await page.mouse.click(axX, axY);
+        }, { settleMs: Math.max(150, waitAfter) });
+
+        invalidateAXCache(getTargetId(page.target()));
+
+        const axRef = refIdManager.generateRef(sessionId, tabId, ax.backendDOMNodeId, ax.role, ax.name, undefined, undefined);
+        await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
+        AdaptiveScreenshot.getInstance().reset(tabId);
+
+        const axVerb = doubleClick ? 'Double-clicked' : 'Clicked';
+        const resultText = `\u2713 ${axVerb} ${ax.role} "${ax.name}" [${axRef}] [via AX tree, score: ${ax.axScore}/100]${axDelta}`;
+
+        if (verify) {
+          try {
+            const buf = await page.screenshot({ type: 'webp', quality: DEFAULT_SCREENSHOT_QUALITY, encoding: 'base64' }) as string;
+            return {
+              content: [
+                { type: 'text' as const, text: resultText },
+                { type: 'image' as const, data: buf, mimeType: 'image/webp' },
+              ],
+            };
+          } catch { /* screenshot failed */ }
+        }
+
+        return { content: [{ type: 'text' as const, text: resultText }] };
+      }
+    } catch {
+      // AX non-fatal — fall through to CSS
+    }
+
+    // ─── CSS Fallback ───
     do { // --- polling loop start ---
     // Find elements matching the query
     let rawResults: Omit<FoundElement, 'score'>[];

@@ -9,6 +9,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
+import { resolveElementsByAXTree } from '../utils/ax-element-resolver';
 
 const definition: MCPToolDefinition = {
   name: 'find',
@@ -81,6 +82,40 @@ const handler: ToolHandler = async (
 
     const cdpClient = sessionManager.getCDPClient();
 
+    // ─── AX-First Resolution ───
+    try {
+      const axMatches = await resolveElementsByAXTree(page, cdpClient, query, {
+        useCenter: false,
+        maxResults: 20,
+      });
+
+      if (axMatches.length > 0 && axMatches[0].axScore >= 60) {
+        const axOutput: string[] = [];
+        for (const el of axMatches) {
+          const refId = refIdManager.generateRef(
+            sessionId, tabId, el.backendDOMNodeId,
+            el.role, el.name, undefined, undefined
+          );
+          const scoreLabel = el.axScore >= 90 ? '\u2605\u2605\u2605' : el.axScore >= 60 ? '\u2605\u2605' : '\u2605';
+          axOutput.push(
+            `[${refId}] ${el.role}: "${el.name}" at (${Math.round(el.rect.x)}, ${Math.round(el.rect.y)}) ${scoreLabel} [AX]`
+          );
+        }
+
+        await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Found ${axOutput.length} elements matching "${query}" [via AX tree]:\n\n${axOutput.join('\n')}`,
+          }],
+        };
+      }
+    } catch {
+      // AX non-fatal — fall through to CSS
+    }
+
+    // ─── CSS Fallback ───
     do { // --- polling loop start ---
     let scored: FoundElement[];
     try {
