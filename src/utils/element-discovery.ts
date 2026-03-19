@@ -359,6 +359,10 @@ export async function discoverFormFields(
         '[contenteditable="true"]',
         '[role="textbox"]',
         '[role="combobox"]',
+        '[role="radio"]',
+        '[role="checkbox"]',
+        '[role="switch"]',
+        '[role="slider"]',
       ];
 
       let index = 0;
