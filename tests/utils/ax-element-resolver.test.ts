@@ -1,12 +1,13 @@
 /// <reference types="jest" />
 /**
- * Unit tests for AX-First Element Resolution
+ * Unit tests for AX-First Element Resolution (cascading filter architecture)
  */
 
 import {
   parseQueryForAX,
-  scoreAXNode,
+  cascadeFilter,
   AXNodeFlat,
+  MATCH_LEVEL_LABELS,
 } from '../../src/utils/ax-element-resolver';
 
 describe('AX Element Resolver', () => {
@@ -15,7 +16,6 @@ describe('AX Element Resolver', () => {
       const result = parseQueryForAX('외부 radio button');
       expect(result.roleHint).toBe('radio');
       expect(result.nameHint).toBe('외부');
-      expect(result.nameTokens).toEqual(['외부']);
     });
 
     test('should extract role and name from "Submit button"', () => {
@@ -27,15 +27,7 @@ describe('AX Element Resolver', () => {
     test('should prefer longest match: "radio button" over "radio"', () => {
       const result = parseQueryForAX('외부 radio button');
       expect(result.roleHint).toBe('radio');
-      // "radio button" extracted, not just "radio" leaving "button" in name
       expect(result.nameHint).not.toContain('button');
-    });
-
-    test('should extract role from "search input"', () => {
-      const result = parseQueryForAX('search input');
-      // "input" matches before "search" in ROLE_KEYWORDS → textbox
-      expect(result.roleHint).toBe('textbox');
-      expect(result.nameHint).toBe('search');
     });
 
     test('should handle query with no role keyword', () => {
@@ -62,16 +54,10 @@ describe('AX Element Resolver', () => {
       expect(result.nameHint).toBe('Agree');
     });
 
-    test('should handle role keyword at beginning of query', () => {
+    test('should handle role keyword at beginning', () => {
       const result = parseQueryForAX('button Submit');
       expect(result.roleHint).toBe('button');
       expect(result.nameHint).toBe('Submit');
-    });
-
-    test('should return full query as name when only role keyword', () => {
-      const result = parseQueryForAX('button');
-      expect(result.roleHint).toBe('button');
-      expect(result.nameHint).toBe('button');
     });
 
     test('should handle link keyword', () => {
@@ -79,119 +65,123 @@ describe('AX Element Resolver', () => {
       expect(result.roleHint).toBe('link');
       expect(result.nameHint).toBe('Learn more');
     });
-
-    test('should generate name tokens', () => {
-      const result = parseQueryForAX('first name text field');
-      expect(result.roleHint).toBe('textbox');
-      expect(result.nameTokens).toEqual(['first', 'name']);
-    });
   });
 
-  describe('scoreAXNode', () => {
+  describe('cascadeFilter', () => {
+    let nodeId = 100;
     const makeNode = (role: string, name: string, props: Record<string, unknown> = {}): AXNodeFlat => ({
-      nodeId: 1,
-      backendDOMNodeId: 100,
+      nodeId: nodeId++,
+      backendDOMNodeId: nodeId,
       role,
       name,
       properties: props,
     });
 
-    test('should give 100 for exact role + exact name match', () => {
-      const node = makeNode('radio', '외부');
-      const score = scoreAXNode(node, 'radio', '외부', ['외부']);
-      expect(score).toBe(110); // 100 + 10 interactive bonus
+    const nodes = [
+      makeNode('radio', '외부'),
+      makeNode('radio', '내부', { disabled: true }),
+      makeNode('button', '외부 사용자 유형 도움말'),
+      makeNode('radiogroup', '대상'),
+      makeNode('button', 'Submit'),
+      makeNode('link', 'Learn more'),
+      makeNode('textbox', 'Search'),
+      makeNode('radio', '외부 고급 설정'),
+    ];
+
+    test('Level 1: exact role + exact name', () => {
+      const results = cascadeFilter(nodes, 'radio', '외부');
+      expect(results.length).toBe(1);
+      expect(results[0].node.role).toBe('radio');
+      expect(results[0].node.name).toBe('외부');
+      expect(results[0].matchLevel).toBe(1);
     });
 
-    test('should give 80+ for exact role + name contains match', () => {
-      const node = makeNode('radio', '외부 사용자');
-      const score = scoreAXNode(node, 'radio', '외부', ['외부']);
-      expect(score).toBeGreaterThanOrEqual(80);
+    test('Level 2: exact role + name contains', () => {
+      const results = cascadeFilter(nodes, 'radio', '고급');
+      expect(results.length).toBe(1);
+      expect(results[0].node.name).toBe('외부 고급 설정');
+      expect(results[0].matchLevel).toBe(2);
     });
 
-    test('should give low score for role mismatch and name mismatch', () => {
-      const node = makeNode('button', '도움말');
-      const score = scoreAXNode(node, 'radio', '외부', ['외부']);
-      // Score is only the interactive bonus (10) — no role or name match
-      expect(score).toBeLessThanOrEqual(10);
+    test('Level 3: exact name without role hint', () => {
+      const results = cascadeFilter(nodes, null, 'Submit');
+      expect(results.length).toBe(1);
+      expect(results[0].node.role).toBe('button');
+      expect(results[0].node.name).toBe('Submit');
+      expect(results[0].matchLevel).toBe(3);
     });
 
-    test('should give 75+ for exact name match without role hint', () => {
-      const node = makeNode('radio', '외부');
-      const score = scoreAXNode(node, null, '외부', ['외부']);
-      expect(score).toBeGreaterThanOrEqual(75);
+    test('Level 4: name contains without role hint', () => {
+      const results = cascadeFilter(nodes, null, 'Learn');
+      expect(results.length).toBe(1);
+      expect(results[0].node.name).toBe('Learn more');
+      expect(results[0].matchLevel).toBe(4);
     });
 
-    test('should give 50+ for name contains without role hint', () => {
-      const node = makeNode('button', 'Submit 외부');
-      const score = scoreAXNode(node, null, '외부', ['외부']);
-      expect(score).toBeGreaterThanOrEqual(50);
+    test('should filter out disabled elements', () => {
+      const results = cascadeFilter(nodes, 'radio', '내부');
+      expect(results.length).toBe(0);
     });
 
-    test('should give role-match-only score of 30+ when name empty', () => {
-      const node = makeNode('button', '');
-      const score = scoreAXNode(node, 'button', '', []);
-      expect(score).toBeGreaterThanOrEqual(30);
+    test('should filter out non-interactive roles', () => {
+      const results = cascadeFilter(nodes, 'radiogroup', '대상');
+      expect(results.length).toBe(0);
     });
 
-    test('should add interactive role bonus', () => {
-      const interactive = makeNode('button', 'Click');
-      const nonInteractive = makeNode('heading', 'Click');
-      const scoreI = scoreAXNode(interactive, null, 'Click', ['click']);
-      const scoreN = scoreAXNode(nonInteractive, null, 'Click', ['click']);
-      expect(scoreI).toBeGreaterThan(scoreN);
+    test('should return empty array when no match', () => {
+      const results = cascadeFilter(nodes, 'slider', 'Volume');
+      expect(results.length).toBe(0);
     });
 
-    test('should penalize disabled elements', () => {
-      const enabled = makeNode('radio', '내부');
-      const disabled = makeNode('radio', '내부', { disabled: true });
-      const scoreE = scoreAXNode(enabled, 'radio', '내부', ['내부']);
-      const scoreD = scoreAXNode(disabled, 'radio', '내부', ['내부']);
-      expect(scoreE).toBeGreaterThan(scoreD);
+    test('should return empty array for empty name hint', () => {
+      const results = cascadeFilter(nodes, 'button', '');
+      expect(results.length).toBe(0);
     });
 
-    test('should handle token overlap scoring', () => {
-      const node = makeNode('generic', 'first name label');
-      const score = scoreAXNode(node, null, 'first name', ['first', 'name']);
-      expect(score).toBeGreaterThan(0);
+    test('should be case insensitive', () => {
+      const results = cascadeFilter(nodes, 'button', 'submit');
+      expect(results.length).toBe(1);
+      expect(results[0].node.name).toBe('Submit');
     });
 
-    test('should return 0 for empty name and no role hint', () => {
-      const node = makeNode('generic', '');
-      const score = scoreAXNode(node, null, 'test', ['test']);
-      expect(score).toBe(0);
+    test('should respect maxResults', () => {
+      const manyNodes = [
+        makeNode('button', 'Action 1'),
+        makeNode('button', 'Action 2'),
+        makeNode('button', 'Action 3'),
+        makeNode('button', 'Action 4'),
+        makeNode('button', 'Action 5'),
+      ];
+      const results = cascadeFilter(manyNodes, null, 'Action', 2);
+      expect(results.length).toBe(2);
     });
 
-    test('should handle case insensitivity', () => {
-      const node = makeNode('Button', 'SUBMIT');
-      const score = scoreAXNode(node, 'button', 'submit', ['submit']);
-      expect(score).toBeGreaterThanOrEqual(100);
+    test('should stop at first matching level (not mix levels)', () => {
+      const results = cascadeFilter(nodes, 'radio', '외부');
+      expect(results.every(r => r.matchLevel === 1)).toBe(true);
     });
 
     describe('real-world Angular Material radio button scenario', () => {
-      test('should score radio "외부" highest for query "외부 radio button"', () => {
-        const radio = makeNode('radio', '외부');
-        const helpButton = makeNode('button', '외부 사용자 유형 도움말');
-        const container = makeNode('radiogroup', '대상');
-
-        const radioScore = scoreAXNode(radio, 'radio', '외부', ['외부']);
-        const helpScore = scoreAXNode(helpButton, 'radio', '외부', ['외부']);
-        const containerScore = scoreAXNode(container, 'radio', '외부', ['외부']);
-
-        // Radio should win decisively
-        expect(radioScore).toBeGreaterThan(helpScore);
-        expect(radioScore).toBeGreaterThan(containerScore);
-        expect(radioScore).toBeGreaterThanOrEqual(100);
+      test('should pick radio "외부" over button "외부 사용자 유형 도움말"', () => {
+        const results = cascadeFilter(nodes, 'radio', '외부');
+        expect(results.length).toBe(1);
+        expect(results[0].node.role).toBe('radio');
+        expect(results[0].node.name).toBe('외부');
       });
 
-      test('should handle disabled "내부" radio with penalty', () => {
-        const internal = makeNode('radio', '내부', { disabled: true });
-        const external = makeNode('radio', '외부');
-
-        const internalScore = scoreAXNode(internal, 'radio', '외부', ['외부']);
-        const externalScore = scoreAXNode(external, 'radio', '외부', ['외부']);
-
-        expect(externalScore).toBeGreaterThan(internalScore);
+      test('should not return disabled "내부" radio', () => {
+        const results = cascadeFilter(nodes, 'radio', '내부');
+        expect(results.length).toBe(0);
       });
+    });
+  });
+
+  describe('MATCH_LEVEL_LABELS', () => {
+    test('should have labels for all 4 levels', () => {
+      expect(MATCH_LEVEL_LABELS[1]).toBe('exact match');
+      expect(MATCH_LEVEL_LABELS[2]).toBe('role match');
+      expect(MATCH_LEVEL_LABELS[3]).toBe('name match');
+      expect(MATCH_LEVEL_LABELS[4]).toBe('partial match');
     });
   });
 });

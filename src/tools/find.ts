@@ -9,7 +9,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
-import { resolveElementsByAXTree } from '../utils/ax-element-resolver';
+import { resolveElementsByAXTree, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 
 const definition: MCPToolDefinition = {
   name: 'find',
@@ -89,14 +89,14 @@ const handler: ToolHandler = async (
         maxResults: 20,
       });
 
-      if (axMatches.length > 0 && axMatches[0].axScore >= 60) {
+      if (axMatches.length > 0) {
         const axOutput: string[] = [];
         for (const el of axMatches) {
           const refId = refIdManager.generateRef(
             sessionId, tabId, el.backendDOMNodeId,
             el.role, el.name, undefined, undefined
           );
-          const scoreLabel = el.axScore >= 90 ? '\u2605\u2605\u2605' : el.axScore >= 60 ? '\u2605\u2605' : '\u2605';
+          const scoreLabel = el.matchLevel === 1 ? '\u2605\u2605\u2605' : el.matchLevel === 2 ? '\u2605\u2605' : '\u2605';
           axOutput.push(
             `[${refId}] ${el.role}: "${el.name}" at (${Math.round(el.rect.x)}, ${Math.round(el.rect.y)}) ${scoreLabel} [AX]`
           );
