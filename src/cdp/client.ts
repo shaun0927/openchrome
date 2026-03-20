@@ -59,6 +59,17 @@ export interface ConnectionEvent {
 }
 
 
+function parseEnvInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    console.error(`[CDPClient] Invalid value for ${name}="${raw}", using default ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}
+
 export class CDPClient {
   private browser: Browser | null = null;
   private sessions: Map<string, CDPSession> = new Map();
@@ -87,12 +98,9 @@ export class CDPClient {
   constructor(options: CDPClientOptions = {}) {
     const globalConfig = getGlobalConfig();
     this.port = options.port || globalConfig.port;
-    this.maxReconnectAttempts = options.maxReconnectAttempts ||
-      Number(process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) || DEFAULT_MAX_RECONNECT_ATTEMPTS;
-    this.reconnectDelayMs = options.reconnectDelayMs ||
-      Number(process.env.OPENCHROME_RECONNECT_DELAY_MS) || DEFAULT_RECONNECT_DELAY_MS;
-    this.heartbeatIntervalMs = options.heartbeatIntervalMs ||
-      Number(process.env.OPENCHROME_HEARTBEAT_INTERVAL_MS) || DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.maxReconnectAttempts = options.maxReconnectAttempts ?? parseEnvInt('OPENCHROME_MAX_RECONNECT_ATTEMPTS', DEFAULT_MAX_RECONNECT_ATTEMPTS);
+    this.reconnectDelayMs = options.reconnectDelayMs ?? parseEnvInt('OPENCHROME_RECONNECT_DELAY_MS', DEFAULT_RECONNECT_DELAY_MS);
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? parseEnvInt('OPENCHROME_HEARTBEAT_INTERVAL_MS', DEFAULT_HEARTBEAT_INTERVAL_MS);
     // Use explicit option if provided, otherwise use global config
     this.autoLaunch = options.autoLaunch !== undefined ? options.autoLaunch : globalConfig.autoLaunch;
   }
