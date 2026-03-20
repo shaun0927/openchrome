@@ -170,6 +170,77 @@ describe('CDPClient – handleDisconnect reconnection fixes', () => {
     // Should return immediately without attempting reconnection
     expect(connectSpy).not.toHaveBeenCalled();
   });
+
+  test('uses exponential backoff between reconnection attempts', async () => {
+    const client = createConnectedClient({ maxReconnectAttempts: 4, reconnectDelayMs: 100 });
+
+    const delays: number[] = [];
+    const originalSetTimeout = global.setTimeout;
+    jest.spyOn(global, 'setTimeout').mockImplementation((fn: any, ms?: number) => {
+      if (ms && ms > 0) delays.push(ms);
+      return originalSetTimeout(fn, 1); // Execute immediately for test speed
+    });
+
+    jest.spyOn(client as any, 'connectInternal')
+      .mockRejectedValue(new Error('Chrome not available'));
+
+    await (client as any).handleDisconnect();
+
+    // Should have 3 delays (between 4 attempts)
+    expect(delays.length).toBe(3);
+    // Each delay should be larger than the previous (exponential)
+    for (let i = 1; i < delays.length; i++) {
+      expect(delays[i]).toBeGreaterThan(delays[i - 1]);
+    }
+    // First delay should be close to base (100ms + jitter)
+    expect(delays[0]).toBeGreaterThanOrEqual(100);
+    expect(delays[0]).toBeLessThan(200); // 100 * 2^0 + jitter(0..50)
+    // All delays capped at 30000ms
+    delays.forEach(d => expect(d).toBeLessThanOrEqual(30000));
+
+    jest.restoreAllMocks();
+  });
+
+  test('defaults to 5 max reconnect attempts from DEFAULT_MAX_RECONNECT_ATTEMPTS', () => {
+    const client = new CDPClient({ port: 9222 });
+    expect((client as any).maxReconnectAttempts).toBe(5);
+  });
+
+  test('respects OPENCHROME_MAX_RECONNECT_ATTEMPTS environment variable', () => {
+    process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '8';
+    const client = new CDPClient({ port: 9222 });
+    expect((client as any).maxReconnectAttempts).toBe(8);
+    delete process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS;
+  });
+
+  test('respects OPENCHROME_HEARTBEAT_INTERVAL_MS environment variable', () => {
+    process.env.OPENCHROME_HEARTBEAT_INTERVAL_MS = '10000';
+    const client = new CDPClient({ port: 9222 });
+    expect((client as any).heartbeatIntervalMs).toBe(10000);
+    delete process.env.OPENCHROME_HEARTBEAT_INTERVAL_MS;
+  });
+
+  test('caps exponential backoff at 30 seconds', async () => {
+    const client = createConnectedClient({ maxReconnectAttempts: 10, reconnectDelayMs: 5000 });
+
+    const delays: number[] = [];
+    const originalSetTimeout = global.setTimeout;
+    jest.spyOn(global, 'setTimeout').mockImplementation((fn: any, ms?: number) => {
+      if (ms && ms > 0) delays.push(ms);
+      return originalSetTimeout(fn, 1);
+    });
+
+    jest.spyOn(client as any, 'connectInternal')
+      .mockRejectedValue(new Error('Chrome not available'));
+
+    await (client as any).handleDisconnect();
+
+    // Later delays should be capped at 30000
+    const laterDelays = delays.filter(d => d >= 30000);
+    laterDelays.forEach(d => expect(d).toBeLessThanOrEqual(30000));
+
+    jest.restoreAllMocks();
+  });
 });
 
 // ─── getChromeLauncher – port validation ──────────────────────────────────────

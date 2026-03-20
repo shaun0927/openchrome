@@ -22,6 +22,9 @@ import {
   DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
   DEFAULT_CONNECT_VERIFY_STALENESS_MS,
   DEFAULT_CDP_SEND_TIMEOUT_MS,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_MAX_RECONNECT_ATTEMPTS,
+  DEFAULT_RECONNECT_DELAY_MS,
 } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 
@@ -56,6 +59,17 @@ export interface ConnectionEvent {
 }
 
 
+function parseEnvInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    console.error(`[CDPClient] Invalid value for ${name}="${raw}", using default ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}
+
 export class CDPClient {
   private browser: Browser | null = null;
   private sessions: Map<string, CDPSession> = new Map();
@@ -84,9 +98,9 @@ export class CDPClient {
   constructor(options: CDPClientOptions = {}) {
     const globalConfig = getGlobalConfig();
     this.port = options.port || globalConfig.port;
-    this.maxReconnectAttempts = options.maxReconnectAttempts || 3;
-    this.reconnectDelayMs = options.reconnectDelayMs || 1000;
-    this.heartbeatIntervalMs = options.heartbeatIntervalMs || 5000;
+    this.maxReconnectAttempts = options.maxReconnectAttempts ?? parseEnvInt('OPENCHROME_MAX_RECONNECT_ATTEMPTS', DEFAULT_MAX_RECONNECT_ATTEMPTS);
+    this.reconnectDelayMs = options.reconnectDelayMs ?? parseEnvInt('OPENCHROME_RECONNECT_DELAY_MS', DEFAULT_RECONNECT_DELAY_MS);
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? parseEnvInt('OPENCHROME_HEARTBEAT_INTERVAL_MS', DEFAULT_HEARTBEAT_INTERVAL_MS);
     // Use explicit option if provided, otherwise use global config
     this.autoLaunch = options.autoLaunch !== undefined ? options.autoLaunch : globalConfig.autoLaunch;
   }
@@ -321,7 +335,13 @@ export class CDPClient {
         console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
 
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
-          await new Promise(resolve => setTimeout(resolve, this.reconnectDelayMs));
+          // Exponential backoff with jitter: baseDelay * 2^(attempt-1) + random(0..baseDelay/2)
+          const backoffDelay = Math.min(
+            this.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1) + Math.floor(Math.random() * this.reconnectDelayMs / 2),
+            30000, // Cap at 30 seconds
+          );
+          console.error(`[CDPClient] Waiting ${backoffDelay}ms before next attempt (exponential backoff)...`);
+          await new Promise(resolve => setTimeout(resolve, backoffDelay));
         }
       }
     }

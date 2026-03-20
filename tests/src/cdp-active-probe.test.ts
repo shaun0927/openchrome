@@ -388,7 +388,7 @@ describe('CDPClient – handleDisconnect resets lastVerifiedAt', () => {
   });
 
   test('handleDisconnect resets lastVerifiedAt to 0', async () => {
-    const client = new CDPClient({ port: 9222 });
+    const client = new CDPClient({ port: 9222, maxReconnectAttempts: 1, reconnectDelayMs: 10 });
     const mockBrowser = createMockBrowser();
     (client as any).browser = mockBrowser;
     (client as any).connectionState = 'connected';

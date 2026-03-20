@@ -95,6 +95,21 @@ export const DEFAULT_CHROME_LAUNCH_TIMEOUT_MS = 60000;
  *  own error (with stderr diagnostics) to propagate instead of a generic timeout. */
 export const DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS = 75000;
 
+/** Heartbeat interval in milliseconds. How frequently the CDP connection health is probed.
+ *  Override with OPENCHROME_HEARTBEAT_INTERVAL_MS environment variable.
+ *  Lower values detect disconnects faster but increase Chrome CPU overhead. */
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 5000;
+
+/** Maximum number of reconnection attempts after a disconnect.
+ *  Override with OPENCHROME_MAX_RECONNECT_ATTEMPTS environment variable.
+ *  Set higher for long-running sessions where transient failures are expected. */
+export const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
+
+/** Base delay between reconnection attempts in milliseconds.
+ *  Actual delay uses exponential backoff: baseDelay * 2^(attempt-1) + jitter.
+ *  Override with OPENCHROME_RECONNECT_DELAY_MS environment variable. */
+export const DEFAULT_RECONNECT_DELAY_MS = 1000;
+
 /** Heartbeat active ping timeout in milliseconds.
  *  Sends Browser.getVersion to detect half-open WebSocket connections
  *  (e.g., after macOS sleep/wake) that browser.isConnected() misses.
