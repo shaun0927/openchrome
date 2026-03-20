@@ -177,12 +177,13 @@ export const DEFAULT_SESSION_PERSIST_DEBOUNCE_MS = 5000;
 export const DEFAULT_EVENT_LOOP_CHECK_INTERVAL_MS = 200;
 
 /** Event loop block warning threshold in milliseconds.
- *  Emit warning when event loop is blocked longer than this. */
-export const DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS = 2000;
+ *  Emit warning when blocked longer than this.
+ *  Low enough to catch stalls before CDP commands time out. */
+export const DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS = 200;
 
-/** Health endpoint HTTP port.
+/** Health endpoint HTTP port. Avoids conflict with Node.js inspector (9229) and Chrome DevTools (9222).
  *  Override with OPENCHROME_HEALTH_PORT environment variable. */
-export const DEFAULT_HEALTH_ENDPOINT_PORT = 9229;
+export const DEFAULT_HEALTH_ENDPOINT_PORT = 9090;
 
 /** Idle timeout for adaptive heartbeat mode transition in milliseconds.
  *  Switch to idle heartbeat mode after this long without tool calls. */
