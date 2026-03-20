@@ -83,6 +83,7 @@ export class CDPClient {
   private targetDestroyedListeners: ((targetId: string, page?: Page) => void)[] = [];
   private reconnectAttempts = 0;
   private consecutiveHeartbeatFailures = 0;
+  private consecutiveHeartbeatSuccesses = 0;
   private checkConnectionInFlight = false;
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
@@ -93,6 +94,17 @@ export class CDPClient {
   private pendingConnect: Promise<void> | null = null;
   /** Timestamp of last successful connection verification (heartbeat or active probe). */
   private lastVerifiedAt = 0;
+
+  // Adaptive heartbeat state
+  private heartbeatMode: 'idle' | 'active' | 'heavy' | 'recovery' = 'active';
+  private lastCommandAt = 0;
+  private heartbeatModeTimer: NodeJS.Timeout | null = null;
+
+  // Connection health metrics
+  private reconnectCount = 0;
+  private pingLatencies: number[] = []; // rolling window
+  private static readonly MAX_PING_SAMPLES = 60; // ~5 min at 5s interval
+
   private static readonly COOKIE_CACHE_TTL = 300000; // 5 minutes
 
   constructor(options: CDPClientOptions = {}) {
@@ -211,8 +223,16 @@ export class CDPClient {
         return;
       }
 
+      // Check for idle transition: no commands for 5 minutes → switch to idle mode
+      if ((this.heartbeatMode === 'active' || this.heartbeatMode === 'heavy')
+          && this.lastCommandAt > 0
+          && now - this.lastCommandAt > 300000) {
+        this.setHeartbeatMode('idle');
+        return; // setHeartbeatMode restarts the timer with new interval
+      }
+
       this.checkConnection();
-    }, this.heartbeatIntervalMs);
+    }, this.getEffectiveHeartbeatInterval());
   }
 
   /**
@@ -223,6 +243,90 @@ export class CDPClient {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+  }
+
+  /**
+   * Set heartbeat mode. Restarts the heartbeat timer with the new interval.
+   */
+  setHeartbeatMode(mode: 'idle' | 'active' | 'heavy' | 'recovery'): void {
+    if (this.heartbeatMode === mode) return;
+    const oldMode = this.heartbeatMode;
+    this.heartbeatMode = mode;
+    console.error(`[CDPClient] Heartbeat mode: ${oldMode} → ${mode} (interval: ${this.getEffectiveHeartbeatInterval()}ms)`);
+
+    // Restart heartbeat with new interval
+    if (this.heartbeatTimer) {
+      this.startHeartbeat();
+    }
+
+    // Auto-transition from recovery to active after 30s
+    if (this.heartbeatModeTimer) {
+      clearTimeout(this.heartbeatModeTimer);
+      this.heartbeatModeTimer = null;
+    }
+    if (mode === 'recovery') {
+      this.heartbeatModeTimer = setTimeout(() => {
+        this.heartbeatModeTimer = null;
+        if (this.heartbeatMode === 'recovery') {
+          this.setHeartbeatMode('active');
+        }
+      }, 30000);
+      this.heartbeatModeTimer.unref();
+    }
+  }
+
+  /**
+   * Get effective heartbeat interval based on current mode.
+   */
+  private getEffectiveHeartbeatInterval(): number {
+    switch (this.heartbeatMode) {
+      case 'idle': return Math.max(this.heartbeatIntervalMs * 3, 15000); // 3x base or 15s min
+      case 'active': return this.heartbeatIntervalMs; // default (5s)
+      case 'heavy': return Math.max(Math.floor(this.heartbeatIntervalMs / 2), 2000); // half or 2s min
+      case 'recovery': return 1000; // 1s fixed during recovery
+    }
+  }
+
+  /**
+   * Record that a command was executed (for idle detection).
+   */
+  recordCommandActivity(): void {
+    this.lastCommandAt = Date.now();
+    if (this.heartbeatMode === 'idle') {
+      this.setHeartbeatMode('active');
+    }
+  }
+
+  /**
+   * Get current heartbeat mode.
+   */
+  getHeartbeatMode(): 'idle' | 'active' | 'heavy' | 'recovery' {
+    return this.heartbeatMode;
+  }
+
+  /**
+   * Get connection health metrics.
+   */
+  getConnectionMetrics(): {
+    msSinceLastVerified: number;
+    reconnectCount: number;
+    avgPingLatencyMs: number;
+    heartbeatMode: string;
+    consecutiveSuccesses: number;
+    lastVerifiedAt: number;
+  } {
+    const avgLatency = this.pingLatencies.length > 0
+      ? Math.round(this.pingLatencies.reduce((a, b) => a + b, 0) / this.pingLatencies.length)
+      : 0;
+
+    return {
+      msSinceLastVerified: this.lastVerifiedAt > 0 ? Date.now() - this.lastVerifiedAt : 0,
+      reconnectCount: this.reconnectCount,
+      avgPingLatencyMs: avgLatency,
+      heartbeatMode: this.heartbeatMode,
+      consecutiveSuccesses: this.consecutiveHeartbeatSuccesses,
+      lastVerifiedAt: this.lastVerifiedAt,
+    };
   }
 
   /**
@@ -249,6 +353,7 @@ export class CDPClient {
       // Active probe: round-trip CDP command to detect dead WebSocket connections.
       // browser.isConnected() only checks a local flag — half-open TCP connections
       // (macOS sleep/wake, Chrome crash) pass the flag check but hang on real commands.
+      const pingStart = Date.now();
       let pingTid: ReturnType<typeof setTimeout>;
       await Promise.race([
         this.browser.version().finally(() => clearTimeout(pingTid)),
@@ -260,9 +365,16 @@ export class CDPClient {
         }),
       ]);
       this.lastVerifiedAt = Date.now();
+      const pingLatency = Date.now() - pingStart;
+      this.pingLatencies.push(pingLatency);
+      if (this.pingLatencies.length > CDPClient.MAX_PING_SAMPLES) {
+        this.pingLatencies.shift();
+      }
+      this.consecutiveHeartbeatSuccesses++;
       this.consecutiveHeartbeatFailures = 0;
       return true;
     } catch (error) {
+      this.consecutiveHeartbeatSuccesses = 0;
       this.consecutiveHeartbeatFailures++;
       if (this.consecutiveHeartbeatFailures < 2) {
         // First failure: warn but don't disconnect. Chrome may be under heavy load.
@@ -293,6 +405,12 @@ export class CDPClient {
       type: 'disconnected',
       timestamp: Date.now(),
     });
+
+    // Clear heartbeat mode timer to prevent 30s recovery timer from leaking
+    if (this.heartbeatModeTimer) {
+      clearTimeout(this.heartbeatModeTimer);
+      this.heartbeatModeTimer = null;
+    }
 
     // Clear existing sessions and stale state
     this.sessions.clear();
@@ -326,6 +444,8 @@ export class CDPClient {
         await this.connectInternal({ autoLaunch: false });
         console.error('[CDPClient] Reconnection successful');
         this.reconnectAttempts = 0;
+        this.reconnectCount++;
+        this.setHeartbeatMode('recovery');
         this.emitConnectionEvent({
           type: 'reconnected',
           timestamp: Date.now(),
@@ -579,6 +699,10 @@ export class CDPClient {
     // Invalidate any in-flight connect() — we're replacing the connection entirely
     this.pendingConnect = null;
     this.stopHeartbeat();
+    if (this.heartbeatModeTimer) {
+      clearTimeout(this.heartbeatModeTimer);
+      this.heartbeatModeTimer = null;
+    }
 
     if (this.browser) {
       try {
@@ -622,6 +746,11 @@ export class CDPClient {
    */
   async disconnect(): Promise<void> {
     this.stopHeartbeat();
+
+    if (this.heartbeatModeTimer) {
+      clearTimeout(this.heartbeatModeTimer);
+      this.heartbeatModeTimer = null;
+    }
 
     if (this.browser) {
       try {
