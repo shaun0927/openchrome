@@ -64,7 +64,7 @@ const SUCCESS_PATTERNS = [
   /\bnew page\b/i,
   /\btitle changed\b/i,
   /\+ .*(?:dialog|modal|drawer|panel|menu(?!item)|dropdown|popover)/i,
-  /\- .*(?:dialog|modal|drawer|panel|menu(?!item)|dropdown|popover)/i,
+  /- .*(?:dialog|modal|drawer|panel|menu(?!item)|dropdown|popover)/i,
   /\+ .*\binput\b/i,
   /\bform\b.*\bsubmit/i,
   /\bscroll\b/i,
