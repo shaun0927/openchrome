@@ -38,8 +38,10 @@ export class ChromeProcessWatchdog extends EventEmitter {
   start(): void {
     this.stop(); // clear any existing timer
 
-    this.timer = setInterval(async () => {
-      await this.check();
+    this.timer = setInterval(() => {
+      this.check().catch((err) => {
+        console.error('[ProcessWatchdog] Unexpected error in check():', err);
+      });
     }, this.intervalMs);
     this.timer.unref();
   }
@@ -52,7 +54,7 @@ export class ChromeProcessWatchdog extends EventEmitter {
       clearInterval(this.timer);
       this.timer = null;
     }
-    this.relaunching = false;
+    // Do NOT reset relaunching — async check() may still be in-flight
   }
 
   /**
@@ -72,27 +74,33 @@ export class ChromeProcessWatchdog extends EventEmitter {
 
     try {
       process.kill(pid, 0); // signal 0 = check existence only
-    } catch {
-      // Process is dead
-      console.error(`[ProcessWatchdog] Chrome process (PID ${pid}) is dead, attempting relaunch...`);
-      this.emit('chrome-died', { pid, timestamp: Date.now() });
-
-      this.relaunching = true;
-      try {
-        await this.launcher.ensureChrome();
-        const newInstance = this.launcher.getInstance();
-        const newPid = newInstance?.process?.pid;
-        console.error(`[ProcessWatchdog] Chrome relaunched successfully (PID ${newPid})`);
-        this.emit('chrome-relaunched', { pid: newPid ?? 0, timestamp: Date.now() });
-      } catch (error) {
-        console.error('[ProcessWatchdog] Chrome relaunch failed:', error);
-        this.emit('relaunch-failed', {
-          error: error instanceof Error ? error : new Error(String(error)),
-          timestamp: Date.now(),
-        });
-      } finally {
-        this.relaunching = false;
+      return; // process alive
+    } catch (err: any) {
+      if (err?.code === 'EPERM') {
+        return; // process exists but owned by another user (Windows)
       }
+      // ESRCH = process truly dead, continue to relaunch
+    }
+
+    // Process is dead
+    console.error(`[ProcessWatchdog] Chrome process (PID ${pid}) is dead, attempting relaunch...`);
+    this.emit('chrome-died', { pid, timestamp: Date.now() });
+
+    this.relaunching = true;
+    try {
+      await this.launcher.ensureChrome({ autoLaunch: true });
+      const newInstance = this.launcher.getInstance();
+      const newPid = newInstance?.process?.pid;
+      console.error(`[ProcessWatchdog] Chrome relaunched successfully (PID ${newPid})`);
+      this.emit('chrome-relaunched', { pid: newPid ?? 0, timestamp: Date.now() });
+    } catch (error) {
+      console.error('[ProcessWatchdog] Chrome relaunch failed:', error);
+      this.emit('relaunch-failed', {
+        error: error instanceof Error ? error : new Error(String(error)),
+        timestamp: Date.now(),
+      });
+    } finally {
+      this.relaunching = false;
     }
   }
 
