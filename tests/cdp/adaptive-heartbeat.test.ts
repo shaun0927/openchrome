@@ -83,7 +83,7 @@ describe('CDPClient — Adaptive Heartbeat', () => {
     const client = createClient();
     const metrics = client.getConnectionMetrics();
 
-    expect(metrics).toHaveProperty('uptime');
+    expect(metrics).toHaveProperty('msSinceLastVerified');
     expect(metrics).toHaveProperty('reconnectCount');
     expect(metrics).toHaveProperty('avgPingLatencyMs');
     expect(metrics).toHaveProperty('heartbeatMode');

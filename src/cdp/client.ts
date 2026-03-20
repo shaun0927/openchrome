@@ -69,6 +69,7 @@ export class CDPClient {
   private targetDestroyedListeners: ((targetId: string, page?: Page) => void)[] = [];
   private reconnectAttempts = 0;
   private consecutiveHeartbeatFailures = 0;
+  private consecutiveHeartbeatSuccesses = 0;
   private checkConnectionInFlight = false;
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
@@ -209,7 +210,8 @@ export class CDPClient {
       }
 
       // Check for idle transition: no commands for 5 minutes → switch to idle mode
-      if (this.heartbeatMode === 'active' && this.lastCommandAt > 0
+      if ((this.heartbeatMode === 'active' || this.heartbeatMode === 'heavy')
+          && this.lastCommandAt > 0
           && now - this.lastCommandAt > 300000) {
         this.setHeartbeatMode('idle');
         return; // setHeartbeatMode restarts the timer with new interval
@@ -292,7 +294,7 @@ export class CDPClient {
    * Get connection health metrics.
    */
   getConnectionMetrics(): {
-    uptime: number;
+    msSinceLastVerified: number;
     reconnectCount: number;
     avgPingLatencyMs: number;
     heartbeatMode: string;
@@ -304,11 +306,11 @@ export class CDPClient {
       : 0;
 
     return {
-      uptime: this.lastVerifiedAt > 0 ? Math.floor((Date.now() - this.lastVerifiedAt) / 1000) : 0,
+      msSinceLastVerified: this.lastVerifiedAt > 0 ? Date.now() - this.lastVerifiedAt : 0,
       reconnectCount: this.reconnectCount,
       avgPingLatencyMs: avgLatency,
       heartbeatMode: this.heartbeatMode,
-      consecutiveSuccesses: this.consecutiveHeartbeatFailures === 0 ? this.pingLatencies.length : 0,
+      consecutiveSuccesses: this.consecutiveHeartbeatSuccesses,
       lastVerifiedAt: this.lastVerifiedAt,
     };
   }
@@ -354,9 +356,11 @@ export class CDPClient {
       if (this.pingLatencies.length > CDPClient.MAX_PING_SAMPLES) {
         this.pingLatencies.shift();
       }
+      this.consecutiveHeartbeatSuccesses++;
       this.consecutiveHeartbeatFailures = 0;
       return true;
     } catch (error) {
+      this.consecutiveHeartbeatSuccesses = 0;
       this.consecutiveHeartbeatFailures++;
       if (this.consecutiveHeartbeatFailures < 2) {
         // First failure: warn but don't disconnect. Chrome may be under heavy load.
@@ -387,6 +391,12 @@ export class CDPClient {
       type: 'disconnected',
       timestamp: Date.now(),
     });
+
+    // Clear heartbeat mode timer to prevent 30s recovery timer from leaking
+    if (this.heartbeatModeTimer) {
+      clearTimeout(this.heartbeatModeTimer);
+      this.heartbeatModeTimer = null;
+    }
 
     // Clear existing sessions and stale state
     this.sessions.clear();
@@ -669,6 +679,10 @@ export class CDPClient {
     // Invalidate any in-flight connect() — we're replacing the connection entirely
     this.pendingConnect = null;
     this.stopHeartbeat();
+    if (this.heartbeatModeTimer) {
+      clearTimeout(this.heartbeatModeTimer);
+      this.heartbeatModeTimer = null;
+    }
 
     if (this.browser) {
       try {
