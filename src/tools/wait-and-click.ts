@@ -13,6 +13,7 @@ import { withDomDelta } from '../utils/dom-delta';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
+import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
@@ -147,10 +148,12 @@ const handler: ToolHandler = async (
 
       const axRef = refIdManager.generateRef(sessionId, tabId, axMatch.backendDOMNodeId, axMatch.role, axMatch.name, undefined, undefined);
 
+      const axOutcome = classifyOutcome(axDelta, axMatch.role);
+      const axLine = formatOutcomeLine(axOutcome, 'Clicked', `${axMatch.role} "${axMatch.name}"`, `[${axRef}]`, `[${MATCH_LEVEL_LABELS[axMatch.matchLevel]} via AX tree]`);
       return {
         content: [{
           type: 'text' as const,
-          text: `\u2713 Clicked ${axMatch.role} "${axMatch.name}" [${axRef}] [${MATCH_LEVEL_LABELS[axMatch.matchLevel]} via AX tree] (waited ${waitTime}ms)${axDelta}`,
+          text: `${axLine} (waited ${waitTime}ms)${axDelta || ''}`,
         }],
       };
     }
