@@ -91,9 +91,9 @@ export class TabHealthMonitor extends EventEmitter {
 
     try {
       // Race: lightweight JS execution vs timeout
-      let probeTid: ReturnType<typeof setTimeout>;
+      let probeTid: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
-        page.evaluate('1').finally(() => clearTimeout(probeTid)),
+        page.evaluate('1').finally(() => { if (probeTid) clearTimeout(probeTid); }),
         new Promise<never>((_, reject) => {
           probeTid = setTimeout(
             () => reject(new Error('tab health probe timeout')),
@@ -116,7 +116,9 @@ export class TabHealthMonitor extends EventEmitter {
       if (info.consecutiveFailures >= this.evictionThreshold) {
         info.status = 'unhealthy';
         console.error(`[TabHealthMonitor] Tab ${targetId} eviction threshold reached (${info.consecutiveFailures} failures)`);
-        this.emit('tab-evict', { targetId, failures: info.consecutiveFailures });
+        // Consumers MUST listen for 'tab-evict' and close the evicted page
+        // to prevent zombie renderer processes in Chrome.
+        this.emit('tab-evict', { targetId, consecutiveFailures: info.consecutiveFailures });
         this.unmonitorTab(targetId); // stop monitoring evicted tab
       } else if (info.consecutiveFailures >= this.unhealthyThreshold) {
         info.status = 'unhealthy';
@@ -154,7 +156,7 @@ export class TabHealthMonitor extends EventEmitter {
    * Stop monitoring all tabs.
    */
   stopAll(): void {
-    for (const [targetId] of this.timers) {
+    for (const targetId of [...this.timers.keys()]) {
       this.unmonitorTab(targetId);
     }
   }
