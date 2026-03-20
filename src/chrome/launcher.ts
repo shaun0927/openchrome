@@ -204,6 +204,9 @@ export class ChromeLauncher {
     type: 'real',
     extensionsAvailable: true,
   };
+  private _intentionalStop = false;
+
+  get intentionalStop(): boolean { return this._intentionalStop; }
 
   constructor(port: number = DEFAULT_PORT) {
     this.port = port;
@@ -552,6 +555,7 @@ export class ChromeLauncher {
       profileType,
     };
 
+    this._intentionalStop = false;
     console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
     return this.instance;
   }
@@ -600,6 +604,7 @@ export class ChromeLauncher {
    * Close Chrome instance (only if we launched it)
    */
   async close(): Promise<void> {
+    this._intentionalStop = true;
     if (this.pendingProcess) {
       try { this.pendingProcess.kill(); } catch { /* ignore */ }
       this.pendingProcess = null;
