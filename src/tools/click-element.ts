@@ -14,6 +14,7 @@ import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
+import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
@@ -138,7 +139,8 @@ const handler: ToolHandler = async (
         AdaptiveScreenshot.getInstance().reset(tabId);
 
         const axVerb = doubleClick ? 'Double-clicked' : 'Clicked';
-        const resultText = `\u2713 ${axVerb} ${ax.role} "${ax.name}" [${axRef}] [${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]${axDelta}`;
+        const axOutcome = classifyOutcome(axDelta, ax.role);
+        const resultText = formatOutcomeLine(axOutcome, axVerb, `${ax.role} "${ax.name}"`, `[${axRef}]`, `[${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]`) + (axDelta || '');
 
         if (verify) {
           try {
@@ -288,8 +290,9 @@ const handler: ToolHandler = async (
     const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
     const textPart = textSample ? ` "${textSample}"` : '';
     const refPart = refId ? ` [${refId}]` : '';
-    const confidenceNote = bestMatch.score < 50 ? ` (low confidence: ${bestMatch.score}/100)` : '';
-    const resultText = `\u2713 ${clickType} ${bestMatch.tagName}${textPart}${refPart}${confidenceNote}${delta}`;
+    const confidencePart = bestMatch.score < 50 ? ' [via CSS, LOW CONFIDENCE]' : ' [via CSS]';
+    const cssOutcome = classifyOutcome(delta, bestMatch.role);
+    const resultText = formatOutcomeLine(cssOutcome, clickType, `${bestMatch.tagName}${textPart}`, refPart, confidencePart) + (delta || '');
 
     // Optional verification screenshot — WebP via CDP for speed and consistency
     if (verify) {
