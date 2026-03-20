@@ -4,7 +4,8 @@
  * Uses the browser's built-in accessibility engine (which already understands all UI frameworks:
  * Angular Material, React MUI, Vue Vuetify, etc.) to resolve elements by role + name.
  *
- * Flow: query → parseQueryForAX → getCachedAXTree → scoreAXNode → DOM.getBoxModel → coordinates
+ * Architecture: Cascading filter — no scoring, no magic numbers, fully deterministic.
+ * Flow: query → parseQueryForAX → getCachedAXTree → cascading filter → DOM.getBoxModel → coordinates
  * Fallback: if AX resolution fails, callers fall back to existing CSS-based discoverElements().
  */
 
@@ -35,12 +36,25 @@ export interface AXNodeFlat {
   properties: Record<string, unknown>;
 }
 
+/**
+ * Match level from cascading filter (1 = most precise, 4 = least precise).
+ * Used instead of numeric scores — each level has a clear semantic meaning.
+ */
+export type MatchLevel = 1 | 2 | 3 | 4;
+
+export const MATCH_LEVEL_LABELS: Record<MatchLevel, string> = {
+  1: 'exact match',
+  2: 'role match',
+  3: 'name match',
+  4: 'partial match',
+};
+
 /** Result of AX-based element resolution */
 export interface AXResolvedElement {
   backendDOMNodeId: number;
   role: string;
   name: string;
-  axScore: number;
+  matchLevel: MatchLevel;
   rect: { x: number; y: number; width: number; height: number };
   properties: Record<string, unknown>;
   source: 'ax';
@@ -57,7 +71,6 @@ export interface AXResolveOptions {
 export interface ParsedAXQuery {
   roleHint: string | null;
   nameHint: string;
-  nameTokens: string[];
 }
 
 // ─── Role Keyword Map ───
@@ -120,119 +133,91 @@ const INTERACTIVE_ROLES = new Set([
  * Examples:
  *   "외부 radio button"  → { roleHint: "radio", nameHint: "외부" }
  *   "Submit button"      → { roleHint: "button", nameHint: "submit" }
- *   "search input"       → { roleHint: "textbox", nameHint: "search" }
  *   "로그인"              → { roleHint: null, nameHint: "로그인" }
  */
 export function parseQueryForAX(query: string): ParsedAXQuery {
   const queryLower = query.toLowerCase().trim();
 
-  // Try longest-match-first to extract role hint
   for (const [keyword, role] of ROLE_KEYWORDS) {
     const idx = queryLower.indexOf(keyword);
     if (idx !== -1) {
-      // Remove the role keyword from the query to get the name hint
       const before = query.slice(0, idx).trim();
       const after = query.slice(idx + keyword.length).trim();
       const nameHint = [before, after].filter(Boolean).join(' ').trim();
 
       return {
         roleHint: role,
-        nameHint: nameHint || query.trim(), // if only role keyword, use full query as name
-        nameTokens: tokenize(nameHint || query.trim()),
+        nameHint: nameHint || query.trim(),
       };
     }
   }
 
-  // No role keyword found
   return {
     roleHint: null,
     nameHint: query.trim(),
-    nameTokens: tokenize(query.trim()),
   };
 }
 
-function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/\s+/).filter(t => t.length > 0);
-}
-
-// ─── AX Node Scoring ───
+// ─── Cascading Filter ───
 
 /**
- * Score an AX node against parsed query hints.
+ * Filter AX nodes through a prioritized cascade.
+ * Returns the first match at the highest (strictest) level.
  *
- * Scoring rubric:
- *   Exact role + exact name:     100
- *   Exact role + name contains:   80
- *   Exact name, no role hint:     75
- *   Name contains, no role hint:  50
- *   Role match only:              30
- *   Per-token overlap:           +15 each
- *   Interactive role bonus:      +10
- *   Disabled penalty:            -50
+ * Level 1: exact role + exact name
+ * Level 2: exact role + name contains
+ * Level 3: exact name (any interactive role)
+ * Level 4: name contains (any interactive role)
+ *
+ * No scoring, no magic numbers, fully deterministic.
  */
-export function scoreAXNode(
-  node: AXNodeFlat,
+export function cascadeFilter(
+  nodes: AXNodeFlat[],
   roleHint: string | null,
   nameHint: string,
-  nameTokens: string[],
-): number {
-  const nodeName = node.name.toLowerCase().trim();
-  const nodeRole = node.role.toLowerCase();
-  const nameHintLower = nameHint.toLowerCase().trim();
+  maxResults: number = 5,
+): Array<{ node: AXNodeFlat; matchLevel: MatchLevel }> {
+  // Pre-filter: remove disabled and non-interactive nodes
+  const candidates = nodes.filter(n =>
+    n.properties['disabled'] !== true &&
+    INTERACTIVE_ROLES.has(n.role.toLowerCase())
+  );
 
-  if (!nodeName && !roleHint) return 0;
+  const nameLower = nameHint.toLowerCase().trim();
+  if (!nameLower) return [];
 
-  let score = 0;
-  const roleMatches = roleHint ? nodeRole === roleHint : false;
-  const exactNameMatch = nodeName === nameHintLower;
-  const nameContains = nameHintLower.length > 0 && nodeName.includes(nameHintLower);
-  const nameContainedBy = nameHintLower.length > 0 && nameHintLower.includes(nodeName);
+  const eq = (nodeName: string) => nodeName.toLowerCase().trim() === nameLower;
+  const includes = (nodeName: string) => nodeName.toLowerCase().trim().includes(nameLower);
 
-  // Primary scoring
-  if (roleMatches && exactNameMatch) {
-    score = 100;
-  } else if (roleMatches && nameContains) {
-    score = 80;
-  } else if (roleMatches && nameContainedBy && nodeName.length > 0) {
-    score = 70;
-  } else if (exactNameMatch && !roleHint) {
-    score = 75;
-  } else if (nameContains && !roleHint) {
-    score = 50;
-  } else if (roleMatches && !nameHintLower) {
-    score = 30;
-  } else if (roleMatches) {
-    // Role matches but name doesn't — check token overlap
-    score = 25;
-  } else {
-    // No role match — check token overlap only
-    score = 0;
-  }
-
-  // Token overlap bonus (for partial matches)
-  if (score < 80) {
-    let tokenMatches = 0;
-    for (const token of nameTokens) {
-      if (token.length >= 2 && nodeName.includes(token)) {
-        tokenMatches++;
-      }
-    }
-    if (nameTokens.length > 0) {
-      score += tokenMatches * 15;
+  // Level 1: exact role + exact name
+  if (roleHint) {
+    const level1 = candidates.filter(n => n.role.toLowerCase() === roleHint && eq(n.name));
+    if (level1.length > 0) {
+      return level1.slice(0, maxResults).map(node => ({ node, matchLevel: 1 as MatchLevel }));
     }
   }
 
-  // Interactive role bonus
-  if (INTERACTIVE_ROLES.has(nodeRole)) {
-    score += 10;
+  // Level 2: exact role + name contains
+  if (roleHint) {
+    const level2 = candidates.filter(n => n.role.toLowerCase() === roleHint && includes(n.name));
+    if (level2.length > 0) {
+      return level2.slice(0, maxResults).map(node => ({ node, matchLevel: 2 as MatchLevel }));
+    }
   }
 
-  // Disabled penalty
-  if (node.properties['disabled'] === true) {
-    score -= 50;
+  // Level 3: exact name (any interactive role)
+  const level3 = candidates.filter(n => eq(n.name));
+  if (level3.length > 0) {
+    return level3.slice(0, maxResults).map(node => ({ node, matchLevel: 3 as MatchLevel }));
   }
 
-  return Math.max(0, score);
+  // Level 4: name contains (any interactive role)
+  const level4 = candidates.filter(n => includes(n.name));
+  if (level4.length > 0) {
+    return level4.slice(0, maxResults).map(node => ({ node, matchLevel: 4 as MatchLevel }));
+  }
+
+  return [];
 }
 
 // ─── AX Tree Cache ───
@@ -290,16 +275,12 @@ export async function getCachedAXTree(
   return flat;
 }
 
-/**
- * Invalidate AX cache for a page (call after interactions that mutate DOM).
- */
+/** Invalidate AX cache for a page (call after interactions that mutate DOM). */
 export function invalidateAXCache(pageTargetId: string): void {
   axCache.delete(pageTargetId);
 }
 
-/**
- * Clear entire AX cache (for testing or shutdown).
- */
+/** Clear entire AX cache (for testing or shutdown). */
 export function clearAXCache(): void {
   axCache.clear();
 }
@@ -309,13 +290,11 @@ export function clearAXCache(): void {
 /**
  * Resolve elements by querying the Chrome Accessibility Tree.
  *
- * 1. Fetch (or use cached) AX tree
- * 2. Parse query into role hint + name hint
- * 3. Match and score AX nodes
- * 4. Resolve coordinates via DOM.getBoxModel for top matches
+ * Uses a cascading filter (not scoring) to find elements:
+ * Level 1: exact role + exact name → Level 2: role + contains → Level 3: exact name → Level 4: contains
  *
- * Returns sorted array of matches (highest score first), or empty array
- * if no matches meet the minimum threshold (score >= 20).
+ * Returns array of matches at the highest (strictest) cascade level that produced results.
+ * Empty array if no matches found (caller should fall back to CSS discovery).
  */
 export async function resolveElementsByAXTree(
   page: Page,
@@ -332,23 +311,13 @@ export async function resolveElementsByAXTree(
   const nodes = await getCachedAXTree(page, cdpClient, depth);
   if (nodes.length === 0) return [];
 
-  // 3. Score all nodes
-  const scored: Array<{ node: AXNodeFlat; score: number }> = [];
-  for (const node of nodes) {
-    const score = scoreAXNode(node, parsed.roleHint, parsed.nameHint, parsed.nameTokens);
-    if (score >= 20) {
-      scored.push({ node, score });
-    }
-  }
+  // 3. Cascading filter
+  const matches = cascadeFilter(nodes, parsed.roleHint, parsed.nameHint, maxResults);
+  if (matches.length === 0) return [];
 
-  if (scored.length === 0) return [];
-
-  // Sort by score descending
-  scored.sort((a, b) => b.score - a.score);
-
-  // 4. Resolve coordinates for top matches
+  // 4. Resolve coordinates for matches
   const resolved: AXResolvedElement[] = [];
-  for (const { node, score } of scored.slice(0, maxResults * 2)) { // fetch extra in case some fail
+  for (const { node, matchLevel } of matches) {
     if (resolved.length >= maxResults) break;
 
     try {
@@ -371,7 +340,7 @@ export async function resolveElementsByAXTree(
         backendDOMNodeId: node.backendDOMNodeId,
         role: node.role,
         name: node.name,
-        axScore: score,
+        matchLevel,
         rect: {
           x: useCenter ? x + width / 2 : x,
           y: useCenter ? y + height / 2 : y,
@@ -382,7 +351,6 @@ export async function resolveElementsByAXTree(
         source: 'ax',
       });
     } catch {
-      // Element may not have layout — skip
       continue;
     }
   }
