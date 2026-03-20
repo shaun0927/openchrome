@@ -32,7 +32,8 @@ export class HealthEndpoint {
   private readonly port: number;
   private readonly provider: HealthDataProvider;
 
-  constructor(provider: HealthDataProvider, port = 9229) {
+  // 9090 avoids conflict with Node.js inspector (9229), Chrome DevTools (9222)
+  constructor(provider: HealthDataProvider, port = 9090) {
     this.port = port;
     this.provider = provider;
   }
@@ -51,8 +52,9 @@ export class HealthEndpoint {
             res.writeHead(statusCode, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(data));
           } catch (error) {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'error', error: String(error) }));
+            console.error('[HealthEndpoint] Provider error:', error);
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'error', error: 'Internal health check failure' }));
           }
         } else {
           res.writeHead(404);
@@ -86,7 +88,10 @@ export class HealthEndpoint {
   stop(): Promise<void> {
     return new Promise((resolve) => {
       if (this.server) {
-        this.server.close(() => resolve());
+        this.server.close(() => {
+          this.server = null;
+          resolve();
+        });
       } else {
         resolve();
       }

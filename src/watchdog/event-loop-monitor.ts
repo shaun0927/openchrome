@@ -11,7 +11,12 @@ export interface EventLoopMonitorOptions {
   checkIntervalMs?: number;
   /** Warn threshold in ms. Default: 2000 (2s) */
   warnThresholdMs?: number;
-  /** Fatal threshold in ms — triggers process exit. Default: 0 (disabled) */
+  /**
+   * Fatal threshold in ms. Default: 0 (disabled).
+   * Emits 'fatal' event when threshold exceeded.
+   * Callers MUST attach a 'fatal' listener to handle recovery (e.g., process.exit(1)).
+   * No automatic process termination — this is intentional for testability.
+   */
   fatalThresholdMs?: number;
 }
 
@@ -54,9 +59,9 @@ export class EventLoopMonitor extends EventEmitter {
 
       if (this.fatalThresholdMs > 0 && drift > this.fatalThresholdMs) {
         console.error(`[EventLoopMonitor] FATAL: Event loop blocked for ${drift}ms (threshold: ${this.fatalThresholdMs}ms)`);
+        // Emits 'fatal' event — callers MUST attach a listener to handle recovery (e.g., process.exit(1)).
+        // No automatic termination: intentional for testability and caller control.
         this.emit('fatal', { driftMs: drift, timestamp: now } as BlockEvent);
-        // In production, this would trigger process.exit(1) for PM2/systemd restart
-        // We emit an event instead of exiting directly, for testability
       } else if (drift > this.warnThresholdMs) {
         this.warnCount++;
         console.error(`[EventLoopMonitor] WARN: Event loop blocked for ${drift}ms (warn #${this.warnCount})`);
