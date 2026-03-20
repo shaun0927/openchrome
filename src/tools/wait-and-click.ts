@@ -12,7 +12,7 @@ import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
-import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement } from '../utils/ax-element-resolver';
+import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
@@ -93,7 +93,7 @@ const handler: ToolHandler = async (
         const axMatches = await resolveElementsByAXTree(page, cdpClient, query, {
           useCenter: true, maxResults: 1,
         });
-        if (axMatches.length > 0 && axMatches[0].axScore >= 60) {
+        if (axMatches.length > 0) {
           axMatch = axMatches[0];
           break;
         }
@@ -150,7 +150,7 @@ const handler: ToolHandler = async (
       return {
         content: [{
           type: 'text' as const,
-          text: `\u2713 Clicked ${axMatch.role} "${axMatch.name}" [${axRef}] [via AX tree, score: ${axMatch.axScore}/100] (waited ${waitTime}ms)${axDelta}`,
+          text: `\u2713 Clicked ${axMatch.role} "${axMatch.name}" [${axRef}] [${MATCH_LEVEL_LABELS[axMatch.matchLevel]} via AX tree] (waited ${waitTime}ms)${axDelta}`,
         }],
       };
     }

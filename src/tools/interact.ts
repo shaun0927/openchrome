@@ -14,7 +14,7 @@ import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAUL
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { withTimeout } from '../utils/with-timeout';
-import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-resolver';
+import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
@@ -117,7 +117,7 @@ const handler: ToolHandler = async (
         useCenter: true,
         maxResults: 3,
       });
-      if (axMatches.length > 0 && axMatches[0].axScore >= 60) {
+      if (axMatches.length > 0) {
         const ax = axMatches[0];
 
         // Scroll into view
@@ -163,7 +163,7 @@ const handler: ToolHandler = async (
 
         // Build response with AX provenance + confidence score
         const axVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
-        const axLine = `\u2713 ${axVerb} ${ax.role} "${ax.name}" [${axRef}] [via AX tree, score: ${ax.axScore}/100]`;
+        const axLine = `\u2713 ${axVerb} ${ax.role} "${ax.name}" [${axRef}] [${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]`;
 
         // Gather state summary (same as CSS path)
         const axState = await withTimeout(page.evaluate(() => {

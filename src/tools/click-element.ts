@@ -13,7 +13,7 @@ import { withDomDelta } from '../utils/dom-delta';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
-import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-resolver';
+import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
@@ -107,7 +107,7 @@ const handler: ToolHandler = async (
       const axMatches = await resolveElementsByAXTree(page, cdpClient, query, {
         useCenter: true, maxResults: 3,
       });
-      if (axMatches.length > 0 && axMatches[0].axScore >= 60) {
+      if (axMatches.length > 0) {
         const ax = axMatches[0];
 
         // Scroll into view and re-resolve coordinates
@@ -138,7 +138,7 @@ const handler: ToolHandler = async (
         AdaptiveScreenshot.getInstance().reset(tabId);
 
         const axVerb = doubleClick ? 'Double-clicked' : 'Clicked';
-        const resultText = `\u2713 ${axVerb} ${ax.role} "${ax.name}" [${axRef}] [via AX tree, score: ${ax.axScore}/100]${axDelta}`;
+        const resultText = `\u2713 ${axVerb} ${ax.role} "${ax.name}" [${axRef}] [${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]${axDelta}`;
 
         if (verify) {
           try {
