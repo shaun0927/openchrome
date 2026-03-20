@@ -557,6 +557,21 @@ export class ChromeLauncher {
   }
 
   /**
+   * Get the current Chrome instance (for process watchdog).
+   * Returns null if Chrome is not running or not launched by us.
+   */
+  getInstance(): ChromeInstance | null {
+    return this.instance;
+  }
+
+  /**
+   * Whether Chrome is currently in the process of launching.
+   */
+  isLaunching(): boolean {
+    return this.pendingProcess !== null || this.launchInFlight !== null;
+  }
+
+  /**
    * Invalidate cached instance so next ensureChrome() re-fetches from HTTP.
    * Called by CDPClient when puppeteer.connect() fails and a retry is needed.
    *
