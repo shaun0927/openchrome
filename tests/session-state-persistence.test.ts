@@ -56,7 +56,7 @@ describe('SessionStatePersistence', () => {
       );
     });
 
-    test('prevents concurrent saves', async () => {
+    test('queues concurrent save so state is not dropped', async () => {
       let resolveFirst!: () => void;
       mockWriteFileAtomicSafe.mockImplementationOnce(
         () => new Promise(resolve => { resolveFirst = () => resolve(undefined); })
@@ -68,7 +68,8 @@ describe('SessionStatePersistence', () => {
       resolveFirst();
       await Promise.all([p1, p2]);
 
-      expect(mockWriteFileAtomicSafe).toHaveBeenCalledTimes(1);
+      // p2 was queued and runs after p1 completes — two writes total
+      expect(mockWriteFileAtomicSafe).toHaveBeenCalledTimes(2);
     });
 
     test('updates timestamp on save', async () => {
@@ -145,9 +146,8 @@ describe('SessionStatePersistence', () => {
   describe('createSnapshot', () => {
     test('converts in-memory session structure to persisted format', () => {
       const sessions = new Map();
-      const targets = new Map();
-      targets.set('T1', { url: 'https://example.com' });
-      targets.set('T2', { url: 'https://github.com' });
+      // targets is Set<string> of bare CDP target IDs — no URL stored in memory
+      const targets = new Set(['T1', 'T2']);
 
       const workers = new Map();
       workers.set('default', { id: 'default', targets });
@@ -160,7 +160,8 @@ describe('SessionStatePersistence', () => {
       expect(snapshot.sessions).toHaveLength(1);
       expect(snapshot.sessions[0].id).toBe('default');
       expect(snapshot.sessions[0].workers[0].targets).toHaveLength(2);
-      expect(snapshot.sessions[0].workers[0].targets[0].url).toBe('https://example.com');
+      // URLs are not tracked in memory; persisted as placeholder
+      expect(snapshot.sessions[0].workers[0].targets[0].url).toBe('about:blank');
     });
 
     test('handles empty sessions', () => {
