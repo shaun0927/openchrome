@@ -1,5 +1,6 @@
 import { Page } from 'puppeteer-core';
 import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
+import { DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS, DEFAULT_WATCHDOG_INTERVAL_MS } from '../config/defaults';
 
 export interface StorageState {
   version: 1;
@@ -119,7 +120,7 @@ export class StorageStateManager {
         }
       })().finally(() => clearTimeout(restoreTid)),
       new Promise<void>((resolve) => {
-        restoreTid = setTimeout(resolve, 10000);
+        restoreTid = setTimeout(resolve, DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS);
       }),
     ]);
 
@@ -136,7 +137,7 @@ export class StorageStateManager {
   }): void {
     this.stopWatchdog(); // clear any existing watchdog
 
-    const interval = opts.intervalMs || 30000;
+    const interval = opts.intervalMs || DEFAULT_WATCHDOG_INTERVAL_MS;
 
     this.watchdogTimer = setInterval(async () => {
       try {

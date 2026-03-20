@@ -72,6 +72,11 @@ export const DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS = 5000;
 /** Storage state restore timeout in milliseconds. */
 export const DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS = 10000;
 
+/** Storage state watchdog interval in milliseconds.
+ *  How frequently cookies and localStorage are persisted to disk.
+ *  Override with OPENCHROME_WATCHDOG_INTERVAL_MS environment variable. */
+export const DEFAULT_WATCHDOG_INTERVAL_MS = 30000;
+
 /** createTarget aggregate timeout in milliseconds. Safety net for entire tab creation chain. */
 export const DEFAULT_CREATE_TARGET_TIMEOUT_MS = 60000;
 
