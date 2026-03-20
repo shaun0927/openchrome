@@ -161,3 +161,49 @@ export const DEFAULT_CDP_SEND_TIMEOUT_MS = 15000;
  *  If a previous lock holder's release() is never called (e.g. due to an
  *  unhandled exception outside the try/finally), this prevents permanent deadlock. */
 export const DEFAULT_COMPLETION_LOCK_TIMEOUT_MS = 30000;
+
+// ─── Self-Healing Architecture (#347) ──────────────────────────────────────
+
+/** Chrome process watchdog check interval in milliseconds.
+ *  How often to verify Chrome PID is still alive.
+ *  Override with OPENCHROME_PROCESS_WATCHDOG_INTERVAL_MS environment variable. */
+export const DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS = 10000;
+
+/** Per-tab renderer health probe interval in milliseconds.
+ *  How often to check idle tabs for frozen/crashed renderers.
+ *  Override with OPENCHROME_TAB_HEALTH_PROBE_INTERVAL_MS environment variable. */
+export const DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS = 60000;
+
+/** Per-tab renderer health probe timeout in milliseconds.
+ *  Maximum time to wait for a tab's page.evaluate('1') to respond. */
+export const DEFAULT_TAB_HEALTH_PROBE_TIMEOUT_MS = 5000;
+
+/** Consecutive tab probe failures before marking as unhealthy. */
+export const DEFAULT_TAB_UNHEALTHY_THRESHOLD = 3;
+
+/** Consecutive tab probe failures before auto-eviction. */
+export const DEFAULT_TAB_EVICTION_THRESHOLD = 5;
+
+/** Session state persistence debounce interval in milliseconds.
+ *  How long to wait after a session mutation before saving to disk. */
+export const DEFAULT_SESSION_PERSIST_DEBOUNCE_MS = 5000;
+
+/** Event loop monitor check interval in milliseconds. */
+export const DEFAULT_EVENT_LOOP_CHECK_INTERVAL_MS = 200;
+
+/** Event loop block warning threshold in milliseconds.
+ *  Emit warning when blocked longer than this.
+ *  Low enough to catch stalls before CDP commands time out. */
+export const DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS = 200;
+
+/** Health endpoint HTTP port. Avoids conflict with Node.js inspector (9229) and Chrome DevTools (9222).
+ *  Override with OPENCHROME_HEALTH_PORT environment variable. */
+export const DEFAULT_HEALTH_ENDPOINT_PORT = 9090;
+
+/** Idle timeout for adaptive heartbeat mode transition in milliseconds.
+ *  Switch to idle heartbeat mode after this long without tool calls. */
+export const DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS = 300000;
+
+/** Recovery mode duration in milliseconds.
+ *  How long to use fast heartbeat (1s) after reconnection before switching to active. */
+export const DEFAULT_HEARTBEAT_RECOVERY_DURATION_MS = 30000;
