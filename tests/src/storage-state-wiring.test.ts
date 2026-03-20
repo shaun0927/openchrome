@@ -29,8 +29,15 @@ describe('StorageState CLI wiring via getSessionManager()', () => {
     expect(config.storageState?.dir).toBe('/custom/path');
   });
 
-  it('should not enable storage state when env var is not set', () => {
+  it('should enable storage state by default when env var is not set', () => {
     delete process.env.OC_PERSIST_STORAGE;
+    const sm = getSessionManager();
+    const config = (sm as any).config;
+    expect(config.storageState?.enabled).toBe(true);
+  });
+
+  it('should disable storage state when OC_PERSIST_STORAGE is 0', () => {
+    process.env.OC_PERSIST_STORAGE = '0';
     const sm = getSessionManager();
     const config = (sm as any).config;
     expect(config.storageState?.enabled ?? false).toBe(false);
