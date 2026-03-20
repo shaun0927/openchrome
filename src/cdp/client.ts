@@ -22,6 +22,9 @@ import {
   DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
   DEFAULT_CONNECT_VERIFY_STALENESS_MS,
   DEFAULT_CDP_SEND_TIMEOUT_MS,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_MAX_RECONNECT_ATTEMPTS,
+  DEFAULT_RECONNECT_DELAY_MS,
 } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 
@@ -84,9 +87,12 @@ export class CDPClient {
   constructor(options: CDPClientOptions = {}) {
     const globalConfig = getGlobalConfig();
     this.port = options.port || globalConfig.port;
-    this.maxReconnectAttempts = options.maxReconnectAttempts || 3;
-    this.reconnectDelayMs = options.reconnectDelayMs || 1000;
-    this.heartbeatIntervalMs = options.heartbeatIntervalMs || 5000;
+    this.maxReconnectAttempts = options.maxReconnectAttempts ||
+      Number(process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) || DEFAULT_MAX_RECONNECT_ATTEMPTS;
+    this.reconnectDelayMs = options.reconnectDelayMs ||
+      Number(process.env.OPENCHROME_RECONNECT_DELAY_MS) || DEFAULT_RECONNECT_DELAY_MS;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ||
+      Number(process.env.OPENCHROME_HEARTBEAT_INTERVAL_MS) || DEFAULT_HEARTBEAT_INTERVAL_MS;
     // Use explicit option if provided, otherwise use global config
     this.autoLaunch = options.autoLaunch !== undefined ? options.autoLaunch : globalConfig.autoLaunch;
   }
@@ -321,7 +327,13 @@ export class CDPClient {
         console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
 
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
-          await new Promise(resolve => setTimeout(resolve, this.reconnectDelayMs));
+          // Exponential backoff with jitter: baseDelay * 2^(attempt-1) + random(0..baseDelay/2)
+          const backoffDelay = Math.min(
+            this.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1) + Math.floor(Math.random() * this.reconnectDelayMs / 2),
+            30000, // Cap at 30 seconds
+          );
+          console.error(`[CDPClient] Waiting ${backoffDelay}ms before next attempt (exponential backoff)...`);
+          await new Promise(resolve => setTimeout(resolve, backoffDelay));
         }
       }
     }
