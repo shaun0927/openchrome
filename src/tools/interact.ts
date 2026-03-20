@@ -16,6 +16,7 @@ import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } fr
 import { withTimeout } from '../utils/with-timeout';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
+import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
@@ -161,9 +162,10 @@ const handler: ToolHandler = async (
         // Clean up any leftover tags
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
-        // Build response with AX provenance + confidence score
+        // Classify outcome and build response
         const axVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
-        const axLine = `\u2713 ${axVerb} ${ax.role} "${ax.name}" [${axRef}] [${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]`;
+        const axOutcome = classifyOutcome(axDelta, ax.role);
+        const axLine = formatOutcomeLine(axOutcome, axVerb, `${ax.role} "${ax.name}"`, `[${axRef}]`, `[${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]`);
 
         // Gather state summary (same as CSS path)
         const axState = await withTimeout(page.evaluate(() => {
@@ -334,8 +336,9 @@ const handler: ToolHandler = async (
     const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
     const textPart = textSample ? ` "${textSample}"` : '';
     const refPart = refId ? ` [${refId}]` : '';
-    const confidencePart = bestMatch.score < 50 ? ` \u26a0 LOW CONFIDENCE [via CSS, score: ${bestMatch.score}/100]` : ` [via CSS, score: ${bestMatch.score}/100]`;
-    const interactedLine = `\u2713 ${actionVerb} ${bestMatch.tagName}${textPart}${refPart}${confidencePart}`;
+    const confidencePart = bestMatch.score < 50 ? ` [via CSS, LOW CONFIDENCE]` : ` [via CSS]`;
+    const cssOutcome = classifyOutcome(delta, bestMatch.role);
+    const interactedLine = formatOutcomeLine(cssOutcome, actionVerb, `${bestMatch.tagName}${textPart}`, refPart, confidencePart);
 
     // Gather state summary via page.evaluate
     const stateSummary = await withTimeout(page.evaluate(() => {
