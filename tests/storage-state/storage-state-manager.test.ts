@@ -267,6 +267,24 @@ describe('StorageStateManager', () => {
       // page.evaluate should NOT be called for localStorage (no entries)
       expect(page.evaluate).not.toHaveBeenCalled();
     });
+
+    test('11. uses DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS for timeout', async () => {
+      // Create a state that takes a while to restore
+      const state: StorageState = {
+        version: 1,
+        timestamp: Date.now(),
+        cookies: SAMPLE_COOKIES,
+        localStorage: { key: 'value' },
+      };
+      mockReadFileSafe.mockResolvedValue({ success: true, data: state });
+
+      const page = makeMockPage();
+      const cdpClient = makeMockCdpClient();
+
+      // Should complete successfully (default timeout is 10000ms, restore is fast)
+      const result = await manager.restore(page as unknown as Page, cdpClient, '/tmp/state.json');
+      expect(result).toBe(true);
+    });
   });
 
   // ─── watchdog ──────────────────────────────────────────────────────────────
@@ -381,6 +399,29 @@ describe('StorageStateManager', () => {
 
       // Watchdog still running (no crash)
       expect(manager.isWatchdogRunning()).toBe(true);
+    });
+
+    test('16. uses DEFAULT_WATCHDOG_INTERVAL_MS when no intervalMs provided', () => {
+      const page = makeMockPage({});
+      const cdpClient = makeMockCdpClient({ cookies: [] });
+
+      // Start watchdog without intervalMs
+      manager.startWatchdog(page as unknown as Page, cdpClient, {
+        filePath: '/tmp/state.json',
+      });
+
+      expect(manager.isWatchdogRunning()).toBe(true);
+
+      // Advance less than default interval (30000ms) — should NOT save
+      jest.advanceTimersByTime(29000);
+      expect(cdpClient.send).not.toHaveBeenCalled();
+
+      // Advance past default interval — should save
+      jest.advanceTimersByTime(2000);
+      // Drain microtasks
+      return Promise.resolve().then(() => {
+        expect(cdpClient.send).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

@@ -13,7 +13,7 @@ import { getGlobalConfig } from './config/global';
 import { RequestQueueManager } from './utils/request-queue';
 import { getRefIdManager } from './utils/ref-id-manager';
 import { smartGoto } from './utils/smart-goto';
-import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD, DEFAULT_CREATE_TARGET_TIMEOUT_MS, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS } from './config/defaults';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD, DEFAULT_CREATE_TARGET_TIMEOUT_MS, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS, DEFAULT_WATCHDOG_INTERVAL_MS } from './config/defaults';
 import * as os from 'os';
 import { BrowserRouter } from './router';
 import { HybridConfig } from './types/browser-backend';
@@ -832,7 +832,8 @@ export class SessionManager {
         const filePath = this.getStorageStatePath(sessionId);
         await ssManager.restore(page, this.cdpClient, filePath);
 
-        const intervalMs = this.storageStateConfig?.watchdogIntervalMs || 30000;
+        const intervalMs = this.storageStateConfig?.watchdogIntervalMs ||
+          Number(process.env.OPENCHROME_WATCHDOG_INTERVAL_MS) || DEFAULT_WATCHDOG_INTERVAL_MS;
         ssManager.startWatchdog(page, this.cdpClient, {
           intervalMs,
           filePath,
@@ -1578,12 +1579,13 @@ export function getSessionManager(): SessionManager {
   if (!sessionManagerInstance) {
     // Read storage state config from environment variables
     // These are set by CLI (cli/index.ts) before server startup
-    const storageState = process.env.OC_PERSIST_STORAGE === '1'
-      ? {
+    const storageDisabled = process.env.OC_PERSIST_STORAGE === '0';
+    const storageState = storageDisabled
+      ? undefined
+      : {
           enabled: true as const,
           dir: process.env.OC_STORAGE_DIR || undefined,
-        }
-      : undefined;
+        };
 
     sessionManagerInstance = new SessionManager(undefined, {
       storageState,
