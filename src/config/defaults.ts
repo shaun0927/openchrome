@@ -135,6 +135,12 @@ export const DEFAULT_VERBOSITY = 'normal';
 /** Minimum response size in bytes before compression is applied. */
 export const COMPRESSION_MIN_BYTES = 500;
 
+/** Per-call timeout for CDPClient.send() in milliseconds.
+ *  Prevents a hung Chrome renderer from blocking indefinitely.
+ *  The 120s tool execution timeout is the outer safety net, but this
+ *  catches hangs at the individual CDP command level (15s). */
+export const DEFAULT_CDP_SEND_TIMEOUT_MS = 15000;
+
 /** Completion lock acquisition timeout in milliseconds.
  *  Safety net for the promise-based mutex in WorkflowEngine.
  *  If a previous lock holder's release() is never called (e.g. due to an

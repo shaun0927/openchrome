@@ -21,7 +21,9 @@ import {
   DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
   DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
   DEFAULT_CONNECT_VERIFY_STALENESS_MS,
+  DEFAULT_CDP_SEND_TIMEOUT_MS,
 } from '../config/defaults';
+import { withTimeout } from '../utils/with-timeout';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -1427,7 +1429,8 @@ export class CDPClient {
   }
 
   /**
-   * Execute CDP command on a page
+   * Execute CDP command on a page.
+   * Wrapped with per-call timeout to prevent hung renderers from blocking indefinitely.
    */
   async send<T = unknown>(
     page: Page,
@@ -1435,7 +1438,11 @@ export class CDPClient {
     params?: Record<string, unknown>
   ): Promise<T> {
     const session = await this.getCDPSession(page);
-    return session.send(method as any, params as any) as Promise<T>;
+    return withTimeout(
+      session.send(method as any, params as any) as Promise<T>,
+      DEFAULT_CDP_SEND_TIMEOUT_MS,
+      `CDP ${method}`
+    );
   }
 
   /**
