@@ -212,3 +212,9 @@ export const DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS = 300000;
 /** Recovery mode duration in milliseconds.
  *  How long to use fast heartbeat (1s) after reconnection before switching to active. */
 export const DEFAULT_HEARTBEAT_RECOVERY_DURATION_MS = 30000;
+
+/** Stealth navigation settle time in milliseconds.
+ *  How long to wait with no CDP attached before attaching to the page.
+ *  Turnstile challenges typically complete in 6-8 seconds.
+ *  Override with stealthSettleMs parameter on navigate tool. */
+export const DEFAULT_STEALTH_SETTLE_MS = 8000;

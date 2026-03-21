@@ -1217,7 +1217,7 @@ export class CDPClient {
    * @param settleMs Milliseconds to wait before attaching CDP (default 5000, range 1000-30000)
    * @returns        The Puppeteer Page and its targetId
    */
-  async createTargetStealth(url: string, settleMs: number = 5000): Promise<{ page: Page; targetId: string }> {
+  async createTargetStealth(url: string, settleMs: number = 8000): Promise<{ page: Page; targetId: string }> {
     const browser = this.getBrowser();
 
     // Step 1: Create target via CDP Target.createTarget.
@@ -1236,6 +1236,16 @@ export class CDPClient {
     }
 
     console.error(`[CDPClient] Stealth tab created: ${targetId}, settling for ${settleMs}ms`);
+
+    // Warn if headless — Turnstile detection is nearly guaranteed in headless mode
+    try {
+      const version = await browser.version();
+      if (version.toLowerCase().includes('headless')) {
+        console.error('[CDPClient] WARNING: Stealth mode in headless Chrome is unlikely to bypass Turnstile. Use headed Chrome (--visible) for anti-bot pages.');
+      }
+    } catch {
+      // Version check failed — continue
+    }
 
     // Step 2: Wait for the page to load without CDP observation (Turnstile runs here)
     await new Promise<void>(resolve => setTimeout(resolve, settleMs));
@@ -1350,6 +1360,40 @@ export class CDPClient {
           get: () => ['en-US', 'en'],
           configurable: true,
         });
+      }
+
+      // 6. window dimensions — headless Chrome returns 0
+      if (window.outerWidth === 0) {
+        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth, configurable: true });
+      }
+      if (window.outerHeight === 0) {
+        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 85, configurable: true });
+      }
+
+      // 7. navigator.mimeTypes — headless has 0 mimeTypes
+      if (navigator.mimeTypes.length === 0) {
+        Object.defineProperty(navigator, 'mimeTypes', {
+          get: () => {
+            const mt = typeof MimeTypeArray !== 'undefined' ? Object.create(MimeTypeArray.prototype) : [];
+            mt[0] = { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' };
+            Object.defineProperty(mt, 'length', { value: 1 });
+            mt.item = (i: number) => mt[i] || null;
+            mt.namedItem = (name: string) => name === 'application/pdf' ? mt[0] : null;
+            return mt;
+          },
+          configurable: true,
+        });
+      }
+
+      // 8. chrome.app and chrome.loadTimes stubs
+      if ((window as any).chrome) {
+        const c = (window as any).chrome;
+        if (!c.app) {
+          c.app = { isInstalled: false, getDetails: () => null, getIsInstalled: () => false, installState: () => 'disabled' };
+        }
+        if (!c.loadTimes) {
+          c.loadTimes = () => ({});
+        }
       }
     }).catch(() => {});
 
@@ -1472,6 +1516,43 @@ export class CDPClient {
           get: () => ['en-US', 'en'],
           configurable: true,
         });
+      }
+    }).catch(() => {});
+
+    // Defense 4: window dimensions + chrome stubs (anti-headless, #361)
+    page.evaluateOnNewDocument(() => {
+      // outerWidth/outerHeight — headless Chrome returns 0
+      if (window.outerWidth === 0) {
+        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth, configurable: true });
+      }
+      if (window.outerHeight === 0) {
+        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 85, configurable: true });
+      }
+
+      // navigator.mimeTypes — headless has 0 mimeTypes
+      if (navigator.mimeTypes.length === 0) {
+        Object.defineProperty(navigator, 'mimeTypes', {
+          get: () => {
+            const mt = typeof MimeTypeArray !== 'undefined' ? Object.create(MimeTypeArray.prototype) : [];
+            mt[0] = { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' };
+            Object.defineProperty(mt, 'length', { value: 1 });
+            mt.item = (i: number) => mt[i] || null;
+            mt.namedItem = (name: string) => name === 'application/pdf' ? mt[0] : null;
+            return mt;
+          },
+          configurable: true,
+        });
+      }
+
+      // chrome.app and chrome.loadTimes stubs
+      if ((window as any).chrome) {
+        const c = (window as any).chrome;
+        if (!c.app) {
+          c.app = { isInstalled: false, getDetails: () => null, getIsInstalled: () => false, installState: () => 'disabled' };
+        }
+        if (!c.loadTimes) {
+          c.loadTimes = () => ({});
+        }
       }
     }).catch(() => {});
 

@@ -38,7 +38,7 @@ const definition: MCPToolDefinition = {
       },
       stealthSettleMs: {
         type: 'number',
-        description: 'How long to wait (ms) before attaching CDP in stealth mode. Default: 5000. Range: 1000-30000.',
+        description: 'How long to wait (ms) before attaching CDP in stealth mode. Default: 8000. Range: 1000-30000.',
       },
     },
     required: ['url'],
@@ -53,7 +53,7 @@ const handler: ToolHandler = async (
   const url = args.url as string;
   const workerId = args.workerId as string | undefined;
   const stealth = args.stealth as boolean | undefined;
-  const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 5000, 1000), 30000);
+  const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 8000, 1000), 30000);
   const stealthIgnoredWarning = stealth && tabId ? 'stealth mode only works when creating new tabs (omit tabId). The stealth parameter was ignored for this navigation.' : undefined;
   const sessionManager = getSessionManager();
 

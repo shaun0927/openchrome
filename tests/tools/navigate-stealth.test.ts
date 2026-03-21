@@ -96,7 +96,7 @@ describe('NavigateTool - Stealth Mode', () => {
       expect((mockSessionManager as any).createTargetStealth).not.toHaveBeenCalled();
     });
 
-    test('stealth mode passes default settleMs of 5000', async () => {
+    test('stealth mode passes default settleMs of 8000', async () => {
       const handler = await getNavigateHandler();
 
       await handler(testSessionId, {
@@ -108,7 +108,7 @@ describe('NavigateTool - Stealth Mode', () => {
         testSessionId,
         'https://example.com',
         undefined,
-        5000
+        8000
       );
     });
 
@@ -196,7 +196,7 @@ describe('NavigateTool - Stealth Mode', () => {
         testSessionId,
         'https://example.com',
         'worker-1',
-        5000
+        8000
       );
     });
 
@@ -212,7 +212,7 @@ describe('NavigateTool - Stealth Mode', () => {
         testSessionId,
         'https://example.com',
         undefined,
-        5000
+        8000
       );
     });
   });
@@ -235,7 +235,7 @@ describe('NavigateTool - Stealth Mode', () => {
         testSessionId,
         'https://turnstile-protected.com',
         undefined,
-        5000
+        8000
       );
       expect(mockSmartGotoFn).not.toHaveBeenCalled();
     });
@@ -295,7 +295,7 @@ describe('NavigateTool - Stealth Mode', () => {
         testSessionId,
         'https://turnstile-protected.com',
         'worker-stealth',
-        5000
+        8000
       );
       expect(mockSmartGotoFn).not.toHaveBeenCalled();
     });
