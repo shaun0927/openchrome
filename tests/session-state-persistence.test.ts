@@ -121,6 +121,63 @@ describe('SessionStatePersistence', () => {
     });
   });
 
+  describe('staleness TTL', () => {
+    test('should restore fresh snapshot (1h old)', async () => {
+      const freshState: PersistedSessionState = {
+        ...SAMPLE_STATE,
+        timestamp: Date.now() - 1 * 60 * 60 * 1000, // 1 hour ago
+      };
+      mockReadFileSafe.mockResolvedValue({ success: true, data: freshState });
+
+      const result = await persistence.restore();
+
+      expect(result).toEqual(freshState);
+    });
+
+    test('should reject stale snapshot (25h old, default 24h TTL)', async () => {
+      const staleState: PersistedSessionState = {
+        ...SAMPLE_STATE,
+        timestamp: Date.now() - 25 * 60 * 60 * 1000, // 25 hours ago
+      };
+      mockReadFileSafe.mockResolvedValue({ success: true, data: staleState });
+
+      const result = await persistence.restore();
+
+      expect(result).toBeNull();
+    });
+
+    test('should respect custom maxStalenessMs', async () => {
+      const customPersistence = new SessionStatePersistence({
+        dir: '/tmp',
+        debounceMs: 50,
+        maxStalenessMs: 1 * 60 * 60 * 1000, // 1 hour TTL
+      });
+      const staleState: PersistedSessionState = {
+        ...SAMPLE_STATE,
+        timestamp: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago
+      };
+      mockReadFileSafe.mockResolvedValue({ success: true, data: staleState });
+
+      const result = await customPersistence.restore();
+
+      expect(result).toBeNull();
+      customPersistence.cancelPendingSave();
+    });
+
+    test('should restore snapshot with no timestamp (legacy)', async () => {
+      const legacyState = {
+        version: 1 as const,
+        sessions: SAMPLE_STATE.sessions,
+        // no timestamp field
+      } as unknown as PersistedSessionState;
+      mockReadFileSafe.mockResolvedValue({ success: true, data: legacyState });
+
+      const result = await persistence.restore();
+
+      expect(result).toEqual(legacyState);
+    });
+  });
+
   describe('scheduleSave', () => {
     test('debounces multiple save calls', async () => {
       persistence.scheduleSave(SAMPLE_STATE);

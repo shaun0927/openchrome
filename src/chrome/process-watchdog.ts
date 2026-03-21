@@ -63,6 +63,7 @@ export class ChromeProcessWatchdog extends EventEmitter {
    */
   private async check(): Promise<void> {
     if (this.relaunching) return; // already handling a crash
+    if (this.launcher.intentionalStop) return; // Chrome was stopped intentionally — do not relaunch
 
     const instance = this.launcher.getInstance();
     if (!instance) return; // Chrome not launched by us — nothing to watch

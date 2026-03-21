@@ -41,13 +41,15 @@ export interface PersistedSessionState {
 export class SessionStatePersistence {
   private saveDebounceTimer: NodeJS.Timeout | null = null;
   private readonly debounceMs: number;
+  private readonly maxStalenessMs: number;
   private readonly filePath: string;
   private saving = false;
   private pendingSave = false;
   private lastState: PersistedSessionState | null = null;
 
-  constructor(opts?: { dir?: string; debounceMs?: number }) {
+  constructor(opts?: { dir?: string; debounceMs?: number; maxStalenessMs?: number }) {
     this.debounceMs = opts?.debounceMs ?? 5000;
+    this.maxStalenessMs = opts?.maxStalenessMs ?? 24 * 60 * 60 * 1000; // 24h default
     const dir = opts?.dir || path.join(os.homedir(), '.openchrome');
     this.filePath = path.join(dir, 'session-state.json');
   }
@@ -116,6 +118,17 @@ export class SessionStatePersistence {
     if (!Array.isArray(state.sessions)) {
       console.error('[SessionStatePersistence] Invalid state: sessions is not an array');
       return null;
+    }
+
+    // Check staleness
+    if (state.timestamp) {
+      const age = Date.now() - state.timestamp;
+      if (age > this.maxStalenessMs) {
+        console.error(
+          `[SessionStatePersistence] Stale snapshot (${Math.round(age / 3600000)}h old, max ${Math.round(this.maxStalenessMs / 3600000)}h), ignoring`
+        );
+        return null;
+      }
     }
 
     return state;

@@ -14,6 +14,25 @@ import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile } from './utils/pid-manager';
 import { getVersion } from './version';
+import { ChromeProcessWatchdog } from './chrome/process-watchdog';
+import { TabHealthMonitor } from './cdp/tab-health-monitor';
+import { EventLoopMonitor } from './watchdog/event-loop-monitor';
+import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
+import { SessionStatePersistence } from './session-state-persistence';
+import { getCDPClient } from './cdp/client';
+import { getSessionManager } from './session-manager';
+import { getChromeLauncher } from './chrome/launcher';
+import {
+  DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
+  DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
+  DEFAULT_TAB_HEALTH_PROBE_TIMEOUT_MS,
+  DEFAULT_TAB_UNHEALTHY_THRESHOLD,
+  DEFAULT_TAB_EVICTION_THRESHOLD,
+  DEFAULT_EVENT_LOOP_CHECK_INTERVAL_MS,
+  DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS,
+  DEFAULT_HEALTH_ENDPOINT_PORT,
+  DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS,
+} from './config/defaults';
 
 // Prevent silent crashes from unhandled promise rejections in background tasks
 process.on('unhandledRejection', (reason) => {
@@ -175,6 +194,113 @@ program
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
     server.start();
+
+    // ─── Self-Healing Module Wiring (#354) ──────────────────────────────────
+
+    const launcher = getChromeLauncher();
+    const cdpClient = getCDPClient();
+    const sessionManager = getSessionManager();
+
+    // Chrome Process Watchdog (Layer 3)
+    const processWatchdog = new ChromeProcessWatchdog(launcher, {
+      intervalMs: parseInt(process.env.OPENCHROME_PROCESS_WATCHDOG_INTERVAL_MS || '', 10) || DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
+    });
+    processWatchdog.on('chrome-relaunched', () => {
+      console.error('[SelfHealing] Chrome relaunched by watchdog, triggering reconnect...');
+      cdpClient.forceReconnect().catch((err: unknown) => {
+        console.error('[SelfHealing] Post-relaunch reconnect failed:', err);
+      });
+    });
+    processWatchdog.start();
+    console.error('[SelfHealing] ChromeProcessWatchdog started');
+
+    // Tab Health Monitor (Layer 1)
+    const tabHealthMonitor = new TabHealthMonitor({
+      probeIntervalMs: parseInt(process.env.OPENCHROME_TAB_HEALTH_PROBE_INTERVAL_MS || '', 10) || DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
+      probeTimeoutMs: DEFAULT_TAB_HEALTH_PROBE_TIMEOUT_MS,
+      unhealthyThreshold: DEFAULT_TAB_UNHEALTHY_THRESHOLD,
+      evictionThreshold: DEFAULT_TAB_EVICTION_THRESHOLD,
+    });
+    tabHealthMonitor.on('tab-evict', ({ targetId }: { targetId: string }) => {
+      console.error(`[SelfHealing] Evicting unhealthy tab ${targetId}`);
+      const owner = sessionManager.getTargetOwner(targetId);
+      if (owner) {
+        sessionManager.closeTarget(owner.sessionId, targetId).catch((err: unknown) => {
+          console.error(`[SelfHealing] Failed to evict tab ${targetId}:`, err);
+        });
+      } else {
+        console.error(`[SelfHealing] Tab ${targetId} not found in session manager, skipping eviction`);
+      }
+    });
+    console.error('[SelfHealing] TabHealthMonitor started');
+
+    // Event Loop Monitor (Layer 4)
+    const eventLoopMonitor = new EventLoopMonitor({
+      checkIntervalMs: DEFAULT_EVENT_LOOP_CHECK_INTERVAL_MS,
+      warnThresholdMs: DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS,
+      fatalThresholdMs: parseInt(process.env.OPENCHROME_EVENT_LOOP_FATAL_MS || '', 10) || 0,
+    });
+    eventLoopMonitor.on('fatal', () => {
+      console.error('[SelfHealing] FATAL: Event loop blocked beyond threshold, exiting...');
+      process.exit(1);
+    });
+    eventLoopMonitor.start();
+    console.error('[SelfHealing] EventLoopMonitor started');
+
+    // Health Endpoint (Layer 4)
+    const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
+    const healthEndpoint = new HealthEndpoint(() => {
+      const elStats = eventLoopMonitor.getStats();
+      const tabHealth = tabHealthMonitor.getAllHealth();
+      let healthyTabs = 0;
+      let unhealthyTabs = 0;
+      for (const [, info] of tabHealth) {
+        if (info.status === 'healthy') healthyTabs++;
+        else unhealthyTabs++;
+      }
+      const data: HealthData = {
+        status: unhealthyTabs > 0 ? 'degraded' : 'ok',
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        eventLoop: { maxDriftMs: elStats.maxDriftMs, warnCount: elStats.warnCount },
+        tabs: { total: tabHealth.size, healthy: healthyTabs, unhealthy: unhealthyTabs },
+      };
+      return data;
+    }, healthPort);
+    healthEndpoint.start().catch((err: unknown) => {
+      console.error('[SelfHealing] HealthEndpoint start failed:', err);
+    });
+
+    // Session State Persistence (Layer 2)
+    const sessionPersistence = new SessionStatePersistence();
+    // Restore on startup
+    sessionPersistence.restore().then((restored) => {
+      if (restored) {
+        console.error(`[SelfHealing] Restored ${restored.sessions.length} sessions from disk`);
+      }
+    }).catch((err: unknown) => {
+      console.error('[SelfHealing] Session state restore failed:', err);
+    });
+
+    // Update shutdown handler to include self-healing cleanup
+    const originalShutdown = shutdown;
+    const enhancedShutdown = async (signal: string) => {
+      processWatchdog.stop();
+      tabHealthMonitor.stopAll();
+      eventLoopMonitor.stop();
+      await healthEndpoint.stop();
+      sessionPersistence.cancelPendingSave();
+      await originalShutdown(signal);
+    };
+    // Replace signal handlers
+    process.removeAllListeners('SIGTERM');
+    process.removeAllListeners('SIGINT');
+    process.on('SIGTERM', () => enhancedShutdown('SIGTERM'));
+    process.on('SIGINT', () => enhancedShutdown('SIGINT'));
+    if (process.platform === 'win32') {
+      process.removeAllListeners('SIGHUP');
+      process.on('SIGHUP', () => enhancedShutdown('SIGHUP'));
+    }
   });
 
 program

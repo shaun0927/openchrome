@@ -7,11 +7,13 @@ import { EventEmitter } from 'events';
 function createMockLauncher(opts: {
   instance?: { process?: { pid?: number } } | null;
   ensureChrome?: jest.Mock;
+  intentionalStop?: boolean;
 } = {}) {
   return {
     getInstance: jest.fn().mockReturnValue(opts.instance ?? null),
     ensureChrome: opts.ensureChrome ?? jest.fn().mockResolvedValue(undefined),
     isLaunching: jest.fn().mockReturnValue(false),
+    intentionalStop: opts.intentionalStop ?? false,
   } as any;
 }
 
@@ -154,5 +156,60 @@ describe('ChromeProcessWatchdog', () => {
     watchdog.stop();
 
     expect(watchdog.isRunning()).toBe(false);
+  });
+
+  describe('intentional stop', () => {
+    test('should NOT relaunch when launcher.intentionalStop is true', async () => {
+      const deadPid = 99999999;
+      const ensureChrome = jest.fn().mockResolvedValue(undefined);
+      const launcher = createMockLauncher({
+        instance: { process: { pid: deadPid } },
+        ensureChrome,
+        intentionalStop: true,
+      });
+
+      watchdog = new ChromeProcessWatchdog(launcher, { intervalMs: 50 });
+
+      const diedHandler = jest.fn();
+      watchdog.on('chrome-died', diedHandler);
+
+      watchdog.start();
+      await new Promise(r => setTimeout(r, 150));
+      watchdog.stop();
+
+      expect(diedHandler).not.toHaveBeenCalled();
+      expect(ensureChrome).not.toHaveBeenCalled();
+    });
+
+    test('should relaunch when intentionalStop is false (crash)', async () => {
+      const deadPid = 99999999;
+      const ensureChrome = jest.fn().mockResolvedValue(undefined);
+      const launcher = createMockLauncher({
+        instance: { process: { pid: deadPid } },
+        ensureChrome,
+        intentionalStop: false,
+      });
+
+      launcher.getInstance
+        .mockReturnValueOnce({ process: { pid: deadPid } }) // first check: dead
+        .mockReturnValue({ process: { pid: 12345 } }); // after relaunch
+
+      watchdog = new ChromeProcessWatchdog(launcher, { intervalMs: 50 });
+
+      const diedHandler = jest.fn();
+      const relaunchedHandler = jest.fn();
+      watchdog.on('chrome-died', diedHandler);
+      watchdog.on('chrome-relaunched', relaunchedHandler);
+
+      watchdog.start();
+      await new Promise(r => setTimeout(r, 200));
+      watchdog.stop();
+
+      expect(diedHandler).toHaveBeenCalledWith(
+        expect.objectContaining({ pid: deadPid })
+      );
+      expect(ensureChrome).toHaveBeenCalled();
+      expect(relaunchedHandler).toHaveBeenCalled();
+    });
   });
 });

@@ -17,7 +17,7 @@ export interface StorageState {
     session: boolean;
     sameSite?: string;
   }>;
-  localStorage: Record<string, string>;
+  localStorage: Record<string, string> | Record<string, Record<string, string>>;
 }
 
 export interface CDPClientLike {
@@ -41,19 +41,23 @@ export class StorageStateManager {
         page, 'Network.getAllCookies', {}
       );
 
-      // Get localStorage via page.evaluate
-      let localStorage: Record<string, string> = {};
+      // Get localStorage via page.evaluate (origin-scoped)
+      let localStorage: Record<string, Record<string, string>> = {};
       try {
-        localStorage = await page.evaluate(() => {
-          const result: Record<string, string> = {};
-          for (let i = 0; i < window.localStorage.length; i++) {
-            const key = window.localStorage.key(i);
-            if (key) {
-              result[key] = window.localStorage.getItem(key) || '';
+        const origin = await page.evaluate(() => window.location.origin) as string;
+        if (origin && origin !== 'null') {  // 'null' for about:blank
+          const items = await page.evaluate(() => {
+            const result: Record<string, string> = {};
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const key = window.localStorage.key(i);
+              if (key) result[key] = window.localStorage.getItem(key) || '';
             }
+            return result;
+          }) as Record<string, string>;
+          if (Object.keys(items).length > 0) {
+            localStorage[origin] = items;
           }
-          return result;
-        }) as Record<string, string>;
+        }
       } catch {
         // localStorage may not be available (about:blank, chrome://)
         localStorage = {};
@@ -106,14 +110,33 @@ export class StorageStateManager {
           }
         }
 
-        // Restore localStorage
+        // Restore localStorage (origin-scoped)
         if (state.localStorage && Object.keys(state.localStorage).length > 0) {
           try {
-            await page.evaluate((data: Record<string, string>) => {
-              for (const [key, value] of Object.entries(data)) {
-                window.localStorage.setItem(key, value);
+            const pageOrigin = await page.evaluate(() => window.location.origin) as string;
+
+            // Detect format: old (flat) vs new (origin-scoped)
+            const firstValue = Object.values(state.localStorage)[0];
+            const isOriginScoped = typeof firstValue === 'object' && firstValue !== null;
+
+            if (isOriginScoped) {
+              // New format: origin-scoped — only inject keys for matching origin
+              const originData = (state.localStorage as Record<string, Record<string, string>>)[pageOrigin];
+              if (originData && Object.keys(originData).length > 0) {
+                await page.evaluate((data: Record<string, string>) => {
+                  for (const [key, value] of Object.entries(data)) {
+                    window.localStorage.setItem(key, value);
+                  }
+                }, originData);
               }
-            }, state.localStorage);
+            } else {
+              // Legacy format: flat (backward compatible — inject all, as before)
+              await page.evaluate((data: Record<string, string>) => {
+                for (const [key, value] of Object.entries(data)) {
+                  window.localStorage.setItem(key, value);
+                }
+              }, state.localStorage as Record<string, string>);
+            }
           } catch {
             // Skip if localStorage can't be accessed (about:blank, chrome://)
           }

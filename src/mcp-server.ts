@@ -25,7 +25,7 @@ import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS } from './config/defaults';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS } from './config/defaults';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { logAuditEntry } from './security/audit-logger';
@@ -88,6 +88,7 @@ export class MCPServer {
   private options: MCPServerOptions;
   private profileWarningShown = false;
   private exposedTier: ToolTier = 1;
+  private heartbeatIdleTimer: NodeJS.Timeout | null = null;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
@@ -530,6 +531,20 @@ export class MCPServer {
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
 
+    // Adaptive heartbeat: switch to active mode during tool execution
+    try {
+      const cdpClient = getCDPClient();
+      if (cdpClient.setHeartbeatMode) {
+        cdpClient.setHeartbeatMode('active');
+      }
+      if (this.heartbeatIdleTimer) {
+        clearTimeout(this.heartbeatIdleTimer);
+        this.heartbeatIdleTimer = null;
+      }
+    } catch {
+      // CDP client may not be initialized yet
+    }
+
     try {
       // Ensure session exists.
       // Use a longer timeout when autoLaunch is enabled because Chrome launch (up to 30s)
@@ -616,6 +631,25 @@ export class MCPServer {
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
 
+      // Schedule heartbeat idle mode transition
+      if (this.heartbeatIdleTimer) {
+        clearTimeout(this.heartbeatIdleTimer);
+      }
+      this.heartbeatIdleTimer = setTimeout(() => {
+        try {
+          const cdpClient = getCDPClient();
+          if (cdpClient.setHeartbeatMode) {
+            cdpClient.setHeartbeatMode('idle');
+          }
+        } catch {
+          // CDP client may be disconnected
+        }
+        this.heartbeatIdleTimer = null;
+      }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
+      if (this.heartbeatIdleTimer.unref) {
+        this.heartbeatIdleTimer.unref();
+      }
+
       const compressionConfig = getGlobalConfig().compression;
       const verbosity = compressionConfig?.verbosity ?? 'normal';
 
@@ -689,6 +723,25 @@ export class MCPServer {
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, 'error', message);
+
+      // Schedule heartbeat idle mode transition
+      if (this.heartbeatIdleTimer) {
+        clearTimeout(this.heartbeatIdleTimer);
+      }
+      this.heartbeatIdleTimer = setTimeout(() => {
+        try {
+          const cdpClient = getCDPClient();
+          if (cdpClient.setHeartbeatMode) {
+            cdpClient.setHeartbeatMode('idle');
+          }
+        } catch {
+          // CDP client may be disconnected
+        }
+        this.heartbeatIdleTimer = null;
+      }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
+      if (this.heartbeatIdleTimer.unref) {
+        this.heartbeatIdleTimer.unref();
+      }
 
       // Append reconnection guidance for connection errors
       const displayMessage = isConnectionError(error)

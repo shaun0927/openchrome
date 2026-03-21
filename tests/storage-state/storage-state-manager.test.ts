@@ -20,6 +20,20 @@ function makeMockPage(evaluateResult?: unknown, evaluateError?: Error): jest.Moc
   } as unknown as jest.Mocked<Pick<Page, 'evaluate'>>;
 }
 
+/**
+ * Build a mock Page where evaluate() returns different values per call order.
+ */
+function makeMockPageMultiEval(responses: Array<unknown>): jest.Mocked<Pick<Page, 'evaluate'>> {
+  let callIndex = 0;
+  return {
+    evaluate: jest.fn().mockImplementation(() => {
+      const response = responses[callIndex] ?? undefined;
+      callIndex++;
+      return Promise.resolve(response);
+    }),
+  } as unknown as jest.Mocked<Pick<Page, 'evaluate'>>;
+}
+
 function makeMockCdpClient(sendResult?: unknown): jest.Mocked<CDPClientLike> {
   return {
     send: jest.fn().mockResolvedValue(sendResult ?? {}),
@@ -68,7 +82,8 @@ describe('StorageStateManager', () => {
   describe('save', () => {
     test('1. captures cookies and localStorage', async () => {
       const localStorageData = { theme: 'dark', lang: 'en' };
-      const page = makeMockPage(localStorageData);
+      // save() makes two evaluate calls: first for origin, then for items
+      const page = makeMockPageMultiEval(['https://example.com', localStorageData]);
       const cdpClient = makeMockCdpClient({ cookies: SAMPLE_COOKIES });
 
       await manager.save(page as unknown as Page, cdpClient, '/tmp/state.json');
@@ -80,7 +95,7 @@ describe('StorageStateManager', () => {
         expect.objectContaining({
           version: 1,
           cookies: SAMPLE_COOKIES,
-          localStorage: localStorageData,
+          localStorage: { 'https://example.com': localStorageData },
         })
       );
     });
@@ -308,13 +323,13 @@ describe('StorageStateManager', () => {
       });
 
       // Advance one interval at a time, flushing async between each
-      // so the concurrent-save guard (this.saving) resets before the next tick
+      // so the concurrent-save guard (this.saving) resets before the next tick.
+      // save() performs: cdpClient.send + page.evaluate (origin) + page.evaluate (items) + writeFileAtomicSafe
+      // — each await needs a microtask flush.
       for (let i = 0; i < 3; i++) {
         jest.advanceTimersByTime(1000);
         // Flush the microtask queue so the async save() completes
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
+        for (let j = 0; j < 6; j++) await Promise.resolve();
       }
 
       expect(cdpClient.send).toHaveBeenCalledTimes(3);
