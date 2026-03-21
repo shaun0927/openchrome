@@ -74,9 +74,9 @@ describe('Stealth: configurePageDefenses source verification', () => {
       : clientSource.slice(methodStart);
   });
 
-  test('configurePageDefenses has exactly 3 evaluateOnNewDocument calls', () => {
+  test('configurePageDefenses has at least 4 evaluateOnNewDocument calls', () => {
     const evalCalls = (defenseBlock.match(/evaluateOnNewDocument/g) || []).length;
-    expect(evalCalls).toBe(3);
+    expect(evalCalls).toBeGreaterThanOrEqual(4);
   });
 
   test('stealth script covers all key fingerprinting vectors', () => {
@@ -87,10 +87,10 @@ describe('Stealth: configurePageDefenses source verification', () => {
     expect(defenseBlock).toContain('window.print');
   });
 
-  test('comment accurately describes chrome.runtime patching', () => {
-    expect(defenseBlock).not.toContain('chrome.csi');
-    expect(defenseBlock).not.toContain('chrome.loadTimes');
+  test('defense block includes chrome.runtime, chrome.app, and chrome.loadTimes stubs', () => {
     expect(defenseBlock).toContain('chrome.runtime');
+    expect(defenseBlock).toContain('chrome.app');
+    expect(defenseBlock).toContain('chrome.loadTimes');
   });
 
   test('Permissions API returns EventTarget-based PermissionStatus', () => {

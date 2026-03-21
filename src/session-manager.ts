@@ -863,7 +863,7 @@ export class SessionManager {
     sessionId: string,
     url: string,
     workerId?: string,
-    settleMs: number = 5000
+    settleMs: number = 8000
   ): Promise<{ targetId: string; page: Page; workerId: string }> {
     await this.ensureConnected();
 
