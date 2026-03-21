@@ -60,6 +60,11 @@ import { registerShutdownTool } from './shutdown';
 import { registerProfileStatusTool } from './profile-status';
 import { registerListProfilesTool } from './list-profiles';
 
+// AI Agent Continuity tools (#355, #356)
+import { registerSessionSnapshotTool } from './session-snapshot';
+import { registerSessionResumeTool } from './session-resume';
+import { registerJournalTool } from './journal';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -122,6 +127,11 @@ export function registerAllTools(server: MCPServer): void {
   registerShutdownTool(server);
   registerProfileStatusTool(server);
   registerListProfilesTool(server);
+
+  // AI Agent Continuity tools (#355, #356)
+  registerSessionSnapshotTool(server);
+  registerSessionResumeTool(server);
+  registerJournalTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

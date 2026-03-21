@@ -31,6 +31,7 @@ import { getToolTier, ToolTier } from './config/tool-tiers';
 import { logAuditEntry } from './security/audit-logger';
 import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
+import { getTaskJournal } from './journal/task-journal';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -62,7 +63,7 @@ export function isConnectionError(error: unknown): boolean {
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
  *  sleep/wake). Skip session initialization so oc_stop can always reach its handler. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status']);
+const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
 
 const RECONNECTION_GUIDANCE =
   '\n\nNote: The browser connection was lost and auto-reconnect was attempted. ' +
@@ -119,6 +120,11 @@ export class MCPServer {
     this.hintEngine = new HintEngine(this.activityTracker);
     this.hintEngine.enableLogging(hintsDir);
     this.hintEngine.enableLearning(hintsDir);
+
+    // Initialize task journal
+    getTaskJournal().init().catch((err: unknown) => {
+      console.error('[MCPServer] Task journal init failed:', err);
+    });
   }
 
   /**
@@ -530,6 +536,7 @@ export class MCPServer {
 
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
+    const toolStartTime = Date.now();
 
     // Adaptive heartbeat: switch to active mode during tool execution
     try {
@@ -631,6 +638,15 @@ export class MCPServer {
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
 
+      // Record to task journal
+      try {
+        const journal = getTaskJournal();
+        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, true);
+        journal.record(entry);
+      } catch {
+        // Best-effort journal recording
+      }
+
       // Schedule heartbeat idle mode transition
       if (this.heartbeatIdleTimer) {
         clearTimeout(this.heartbeatIdleTimer);
@@ -723,6 +739,15 @@ export class MCPServer {
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, 'error', message);
+
+      // Record to task journal
+      try {
+        const journal = getTaskJournal();
+        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, false);
+        journal.record(entry);
+      } catch {
+        // Best-effort journal recording
+      }
 
       // Schedule heartbeat idle mode transition
       if (this.heartbeatIdleTimer) {

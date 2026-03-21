@@ -33,6 +33,9 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   lightweight_scroll: 1,
   oc_stop: 1,
   oc_profile_status: 1,
+  oc_session_snapshot: 1,
+  oc_session_resume: 1,
+  oc_journal: 1,
 
   // Tier 2: Specialist (on demand)
   click_element: 2,
