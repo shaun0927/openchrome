@@ -434,6 +434,11 @@ export class CDPClient {
       this.reconnectAttempts++;
       console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
 
+      // Invalidate launcher cache at start of each attempt so ensureChrome()
+      // re-probes Chrome's HTTP endpoint to discover the new WebSocket UUID
+      // after a relaunch by the process watchdog
+      getChromeLauncher(this.port).invalidateInstance();
+
       this.emitConnectionEvent({
         type: 'reconnecting',
         timestamp: Date.now(),
