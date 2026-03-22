@@ -1,6 +1,6 @@
 {
   "name": "openchrome-mcp",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
   "bin": {
@@ -17,6 +17,7 @@
     "benchmark": "ts-node tests/benchmark/run.ts",
     "benchmark:ci": "ts-node tests/benchmark/run.ts --ci",
     "test": "jest",
+    "test:e2e": "jest --config tests/e2e/jest.e2e.config.js",
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
     "clean": "rimraf dist",
