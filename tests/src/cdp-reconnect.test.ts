@@ -20,6 +20,7 @@ const mockEnsureChrome = jest.fn();
 jest.mock('../../src/chrome/launcher', () => ({
   getChromeLauncher: jest.fn().mockReturnValue({
     ensureChrome: mockEnsureChrome,
+    invalidateInstance: jest.fn(),
   }),
 }));
 
@@ -76,7 +77,7 @@ describe('CDPClient – handleDisconnect reconnection fixes', () => {
     // Restore getChromeLauncher mock return value after clearAllMocks (which only
     // clears call history, not implementations — but be explicit for clarity)
     const launcherMock = require('../../src/chrome/launcher');
-    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome });
+    launcherMock.getChromeLauncher.mockReturnValue({ ensureChrome: mockEnsureChrome, invalidateInstance: jest.fn() });
   });
 
   test('resets reconnectAttempts to 0 on new disconnect event', async () => {
