@@ -69,6 +69,17 @@ const handler: ToolHandler = async (
     try {
       // Normalize URL first
       let targetUrl = url;
+      // Detect non-http schemes before normalization to prevent https:// prepending
+      const schemeMatch = targetUrl.match(/^([a-z][a-z0-9+.-]*):\/\//i);
+      if (schemeMatch && !['http', 'https'].includes(schemeMatch[1].toLowerCase())) {
+        return {
+          content: [{
+            type: 'text',
+            text: `Navigation error: "${schemeMatch[1]}://" URLs are not supported. Only http:// and https:// URLs can be navigated.`,
+          }],
+          isError: true,
+        };
+      }
       if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
         targetUrl = 'https://' + targetUrl;
       }
@@ -116,7 +127,11 @@ const handler: ToolHandler = async (
         if (await sessionManager.isTargetValid(existingTabId)) {
           const page = await sessionManager.getPage(sessionId, existingTabId, undefined, 'navigate');
           if (page) {
-            const { authRedirect } = await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+            const { authRedirect } = await withTimeout(
+              smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }),
+              DEFAULT_NAVIGATION_TIMEOUT_MS + 5000,
+              `navigate to ${targetUrl}`
+            );
             if (authRedirect) {
               AdaptiveScreenshot.getInstance().reset(existingTabId);
               return {
@@ -327,6 +342,17 @@ const handler: ToolHandler = async (
 
     // Normalize URL
     let targetUrl = url;
+    // Detect non-http schemes before normalization to prevent https:// prepending
+    const schemeMatch = targetUrl.match(/^([a-z][a-z0-9+.-]*):\/\//i);
+    if (schemeMatch && !['http', 'https'].includes(schemeMatch[1].toLowerCase())) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Navigation error: "${schemeMatch[1]}://" URLs are not supported. Only http:// and https:// URLs can be navigated.`,
+        }],
+        isError: true,
+      };
+    }
     if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
       targetUrl = 'https://' + targetUrl;
     }
@@ -376,7 +402,11 @@ const handler: ToolHandler = async (
     assertDomainAllowed(targetUrl);
 
     // Navigate with smart auth redirect detection
-    const { authRedirect } = await smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+    const { authRedirect } = await withTimeout(
+      smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }),
+      DEFAULT_NAVIGATION_TIMEOUT_MS + 5000,
+      `navigate to ${targetUrl}`
+    );
 
     // Auth redirect = fail-fast with clear error
     if (authRedirect) {
