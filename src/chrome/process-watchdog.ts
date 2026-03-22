@@ -16,6 +16,7 @@ export interface ProcessWatchdogEvents {
   'chrome-died': { pid: number; timestamp: number };
   'chrome-relaunched': { pid: number; timestamp: number };
   'relaunch-failed': { error: Error; timestamp: number };
+  'watchdog-exhausted': { count: number; timestamp: number };
 }
 
 export class ChromeProcessWatchdog extends EventEmitter {
@@ -24,6 +25,9 @@ export class ChromeProcessWatchdog extends EventEmitter {
   private readonly launcher: ChromeLauncher;
   private lastKnownPid: number | null = null;
   private relaunching = false;
+  private cooldownUntil = 0;
+  private relaunchCount = 0;
+  private readonly maxRelaunchCycles = 10;
 
   constructor(launcher: ChromeLauncher, opts?: ProcessWatchdogOptions) {
     super();
@@ -63,6 +67,10 @@ export class ChromeProcessWatchdog extends EventEmitter {
    */
   private async check(): Promise<void> {
     if (this.relaunching) return; // already handling a crash
+    // Cooldown after recent relaunch to let CDPClient fully reconnect
+    if (Date.now() < this.cooldownUntil) {
+      return;
+    }
     if (this.launcher.intentionalStop) return; // Chrome was stopped intentionally — do not relaunch
 
     const instance = this.launcher.getInstance();
@@ -94,6 +102,15 @@ export class ChromeProcessWatchdog extends EventEmitter {
       const newPid = newInstance?.process?.pid;
       console.error(`[ProcessWatchdog] Chrome relaunched successfully (PID ${newPid})`);
       this.emit('chrome-relaunched', { pid: newPid ?? 0, timestamp: Date.now() });
+      this.relaunchCount++;
+      // Cooldown: skip 3 check intervals to let CDPClient reconnect
+      this.cooldownUntil = Date.now() + this.intervalMs * 3;
+
+      if (this.relaunchCount >= this.maxRelaunchCycles) {
+        console.error(`[ProcessWatchdog] Relaunch limit (${this.maxRelaunchCycles}) reached, stopping watchdog`);
+        this.emit('watchdog-exhausted', { count: this.relaunchCount, timestamp: Date.now() });
+        this.stop();
+      }
     } catch (error) {
       console.error('[ProcessWatchdog] Chrome relaunch failed:', error);
       this.emit('relaunch-failed', {
