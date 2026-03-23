@@ -1,9 +1,12 @@
 /**
  * ChromePool - Manages multiple Chrome instances on different ports
  * to solve the CDP same-origin renderer process contention issue.
+ * Also supports profile-aware instance routing for multi-profile workflows.
  */
 
 import * as http from 'http';
+import * as os from 'os';
+import * as path from 'path';
 import { ChromeLauncher, ChromeInstance, LaunchOptions } from './launcher';
 
 export interface ChromePoolConfig {
@@ -18,6 +21,7 @@ export interface PooledInstance {
   origins: Set<string>;  // origins currently using this instance
   tabCount: number;
   isPreExisting: boolean; // was it already running when we found it?
+  profileDirectory?: string; // Chrome profile directory (e.g., "Profile 1", "Default")
 }
 
 const DEFAULT_POOL_CONFIG: ChromePoolConfig = {
@@ -64,6 +68,8 @@ async function checkDebugPort(port: number): Promise<boolean> {
 export class ChromePool {
   private config: ChromePoolConfig;
   private instances: Map<number, PooledInstance> = new Map();
+  // In-flight dedup: prevent concurrent launches for the same profile (P1-3 fix)
+  private profileLaunchInFlight: Map<string, Promise<PooledInstance>> = new Map();
 
   constructor(config: Partial<ChromePoolConfig> = {}) {
     this.config = { ...DEFAULT_POOL_CONFIG, ...config };
@@ -119,6 +125,59 @@ export class ChromePool {
   }
 
   /**
+   * Acquire a Chrome instance running a specific profile.
+   * Returns an existing instance if one is already running this profile,
+   * otherwise launches a new Chrome process with --profile-directory.
+   * Uses in-flight deduplication to prevent concurrent launches for the same profile.
+   */
+  async acquireInstanceForProfile(profileDirectory: string, origin?: string): Promise<PooledInstance> {
+    // 1. Find an existing instance already running this profile
+    for (const [, instance] of this.instances) {
+      if (instance.profileDirectory === profileDirectory) {
+        if (origin) instance.origins.add(origin);
+        instance.tabCount++;
+        console.error(
+          `[ChromePool] Reusing existing instance on port ${instance.port} for profile "${profileDirectory}"`
+        );
+        return instance;
+      }
+    }
+
+    // 2. Check for in-flight launch of the same profile (P1-3: race condition fix)
+    const inflight = this.profileLaunchInFlight.get(profileDirectory);
+    if (inflight) {
+      console.error(`[ChromePool] Waiting for in-flight launch of profile "${profileDirectory}"`);
+      const inst = await inflight;
+      if (origin) inst.origins.add(origin);
+      inst.tabCount++;
+      return inst;
+    }
+
+    // 3. No instance with this profile — launch a new one
+    if (this.instances.size >= this.config.maxInstances) {
+      throw new Error(
+        `[ChromePool] Cannot launch Chrome for profile "${profileDirectory}": ` +
+        `pool is at max capacity (${this.config.maxInstances} instances). ` +
+        `Close unused profiles first.`
+      );
+    }
+
+    // Set in-flight guard before async launch
+    const launchPromise = this.launchNewInstance(profileDirectory).finally(() => {
+      this.profileLaunchInFlight.delete(profileDirectory);
+    });
+    this.profileLaunchInFlight.set(profileDirectory, launchPromise);
+
+    const newInstance = await launchPromise;
+    if (origin) newInstance.origins.add(origin);
+    newInstance.tabCount++;
+    console.error(
+      `[ChromePool] Launched new instance on port ${newInstance.port} for profile "${profileDirectory}"`
+    );
+    return newInstance;
+  }
+
+  /**
    * Mark that an origin is no longer using a port.
    */
   releaseInstance(port: number, origin: string): void {
@@ -133,6 +192,21 @@ export class ChromePool {
     console.error(
       `[ChromePool] Released origin "${origin}" from port ${port}. ` +
         `Remaining origins: ${instance.tabCount}`
+    );
+  }
+
+  /**
+   * Decrement tab count for a profile instance (P1-2 fix).
+   * Used when a profile worker is deleted but has no poolOrigin.
+   */
+  releaseProfileInstance(port: number): void {
+    const instance = this.instances.get(port);
+    if (!instance) return;
+    if (instance.tabCount > 0) {
+      instance.tabCount--;
+    }
+    console.error(
+      `[ChromePool] Released profile instance on port ${port}. Tab count: ${instance.tabCount}`
     );
   }
 
@@ -155,6 +229,7 @@ export class ChromePool {
 
     await Promise.all(closurePromises);
     this.instances.clear();
+    this.profileLaunchInFlight.clear();
     console.error('[ChromePool] Cleanup complete.');
   }
 
@@ -169,13 +244,23 @@ export class ChromePool {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  private async launchNewInstance(): Promise<PooledInstance> {
+  private async launchNewInstance(profileDirectory?: string): Promise<PooledInstance> {
     const port = this.nextAvailablePort();
     const launcher = new ChromeLauncher(port);
 
+    // SingletonLock isolation: Chrome's SingletonLock is per --user-data-dir,
+    // NOT per --profile-directory. Two Chrome processes sharing the same
+    // --user-data-dir will conflict even with different --profile-directory.
+    // Each profile instance gets its own isolated user-data-dir.
+    const profileUserDataDir = profileDirectory
+      ? path.join(os.homedir(), '.openchrome', 'profiles', profileDirectory.replace(/[^a-zA-Z0-9_\- ]/g, '_'))
+      : undefined;
+
     const launchOptions: LaunchOptions = {
       port,
-      autoLaunch: this.config.autoLaunch,
+      autoLaunch: profileDirectory ? true : this.config.autoLaunch,
+      ...(profileDirectory && { profileDirectory }),
+      ...(profileUserDataDir && { userDataDir: profileUserDataDir }),
     };
 
     let isPreExisting = false;
@@ -199,6 +284,7 @@ export class ChromePool {
       origins: new Set(),
       tabCount: 0,
       isPreExisting,
+      profileDirectory,
     };
 
     this.instances.set(port, pooled);
@@ -227,6 +313,14 @@ let poolInstance: ChromePool | null = null;
 export function getChromePool(config?: Partial<ChromePoolConfig>): ChromePool {
   if (!poolInstance) {
     poolInstance = new ChromePool(config);
+  } else if (config && Object.keys(config).length > 0) {
+    // P1-5: warn when config is passed to an already-initialized singleton
+    console.error('[ChromePool] Warning: getChromePool called with config after initialization; config ignored.');
   }
   return poolInstance;
+}
+
+/** Reset the singleton — for tests only. */
+export function resetChromePool(): void {
+  poolInstance = null;
 }
