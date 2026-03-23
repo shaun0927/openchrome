@@ -28,7 +28,7 @@ describe('E2E-6: Memory Stability', () => {
 
   test('heap delta remains under 50MB after extended operation', async () => {
     const port = getFixturePort();
-    const sampler = new HeapSampler();
+    const sampler = new HeapSampler({ pid: mcp.pid });
     sampler.takeBaseline();
 
     const sites = [

@@ -29,9 +29,13 @@ export class MCPClient {
   }>();
   private buffer = '';
   private defaultTimeoutMs: number;
+  private extraEnv: Record<string, string>;
+  private extraArgs: string[];
 
-  constructor(opts?: { timeoutMs?: number }) {
+  constructor(opts?: { timeoutMs?: number; env?: Record<string, string>; args?: string[] }) {
     this.defaultTimeoutMs = opts?.timeoutMs ?? 30_000;
+    this.extraEnv = opts?.env ?? {};
+    this.extraArgs = opts?.args ?? [];
   }
 
   async start(): Promise<void> {
@@ -41,9 +45,9 @@ export class MCPClient {
     }
 
     return new Promise((resolve, reject) => {
-      this.process = spawn('node', [serverPath, 'serve'], {
+      this.process = spawn('node', [serverPath, 'serve', ...this.extraArgs], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: { ...process.env, ...this.extraEnv },
       });
 
       let ready = false;

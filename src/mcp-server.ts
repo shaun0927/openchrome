@@ -65,6 +65,22 @@ export function isConnectionError(error: unknown): boolean {
  *  sleep/wake). Skip session initialization so oc_stop can always reach its handler. */
 const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
 
+/**
+ * Clients known to support notifications/tools/list_changed.
+ * Progressive disclosure (tiered tools) is only enabled for these clients.
+ * Unknown clients get all tools exposed immediately.
+ */
+const PROGRESSIVE_DISCLOSURE_CLIENTS = new Set([
+  'claude-code',
+  'claude',
+  'cursor',
+  'vscode',
+  'windsurf',
+  'cline',
+  'zed',
+  'continue',
+]);
+
 const RECONNECTION_GUIDANCE =
   '\n\nNote: The browser connection was lost and auto-reconnect was attempted. ' +
   'Simply retry your operation — Chrome will be re-launched automatically if needed. ' +
@@ -89,6 +105,8 @@ export class MCPServer {
   private options: MCPServerOptions;
   private profileWarningShown = false;
   private exposedTier: ToolTier = 1;
+  private clientSupportsListChanged = true;
+  private clientDetected = false;
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
@@ -189,8 +207,10 @@ export class MCPServer {
   public expandToolTier(tier: ToolTier): void {
     if (tier > this.exposedTier) {
       this.exposedTier = tier;
-      // Notify client that tool list has changed (MCP spec compliant)
-      this.sendNotification('notifications/tools/list_changed');
+      // Only notify clients that support listChanged — unknown clients already have all tools
+      if (this.clientSupportsListChanged) {
+        this.sendNotification('notifications/tools/list_changed');
+      }
     }
   }
 
@@ -376,11 +396,39 @@ export class MCPServer {
   /**
    * Handle initialize request
    */
-  private async handleInitialize(_params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleInitialize(params?: Record<string, unknown>): Promise<MCPResult> {
+    // Detect client identity for progressive disclosure decisions
+    const clientInfo = params?.clientInfo as { name?: string; version?: string } | undefined;
+    const rawName = clientInfo?.name ?? '';
+    const nameLower = rawName.toLowerCase();
+
+    // Idempotency: only detect client on first initialize (reconnects preserve state)
+    if (!this.clientDetected) {
+      this.clientDetected = true;
+
+      if (this.options.initialToolTier) {
+        console.error(`[openchrome] Tool tier override: initialToolTier=${this.options.initialToolTier}, skipping client detection`);
+      } else {
+        const isKnownClient = rawName !== '' && Array.from(PROGRESSIVE_DISCLOSURE_CLIENTS).some(known =>
+          nameLower.includes(known)
+        );
+
+        if (!isKnownClient) {
+          // Unknown or absent client: expose all tools immediately (no progressive disclosure)
+          this.exposedTier = 3;
+          this.clientSupportsListChanged = false;
+          console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" — progressive disclosure disabled, exposing all tools`);
+        } else {
+          // Known client: keep progressive disclosure enabled
+          console.error(`[openchrome] Client "${rawName}" supports tool list changes — progressive disclosure enabled`);
+        }
+      }
+    }
+
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
-        tools: { listChanged: true },
+        tools: { listChanged: this.clientSupportsListChanged },
         resources: {},
       },
       serverInfo: {
@@ -402,8 +450,10 @@ export class MCPServer {
       }
     }
 
-    // Add hint about additional tools when not fully expanded
-    if (this.exposedTier < 3) {
+    // Add hint about additional tools when not fully expanded.
+    // Only inject expand_tools if the client supports notifications/tools/list_changed —
+    // otherwise there's no point since the client can't react to the notification.
+    if (this.exposedTier < 3 && this.clientSupportsListChanged) {
       const hiddenCount = Array.from(this.tools.values()).filter(
         r => getToolTier(r.definition.name) > this.exposedTier
       ).length;

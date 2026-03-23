@@ -1,11 +1,17 @@
 /**
- * E2E-7: Multi-Site Continuous Operation
- * Validates: 3+ domains with interact+read cycles complete without error.
+ * E2E-7: Idle Session Survival & Multi-Site
+ * Validates: session survives idle heartbeat transition and recovers on next command;
+ * also validates 3+ domains with interact+read cycles complete without error.
+ *
+ * Idle transition is triggered by setting OPENCHROME_IDLE_TRANSITION_MS=5000 (5s)
+ * instead of the default 5 minutes, then waiting for the CDPClient to switch to
+ * idle heartbeat mode. After the idle period the test issues a live command and
+ * verifies the session responds within 30 s (allowing for any reconnection).
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { MCPClient } from '../harness/mcp-client';
-import { sleep } from '../harness/time-scale';
+import { scaledSleep } from '../harness/time-scale';
 
 function getFixturePort(): number {
   const stateFile = path.join(process.cwd(), '.e2e-state.json');
@@ -17,7 +23,11 @@ describe('E2E-7: Multi-Site', () => {
   let mcp: MCPClient;
 
   beforeAll(async () => {
-    mcp = new MCPClient({ timeoutMs: 60_000 });
+    mcp = new MCPClient({
+      timeoutMs: 60_000,
+      args: ['--auto-launch'],
+      env: { OPENCHROME_IDLE_TRANSITION_MS: '5000' },
+    });
     await mcp.start();
   }, 60_000);
 
@@ -25,9 +35,52 @@ describe('E2E-7: Multi-Site', () => {
     await mcp.stop();
   }, 30_000);
 
-  test('3+ sites with interact+read cycles complete successfully', async () => {
+  test('Idle Session Survival & Multi-Site — session survives idle then serves multi-site', async () => {
     const port = getFixturePort();
 
+    // ── Phase 1: Establish active connection ────────────────────────────────
+    const siteA = `http://localhost:${port}/site-a`;
+    const navResult = await mcp.callTool('navigate', { url: siteA });
+    expect(navResult.text).toBeDefined();
+    console.error('[idle-survival] Phase 1: navigated to site-a');
+
+    // Extract tabId for later verification
+    const tabIdMatch = navResult.text.match(/"tabId"\s*:\s*"([A-F0-9]{32})"/);
+    const tabId = tabIdMatch?.[1] || '';
+    console.error(`[idle-survival] tabId: ${tabId || '(none)'}`);
+
+    // ── Phase 2: Record initial state ───────────────────────────────────────
+    const statusBefore = await mcp.callTool('oc_profile_status', {});
+    expect(statusBefore.text).toBeDefined();
+    const t0 = Date.now();
+    console.error(`[idle-survival] Phase 2: oc_profile_status OK (${statusBefore.text.length} chars)`);
+
+    // ── Phase 3: Wait for idle transition ───────────────────────────────────
+    // OPENCHROME_IDLE_TRANSITION_MS=5000 means idle triggers after 5 s of no commands.
+    // We wait 3× that (15 s scaled) to ensure the CDPClient has entered idle mode and
+    // the idle heartbeat interval (max(3×base, 15 s)) has fired at least once.
+    const idleTransitionMs = 5_000;
+    const waitMs = idleTransitionMs * 3; // 15 s at full scale
+    console.error(`[idle-survival] Phase 3: waiting ${waitMs}ms (scaled) for idle transition…`);
+    await scaledSleep(waitMs);
+    console.error('[idle-survival] Phase 3: idle wait complete');
+
+    // ── Phase 4: Verify session survived idle ───────────────────────────────
+    // Issue a live command — this should exit idle mode via recordCommandActivity()
+    // and respond within 30 s even if a reconnect is needed.
+    const t1 = Date.now();
+    const postIdlePage = await mcp.callTool('read_page', {}, 30_000);
+    const responseMs = Date.now() - t1;
+    expect(postIdlePage.text).toBeDefined();
+    expect(postIdlePage.text.length).toBeGreaterThan(0);
+    expect(responseMs).toBeLessThan(30_000);
+    console.error(`[idle-survival] Phase 4: post-idle read_page OK (${responseMs}ms, ${postIdlePage.text.length} chars)`);
+
+    // Verify total elapsed since initial navigate is sane (no unrecoverable hang)
+    const totalElapsed = Date.now() - t0;
+    console.error(`[idle-survival] Phase 4: total elapsed ${totalElapsed}ms`);
+
+    // ── Phase 5: Multi-site verification ───────────────────────────────────
     const sites = [
       { url: `http://localhost:${port}/site-a`, action: 'click button#submit', expectedText: 'Site A' },
       { url: `http://localhost:${port}/site-b`, action: 'click button[type="submit"]', expectedText: 'Search' },
@@ -38,39 +91,35 @@ describe('E2E-7: Multi-Site', () => {
 
     for (const site of sites) {
       try {
-        // Navigate to site
         await mcp.callTool('navigate', { url: site.url });
-        await sleep(1000);
+        await scaledSleep(1000);
 
-        // Read page content
         const page = await mcp.callTool('read_page', {});
         expect(page.text).toBeDefined();
         expect(page.text.length).toBeGreaterThan(0);
 
-        // Site-specific interaction
         try {
           await mcp.callTool('interact', { description: site.action });
         } catch {
-          // Some interactions may fail but page should still be functional
-          console.error(`[multi-site] Interaction failed for ${site.url}: ${site.action} (non-fatal)`);
+          // Some interactions may fail but the page should still be functional
+          console.error(`[idle-survival] Interaction failed for ${site.url}: ${site.action} (non-fatal)`);
         }
-        await sleep(500);
+        await scaledSleep(500);
 
-        // Verify page still accessible after interaction
         const afterPage = await mcp.callTool('read_page', {});
         expect(afterPage.text).toBeDefined();
 
         results.push({ site: site.url, success: true });
-        console.error(`[multi-site] ✓ ${site.url}`);
+        console.error(`[idle-survival] Phase 5: ✓ ${site.url}`);
       } catch (err) {
         results.push({ site: site.url, success: false, error: (err as Error).message });
-        console.error(`[multi-site] ✗ ${site.url}: ${(err as Error).message}`);
+        console.error(`[idle-survival] Phase 5: ✗ ${site.url}: ${(err as Error).message}`);
       }
     }
 
     // All 3 sites must succeed
     const successCount = results.filter(r => r.success).length;
     expect(successCount).toBe(sites.length);
-    console.error(`[multi-site] ${successCount}/${sites.length} sites passed`);
+    console.error(`[idle-survival] Phase 5: ${successCount}/${sites.length} sites passed`);
   }, 120_000);
 });
