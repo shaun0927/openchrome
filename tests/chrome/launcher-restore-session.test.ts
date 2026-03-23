@@ -182,7 +182,7 @@ describe('ChromeLauncher — --restore-last-session flag (#347)', () => {
 
     const launcher = new ChromeLauncher();
     try {
-      await launcher.launch({
+      await launcher.ensureChrome({
         port: fakeServer.port,
         autoLaunch: true,
         restoreLastSession: options.restoreLastSession,
@@ -211,7 +211,7 @@ describe('ChromeLauncher — --restore-last-session flag (#347)', () => {
     setupMockSpawn(fakeServer.port, fakeServer.port);
     const launcher = new ChromeLauncher();
     try {
-      await launcher.launch({ port: fakeServer.port, autoLaunch: true });
+      await launcher.ensureChrome({ port: fakeServer.port, autoLaunch: true });
     } catch { /* ignore */ }
 
     if (!mockSpawn.mock.calls.length) {
@@ -237,7 +237,7 @@ describe('ChromeLauncher — --restore-last-session flag (#347)', () => {
     setupMockSpawn(fakeServer.port, fakeServer.port);
     const launcher = new ChromeLauncher();
     try {
-      await launcher.launch({ port: fakeServer.port, autoLaunch: true, restoreLastSession: true });
+      await launcher.ensureChrome({ port: fakeServer.port, autoLaunch: true, restoreLastSession: true });
     } catch { /* ignore */ }
 
     if (!mockSpawn.mock.calls.length) return;
@@ -262,7 +262,7 @@ describe('ChromeLauncher — --restore-last-session flag (#347)', () => {
     setupMockSpawn(fakeServer.port, fakeServer.port);
     const launcher = new ChromeLauncher();
     try {
-      await launcher.launch({ port: fakeServer.port, autoLaunch: true });
+      await launcher.ensureChrome({ port: fakeServer.port, autoLaunch: true });
     } catch { /* ignore */ }
 
     if (!mockSpawn.mock.calls.length) return;
@@ -287,7 +287,7 @@ describe('ChromeLauncher — --restore-last-session flag (#347)', () => {
     setupMockSpawn(fakeServer.port, fakeServer.port);
     const launcher = new ChromeLauncher();
     try {
-      await launcher.launch({ port: fakeServer.port, autoLaunch: true });
+      await launcher.ensureChrome({ port: fakeServer.port, autoLaunch: true });
     } catch { /* ignore */ }
 
     if (!mockSpawn.mock.calls.length) return;
