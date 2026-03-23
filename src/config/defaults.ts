@@ -218,3 +218,8 @@ export const DEFAULT_HEARTBEAT_RECOVERY_DURATION_MS = 30000;
  *  Turnstile challenges typically complete in 6-8 seconds.
  *  Override with stealthSettleMs parameter on navigate tool. */
 export const DEFAULT_STEALTH_SETTLE_MS = 8000;
+
+/** Whether to restore Chrome's previous session tabs after crash (default: false).
+ *  Enable for long-running sessions where tab preservation matters.
+ *  Override with OPENCHROME_RESTORE_LAST_SESSION=true environment variable. */
+export const DEFAULT_RESTORE_LAST_SESSION = false;
