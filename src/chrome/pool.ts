@@ -8,6 +8,7 @@ import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { ChromeLauncher, ChromeInstance, LaunchOptions } from './launcher';
+import { ProfileManager } from './profile-manager';
 
 export interface ChromePoolConfig {
   maxInstances: number; // default: 5
@@ -153,7 +154,20 @@ export class ChromePool {
       return inst;
     }
 
-    // 3. No instance with this profile — launch a new one
+    // 3. Validate that the profile exists in Chrome's Local State
+    const profileManager = new ProfileManager();
+    const knownProfiles = profileManager.listProfiles();
+    const profileExists = knownProfiles.some(p => p.directory === profileDirectory);
+    if (!profileExists) {
+      const available = knownProfiles.map(p => `"${p.directory}" (${p.name})`).join(', ');
+      throw new Error(
+        `[ChromePool] Profile "${profileDirectory}" not found. ` +
+        `Available profiles: ${available || 'none'}. ` +
+        `Use list_profiles to see all available profiles.`
+      );
+    }
+
+    // 4. No instance with this profile — launch a new one
     if (this.instances.size >= this.config.maxInstances) {
       throw new Error(
         `[ChromePool] Cannot launch Chrome for profile "${profileDirectory}": ` +
