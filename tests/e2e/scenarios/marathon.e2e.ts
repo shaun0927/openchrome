@@ -16,11 +16,12 @@ function getFixturePort(): number {
 
 describe('E2E-1: Marathon', () => {
   let mcp: MCPClient;
-  const heapSampler = new HeapSampler();
+  let heapSampler: HeapSampler;
 
   beforeAll(async () => {
     mcp = new MCPClient({ timeoutMs: 60_000 });
     await mcp.start();
+    heapSampler = new HeapSampler({ pid: mcp.pid });
   }, 60_000);
 
   afterAll(async () => {

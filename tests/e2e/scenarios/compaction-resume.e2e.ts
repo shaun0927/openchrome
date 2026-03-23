@@ -56,11 +56,18 @@ describe('E2E-8: Compaction Resume', () => {
 
     // Step 4: Resume from snapshot
     const resumeResult = await mcp.callTool('oc_session_resume', {});
-    console.error(`[compaction-resume] Resume result: ${resumeResult.text.slice(0, 300)}`);
+    console.error(`[compaction-resume] Resume result: ${resumeResult.text.slice(0, 500)}`);
 
     // Verify resume contains correct context
     expect(resumeResult.text).toContain('CONTEXT RESTORED');
     expect(resumeResult.text).toContain('Test compaction recovery');
     expect(resumeResult.text).toContain('Step 2 of 3');
+    // Verify resume contains tab status info
+    expect(resumeResult.text.match(/LIVE|CLOSED|REMAPPED/)).toBeTruthy();
+
+    // Step 5: Verify tool operations work after resume
+    const postResumeNav = await mcp.callTool('navigate', { url: testUrl });
+    expect(postResumeNav.text).toBeDefined();
+    console.error('[compaction-resume] Tool call verified after resume');
   }, 120_000);
 });
