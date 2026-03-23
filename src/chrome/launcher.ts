@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
 import { getGlobalConfig } from '../config/global';
-import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS } from '../config/defaults';
+import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAST_SESSION } from '../config/defaults';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
 export type { ProfileType } from './profile-manager';
@@ -33,6 +33,9 @@ export interface LaunchOptions {
   restartChrome?: boolean;
   /** Chrome profile directory name (e.g., "Profile 1"). Passed as --profile-directory flag */
   profileDirectory?: string;
+  /** If true, restore Chrome's previous session tabs after crash (default: false).
+   *  Enable for long-running sessions where tab preservation matters. */
+  restoreLastSession?: boolean;
 }
 
 const DEFAULT_PORT = 9222;
@@ -428,10 +431,18 @@ export class ChromeLauncher {
       console.error(`[ChromeLauncher] Using profile directory: ${profileDirectory}`);
     }
 
+    // Tab restoration: opt-in for long sessions (#347 Phase 2A.3)
+    const restoreSession = options.restoreLastSession
+      ?? (process.env.OPENCHROME_RESTORE_LAST_SESSION !== undefined
+          ? process.env.OPENCHROME_RESTORE_LAST_SESSION === 'true'
+          : undefined)
+      ?? globalConfig.restoreLastSession
+      ?? DEFAULT_RESTORE_LAST_SESSION;
+
     args.push(
       '--no-first-run',
       '--no-default-browser-check',
-      '--no-restore-last-session',
+      restoreSession ? '--restore-last-session' : '--no-restore-last-session',
       // IMPORTANT: Start maximized for proper debugging experience
       '--start-maximized',
       // Fallback window size if maximize doesn't work
@@ -442,6 +453,10 @@ export class ChromeLauncher {
       '--disable-backgrounding-occluded-windows',
       // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
       '--disable-gpu-crash-limit',
+      // Suppress crash UI that blocks automation in long sessions (#347)
+      '--disable-crash-reporter',
+      '--disable-session-crashed-bubble',
+      '--hide-crash-restore-bubble',
     );
 
     // Prevent Blink from setting navigator.webdriver = true when CDP is connected.

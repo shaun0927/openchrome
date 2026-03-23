@@ -588,11 +588,11 @@ export class MCPServer {
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
     const toolStartTime = Date.now();
 
-    // Adaptive heartbeat: switch to active mode during tool execution
+    // Adaptive heartbeat: switch to heavy mode during tool execution
     try {
       const cdpClient = getCDPClient();
       if (cdpClient.setHeartbeatMode) {
-        cdpClient.setHeartbeatMode('active');
+        cdpClient.setHeartbeatMode('heavy');
       }
       if (this.heartbeatIdleTimer) {
         clearTimeout(this.heartbeatIdleTimer);
@@ -697,6 +697,16 @@ export class MCPServer {
         // Best-effort journal recording
       }
 
+      // Transition from heavy back to active after tool completes
+      try {
+        const cdpClient = getCDPClient();
+        if (cdpClient.setHeartbeatMode) {
+          cdpClient.setHeartbeatMode('active');
+        }
+      } catch {
+        // CDP client may not be initialized
+      }
+
       // Schedule heartbeat idle mode transition
       if (this.heartbeatIdleTimer) {
         clearTimeout(this.heartbeatIdleTimer);
@@ -734,6 +744,24 @@ export class MCPServer {
             };
           }
           // compact: skip _timing entirely
+        }
+      }
+
+      // Inject session context for AI agent continuity (#347 Phase 4)
+      if (verbosity !== 'compact' && !['oc_checkpoint', 'oc_connection_health'].includes(toolName)) {
+        try {
+          const cdpClient = getCDPClient();
+          const metrics = cdpClient.getConnectionMetrics();
+          const stats = this.sessionManager.getStats();
+          (result as Record<string, unknown>)._sessionContext = {
+            uptime: Math.round(process.uptime()),
+            tabCount: stats.totalTargets,
+            heartbeatMode: metrics.heartbeatMode,
+            reconnectsSinceStart: metrics.reconnectCount,
+            checkpointAvailable: true,
+          };
+        } catch {
+          // Best-effort — don't fail tool calls for context injection
         }
       }
 
@@ -797,6 +825,16 @@ export class MCPServer {
         journal.record(entry);
       } catch {
         // Best-effort journal recording
+      }
+
+      // Transition from heavy back to active after tool completes
+      try {
+        const cdpClient = getCDPClient();
+        if (cdpClient.setHeartbeatMode) {
+          cdpClient.setHeartbeatMode('active');
+        }
+      } catch {
+        // CDP client may not be initialized
       }
 
       // Schedule heartbeat idle mode transition
