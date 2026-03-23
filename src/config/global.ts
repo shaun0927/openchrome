@@ -19,6 +19,9 @@ export interface GlobalConfig {
   headless?: boolean;
   /** If true, quit running Chrome to reuse the real profile instead of using temp profile (default: false) */
   restartChrome?: boolean;
+  /** If true, restore Chrome's previous session tabs after crash (default: false).
+   *  Enable for long-running sessions where tab preservation matters. */
+  restoreLastSession?: boolean;
   /** If true, skip cookie bridge on page creation (used in server/headless mode) */
   skipCookieBridge?: boolean;
   /** Chrome Pool settings for managing multiple Chrome instances */
