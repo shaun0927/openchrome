@@ -1243,13 +1243,20 @@ export class CDPClient {
     console.error(`[CDPClient] Stealth tab created: ${targetId}, settling for ${settleMs}ms`);
 
     // Warn if headless — Turnstile detection is nearly guaranteed in headless mode
-    try {
-      const version = await browser.version();
-      if (version.toLowerCase().includes('headless')) {
+    {
+      const { headless } = getGlobalConfig();
+      let isHeadless = !!headless;
+      if (!isHeadless) {
+        try {
+          const version = await browser.version();
+          isHeadless = version.toLowerCase().includes('headless');
+        } catch {
+          // Version check failed — continue
+        }
+      }
+      if (isHeadless) {
         console.error('[CDPClient] WARNING: Stealth mode in headless Chrome is unlikely to bypass Turnstile. Use headed Chrome (--visible) for anti-bot pages.');
       }
-    } catch {
-      // Version check failed — continue
     }
 
     // Step 2: Wait for the page to load without CDP observation (Turnstile runs here)
