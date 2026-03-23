@@ -40,6 +40,10 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'How long to wait (ms) before attaching CDP in stealth mode. Default: 8000. Range: 1000-30000.',
       },
+      profileDirectory: {
+        type: 'string',
+        description: 'Chrome profile directory name (e.g., "Profile 1"). Use list_profiles to see available profiles. Launches a separate Chrome instance for each profile. If omitted, uses the server default. Cannot be combined with workerId.',
+      },
     },
     required: ['url'],
   },
@@ -51,7 +55,16 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string | undefined;
   const url = args.url as string;
-  const workerId = args.workerId as string | undefined;
+  const profileDirectory = args.profileDirectory as string | undefined;
+  // P1-6: reject workerId + profileDirectory combination
+  if (args.workerId && profileDirectory) {
+    return {
+      content: [{ type: 'text', text: 'Error: workerId and profileDirectory cannot be used together. Use profileDirectory alone (a worker is auto-created per profile).' }],
+      isError: true,
+    };
+  }
+  // Auto-generate a profile-scoped workerId when profileDirectory is specified
+  const workerId = (args.workerId as string | undefined) || (profileDirectory ? `profile:${profileDirectory}` : undefined);
   const stealth = args.stealth as boolean | undefined;
   const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 8000, 1000), 30000);
   const stealthIgnoredWarning = stealth && tabId ? 'stealth mode only works when creating new tabs (omit tabId). The stealth parameter was ignored for this navigation.' : undefined;
@@ -194,8 +207,8 @@ const handler: ToolHandler = async (
       // Create new tab with URL directly (in specified worker or default)
       // Use stealth mode (CDP-free load) when requested, e.g. for Cloudflare Turnstile pages
       const { targetId, page, workerId: assignedWorkerId } = stealth
-        ? await sessionManager.createTargetStealth(sessionId, targetUrl, workerId, stealthSettleMs)
-        : await sessionManager.createTarget(sessionId, targetUrl, workerId);
+        ? await sessionManager.createTargetStealth(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory)
+        : await sessionManager.createTarget(sessionId, targetUrl, workerId, profileDirectory);
 
       AdaptiveScreenshot.getInstance().reset(targetId);
       const [newTabSummary, newTabBlocking] = await Promise.all([

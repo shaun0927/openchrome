@@ -63,7 +63,8 @@ const handler: ToolHandler = async (
     }
 
     lines.push('');
-    lines.push('To use a specific profile, restart the server with --profile-directory "<directory>" (e.g., --profile-directory "Profile 1").');
+    lines.push('To use a specific profile, pass profileDirectory to navigate or tabs_create (e.g., navigate({ url: "...", profileDirectory: "Profile 1" })). Each profile runs in its own Chrome instance.');
+    lines.push('Alternatively, set the server default with --profile-directory "<directory>" at startup.');
 
     return {
       content: [
