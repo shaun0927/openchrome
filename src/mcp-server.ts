@@ -747,6 +747,24 @@ export class MCPServer {
         }
       }
 
+      // Inject session context for AI agent continuity (#347 Phase 4)
+      if (verbosity !== 'compact' && !['oc_checkpoint', 'oc_connection_health'].includes(toolName)) {
+        try {
+          const cdpClient = getCDPClient();
+          const metrics = cdpClient.getConnectionMetrics();
+          const stats = this.sessionManager.getStats();
+          (result as Record<string, unknown>)._sessionContext = {
+            uptime: Math.round(process.uptime()),
+            tabCount: stats.totalTargets,
+            heartbeatMode: metrics.heartbeatMode,
+            reconnectsSinceStart: metrics.reconnectCount,
+            checkpointAvailable: true,
+          };
+        } catch {
+          // Best-effort — don't fail tool calls for context injection
+        }
+      }
+
       // Inject profile state
       if (verbosity !== 'compact') {
         const profileInfo = this.buildProfileInfo();
