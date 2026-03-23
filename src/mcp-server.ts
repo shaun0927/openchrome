@@ -588,11 +588,11 @@ export class MCPServer {
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
     const toolStartTime = Date.now();
 
-    // Adaptive heartbeat: switch to active mode during tool execution
+    // Adaptive heartbeat: switch to heavy mode during tool execution
     try {
       const cdpClient = getCDPClient();
       if (cdpClient.setHeartbeatMode) {
-        cdpClient.setHeartbeatMode('active');
+        cdpClient.setHeartbeatMode('heavy');
       }
       if (this.heartbeatIdleTimer) {
         clearTimeout(this.heartbeatIdleTimer);
@@ -697,6 +697,16 @@ export class MCPServer {
         // Best-effort journal recording
       }
 
+      // Transition from heavy back to active after tool completes
+      try {
+        const cdpClient = getCDPClient();
+        if (cdpClient.setHeartbeatMode) {
+          cdpClient.setHeartbeatMode('active');
+        }
+      } catch {
+        // CDP client may not be initialized
+      }
+
       // Schedule heartbeat idle mode transition
       if (this.heartbeatIdleTimer) {
         clearTimeout(this.heartbeatIdleTimer);
@@ -797,6 +807,16 @@ export class MCPServer {
         journal.record(entry);
       } catch {
         // Best-effort journal recording
+      }
+
+      // Transition from heavy back to active after tool completes
+      try {
+        const cdpClient = getCDPClient();
+        if (cdpClient.setHeartbeatMode) {
+          cdpClient.setHeartbeatMode('active');
+        }
+      } catch {
+        // CDP client may not be initialized
       }
 
       // Schedule heartbeat idle mode transition

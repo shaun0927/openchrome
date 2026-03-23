@@ -223,14 +223,6 @@ export class CDPClient {
         return;
       }
 
-      // Check for idle transition: no commands for 5 minutes → switch to idle mode
-      if ((this.heartbeatMode === 'active' || this.heartbeatMode === 'heavy')
-          && this.lastCommandAt > 0
-          && now - this.lastCommandAt > 300000) {
-        this.setHeartbeatMode('idle');
-        return; // setHeartbeatMode restarts the timer with new interval
-      }
-
       this.checkConnection();
     }, this.getEffectiveHeartbeatInterval());
   }
@@ -289,6 +281,9 @@ export class CDPClient {
 
   /**
    * Record that a command was executed (for idle detection).
+   * @deprecated Idle transitions are now managed by MCPServer via setTimeout. This method
+   * is retained for API compatibility but the internal idle-check in startHeartbeat() has
+   * been removed as dead code (#347).
    */
   recordCommandActivity(): void {
     this.lastCommandAt = Date.now();
