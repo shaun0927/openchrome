@@ -106,6 +106,7 @@ export class MCPServer {
   private profileWarningShown = false;
   private exposedTier: ToolTier = 1;
   private clientSupportsListChanged = true;
+  private clientDetected = false;
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
@@ -206,8 +207,10 @@ export class MCPServer {
   public expandToolTier(tier: ToolTier): void {
     if (tier > this.exposedTier) {
       this.exposedTier = tier;
-      // Notify client that tool list has changed (MCP spec compliant)
-      this.sendNotification('notifications/tools/list_changed');
+      // Only notify clients that support listChanged — unknown clients already have all tools
+      if (this.clientSupportsListChanged) {
+        this.sendNotification('notifications/tools/list_changed');
+      }
     }
   }
 
@@ -399,27 +402,33 @@ export class MCPServer {
     const rawName = clientInfo?.name ?? '';
     const nameLower = rawName.toLowerCase();
 
-    // Only auto-detect if no explicit override (--all-tools or OPENCHROME_TOOL_TIER)
-    if (!this.options.initialToolTier) {
-      const isKnownClient = Array.from(PROGRESSIVE_DISCLOSURE_CLIENTS).some(known =>
-        nameLower.includes(known)
-      );
+    // Idempotency: only detect client on first initialize (reconnects preserve state)
+    if (!this.clientDetected) {
+      this.clientDetected = true;
 
-      if (rawName && !isKnownClient) {
-        // Unknown client: expose all tools immediately (no progressive disclosure)
-        this.exposedTier = 3;
-        this.clientSupportsListChanged = false;
-        console.error(`[openchrome] Client "${rawName}" — progressive disclosure disabled, exposing all tools`);
+      if (this.options.initialToolTier) {
+        console.error(`[openchrome] Tool tier override: initialToolTier=${this.options.initialToolTier}, skipping client detection`);
       } else {
-        // Known client or no client info: keep progressive disclosure enabled
-        console.error(`[openchrome] Client "${rawName || '(unknown)'}" supports tool list changes — progressive disclosure enabled`);
+        const isKnownClient = rawName !== '' && Array.from(PROGRESSIVE_DISCLOSURE_CLIENTS).some(known =>
+          nameLower.includes(known)
+        );
+
+        if (!isKnownClient) {
+          // Unknown or absent client: expose all tools immediately (no progressive disclosure)
+          this.exposedTier = 3;
+          this.clientSupportsListChanged = false;
+          console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" — progressive disclosure disabled, exposing all tools`);
+        } else {
+          // Known client: keep progressive disclosure enabled
+          console.error(`[openchrome] Client "${rawName}" supports tool list changes — progressive disclosure enabled`);
+        }
       }
     }
 
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
-        tools: { listChanged: true },
+        tools: { listChanged: this.clientSupportsListChanged },
         resources: {},
       },
       serverInfo: {
