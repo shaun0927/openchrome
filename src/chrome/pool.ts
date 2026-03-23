@@ -5,6 +5,8 @@
  */
 
 import * as http from 'http';
+import * as os from 'os';
+import * as path from 'path';
 import { ChromeLauncher, ChromeInstance, LaunchOptions } from './launcher';
 
 export interface ChromePoolConfig {
@@ -246,10 +248,19 @@ export class ChromePool {
     const port = this.nextAvailablePort();
     const launcher = new ChromeLauncher(port);
 
+    // SingletonLock isolation: Chrome's SingletonLock is per --user-data-dir,
+    // NOT per --profile-directory. Two Chrome processes sharing the same
+    // --user-data-dir will conflict even with different --profile-directory.
+    // Each profile instance gets its own isolated user-data-dir.
+    const profileUserDataDir = profileDirectory
+      ? path.join(os.homedir(), '.openchrome', 'profiles', profileDirectory.replace(/[^a-zA-Z0-9_\- ]/g, '_'))
+      : undefined;
+
     const launchOptions: LaunchOptions = {
       port,
-      autoLaunch: this.config.autoLaunch,
+      autoLaunch: profileDirectory ? true : this.config.autoLaunch,
       ...(profileDirectory && { profileDirectory }),
+      ...(profileUserDataDir && { userDataDir: profileUserDataDir }),
     };
 
     let isPreExisting = false;
