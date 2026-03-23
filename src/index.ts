@@ -258,11 +258,25 @@ program
         if (info.status === 'healthy') healthyTabs++;
         else unhealthyTabs++;
       }
+
+      // Gap 3: populate CDP connection metrics
+      let chromeData: HealthData['chrome'] | undefined;
+      try {
+        const metrics = cdpClient.getConnectionMetrics();
+        chromeData = {
+          connected: cdpClient.getConnectionState() === 'connected',
+          reconnectCount: metrics.reconnectCount,
+        };
+      } catch {
+        // CDP client may not be initialized yet
+      }
+
       const data: HealthData = {
         status: unhealthyTabs > 0 ? 'degraded' : 'ok',
         uptime: process.uptime(),
         memory: process.memoryUsage(),
         eventLoop: { maxDriftMs: elStats.maxDriftMs, warnCount: elStats.warnCount },
+        chrome: chromeData,
         tabs: { total: tabHealth.size, healthy: healthyTabs, unhealthy: unhealthyTabs },
       };
       return data;
@@ -273,13 +287,39 @@ program
 
     // Session State Persistence (Layer 2)
     const sessionPersistence = new SessionStatePersistence();
-    // Restore on startup
+    // Restore on startup — informational only; active tabs are reconciled on reconnect
     sessionPersistence.restore().then((restored) => {
       if (restored) {
-        console.error(`[SelfHealing] Restored ${restored.sessions.length} sessions from disk`);
+        console.error(`[SelfHealing] Restored session state: ${restored.sessions.length} sessions from disk (informational — Chrome targets will be reconciled on reconnect)`);
       }
     }).catch((err: unknown) => {
       console.error('[SelfHealing] Session state restore failed:', err);
+    });
+
+    // Gap 1: register tabs with TabHealthMonitor when targets are added/removed
+    sessionManager.addEventListener((event) => {
+      if (event.type === 'session:target-added' && event.targetId) {
+        cdpClient.getPageByTargetId(event.targetId).then((page) => {
+          if (page) {
+            tabHealthMonitor.monitorTab(event.targetId!, page);
+          }
+        }).catch((err: unknown) => {
+          console.error(`[SelfHealing] Failed to monitor tab ${event.targetId}:`, err);
+        });
+      }
+    });
+
+    // Unregister tabs from TabHealthMonitor when targets are destroyed
+    cdpClient.addTargetDestroyedListener((targetId) => {
+      tabHealthMonitor.unmonitorTab(targetId);
+    });
+
+    // Gap 2: persist session state on every mutation
+    sessionManager.addEventListener((event) => {
+      if (['session:created', 'session:deleted', 'session:target-added', 'session:target-removed'].includes(event.type)) {
+        const snapshot = SessionStatePersistence.createSnapshot(sessionManager.getSessions());
+        sessionPersistence.scheduleSave(snapshot);
+      }
     });
 
     // Update shutdown handler to include self-healing cleanup

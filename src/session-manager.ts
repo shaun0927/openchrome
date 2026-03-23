@@ -1612,6 +1612,14 @@ export class SessionManager {
   }
 
   /**
+   * Expose the internal sessions map for persistence snapshots.
+   * Returns a read-only reference — callers must not mutate the map or its values.
+   */
+  getSessions(): Map<string, Session> {
+    return this.sessions;
+  }
+
+  /**
    * Initialize hybrid mode with BrowserRouter
    */
   async initHybrid(config: HybridConfig): Promise<void> {
