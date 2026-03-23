@@ -65,6 +65,9 @@ import { registerSessionSnapshotTool } from './session-snapshot';
 import { registerSessionResumeTool } from './session-resume';
 import { registerJournalTool } from './journal';
 
+// Self-healing tools (#347)
+import { registerConnectionHealthTool } from './connection-health';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -132,6 +135,9 @@ export function registerAllTools(server: MCPServer): void {
   registerSessionSnapshotTool(server);
   registerSessionResumeTool(server);
   registerJournalTool(server);
+
+  // Self-healing tools (#347)
+  registerConnectionHealthTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
