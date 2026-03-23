@@ -442,6 +442,10 @@ export class ChromeLauncher {
       '--disable-backgrounding-occluded-windows',
       // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
       '--disable-gpu-crash-limit',
+      // Suppress crash UI that blocks automation in long sessions (#347)
+      '--disable-crash-reporter',
+      '--disable-session-crashed-bubble',
+      '--hide-crash-restore-bubble',
     );
 
     // Prevent Blink from setting navigator.webdriver = true when CDP is connected.
