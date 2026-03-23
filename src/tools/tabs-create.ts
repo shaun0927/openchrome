@@ -22,6 +22,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Worker ID for parallel ops. Default: default',
       },
+      profileDirectory: {
+        type: 'string',
+        description: 'Chrome profile directory name (e.g., "Profile 1"). Use list_profiles to see available profiles. Launches a separate Chrome instance for each profile. If omitted, uses the server default. Cannot be combined with workerId.',
+      },
     },
     required: ['url'],
   },
@@ -33,7 +37,14 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const sessionManager = getSessionManager();
   const url = args.url as string;
-  const workerId = args.workerId as string | undefined;
+  const profileDirectory = args.profileDirectory as string | undefined;
+  if (args.workerId && profileDirectory) {
+    return {
+      content: [{ type: 'text', text: 'Error: workerId and profileDirectory cannot be used together. Use profileDirectory alone (a worker is auto-created per profile).' }],
+      isError: true,
+    };
+  }
+  const workerId = (args.workerId as string | undefined) || (profileDirectory ? `profile:${profileDirectory}` : undefined);
 
   // URL is required
   if (!url) {
@@ -64,7 +75,7 @@ const handler: ToolHandler = async (
   }
 
   try {
-    const { targetId, page, workerId: assignedWorkerId } = await sessionManager.createTarget(sessionId, url, workerId);
+    const { targetId, page, workerId: assignedWorkerId } = await sessionManager.createTarget(sessionId, url, workerId, profileDirectory);
 
     return {
       content: [

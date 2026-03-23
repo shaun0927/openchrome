@@ -226,7 +226,7 @@ describe('TabsCreateTool', () => {
       await handler(testSessionId, { url: 'https://google.com' });
 
       // Now includes optional workerId parameter
-      expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'https://google.com', undefined);
+      expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'https://google.com', undefined, undefined);
     });
 
     test('returns error when URL is not provided', async () => {
@@ -246,7 +246,7 @@ describe('TabsCreateTool', () => {
       await handler(testSessionId, { url: 'https://example.com' });
 
       // createTarget implicitly creates/uses session, now with optional workerId
-      expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'https://example.com', undefined);
+      expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'https://example.com', undefined, undefined);
     });
   });
 

@@ -146,6 +146,25 @@ export class SessionManager {
   }
 
   /**
+   * Lazily initialize ChromePool when needed (e.g., first multi-profile request).
+   */
+  private ensurePool(): ChromePool {
+    if (!this.chromePool) {
+      this.chromePool = getChromePool({ autoLaunch: getGlobalConfig().autoLaunch });
+      console.error('[SessionManager] ChromePool lazily initialized for multi-profile support');
+    }
+    return this.chromePool;
+  }
+
+  /**
+   * Parse URL origin safely, returning undefined on failure (P1-4 fix).
+   */
+  private static safeParseOrigin(url: string | undefined): string | undefined {
+    if (!url) return undefined;
+    try { return new URL(url).origin; } catch { return undefined; }
+  }
+
+  /**
    * Get the CDPClient for a specific worker (may be on a different Chrome instance)
    */
   private getCDPClientForWorker(sessionId: string, workerId: string): CDPClient {
@@ -500,22 +519,22 @@ export class SessionManager {
 
     const name = options.name || `Worker ${workerId}`;
 
-    // Create browser context: shared (null = copies cookies from Chrome profile) or isolated
-    const context = options.shareCookies
-      ? null
-      : await this.cdpClient.createBrowserContext();
-
-    // If pool is enabled and targetUrl provided, acquire a separate Chrome instance
+    // Acquire Chrome instance from pool BEFORE creating browser context (P1-1 fix).
+    // Context must be created on the correct CDP client (profile-specific or primary).
     let workerPort: number | undefined;
     let workerPoolOrigin: string | undefined;
-    if (this.chromePool && options.targetUrl) {
+    let workerProfileDirectory: string | undefined;
+
+    if (options.profileDirectory) {
+      // Multi-profile: lazily enable pool and acquire profile-specific instance
       try {
-        const origin = new URL(options.targetUrl).origin;
-        const poolInstance = await this.chromePool.acquireInstance(origin);
+        const pool = this.ensurePool();
+        const origin = SessionManager.safeParseOrigin(options.targetUrl); // P1-4 fix
+        const poolInstance = await pool.acquireInstanceForProfile(options.profileDirectory, origin);
         workerPort = poolInstance.port;
         workerPoolOrigin = origin;
+        workerProfileDirectory = options.profileDirectory;
 
-        // Ensure CDPClient for this port is connected
         const workerCdpClient = this.cdpFactory.getOrCreate(workerPort, {
           autoLaunch: getGlobalConfig().autoLaunch,
         });
@@ -523,13 +542,43 @@ export class SessionManager {
           await workerCdpClient.connect();
         }
 
-        console.error(`[SessionManager] Worker ${workerId} assigned to Chrome instance on port ${workerPort} for origin ${origin}`);
+        console.error(`[SessionManager] Worker ${workerId} assigned to profile "${options.profileDirectory}" on port ${workerPort}`);
+      } catch (err) {
+        console.error(`[SessionManager] Profile acquisition failed for "${options.profileDirectory}":`, err);
+        throw err; // Propagate — caller explicitly requested a profile
+      }
+    } else if (this.chromePool && options.targetUrl) {
+      // Origin isolation: existing pool behavior
+      try {
+        const origin = SessionManager.safeParseOrigin(options.targetUrl); // P1-4 fix
+        if (origin) {
+          const poolInstance = await this.chromePool.acquireInstance(origin);
+          workerPort = poolInstance.port;
+          workerPoolOrigin = origin;
+
+          const workerCdpClient = this.cdpFactory.getOrCreate(workerPort, {
+            autoLaunch: getGlobalConfig().autoLaunch,
+          });
+          if (!workerCdpClient.isConnected()) {
+            await workerCdpClient.connect();
+          }
+
+          console.error(`[SessionManager] Worker ${workerId} assigned to Chrome instance on port ${workerPort} for origin ${origin}`);
+        }
       } catch (err) {
         console.error(`[SessionManager] Pool acquisition failed, falling back to default:`, err);
         workerPort = undefined;
         workerPoolOrigin = undefined;
       }
     }
+
+    // P1-1 fix: Create browser context on the CORRECT CDP client (profile-specific or primary)
+    const effectiveCdpClient = workerPort
+      ? (this.cdpFactory.get(workerPort) ?? this.cdpClient)
+      : this.cdpClient;
+    const context = options.shareCookies
+      ? null
+      : await effectiveCdpClient.createBrowserContext();
 
     const worker: Worker = {
       id: workerId,
@@ -540,6 +589,7 @@ export class SessionManager {
       lastActivityAt: Date.now(),
       port: workerPort,
       poolOrigin: workerPoolOrigin,
+      profileDirectory: workerProfileDirectory,
     };
 
     session.workers.set(workerId, worker);
@@ -568,7 +618,7 @@ export class SessionManager {
   /**
    * Get or create a worker
    */
-  async getOrCreateWorker(sessionId: string, workerId?: string): Promise<Worker> {
+  async getOrCreateWorker(sessionId: string, workerId?: string, options?: { profileDirectory?: string; targetUrl?: string }): Promise<Worker> {
     const session = await this.getOrCreateSession(sessionId);
 
     // If no workerId specified, use default worker
@@ -576,7 +626,11 @@ export class SessionManager {
 
     let worker = session.workers.get(targetWorkerId);
     if (!worker) {
-      worker = await this.createWorker(sessionId, { id: targetWorkerId });
+      worker = await this.createWorker(sessionId, {
+        id: targetWorkerId,
+        ...(options?.profileDirectory && { profileDirectory: options.profileDirectory }),
+        ...(options?.targetUrl && { targetUrl: options.targetUrl }),
+      });
     }
 
     return worker;
@@ -665,10 +719,15 @@ export class SessionManager {
       }
     }
 
-    // Release Chrome pool instance if worker had one
-    if (worker.port && worker.poolOrigin && this.chromePool) {
-      this.chromePool.releaseInstance(worker.port, worker.poolOrigin);
-      console.error(`[SessionManager] Released pool instance port ${worker.port} for origin ${worker.poolOrigin}`);
+    // Release Chrome pool instance if worker had one (P1-2 fix: handle profile workers without poolOrigin)
+    if (worker.port && this.chromePool) {
+      if (worker.poolOrigin) {
+        this.chromePool.releaseInstance(worker.port, worker.poolOrigin);
+        console.error(`[SessionManager] Released pool instance port ${worker.port} for origin ${worker.poolOrigin}`);
+      } else if (worker.profileDirectory) {
+        this.chromePool.releaseProfileInstance(worker.port);
+        console.error(`[SessionManager] Released profile instance port ${worker.port} for profile "${worker.profileDirectory}"`);
+      }
     }
 
     // Clean up ref IDs for this worker
@@ -691,11 +750,12 @@ export class SessionManager {
   async createTarget(
     sessionId: string,
     url?: string,
-    workerId?: string
+    workerId?: string,
+    profileDirectory?: string
   ): Promise<{ targetId: string; page: Page; workerId: string }> {
     let createTargetTid: ReturnType<typeof setTimeout>;
     return Promise.race([
-      this._createTargetImpl(sessionId, url, workerId).finally(() => clearTimeout(createTargetTid)),
+      this._createTargetImpl(sessionId, url, workerId, profileDirectory).finally(() => clearTimeout(createTargetTid)),
       new Promise<never>((_, reject) => {
         createTargetTid = setTimeout(() => reject(new Error(`createTarget timed out after ${DEFAULT_CREATE_TARGET_TIMEOUT_MS}ms`)), DEFAULT_CREATE_TARGET_TIMEOUT_MS);
       }),
@@ -705,11 +765,15 @@ export class SessionManager {
   private async _createTargetImpl(
     sessionId: string,
     url?: string,
-    workerId?: string
+    workerId?: string,
+    profileDirectory?: string
   ): Promise<{ targetId: string; page: Page; workerId: string }> {
     await this.ensureConnected();
 
-    const worker = await this.getOrCreateWorker(sessionId, workerId);
+    const worker = await this.getOrCreateWorker(sessionId, workerId, {
+      profileDirectory,
+      targetUrl: url,
+    });
 
     // Enforce per-worker tab limit: close oldest tab when limit reached
     if (worker.targets.size >= this.config.maxTargetsPerWorker) {
@@ -863,11 +927,15 @@ export class SessionManager {
     sessionId: string,
     url: string,
     workerId?: string,
-    settleMs: number = 8000
+    settleMs: number = 8000,
+    profileDirectory?: string
   ): Promise<{ targetId: string; page: Page; workerId: string }> {
     await this.ensureConnected();
 
-    const worker = await this.getOrCreateWorker(sessionId, workerId);
+    const worker = await this.getOrCreateWorker(sessionId, workerId, {
+      profileDirectory,
+      targetUrl: url,
+    });
 
     // Enforce per-worker tab limit: close oldest tab when limit reached
     if (worker.targets.size >= this.config.maxTargetsPerWorker) {

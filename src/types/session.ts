@@ -16,8 +16,9 @@ export interface Worker {
   context: BrowserContext | null;  // null = use default browser context (shares Chrome profile cookies)
   createdAt: number;
   lastActivityAt: number;
-  port?: number;         // Chrome instance port (when using pool)
-  poolOrigin?: string;   // Origin used for pool allocation
+  port?: number;              // Chrome instance port (when using pool)
+  poolOrigin?: string;        // Origin used for pool allocation
+  profileDirectory?: string;  // Chrome profile directory (when using multi-profile)
 }
 
 export interface WorkerInfo {
@@ -31,8 +32,9 @@ export interface WorkerInfo {
 export interface WorkerCreateOptions {
   id?: string;
   name?: string;
-  shareCookies?: boolean;  // If true, use default browser context (shares Chrome profile cookies) instead of isolated context
-  targetUrl?: string;      // URL for origin-aware Chrome instance selection
+  shareCookies?: boolean;       // If true, use default browser context (shares Chrome profile cookies) instead of isolated context
+  targetUrl?: string;           // URL for origin-aware Chrome instance selection
+  profileDirectory?: string;    // Chrome profile directory for multi-profile support
 }
 
 export interface Session {

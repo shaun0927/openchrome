@@ -9,6 +9,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getChromeLauncher } from '../chrome/launcher';
+import { getChromePool } from '../chrome/pool';
 import { formatAge } from '../utils/format-age';
 
 const definition: MCPToolDefinition = {
@@ -86,6 +87,24 @@ const handler: ToolHandler = async (
       }
     } else {
       lines.push('Profile: Unknown (Chrome may not be launched yet)');
+    }
+
+    // Append multi-profile pool info if multiple instances are running
+    const pool = getChromePool();
+    const instances = pool.getInstances();
+    const profileInstances = Array.from(instances.values()).filter(i => i.profileDirectory);
+    if (profileInstances.length > 0) {
+      const activeProfiles = profileInstances.map(i => ({
+        profileDirectory: i.profileDirectory,
+        port: i.port,
+        tabCount: i.tabCount,
+      }));
+      result.activeProfiles = activeProfiles;
+      lines.push('');
+      lines.push(`Active profile instances (${profileInstances.length}):`);
+      for (const p of profileInstances) {
+        lines.push(`  "${p.profileDirectory}" — port ${p.port}, ${p.tabCount} tab(s)`);
+      }
     }
 
     return {
