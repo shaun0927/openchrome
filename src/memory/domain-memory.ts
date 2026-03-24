@@ -7,6 +7,7 @@
  */
 
 import * as fs from 'fs';
+import * as fsPromises from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { extractHostname } from '../utils/url-utils';
@@ -30,6 +31,7 @@ export class DomainMemory {
   private entries: DomainKnowledge[] = [];
   private filePath: string | null = null;
   private dirty = false;
+  private savePromise: Promise<void> | null = null;
 
   static readonly MAX_ENTRIES = 200;
   static readonly STALE_DAYS = 30;
@@ -42,11 +44,11 @@ export class DomainMemory {
   /**
    * Enable persistence and run startup compression.
    */
-  enablePersistence(dirPath: string): void {
+  async enablePersistence(dirPath: string): Promise<void> {
     try {
-      fs.mkdirSync(dirPath, { recursive: true });
+      await fsPromises.mkdir(dirPath, { recursive: true });
       this.filePath = path.join(dirPath, 'domain-knowledge.json');
-      this.load();
+      await this.load();
       this.compress();
     } catch {
       // Best-effort
@@ -168,10 +170,10 @@ export class DomainMemory {
     return this.entries;
   }
 
-  private load(): void {
+  private async load(): Promise<void> {
     if (!this.filePath) return;
     try {
-      const data = fs.readFileSync(this.filePath, 'utf-8');
+      const data = await fsPromises.readFile(this.filePath, 'utf-8');
       const store: KnowledgeStore = JSON.parse(data);
       this.entries = store.entries || [];
     } catch {
@@ -181,15 +183,25 @@ export class DomainMemory {
 
   save(): void {
     if (!this.filePath || !this.dirty) return;
+    // Fire-and-forget: callers don't await this.
+    // Coalesce: if a save is already in flight, don't start another.
+    if (this.savePromise) return;
+    this.savePromise = this.saveAsync().finally(() => {
+      this.savePromise = null;
+    });
+  }
+
+  private async saveAsync(): Promise<void> {
+    if (!this.filePath) return;
     try {
       const dir = path.dirname(this.filePath);
-      fs.mkdirSync(dir, { recursive: true });
+      await fsPromises.mkdir(dir, { recursive: true });
       const store: KnowledgeStore = {
         version: 1,
         entries: this.entries,
         updatedAt: Date.now(),
       };
-      fs.writeFileSync(this.filePath, JSON.stringify(store, null, 2));
+      await fsPromises.writeFile(this.filePath, JSON.stringify(store, null, 2));
       this.dirty = false;
     } catch {
       // Best-effort
@@ -205,7 +217,10 @@ export function getDomainMemory(): DomainMemory {
     instance = new DomainMemory();
     const homedir = os.homedir();
     const memoryDir = path.join(homedir, '.openchrome', 'memory');
-    instance.enablePersistence(memoryDir);
+    // Fire-and-forget: persistence loads in background, entries available after I/O completes
+    instance.enablePersistence(memoryDir).catch((err: unknown) => {
+      console.error('[DomainMemory] Persistence initialization failed:', err);
+    });
   }
   return instance;
 }

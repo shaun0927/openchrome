@@ -235,3 +235,10 @@ export const DEFAULT_RESTORE_LAST_SESSION = false;
  *  Set to 0 to disable rate limiting.
  *  Override with OPENCHROME_RATE_LIMIT_RPM environment variable. */
 export const DEFAULT_RATE_LIMIT_RPM = 120;
+
+/** Default event loop fatal threshold in milliseconds.
+ *  When the event loop is blocked for longer than this, the process should exit
+ *  so the supervisor (systemd/PM2) can restart it — hanging forever is worse.
+ *  Set to 0 to disable. Override with OPENCHROME_EVENT_LOOP_FATAL_MS env var.
+ *  NOTE: This only takes effect when no explicit env var is set. */
+export const DEFAULT_EVENT_LOOP_FATAL_MS = 30000;

@@ -31,6 +31,7 @@ import {
   DEFAULT_TAB_EVICTION_THRESHOLD,
   DEFAULT_EVENT_LOOP_CHECK_INTERVAL_MS,
   DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS,
+  DEFAULT_EVENT_LOOP_FATAL_MS,
   DEFAULT_HEALTH_ENDPOINT_PORT,
   DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS,
   DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP,
@@ -279,10 +280,11 @@ program
     console.error('[SelfHealing] TabHealthMonitor started');
 
     // Event Loop Monitor (Layer 4)
+    const fatalThresholdMs = parseInt(process.env.OPENCHROME_EVENT_LOOP_FATAL_MS || '', 10) || DEFAULT_EVENT_LOOP_FATAL_MS;
     const eventLoopMonitor = new EventLoopMonitor({
       checkIntervalMs: DEFAULT_EVENT_LOOP_CHECK_INTERVAL_MS,
       warnThresholdMs: DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS,
-      fatalThresholdMs: parseInt(process.env.OPENCHROME_EVENT_LOOP_FATAL_MS || '', 10) || 0,
+      fatalThresholdMs,
     });
     eventLoopMonitor.on('fatal', () => {
       console.error('[SelfHealing] FATAL: Event loop blocked beyond threshold, exiting...');
@@ -291,6 +293,9 @@ program
     });
     eventLoopMonitor.start();
     console.error('[SelfHealing] EventLoopMonitor started');
+    if (fatalThresholdMs > 0) {
+      console.error(`[SelfHealing] EventLoopMonitor fatal threshold: ${fatalThresholdMs}ms (set OPENCHROME_EVENT_LOOP_FATAL_MS=0 to disable)`);
+    }
 
     // Health Endpoint (Layer 4)
     const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
