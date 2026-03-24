@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import { getMCPServer, setMCPServerOptions } from './mcp-server';
 import { registerAllTools } from './tools';
+import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
@@ -70,7 +71,8 @@ program
   .option('--no-sanitize-content', 'Disable content sanitization for prompt injection defense (default: enabled)')
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean }) => {
+  .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -221,7 +223,16 @@ program
     if (process.platform === 'win32') {
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
-    server.start();
+    // Determine transport mode
+    const useHttp = options.http !== undefined && options.http !== false;
+    if (useHttp) {
+      const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : 3100;
+      const transport = createTransport('http', { port: httpPort });
+      server.start(transport);
+      console.error(`[openchrome] HTTP transport enabled on port ${httpPort}`);
+    } else {
+      server.start();
+    }
 
     // ─── Self-Healing Module Wiring (#354) ──────────────────────────────────
 
