@@ -31,6 +31,10 @@ export interface HealthData {
     totalBytes: number;
     fileCount: number;
   };
+  browserState?: {
+    lastSnapshotAt: number;
+    snapshotCount: number;
+  };
 }
 
 export type HealthDataProvider = () => HealthData;

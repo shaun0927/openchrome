@@ -475,6 +475,28 @@ export class CDPClient {
         this.reconnectNextRetryAt = 0;
         this.reconnectCount++;
         this.setHeartbeatMode('recovery');
+
+        // Restore browser state (cookies) from last snapshot after reconnection.
+        // Uses dynamic import() to avoid circular dependency with browser-state module.
+        // Restore is best-effort — failure must not block reconnection.
+        try {
+          const { getBrowserStateManager } = await import('../browser-state');
+          const stateManager = getBrowserStateManager();
+          const cookies = await stateManager.getLatestCookies();
+          const currentBrowser = this.browser as Browser | null;
+          if (cookies && cookies.length > 0 && currentBrowser) {
+            const pages = await currentBrowser.pages();
+            if (pages.length > 0) {
+              const client = await pages[0].createCDPSession();
+              await client.send('Network.setCookies', { cookies });
+              await client.detach();
+              console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
+            }
+          }
+        } catch (err) {
+          console.error('[CDPClient] Cookie restore after reconnection failed (non-fatal):', err);
+        }
+
         this.emitConnectionEvent({
           type: 'reconnected',
           timestamp: Date.now(),

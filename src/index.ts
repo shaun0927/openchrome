@@ -24,6 +24,7 @@ import { SessionStatePersistence } from './session-state-persistence';
 import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';
+import { getBrowserStateManager } from './browser-state';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -36,6 +37,7 @@ import {
   DEFAULT_HEALTH_ENDPOINT_PORT,
   DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS,
   DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP,
+  DEFAULT_SNAPSHOT_INTERVAL_MS,
 } from './config/defaults';
 
 // Prevent silent crashes from unhandled promise rejections in background tasks
@@ -250,6 +252,34 @@ program
     const cdpClient = getCDPClient();
     const sessionManager = getSessionManager();
 
+    // Browser State Snapshot (Gap 2: #416)
+    const snapshotIntervalMs = parseInt(process.env.OPENCHROME_SNAPSHOT_INTERVAL_MS || '', 10) || DEFAULT_SNAPSHOT_INTERVAL_MS;
+    const stateManager = getBrowserStateManager();
+    stateManager.setCookieProvider(async () => {
+      try {
+        const pages = await cdpClient.getPages();
+        if (pages.length === 0) return [];
+        const client = await pages[0].createCDPSession();
+        const result = await client.send('Network.getAllCookies') as { cookies?: any[] };
+        await client.detach();
+        return result.cookies || [];
+      } catch {
+        return [];
+      }
+    });
+    stateManager.setTabUrlProvider(async () => {
+      try {
+        const pages = await cdpClient.getPages();
+        return pages.map(p => p.url()).filter(u => u && u !== 'about:blank');
+      } catch {
+        return [];
+      }
+    });
+    stateManager.start().catch((err: unknown) => {
+      console.error('[SelfHealing] BrowserStateManager start failed:', err);
+    });
+    console.error('[SelfHealing] BrowserStateManager started');
+
     // Chrome Process Watchdog (Layer 3)
     const processWatchdog = new ChromeProcessWatchdog(launcher, {
       intervalMs: parseInt(process.env.OPENCHROME_PROCESS_WATCHDOG_INTERVAL_MS || '', 10) || DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
@@ -349,6 +379,7 @@ program
         chrome: chromeData,
         tabs: { total: tabHealth.size, healthy: healthyTabs, unhealthy: unhealthyTabs },
         disk: diskData,
+        browserState: stateManager.getStatus(),
       };
       return data;
     }, healthPort);
@@ -405,6 +436,7 @@ program
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
       diskMonitor?.stop();
+      stateManager.stop();
       await healthEndpoint.stop();
       sessionPersistence.cancelPendingSave();
       await originalShutdown(signal);
