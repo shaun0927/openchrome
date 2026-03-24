@@ -24,6 +24,7 @@ import { formatError } from './utils/format-error';
 import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
+import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS } from './config/defaults';
 import { getGlobalConfig } from './config/global';
@@ -108,6 +109,7 @@ export class MCPServer {
   private clientSupportsListChanged = true;
   private clientDetected = false;
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
@@ -1127,6 +1129,17 @@ export class MCPServer {
    * Stop the server and clean up all Chrome resources
    */
   async stop(): Promise<void> {
+    // Reentrancy guard: if stop() is already in progress, return the existing promise.
+    // This prevents double-cleanup when SIGTERM and stdin-close fire simultaneously.
+    if (this.stopPromise) {
+      return this.stopPromise;
+    }
+
+    this.stopPromise = this._stopInternal();
+    return this.stopPromise;
+  }
+
+  private async _stopInternal(): Promise<void> {
     // Stop dashboard
     if (this.dashboard) {
       this.dashboard.stop();
@@ -1137,12 +1150,22 @@ export class MCPServer {
       this.rl = null;
     }
 
-    // Await cleanup with safety timeout to prevent hanging forever
-    const timeoutMs = 5000;
+    // Scale timeout based on number of Chrome pool instances.
+    // Each launcher.close() needs up to 5s for SIGTERM->SIGKILL escalation,
+    // plus time for session/CDP cleanup before that.
+    let poolInstanceCount = 0;
+    try {
+      const pool = getChromePool();
+      poolInstanceCount = pool.getInstances().size;
+    } catch { /* pool may not be initialized */ }
+
+    // Base 5s for session/CDP cleanup + 6s per Chrome instance (5s kill + 1s buffer)
+    const timeoutMs = Math.max(5000, 5000 + poolInstanceCount * 6000);
+
     await Promise.race([
       this.cleanup(),
       new Promise<void>((resolve) => setTimeout(() => {
-        console.error('[MCPServer] Cleanup timed out after 5s, forcing exit');
+        console.error(`[MCPServer] Cleanup timed out after ${timeoutMs / 1000}s, forcing exit`);
         resolve();
       }, timeoutMs)),
     ]);

@@ -233,7 +233,11 @@ export class ChromePool {
     for (const [port, instance] of this.instances) {
       if (!instance.isPreExisting) {
         console.error(`[ChromePool] Closing launched instance on port ${port}`);
-        closurePromises.push(instance.launcher.close());
+        closurePromises.push(
+          instance.launcher.close().catch((err) => {
+            console.error(`[ChromePool] Failed to close instance on port ${port}:`, err);
+          })
+        );
       } else {
         console.error(
           `[ChromePool] Skipping pre-existing instance on port ${port}`
@@ -241,7 +245,8 @@ export class ChromePool {
       }
     }
 
-    await Promise.all(closurePromises);
+    // Use allSettled so one failed close() doesn't prevent cleaning up the rest
+    await Promise.allSettled(closurePromises);
     this.instances.clear();
     this.profileLaunchInFlight.clear();
     console.error('[ChromePool] Cleanup complete.');
