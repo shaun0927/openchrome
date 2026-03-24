@@ -26,6 +26,10 @@ export interface HealthData {
     healthy: number;
     unhealthy: number;
   };
+  disk?: {
+    totalBytes: number;
+    fileCount: number;
+  };
 }
 
 export type HealthDataProvider = () => HealthData;

@@ -19,6 +19,7 @@ import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
+import { DiskMonitor } from './watchdog/disk-monitor';
 import { SessionStatePersistence } from './session-state-persistence';
 import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
@@ -297,6 +298,9 @@ program
       console.error(`[SelfHealing] EventLoopMonitor fatal threshold: ${fatalThresholdMs}ms (set OPENCHROME_EVENT_LOOP_FATAL_MS=0 to disable)`);
     }
 
+    // Declare disk monitor early so health provider can reference it
+    let diskMonitor: DiskMonitor | null = null;
+
     // Health Endpoint (Layer 4)
     const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
     const healthEndpoint = new HealthEndpoint(() => {
@@ -324,6 +328,16 @@ program
         // CDP client may not be initialized yet
       }
 
+      // Disk usage stats
+      let diskData: HealthData['disk'] | undefined;
+      const diskStats = diskMonitor?.getStats();
+      if (diskStats) {
+        diskData = {
+          totalBytes: diskStats.totalBytes,
+          fileCount: diskStats.fileCount,
+        };
+      }
+
       const data: HealthData = {
         status: unhealthyTabs > 0 ? 'degraded' : 'ok',
         uptime: process.uptime(),
@@ -331,6 +345,7 @@ program
         eventLoop: { maxDriftMs: elStats.maxDriftMs, warnCount: elStats.warnCount },
         chrome: chromeData,
         tabs: { total: tabHealth.size, healthy: healthyTabs, unhealthy: unhealthyTabs },
+        disk: diskData,
       };
       return data;
     }, healthPort);
@@ -348,6 +363,11 @@ program
     }).catch((err: unknown) => {
       console.error('[SelfHealing] Session state restore failed:', err);
     });
+
+    // Disk Monitor — auto-prune old journals, snapshots, checkpoints
+    diskMonitor = new DiskMonitor();
+    diskMonitor.start();
+    console.error('[SelfHealing] DiskMonitor started (5-min interval)');
 
     // Gap 1: register tabs with TabHealthMonitor when targets are added/removed
     sessionManager.addEventListener((event) => {
@@ -381,6 +401,7 @@ program
       processWatchdog.stop();
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
+      diskMonitor?.stop();
       await healthEndpoint.stop();
       sessionPersistence.cancelPendingSave();
       await originalShutdown(signal);
