@@ -40,6 +40,7 @@ describe('ChromePool cleanup robustness', () => {
       origins: new Set(),
       tabCount: 0,
       isPreExisting: false,
+      lastActiveAt: Date.now(),
       ...opts,
     });
   }
