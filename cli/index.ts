@@ -192,26 +192,32 @@ program
   .description('Start MCP server for Claude Code')
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: false)')
-  .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
+  .option('--user-data-dir <dir>', 'Chrome user data directory (default: real Chrome profile on macOS)')
+  .option('--profile-directory <name>', 'Chrome profile directory name (e.g., "Profile 1", "Default")')
+  .option('--chrome-binary <path>', 'Path to Chrome binary (e.g., chrome-headless-shell)')
+  .option('--headless-shell', 'Use chrome-headless-shell if available (default: false)')
+  .option('--visible', 'Show Chrome window (default: headless when auto-launch)')
+  .option('--restart-chrome', 'Quit running Chrome to reuse real profile (default: uses temp profile)')
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
+  .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
+  .option('--audit-log', 'Enable security audit logging (default: false)')
+  .option('--no-sanitize-content', 'Disable content sanitization for prompt injection defense (default: enabled)')
+  .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
+  .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
+  .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
+  .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
   .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
   .option('--storage-dir <path>', 'Directory for storage state files (default: .openchrome/storage-state/)')
-  .action(async (options: { port: string; autoLaunch?: boolean; dashboard?: boolean; hybrid?: boolean; lpPort?: string; persistStorage?: boolean; storageDir?: string }) => {
-    const port = parseInt(options.port, 10);
-    const autoLaunch = options.autoLaunch || false;
-    const dashboard = options.dashboard || false;
-
+  .action(async () => {
     // Non-blocking update check (fires in background)
     checkForUpdates(version).catch(() => {});
 
     // Auto-migrate: patch ~/.claude.json to use @latest if still using bare package name.
-    // This ensures existing users get auto-updates without re-running setup.
     try {
       const claudeConfigPath = path.join(os.homedir(), '.claude.json');
       if (fs.existsSync(claudeConfigPath)) {
         const raw = fs.readFileSync(claudeConfigPath, 'utf8');
-        // Only patch if the file contains the bare name without @latest
         if (raw.includes('openchrome-mcp') && !raw.includes('openchrome-mcp@')) {
           const patched = raw.replace(/openchrome-mcp(?!@)/g, 'openchrome-mcp@latest');
           if (patched !== raw) {
@@ -221,69 +227,30 @@ program
         }
       }
     } catch {
-      // Best-effort migration — don't block server start
+      // Best-effort migration
     }
 
-    console.error(`[openchrome] Starting MCP server`);
-    console.error(`[openchrome] Chrome debugging port: ${port}`);
-    console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
-    console.error(`[openchrome] Dashboard: ${dashboard}`);
+    // Forward to the full-featured serve implementation in dist/index.js
+    // This includes self-healing, HTTP transport, event loop monitor, disk monitor,
+    // health endpoint, session persistence, and all reliability features.
+    const serveEntry = path.join(__dirname, '..', 'index.js');
+    const child = spawn(process.execPath, [serveEntry, ...process.argv.slice(2)], {
+      stdio: 'inherit',
+    });
 
-    // Set environment variables for storage state persistence
-    if (options.persistStorage) {
-      process.env.OC_PERSIST_STORAGE = '1';
-      console.error(`[openchrome] Storage state persistence: enabled`);
-    }
-    if (options.storageDir) {
-      process.env.OC_STORAGE_DIR = options.storageDir;
-      console.error(`[openchrome] Storage state directory: ${options.storageDir}`);
-    }
-
-    // Import from built dist/ files (relative to dist/cli/)
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { setGlobalConfig } = require('../config/global');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getMCPServer, setMCPServerOptions } = require('../mcp-server');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { registerAllTools } = require('../tools');
-
-    // Set global config before initializing anything
-    setGlobalConfig({ port, autoLaunch });
-
-    // Configure hybrid mode if enabled
-    const hybrid = options.hybrid || false;
-    const lpPort = parseInt(options.lpPort || '9223', 10);
-
-    if (hybrid) {
-      setGlobalConfig({
-        hybrid: {
-          enabled: true,
-          lightpandaPort: lpPort,
-        },
-      });
-      console.error(`[openchrome] Hybrid mode: enabled`);
-      console.error(`[openchrome] Lightpanda port: ${lpPort}`);
+    // Forward signals to child process
+    const forwardSignal = (signal: NodeJS.Signals) => {
+      if (!child.killed) {
+        child.kill(signal);
+      }
+    };
+    process.on('SIGTERM', () => forwardSignal('SIGTERM'));
+    process.on('SIGINT', () => forwardSignal('SIGINT'));
+    if (process.platform === 'win32') {
+      process.on('SIGHUP', () => forwardSignal('SIGHUP'));
     }
 
-    // Set MCP server options (including dashboard)
-    setMCPServerOptions({ dashboard });
-
-    const server = getMCPServer();
-    registerAllTools(server);
-
-    // Initialize hybrid routing if enabled
-    if (hybrid) {
-      const { getSessionManager } = require('../session-manager');
-      const sm = getSessionManager();
-      await sm.initHybrid({
-        enabled: true,
-        lightpandaPort: lpPort,
-        circuitBreaker: { maxFailures: 3, cooldownMs: 60000 },
-        cookieSync: { intervalMs: 5000 },
-      });
-    }
-
-    server.start();
+    child.on('exit', (code) => process.exit(code ?? 0));
   });
 
 program

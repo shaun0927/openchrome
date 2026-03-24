@@ -27,6 +27,9 @@ ExecStartPost=/bin/sh -c 'for i in $(seq 1 30); do curl -sf http://127.0.0.1:909
 Restart=always
 RestartSec=3
 
+# Kill entire cgroup on stop (prevents orphan Chrome processes)
+KillMode=control-group
+
 # Resource limits
 MemoryMax=512M
 TasksMax=100
