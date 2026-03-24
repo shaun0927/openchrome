@@ -229,3 +229,9 @@ export const DEFAULT_STEALTH_SETTLE_MS = 8000;
  *  Enable for long-running sessions where tab preservation matters.
  *  Override with OPENCHROME_RESTORE_LAST_SESSION=true environment variable. */
 export const DEFAULT_RESTORE_LAST_SESSION = false;
+
+/** Default per-session rate limit in requests per minute.
+ *  Protects against runaway agents flooding the server.
+ *  Set to 0 to disable rate limiting.
+ *  Override with OPENCHROME_RATE_LIMIT_RPM environment variable. */
+export const DEFAULT_RATE_LIMIT_RPM = 120;
