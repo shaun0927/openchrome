@@ -17,7 +17,7 @@ import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager'
 import { getVersion } from './version';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
-import { EventLoopMonitor } from './watchdog/event-loop-monitor';
+import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
 import { DiskMonitor } from './watchdog/disk-monitor';
 import { SessionStatePersistence } from './session-state-persistence';
@@ -296,6 +296,7 @@ program
       process.exit(1);
     });
     eventLoopMonitor.start();
+    setGlobalEventLoopMonitor(eventLoopMonitor);
     console.error('[SelfHealing] EventLoopMonitor started');
     if (fatalThresholdMs > 0) {
       console.error(`[SelfHealing] EventLoopMonitor fatal threshold: ${fatalThresholdMs}ms (set OPENCHROME_EVENT_LOOP_FATAL_MS=0 to disable)`);

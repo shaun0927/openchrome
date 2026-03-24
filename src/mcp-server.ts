@@ -26,7 +26,8 @@ import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM } from './config/defaults';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM, DEFAULT_EVENT_LOOP_HEAVY_OP_FATAL_MS } from './config/defaults';
+import { getGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
@@ -636,6 +637,16 @@ export class MCPServer {
         ]);
       }
 
+      // Identify heavy tools that may block the event loop legitimately
+      // (screenshot captures, full-page DOM reads, bulk cookie scans, arbitrary JS).
+      const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
+      const isHeavyTool = HEAVY_TOOLS.has(toolName);
+
+      const eventLoopMonitor = getGlobalEventLoopMonitor();
+      if (isHeavyTool && eventLoopMonitor) {
+        eventLoopMonitor.beginHeavyOperation(DEFAULT_EVENT_LOOP_HEAVY_OP_FATAL_MS);
+      }
+
       let result: MCPResult;
       try {
         let tid: ReturnType<typeof setTimeout>;
@@ -684,6 +695,11 @@ export class MCPServer {
           }
         } else {
           throw handlerError;
+        }
+      } finally {
+        // Always restore normal threshold after heavy tool completes (success or error)
+        if (isHeavyTool && eventLoopMonitor) {
+          eventLoopMonitor.endHeavyOperation();
         }
       }
 

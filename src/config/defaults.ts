@@ -243,6 +243,9 @@ export const DEFAULT_RATE_LIMIT_RPM = 120;
  *  NOTE: This only takes effect when no explicit env var is set. */
 export const DEFAULT_EVENT_LOOP_FATAL_MS = 30000;
 
+/** Event loop fatal threshold during heavy tool operations (screenshot, bulk cookies). Default: 120s */
+export const DEFAULT_EVENT_LOOP_HEAVY_OP_FATAL_MS = 120000;
+
 // ─── Disk Monitoring (Phase 7) ────────────────────────────────────────
 
 /** Disk monitor check interval in milliseconds. Default: 5 minutes.
