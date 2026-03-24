@@ -23,6 +23,7 @@ export interface PooledInstance {
   tabCount: number;
   isPreExisting: boolean; // was it already running when we found it?
   profileDirectory?: string; // Chrome profile directory (e.g., "Profile 1", "Default")
+  lastActiveAt: number; // timestamp of last tab activity (used by idle reaper)
 }
 
 const DEFAULT_POOL_CONFIG: ChromePoolConfig = {
@@ -71,6 +72,9 @@ export class ChromePool {
   private instances: Map<number, PooledInstance> = new Map();
   // In-flight dedup: prevent concurrent launches for the same profile (P1-3 fix)
   private profileLaunchInFlight: Map<string, Promise<PooledInstance>> = new Map();
+  private reaperTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+  private static readonly DEFAULT_REAPER_INTERVAL_MS = 60 * 1000; // check every 60s
 
   constructor(config: Partial<ChromePoolConfig> = {}) {
     this.config = { ...DEFAULT_POOL_CONFIG, ...config };
@@ -86,6 +90,7 @@ export class ChromePool {
       if (!instance.origins.has(origin)) {
         instance.origins.add(origin);
         instance.tabCount++;
+        instance.lastActiveAt = Date.now();
         console.error(
           `[ChromePool] Assigned origin "${origin}" to existing instance on port ${instance.port}`
         );
@@ -98,6 +103,7 @@ export class ChromePool {
       const newInstance = await this.launchNewInstance();
       newInstance.origins.add(origin);
       newInstance.tabCount++;
+      newInstance.lastActiveAt = Date.now();
       console.error(
         `[ChromePool] Launched new instance on port ${newInstance.port} for origin "${origin}"`
       );
@@ -137,6 +143,7 @@ export class ChromePool {
       if (instance.profileDirectory === profileDirectory) {
         if (origin) instance.origins.add(origin);
         instance.tabCount++;
+        instance.lastActiveAt = Date.now();
         console.error(
           `[ChromePool] Reusing existing instance on port ${instance.port} for profile "${profileDirectory}"`
         );
@@ -151,6 +158,7 @@ export class ChromePool {
       const inst = await inflight;
       if (origin) inst.origins.add(origin);
       inst.tabCount++;
+      inst.lastActiveAt = Date.now();
       return inst;
     }
 
@@ -185,6 +193,7 @@ export class ChromePool {
     const newInstance = await launchPromise;
     if (origin) newInstance.origins.add(origin);
     newInstance.tabCount++;
+    newInstance.lastActiveAt = Date.now();
     console.error(
       `[ChromePool] Launched new instance on port ${newInstance.port} for profile "${profileDirectory}"`
     );
@@ -203,6 +212,7 @@ export class ChromePool {
     if (removed && instance.tabCount > 0) {
       instance.tabCount--;
     }
+    instance.lastActiveAt = Date.now();
     console.error(
       `[ChromePool] Released origin "${origin}" from port ${port}. ` +
         `Remaining origins: ${instance.tabCount}`
@@ -219,6 +229,7 @@ export class ChromePool {
     if (instance.tabCount > 0) {
       instance.tabCount--;
     }
+    instance.lastActiveAt = Date.now();
     console.error(
       `[ChromePool] Released profile instance on port ${port}. Tab count: ${instance.tabCount}`
     );
@@ -228,6 +239,7 @@ export class ChromePool {
    * Close all instances we launched (not pre-existing ones).
    */
   async cleanup(): Promise<void> {
+    this.stopReaper();
     const closurePromises: Promise<void>[] = [];
 
     for (const [port, instance] of this.instances) {
@@ -250,6 +262,74 @@ export class ChromePool {
     this.instances.clear();
     this.profileLaunchInFlight.clear();
     console.error('[ChromePool] Cleanup complete.');
+  }
+
+  /**
+   * Start the idle instance reaper.
+   * Periodically checks for profile instances with tabCount === 0
+   * that have been idle for longer than the threshold, and closes them.
+   */
+  startReaper(idleTimeoutMs: number = ChromePool.DEFAULT_IDLE_TIMEOUT_MS): void {
+    if (this.reaperTimer) return; // already running
+
+    this.reaperTimer = setInterval(() => {
+      this.reapIdleInstances(idleTimeoutMs).catch((err) => {
+        console.error('[ChromePool] Reaper error:', err);
+      });
+    }, ChromePool.DEFAULT_REAPER_INTERVAL_MS);
+    this.reaperTimer.unref(); // don't prevent process exit
+    console.error(`[ChromePool] Idle instance reaper started (timeout: ${idleTimeoutMs / 1000}s)`);
+  }
+
+  /**
+   * Stop the idle instance reaper.
+   */
+  stopReaper(): void {
+    if (this.reaperTimer) {
+      clearInterval(this.reaperTimer);
+      this.reaperTimer = null;
+      console.error('[ChromePool] Idle instance reaper stopped');
+    }
+  }
+
+  /**
+   * Close idle profile instances.
+   * An instance is considered idle if:
+   * 1. It has tabCount === 0 (no active workers)
+   * 2. It has been idle for longer than idleTimeoutMs
+   * 3. It is not pre-existing (we don't close user-started Chrome)
+   * 4. It has a profileDirectory (only profile instances are reaped, not origin-based)
+   */
+  private async reapIdleInstances(idleTimeoutMs: number): Promise<number> {
+    const now = Date.now();
+    let reaped = 0;
+
+    for (const [port, instance] of this.instances) {
+      if (
+        instance.tabCount === 0 &&
+        !instance.isPreExisting &&
+        instance.profileDirectory &&
+        (now - instance.lastActiveAt) > idleTimeoutMs
+      ) {
+        console.error(
+          `[ChromePool] Reaping idle profile instance "${instance.profileDirectory}" on port ${port} ` +
+          `(idle for ${Math.round((now - instance.lastActiveAt) / 1000)}s)`
+        );
+        try {
+          await instance.launcher.close();
+        } catch (err) {
+          console.error(`[ChromePool] Failed to close idle instance on port ${port}:`, err);
+        }
+        this.instances.delete(port);
+        reaped++;
+      }
+    }
+
+    if (reaped > 0) {
+      console.error(`[ChromePool] Reaped ${reaped} idle instance(s)`);
+    }
+
+    return reaped;
   }
 
   /**
@@ -304,6 +384,7 @@ export class ChromePool {
       tabCount: 0,
       isPreExisting,
       profileDirectory,
+      lastActiveAt: Date.now(),
     };
 
     this.instances.set(port, pooled);
