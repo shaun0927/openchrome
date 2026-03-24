@@ -30,6 +30,7 @@ import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEF
 import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
+import { getMetricsCollector } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
 import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
@@ -692,6 +693,16 @@ export class MCPServer {
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
 
+      // Record Prometheus metrics
+      try {
+        const metrics = getMetricsCollector();
+        const durationSec = (Date.now() - toolStartTime) / 1000;
+        metrics.inc('openchrome_tool_calls_total', { tool: toolName, status: 'success' });
+        metrics.observe('openchrome_tool_duration_seconds', { tool: toolName }, durationSec);
+      } catch {
+        // Best-effort metrics
+      }
+
       // Record to task journal
       try {
         const journal = getTaskJournal();
@@ -821,6 +832,16 @@ export class MCPServer {
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, 'error', message);
+
+      // Record Prometheus metrics
+      try {
+        const metrics = getMetricsCollector();
+        const durationSec = (Date.now() - toolStartTime) / 1000;
+        metrics.inc('openchrome_tool_calls_total', { tool: toolName, status: 'error' });
+        metrics.observe('openchrome_tool_duration_seconds', { tool: toolName }, durationSec);
+      } catch {
+        // Best-effort metrics
+      }
 
       // Record to task journal
       try {
