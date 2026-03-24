@@ -13,9 +13,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { MCPClient } from '../harness/mcp-client';
+import { MCPClient, MCPToolResult } from '../harness/mcp-client';
 import { sleep } from '../harness/time-scale';
 import { SessionStatePersistence } from '../../../src/session-state-persistence';
+
+/** Try to parse JSON from individual content items (handles multi-block MCP responses) */
+function tryParseJSON(result: MCPToolResult): unknown | null {
+  for (const item of result.content) {
+    if (item.text) {
+      try { return JSON.parse(item.text); } catch { /* try next item */ }
+    }
+  }
+  try { return JSON.parse(result.text); } catch { return null; }
+}
 
 function getFixturePort(): number {
   const stateFile = path.join(process.cwd(), '.e2e-state.json');
@@ -101,10 +111,13 @@ describe('E2E-3: MCP Server Restart Recovery (#347)', () => {
     console.error('[server-restart] Step 1: Navigating to establish initial connection');
     const navResult = await mcp.callTool('navigate', { url: testUrl });
     expect(navResult.text).toBeDefined();
+    const navData = tryParseJSON(navResult) as Record<string, unknown> | null;
+    expect(navData).not.toBeNull();
+    const tabId = navData!.tabId as string;
     console.error('[server-restart] Step 1 OK: Initial connection established');
 
     // Step 2: Verify page content before restart
-    const beforeResult = await mcp.callTool('read_page', {});
+    const beforeResult = await mcp.callTool('read_page', { tabId });
     expect(beforeResult.text).toContain('E2E Test');
     console.error('[server-restart] Step 2 OK: Pre-restart page content verified');
 
@@ -123,11 +136,14 @@ describe('E2E-3: MCP Server Restart Recovery (#347)', () => {
     console.error('[server-restart] Step 5: Verifying Chrome reconnection post-restart');
     const afterResult = await mcp.callTool('navigate', { url: testUrl }, 30_000);
     expect(afterResult.text).toBeDefined();
+    const afterData = tryParseJSON(afterResult) as Record<string, unknown> | null;
+    expect(afterData).not.toBeNull();
+    const afterTabId = afterData!.tabId as string;
     console.error('[server-restart] Step 5 OK: Post-restart navigation succeeded');
 
     // Step 6: Verify functional tool call on reconnected Chrome
     console.error('[server-restart] Step 6: Verifying read_page works on reconnected Chrome');
-    const readResult = await mcp.callTool('read_page', {});
+    const readResult = await mcp.callTool('read_page', { tabId: afterTabId });
     expect(readResult.text).toBeDefined();
     expect(readResult.text.length).toBeGreaterThan(0);
     console.error('[server-restart] Step 6 OK: read_page works post-restart');

@@ -15,8 +15,17 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { MCPClient } from '../harness/mcp-client';
+import { MCPClient, MCPToolResult } from '../harness/mcp-client';
 import { scaled, scaledSleep, sleep, JEST_OVERHEAD_MS } from '../harness/time-scale';
+
+function tryParseJSON(result: MCPToolResult): unknown | null {
+  for (const item of result.content) {
+    if (item.text) {
+      try { return JSON.parse(item.text); } catch { /* try next item */ }
+    }
+  }
+  try { return JSON.parse(result.text); } catch { return null; }
+}
 
 function getFixturePort(): number {
   const stateFile = path.join(process.cwd(), '.e2e-state.json');
@@ -44,10 +53,12 @@ describe('E2E-7: Idle Session Survival (#347)', () => {
     console.error('[idle-session] Step 1: Establishing active session with initial navigation');
     const navResult = await mcp.callTool('navigate', { url: testUrl });
     expect(navResult.text).toBeDefined();
+    const navData = tryParseJSON(navResult) as Record<string, unknown> | null;
+    const tabId = navData?.tabId as string | undefined;
     console.error('[idle-session] Step 1 OK: Session established, initial page loaded');
 
     // Step 2: Verify session is functional before idle
-    const beforeRead = await mcp.callTool('read_page', {});
+    const beforeRead = await mcp.callTool('read_page', tabId ? { tabId } : {});
     expect(beforeRead.text).toContain('E2E Test');
     console.error('[idle-session] Step 2 OK: Pre-idle read_page succeeded');
 
@@ -68,10 +79,12 @@ describe('E2E-7: Idle Session Survival (#347)', () => {
     console.error('[idle-session] Step 5: Verifying session alive after idle');
     const postIdleNavResult = await mcp.callTool('navigate', { url: testUrl }, 30_000);
     expect(postIdleNavResult.text).toBeDefined();
+    const postIdleNavData = tryParseJSON(postIdleNavResult) as Record<string, unknown> | null;
+    const postIdleTabId = (postIdleNavData?.tabId as string | undefined) ?? tabId;
     console.error('[idle-session] Step 5 OK: Post-idle navigation succeeded — session survived idle');
 
     // Step 6: Verify page content is correct (session context intact)
-    const postIdleRead = await mcp.callTool('read_page', {});
+    const postIdleRead = await mcp.callTool('read_page', postIdleTabId ? { tabId: postIdleTabId } : {});
     expect(postIdleRead.text).toBeDefined();
     expect(postIdleRead.text.length).toBeGreaterThan(0);
     console.error('[idle-session] Step 6 OK: Post-idle read_page returned content — session context intact');

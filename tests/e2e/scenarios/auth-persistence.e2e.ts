@@ -46,7 +46,6 @@ describe('E2E-4: Auth Persistence', () => {
     const mcp1 = new MCPClient({
       timeoutMs: 60_000,
       env: { OC_STORAGE_DIR: storageDir },
-      args: ['--auto-launch'],
     });
     await mcp1.start();
 
@@ -99,7 +98,6 @@ describe('E2E-4: Auth Persistence', () => {
     const mcp2 = new MCPClient({
       timeoutMs: 60_000,
       env: { OC_STORAGE_DIR: storageDir },
-      args: ['--auto-launch'],
     });
     await mcp2.start();
 

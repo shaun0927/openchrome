@@ -84,7 +84,7 @@ describe('E2E-8: 24-Hour Endurance', () => {
     beforeAll(async () => {
       mcp = new MCPClient({
         timeoutMs: 60_000,
-        args: ['--auto-launch', '--port', String(CHROME_DEBUG_PORT)],
+        args: ['--port', String(CHROME_DEBUG_PORT)],
       });
       await mcp.start();
       chrome = new ChromeController();

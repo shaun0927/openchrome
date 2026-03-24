@@ -3,13 +3,9 @@
  * Enables recovery of MCP server state after process restart.
  * Part of #347 Layer 2: Session State Persistence.
  *
- * Integration plan:
- * SessionManager should instantiate SessionStatePersistence and call:
- *   - scheduleSave(createSnapshot(this.sessions)) on every mutation
- *     (worker/target created or deleted)
- *   - restore() on startup to reload prior state
- *   - clear() on clean shutdown (e.g., SIGTERM handler)
- * Until that wiring lands this module is compiled but not invoked at runtime.
+ * Wired in src/index.ts: SessionManager events (session:created, session:deleted,
+ * session:target-added, session:target-removed) trigger scheduleSave(createSnapshot(...)).
+ * Restore is called on startup; pending saves are cancelled on shutdown.
  */
 
 import * as path from 'path';

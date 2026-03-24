@@ -337,7 +337,7 @@ async function main(): Promise<void> {
   // Start MCP client
   const mcp = new MCPClient({
     timeoutMs: 60_000,
-    args: ['--auto-launch', '--port', String(CHROME_DEBUG_PORT)],
+    args: ['--port', String(CHROME_DEBUG_PORT)],
   });
   await mcp.start();
   console.error('[runner] MCP server started');

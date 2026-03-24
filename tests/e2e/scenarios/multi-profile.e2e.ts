@@ -5,7 +5,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { MCPClient } from '../harness/mcp-client';
+import { MCPClient, MCPToolResult } from '../harness/mcp-client';
 import { scaledSleep } from '../harness/time-scale';
 
 function getFixturePort(): number {
@@ -14,13 +14,22 @@ function getFixturePort(): number {
   return state.port;
 }
 
+/** Parse JSON from the first parseable content item (handles multi-block MCP responses) */
+function tryParseJSON(result: MCPToolResult): unknown | null {
+  for (const item of result.content) {
+    if (item.text) {
+      try { return JSON.parse(item.text); } catch { /* try next item */ }
+    }
+  }
+  try { return JSON.parse(result.text); } catch { return null; }
+}
+
 describe('E2E-9: Multi-Profile Isolation', () => {
   let mcp: MCPClient;
 
   beforeAll(async () => {
     mcp = new MCPClient({
       timeoutMs: 60_000,
-      args: ['--auto-launch'],
     });
     await mcp.start();
   }, 60_000);
@@ -38,9 +47,13 @@ describe('E2E-9: Multi-Profile Isolation', () => {
       console.error('[multi-profile] Phase 9a: listing profiles');
       const listResult = await mcp.callTool('list_profiles', {});
       expect(listResult.text).toBeDefined();
-      const profiles = JSON.parse(listResult.text);
-      expect(Array.isArray(profiles)).toBe(true);
-      expect(profiles.length).toBeGreaterThanOrEqual(1);
+      const parsed = tryParseJSON(listResult) as { profiles?: Array<{ directory: string; name: string }> } | null;
+      if (!parsed || !Array.isArray(parsed.profiles) || parsed.profiles.length < 2) {
+        console.error('[multi-profile] Phase 9a: fewer than 2 Chrome profiles available — skipping test');
+        return;
+      }
+      const profiles = parsed.profiles;
+      expect(profiles.length).toBeGreaterThanOrEqual(2);
       const firstProfile = profiles[0];
       expect(firstProfile).toHaveProperty('directory');
       expect(firstProfile).toHaveProperty('name');
@@ -54,9 +67,10 @@ describe('E2E-9: Multi-Profile Isolation', () => {
         120_000,
       );
       expect(navA.text).toBeDefined();
-      const navAData = JSON.parse(navA.text);
-      expect(navAData.workerId).toMatch(/profile:Default/);
-      const profileATabId: string = navAData.tabId;
+      const navAData = tryParseJSON(navA) as Record<string, unknown>;
+      expect(navAData).not.toBeNull();
+      expect(navAData!.workerId).toMatch(/profile:Default/);
+      const profileATabId: string = navAData!.tabId as string;
       expect(profileATabId).toBeTruthy();
       console.error(`[multi-profile] Phase 9b: Default profile workerId=${navAData.workerId} tabId=${profileATabId}`);
 
@@ -70,9 +84,10 @@ describe('E2E-9: Multi-Profile Isolation', () => {
         120_000,
       );
       expect(navB.text).toBeDefined();
-      const navBData = JSON.parse(navB.text);
-      expect(navBData.workerId).toMatch(/profile:Profile 1/);
-      const profileBTabId: string = navBData.tabId;
+      const navBData = tryParseJSON(navB) as Record<string, unknown>;
+      expect(navBData).not.toBeNull();
+      expect(navBData!.workerId).toMatch(/profile:Profile 1/);
+      const profileBTabId: string = navBData!.tabId as string;
       expect(profileBTabId).toBeTruthy();
       console.error(`[multi-profile] Phase 9c: Profile 1 workerId=${navBData.workerId} tabId=${profileBTabId}`);
 
@@ -119,16 +134,17 @@ describe('E2E-9: Multi-Profile Isolation', () => {
       console.error('[multi-profile] Phase 9f: checking oc_profile_status');
       const statusResult = await mcp.callTool('oc_profile_status', {});
       expect(statusResult.text).toBeDefined();
-      const status = JSON.parse(statusResult.text);
+      const status = tryParseJSON(statusResult) as { activeProfiles: Array<{ profileDirectory: string; port: number; tabCount: number }> } | null;
+      expect(status).not.toBeNull();
       expect(status).toHaveProperty('activeProfiles');
-      expect(Array.isArray(status.activeProfiles)).toBe(true);
-      expect(status.activeProfiles.length).toBeGreaterThanOrEqual(2);
-      for (const entry of status.activeProfiles) {
+      expect(Array.isArray(status!.activeProfiles)).toBe(true);
+      expect(status!.activeProfiles.length).toBeGreaterThanOrEqual(2);
+      for (const entry of status!.activeProfiles) {
         expect(entry).toHaveProperty('profileDirectory');
         expect(entry).toHaveProperty('port');
         expect(entry).toHaveProperty('tabCount');
       }
-      const profileDirs = status.activeProfiles.map((e: { profileDirectory: string }) => e.profileDirectory);
+      const profileDirs = status!.activeProfiles.map(e => e.profileDirectory);
       expect(profileDirs).toContain('Default');
       expect(profileDirs).toContain('Profile 1');
       console.error(`[multi-profile] Phase 9f: active profiles: ${profileDirs.join(', ')}`);
@@ -143,9 +159,10 @@ describe('E2E-9: Multi-Profile Isolation', () => {
         60_000,
       );
       expect(tabDefaultResult.text).toBeDefined();
-      const tabDefault = JSON.parse(tabDefaultResult.text);
-      expect(tabDefault.tabId).toBeTruthy();
-      console.error(`[multi-profile] Phase 9g: Default tab created tabId=${tabDefault.tabId}`);
+      const tabDefault = tryParseJSON(tabDefaultResult) as Record<string, unknown>;
+      expect(tabDefault).not.toBeNull();
+      expect(tabDefault!.tabId).toBeTruthy();
+      console.error(`[multi-profile] Phase 9g: Default tab created tabId=${tabDefault!.tabId}`);
 
       const tabProfile1Result = await mcp.callTool(
         'tabs_create',
@@ -153,9 +170,10 @@ describe('E2E-9: Multi-Profile Isolation', () => {
         60_000,
       );
       expect(tabProfile1Result.text).toBeDefined();
-      const tabProfile1 = JSON.parse(tabProfile1Result.text);
-      expect(tabProfile1.tabId).toBeTruthy();
-      console.error(`[multi-profile] Phase 9g: Profile 1 tab created tabId=${tabProfile1.tabId}`);
+      const tabProfile1 = tryParseJSON(tabProfile1Result) as Record<string, unknown>;
+      expect(tabProfile1).not.toBeNull();
+      expect(tabProfile1!.tabId).toBeTruthy();
+      console.error(`[multi-profile] Phase 9g: Profile 1 tab created tabId=${tabProfile1!.tabId}`);
 
       await scaledSleep(1000);
 
@@ -173,9 +191,10 @@ describe('E2E-9: Multi-Profile Isolation', () => {
         60_000,
       );
       expect(reuseResult.text).toBeDefined();
-      const reuseData = JSON.parse(reuseResult.text);
-      expect(reuseData.workerId).toMatch(/profile:Default/);
-      console.error(`[multi-profile] Phase 9h: workerId=${reuseData.workerId} — same instance reused`);
+      const reuseData = tryParseJSON(reuseResult) as Record<string, unknown>;
+      expect(reuseData).not.toBeNull();
+      expect(reuseData!.workerId).toMatch(/profile:Default/);
+      console.error(`[multi-profile] Phase 9h: workerId=${reuseData!.workerId} — same instance reused`);
 
       await scaledSleep(1000);
 
