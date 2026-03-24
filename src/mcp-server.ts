@@ -26,7 +26,8 @@ import { getCDPClient } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS } from './config/defaults';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM } from './config/defaults';
+import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { logAuditEntry } from './security/audit-logger';
@@ -110,6 +111,7 @@ export class MCPServer {
   private clientDetected = false;
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
   private stopPromise: Promise<void> | null = null;
+  private rateLimiter: SessionRateLimiter | null = null;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
@@ -145,6 +147,13 @@ export class MCPServer {
     getTaskJournal().init().catch((err: unknown) => {
       console.error('[MCPServer] Task journal init failed:', err);
     });
+
+    // Initialize rate limiter if configured (0 = disabled)
+    const rateLimitRpm = parseInt(process.env.OPENCHROME_RATE_LIMIT_RPM || '', 10) || DEFAULT_RATE_LIMIT_RPM;
+    if (rateLimitRpm > 0) {
+      this.rateLimiter = new SessionRateLimiter(rateLimitRpm);
+      console.error(`[MCPServer] Rate limiter: ${rateLimitRpm} requests/min per session`);
+    }
   }
 
   /**
@@ -560,6 +569,23 @@ export class MCPServer {
     const toolTier = getToolTier(toolName);
     if (toolTier > this.exposedTier) {
       this.expandToolTier(toolTier);
+    }
+
+    // Rate limit check — reject before doing any work
+    if (this.rateLimiter) {
+      const rateResult = this.rateLimiter.check(sessionId);
+      if (!rateResult.allowed) {
+        console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Rate limit exceeded. Too many requests from this session. Please retry after ${rateResult.retryAfterSec} second(s). Current limit: ${process.env.OPENCHROME_RATE_LIMIT_RPM || DEFAULT_RATE_LIMIT_RPM} requests/minute.`,
+            },
+          ],
+          isError: true,
+        };
+      }
     }
 
     // Start activity tracking
