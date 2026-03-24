@@ -5,6 +5,7 @@
  */
 
 import * as http from 'http';
+import { getMetricsCollector } from '../metrics/collector';
 
 export interface HealthData {
   status: 'ok' | 'degraded' | 'error';
@@ -59,6 +60,27 @@ export class HealthEndpoint {
             res.writeHead(503, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ status: 'error', error: 'Internal health check failure' }));
           }
+        } else if (req.url === '/metrics' && req.method === 'GET') {
+          try {
+            // Update dynamic gauges before export
+            const data = this.provider();
+            const metrics = getMetricsCollector();
+            metrics.set('openchrome_heap_bytes', {}, data.memory.heapUsed);
+            if (data.tabs) {
+              metrics.set('openchrome_tabs_health', { status: 'healthy' }, data.tabs.healthy);
+              metrics.set('openchrome_tabs_health', { status: 'unhealthy' }, data.tabs.unhealthy);
+            }
+            if (data.chrome) {
+              metrics.set('openchrome_active_sessions', {}, 0); // Will be updated by MCPServer
+            }
+
+            res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+            res.end(metrics.export());
+          } catch (error) {
+            console.error('[HealthEndpoint] Metrics export error:', error);
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('# Error exporting metrics\n');
+          }
         } else {
           res.writeHead(404);
           res.end('Not Found');
@@ -76,7 +98,8 @@ export class HealthEndpoint {
       });
 
       this.server.listen(this.port, '127.0.0.1', () => {
-        console.error(`[HealthEndpoint] Health check available at http://127.0.0.1:${this.port}/health`);
+        console.error(`[HealthEndpoint] Health check: http://127.0.0.1:${this.port}/health`);
+        console.error(`[HealthEndpoint] Prometheus metrics: http://127.0.0.1:${this.port}/metrics`);
         resolve();
       });
 
