@@ -59,7 +59,7 @@ program
 program
   .command('serve')
   .description('Start the MCP server')
-  .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
+  .option('-p, --port <port>', 'Chrome remote debugging port', process.env.CHROME_PORT || '9222')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: false)')
   .option('--user-data-dir <dir>', 'Chrome user data directory (default: real Chrome profile on macOS)')
   .option('--profile-directory <name>', 'Chrome profile directory name (e.g., "Profile 1", "Default")')
@@ -232,7 +232,7 @@ program
       process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
     }
     if (useHttp) {
-      const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : 3100;
+      const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
       const transport = createTransport('http', { port: httpPort });
       server.start(transport);
       console.error(`[openchrome] HTTP transport enabled on port ${httpPort}`);
@@ -420,7 +420,7 @@ program
 program
   .command('check')
   .description('Check Chrome connection status')
-  .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
+  .option('-p, --port <port>', 'Chrome remote debugging port', process.env.CHROME_PORT || '9222')
   .action(async (options) => {
     const port = parseInt(options.port, 10);
 
@@ -465,7 +465,7 @@ program
 program
   .command('verify')
   .description('Verify performance optimizations are working')
-  .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
+  .option('-p, --port <port>', 'Chrome remote debugging port', process.env.CHROME_PORT || '9222')
   .action(async (options: { port: string }) => {
     const port = parseInt(options.port, 10);
 
