@@ -12,7 +12,7 @@ import { getMCPServer, setMCPServerOptions } from './mcp-server';
 import { registerAllTools } from './tools';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { ToolTier } from './config/tool-tiers';
-import { writePidFile } from './utils/pid-manager';
+import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
 import { getVersion } from './version';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
@@ -41,6 +41,7 @@ process.on('unhandledRejection', (reason) => {
 
 process.on('uncaughtException', (error) => {
   console.error('[openchrome] Uncaught exception:', error);
+  // Chrome cleanup happens in the process.on('exit') handler registered below
   process.exit(1);
 });
 
@@ -180,6 +181,33 @@ program
     // Write PID file for zombie process detection
     writePidFile(port);
 
+    // Clean up orphaned Chrome from previous crashed sessions
+    cleanOrphanedChromeProcesses([port, port + 1, port + 2, port + 3, port + 4]);
+
+    // Last-resort synchronous Chrome kill on ANY exit path
+    // (including uncaughtException, SIGKILL recovery, process.exit())
+    process.on('exit', () => {
+      try {
+        const launcher = getChromeLauncher();
+        const chromePid = launcher.getChromePid();
+        if (chromePid) {
+          try { process.kill(chromePid, 'SIGTERM'); } catch { /* ignore */ }
+        }
+      } catch { /* launcher may not be initialized */ }
+
+      // Also kill any pool Chrome instances
+      try {
+        const { getChromePool } = require('./chrome/pool');
+        const pool = getChromePool();
+        for (const [, instance] of pool.getInstances()) {
+          const pid = instance.launcher.getChromePid();
+          if (pid) {
+            try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+          }
+        }
+      } catch { /* pool may not be initialized */ }
+    });
+
     // Register signal handlers for graceful shutdown
     const shutdown = async (signal: string) => {
       console.error(`[openchrome] Received ${signal}, shutting down...`);
@@ -242,6 +270,7 @@ program
     });
     eventLoopMonitor.on('fatal', () => {
       console.error('[SelfHealing] FATAL: Event loop blocked beyond threshold, exiting...');
+      // Chrome cleanup happens in the synchronous process.on('exit') handler
       process.exit(1);
     });
     eventLoopMonitor.start();
