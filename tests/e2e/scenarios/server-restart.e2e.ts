@@ -101,10 +101,12 @@ describe('E2E-3: MCP Server Restart Recovery (#347)', () => {
     console.error('[server-restart] Step 1: Navigating to establish initial connection');
     const navResult = await mcp.callTool('navigate', { url: testUrl });
     expect(navResult.text).toBeDefined();
+    const navData = JSON.parse(navResult.content.find((c: { text?: string }) => c.text)?.text || navResult.text);
+    const tabId = navData.tabId;
     console.error('[server-restart] Step 1 OK: Initial connection established');
 
     // Step 2: Verify page content before restart
-    const beforeResult = await mcp.callTool('read_page', {});
+    const beforeResult = await mcp.callTool('read_page', { tabId });
     expect(beforeResult.text).toContain('E2E Test');
     console.error('[server-restart] Step 2 OK: Pre-restart page content verified');
 
@@ -123,11 +125,13 @@ describe('E2E-3: MCP Server Restart Recovery (#347)', () => {
     console.error('[server-restart] Step 5: Verifying Chrome reconnection post-restart');
     const afterResult = await mcp.callTool('navigate', { url: testUrl }, 30_000);
     expect(afterResult.text).toBeDefined();
+    const afterData = JSON.parse(afterResult.content.find((c: { text?: string }) => c.text)?.text || afterResult.text);
+    const afterTabId = afterData.tabId;
     console.error('[server-restart] Step 5 OK: Post-restart navigation succeeded');
 
     // Step 6: Verify functional tool call on reconnected Chrome
     console.error('[server-restart] Step 6: Verifying read_page works on reconnected Chrome');
-    const readResult = await mcp.callTool('read_page', {});
+    const readResult = await mcp.callTool('read_page', { tabId: afterTabId });
     expect(readResult.text).toBeDefined();
     expect(readResult.text.length).toBeGreaterThan(0);
     console.error('[server-restart] Step 6 OK: read_page works post-restart');

@@ -35,12 +35,18 @@ describe('E2E-3: GC Resilience', () => {
     expect(navResult.text).toBeDefined();
     console.error('[connection-health] CDP connection established via navigate');
 
+    let currentTabId: string | undefined;
+    try {
+      const navData = JSON.parse(navResult.content?.find((c: { text?: string }) => c.text)?.text || navResult.text || '{}');
+      currentTabId = navData.tabId;
+    } catch { /* fall through without tabId */ }
+
     // Step 2: Verify basic connectivity via multiple tool calls
     const statusBefore = await mcp.callTool('oc_profile_status', {});
     expect(statusBefore.text).toBeDefined();
     console.error('[connection-health] oc_profile_status OK (pre-burst)');
 
-    const pageBefore = await mcp.callTool('read_page', {});
+    const pageBefore = await mcp.callTool('read_page', currentTabId ? { tabId: currentTabId } : {});
     expect(pageBefore.text).toBeDefined();
     expect(pageBefore.text.length).toBeGreaterThan(0);
     console.error('[connection-health] read_page OK (pre-burst)');
@@ -53,13 +59,17 @@ describe('E2E-3: GC Resilience', () => {
       try {
         if (i % 4 === 0) {
           // Re-navigate periodically to cycle CDP sessions
-          await mcp.callTool('navigate', { url: testUrl });
+          const burstNav = await mcp.callTool('navigate', { url: testUrl });
+          try {
+            const burstNavData = JSON.parse(burstNav.content?.find((c: { text?: string }) => c.text)?.text || burstNav.text || '{}');
+            if (burstNavData.tabId) currentTabId = burstNavData.tabId;
+          } catch { /* keep existing tabId */ }
         } else if (i % 4 === 1) {
-          await mcp.callTool('read_page', {});
+          await mcp.callTool('read_page', currentTabId ? { tabId: currentTabId } : {});
         } else if (i % 4 === 2) {
           await mcp.callTool('oc_profile_status', {});
         } else {
-          await mcp.callTool('read_page', {});
+          await mcp.callTool('read_page', currentTabId ? { tabId: currentTabId } : {});
         }
         console.error(`[connection-health] burst call ${i + 1}/${burstCount} OK`);
       } catch (err) {
@@ -78,7 +88,7 @@ describe('E2E-3: GC Resilience', () => {
     console.error('[connection-health] oc_profile_status OK (post-burst)');
 
     // Step 5: Verify full read still works after burst
-    const pageAfter = await mcp.callTool('read_page', {});
+    const pageAfter = await mcp.callTool('read_page', currentTabId ? { tabId: currentTabId } : {});
     expect(pageAfter.text).toBeDefined();
     expect(pageAfter.text.length).toBeGreaterThan(0);
     console.error('[connection-health] read_page OK (post-burst)');

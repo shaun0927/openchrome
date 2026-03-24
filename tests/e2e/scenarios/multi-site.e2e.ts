@@ -69,7 +69,7 @@ describe('E2E-7: Multi-Site', () => {
     // Issue a live command — this should exit idle mode via recordCommandActivity()
     // and respond within 30 s even if a reconnect is needed.
     const t1 = Date.now();
-    const postIdlePage = await mcp.callTool('read_page', {}, 30_000);
+    const postIdlePage = await mcp.callTool('read_page', tabId ? { tabId } : {}, 30_000);
     const responseMs = Date.now() - t1;
     expect(postIdlePage.text).toBeDefined();
     expect(postIdlePage.text.length).toBeGreaterThan(0);
@@ -91,10 +91,16 @@ describe('E2E-7: Multi-Site', () => {
 
     for (const site of sites) {
       try {
-        await mcp.callTool('navigate', { url: site.url });
+        const siteNavResult = await mcp.callTool('navigate', { url: site.url });
         await scaledSleep(1000);
 
-        const page = await mcp.callTool('read_page', {});
+        let siteTabId: string | undefined;
+        try {
+          const siteNavData = JSON.parse(siteNavResult.content?.find((c: { text?: string }) => c.text)?.text || siteNavResult.text || '{}');
+          siteTabId = siteNavData.tabId;
+        } catch { /* fall through without tabId */ }
+
+        const page = await mcp.callTool('read_page', siteTabId ? { tabId: siteTabId } : {});
         expect(page.text).toBeDefined();
         expect(page.text.length).toBeGreaterThan(0);
 
@@ -106,7 +112,7 @@ describe('E2E-7: Multi-Site', () => {
         }
         await scaledSleep(500);
 
-        const afterPage = await mcp.callTool('read_page', {});
+        const afterPage = await mcp.callTool('read_page', siteTabId ? { tabId: siteTabId } : {});
         expect(afterPage.text).toBeDefined();
 
         results.push({ site: site.url, success: true });

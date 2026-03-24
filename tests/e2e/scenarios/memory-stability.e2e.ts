@@ -45,8 +45,13 @@ describe('E2E-6: Memory Stability', () => {
     while (Date.now() < endTime) {
       const site = sites[cycle % sites.length];
       try {
-        await mcp.callTool('navigate', { url: site });
-        await mcp.callTool('read_page', {});
+        const navRes = await mcp.callTool('navigate', { url: site });
+        let loopTabId: string | undefined;
+        try {
+          const navResData = JSON.parse(navRes.content?.find((c: { text?: string }) => c.text)?.text || navRes.text || '{}');
+          loopTabId = navResData.tabId;
+        } catch { /* fall through without tabId */ }
+        await mcp.callTool('read_page', loopTabId ? { tabId: loopTabId } : {});
       } catch (err) {
         console.error(`[memory-stability] Cycle ${cycle} error: ${(err as Error).message}`);
       }

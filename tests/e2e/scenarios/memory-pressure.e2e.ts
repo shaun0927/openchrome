@@ -78,8 +78,13 @@ describe('E2E-6: Memory Pressure (#347)', () => {
       const url = urls[i % urls.length];
       const start = Date.now();
       try {
-        await mcp.callTool('navigate', { url });
-        await mcp.callTool('read_page', {});
+        const warmupNav = await mcp.callTool('navigate', { url });
+        let warmupTabId: string | undefined;
+        try {
+          const warmupNavData = JSON.parse(warmupNav.content?.find((c: { text?: string }) => c.text)?.text || warmupNav.text || '{}');
+          warmupTabId = warmupNavData.tabId;
+        } catch { /* fall through without tabId */ }
+        await mcp.callTool('read_page', warmupTabId ? { tabId: warmupTabId } : {});
         warmupDurations.push(Date.now() - start);
       } catch (err) {
         console.error(`[memory-pressure] Warm-up interaction ${i} error: ${(err as Error).message}`);
@@ -102,8 +107,13 @@ describe('E2E-6: Memory Pressure (#347)', () => {
       const url = urls[i % urls.length];
       const start = Date.now();
       try {
-        await mcp.callTool('navigate', { url });
-        await mcp.callTool('read_page', {});
+        const mainNav = await mcp.callTool('navigate', { url });
+        let mainTabId: string | undefined;
+        try {
+          const mainNavData = JSON.parse(mainNav.content?.find((c: { text?: string }) => c.text)?.text || mainNav.text || '{}');
+          mainTabId = mainNavData.tabId;
+        } catch { /* fall through without tabId */ }
+        await mcp.callTool('read_page', mainTabId ? { tabId: mainTabId } : {});
         successCount++;
       } catch (err) {
         errorCount++;

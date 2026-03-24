@@ -22,8 +22,9 @@ import { sleep } from '../harness/time-scale';
 describe('E2E-4: Event Loop Block Recovery (#347)', () => {
   afterEach(() => {
     // Restore Date.now in case a test patched it
-    if ((Date as unknown as { _original?: typeof Date.now }).now !== Date.now) {
-      Date.now = (Date as unknown as { _original: typeof Date.now })._original;
+    const dateAny = Date as unknown as Record<string, unknown>;
+    if (dateAny._original) {
+      Date.now = dateAny._original as typeof Date.now;
     }
   });
 
