@@ -74,12 +74,19 @@ export class ChromeProcessWatchdog extends EventEmitter {
     if (this.launcher.intentionalStop) return; // Chrome was stopped intentionally — do not relaunch
 
     const instance = this.launcher.getInstance();
-    if (!instance) return; // Chrome not launched by us — nothing to watch
+    let pid: number | undefined;
 
-    const pid = instance.process?.pid;
+    if (instance) {
+      pid = instance.process?.pid;
+      if (pid) this.lastKnownPid = pid;
+    } else if (this.lastKnownPid) {
+      // Instance was invalidated by CDPClient reconnection loop, but we
+      // still know the last Chrome PID — check if it's alive so we can
+      // trigger a relaunch when it's not.
+      pid = this.lastKnownPid;
+    }
+
     if (!pid) return; // no PID tracked
-
-    this.lastKnownPid = pid;
 
     try {
       process.kill(pid, 0); // signal 0 = check existence only

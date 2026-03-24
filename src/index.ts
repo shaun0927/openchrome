@@ -180,6 +180,13 @@ program
       console.error('[openchrome] Tier 2 tools exposed from startup');
     }
 
+    // Set infinite reconnection for HTTP daemon mode BEFORE creating CDPClient singleton.
+    // getMCPServer() → SessionManager → getCDPClient() reads this env var at construction.
+    const useHttp = options.http !== undefined && options.http !== false;
+    if (useHttp && !process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) {
+      process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
+    }
+
     const server = getMCPServer();
     registerAllTools(server);
 
@@ -226,11 +233,7 @@ program
     if (process.platform === 'win32') {
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
-    // Determine transport mode
-    const useHttp = options.http !== undefined && options.http !== false;
-    if (useHttp && !process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) {
-      process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
-    }
+    // Start transport (useHttp was determined above, before getMCPServer)
     if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : 3100;
       const transport = createTransport('http', { port: httpPort });
