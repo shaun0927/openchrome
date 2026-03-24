@@ -1,8 +1,7 @@
 /**
- * MCP Server - Implements MCP protocol over stdio
+ * MCP Server - Implements MCP protocol with pluggable transports (stdio, HTTP)
  */
 
-import * as readline from 'readline';
 import * as path from 'path';
 import {
   MCPRequest,
@@ -14,6 +13,7 @@ import {
   ToolRegistry,
   MCPErrorCodes,
 } from './types/mcp';
+import { MCPTransport, createTransport } from './transports/index';
 import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
@@ -97,7 +97,7 @@ export class MCPServer {
   private resources: Map<string, MCPResourceDefinition> = new Map();
   private manifestVersion: number = 1;
   private sessionManager: SessionManager;
-  private rl: readline.Interface | null = null;
+  private transport: MCPTransport | null = null;
   private dashboard: Dashboard | null = null;
   private activityTracker: ActivityTracker | null = null;
   private operationController: OperationController | null = null;
@@ -227,10 +227,17 @@ export class MCPServer {
   }
 
   /**
-   * Start the stdio server
+   * Start the MCP server with the given transport.
+   * If no transport is provided, defaults to stdio (backward compatible).
    */
-  start(): void {
-    console.error('[MCPServer] Starting stdio server...');
+  start(transport?: MCPTransport): void {
+    if (transport) {
+      this.transport = transport;
+    } else {
+      this.transport = createTransport('stdio');
+    }
+
+    console.error('[MCPServer] Starting server...');
 
     // Start dashboard if enabled
     if (this.dashboard) {
@@ -242,32 +249,8 @@ export class MCPServer {
       }
     }
 
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      // Do NOT set output to process.stdout — stdout is the MCP JSON-RPC channel.
-      // Setting it risks protocol corruption if readline writes internally (prompts, echoes).
-      terminal: false,
-    });
-
-    this.rl.on('line', (line) => {
-      if (!line.trim()) return;
-
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(line) as Record<string, unknown>;
-      } catch (error) {
-        const errorResponse: MCPResponse = {
-          jsonrpc: '2.0',
-          id: 0,
-          error: {
-            code: MCPErrorCodes.PARSE_ERROR,
-            message: error instanceof Error ? error.message : 'Parse error',
-          },
-        };
-        this.sendResponse(errorResponse);
-        return;
-      }
-
+    // Wire the transport message handler to MCPServer protocol logic
+    this.transport.onMessage(async (parsed: Record<string, unknown>) => {
       // Validate JSON-RPC 2.0 envelope
       if (
         typeof parsed !== 'object' ||
@@ -275,16 +258,14 @@ export class MCPServer {
         parsed.jsonrpc !== '2.0' ||
         typeof parsed.method !== 'string'
       ) {
-        const errorResponse: MCPResponse = {
-          jsonrpc: '2.0',
+        return {
+          jsonrpc: '2.0' as const,
           id: (parsed.id as string | number) ?? 0,
           error: {
             code: MCPErrorCodes.INVALID_REQUEST,
             message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
           },
         };
-        this.sendResponse(errorResponse);
-        return;
       }
 
       // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
@@ -294,45 +275,40 @@ export class MCPServer {
           console.error(`[MCPServer] Received notification: ${method}`);
         }
         // All notifications are silently ignored (no response sent)
-        return;
+        return null;
       }
 
       const request = parsed as unknown as MCPRequest;
 
-      // Fire-and-forget: process requests concurrently
-      this.handleRequest(request)
-        .then((response) => this.sendResponse(response))
-        .catch((error) => {
-          const errorResponse: MCPResponse = {
-            jsonrpc: '2.0',
-            id: request.id,
-            error: {
-              code: MCPErrorCodes.INTERNAL_ERROR,
-              message: error instanceof Error ? error.message : 'Internal error',
-            },
-          };
-          this.sendResponse(errorResponse);
-        });
+      try {
+        return await this.handleRequest(request);
+      } catch (error) {
+        return {
+          jsonrpc: '2.0' as const,
+          id: request.id,
+          error: {
+            code: MCPErrorCodes.INTERNAL_ERROR,
+            message: error instanceof Error ? error.message : 'Internal error',
+          },
+        };
+      }
     });
 
-    this.rl.on('close', () => {
-      console.error('[MCPServer] stdin closed, shutting down...');
-      this.stop().then(() => {
-        process.exit(0);
-      }).catch((err) => {
-        console.error('[MCPServer] Shutdown error:', err);
-        process.exit(1);
-      });
-    });
+    this.transport.start();
 
     console.error('[MCPServer] Ready, waiting for requests...');
   }
 
   /**
-   * Send response to stdout
+   * Send response via the active transport
    */
   private sendResponse(response: MCPResponse): void {
-    console.log(JSON.stringify(response));
+    if (this.transport) {
+      this.transport.send(response);
+    } else {
+      // Fallback: should not happen after start(), but safe guard
+      console.log(JSON.stringify(response));
+    }
   }
 
   /**
@@ -1132,9 +1108,9 @@ export class MCPServer {
       this.dashboard.stop();
     }
 
-    if (this.rl) {
-      this.rl.close();
-      this.rl = null;
+    if (this.transport) {
+      await this.transport.close();
+      this.transport = null;
     }
 
     // Await cleanup with safety timeout to prevent hanging forever
