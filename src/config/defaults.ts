@@ -242,3 +242,29 @@ export const DEFAULT_RATE_LIMIT_RPM = 120;
  *  Set to 0 to disable. Override with OPENCHROME_EVENT_LOOP_FATAL_MS env var.
  *  NOTE: This only takes effect when no explicit env var is set. */
 export const DEFAULT_EVENT_LOOP_FATAL_MS = 30000;
+
+// ─── Disk Monitoring (Phase 7) ────────────────────────────────────────
+
+/** Disk monitor check interval in milliseconds. Default: 5 minutes.
+ *  Override with OPENCHROME_DISK_CHECK_INTERVAL_MS environment variable. */
+export const DEFAULT_DISK_CHECK_INTERVAL_MS = 300000;
+
+/** Disk usage warning threshold in bytes. Default: 500MB.
+ *  Logs a warning when ~/.openchrome/ exceeds this size. */
+export const DEFAULT_DISK_WARN_THRESHOLD_BYTES = 500 * 1024 * 1024;
+
+/** Disk usage aggressive cleanup threshold in bytes. Default: 1GB.
+ *  Triggers auto-pruning when exceeded. */
+export const DEFAULT_DISK_CLEANUP_THRESHOLD_BYTES = 1024 * 1024 * 1024;
+
+/** Journal file retention in days. Default: 7.
+ *  Files in ~/.openchrome/journal/ older than this are deleted. */
+export const DEFAULT_JOURNAL_RETENTION_DAYS = 7;
+
+/** Snapshot retention in days. Default: 30.
+ *  Files in ~/.openchrome/snapshots/ older than this are deleted. */
+export const DEFAULT_SNAPSHOT_RETENTION_DAYS = 30;
+
+/** Maximum number of checkpoints to keep. Default: 10.
+ *  Oldest checkpoints beyond this count are deleted. */
+export const DEFAULT_MAX_CHECKPOINTS = 10;
