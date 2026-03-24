@@ -1,0 +1,47 @@
+# OpenChrome MCP Server — systemd service unit
+# Install: sudo cp deploy/systemd/openchrome.service /etc/systemd/system/
+# Enable:  sudo systemctl enable --now openchrome
+# Logs:    journalctl -u openchrome -f
+
+[Unit]
+Description=OpenChrome MCP Browser Automation Server
+Documentation=https://github.com/shaun0927/openchrome
+After=network.target
+
+[Service]
+Type=simple
+User=openchrome
+Group=openchrome
+WorkingDirectory=/opt/openchrome
+
+# Environment configuration (override defaults here)
+EnvironmentFile=-/etc/openchrome/env
+
+# Start the HTTP daemon
+ExecStart=/usr/bin/node dist/index.js serve --http 3100 --auto-launch --server-mode
+
+# Wait for health endpoint before reporting ready
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 30); do curl -sf http://127.0.0.1:9090/health > /dev/null && exit 0; sleep 1; done; exit 1'
+
+# Restart policy
+Restart=always
+RestartSec=3
+
+# Resource limits
+MemoryMax=512M
+TasksMax=100
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/openchrome/.openchrome
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openchrome
+
+[Install]
+WantedBy=multi-user.target
