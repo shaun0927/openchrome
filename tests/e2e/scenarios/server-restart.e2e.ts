@@ -13,9 +13,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { MCPClient } from '../harness/mcp-client';
+import { MCPClient, MCPToolResult } from '../harness/mcp-client';
 import { sleep } from '../harness/time-scale';
 import { SessionStatePersistence } from '../../../src/session-state-persistence';
+
+/** Try to parse JSON from individual content items (handles multi-block MCP responses) */
+function tryParseJSON(result: MCPToolResult): unknown | null {
+  for (const item of result.content) {
+    if (item.text) {
+      try { return JSON.parse(item.text); } catch { /* try next item */ }
+    }
+  }
+  try { return JSON.parse(result.text); } catch { return null; }
+}
 
 function getFixturePort(): number {
   const stateFile = path.join(process.cwd(), '.e2e-state.json');
@@ -27,7 +37,7 @@ describe('E2E-3: MCP Server Restart Recovery (#347)', () => {
   let mcp: MCPClient;
 
   beforeAll(async () => {
-    mcp = new MCPClient({ timeoutMs: 60_000 });
+    mcp = new MCPClient({ timeoutMs: 60_000, args: ['--auto-launch'] });
     await mcp.start();
   }, 90_000);
 
@@ -101,8 +111,9 @@ describe('E2E-3: MCP Server Restart Recovery (#347)', () => {
     console.error('[server-restart] Step 1: Navigating to establish initial connection');
     const navResult = await mcp.callTool('navigate', { url: testUrl });
     expect(navResult.text).toBeDefined();
-    const navData = JSON.parse(navResult.content.find((c: { text?: string }) => c.text)?.text || navResult.text);
-    const tabId = navData.tabId;
+    const navData = tryParseJSON(navResult) as Record<string, unknown> | null;
+    expect(navData).not.toBeNull();
+    const tabId = navData!.tabId as string;
     console.error('[server-restart] Step 1 OK: Initial connection established');
 
     // Step 2: Verify page content before restart
@@ -125,8 +136,9 @@ describe('E2E-3: MCP Server Restart Recovery (#347)', () => {
     console.error('[server-restart] Step 5: Verifying Chrome reconnection post-restart');
     const afterResult = await mcp.callTool('navigate', { url: testUrl }, 30_000);
     expect(afterResult.text).toBeDefined();
-    const afterData = JSON.parse(afterResult.content.find((c: { text?: string }) => c.text)?.text || afterResult.text);
-    const afterTabId = afterData.tabId;
+    const afterData = tryParseJSON(afterResult) as Record<string, unknown> | null;
+    expect(afterData).not.toBeNull();
+    const afterTabId = afterData!.tabId as string;
     console.error('[server-restart] Step 5 OK: Post-restart navigation succeeded');
 
     // Step 6: Verify functional tool call on reconnected Chrome

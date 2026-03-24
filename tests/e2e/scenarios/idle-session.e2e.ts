@@ -37,7 +37,7 @@ describe('E2E-7: Idle Session Survival (#347)', () => {
   let mcp: MCPClient;
 
   beforeAll(async () => {
-    mcp = new MCPClient({ timeoutMs: 60_000 });
+    mcp = new MCPClient({ timeoutMs: 60_000, args: ['--auto-launch'] });
     await mcp.start();
   }, 90_000);
 
