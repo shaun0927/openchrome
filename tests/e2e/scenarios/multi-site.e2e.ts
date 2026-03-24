@@ -10,7 +10,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { MCPClient } from '../harness/mcp-client';
+import { MCPClient, MCPToolResult } from '../harness/mcp-client';
 import { scaledSleep } from '../harness/time-scale';
 
 function getFixturePort(): number {
@@ -19,13 +19,22 @@ function getFixturePort(): number {
   return state.port;
 }
 
+/** Try to parse JSON from individual content items (handles multi-block MCP responses) */
+function tryParseJSON(result: MCPToolResult): unknown | null {
+  for (const item of result.content) {
+    if (item.text) {
+      try { return JSON.parse(item.text); } catch { /* try next item */ }
+    }
+  }
+  try { return JSON.parse(result.text); } catch { return null; }
+}
+
 describe('E2E-7: Multi-Site', () => {
   let mcp: MCPClient;
 
   beforeAll(async () => {
     mcp = new MCPClient({
       timeoutMs: 60_000,
-      args: ['--auto-launch'],
       env: { OPENCHROME_IDLE_TRANSITION_MS: '5000' },
     });
     await mcp.start();
@@ -45,8 +54,8 @@ describe('E2E-7: Multi-Site', () => {
     console.error('[idle-survival] Phase 1: navigated to site-a');
 
     // Extract tabId for later verification
-    const tabIdMatch = navResult.text.match(/"tabId"\s*:\s*"([A-F0-9]{32})"/);
-    const tabId = tabIdMatch?.[1] || '';
+    const navData = tryParseJSON(navResult) as Record<string, unknown> | null;
+    const tabId = (navData?.tabId as string | undefined) ?? '';
     console.error(`[idle-survival] tabId: ${tabId || '(none)'}`);
 
     // ── Phase 2: Record initial state ───────────────────────────────────────

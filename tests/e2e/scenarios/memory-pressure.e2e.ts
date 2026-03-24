@@ -35,7 +35,7 @@ describe('E2E-6: Memory Pressure (#347)', () => {
   let mcp: MCPClient;
 
   beforeAll(async () => {
-    mcp = new MCPClient({ timeoutMs: 60_000, args: ['--auto-launch'] });
+    mcp = new MCPClient({ timeoutMs: 60_000 });
     await mcp.start();
   }, 90_000);
 
@@ -125,7 +125,7 @@ describe('E2E-6: Memory Pressure (#347)', () => {
       if ((i + 1) % 50 === 0) {
         sampler.takeSample();
         const delta = sampler.getDelta();
-        const heapDeltaMB = delta.heapUsedDelta / (1024 / 1024);
+        const heapDeltaMB = delta.heapUsedDelta / (1024 * 1024);
         const currentP95 = p95(mainDurations);
         console.error(
           `[memory-pressure] Interaction ${i + 1}/${TARGET_INTERACTIONS}: ` +

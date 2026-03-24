@@ -30,7 +30,6 @@ describe('E2E-10: Multi-Profile Error Handling', () => {
   beforeAll(async () => {
     mcp = new MCPClient({
       timeoutMs: 60_000,
-      args: ['--auto-launch'],
     });
     await mcp.start();
   }, 60_000);

@@ -27,7 +27,7 @@ describe('E2E-2: Kill Recovery', () => {
   beforeAll(async () => {
     mcp = new MCPClient({
       timeoutMs: 60_000,
-      args: ['--auto-launch', '--port', String(CHROME_PORT)],
+      args: ['--port', String(CHROME_PORT)],
     });
     await mcp.start();
     chrome = new ChromeController();

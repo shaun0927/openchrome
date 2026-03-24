@@ -25,7 +25,7 @@ describe('E2E-5: Tab Isolation', () => {
     await mcp.stop();
   }, 30_000);
 
-  test('renderer crash in one tab does not affect others', async () => {
+  test('JS error in one tab does not affect others', async () => {
     const port = getFixturePort();
     const url0 = `http://localhost:${port}/`;
     const url1 = `http://localhost:${port}/site-a`;

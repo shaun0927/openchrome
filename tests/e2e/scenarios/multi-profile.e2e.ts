@@ -30,7 +30,6 @@ describe('E2E-9: Multi-Profile Isolation', () => {
   beforeAll(async () => {
     mcp = new MCPClient({
       timeoutMs: 60_000,
-      args: ['--auto-launch'],
     });
     await mcp.start();
   }, 60_000);
