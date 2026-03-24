@@ -197,6 +197,7 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerGauge('openchrome_heap_bytes', 'Node.js heap usage in bytes');
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');
     instance.registerGauge('openchrome_tabs_health', 'Tab health status count');
+    instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
   }
   return instance;
 }

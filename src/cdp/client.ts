@@ -27,6 +27,7 @@ import {
   DEFAULT_RECONNECT_DELAY_MS,
 } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
+import { getMetricsCollector } from '../metrics/collector';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -474,6 +475,7 @@ export class CDPClient {
         this.reconnectingAttempt = 0;
         this.reconnectNextRetryAt = 0;
         this.reconnectCount++;
+        try { getMetricsCollector().inc('openchrome_reconnect_total'); } catch { /* best-effort */ }
         this.setHeartbeatMode('recovery');
         this.emitConnectionEvent({
           type: 'reconnected',

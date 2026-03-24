@@ -577,6 +577,7 @@ export class MCPServer {
       const rateResult = this.rateLimiter.check(sessionId);
       if (!rateResult.allowed) {
         console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
+        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', { tool: toolName }); } catch { /* best-effort */ }
         return {
           content: [
             {

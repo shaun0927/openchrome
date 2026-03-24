@@ -349,6 +349,7 @@ program
         chrome: chromeData,
         tabs: { total: tabHealth.size, healthy: healthyTabs, unhealthy: unhealthyTabs },
         disk: diskData,
+        sessions: { active: sessionManager?.sessionCount ?? 0 },
       };
       return data;
     }, healthPort);
