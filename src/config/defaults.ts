@@ -124,9 +124,11 @@ export const DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP = Infinity;
 /** Heartbeat active ping timeout in milliseconds.
  *  Sends Browser.getVersion to detect half-open WebSocket connections
  *  (e.g., after macOS sleep/wake) that browser.isConnected() misses.
- *  Set higher than heartbeat interval (5s) to avoid false-positive disconnects
- *  when Chrome is under heavy CPU load (GC pauses, complex JS execution). */
-export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 15000;
+ *  5s is 50x longer than normal Chrome response (<100ms) and handles
+ *  heavy CPU load (GC pauses ~1-2s). The 2-strike policy in checkConnection()
+ *  provides additional false-positive protection. Lower values enable faster
+ *  detection of frozen/network-blocked Chrome (#408). */
+export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 5000;
 
 /** Connection verification staleness threshold in milliseconds.
  *  If the connection hasn't been verified (by heartbeat or probe) within this window,
