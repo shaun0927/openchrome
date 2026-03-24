@@ -431,11 +431,17 @@ export class CDPClient {
     this.inFlightCookieScans.clear();
     this.lastVerifiedAt = 0;
 
-    // Remove old browser listeners before nulling reference
+    // Remove listeners first (prevent re-entry), then force-close the WebSocket
+    // to immediately reject all in-flight CDP operations.
     if (this.browser) {
       this.browser.removeAllListeners('disconnected');
       this.browser.removeAllListeners('targetdestroyed');
       this.browser.removeAllListeners('targetcreated');
+      try {
+        this.browser.disconnect();
+      } catch {
+        // Ignore — browser may already be disconnected
+      }
     }
     this.browser = null;
 
