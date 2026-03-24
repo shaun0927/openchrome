@@ -45,7 +45,7 @@ export class MCPClient {
     }
 
     return new Promise((resolve, reject) => {
-      this.process = spawn('node', [serverPath, 'serve', ...this.extraArgs], {
+      this.process = spawn('node', [serverPath, 'serve', '--auto-launch', ...this.extraArgs], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ...this.extraEnv },
       });

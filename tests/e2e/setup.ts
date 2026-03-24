@@ -115,7 +115,7 @@ export default async function globalSetup(): Promise<void> {
     throw new Error(`MCP server not built. Run: npm run build\n  Expected: ${serverPath}`);
   }
 
-  mcpProcess = spawn('node', [serverPath, 'serve'], {
+  mcpProcess = spawn('node', [serverPath, 'serve', '--auto-launch'], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env },
   });

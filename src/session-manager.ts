@@ -920,7 +920,7 @@ export class SessionManager {
    * @param sessionId  Session to register the new target under
    * @param url        URL to navigate to
    * @param workerId   Optional worker ID (uses default worker if omitted)
-   * @param settleMs   How long to wait before attaching CDP (default 5000, range 1000-30000)
+   * @param settleMs   How long to wait before attaching CDP (default 8000, range 1000-30000)
    * @returns          Registered targetId, Page, and workerId
    */
   async createTargetStealth(
