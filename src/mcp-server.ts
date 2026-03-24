@@ -589,6 +589,28 @@ export class MCPServer {
       }
     }
 
+    // Reconnection gate — reject immediately if Chrome is reconnecting
+    try {
+      const cdpClient = getCDPClient();
+      if (cdpClient.isReconnecting()) {
+        const retryMs = cdpClient.estimatedRetryMs();
+        const retrySec = Math.ceil(retryMs / 1000);
+        console.error(`[MCPServer] Rejecting tool call '${toolName}' — Chrome is reconnecting (retry in ~${retrySec}s)`);
+        try { getMetricsCollector().inc('openchrome_tool_calls_total', { tool: toolName, status: 'reconnecting' }); } catch { /* best-effort */ }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Chrome is currently reconnecting after a disconnection. Please retry in approximately ${retrySec} second(s). The server will automatically reconnect and resume normal operation.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch {
+      // CDPClient may not be initialized — proceed with normal flow
+    }
+
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
     const toolStartTime = Date.now();
