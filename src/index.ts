@@ -33,6 +33,7 @@ import {
   DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS,
   DEFAULT_HEALTH_ENDPOINT_PORT,
   DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS,
+  DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP,
 } from './config/defaults';
 
 // Prevent silent crashes from unhandled promise rejections in background tasks
@@ -197,11 +198,15 @@ program
     }
     // Determine transport mode
     const useHttp = options.http !== undefined && options.http !== false;
+    if (useHttp && !process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) {
+      process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
+    }
     if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : 3100;
       const transport = createTransport('http', { port: httpPort });
       server.start(transport);
       console.error(`[openchrome] HTTP transport enabled on port ${httpPort}`);
+      console.error(`[openchrome] Infinite reconnection: enabled (daemon mode)`);
     } else {
       server.start();
     }
@@ -277,6 +282,9 @@ program
         chromeData = {
           connected: cdpClient.getConnectionState() === 'connected',
           reconnectCount: metrics.reconnectCount,
+          reconnecting: metrics.reconnecting,
+          reconnectAttempt: metrics.reconnectAttempt,
+          nextRetryInMs: metrics.reconnectNextRetryInMs > 0 ? metrics.reconnectNextRetryInMs : undefined,
         };
       } catch {
         // CDP client may not be initialized yet

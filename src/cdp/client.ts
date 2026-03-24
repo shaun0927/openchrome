@@ -67,6 +67,10 @@ function parseEnvInt(name: string, fallback: number): number {
     console.error(`[CDPClient] Invalid value for ${name}="${raw}", using default ${fallback}`);
     return fallback;
   }
+  // Special case: 0 means Infinity for max-attempts (infinite reconnection)
+  if (name === 'OPENCHROME_MAX_RECONNECT_ATTEMPTS' && parsed === 0) {
+    return Infinity;
+  }
   return parsed;
 }
 
@@ -106,6 +110,11 @@ export class CDPClient {
   private static readonly MAX_PING_SAMPLES = 60; // ~5 min at 5s interval
 
   private static readonly COOKIE_CACHE_TTL = 300000; // 5 minutes
+
+  // Reconnection progress (exposed via getConnectionMetrics)
+  private reconnecting = false;
+  private reconnectingAttempt = 0;
+  private reconnectNextRetryAt = 0;
 
   constructor(options: CDPClientOptions = {}) {
     const globalConfig = getGlobalConfig();
@@ -309,6 +318,9 @@ export class CDPClient {
     heartbeatMode: string;
     consecutiveSuccesses: number;
     lastVerifiedAt: number;
+    reconnecting: boolean;
+    reconnectAttempt: number;
+    reconnectNextRetryInMs: number;
   } {
     const avgLatency = this.pingLatencies.length > 0
       ? Math.round(this.pingLatencies.reduce((a, b) => a + b, 0) / this.pingLatencies.length)
@@ -321,6 +333,11 @@ export class CDPClient {
       heartbeatMode: this.heartbeatMode,
       consecutiveSuccesses: this.consecutiveHeartbeatSuccesses,
       lastVerifiedAt: this.lastVerifiedAt,
+      reconnecting: this.reconnecting,
+      reconnectAttempt: this.reconnectingAttempt,
+      reconnectNextRetryInMs: this.reconnectNextRetryAt > 0
+        ? Math.max(0, this.reconnectNextRetryAt - Date.now())
+        : 0,
     };
   }
 
@@ -396,6 +413,7 @@ export class CDPClient {
 
     this.reconnectAttempts = 0; // Reset counter on each new disconnect event
     this.connectionState = 'reconnecting';
+    this.reconnecting = true;
     this.emitConnectionEvent({
       type: 'disconnected',
       timestamp: Date.now(),
@@ -425,9 +443,11 @@ export class CDPClient {
     // If Chrome was closed by the user, we should stay disconnected and only
     // re-launch when the next tool call arrives (lazy launch). This prevents
     // the "Chrome keeps reopening" loop reported in issue #159.
-    while (this.reconnectAttempts < this.maxReconnectAttempts) {
+    while (this.maxReconnectAttempts === Infinity || this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
-      console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
+      this.reconnectingAttempt = this.reconnectAttempts;
+      const maxLabel = this.maxReconnectAttempts === Infinity ? '∞' : String(this.maxReconnectAttempts);
+      console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts}/${maxLabel}...`);
 
       // Invalidate launcher cache at start of each attempt so ensureChrome()
       // re-probes Chrome's HTTP endpoint to discover the new WebSocket UUID
@@ -444,6 +464,9 @@ export class CDPClient {
         await this.connectInternal({ autoLaunch: false });
         console.error('[CDPClient] Reconnection successful');
         this.reconnectAttempts = 0;
+        this.reconnecting = false;
+        this.reconnectingAttempt = 0;
+        this.reconnectNextRetryAt = 0;
         this.reconnectCount++;
         this.setHeartbeatMode('recovery');
         this.emitConnectionEvent({
@@ -454,12 +477,15 @@ export class CDPClient {
       } catch (error) {
         console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
 
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        if (this.maxReconnectAttempts === Infinity || this.reconnectAttempts < this.maxReconnectAttempts) {
           // Exponential backoff with jitter: baseDelay * 2^(attempt-1) + random(0..baseDelay/2)
+          // Exponent capped at 6 to prevent Number overflow on high attempt counts (infinite mode)
+          const backoffCap = this.maxReconnectAttempts === Infinity ? 60000 : 30000;
           const backoffDelay = Math.min(
-            this.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1) + Math.floor(Math.random() * this.reconnectDelayMs / 2),
-            30000, // Cap at 30 seconds
+            this.reconnectDelayMs * Math.pow(2, Math.min(this.reconnectAttempts - 1, 6)) + Math.floor(Math.random() * this.reconnectDelayMs / 2),
+            backoffCap,
           );
+          this.reconnectNextRetryAt = Date.now() + backoffDelay;
           console.error(`[CDPClient] Waiting ${backoffDelay}ms before next attempt (exponential backoff)...`);
           await new Promise(resolve => setTimeout(resolve, backoffDelay));
         }
@@ -469,6 +495,9 @@ export class CDPClient {
     // All attempts failed — Chrome is not running. Stay disconnected until
     // the next tool call triggers a fresh connect() with autoLaunch.
     this.connectionState = 'disconnected';
+    this.reconnecting = false;
+    this.reconnectingAttempt = 0;
+    this.reconnectNextRetryAt = 0;
     this.stopHeartbeat();
     this.emitConnectionEvent({
       type: 'reconnect_failed',
