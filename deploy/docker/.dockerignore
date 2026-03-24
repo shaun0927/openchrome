@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.github
+tests
+docs
+*.md
+.eslintrc*
+.prettierrc*
+jest.config.*
+tsconfig.*.json
+!tsconfig.json
+!tsconfig.cli.json
