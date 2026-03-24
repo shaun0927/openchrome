@@ -17,6 +17,9 @@ export interface HealthData {
   chrome?: {
     connected: boolean;
     reconnectCount: number;
+    reconnecting?: boolean;
+    reconnectAttempt?: number;
+    nextRetryInMs?: number;
   };
   tabs?: {
     total: number;

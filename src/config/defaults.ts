@@ -115,6 +115,12 @@ export const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
  *  Override with OPENCHROME_RECONNECT_DELAY_MS environment variable. */
 export const DEFAULT_RECONNECT_DELAY_MS = 1000;
 
+/** Maximum reconnection attempts for HTTP daemon mode (never give up).
+ *  In HTTP mode, Chrome absence is temporary — the daemon should keep retrying
+ *  until Chrome returns. In stdio mode, DEFAULT_MAX_RECONNECT_ATTEMPTS (5) applies.
+ *  Override with OPENCHROME_MAX_RECONNECT_ATTEMPTS=0 (0 means infinite). */
+export const DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP = Infinity;
+
 /** Heartbeat active ping timeout in milliseconds.
  *  Sends Browser.getVersion to detect half-open WebSocket connections
  *  (e.g., after macOS sleep/wake) that browser.isConnected() misses.
