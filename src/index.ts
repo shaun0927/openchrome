@@ -20,6 +20,7 @@ import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
 import { DiskMonitor } from './watchdog/disk-monitor';
+import { ChromeProcessMonitor } from './watchdog/chrome-monitor';
 import { SessionStatePersistence } from './session-state-persistence';
 import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
@@ -36,6 +37,9 @@ import {
   DEFAULT_HEALTH_ENDPOINT_PORT,
   DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS,
   DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP,
+  DEFAULT_CHROME_MONITOR_INTERVAL_MS,
+  DEFAULT_CHROME_MEMORY_WARN_BYTES,
+  DEFAULT_CHROME_MEMORY_CRITICAL_BYTES,
 } from './config/defaults';
 
 // Prevent silent crashes from unhandled promise rejections in background tasks
@@ -304,6 +308,13 @@ program
     // Declare disk monitor early so health provider can reference it
     let diskMonitor: DiskMonitor | null = null;
 
+    // Declare chrome process monitor early so health provider can reference it
+    const chromeProcessMonitor = new ChromeProcessMonitor({
+      intervalMs: DEFAULT_CHROME_MONITOR_INTERVAL_MS,
+      warnBytes: DEFAULT_CHROME_MEMORY_WARN_BYTES,
+      criticalBytes: DEFAULT_CHROME_MEMORY_CRITICAL_BYTES,
+    });
+
     // Health Endpoint (Layer 4)
     const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
     const healthEndpoint = new HealthEndpoint(() => {
@@ -341,6 +352,16 @@ program
         };
       }
 
+      // Chrome process memory stats
+      let chromeProcessData: HealthData['chromeProcess'] | undefined;
+      const chromeStats = chromeProcessMonitor.getStats();
+      if (chromeStats) {
+        chromeProcessData = {
+          pid: chromeStats.pid,
+          rssBytes: chromeStats.rssBytes,
+        };
+      }
+
       const data: HealthData = {
         status: unhealthyTabs > 0 ? 'degraded' : 'ok',
         uptime: process.uptime(),
@@ -349,6 +370,7 @@ program
         chrome: chromeData,
         tabs: { total: tabHealth.size, healthy: healthyTabs, unhealthy: unhealthyTabs },
         disk: diskData,
+        chromeProcess: chromeProcessData,
       };
       return data;
     }, healthPort);
@@ -371,6 +393,17 @@ program
     diskMonitor = new DiskMonitor();
     diskMonitor.start();
     console.error('[SelfHealing] DiskMonitor started (5-min interval)');
+
+    // Chrome Process Monitor — track Chrome RSS memory, warn before OOM
+    // browser.process() returns null when connecting to an already-running Chrome,
+    // so we only start the monitor when puppeteer spawned the process.
+    const chromePid = cdpClient.getChromePid();
+    if (chromePid != null) {
+      chromeProcessMonitor.start(chromePid);
+      console.error(`[SelfHealing] ChromeProcessMonitor started (pid=${chromePid})`);
+    } else {
+      console.error('[SelfHealing] ChromeProcessMonitor skipped (no puppeteer-spawned Chrome process)');
+    }
 
     // Gap 1: register tabs with TabHealthMonitor when targets are added/removed
     sessionManager.addEventListener((event) => {
@@ -405,6 +438,7 @@ program
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
       diskMonitor?.stop();
+      chromeProcessMonitor.stop();
       await healthEndpoint.stop();
       sessionPersistence.cancelPendingSave();
       await originalShutdown(signal);
