@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
 import { getGlobalConfig } from '../config/global';
+import { writeChromePid, removeChromePid } from '../utils/pid-manager';
 import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAST_SESSION } from '../config/defaults';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
@@ -570,6 +571,11 @@ export class ChromeLauncher {
       profileType,
     };
 
+    // Persist Chrome PID to disk for orphan detection
+    if (chromeProcess.pid) {
+      writeChromePid(port, chromeProcess.pid);
+    }
+
     this._intentionalStop = false;
     console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
     return this.instance;
@@ -685,7 +691,17 @@ export class ChromeLauncher {
         }
       }
     }
+    // Remove Chrome PID file before clearing instance
+    removeChromePid(this.port);
     this.instance = null;
+  }
+
+  /**
+   * Get the PID of the managed Chrome process (if any).
+   * Checks both the active instance and the pending (still-launching) process.
+   */
+  getChromePid(): number | undefined {
+    return this.instance?.process?.pid ?? this.pendingProcess?.pid ?? undefined;
   }
 
   /**

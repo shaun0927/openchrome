@@ -1,0 +1,27 @@
+# OpenChrome MCP Server — Docker Compose
+# Start: docker compose -f deploy/docker/docker-compose.yml up -d
+# Logs:  docker compose -f deploy/docker/docker-compose.yml logs -f
+
+services:
+  openchrome:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "3100:3100"   # MCP HTTP transport
+      - "9090:9090"   # Health + Metrics endpoint
+    volumes:
+      - openchrome-data:/home/openchrome/.openchrome
+    environment:
+      - OPENCHROME_RATE_LIMIT_RPM=120
+      - OPENCHROME_MAX_RECONNECT_ATTEMPTS=0
+      - OPENCHROME_EVENT_LOOP_FATAL_MS=30000
+    restart: unless-stopped
+    # Chrome needs these for headless operation
+    shm_size: '2gb'
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  openchrome-data:
+    driver: local

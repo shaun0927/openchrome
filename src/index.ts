@@ -10,14 +10,16 @@
 import { Command } from 'commander';
 import { getMCPServer, setMCPServerOptions } from './mcp-server';
 import { registerAllTools } from './tools';
+import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { ToolTier } from './config/tool-tiers';
-import { writePidFile } from './utils/pid-manager';
+import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
 import { getVersion } from './version';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
+import { DiskMonitor } from './watchdog/disk-monitor';
 import { SessionStatePersistence } from './session-state-persistence';
 import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
@@ -30,8 +32,10 @@ import {
   DEFAULT_TAB_EVICTION_THRESHOLD,
   DEFAULT_EVENT_LOOP_CHECK_INTERVAL_MS,
   DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS,
+  DEFAULT_EVENT_LOOP_FATAL_MS,
   DEFAULT_HEALTH_ENDPOINT_PORT,
   DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS,
+  DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP,
 } from './config/defaults';
 
 // Prevent silent crashes from unhandled promise rejections in background tasks
@@ -41,6 +45,7 @@ process.on('unhandledRejection', (reason) => {
 
 process.on('uncaughtException', (error) => {
   console.error('[openchrome] Uncaught exception:', error);
+  // Chrome cleanup happens in the process.on('exit') handler registered below
   process.exit(1);
 });
 
@@ -69,7 +74,8 @@ program
   .option('--no-sanitize-content', 'Disable content sanitization for prompt injection defense (default: enabled)')
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean }) => {
+  .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -180,6 +186,33 @@ program
     // Write PID file for zombie process detection
     writePidFile(port);
 
+    // Clean up orphaned Chrome from previous crashed sessions
+    cleanOrphanedChromeProcesses([port, port + 1, port + 2, port + 3, port + 4]);
+
+    // Last-resort synchronous Chrome kill on ANY exit path
+    // (including uncaughtException, SIGKILL recovery, process.exit())
+    process.on('exit', () => {
+      try {
+        const launcher = getChromeLauncher();
+        const chromePid = launcher.getChromePid();
+        if (chromePid) {
+          try { process.kill(chromePid, 'SIGTERM'); } catch { /* ignore */ }
+        }
+      } catch { /* launcher may not be initialized */ }
+
+      // Also kill any pool Chrome instances
+      try {
+        const { getChromePool } = require('./chrome/pool');
+        const pool = getChromePool();
+        for (const [, instance] of pool.getInstances()) {
+          const pid = instance.launcher.getChromePid();
+          if (pid) {
+            try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+          }
+        }
+      } catch { /* pool may not be initialized */ }
+    });
+
     // Register signal handlers for graceful shutdown
     const shutdown = async (signal: string) => {
       console.error(`[openchrome] Received ${signal}, shutting down...`);
@@ -193,7 +226,20 @@ program
     if (process.platform === 'win32') {
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
-    server.start();
+    // Determine transport mode
+    const useHttp = options.http !== undefined && options.http !== false;
+    if (useHttp && !process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) {
+      process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
+    }
+    if (useHttp) {
+      const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : 3100;
+      const transport = createTransport('http', { port: httpPort });
+      server.start(transport);
+      console.error(`[openchrome] HTTP transport enabled on port ${httpPort}`);
+      console.error(`[openchrome] Infinite reconnection: enabled (daemon mode)`);
+    } else {
+      server.start();
+    }
 
     // ─── Self-Healing Module Wiring (#354) ──────────────────────────────────
 
@@ -235,17 +281,25 @@ program
     console.error('[SelfHealing] TabHealthMonitor started');
 
     // Event Loop Monitor (Layer 4)
+    const fatalThresholdMs = parseInt(process.env.OPENCHROME_EVENT_LOOP_FATAL_MS || '', 10) || DEFAULT_EVENT_LOOP_FATAL_MS;
     const eventLoopMonitor = new EventLoopMonitor({
       checkIntervalMs: DEFAULT_EVENT_LOOP_CHECK_INTERVAL_MS,
       warnThresholdMs: DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS,
-      fatalThresholdMs: parseInt(process.env.OPENCHROME_EVENT_LOOP_FATAL_MS || '', 10) || 0,
+      fatalThresholdMs,
     });
     eventLoopMonitor.on('fatal', () => {
       console.error('[SelfHealing] FATAL: Event loop blocked beyond threshold, exiting...');
+      // Chrome cleanup happens in the synchronous process.on('exit') handler
       process.exit(1);
     });
     eventLoopMonitor.start();
     console.error('[SelfHealing] EventLoopMonitor started');
+    if (fatalThresholdMs > 0) {
+      console.error(`[SelfHealing] EventLoopMonitor fatal threshold: ${fatalThresholdMs}ms (set OPENCHROME_EVENT_LOOP_FATAL_MS=0 to disable)`);
+    }
+
+    // Declare disk monitor early so health provider can reference it
+    let diskMonitor: DiskMonitor | null = null;
 
     // Health Endpoint (Layer 4)
     const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
@@ -266,9 +320,22 @@ program
         chromeData = {
           connected: cdpClient.getConnectionState() === 'connected',
           reconnectCount: metrics.reconnectCount,
+          reconnecting: metrics.reconnecting,
+          reconnectAttempt: metrics.reconnectAttempt,
+          nextRetryInMs: metrics.reconnectNextRetryInMs > 0 ? metrics.reconnectNextRetryInMs : undefined,
         };
       } catch {
         // CDP client may not be initialized yet
+      }
+
+      // Disk usage stats
+      let diskData: HealthData['disk'] | undefined;
+      const diskStats = diskMonitor?.getStats();
+      if (diskStats) {
+        diskData = {
+          totalBytes: diskStats.totalBytes,
+          fileCount: diskStats.fileCount,
+        };
       }
 
       const data: HealthData = {
@@ -278,6 +345,7 @@ program
         eventLoop: { maxDriftMs: elStats.maxDriftMs, warnCount: elStats.warnCount },
         chrome: chromeData,
         tabs: { total: tabHealth.size, healthy: healthyTabs, unhealthy: unhealthyTabs },
+        disk: diskData,
       };
       return data;
     }, healthPort);
@@ -295,6 +363,11 @@ program
     }).catch((err: unknown) => {
       console.error('[SelfHealing] Session state restore failed:', err);
     });
+
+    // Disk Monitor — auto-prune old journals, snapshots, checkpoints
+    diskMonitor = new DiskMonitor();
+    diskMonitor.start();
+    console.error('[SelfHealing] DiskMonitor started (5-min interval)');
 
     // Gap 1: register tabs with TabHealthMonitor when targets are added/removed
     sessionManager.addEventListener((event) => {
@@ -328,6 +401,7 @@ program
       processWatchdog.stop();
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
+      diskMonitor?.stop();
       await healthEndpoint.stop();
       sessionPersistence.cancelPendingSave();
       await originalShutdown(signal);

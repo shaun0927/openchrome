@@ -115,6 +115,12 @@ export const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
  *  Override with OPENCHROME_RECONNECT_DELAY_MS environment variable. */
 export const DEFAULT_RECONNECT_DELAY_MS = 1000;
 
+/** Maximum reconnection attempts for HTTP daemon mode (never give up).
+ *  In HTTP mode, Chrome absence is temporary — the daemon should keep retrying
+ *  until Chrome returns. In stdio mode, DEFAULT_MAX_RECONNECT_ATTEMPTS (5) applies.
+ *  Override with OPENCHROME_MAX_RECONNECT_ATTEMPTS=0 (0 means infinite). */
+export const DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP = Infinity;
+
 /** Heartbeat active ping timeout in milliseconds.
  *  Sends Browser.getVersion to detect half-open WebSocket connections
  *  (e.g., after macOS sleep/wake) that browser.isConnected() misses.
@@ -223,3 +229,42 @@ export const DEFAULT_STEALTH_SETTLE_MS = 8000;
  *  Enable for long-running sessions where tab preservation matters.
  *  Override with OPENCHROME_RESTORE_LAST_SESSION=true environment variable. */
 export const DEFAULT_RESTORE_LAST_SESSION = false;
+
+/** Default per-session rate limit in requests per minute.
+ *  Protects against runaway agents flooding the server.
+ *  Set to 0 to disable rate limiting.
+ *  Override with OPENCHROME_RATE_LIMIT_RPM environment variable. */
+export const DEFAULT_RATE_LIMIT_RPM = 120;
+
+/** Default event loop fatal threshold in milliseconds.
+ *  When the event loop is blocked for longer than this, the process should exit
+ *  so the supervisor (systemd/PM2) can restart it — hanging forever is worse.
+ *  Set to 0 to disable. Override with OPENCHROME_EVENT_LOOP_FATAL_MS env var.
+ *  NOTE: This only takes effect when no explicit env var is set. */
+export const DEFAULT_EVENT_LOOP_FATAL_MS = 30000;
+
+// ─── Disk Monitoring (Phase 7) ────────────────────────────────────────
+
+/** Disk monitor check interval in milliseconds. Default: 5 minutes.
+ *  Override with OPENCHROME_DISK_CHECK_INTERVAL_MS environment variable. */
+export const DEFAULT_DISK_CHECK_INTERVAL_MS = 300000;
+
+/** Disk usage warning threshold in bytes. Default: 500MB.
+ *  Logs a warning when ~/.openchrome/ exceeds this size. */
+export const DEFAULT_DISK_WARN_THRESHOLD_BYTES = 500 * 1024 * 1024;
+
+/** Disk usage aggressive cleanup threshold in bytes. Default: 1GB.
+ *  Triggers auto-pruning when exceeded. */
+export const DEFAULT_DISK_CLEANUP_THRESHOLD_BYTES = 1024 * 1024 * 1024;
+
+/** Journal file retention in days. Default: 7.
+ *  Files in ~/.openchrome/journal/ older than this are deleted. */
+export const DEFAULT_JOURNAL_RETENTION_DAYS = 7;
+
+/** Snapshot retention in days. Default: 30.
+ *  Files in ~/.openchrome/snapshots/ older than this are deleted. */
+export const DEFAULT_SNAPSHOT_RETENTION_DAYS = 30;
+
+/** Maximum number of checkpoints to keep. Default: 10.
+ *  Oldest checkpoints beyond this count are deleted. */
+export const DEFAULT_MAX_CHECKPOINTS = 10;
