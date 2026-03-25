@@ -104,6 +104,7 @@ export class BrowserStateManager {
       const filename = `snapshot-${Date.now()}.json`;
       const filepath = path.join(this.snapshotDir, filename);
       await fs.writeFile(filepath, JSON.stringify(snapshot), 'utf-8');
+      await fs.chmod(filepath, 0o600);
       this.lastSnapshotAt = Date.now();
       this.snapshotCount++;
 
@@ -113,36 +114,6 @@ export class BrowserStateManager {
       console.error(`[BrowserState] Snapshot saved: ${cookies.length} cookies, ${tabUrls.length} tabs`);
     } catch (err) {
       console.error('[BrowserState] Failed to take snapshot:', err);
-    }
-  }
-
-  /**
-   * Restore cookies from the latest snapshot.
-   * Called after Chrome reconnection.
-   * Returns the number of cookies restored, or 0 if no snapshot available.
-   */
-  async restoreLatest(): Promise<number> {
-    try {
-      const files = await fs.readdir(this.snapshotDir);
-      const snapshotFiles = files
-        .filter(f => f.startsWith('snapshot-') && f.endsWith('.json'))
-        .sort()
-        .reverse(); // newest first
-
-      if (snapshotFiles.length === 0) {
-        console.error('[BrowserState] No snapshots available for restore');
-        return 0;
-      }
-
-      const latestPath = path.join(this.snapshotDir, snapshotFiles[0]);
-      const content = await fs.readFile(latestPath, 'utf-8');
-      const snapshot: BrowserSnapshot = JSON.parse(content);
-
-      console.error(`[BrowserState] Restoring from snapshot: ${snapshot.cookies.length} cookies (age: ${Math.round((Date.now() - snapshot.timestamp) / 1000)}s)`);
-      return snapshot.cookies.length;
-    } catch (err) {
-      console.error('[BrowserState] Restore failed:', err);
-      return 0;
     }
   }
 

@@ -37,7 +37,6 @@ import {
   DEFAULT_HEALTH_ENDPOINT_PORT,
   DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS,
   DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP,
-  DEFAULT_SNAPSHOT_INTERVAL_MS,
 } from './config/defaults';
 
 // Prevent silent crashes from unhandled promise rejections in background tasks
@@ -253,16 +252,18 @@ program
     const sessionManager = getSessionManager();
 
     // Browser State Snapshot (Gap 2: #416)
-    const snapshotIntervalMs = parseInt(process.env.OPENCHROME_SNAPSHOT_INTERVAL_MS || '', 10) || DEFAULT_SNAPSHOT_INTERVAL_MS;
     const stateManager = getBrowserStateManager();
     stateManager.setCookieProvider(async () => {
       try {
         const pages = await cdpClient.getPages();
         if (pages.length === 0) return [];
         const client = await pages[0].createCDPSession();
-        const result = await client.send('Network.getAllCookies') as { cookies?: any[] };
-        await client.detach();
-        return result.cookies || [];
+        try {
+          const result = await client.send('Network.getAllCookies') as { cookies?: any[] };
+          return result.cookies || [];
+        } finally {
+          await client.detach();
+        }
       } catch {
         return [];
       }

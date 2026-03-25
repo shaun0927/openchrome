@@ -488,9 +488,12 @@ export class CDPClient {
             const pages = await currentBrowser.pages();
             if (pages.length > 0) {
               const client = await pages[0].createCDPSession();
-              await client.send('Network.setCookies', { cookies });
-              await client.detach();
-              console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
+              try {
+                await client.send('Network.setCookies', { cookies });
+                console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
+              } finally {
+                await client.detach();
+              }
             }
           }
         } catch (err) {
@@ -787,6 +790,28 @@ export class CDPClient {
       this.startHeartbeat();
       this.emitConnectionEvent({ type: 'reconnected', timestamp: Date.now() });
       console.error('[CDPClient] Reconnected to Chrome');
+
+      // Restore cookies from snapshot after reconnection (best-effort)
+      try {
+        const { getBrowserStateManager } = await import('../browser-state');
+        const stateManager = getBrowserStateManager();
+        const cookies = await stateManager.getLatestCookies();
+        const currentBrowser = this.browser as Browser | null;
+        if (cookies && cookies.length > 0 && currentBrowser) {
+          const pages = await currentBrowser.pages();
+          if (pages.length > 0) {
+            const client = await pages[0].createCDPSession();
+            try {
+              await client.send('Network.setCookies', { cookies });
+              console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
+            } finally {
+              await client.detach();
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[CDPClient] Cookie restore after reconnection failed (non-fatal):', err);
+      }
     } catch (err) {
       this.connectionState = 'disconnected';
       this.emitConnectionEvent({
