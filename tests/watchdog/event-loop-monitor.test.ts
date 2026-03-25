@@ -128,6 +128,138 @@ describe('EventLoopMonitor', () => {
   });
 });
 
+describe('EventLoopMonitor heavy operation grace period', () => {
+  let monitor: EventLoopMonitor;
+
+  afterEach(() => {
+    if (monitor) monitor.stop();
+  });
+
+  test('beginHeavyOperation prevents fatal event for drift between normal and heavy threshold', async () => {
+    // fatalThresholdMs = 60ms, heavyOpFatalThresholdMs = 200ms
+    // Busy-wait for ~100ms: exceeds normal fatal (60ms) but not heavy (200ms)
+    monitor = new EventLoopMonitor({
+      checkIntervalMs: 20,
+      warnThresholdMs: 30,
+      fatalThresholdMs: 60,
+      heavyOpFatalThresholdMs: 200,
+    });
+    const fatalHandler = jest.fn();
+    monitor.on('fatal', fatalHandler);
+
+    monitor.beginHeavyOperation();
+    monitor.start();
+
+    // Block for ~100ms — exceeds normal fatal (60ms) but under heavy (200ms)
+    const start = Date.now();
+    while (Date.now() - start < 100) {
+      // busy wait
+    }
+
+    await new Promise(r => setTimeout(r, 50));
+    monitor.stop();
+
+    expect(fatalHandler).not.toHaveBeenCalled();
+  });
+
+  test('endHeavyOperation restores normal threshold — fatal fires again', async () => {
+    monitor = new EventLoopMonitor({
+      checkIntervalMs: 20,
+      warnThresholdMs: 30,
+      fatalThresholdMs: 60,
+      heavyOpFatalThresholdMs: 200,
+    });
+    const fatalHandler = jest.fn();
+    monitor.on('fatal', fatalHandler);
+
+    monitor.beginHeavyOperation();
+    monitor.endHeavyOperation(); // back to normal threshold
+
+    monitor.start();
+
+    // Block for ~100ms — now exceeds normal fatal (60ms)
+    const start = Date.now();
+    while (Date.now() - start < 100) {
+      // busy wait
+    }
+
+    await new Promise(r => setTimeout(r, 50));
+    monitor.stop();
+
+    expect(fatalHandler).toHaveBeenCalled();
+  });
+
+  test('ref counting: two beginHeavyOperation, one endHeavyOperation — still in heavy mode', async () => {
+    monitor = new EventLoopMonitor({
+      checkIntervalMs: 20,
+      warnThresholdMs: 30,
+      fatalThresholdMs: 60,
+      heavyOpFatalThresholdMs: 200,
+    });
+    const fatalHandler = jest.fn();
+    monitor.on('fatal', fatalHandler);
+
+    monitor.beginHeavyOperation();
+    monitor.beginHeavyOperation();
+    monitor.endHeavyOperation(); // count goes to 1 — still heavy
+
+    monitor.start();
+
+    // Block for ~100ms — still under heavy threshold (200ms)
+    const start = Date.now();
+    while (Date.now() - start < 100) {
+      // busy wait
+    }
+
+    await new Promise(r => setTimeout(r, 50));
+    monitor.stop();
+
+    expect(fatalHandler).not.toHaveBeenCalled();
+  });
+
+  test('ref counting: two begin, two end — back to normal threshold', async () => {
+    monitor = new EventLoopMonitor({
+      checkIntervalMs: 20,
+      warnThresholdMs: 30,
+      fatalThresholdMs: 60,
+      heavyOpFatalThresholdMs: 200,
+    });
+    const fatalHandler = jest.fn();
+    monitor.on('fatal', fatalHandler);
+
+    monitor.beginHeavyOperation();
+    monitor.beginHeavyOperation();
+    monitor.endHeavyOperation();
+    monitor.endHeavyOperation(); // count back to 0 — normal threshold
+
+    monitor.start();
+
+    // Block for ~100ms — exceeds normal fatal (60ms)
+    const start = Date.now();
+    while (Date.now() - start < 100) {
+      // busy wait
+    }
+
+    await new Promise(r => setTimeout(r, 50));
+    monitor.stop();
+
+    expect(fatalHandler).toHaveBeenCalled();
+  });
+
+  test('endHeavyOperation does not go below 0', () => {
+    monitor = new EventLoopMonitor({ checkIntervalMs: 50 });
+
+    // Call end without any begin — should not throw or underflow
+    expect(() => monitor.endHeavyOperation()).not.toThrow();
+    expect(() => monitor.endHeavyOperation()).not.toThrow();
+
+    // beginHeavyOperation should still work correctly afterwards
+    monitor.beginHeavyOperation();
+    // No assertion on internals needed — just verify no error thrown
+    expect(() => monitor.endHeavyOperation()).not.toThrow();
+  });
+});
+
 describe('HealthEndpoint', () => {
   let endpoint: HealthEndpoint;
 

@@ -3,7 +3,8 @@
  */
 
 import type { Page } from 'puppeteer-core';
-import { MAX_OUTPUT_CHARS } from '../config/defaults';
+import { MAX_OUTPUT_CHARS, DEFAULT_MAX_SERIALIZER_NODES } from '../config/defaults';
+import { withTimeout } from '../utils/with-timeout';
 
 export interface DOMSerializerOptions {
   maxDepth?: number;                    // default: -1 (unlimited)
@@ -275,6 +276,8 @@ interface SerializeContext {
   interactiveOnly: boolean;
   compression: 'none' | 'light' | 'aggressive';
   includeUserAgentShadowDOM: boolean;
+  nodesVisited: number;
+  maxNodes: number;
 }
 
 /**
@@ -286,6 +289,16 @@ function serializeNode(
   ctx: SerializeContext,
 ): void {
   if (ctx.truncated) return;
+
+  // Node count safety valve — prevent event loop blocking on massive DOMs
+  ctx.nodesVisited++;
+  if (ctx.nodesVisited > ctx.maxNodes) {
+    ctx.truncated = true;
+    const msg = `\n[Truncated: visited ${ctx.maxNodes.toLocaleString()} nodes — output limit reached]\n`;
+    ctx.lines.push(msg);
+    ctx.totalChars += msg.length;
+    return;
+  }
 
   // Handle document node - just recurse into children
   if (node.nodeType === NODE_TYPE_DOCUMENT) {
@@ -495,16 +508,20 @@ export async function serializeDOM(
   const includeUserAgentShadowDOM = options?.includeUserAgentShadowDOM ?? false;
 
   // Get page stats via page.evaluate
-  const pageStats = await page.evaluate(() => ({
-    url: window.location.href,
-    title: document.title,
-    scrollX: window.scrollX,
-    scrollY: window.scrollY,
-    scrollWidth: document.documentElement.scrollWidth,
-    scrollHeight: document.documentElement.scrollHeight,
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight,
-  })) as PageStats;
+  const pageStats = await withTimeout(
+    page.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    })),
+    15000,
+    'serializeDOM:pageStats',
+  ) as PageStats;
 
   // Get full DOM tree via CDP
   const { root } = await cdpClient.send<{ root: DOMNode }>(
@@ -531,6 +548,8 @@ export async function serializeDOM(
     interactiveOnly,
     compression,
     includeUserAgentShadowDOM,
+    nodesVisited: 0,
+    maxNodes: DEFAULT_MAX_SERIALIZER_NODES,
   };
 
   // Serialize from root

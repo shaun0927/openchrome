@@ -274,6 +274,9 @@ export const DEFAULT_SNAPSHOT_RETENTION_DAYS = 30;
  *  Oldest checkpoints beyond this count are deleted. */
 export const DEFAULT_MAX_CHECKPOINTS = 10;
 
+/** Maximum DOM nodes to visit during serialization. Safety valve against event loop blocking. */
+export const DEFAULT_MAX_SERIALIZER_NODES = 100000;
+
 // ─── Browser State Snapshot (Gap 2: #416) ─────────────────────────────
 
 /** Browser state snapshot interval in milliseconds. Default: 60s (1 minute).
