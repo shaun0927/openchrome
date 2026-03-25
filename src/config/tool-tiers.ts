@@ -48,6 +48,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   geolocation: 2,
   emulate_device: 2,
   page_pdf: 2,
+  page_screenshot: 2,
   page_content: 2,
   console_capture: 2,
   performance_metrics: 2,
