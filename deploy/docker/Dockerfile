@@ -6,7 +6,7 @@ FROM node:22-slim AS builder
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY tsconfig.json tsconfig.cli.json ./
 COPY src/ src/
 COPY cli/ cli/
@@ -52,6 +52,7 @@ ENV CHROME_BINARY=/usr/bin/chromium
 ENV NODE_ENV=production
 ENV OPENCHROME_MAX_RECONNECT_ATTEMPTS=0
 ENV OPENCHROME_EVENT_LOOP_FATAL_MS=30000
+ENV OPENCHROME_HEALTH_BIND=0.0.0.0
 
 # Expose ports: MCP HTTP transport + Health endpoint
 EXPOSE 3100 9090
