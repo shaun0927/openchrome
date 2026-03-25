@@ -274,6 +274,17 @@ export const DEFAULT_SNAPSHOT_RETENTION_DAYS = 30;
  *  Oldest checkpoints beyond this count are deleted. */
 export const DEFAULT_MAX_CHECKPOINTS = 10;
 
+// ─── Browser State Snapshot (Gap 2: #416) ─────────────────────────────
+
+/** Browser state snapshot interval in milliseconds. Default: 60s (1 minute).
+ *  How frequently cookies and tab URLs are snapshotted to disk.
+ *  Override with OPENCHROME_SNAPSHOT_INTERVAL_MS environment variable. */
+export const DEFAULT_SNAPSHOT_INTERVAL_MS = 60000;
+
+/** Maximum number of browser state snapshots to retain. Default: 5.
+ *  Oldest snapshots beyond this count are pruned after each save. */
+export const DEFAULT_SNAPSHOT_MAX_COUNT = 5;
+
 /** Chrome process memory check interval in ms. Default: 30s */
 export const DEFAULT_CHROME_MONITOR_INTERVAL_MS = 30000;
 /** Chrome RSS memory warning threshold in bytes. Default: 1GB */

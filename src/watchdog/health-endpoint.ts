@@ -31,6 +31,10 @@ export interface HealthData {
     totalBytes: number;
     fileCount: number;
   };
+  browserState?: {
+    lastSnapshotAt: number;
+    snapshotCount: number;
+  };
   chromeProcess?: {
     pid: number;
     rssBytes: number;
