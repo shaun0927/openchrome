@@ -226,7 +226,8 @@ export class DiskMonitor {
       try {
         if (entry.isFile()) {
           const stat = await fs.stat(fullPath);
-          if (stat.mtimeMs < cutoff) {
+          const fileAge = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+          if (fileAge < cutoff) {
             await fs.unlink(fullPath);
             pruned++;
           }
