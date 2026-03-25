@@ -27,6 +27,7 @@ import {
   DEFAULT_RECONNECT_DELAY_MS,
 } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
+import { getMetricsCollector } from '../metrics/collector';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -131,6 +132,24 @@ export class CDPClient {
    */
   getConnectionState(): ConnectionState {
     return this.connectionState;
+  }
+
+  /**
+   * Whether the client is currently in a reconnection loop.
+   */
+  isReconnecting(): boolean {
+    return this.reconnecting || this.connectionState === 'reconnecting';
+  }
+
+  /**
+   * Estimated milliseconds until the next reconnection attempt completes.
+   * Returns 0 if not reconnecting.
+   */
+  estimatedRetryMs(): number {
+    if (!this.isReconnecting()) return 0;
+    return this.reconnectNextRetryAt > 0
+      ? Math.max(0, this.reconnectNextRetryAt - Date.now())
+      : this.reconnectDelayMs; // fallback to base delay
   }
 
   /**
@@ -309,6 +328,14 @@ export class CDPClient {
   }
 
   /**
+   * Get the Chrome process PID, if available.
+   * Returns null when connecting to an already-running Chrome (no process spawned by puppeteer).
+   */
+  getChromePid(): number | null {
+    return this.browser?.process()?.pid ?? null;
+  }
+
+  /**
    * Get connection health metrics.
    */
   getConnectionMetrics(): {
@@ -474,7 +501,33 @@ export class CDPClient {
         this.reconnectingAttempt = 0;
         this.reconnectNextRetryAt = 0;
         this.reconnectCount++;
+        try { getMetricsCollector().inc('openchrome_reconnect_total'); } catch { /* best-effort */ }
         this.setHeartbeatMode('recovery');
+
+        // Restore browser state (cookies) from last snapshot after reconnection.
+        // Uses dynamic import() to avoid circular dependency with browser-state module.
+        // Restore is best-effort — failure must not block reconnection.
+        try {
+          const { getBrowserStateManager } = await import('../browser-state');
+          const stateManager = getBrowserStateManager();
+          const cookies = await stateManager.getLatestCookies();
+          const currentBrowser = this.browser as Browser | null;
+          if (cookies && cookies.length > 0 && currentBrowser) {
+            const pages = await currentBrowser.pages();
+            if (pages.length > 0) {
+              const client = await pages[0].createCDPSession();
+              try {
+                await client.send('Network.setCookies', { cookies });
+                console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
+              } finally {
+                await client.detach();
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[CDPClient] Cookie restore after reconnection failed (non-fatal):', err);
+        }
+
         this.emitConnectionEvent({
           type: 'reconnected',
           timestamp: Date.now(),
@@ -765,6 +818,28 @@ export class CDPClient {
       this.startHeartbeat();
       this.emitConnectionEvent({ type: 'reconnected', timestamp: Date.now() });
       console.error('[CDPClient] Reconnected to Chrome');
+
+      // Restore cookies from snapshot after reconnection (best-effort)
+      try {
+        const { getBrowserStateManager } = await import('../browser-state');
+        const stateManager = getBrowserStateManager();
+        const cookies = await stateManager.getLatestCookies();
+        const currentBrowser = this.browser as Browser | null;
+        if (cookies && cookies.length > 0 && currentBrowser) {
+          const pages = await currentBrowser.pages();
+          if (pages.length > 0) {
+            const client = await pages[0].createCDPSession();
+            try {
+              await client.send('Network.setCookies', { cookies });
+              console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
+            } finally {
+              await client.detach();
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[CDPClient] Cookie restore after reconnection failed (non-fatal):', err);
+      }
     } catch (err) {
       this.connectionState = 'disconnected';
       this.emitConnectionEvent({

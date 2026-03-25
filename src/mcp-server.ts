@@ -27,6 +27,7 @@ import { getChromeLauncher } from './chrome/launcher';
 import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM } from './config/defaults';
+import { getGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
@@ -67,6 +68,9 @@ export function isConnectionError(error: unknown): boolean {
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
  *  sleep/wake). Skip session initialization so oc_stop can always reach its handler. */
 const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
+
+/** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
+const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
 
 /**
  * Clients known to support notifications/tools/list_changed.
@@ -577,6 +581,7 @@ export class MCPServer {
       const rateResult = this.rateLimiter.check(sessionId);
       if (!rateResult.allowed) {
         console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
+        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', { tool: toolName }); } catch { /* best-effort */ }
         return {
           content: [
             {
@@ -587,6 +592,29 @@ export class MCPServer {
           isError: true,
         };
       }
+    }
+
+    // Reconnection gate — reject immediately if Chrome is reconnecting
+    // Allow lifecycle tools that must work during disconnection (oc_stop, oc_session_resume, etc.)
+    if (!SKIP_SESSION_INIT_TOOLS.has(toolName)) try {
+      const cdpClient = getCDPClient();
+      if (cdpClient.isReconnecting()) {
+        const retryMs = cdpClient.estimatedRetryMs();
+        const retrySec = Math.max(1, Math.ceil(retryMs / 1000));
+        console.error(`[MCPServer] Rejecting tool call '${toolName}' — Chrome is reconnecting (retry in ~${retrySec}s)`);
+        try { getMetricsCollector().inc('openchrome_tool_calls_total', { tool: toolName, status: 'reconnecting' }); } catch { /* best-effort */ }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Chrome is currently reconnecting after a disconnection. Please retry in approximately ${retrySec} second(s). The server will automatically reconnect and resume normal operation.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch {
+      // CDPClient may not be initialized — proceed with normal flow
     }
 
     // Start activity tracking
@@ -634,6 +662,15 @@ export class MCPServer {
             gateTid = setTimeout(() => reject(new Error(`Operation gate timed out after ${DEFAULT_OPERATION_GATE_TIMEOUT_MS}ms`)), DEFAULT_OPERATION_GATE_TIMEOUT_MS);
           }),
         ]);
+      }
+
+      // Identify heavy tools that may block the event loop legitimately
+      // (screenshot captures, full-page DOM reads, bulk cookie scans, arbitrary JS).
+      const isHeavyTool = HEAVY_TOOLS.has(toolName);
+
+      const eventLoopMonitor = getGlobalEventLoopMonitor();
+      if (isHeavyTool && eventLoopMonitor) {
+        eventLoopMonitor.beginHeavyOperation();
       }
 
       let result: MCPResult;
@@ -684,6 +721,11 @@ export class MCPServer {
           }
         } else {
           throw handlerError;
+        }
+      } finally {
+        // Always restore normal threshold after heavy tool completes (success or error)
+        if (isHeavyTool && eventLoopMonitor) {
+          eventLoopMonitor.endHeavyOperation();
         }
       }
 

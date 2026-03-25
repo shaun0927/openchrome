@@ -193,10 +193,11 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerCounter('openchrome_tool_calls_total', 'Total MCP tool calls');
     instance.registerHistogram('openchrome_tool_duration_seconds', 'Tool call duration in seconds',
       [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120]);
-    instance.registerCounter('openchrome_reconnect_total', 'CDP reconnection attempts');
+    instance.registerCounter('openchrome_reconnect_total', 'Total successful CDP reconnections');
     instance.registerGauge('openchrome_heap_bytes', 'Node.js heap usage in bytes');
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');
     instance.registerGauge('openchrome_tabs_health', 'Tab health status count');
+    instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
   }
   return instance;
 }
