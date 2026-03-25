@@ -27,6 +27,7 @@ import {
   DEFAULT_RECONNECT_DELAY_MS,
 } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
+import { getMetricsCollector } from '../metrics/collector';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -131,6 +132,24 @@ export class CDPClient {
    */
   getConnectionState(): ConnectionState {
     return this.connectionState;
+  }
+
+  /**
+   * Whether the client is currently in a reconnection loop.
+   */
+  isReconnecting(): boolean {
+    return this.reconnecting || this.connectionState === 'reconnecting';
+  }
+
+  /**
+   * Estimated milliseconds until the next reconnection attempt completes.
+   * Returns 0 if not reconnecting.
+   */
+  estimatedRetryMs(): number {
+    if (!this.isReconnecting()) return 0;
+    return this.reconnectNextRetryAt > 0
+      ? Math.max(0, this.reconnectNextRetryAt - Date.now())
+      : this.reconnectDelayMs; // fallback to base delay
   }
 
   /**
@@ -482,6 +501,7 @@ export class CDPClient {
         this.reconnectingAttempt = 0;
         this.reconnectNextRetryAt = 0;
         this.reconnectCount++;
+        try { getMetricsCollector().inc('openchrome_reconnect_total'); } catch { /* best-effort */ }
         this.setHeartbeatMode('recovery');
         this.emitConnectionEvent({
           type: 'reconnected',

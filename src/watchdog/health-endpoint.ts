@@ -35,6 +35,9 @@ export interface HealthData {
     pid: number;
     rssBytes: number;
   };
+  sessions?: {
+    active: number;
+  };
 }
 
 export type HealthDataProvider = () => HealthData;
@@ -78,9 +81,7 @@ export class HealthEndpoint {
               metrics.set('openchrome_tabs_health', { status: 'healthy' }, data.tabs.healthy);
               metrics.set('openchrome_tabs_health', { status: 'unhealthy' }, data.tabs.unhealthy);
             }
-            if (data.chrome) {
-              metrics.set('openchrome_active_sessions', {}, 0); // Will be updated by MCPServer
-            }
+            metrics.set('openchrome_active_sessions', {}, data.sessions?.active ?? 0);
 
             res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
             res.end(metrics.export());

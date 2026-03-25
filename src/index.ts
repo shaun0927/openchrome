@@ -380,6 +380,7 @@ program
         tabs: { total: tabHealth.size, healthy: healthyTabs, unhealthy: unhealthyTabs },
         disk: diskData,
         chromeProcess: chromeProcessData,
+        sessions: { active: sessionManager?.sessionCount ?? 0 },
       };
       return data;
     }, healthPort);
