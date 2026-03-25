@@ -135,6 +135,24 @@ export class CDPClient {
   }
 
   /**
+   * Whether the client is currently in a reconnection loop.
+   */
+  isReconnecting(): boolean {
+    return this.reconnecting || this.connectionState === 'reconnecting';
+  }
+
+  /**
+   * Estimated milliseconds until the next reconnection attempt completes.
+   * Returns 0 if not reconnecting.
+   */
+  estimatedRetryMs(): number {
+    if (!this.isReconnecting()) return 0;
+    return this.reconnectNextRetryAt > 0
+      ? Math.max(0, this.reconnectNextRetryAt - Date.now())
+      : this.reconnectDelayMs; // fallback to base delay
+  }
+
+  /**
    * Add connection event listener
    */
   addConnectionListener(listener: (event: ConnectionEvent) => void): void {
