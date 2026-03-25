@@ -253,6 +253,14 @@ export class MCPServer {
       this.transport = createTransport('stdio');
     }
 
+    // Wire rate-limiter session cleanup into the HTTP transport so that
+    // bucket memory is freed immediately when a client sends DELETE /mcp.
+    if (this.rateLimiter && typeof (this.transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function') {
+      (this.transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
+        (sessionId: string) => this.rateLimiter!.removeSession(sessionId),
+      );
+    }
+
     console.error('[MCPServer] Starting server...');
 
     // Start dashboard if enabled

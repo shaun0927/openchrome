@@ -13,6 +13,7 @@ export interface RateLimiterOptions {
 export class TokenBucket {
   private tokens: number;
   private lastRefillAt: number;
+  private lastUsedAt: number;
   private readonly maxTokens: number;
   private readonly refillRatePerSec: number;
 
@@ -21,6 +22,7 @@ export class TokenBucket {
     this.refillRatePerSec = opts.refillRatePerSec;
     this.tokens = opts.maxTokens; // Start full
     this.lastRefillAt = Date.now();
+    this.lastUsedAt = Date.now();
   }
 
   /**
@@ -28,12 +30,20 @@ export class TokenBucket {
    * Returns true if token was consumed; false if the bucket is empty.
    */
   consume(): boolean {
+    this.lastUsedAt = Date.now();
     this.refill();
     if (this.tokens >= 1) {
       this.tokens -= 1;
       return true;
     }
     return false;
+  }
+
+  /**
+   * Returns the timestamp (ms since epoch) when this bucket was last used.
+   */
+  getLastUsedAt(): number {
+    return this.lastUsedAt;
   }
 
   /**
@@ -104,6 +114,24 @@ export class SessionRateLimiter {
    */
   removeSession(sessionId: string): void {
     this.buckets.delete(sessionId);
+  }
+
+  /**
+   * Remove buckets that have not been used for longer than maxIdleMs.
+   * Call periodically to reclaim memory from abandoned sessions that never
+   * received an explicit DELETE (e.g. clients that silently disconnected).
+   * Returns the number of buckets removed.
+   */
+  sweep(maxIdleMs: number): number {
+    const cutoff = Date.now() - maxIdleMs;
+    let removed = 0;
+    for (const [sessionId, bucket] of this.buckets) {
+      if (bucket.getLastUsedAt() < cutoff) {
+        this.buckets.delete(sessionId);
+        removed++;
+      }
+    }
+    return removed;
   }
 
   /**

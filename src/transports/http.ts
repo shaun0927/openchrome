@@ -27,9 +27,18 @@ export class HTTPTransport implements MCPTransport {
   private port: number;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
+  private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
 
   constructor(port: number) {
     this.port = port;
+  }
+
+  /**
+   * Register a callback to be invoked whenever a session is deleted.
+   * Used by MCPServer to clean up per-session state (e.g. rate-limiter buckets).
+   */
+  onSessionDelete(handler: (sessionId: string) => void): void {
+    this.sessionDeleteHandler = handler;
   }
 
   onMessage(handler: (msg: Record<string, unknown>) => Promise<MCPResponse | null>): void {
@@ -310,6 +319,11 @@ export class HTTPTransport implements MCPTransport {
 
     if (sessionId && this.sessions.has(sessionId)) {
       this.sessions.delete(sessionId);
+
+      // Notify session-delete listeners (e.g. rate-limiter cleanup)
+      if (this.sessionDeleteHandler) {
+        this.sessionDeleteHandler(sessionId);
+      }
 
       // Close any SSE connections for this session
       this.sseConnections = this.sseConnections.filter((conn) => {
