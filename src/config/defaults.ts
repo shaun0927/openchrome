@@ -270,3 +270,10 @@ export const DEFAULT_SNAPSHOT_RETENTION_DAYS = 30;
 /** Maximum number of checkpoints to keep. Default: 10.
  *  Oldest checkpoints beyond this count are deleted. */
 export const DEFAULT_MAX_CHECKPOINTS = 10;
+
+/** Chrome process memory check interval in ms. Default: 30s */
+export const DEFAULT_CHROME_MONITOR_INTERVAL_MS = 30000;
+/** Chrome RSS memory warning threshold in bytes. Default: 1GB */
+export const DEFAULT_CHROME_MEMORY_WARN_BYTES = 1024 * 1024 * 1024;
+/** Chrome RSS memory critical threshold in bytes. Default: 2GB */
+export const DEFAULT_CHROME_MEMORY_CRITICAL_BYTES = 2 * 1024 * 1024 * 1024;

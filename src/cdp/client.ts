@@ -328,6 +328,14 @@ export class CDPClient {
   }
 
   /**
+   * Get the Chrome process PID, if available.
+   * Returns null when connecting to an already-running Chrome (no process spawned by puppeteer).
+   */
+  getChromePid(): number | null {
+    return this.browser?.process()?.pid ?? null;
+  }
+
+  /**
    * Get connection health metrics.
    */
   getConnectionMetrics(): {
