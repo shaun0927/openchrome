@@ -106,8 +106,12 @@ const handler: ToolHandler = async (
   try {
     const page = await sessionManager.getPage(sessionId, tabId);
     if (!page) {
+      const available = await sessionManager.getAvailableTargets(sessionId);
+      const availableInfo = available.length > 0
+        ? `\nAvailable tabs:\n${available.map(t => `  - tabId: ${t.tabId} | ${t.url} | ${t.title}`).join('\n')}`
+        : '\nNo tabs available. Call navigate without tabId to create a new tab.';
       return {
-        content: [{ type: 'text', text: `Error: Tab ${tabId} not found. Hint: The tab may have been closed or the session expired. Use navigate() to open a new tab.` }],
+        content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.${availableInfo}` }],
         isError: true,
       };
     }
