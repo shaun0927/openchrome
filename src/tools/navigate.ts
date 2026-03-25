@@ -13,6 +13,27 @@ import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { detectBlockingPage } from '../utils/page-diagnostics';
 import { withTimeout } from '../utils/with-timeout';
+import type { Page } from 'puppeteer-core';
+
+/** Compute readiness data for navigate responses. Non-critical — returns defaults on failure. */
+async function getReadiness(page: Page): Promise<{ readyState: string; domStable: boolean; framework: string }> {
+  try {
+    const readyState = await withTimeout(page.evaluate(() => document.readyState), 3000, 'readyState');
+    let framework = 'none';
+    try {
+      framework = await withTimeout(page.evaluate(() => {
+        if ((window as any).__NEXT_DATA__ || document.querySelector('#__next')) return 'next';
+        if ((window as any).__REACT_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-reactroot]')) return 'react';
+        if ((window as any).__VUE__) return 'vue';
+        if ((window as any).__ANGULAR_DEVTOOLS_BACKEND_API__) return 'angular';
+        return 'none';
+      }), 2000, 'framework');
+    } catch { /* ignore */ }
+    return { readyState, domStable: true, framework };
+  } catch {
+    return { readyState: 'unknown', domStable: false, framework: 'unknown' };
+  }
+}
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -186,6 +207,7 @@ const handler: ToolHandler = async (
             } catch {
               // Non-critical — proceed without count
             }
+            const reuseReadiness = await getReadiness(page);
             const reuseResultText = JSON.stringify({
               action: 'navigate',
               url: page.url(),
@@ -194,6 +216,7 @@ const handler: ToolHandler = async (
               workerId: resolvedWorkerId,
               reused: true,
               elementCount: reuseElementCount,
+              readiness: reuseReadiness,
               ...(summary && { visualSummary: summary }),
               ...(reuseBlocking && { blockingPage: reuseBlocking }),
             });
@@ -228,6 +251,7 @@ const handler: ToolHandler = async (
       } catch {
         // Non-critical — proceed without count
       }
+      const newTabReadiness = await getReadiness(page);
       const newTabResultText = JSON.stringify({
         action: 'navigate',
         url: page.url(),
@@ -236,6 +260,7 @@ const handler: ToolHandler = async (
         workerId: assignedWorkerId,
         created: true,
         elementCount: newTabElementCount,
+        readiness: newTabReadiness,
         ...(newTabSummary && { visualSummary: newTabSummary }),
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
       });
@@ -462,11 +487,13 @@ const handler: ToolHandler = async (
     } catch {
       // Non-critical — proceed without count
     }
+    const navReadiness = await getReadiness(page);
     const navResultText = JSON.stringify({
       action: 'navigate',
       url: page.url(),
       title: await safeTitle(page),
       elementCount: navElementCount,
+      readiness: navReadiness,
       ...(navSummary && { visualSummary: navSummary }),
       ...(navBlocking && { blockingPage: navBlocking }),
       ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
@@ -477,6 +504,42 @@ const handler: ToolHandler = async (
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     const isTimeout = errMsg.includes('timeout') || errMsg.includes('Timeout');
+
+    if (isTimeout && tabId) {
+      // Check if the page has usable content despite timeout
+      try {
+        const timeoutPage = await sessionManager.getPage(sessionId, tabId, undefined, 'navigate');
+        if (timeoutPage) {
+          const timeoutReadiness = await getReadiness(timeoutPage);
+          let timeoutElementCount = 0;
+          try {
+            timeoutElementCount = await withTimeout(
+              timeoutPage.evaluate(() => document.querySelectorAll('*').length),
+              3000, 'elementCount'
+            );
+          } catch { /* ignore */ }
+
+          const hasContent = (timeoutReadiness.readyState === 'interactive' || timeoutReadiness.readyState === 'complete') && timeoutElementCount > 10;
+          if (hasContent) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'navigate',
+                  url: timeoutPage.url(),
+                  title: await safeTitle(timeoutPage),
+                  tabId,
+                  elementCount: timeoutElementCount,
+                  readiness: { ...timeoutReadiness, domStable: false },
+                  warning: 'Navigation load event timed out, but page has usable content. Proceed with caution.',
+                }),
+              }],
+            };
+          }
+        }
+      } catch { /* page might be gone — fall through to error */ }
+    }
+
     return {
       content: [
         {
