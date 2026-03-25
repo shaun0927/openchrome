@@ -938,6 +938,9 @@ export class MCPServer {
 
       // Timeout errors on tools with timeoutRecoverable=true return isError:false
       // so the LLM can continue with partial state (e.g., partially loaded DOM).
+      // NOTE: navigate.ts now handles timeout coherence itself (checking readyState/elementCount
+      // to decide success-with-warning vs genuine error). This fallback is kept for backward
+      // compatibility with any other tools that set timeoutRecoverable=true.
       const errorIsError = !(isTimeoutError(error) && tool.timeoutRecoverable);
 
       const errResult: MCPResult = {
