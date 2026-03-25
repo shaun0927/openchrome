@@ -22,7 +22,7 @@ import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
 import { getCDPConnectionPool } from './cdp/connection-pool';
-import { getCDPClient } from './cdp/client';
+import { getCDPClient, ConnectionEvent } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
@@ -594,24 +594,53 @@ export class MCPServer {
       }
     }
 
-    // Reconnection gate — reject immediately if Chrome is reconnecting
+    // Reconnection wait — if Chrome is reconnecting, wait for it to complete
+    // instead of rejecting immediately. This is server-level resilience, not orchestration.
     // Allow lifecycle tools that must work during disconnection (oc_stop, oc_session_resume, etc.)
     if (!SKIP_SESSION_INIT_TOOLS.has(toolName)) try {
       const cdpClient = getCDPClient();
       if (cdpClient.isReconnecting()) {
-        const retryMs = cdpClient.estimatedRetryMs();
-        const retrySec = Math.max(1, Math.ceil(retryMs / 1000));
-        console.error(`[MCPServer] Rejecting tool call '${toolName}' — Chrome is reconnecting (retry in ~${retrySec}s)`);
-        try { getMetricsCollector().inc('openchrome_tool_calls_total', { tool: toolName, status: 'reconnecting' }); } catch { /* best-effort */ }
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Chrome is currently reconnecting after a disconnection. Please retry in approximately ${retrySec} second(s). The server will automatically reconnect and resume normal operation.`,
-            },
-          ],
-          isError: true,
-        };
+        console.error(`[MCPServer] Tool call "${toolName}" arrived during reconnection, waiting...`);
+        try { getMetricsCollector().inc('openchrome_tool_calls_total', { tool: toolName, status: 'reconnecting_wait' }); } catch { /* best-effort */ }
+        const reconnectResult = await new Promise<'reconnected' | 'failed' | 'timeout'>((resolve) => {
+          const timeout = setTimeout(() => {
+            cdpClient.removeConnectionListener(listener);
+            resolve('timeout');
+          }, DEFAULT_SESSION_INIT_TIMEOUT_MS);
+
+          const listener = (event: ConnectionEvent) => {
+            if (event.type === 'reconnected' || event.type === 'connected') {
+              clearTimeout(timeout);
+              cdpClient.removeConnectionListener(listener);
+              resolve('reconnected');
+            } else if (event.type === 'reconnect_failed' || event.type === 'disconnected') {
+              clearTimeout(timeout);
+              cdpClient.removeConnectionListener(listener);
+              resolve('failed');
+            }
+          };
+          cdpClient.addConnectionListener(listener);
+
+          // Check again in case reconnection completed between the if-check and listener registration
+          if (!cdpClient.isReconnecting()) {
+            clearTimeout(timeout);
+            cdpClient.removeConnectionListener(listener);
+            resolve('reconnected');
+          }
+        });
+
+        if (reconnectResult !== 'reconnected') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Chrome reconnection ${reconnectResult === 'timeout' ? 'timed out' : 'failed'}. The server could not re-establish the connection. Try again or check if Chrome is running.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        console.error(`[MCPServer] Reconnection complete, proceeding with "${toolName}"`);
       }
     } catch {
       // CDPClient may not be initialized — proceed with normal flow
@@ -726,6 +755,26 @@ export class MCPServer {
         // Always restore normal threshold after heavy tool completes (success or error)
         if (isHeavyTool && eventLoopMonitor) {
           eventLoopMonitor.endHeavyOperation();
+        }
+      }
+
+      // Check if the handler returned a connection error as MCPResult instead of throwing.
+      // Tools like tabs_create and navigate catch connection errors internally and return
+      // isError results, bypassing the thrown-error retry at the catch block above.
+      if (result.isError && result.content?.[0]?.type === 'text') {
+        const errorText = (result.content[0] as { text: string }).text;
+        if (isConnectionError({ message: errorText })) {
+          console.error(`[MCPServer] Detected swallowed connection error in "${toolName}" result, attempting reconnect + retry`);
+          try {
+            const cdpClientRetry = getCDPClient();
+            await cdpClientRetry.forceReconnect();
+            // Retry the tool call once
+            result = await Promise.resolve(tool.handler(sessionId, toolArgs));
+            console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);
+          } catch (retryError) {
+            console.error(`[MCPServer] Retry after swallowed connection error failed for "${toolName}":`, retryError);
+            // Keep original error result
+          }
         }
       }
 
