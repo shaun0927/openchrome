@@ -6,6 +6,7 @@
  */
 
 import type { Page } from 'puppeteer-core';
+import { withTimeout } from './with-timeout';
 
 export interface PaginationInfo {
   type: 'numbered' | 'next_button' | 'load_more' | 'infinite_scroll' | 'cursor' | 'viewer' | 'none';
@@ -23,7 +24,7 @@ export interface PaginationInfo {
 
 export async function detectPagination(page: Page, tabId: string): Promise<PaginationInfo> {
   try {
-    const result = await page.evaluate(() => {
+    const result = await withTimeout(page.evaluate(() => {
       interface DetectResult {
         type: 'numbered' | 'next_button' | 'load_more' | 'infinite_scroll' | 'cursor' | 'viewer' | 'none';
         hasNext: boolean;
@@ -278,7 +279,7 @@ export async function detectPagination(page: Page, tabId: string): Promise<Pagin
         hasNext: false,
         hasPrev: false,
       } as DetectResult;
-    });
+    }), 15000, 'detectPagination');  // end of page.evaluate + withTimeout
 
     // Build the final PaginationInfo with nextAction and suggestedStrategy
     const info: PaginationInfo = {
