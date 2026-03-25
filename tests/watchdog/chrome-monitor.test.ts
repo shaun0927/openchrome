@@ -42,6 +42,9 @@ describe('ChromeProcessMonitor', () => {
     jest.useFakeTimers();
     mockExecFile.mockReset();
     originalPlatform = process.platform;
+    // Force non-Windows platform so tests run consistently on all CI platforms.
+    // The Windows-skip behavior is tested separately in the 'Windows platform' describe block.
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     monitor = new ChromeProcessMonitor({
       intervalMs: 1000,
       warnBytes: WARN_BYTES,

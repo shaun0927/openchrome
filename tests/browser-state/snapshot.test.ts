@@ -188,7 +188,7 @@ describe('BrowserStateManager — takeSnapshot()', () => {
 
     // File lives inside the snapshot dir
     expect(filePath as string).toMatch(
-      new RegExp(`^${SNAPSHOT_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/snapshot-\\d+\\.json$`)
+      new RegExp(`^${SNAPSHOT_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[/\\\\]snapshot-\\d+\\.json$`)
     );
 
     const written = JSON.parse(rawContent as string);
