@@ -15,6 +15,9 @@ import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { MCPTransport } from './index';
 
+/** Maximum allowed HTTP request body size (10 MB) to prevent OOM from oversized requests */
+const MAX_BODY_BYTES = 10 * 1024 * 1024;
+
 /** Active SSE connections for server-initiated notifications */
 interface SSEConnection {
   res: http.ServerResponse;
@@ -152,8 +155,20 @@ export class HTTPTransport implements MCPTransport {
    */
   private handlePost(req: http.IncomingMessage, res: http.ServerResponse): void {
     const chunks: Buffer[] = [];
+    let bodyBytes = 0;
 
     req.on('data', (chunk: Buffer) => {
+      bodyBytes += chunk.length;
+      if (bodyBytes > MAX_BODY_BYTES) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id: 0,
+          error: { code: MCPErrorCodes.INVALID_REQUEST, message: 'Request body too large' },
+        }));
+        req.destroy();
+        return;
+      }
       chunks.push(chunk);
     });
 
@@ -340,6 +355,19 @@ export class HTTPTransport implements MCPTransport {
     sessionId: string | undefined,
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
+
+    // Assign sessionId once before concurrent processing to avoid data race
+    // when multiple initialize requests appear in the same batch.
+    if (!sessionId) {
+      const hasInitialize = messages.some(
+        (msg) => typeof msg === 'object' && msg !== null && (msg as Record<string, unknown>).method === 'initialize',
+      );
+      if (hasInitialize) {
+        sessionId = crypto.randomUUID();
+        this.sessions.add(sessionId);
+      }
+    }
+
     const promises = messages.map(async (msg) => {
       if (typeof msg !== 'object' || msg === null) {
         return {
@@ -353,12 +381,6 @@ export class HTTPTransport implements MCPTransport {
       }
 
       const record = msg as Record<string, unknown>;
-
-      // For initialize requests in batch, assign session
-      if (record.method === 'initialize' && !sessionId) {
-        sessionId = crypto.randomUUID();
-        this.sessions.add(sessionId);
-      }
 
       try {
         return await handler(record);
