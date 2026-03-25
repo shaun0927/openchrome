@@ -31,14 +31,15 @@ RestartSec=3
 KillMode=control-group
 
 # Resource limits
-MemoryMax=512M
+MemoryHigh=1G
+MemoryMax=2G
 TasksMax=100
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/openchrome/.openchrome
+ReadWritePaths=%h/.openchrome
 PrivateTmp=true
 
 # Logging
