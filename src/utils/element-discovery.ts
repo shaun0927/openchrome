@@ -90,7 +90,7 @@ export async function discoverElements(
     page.evaluate(
       (searchQuery: string, maxRes: number, centerCoords: boolean, tagProp: string): RawElement[] => {
         const elements: RawElement[] = [];
-        const searchLower = searchQuery.toLowerCase();
+        const searchLower = searchQuery.normalize('NFC').toLowerCase().replace(/["""'''`]/g, '');
         const queryTokens = searchLower
           .split(/\s+/)
           .filter(t => t.length > 1)
@@ -250,7 +250,7 @@ export async function discoverElements(
 
         return elements;
       },
-      query.toLowerCase(),
+      query.normalize('NFC').toLowerCase().replace(/["""'''`]/g, ''),
       maxResults,
       useCenter,
       DISCOVERY_TAG,
@@ -556,7 +556,9 @@ export async function resolveBackendNodeIds(
     );
   }
 
-  await Promise.all(describePromises);
+  await withTimeout(Promise.all(describePromises), 8000, 'resolve-backend-node-ids').catch(() => {
+    // Timeout resolving backend node IDs — partial results are acceptable
+  });
 }
 
 /**
