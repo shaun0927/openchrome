@@ -168,10 +168,14 @@ export class MetricsCollector {
   }
 }
 
+function escapeLabel(v: string): string {
+  return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+}
+
 function formatLabels(labels: Record<string, string>): string {
   const keys = Object.keys(labels);
   if (keys.length === 0) return '';
-  const pairs = keys.map(k => `${k}="${labels[k]}"`).join(',');
+  const pairs = keys.map(k => `${k}="${escapeLabel(labels[k])}"`).join(',');
   return `{${pairs}}`;
 }
 
