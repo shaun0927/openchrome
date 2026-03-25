@@ -27,6 +27,7 @@ import { getChromeLauncher } from './chrome/launcher';
 import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM } from './config/defaults';
+import { getGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
@@ -67,6 +68,9 @@ export function isConnectionError(error: unknown): boolean {
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
  *  sleep/wake). Skip session initialization so oc_stop can always reach its handler. */
 const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
+
+/** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
+const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
 
 /**
  * Clients known to support notifications/tools/list_changed.
@@ -660,6 +664,15 @@ export class MCPServer {
         ]);
       }
 
+      // Identify heavy tools that may block the event loop legitimately
+      // (screenshot captures, full-page DOM reads, bulk cookie scans, arbitrary JS).
+      const isHeavyTool = HEAVY_TOOLS.has(toolName);
+
+      const eventLoopMonitor = getGlobalEventLoopMonitor();
+      if (isHeavyTool && eventLoopMonitor) {
+        eventLoopMonitor.beginHeavyOperation();
+      }
+
       let result: MCPResult;
       try {
         let tid: ReturnType<typeof setTimeout>;
@@ -708,6 +721,11 @@ export class MCPServer {
           }
         } else {
           throw handlerError;
+        }
+      } finally {
+        // Always restore normal threshold after heavy tool completes (success or error)
+        if (isHeavyTool && eventLoopMonitor) {
+          eventLoopMonitor.endHeavyOperation();
         }
       }
 
