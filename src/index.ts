@@ -264,6 +264,15 @@ program
         console.error('[SelfHealing] Post-relaunch reconnect failed:', err);
       });
     });
+    // Update ChromeProcessMonitor PID after watchdog relaunch
+    processWatchdog.on('chrome-relaunched', () => {
+      const newPid = cdpClient.getChromePid();
+      if (newPid != null && process.platform !== 'win32') {
+        chromeProcessMonitor.stop();
+        chromeProcessMonitor.start(newPid);
+        console.error(`[SelfHealing] ChromeProcessMonitor restarted (new pid=${newPid})`);
+      }
+    });
     processWatchdog.start();
     console.error('[SelfHealing] ChromeProcessWatchdog started');
 

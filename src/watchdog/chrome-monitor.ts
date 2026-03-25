@@ -34,6 +34,10 @@ export class ChromeProcessMonitor extends EventEmitter {
   }
 
   start(pid: number): void {
+    if (process.platform === 'win32') {
+      console.error('[ChromeMonitor] Memory monitoring not supported on Windows, skipping');
+      return;
+    }
     this.stop();
     this.pid = pid;
     this.check(); // immediate first check
