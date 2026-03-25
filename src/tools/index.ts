@@ -28,6 +28,7 @@ import { registerUserAgentTool } from './user-agent';
 import { registerGeolocationTool } from './geolocation';
 import { registerEmulateDeviceTool } from './emulate-device';
 import { registerPagePdfTool } from './page-pdf';
+import { registerPageScreenshotTool } from './page-screenshot';
 import { registerConsoleCaptureTool } from './console-capture';
 import { registerPerformanceMetricsTool } from './performance-metrics';
 import { registerRequestInterceptTool } from './request-intercept';
@@ -94,6 +95,7 @@ export function registerAllTools(server: MCPServer): void {
   registerGeolocationTool(server);
   registerEmulateDeviceTool(server);
   registerPagePdfTool(server);
+  registerPageScreenshotTool(server);
   registerConsoleCaptureTool(server);
   registerPerformanceMetricsTool(server);
   registerRequestInterceptTool(server);
