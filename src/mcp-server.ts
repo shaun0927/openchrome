@@ -591,11 +591,12 @@ export class MCPServer {
     }
 
     // Reconnection gate — reject immediately if Chrome is reconnecting
-    try {
+    // Allow lifecycle tools that must work during disconnection (oc_stop, oc_session_resume, etc.)
+    if (!SKIP_SESSION_INIT_TOOLS.has(toolName)) try {
       const cdpClient = getCDPClient();
       if (cdpClient.isReconnecting()) {
         const retryMs = cdpClient.estimatedRetryMs();
-        const retrySec = Math.ceil(retryMs / 1000);
+        const retrySec = Math.max(1, Math.ceil(retryMs / 1000));
         console.error(`[MCPServer] Rejecting tool call '${toolName}' — Chrome is reconnecting (retry in ~${retrySec}s)`);
         try { getMetricsCollector().inc('openchrome_tool_calls_total', { tool: toolName, status: 'reconnecting' }); } catch { /* best-effort */ }
         return {
