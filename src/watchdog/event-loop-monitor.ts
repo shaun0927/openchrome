@@ -41,7 +41,7 @@ export class EventLoopMonitor extends EventEmitter {
   private lastCheckAt = 0;
   private maxDriftObserved = 0;
   private warnCount = 0;
-  private heavyOpActive = false;
+  private heavyOpCount = 0;
 
   constructor(opts?: EventLoopMonitorOptions) {
     super();
@@ -67,9 +67,11 @@ export class EventLoopMonitor extends EventEmitter {
         this.maxDriftObserved = drift;
       }
 
-      const effectiveThreshold = this.heavyOpActive ? this.heavyOpThresholdMs : this.fatalThresholdMs;
+      const effectiveThreshold = (this.fatalThresholdMs === 0)
+        ? 0
+        : (this.heavyOpCount > 0 ? this.heavyOpThresholdMs : this.fatalThresholdMs);
       if (effectiveThreshold > 0 && drift > effectiveThreshold) {
-        console.error(`[EventLoopMonitor] FATAL: Event loop blocked for ${drift}ms (threshold: ${effectiveThreshold}ms${this.heavyOpActive ? ', heavy-op mode' : ''})`);
+        console.error(`[EventLoopMonitor] FATAL: Event loop blocked for ${drift}ms (threshold: ${effectiveThreshold}ms${this.heavyOpCount > 0 ? ', heavy-op mode' : ''})`);
         // Emits 'fatal' event — callers MUST attach a listener to handle recovery (e.g., process.exit(1)).
         // No automatic termination: intentional for testability and caller control.
         this.emit('fatal', { driftMs: drift, timestamp: now } as BlockEvent);
@@ -102,24 +104,18 @@ export class EventLoopMonitor extends EventEmitter {
   /**
    * Signal the start of a heavy tool operation that may legitimately block the event loop.
    * While active, the monitor uses heavyOpThresholdMs instead of fatalThresholdMs.
-   *
-   * @param thresholdMs - Optional override for the heavy-op threshold (ms).
-   *   Defaults to the heavyOpFatalThresholdMs passed at construction.
+   * Uses a reference counter so concurrent heavy tools are handled correctly.
    */
-  beginHeavyOperation(thresholdMs?: number): void {
-    this.heavyOpActive = true;
-    if (thresholdMs !== undefined) {
-      // Store per-call override by re-assigning the mutable field via a trick:
-      // TypeScript readonly only enforces at compile time; cast to bypass for the override.
-      (this as unknown as { heavyOpThresholdMs: number }).heavyOpThresholdMs = thresholdMs;
-    }
+  beginHeavyOperation(): void {
+    this.heavyOpCount++;
   }
 
   /**
-   * Signal the end of a heavy tool operation, reverting to the normal fatal threshold.
+   * Signal the end of a heavy tool operation, reverting to the normal fatal threshold
+   * once all concurrent heavy operations have completed.
    */
   endHeavyOperation(): void {
-    this.heavyOpActive = false;
+    if (this.heavyOpCount > 0) this.heavyOpCount--;
   }
 
   /**
