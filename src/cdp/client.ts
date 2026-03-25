@@ -511,19 +511,7 @@ export class CDPClient {
           const { getBrowserStateManager } = await import('../browser-state');
           const stateManager = getBrowserStateManager();
           const cookies = await stateManager.getLatestCookies();
-          const currentBrowser = this.browser as Browser | null;
-          if (cookies && cookies.length > 0 && currentBrowser) {
-            const pages = await currentBrowser.pages();
-            if (pages.length > 0) {
-              const client = await pages[0].createCDPSession();
-              try {
-                await client.send('Network.setCookies', { cookies });
-                console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
-              } finally {
-                await client.detach();
-              }
-            }
-          }
+          await this.restoreCookiesAfterReconnect(cookies);
         } catch (err) {
           console.error('[CDPClient] Cookie restore after reconnection failed (non-fatal):', err);
         }
@@ -824,19 +812,7 @@ export class CDPClient {
         const { getBrowserStateManager } = await import('../browser-state');
         const stateManager = getBrowserStateManager();
         const cookies = await stateManager.getLatestCookies();
-        const currentBrowser = this.browser as Browser | null;
-        if (cookies && cookies.length > 0 && currentBrowser) {
-          const pages = await currentBrowser.pages();
-          if (pages.length > 0) {
-            const client = await pages[0].createCDPSession();
-            try {
-              await client.send('Network.setCookies', { cookies });
-              console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
-            } finally {
-              await client.detach();
-            }
-          }
-        }
+        await this.restoreCookiesAfterReconnect(cookies);
       } catch (err) {
         console.error('[CDPClient] Cookie restore after reconnection failed (non-fatal):', err);
       }
@@ -848,6 +824,32 @@ export class CDPClient {
         error: err instanceof Error ? err.message : String(err),
       });
       throw err;
+    }
+  }
+
+  /**
+   * Restore cookies to the browser after reconnection.
+   * Filters out about:blank and chrome:// pages before selecting the CDP target
+   * to avoid setting cookies on ghost tabs or pool placeholders.
+   */
+  private async restoreCookiesAfterReconnect(cookies: any[] | null): Promise<void> {
+    if (!cookies || cookies.length === 0) return;
+    try {
+      const pages = await this.browser!.pages();
+      const validPage = pages.find(p => {
+        const url = p.url();
+        return url && url !== 'about:blank' && !url.startsWith('chrome://');
+      }) || pages[0]; // fallback to pages[0] if no valid page
+      if (!validPage) return;
+      const client = await validPage.createCDPSession();
+      try {
+        await client.send('Network.setCookies', { cookies });
+        console.error(`[CDPClient] Restored ${cookies.length} cookies from snapshot after reconnection`);
+      } finally {
+        await client.detach();
+      }
+    } catch (err) {
+      console.error('[CDPClient] Cookie restore failed:', err);
     }
   }
 
