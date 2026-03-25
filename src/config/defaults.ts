@@ -124,9 +124,11 @@ export const DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP = Infinity;
 /** Heartbeat active ping timeout in milliseconds.
  *  Sends Browser.getVersion to detect half-open WebSocket connections
  *  (e.g., after macOS sleep/wake) that browser.isConnected() misses.
- *  Set higher than heartbeat interval (5s) to avoid false-positive disconnects
- *  when Chrome is under heavy CPU load (GC pauses, complex JS execution). */
-export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 15000;
+ *  5s is 50x longer than normal Chrome response (<100ms) and handles
+ *  heavy CPU load (GC pauses ~1-2s). The 2-strike policy in checkConnection()
+ *  provides additional false-positive protection. Lower values enable faster
+ *  detection of frozen/network-blocked Chrome (#408). */
+export const DEFAULT_HEARTBEAT_PING_TIMEOUT_MS = 5000;
 
 /** Connection verification staleness threshold in milliseconds.
  *  If the connection hasn't been verified (by heartbeat or probe) within this window,
@@ -271,3 +273,10 @@ export const DEFAULT_SNAPSHOT_RETENTION_DAYS = 30;
 /** Maximum number of checkpoints to keep. Default: 10.
  *  Oldest checkpoints beyond this count are deleted. */
 export const DEFAULT_MAX_CHECKPOINTS = 10;
+
+/** Chrome process memory check interval in ms. Default: 30s */
+export const DEFAULT_CHROME_MONITOR_INTERVAL_MS = 30000;
+/** Chrome RSS memory warning threshold in bytes. Default: 1GB */
+export const DEFAULT_CHROME_MEMORY_WARN_BYTES = 1024 * 1024 * 1024;
+/** Chrome RSS memory critical threshold in bytes. Default: 2GB */
+export const DEFAULT_CHROME_MEMORY_CRITICAL_BYTES = 2 * 1024 * 1024 * 1024;

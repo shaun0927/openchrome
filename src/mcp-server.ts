@@ -581,6 +581,7 @@ export class MCPServer {
       const rateResult = this.rateLimiter.check(sessionId);
       if (!rateResult.allowed) {
         console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
+        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', { tool: toolName }); } catch { /* best-effort */ }
         return {
           content: [
             {
@@ -591,6 +592,29 @@ export class MCPServer {
           isError: true,
         };
       }
+    }
+
+    // Reconnection gate — reject immediately if Chrome is reconnecting
+    // Allow lifecycle tools that must work during disconnection (oc_stop, oc_session_resume, etc.)
+    if (!SKIP_SESSION_INIT_TOOLS.has(toolName)) try {
+      const cdpClient = getCDPClient();
+      if (cdpClient.isReconnecting()) {
+        const retryMs = cdpClient.estimatedRetryMs();
+        const retrySec = Math.max(1, Math.ceil(retryMs / 1000));
+        console.error(`[MCPServer] Rejecting tool call '${toolName}' — Chrome is reconnecting (retry in ~${retrySec}s)`);
+        try { getMetricsCollector().inc('openchrome_tool_calls_total', { tool: toolName, status: 'reconnecting' }); } catch { /* best-effort */ }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Chrome is currently reconnecting after a disconnection. Please retry in approximately ${retrySec} second(s). The server will automatically reconnect and resume normal operation.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch {
+      // CDPClient may not be initialized — proceed with normal flow
     }
 
     // Start activity tracking
