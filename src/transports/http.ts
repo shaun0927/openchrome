@@ -15,6 +15,9 @@ import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { MCPTransport } from './index';
 
+/** Maximum allowed HTTP request body size (10 MB) to prevent OOM from oversized requests */
+const MAX_BODY_BYTES = 10 * 1024 * 1024;
+
 /** Active SSE connections for server-initiated notifications */
 interface SSEConnection {
   res: http.ServerResponse;
@@ -27,9 +30,18 @@ export class HTTPTransport implements MCPTransport {
   private port: number;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
+  private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
 
   constructor(port: number) {
     this.port = port;
+  }
+
+  /**
+   * Register a callback to be invoked whenever a session is deleted.
+   * Used by MCPServer to clean up per-session state (e.g. rate-limiter buckets).
+   */
+  onSessionDelete(handler: (sessionId: string) => void): void {
+    this.sessionDeleteHandler = handler;
   }
 
   onMessage(handler: (msg: Record<string, unknown>) => Promise<MCPResponse | null>): void {
@@ -152,8 +164,20 @@ export class HTTPTransport implements MCPTransport {
    */
   private handlePost(req: http.IncomingMessage, res: http.ServerResponse): void {
     const chunks: Buffer[] = [];
+    let bodyBytes = 0;
 
     req.on('data', (chunk: Buffer) => {
+      bodyBytes += chunk.length;
+      if (bodyBytes > MAX_BODY_BYTES) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id: 0,
+          error: { code: MCPErrorCodes.INVALID_REQUEST, message: 'Request body too large' },
+        }));
+        req.destroy();
+        return;
+      }
       chunks.push(chunk);
     });
 
@@ -311,6 +335,11 @@ export class HTTPTransport implements MCPTransport {
     if (sessionId && this.sessions.has(sessionId)) {
       this.sessions.delete(sessionId);
 
+      // Notify session-delete listeners (e.g. rate-limiter cleanup)
+      if (this.sessionDeleteHandler) {
+        this.sessionDeleteHandler(sessionId);
+      }
+
       // Close any SSE connections for this session
       this.sseConnections = this.sseConnections.filter((conn) => {
         if (conn.sessionId === sessionId) {
@@ -340,6 +369,19 @@ export class HTTPTransport implements MCPTransport {
     sessionId: string | undefined,
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
+
+    // Assign sessionId once before concurrent processing to avoid data race
+    // when multiple initialize requests appear in the same batch.
+    if (!sessionId) {
+      const hasInitialize = messages.some(
+        (msg) => typeof msg === 'object' && msg !== null && (msg as Record<string, unknown>).method === 'initialize',
+      );
+      if (hasInitialize) {
+        sessionId = crypto.randomUUID();
+        this.sessions.add(sessionId);
+      }
+    }
+
     const promises = messages.map(async (msg) => {
       if (typeof msg !== 'object' || msg === null) {
         return {
@@ -353,12 +395,6 @@ export class HTTPTransport implements MCPTransport {
       }
 
       const record = msg as Record<string, unknown>;
-
-      // For initialize requests in batch, assign session
-      if (record.method === 'initialize' && !sessionId) {
-        sessionId = crypto.randomUUID();
-        this.sessions.add(sessionId);
-      }
 
       try {
         return await handler(record);

@@ -21,6 +21,7 @@ import { StorageStateManager } from './storage-state';
 import { StorageStateConfig } from './config';
 import { assertDomainAllowed } from './security/domain-guard';
 import { getTargetId } from './utils/puppeteer-helpers';
+import { safeTitle } from './utils/safe-title';
 
 /** The primary session ID used by most single-agent workflows. */
 const DEFAULT_SESSION_ID = 'default';
@@ -1381,6 +1382,35 @@ export class SessionManager {
       : ' No tabs available in this session. Use navigate to open a new page.';
 
     return `Target ${targetId} not found in session ${sessionId}. The tab may have been closed or Chrome may have been restarted.${tabInfo}`;
+  }
+
+  /**
+   * Get available targets for a session, formatted for error messages.
+   * Returns an array of { tabId, url, title } for each live target.
+   */
+  async getAvailableTargets(sessionId: string): Promise<Array<{ tabId: string; url: string; title: string }>> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return [];
+
+    const results: Array<{ tabId: string; url: string; title: string }> = [];
+    for (const [workerId, worker] of session.workers.entries()) {
+      const cdpClient = this.getCDPClientForWorker(sessionId, workerId);
+      for (const targetId of worker.targets) {
+        try {
+          const page = await cdpClient.getPageByTargetId(targetId);
+          if (page && !page.isClosed()) {
+            results.push({
+              tabId: targetId,
+              url: page.url(),
+              title: await safeTitle(page),
+            });
+          }
+        } catch {
+          // Target may have closed between iteration steps — skip it
+        }
+      }
+    }
+    return results;
   }
 
   /**

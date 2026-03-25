@@ -63,6 +63,8 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     pages,
     mockCDPClient,
 
+    getAvailableTargets: jest.fn().mockReturnValue([]),
+
     ensureConnected: jest.fn().mockResolvedValue(undefined),
 
     createSession: jest.fn().mockImplementation(async (opts: { id?: string; name?: string } = {}) => {
