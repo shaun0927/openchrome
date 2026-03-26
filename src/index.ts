@@ -358,6 +358,7 @@ program
 
     // Health Endpoint (Layer 4)
     const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
+    const healthBind = process.env.OPENCHROME_HEALTH_BIND || '127.0.0.1';
     const healthEndpoint = new HealthEndpoint(() => {
       const elStats = eventLoopMonitor.getStats();
       const tabHealth = tabHealthMonitor.getAllHealth();
@@ -416,7 +417,7 @@ program
         sessions: { active: sessionManager?.sessionCount ?? 0 },
       };
       return data;
-    }, healthPort);
+    }, healthPort, healthBind);
     healthEndpoint.start().catch((err: unknown) => {
       console.error('[SelfHealing] HealthEndpoint start failed:', err);
     });

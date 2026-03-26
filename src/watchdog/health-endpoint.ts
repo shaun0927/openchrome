@@ -49,11 +49,13 @@ export type HealthDataProvider = () => HealthData;
 export class HealthEndpoint {
   private server: http.Server | null = null;
   private readonly port: number;
+  private readonly bindAddress: string;
   private readonly provider: HealthDataProvider;
 
   // 9090 avoids conflict with Node.js inspector (9229), Chrome DevTools (9222)
-  constructor(provider: HealthDataProvider, port = 9090) {
+  constructor(provider: HealthDataProvider, port = 9090, bindAddress = '127.0.0.1') {
     this.port = port;
+    this.bindAddress = bindAddress;
     this.provider = provider;
   }
 
@@ -110,9 +112,9 @@ export class HealthEndpoint {
         }
       });
 
-      this.server.listen(this.port, '127.0.0.1', () => {
-        console.error(`[HealthEndpoint] Health check: http://127.0.0.1:${this.port}/health`);
-        console.error(`[HealthEndpoint] Prometheus metrics: http://127.0.0.1:${this.port}/metrics`);
+      this.server.listen(this.port, this.bindAddress, () => {
+        console.error(`[HealthEndpoint] Health check: http://${this.bindAddress}:${this.port}/health`);
+        console.error(`[HealthEndpoint] Prometheus metrics: http://${this.bindAddress}:${this.port}/metrics`);
         resolve();
       });
 
