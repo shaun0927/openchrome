@@ -113,6 +113,9 @@ export async function discoverElements(
     page.evaluate(
       (searchQuery: string, maxRes: number, centerCoords: boolean, tagProp: string): RawElement[] => {
         const elements: RawElement[] = [];
+        // NOTE: This normalization duplicates normalizeQuery() from element-finder.ts
+        // because page.evaluate runs in the browser context (no Node imports).
+        // Keep in sync with the canonical implementation.
         const searchLower = searchQuery.normalize('NFC').toLowerCase().replace(/["""'''`]/g, '');
         const queryTokens = searchLower
           .split(/\s+/)
