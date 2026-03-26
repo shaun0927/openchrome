@@ -11,6 +11,8 @@ import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../c
 import { withDomDelta } from '../utils/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
 import { discoverFormFields, FormField, FORM_FIELD_TAG } from '../utils/element-discovery';
+import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-resolver';
+import { getTargetId } from '../utils/puppeteer-helpers';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -125,6 +127,71 @@ const handler: ToolHandler = async (
       for (const [fieldKey, fieldValue] of Object.entries(fields)) {
         const keyLower = fieldKey.toLowerCase();
 
+        // ─── AX-First Resolution ───
+        // Try AX tree first — the browser's accessibility engine understands all UI frameworks
+        let axMatch: { backendDOMNodeId: number; rect: { x: number; y: number; width: number; height: number } } | null = null;
+        try {
+          const axResults = await withTimeout(
+            resolveElementsByAXTree(page, cdpClient, fieldKey, {
+              maxResults: 1,
+              useCenter: true,
+            }),
+            5000,
+            'fill-form-ax'
+          );
+          if (axResults.length > 0) {
+            axMatch = axResults[0];
+          }
+        } catch {
+          // AX resolution failed — fall through to CSS discovery
+        }
+
+        if (axMatch) {
+          try {
+            // Scroll into view
+            await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
+              backendNodeId: axMatch.backendDOMNodeId,
+            });
+            await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+
+            // Re-resolve coordinates after scroll
+            try {
+              const { model } = await cdpClient.send<{ model: { content: number[] } }>(
+                page, 'DOM.getBoxModel', { backendNodeId: axMatch.backendDOMNodeId }
+              );
+              if (model?.content && model.content.length >= 8) {
+                const bx = model.content[0], by = model.content[1];
+                const bw = model.content[2] - bx, bh = model.content[5] - by;
+                if (bw > 0 && bh > 0) {
+                  axMatch.rect = { x: bx + bw / 2, y: by + bh / 2, width: bw, height: bh };
+                }
+              }
+            } catch { /* use original coordinates */ }
+
+            // Click to focus
+            await page.mouse.click(Math.round(axMatch.rect.x), Math.round(axMatch.rect.y));
+            await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+
+            // Type value (AX path handles text inputs only — no checkbox/select special-casing needed here
+            // since AX field discovery targets labeled fields; CSS path handles typed controls)
+            if (clearFirst) {
+              const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+              await page.keyboard.down(modifier);
+              await page.keyboard.press('KeyA');
+              await page.keyboard.up(modifier);
+              await page.keyboard.press('Backspace');
+            }
+            await page.keyboard.type(String(fieldValue));
+
+            invalidateAXCache(getTargetId(page.target()));
+            filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
+          } catch (e) {
+            errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
+          }
+          continue;
+        }
+
+        // ─── CSS Fallback ───
         // Find best matching form field
         let bestMatch: FormField | null = null;
         let bestScore = 0;
