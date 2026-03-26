@@ -17,6 +17,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
+import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
@@ -221,12 +222,18 @@ const handler: ToolHandler = async (
     do {
     // Find elements matching the query using the shared discovery module
     let results: Omit<FoundElement, 'score'>[];
+    const cb = getCircuitBreaker();
     try {
       results = await discoverElements(page, cdpClient, queryLower, {
         maxResults: 30,
         useCenter: true,
         timeout: 10000,
         toolName: 'interact',
+        circuitBreaker: {
+          check: (_pageUrl: string) => !cb.check(tabId, queryLower).allowed,
+          recordFailure: (_pageUrl: string) => cb.recordElementFailure(tabId, queryLower),
+          recordSuccess: (_pageUrl: string) => cb.recordElementSuccess(tabId, queryLower),
+        },
       });
     } catch {
       // CDP evaluate timed out — retry if budget remains
