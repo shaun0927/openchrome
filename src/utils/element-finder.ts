@@ -34,7 +34,9 @@ const STOP_WORDS = new Set([
  */
 export function tokenizeQuery(query: string): string[] {
   return query
+    .normalize('NFC')
     .toLowerCase()
+    .replace(/["""'''`]/g, '')
     .split(/\s+/)
     .filter(t => t.length > 1)
     .filter(t => !STOP_WORDS.has(t));

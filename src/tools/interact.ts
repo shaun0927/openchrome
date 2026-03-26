@@ -106,8 +106,8 @@ const handler: ToolHandler = async (
       };
     }
 
-    const queryLower = query.toLowerCase();
-    const queryTokens = tokenizeQuery(query);
+    const queryLower = query.normalize('NFC').toLowerCase().replace(/["""'''`]/g, '');
+    const queryTokens = tokenizeQuery(queryLower);
 
     // Optional polling for dynamic/lazy content
     const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
@@ -118,10 +118,14 @@ const handler: ToolHandler = async (
     // ─── AX-First Resolution ───
     // Try AX tree first — the browser's accessibility engine understands all UI frameworks
     try {
-      const axMatches = await resolveElementsByAXTree(page, cdpClient, query, {
-        useCenter: true,
-        maxResults: 3,
-      });
+      const axMatches = await withTimeout(
+        resolveElementsByAXTree(page, cdpClient, query, {
+          useCenter: true,
+          maxResults: 3,
+        }),
+        10000,
+        'ax-resolution'
+      );
       if (axMatches.length > 0) {
         const ax = axMatches[0];
 
@@ -208,8 +212,9 @@ const handler: ToolHandler = async (
 
         return { content: resultContent };
       }
-    } catch {
+    } catch (axError) {
       // AX resolution failed — fall through to CSS discovery
+      console.error(`[interact] AX resolution failed, falling back to CSS: ${axError instanceof Error ? axError.message : String(axError)}`);
     }
 
     // ─── CSS Fallback (existing logic) ───
@@ -415,7 +420,10 @@ const handler: ToolHandler = async (
       }
 
       return { url, title, scrollX, scrollY, activeInfo, panels, headings };
-    }), 10000, 'interact');
+    }), 10000, 'interact').catch(() => ({
+      url: '', title: '', scrollX: 0, scrollY: 0,
+      activeInfo: 'unknown', panels: [] as string[], headings: [] as string[],
+    }));
 
     // Build the response — compact success format
     const lines: string[] = [interactedLine];
