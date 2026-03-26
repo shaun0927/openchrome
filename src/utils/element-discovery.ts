@@ -14,6 +14,19 @@ import { discoverShadowElements, DEEP_WALK_ELEMENTS_JS, getAllShadowRoots, query
 import { withTimeout } from './with-timeout';
 
 /**
+ * Optional circuit breaker interface for element discovery.
+ * Allows callers to integrate fault-tolerance without coupling to a specific implementation.
+ */
+export interface DiscoveryCircuitBreaker {
+  /** Returns true if the circuit is open (should fail fast) for the given page URL */
+  check: (pageUrl: string) => boolean;
+  /** Record a discovery failure for the given page URL */
+  recordFailure: (pageUrl: string) => void;
+  /** Record a discovery success for the given page URL */
+  recordSuccess: (pageUrl: string) => void;
+}
+
+/**
  * Options for element discovery.
  */
 export interface DiscoverOptions {
@@ -25,6 +38,8 @@ export interface DiscoverOptions {
   timeout?: number;
   /** Tool name for timeout error messages */
   toolName?: string;
+  /** Optional circuit breaker — fail fast when page is in a bad state */
+  circuitBreaker?: DiscoveryCircuitBreaker;
 }
 
 /**
@@ -85,12 +100,23 @@ export async function discoverElements(
   const timeout = options?.timeout ?? 10000;
   const toolName = options?.toolName ?? 'element-discovery';
 
+  // Circuit breaker: fail fast if the page is in a known bad state
+  if (options?.circuitBreaker) {
+    const pageUrl = page.url();
+    if (options.circuitBreaker.check(pageUrl)) {
+      return [];
+    }
+  }
+
   // Step 1: In-page element search
   const results = await withTimeout(
     page.evaluate(
       (searchQuery: string, maxRes: number, centerCoords: boolean, tagProp: string): RawElement[] => {
         const elements: RawElement[] = [];
-        const searchLower = searchQuery.toLowerCase();
+        // NOTE: This normalization duplicates normalizeQuery() from element-finder.ts
+        // because page.evaluate runs in the browser context (no Node imports).
+        // Keep in sync with the canonical implementation.
+        const searchLower = searchQuery.normalize('NFC').toLowerCase().replace(/["""'''`]/g, '');
         const queryTokens = searchLower
           .split(/\s+/)
           .filter(t => t.length > 1)
@@ -250,7 +276,7 @@ export async function discoverElements(
 
         return elements;
       },
-      query.toLowerCase(),
+      query.normalize('NFC').toLowerCase().replace(/["""'''`]/g, ''),
       maxResults,
       useCenter,
       DISCOVERY_TAG,
@@ -292,6 +318,16 @@ export async function discoverElements(
       }
     } catch {
       // Shadow search failure is non-fatal — JS results are still valid
+    }
+  }
+
+  // Circuit breaker: record outcome based on discovery results
+  if (options?.circuitBreaker) {
+    const pageUrl = page.url();
+    if (results.length > 0) {
+      options.circuitBreaker.recordSuccess(pageUrl);
+    } else {
+      options.circuitBreaker.recordFailure(pageUrl);
     }
   }
 
@@ -556,7 +592,9 @@ export async function resolveBackendNodeIds(
     );
   }
 
-  await Promise.all(describePromises);
+  await withTimeout(Promise.all(describePromises), 8000, 'resolve-backend-node-ids').catch(() => {
+    // Timeout resolving backend node IDs — partial results are acceptable
+  });
 }
 
 /**

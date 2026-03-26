@@ -11,12 +11,13 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
-import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
+import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { withTimeout } from '../utils/with-timeout';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
+import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
@@ -106,8 +107,9 @@ const handler: ToolHandler = async (
       };
     }
 
-    const queryLower = query.toLowerCase();
-    const queryTokens = tokenizeQuery(query);
+    const queryNorm = normalizeQuery(query);
+    const queryLower = queryNorm;
+    const queryTokens = tokenizeQuery(queryNorm);
 
     // Optional polling for dynamic/lazy content
     const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
@@ -118,10 +120,14 @@ const handler: ToolHandler = async (
     // ─── AX-First Resolution ───
     // Try AX tree first — the browser's accessibility engine understands all UI frameworks
     try {
-      const axMatches = await resolveElementsByAXTree(page, cdpClient, query, {
-        useCenter: true,
-        maxResults: 3,
-      });
+      const axMatches = await withTimeout(
+        resolveElementsByAXTree(page, cdpClient, query, {
+          useCenter: true,
+          maxResults: 3,
+        }),
+        10000,
+        'ax-resolution'
+      );
       if (axMatches.length > 0) {
         const ax = axMatches[0];
 
@@ -208,20 +214,27 @@ const handler: ToolHandler = async (
 
         return { content: resultContent };
       }
-    } catch {
+    } catch (axError) {
       // AX resolution failed — fall through to CSS discovery
+      console.error(`[interact] AX resolution failed, falling back to CSS: ${axError instanceof Error ? axError.message : String(axError)}`);
     }
 
     // ─── CSS Fallback (existing logic) ───
     do {
     // Find elements matching the query using the shared discovery module
     let results: Omit<FoundElement, 'score'>[];
+    const cb = getCircuitBreaker();
     try {
       results = await discoverElements(page, cdpClient, queryLower, {
         maxResults: 30,
         useCenter: true,
         timeout: 10000,
         toolName: 'interact',
+        circuitBreaker: {
+          check: (_pageUrl: string) => !cb.check(tabId, queryLower).allowed,
+          recordFailure: (_pageUrl: string) => cb.recordElementFailure(tabId, queryLower),
+          recordSuccess: (_pageUrl: string) => cb.recordElementSuccess(tabId, queryLower),
+        },
       });
     } catch {
       // CDP evaluate timed out — retry if budget remains
@@ -415,7 +428,10 @@ const handler: ToolHandler = async (
       }
 
       return { url, title, scrollX, scrollY, activeInfo, panels, headings };
-    }), 10000, 'interact');
+    }), 10000, 'interact').catch(() => ({
+      url: '', title: '', scrollX: 0, scrollY: 0,
+      activeInfo: 'unknown', panels: [] as string[], headings: [] as string[],
+    }));
 
     // Build the response — compact success format
     const lines: string[] = [interactedLine];

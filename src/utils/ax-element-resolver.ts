@@ -12,6 +12,7 @@
 import type { Page } from 'puppeteer-core';
 import type { CDPClient } from '../cdp/client';
 import { getTargetId } from './puppeteer-helpers';
+import { normalizeQuery } from './element-finder';
 
 // ─── Types ───
 
@@ -90,6 +91,22 @@ const ROLE_KEYWORDS: Array<[string, string]> = [
   ['tree item', 'treeitem'],
   ['tab panel', 'tabpanel'],
   ['list item', 'listitem'],
+  // Localized role keywords — Korean (ko)
+  // LLM clients send queries in the user's language; these map Korean UI terms to ARIA roles.
+  // To add another locale: append entries here, longest-first within each language block.
+  // Keep keywords >= 2 characters to avoid spurious matches.
+  ['라디오 버튼', 'radio'],
+  ['체크박스', 'checkbox'],
+  ['콤보박스', 'combobox'],
+  ['텍스트 필드', 'textbox'],
+  ['검색창', 'searchbox'],
+  ['메뉴 항목', 'menuitem'],
+  ['드롭다운', 'combobox'],
+  ['버튼', 'button'],
+  ['링크', 'link'],
+  ['스위치', 'switch'],
+  ['슬라이더', 'slider'],
+  ['이미지', 'image'],
   ['button', 'button'],
   ['link', 'link'],
   ['radio', 'radio'],
@@ -136,25 +153,28 @@ const INTERACTIVE_ROLES = new Set([
  *   "로그인"              → { roleHint: null, nameHint: "로그인" }
  */
 export function parseQueryForAX(query: string): ParsedAXQuery {
-  const queryLower = query.toLowerCase().trim();
+  // Use normalized form for keyword matching, but preserve original case in nameHint
+  const queryNorm = normalizeQuery(query);
+  const queryClean = query.normalize('NFC').replace(/["""'''`]/g, '').trim();
 
   for (const [keyword, role] of ROLE_KEYWORDS) {
-    const idx = queryLower.indexOf(keyword);
+    const idx = queryNorm.indexOf(keyword);
     if (idx !== -1) {
-      const before = query.slice(0, idx).trim();
-      const after = query.slice(idx + keyword.length).trim();
+      // Slice from the case-preserving version using the same indices
+      const before = queryClean.slice(0, idx).trim();
+      const after = queryClean.slice(idx + keyword.length).trim();
       const nameHint = [before, after].filter(Boolean).join(' ').trim();
 
       return {
         roleHint: role,
-        nameHint: nameHint || query.trim(),
+        nameHint: nameHint || queryClean,
       };
     }
   }
 
   return {
     roleHint: null,
-    nameHint: query.trim(),
+    nameHint: queryClean,
   };
 }
 
@@ -183,11 +203,11 @@ export function cascadeFilter(
     INTERACTIVE_ROLES.has(n.role.toLowerCase())
   );
 
-  const nameLower = nameHint.toLowerCase().trim();
+  const nameLower = nameHint.normalize('NFC').toLowerCase().trim();
   if (!nameLower) return [];
 
-  const eq = (nodeName: string) => nodeName.toLowerCase().trim() === nameLower;
-  const includes = (nodeName: string) => nodeName.toLowerCase().trim().includes(nameLower);
+  const eq = (nodeName: string) => nodeName.normalize('NFC').toLowerCase().trim() === nameLower;
+  const includes = (nodeName: string) => nodeName.normalize('NFC').toLowerCase().trim().includes(nameLower);
 
   // Level 1: exact role + exact name
   if (roleHint) {

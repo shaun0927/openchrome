@@ -35,6 +35,7 @@ import { getMetricsCollector } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
 import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
+import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 
 /**
@@ -42,6 +43,7 @@ import { getTaskJournal } from './journal/task-journal';
  * by reconnecting to the browser.
  */
 export function isConnectionError(error: unknown): boolean {
+  if (error instanceof OpenChromeConnectionError) return true;
   const message = formatError(error);
   const patterns = [
     'not connected to chrome',

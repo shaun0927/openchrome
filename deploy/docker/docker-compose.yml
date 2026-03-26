@@ -16,6 +16,7 @@ services:
       - OPENCHROME_RATE_LIMIT_RPM=120
       - OPENCHROME_MAX_RECONNECT_ATTEMPTS=0
       - OPENCHROME_EVENT_LOOP_FATAL_MS=30000
+      - OPENCHROME_HEALTH_BIND=0.0.0.0
     restart: unless-stopped
     # Chrome needs these for headless operation
     shm_size: '2gb'

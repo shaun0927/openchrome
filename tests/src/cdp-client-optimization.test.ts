@@ -377,8 +377,9 @@ describe('CDPClient – triggerGC', () => {
 
   test('sends HeapProfiler.collectGarbage via CDP session', async () => {
     const mockPage = createMockPage('gc-target');
-    // Inject session into the sessions map so getCDPSession returns it directly
+    // Inject session and target index so getCDPSession returns it directly
     (client as any).sessions.set('gc-target', mockPage._cdpSession);
+    (client as any).targetIdIndex.set('gc-target', mockPage);
 
     await client.triggerGC(mockPage as any);
 
@@ -420,8 +421,9 @@ describe('CDPClient – closePage', () => {
       callOrder.push('close');
     });
 
-    // Inject the session and make getPageByTargetId return the page
+    // Inject the session, target index, and make getPageByTargetId return the page
     (client as any).sessions.set(targetId, mockPage._cdpSession);
+    (client as any).targetIdIndex.set(targetId, mockPage);
     const origGetPage = client.getPageByTargetId.bind(client);
     jest.spyOn(client, 'getPageByTargetId').mockResolvedValue(mockPage as any);
 

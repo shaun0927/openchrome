@@ -8,7 +8,7 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
-import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
+import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { resolveElementsByAXTree, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 
 const definition: MCPToolDefinition = {
@@ -77,7 +77,8 @@ const handler: ToolHandler = async (
       };
     }
 
-    const queryLower = query.toLowerCase();
+    const queryNorm = normalizeQuery(query);
+    const queryLower = queryNorm;
 
     // Optional polling for dynamic/lazy content (default 3000ms; pass 0 to disable)
     const maxWait = Math.min(Math.max(waitForMs ?? 3000, 0), 30000);
