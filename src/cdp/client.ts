@@ -28,6 +28,7 @@ import {
 } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
+import { OpenChromeConnectionError } from '../errors/connection';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -1768,6 +1769,16 @@ export class CDPClient {
     const target = page.target();
     const targetId = getTargetId(target);
 
+    // Fail fast if the target is no longer valid (browser may have reconnected)
+    if (targetId && !this.targetIdIndex.has(targetId)) {
+      console.error(`[CDPClient] Rejecting getCDPSession() for stale target ${targetId} — page reference is no longer valid`);
+      throw new OpenChromeConnectionError(
+        `Target ${targetId} is no longer valid (browser disconnected or reconnected). ` +
+        `Retry the operation to get a fresh page reference.`,
+        targetId
+      );
+    }
+
     let session = this.sessions.get(targetId);
     if (!session) {
       session = await page.createCDPSession();
@@ -1786,6 +1797,17 @@ export class CDPClient {
     method: string,
     params?: Record<string, unknown>
   ): Promise<T> {
+    // Fail fast if the target is no longer valid (browser may have reconnected)
+    const targetId = getTargetId(page.target());
+    if (targetId && !this.targetIdIndex.has(targetId)) {
+      console.error(`[CDPClient] Rejecting send() for stale target ${targetId} — page reference is no longer valid`);
+      throw new OpenChromeConnectionError(
+        `Target ${targetId} is no longer valid (browser disconnected or reconnected). ` +
+        `Retry the operation to get a fresh page reference.`,
+        targetId
+      );
+    }
+
     const session = await this.getCDPSession(page);
     return withTimeout(
       session.send(method as any, params as any) as Promise<T>,
