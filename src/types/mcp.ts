@@ -51,9 +51,22 @@ export interface MCPToolDefinition {
   };
 }
 
+/**
+ * Context passed to tool handlers for budget-aware execution.
+ * Tools can use getRemainingBudget() to check how much time remains
+ * before the tool execution timeout fires.
+ */
+export interface ToolContext {
+  /** When the tool handler started executing */
+  startTime: number;
+  /** Total budget in milliseconds (default: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS) */
+  deadlineMs: number;
+}
+
 export type ToolHandler = (
   sessionId: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  context?: ToolContext
 ) => Promise<MCPResult>;
 
 export interface ToolRegistry {

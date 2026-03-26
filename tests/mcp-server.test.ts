@@ -212,7 +212,7 @@ describe('MCPServer', () => {
 
       await server.handleRequest(request);
 
-      expect(handler).toHaveBeenCalledWith('test-session', { foo: 'bar' });
+      expect(handler).toHaveBeenCalledWith('test-session', { foo: 'bar' }, expect.objectContaining({ startTime: expect.any(Number), deadlineMs: expect.any(Number) }));
     });
 
     test('returns tool result', async () => {
