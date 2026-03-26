@@ -13,6 +13,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { discoverFormFields, FormField, FORM_FIELD_TAG } from '../utils/element-discovery';
 import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
+import { normalizeQuery } from '../utils/element-finder';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -125,7 +126,7 @@ const handler: ToolHandler = async (
       let submitted = false;
       // Match and fill each requested field
       for (const [fieldKey, fieldValue] of Object.entries(fields)) {
-        const keyLower = fieldKey.toLowerCase();
+        const keyLower = normalizeQuery(fieldKey);
 
         // ─── AX-First Resolution ───
         // Try AX tree first — the browser's accessibility engine understands all UI frameworks
@@ -312,7 +313,7 @@ const handler: ToolHandler = async (
       // Optional: Click submit button
       if (submit && filledFields.length > 0) {
         try {
-          const submitLower = submit.toLowerCase();
+          const submitLower = normalizeQuery(submit);
 
           // Find submit button
           const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number } | null => {

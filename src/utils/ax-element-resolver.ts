@@ -12,6 +12,7 @@
 import type { Page } from 'puppeteer-core';
 import type { CDPClient } from '../cdp/client';
 import { getTargetId } from './puppeteer-helpers';
+import { normalizeQuery } from './element-finder';
 
 // ─── Types ───
 
@@ -152,25 +153,28 @@ const INTERACTIVE_ROLES = new Set([
  *   "로그인"              → { roleHint: null, nameHint: "로그인" }
  */
 export function parseQueryForAX(query: string): ParsedAXQuery {
-  const queryLower = query.normalize('NFC').toLowerCase().trim();
+  // Use normalized form for keyword matching, but preserve original case in nameHint
+  const queryNorm = normalizeQuery(query);
+  const queryClean = query.normalize('NFC').replace(/["""'''`]/g, '').trim();
 
   for (const [keyword, role] of ROLE_KEYWORDS) {
-    const idx = queryLower.indexOf(keyword);
+    const idx = queryNorm.indexOf(keyword);
     if (idx !== -1) {
-      const before = query.slice(0, idx).trim();
-      const after = query.slice(idx + keyword.length).trim();
-      const nameHint = [before, after].filter(Boolean).join(' ').trim().replace(/["""'''`]/g, '');
+      // Slice from the case-preserving version using the same indices
+      const before = queryClean.slice(0, idx).trim();
+      const after = queryClean.slice(idx + keyword.length).trim();
+      const nameHint = [before, after].filter(Boolean).join(' ').trim();
 
       return {
         roleHint: role,
-        nameHint: nameHint || query.trim().replace(/["""'''`]/g, ''),
+        nameHint: nameHint || queryClean,
       };
     }
   }
 
   return {
     roleHint: null,
-    nameHint: query.trim().replace(/["""'''`]/g, ''),
+    nameHint: queryClean,
   };
 }
 

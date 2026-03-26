@@ -11,7 +11,7 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
-import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
+import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { withTimeout } from '../utils/with-timeout';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
@@ -107,8 +107,9 @@ const handler: ToolHandler = async (
       };
     }
 
-    const queryLower = query.normalize('NFC').toLowerCase().replace(/["""'''`]/g, '');
-    const queryTokens = tokenizeQuery(queryLower);
+    const queryNorm = normalizeQuery(query);
+    const queryLower = queryNorm;
+    const queryTokens = tokenizeQuery(queryNorm);
 
     // Optional polling for dynamic/lazy content
     const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;

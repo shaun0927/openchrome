@@ -22,6 +22,16 @@ export interface FoundElement {
 }
 
 /**
+ * Normalize a user-facing query string for element matching.
+ * Strips quotes (straight, curly, backticks), applies Unicode NFC normalization,
+ * and lowercases. All tools that accept text queries MUST call this at the
+ * handler boundary before passing to any discovery or matching function.
+ */
+export function normalizeQuery(raw: string): string {
+  return raw.normalize('NFC').toLowerCase().replace(/["""'''`]/g, '').trim();
+}
+
+/**
  * Stop words filtered out when tokenizing queries.
  */
 const STOP_WORDS = new Set([
@@ -33,10 +43,7 @@ const STOP_WORDS = new Set([
  * Filters out stop words and single-character tokens.
  */
 export function tokenizeQuery(query: string): string[] {
-  return query
-    .normalize('NFC')
-    .toLowerCase()
-    .replace(/["""'''`]/g, '')
+  return normalizeQuery(query)
     .split(/\s+/)
     .filter(t => t.length > 1)
     .filter(t => !STOP_WORDS.has(t));
