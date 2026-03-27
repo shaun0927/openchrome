@@ -340,7 +340,7 @@ describe('Stealth: navigator.webdriver configurable property (#286)', () => {
     expect(webdriverBlock).toContain('configurable: true');
   });
 
-  test('createTargetStealth post-attach webdriver override includes configurable: true', () => {
+  test('createTargetStealth post-attach webdriver override uses prototype deletion (#446)', () => {
     // Extract the createTargetStealth method body
     const methodStart = clientSource.indexOf('createTargetStealth(');
     expect(methodStart).toBeGreaterThan(-1);
@@ -348,14 +348,9 @@ describe('Stealth: navigator.webdriver configurable property (#286)', () => {
     const methodEnd = clientSource.indexOf('\n  /**', methodStart + 50);
     const stealthBlock = clientSource.slice(methodStart, methodEnd > methodStart ? methodEnd : undefined);
 
-    // Find the page.evaluate webdriver override
-    const evalStart = stealthBlock.indexOf('page.evaluate');
-    expect(evalStart).toBeGreaterThan(-1);
-
-    const evalEnd = stealthBlock.indexOf('.catch', evalStart);
-    const evalBlock = stealthBlock.slice(evalStart, evalEnd);
-
-    expect(evalBlock).toContain("navigator, 'webdriver'");
-    expect(evalBlock).toContain('configurable: true');
+    // The webdriver override now uses prototype-level deletion (less detectable
+    // than defineProperty) with a defineProperty fallback for headless mode.
+    expect(stealthBlock).toContain('Object.getPrototypeOf(navigator)');
+    expect(stealthBlock).toContain('webdriver');
   });
 });

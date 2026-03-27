@@ -12,6 +12,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
+import { humanScroll } from '../stealth/human-behavior';
 
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',
@@ -296,6 +297,21 @@ const handler: ToolHandler = async (
         atEnd: false,
       };
     };
+
+    // Stealth mode: use human-like wheel events instead of JS scrollBy.
+    // This generates real Input.dispatchMouseEvent wheel events that populate
+    // behavioral telemetry collected by anti-bot sensors.
+    const isStealthScroll = sessionManager.isStealthTarget(tabId);
+    if (isStealthScroll && !scrollToEnd) {
+      let stealthDeltaY = 0;
+      switch (direction) {
+        case 'down': stealthDeltaY = amount; break;
+        case 'up': stealthDeltaY = -amount; break;
+      }
+      if (stealthDeltaY !== 0) {
+        await humanScroll(page, stealthDeltaY);
+      }
+    }
 
     const { result: scrollResult, recovered, method: recoveryMethod } = await retryWithFallback(
       primaryScroll,
