@@ -1328,30 +1328,34 @@ export class CDPClient {
    * CDP observer attached. CDP is attached only after the settle window expires.
    *
    * @param url      URL to open in the new tab
-   * @param settleMs Milliseconds to wait before attaching CDP (default 5000, range 1000-30000)
+   * @param settleMs Total settle time in ms — used for navigation timeout and post-nav wait (default 8000)
    * @returns        The Puppeteer Page and its targetId
    */
   async createTargetStealth(url: string, settleMs: number = 8000): Promise<{ page: Page; targetId: string }> {
     const browser = this.getBrowser();
 
-    // Step 1: Create target via CDP Target.createTarget.
-    // Puppeteer's ChromeTargetManager uses Target.setAutoAttach with { exclude: true }
-    // for page targets, so the new tab is added to #discoveredTargetsByTargetId but NOT
-    // #attachedTargetsByTargetId. This means browser.pages() will never find it.
-    // We use a CDP session on the browser target to issue the command directly.
+    // Stealth v3 architecture (#450):
+    // Instead of navigating directly to the target URL (which lets anti-bot scripts
+    // fingerprint the raw browser before defenses are applied), we:
+    //   1. Create tab with about:blank (no anti-bot scripts, no network request)
+    //   2. Attach CDP immediately and register all defenses via evaluateOnNewDocument
+    //   3. Navigate to the real URL — defenses fire at document_start, BEFORE any page JS
+    // This closes the fingerprint timing gap that caused Access Denied on Coupang/Reddit.
+
+    // Step 1: Create target with about:blank — invisible to anti-bot systems
     const cdp = await browser.target().createCDPSession();
     let targetId: string;
     try {
-      const result = await cdp.send('Target.createTarget', { url }) as { targetId: string };
+      const result = await cdp.send('Target.createTarget', { url: 'about:blank' }) as { targetId: string };
       targetId = result.targetId;
     } catch (createErr) {
       await cdp.detach().catch(() => {});
       throw new Error(`Stealth navigation: failed to create target: ${createErr instanceof Error ? createErr.message : String(createErr)}`);
     }
 
-    console.error(`[CDPClient] Stealth tab created: ${targetId}, settling for ${settleMs}ms`);
+    console.error(`[CDPClient] Stealth tab created: ${targetId} (about:blank), will navigate to ${url}`);
 
-    // Warn if headless — Turnstile detection is nearly guaranteed in headless mode
+    // Warn if headless — anti-bot detection is nearly guaranteed in headless mode
     {
       const { headless } = getGlobalConfig();
       let isHeadless = !!headless;
@@ -1364,27 +1368,19 @@ export class CDPClient {
         }
       }
       if (isHeadless) {
-        console.error('[CDPClient] WARNING: Stealth mode in headless Chrome is unlikely to bypass Turnstile. Use headed Chrome (--visible) for anti-bot pages.');
+        console.error('[CDPClient] WARNING: Stealth mode in headless Chrome is unlikely to bypass anti-bot systems. Use headed Chrome (--visible) for anti-bot pages.');
       }
     }
 
-    // Step 2: Wait for the page to load without CDP observation (Turnstile runs here)
-    await new Promise<void>(resolve => setTimeout(resolve, settleMs));
-
-    // Step 3: Attach to the target via CDP to bring it into Puppeteer's attached set
+    // Step 2: Attach CDP immediately (about:blank has no anti-bot to detect it)
     try {
       await cdp.send('Target.attachToTarget', { targetId, flatten: true });
     } catch (attachErr) {
-      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
       await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
       await cdp.detach().catch(() => {});
       throw new Error(`Stealth navigation: failed to attach to target ${targetId}: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
     }
 
-    // Step 4: Use browser.waitForTarget() to reliably find the target.
-    // After attachToTarget, Puppeteer's internal ChromeTargetManager processes the
-    // attachment asynchronously. browser.targets().find() may miss it due to a race
-    // condition. waitForTarget() listens for the target event and handles timing.
     let target: Target;
     try {
       target = await browser.waitForTarget(
@@ -1392,7 +1388,6 @@ export class CDPClient {
         { timeout: 5000 }
       );
     } catch {
-      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
       await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
       await cdp.detach().catch(() => {});
       throw new Error(`Stealth navigation: target ${targetId} not found after attach (waitForTarget timed out)`);
@@ -1406,33 +1401,49 @@ export class CDPClient {
     }
 
     if (!page) {
-      // Ghost tab cleanup: close the orphaned Chrome tab before throwing
       await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
       await cdp.detach().catch(() => {});
       throw new Error(`Stealth navigation: could not get page for target ${targetId}`);
     }
 
-    // Clean up the helper session — the page now has its own CDP session managed by Puppeteer
     await cdp.detach().catch(() => {});
 
-    // Step 5: Index the page and configure defenses (CDP commands flow from here)
+    // Step 3: Register ALL defense scripts BEFORE navigation.
+    // evaluateOnNewDocument scripts persist on the CDP session and execute at
+    // document_start of every new document — before any <script> tag on the page.
     this.targetIdIndex.set(targetId, page);
     this.configurePageDefenses(page);
 
-    // Step 5b: Apply advanced stealth fingerprint defenses (WebGL, Canvas, Audio, hardware).
-    // These scripts are stealth-only and not registered in configurePageDefenses to avoid
-    // overhead on normal pages. Register for future navigations AND apply to current page.
+    // Stealth-only fingerprint defenses (WebGL, Canvas, Audio, hardware, screen, webdriver)
     const fpScript = getStealthFingerprintDefenseScript();
     const stackScript = getStealthStackSanitizationScript();
     await page.evaluateOnNewDocument(fpScript).catch(() => {});
     await page.evaluateOnNewDocument(stackScript).catch(() => {});
-    // Apply immediately to the already-loaded page
+
+    // Step 4: Navigate to the real URL — all defenses now fire at document_start
+    console.error(`[CDPClient] Stealth tab ${targetId}: navigating to ${url} with defenses pre-registered`);
+    try {
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: Math.max(settleMs, 30000),
+      });
+    } catch (navErr) {
+      // Navigation timeout is not fatal — the page may still be usable
+      // (e.g., Turnstile challenge pages load slowly but are interactive)
+      console.error(`[CDPClient] Stealth navigation warning: ${navErr instanceof Error ? navErr.message : String(navErr)}`);
+    }
+
+    // Step 5: Post-navigation settle period for challenge completion (Turnstile, etc.)
+    // The page has loaded with defenses active; this extra wait lets async challenges finish.
+    const postNavSettleMs = Math.max(settleMs - 5000, 2000); // At least 2s, reduced from total settle
+    await new Promise<void>(resolve => setTimeout(resolve, postNavSettleMs));
+
+    // Step 6: Defense-in-depth — apply patches directly to the current page.
+    // evaluateOnNewDocument should have handled this at document_start, but we
+    // re-apply as fallback in case of edge cases (e.g., SPA soft-navigation).
     await page.evaluate(fpScript).catch(() => {});
     await page.evaluate(stackScript).catch(() => {});
 
-    // Step 6: Apply all stealth defenses immediately to the already-loaded page.
-    // configurePageDefenses() registers evaluateOnNewDocument scripts that only run on
-    // future navigations. The current page loaded without CDP, so we must patch it now.
     await page.evaluate(() => {
       // 1. navigator.webdriver — prototype-level deletion (less detectable than defineProperty)
       try {
@@ -1533,7 +1544,7 @@ export class CDPClient {
       }
     }).catch(() => {});
 
-    console.error(`[CDPClient] Stealth tab ${targetId} attached after settle period`);
+    console.error(`[CDPClient] Stealth tab ${targetId} ready (defenses pre-injected, page loaded)`);
     return { page, targetId };
   }
 
