@@ -115,7 +115,7 @@ describe('Stealth v2 Integration: lightweight-scroll.ts', () => {
   });
 });
 
-describe('Stealth v2 Integration: cdp/client.ts', () => {
+describe('Stealth v3 Integration: cdp/client.ts (#450)', () => {
   const source = readSource('cdp/client.ts');
 
   test('imports fingerprint defense scripts', () => {
@@ -124,9 +124,37 @@ describe('Stealth v2 Integration: cdp/client.ts', () => {
     expect(source).toContain('getStealthStackSanitizationScript');
   });
 
-  test('applies fingerprint defenses in createTargetStealth', () => {
-    const methodStart = source.indexOf('createTargetStealth(');
-    const methodBlock = source.slice(methodStart, source.indexOf('console.error(`[CDPClient] Stealth tab ${targetId} attached'));
+  test('creates target with about:blank, not the real URL (#450)', () => {
+    const methodStart = source.indexOf('async createTargetStealth(');
+    const methodEnd = source.indexOf('console.error(`[CDPClient] Stealth tab ${targetId} ready');
+    const methodBlock = source.slice(methodStart, methodEnd);
+    // Must create with about:blank to avoid fingerprinting during load
+    expect(methodBlock).toContain("url: 'about:blank'");
+    // Must NOT pass the real URL to createTarget
+    expect(methodBlock).not.toMatch(/createTarget\(\s*\{\s*url\s*\}\s*\)/);
+  });
+
+  test('registers evaluateOnNewDocument BEFORE page.goto (#450)', () => {
+    const methodStart = source.indexOf('async createTargetStealth(');
+    const methodBlock = source.slice(methodStart, source.indexOf('console.error(`[CDPClient] Stealth tab ${targetId} ready'));
+    const evalOnNewDocPos = methodBlock.indexOf('evaluateOnNewDocument(fpScript)');
+    const gotoPos = methodBlock.indexOf('page.goto(url');
+    // evaluateOnNewDocument must come before page.goto
+    expect(evalOnNewDocPos).toBeGreaterThan(-1);
+    expect(gotoPos).toBeGreaterThan(-1);
+    expect(evalOnNewDocPos).toBeLessThan(gotoPos);
+  });
+
+  test('navigates to real URL via page.goto after defenses are registered (#450)', () => {
+    const methodStart = source.indexOf('async createTargetStealth(');
+    const methodBlock = source.slice(methodStart, source.indexOf('console.error(`[CDPClient] Stealth tab ${targetId} ready'));
+    expect(methodBlock).toContain('page.goto(url');
+    expect(methodBlock).toContain('configurePageDefenses(page)');
+  });
+
+  test('applies fingerprint defenses via evaluateOnNewDocument and page.evaluate', () => {
+    const methodStart = source.indexOf('async createTargetStealth(');
+    const methodBlock = source.slice(methodStart, source.indexOf('console.error(`[CDPClient] Stealth tab ${targetId} ready'));
     expect(methodBlock).toContain('fpScript');
     expect(methodBlock).toContain('stackScript');
     expect(methodBlock).toContain('evaluateOnNewDocument(fpScript)');
@@ -141,7 +169,6 @@ describe('Stealth v2 Integration: cdp/client.ts', () => {
     const configStart = source.indexOf('private configurePageDefenses');
     const configEnd = source.indexOf('\n  /**', configStart + 100);
     const configBlock = source.slice(configStart, configEnd > configStart ? configEnd : configStart + 2000);
-    // configurePageDefenses should NOT contain fingerprint defense imports
     expect(configBlock).not.toContain('getStealthFingerprintDefenseScript');
     expect(configBlock).not.toContain('fpScript');
   });
