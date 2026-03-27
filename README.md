@@ -5,8 +5,8 @@
 <h1 align="center">OpenChrome</h1>
 
 <p align="center">
-  <b>Smart. Fast. Parallel.</b><br>
-  Browser automation MCP server that uses your real Chrome.
+  <b>Harness-Engineered Browser Automation</b><br>
+  The MCP server that guides AI agents instead of just exposing APIs.
 </p>
 
 <p align="center">
@@ -32,12 +32,17 @@
 | **RAM (20 parallel)** | **~300 MB** | ~5 GB+ | impractical | impractical |
 | **Bot detection** | **invisible** (real Chrome) | detected (TLS fingerprint) | detected (CDP signals) | detected (local) / cloud only |
 | **Chrome login reuse** | **built-in** | extension mode only | manual | manual state files |
-| **LLM hang prevention** | **hint engine** (17 rules) | none | none | error rewrite (5 patterns) |
-| **Shadow DOM** | **supported** | invisible | invisible | invisible |
+| **LLM hang prevention** | **hint engine** (30+ rules) | none | none | error rewrite (5 patterns) |
+| **Reliability mechanisms** | **49** (8-layer defense) | ~3 | ~3 | ~5 |
+| **Token compression** | **15x** (DOM serializer) | none | none | none |
+| **Outcome classification** | **yes** (DOM delta) | none | none | none |
+| **Cross-session learning** | **yes** (domain memory) | none | none | none |
+| **Circuit breaker** | **3-level** | none | none | none |
+| **Shadow DOM** | **all types** (open + closed) | open only | invisible | invisible |
 | **MCP native** | **yes** | yes | yes | no (CLI only) |
 | **Parallel sessions** | **1 Chrome, N tabs** | N browsers | manual tabs | N daemons |
 
-> **tl;dr** — OpenChrome talks directly to Chrome via CDP with zero middleware, reuses your real login sessions (making bot detection irrelevant), and is the only tool with a hint engine that stops LLM agents from wandering.
+> **tl;dr** — OpenChrome talks directly to Chrome via CDP with zero middleware, reuses your real login sessions, and is the only browser MCP server with **harness engineering** — 27 intelligent subsystems that guide, protect, and optimize the AI agent at every step.
 
 ---
 
@@ -68,7 +73,9 @@ AI:  [8 parallel workers, all sites simultaneously]
 
 ---
 
-## Guided, Not Guessing
+## Harness-Engineered, Not Just Automated
+
+Traditional browser automation exposes raw APIs. When the AI agent fails, it's on its own — burning tokens guessing, retrying, and wandering. **Harness engineering** means the tool itself wraps intelligence around those APIs: preventing mistakes, recovering from errors, and guiding the agent toward efficient behavior.
 
 The bottleneck in browser automation isn't the browser — it's the **LLM thinking between each step**. Every tool call costs 5–15 seconds of inference time. When an AI agent guesses wrong, it doesn't just fail — it spends another 10 seconds thinking about why, then another 10 seconds trying something else.
 
@@ -105,7 +112,7 @@ OpenChrome agent checking prices on 5 sites:
   = ~20 LLM calls,  ~15 seconds,  ~$0.40
 ```
 
-The hint engine watches every tool call across 6 layers — error recovery, composite suggestions, repetition detection, sequence detection, learned patterns, and success guidance. When it sees the same error→recovery pattern 3+ times, it promotes it to a permanent rule across sessions.
+The hint engine watches every tool call across 9 categories — error recovery, blocking page detection, composite suggestions, repetition detection, sequence detection, pagination detection, learned patterns, success guidance, and setup hints. When it sees the same error→recovery pattern 3+ times, it promotes it to a permanent rule across sessions via the Pattern Learner.
 
 | | Playwright | OpenChrome | Savings |
 |---|---|---|---|
@@ -113,6 +120,35 @@ The hint engine watches every tool call across 6 layers — error recovery, comp
 | **Wall time** | ~20 min | ~15 sec | **80x faster** |
 | **Token cost** | ~$2.00 | ~$0.40 | **5x cheaper** |
 | **Wasted calls** | ~95% | ~0% | |
+
+### 27 Harness Features Across 7 Categories
+
+OpenChrome isn't just a browser API — it's an intelligent harness with 27 subsystems that work together:
+
+| Category | Key Features | What It Does |
+|----------|-------------|--------------|
+| **Guidance** | Hint Engine (30+ rules, 9 types), Progress Tracker, Usage Guide | Prevents mistakes before they cascade |
+| **Resilience** | Ralph Engine (7-strategy waterfall), Auto-Reconnect, Ref Self-Healing | Recovers from failures automatically |
+| **Protection** | 3-Level Circuit Breaker, Rate Limiter, Domain Guard | Stops runaway token waste |
+| **Feedback** | Outcome Classifier, DOM Delta, Visual Summary, Hit Detection | Reports what *actually* happened |
+| **Learning** | Pattern Learner, Strategy Learner, Domain Memory | Gets smarter across sessions |
+| **Optimization** | DOM Mode (15x compression), Adaptive Screenshot, Snapshot Delta | Minimizes token consumption |
+| **Detection** | Auth Redirect Detection, Blocking Page, Pagination Detector | Identifies situations early |
+
+<details>
+<summary>Feature highlights</summary>
+
+**Hint Engine** — 30+ rules across 9 categories (error recovery, blocking page detection, repetition loops, pagination, composite suggestions, sequence optimization, learned patterns, success guidance, setup hints). Escalates from `info` → `warning` → `critical` as patterns repeat. The Progress Tracker detects stuck agents within 3-5 tool calls.
+
+**Ralph Engine** — When an interaction fails, Ralph automatically tries 7 strategies in sequence: AX tree click → CSS discovery → CDP coordinate dispatch → JS injection → Keyboard navigation → Raw CDP mouse events → Human-in-the-loop escalation. Each attempt is classified by the Outcome Classifier (SUCCESS / SILENT_CLICK / WRONG_ELEMENT).
+
+**3-Level Circuit Breaker** — Element level (3 failures → skip, 2min reset), Page level (5 distinct failures → suggest reload), Global level (10 failures in 5min → pause all). Prevents agents from burning tokens on permanently broken elements.
+
+**Pattern Learner** — When a hint rule misses, the learner observes the next 3 tool calls. If a different tool succeeds, it records the error→recovery correlation. After 3 occurrences at 60%+ confidence, it promotes the pattern to a permanent rule that fires in future sessions.
+
+**DOM Mode** — Serializes the full DOM into a compact text format: strips SCRIPT/STYLE/SVG, keeps only 18 actionable attributes, deduplicates repetitive siblings, collapses nested wrapper chains. **Benchmarked: ~12K tokens vs ~180K tokens** for the same page (15x compression).
+
+</details>
 
 ---
 
@@ -184,7 +220,7 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 
 ---
 
-## 45 Tools
+## 46 Tools
 
 | Category | Tools |
 |----------|-------|
@@ -196,7 +232,7 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 | **Memory** | `memory_record`, `memory_query`, `memory_validate` |
 
 <details>
-<summary>Full tool list (45)</summary>
+<summary>Full tool list (46)</summary>
 
 `navigate` `interact` `computer` `read_page` `find` `form_input` `fill_form` `javascript_tool` `page_reload` `page_content` `page_pdf` `wait_for` `user_agent` `geolocation` `emulate_device` `network` `selector_query` `xpath_query` `cookies` `storage` `console_capture` `performance_metrics` `request_intercept` `drag_drop` `file_upload` `http_auth` `worker_create` `worker_list` `worker_update` `worker_complete` `worker_delete` `tabs_create` `tabs_context` `tabs_close` `workflow_init` `workflow_status` `workflow_collect` `workflow_collect_partial` `workflow_cleanup` `execute_plan` `batch_execute` `lightweight_scroll` `memory_record` `memory_query` `memory_validate` `oc_stop`
 
@@ -316,7 +352,7 @@ By default, benchmarks run in **stub mode** — measuring protocol correctness a
 
 ## Server / Headless Deployment
 
-OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 45 tools function with unauthenticated Chrome — navigation, scraping, screenshots, form filling, and parallel workflows all work in clean sessions.
+OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 46 tools function with unauthenticated Chrome — navigation, scraping, screenshots, form filling, and parallel workflows all work in clean sessions.
 
 ### Quick start
 
@@ -386,6 +422,66 @@ openchrome serve \
 | `--headless-shell` | `false` | Use chrome-headless-shell binary |
 | `--visible` | `false` | Show Chrome window (disables headless) |
 | `--server-mode` | `false` | Compound flag for server deployment |
+
+---
+
+## Under the Hood: 8-Layer Reliability
+
+OpenChrome has **49 distinct reliability mechanisms** across 8 defense layers — ensuring no single failure can hang the MCP server.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 7: MCP Gateway                                       │
+│  Rate limiter · Tool timeout (120s) · Error recovery hints  │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 6: Session Management                                │
+│  TTL cleanup · Memory pressure · Target reconciliation      │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 5: Request Queue                                     │
+│  Per-session FIFO · Per-item timeout (120s)                 │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 4: Circuit Breaker                                   │
+│  Element (3 fails) · Page (5 fails) · Global (10/5min)     │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 3: CDP Client                                        │
+│  Adaptive heartbeat · Stale target guard · Page defenses    │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 2: Reconnection Engine                               │
+│  Auto-reconnect (5 retries) · Exponential backoff · Cookie  │
+│  restore · Sleep/wake detection                             │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 1: Self-Healing                                      │
+│  Chrome watchdog · Tab health monitor · Event loop monitor  │
+│  Disk monitor · Health endpoint (/health, /metrics)         │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 0: Process Lifecycle                                 │
+│  Graceful shutdown · Orphan cleanup · Atomic file writes    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**32 configurable timeouts** cover every operation from CDP commands (15s) to tool execution (120s) to Chrome launch (60s). Every timeout is independently tunable via `src/config/defaults.ts`.
+
+## Element Intelligence
+
+Finding elements by natural language instead of CSS selectors:
+
+```
+"Submit button" → normalizeQuery → parseQueryForAX → AX Tree Resolution
+                                                          │
+                                                     match found?
+                                                     /         \
+                                                   yes          no
+                                                    │            │
+                                              [AX result]   CSS Fallback
+                                                             + Shadow DOM
+                                                             + Scoring
+```
+
+- **AX-first**: Uses Chrome's accessibility tree — framework-agnostic across React, Angular, Vue, Web Components
+- **Cascading filter**: 4-level deterministic priority (exact role+name → role+contains → exact name → partial)
+- **3-tier Shadow DOM**: Open roots (JS) + closed roots (CDP) + user-agent roots
+- **Hit detection**: After clicking, reports what was actually hit + nearest interactive element
+- **i18n**: Korean role keywords built-in (`"버튼"` → button, `"링크"` → link, `"드롭다운"` → combobox)
 
 ---
 
