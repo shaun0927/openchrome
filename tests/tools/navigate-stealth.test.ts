@@ -182,9 +182,19 @@ describe('NavigateTool - Stealth Mode', () => {
         tabId: expect.any(String),
         workerId: expect.any(String),
         created: true,
+        stealth: true,
       });
       expect(typeof parsed['url']).toBe('string');
       expect(typeof parsed['title']).toBe('string');
+    });
+
+    test('non-stealth response does not include stealth field', async () => {
+      const handler = await getNavigateHandler();
+      const result = await handler(testSessionId, {
+        url: 'https://example.com',
+      });
+      const parsed = parseResultJSON(result as any) as Record<string, unknown>;
+      expect(parsed).not.toHaveProperty('stealth');
     });
 
     test('stealth mode passes workerId to createTargetStealth', async () => {

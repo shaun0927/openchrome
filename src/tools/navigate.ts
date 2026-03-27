@@ -268,6 +268,7 @@ const handler: ToolHandler = async (
         created: true,
         elementCount: newTabElementCount,
         readiness: newTabReadiness,
+        ...(stealth && { stealth: true }),
         ...(newTabSummary && { visualSummary: newTabSummary }),
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
       });
