@@ -29,6 +29,7 @@ import {
 import { withTimeout } from '../utils/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
+import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -1418,12 +1419,27 @@ export class CDPClient {
     this.targetIdIndex.set(targetId, page);
     this.configurePageDefenses(page);
 
+    // Step 5b: Apply advanced stealth fingerprint defenses (WebGL, Canvas, Audio, hardware).
+    // These scripts are stealth-only and not registered in configurePageDefenses to avoid
+    // overhead on normal pages. Register for future navigations AND apply to current page.
+    const fpScript = getStealthFingerprintDefenseScript();
+    const stackScript = getStealthStackSanitizationScript();
+    await page.evaluateOnNewDocument(fpScript).catch(() => {});
+    await page.evaluateOnNewDocument(stackScript).catch(() => {});
+    // Apply immediately to the already-loaded page
+    await page.evaluate(fpScript).catch(() => {});
+    await page.evaluate(stackScript).catch(() => {});
+
     // Step 6: Apply all stealth defenses immediately to the already-loaded page.
     // configurePageDefenses() registers evaluateOnNewDocument scripts that only run on
     // future navigations. The current page loaded without CDP, so we must patch it now.
     await page.evaluate(() => {
-      // 1. navigator.webdriver
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+      // 1. navigator.webdriver — prototype-level deletion (less detectable than defineProperty)
+      try {
+        delete (Object.getPrototypeOf(navigator) as any).webdriver;
+      } catch {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+      }
 
       // 2. chrome.runtime shape
       if ((window as any).chrome) {
@@ -1561,14 +1577,21 @@ export class CDPClient {
     }).catch(() => {});
 
     // Remove navigator.webdriver flag that CDP sets automatically.
-    // Anti-automation systems (e.g., Cloudflare Turnstile) check this flag and refuse
-    // to function even for manual human interaction. Defense-in-depth alongside the
-    // --disable-blink-features=AutomationControlled launch flag. (#247)
+    // The --disable-blink-features=AutomationControlled launch flag prevents Blink from
+    // setting this flag in headed mode. For headless mode (where the flag may not work),
+    // we delete the property from the prototype rather than using Object.defineProperty
+    // on the instance — the defineProperty approach is detectable via
+    // Object.getOwnPropertyDescriptor(navigator, 'webdriver'). (#247, #446)
     page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-        configurable: true,
-      });
+      try {
+        delete (Object.getPrototypeOf(navigator) as any).webdriver;
+      } catch {
+        // Fallback: defineProperty if prototype deletion fails
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined,
+          configurable: true,
+        });
+      }
     }).catch(() => {});
 
     // Mask Chrome automation artifacts that anti-bot systems scan for.

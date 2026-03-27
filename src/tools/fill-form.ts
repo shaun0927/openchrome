@@ -14,6 +14,7 @@ import { discoverFormFields, FormField, FORM_FIELD_TAG } from '../utils/element-
 import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { normalizeQuery } from '../utils/element-finder';
+import { humanType, humanMouseMove } from '../stealth/human-behavior';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -169,8 +170,12 @@ const handler: ToolHandler = async (
               }
             } catch { /* use original coordinates */ }
 
-            // Click to focus
-            await page.mouse.click(Math.round(axMatch.rect.x), Math.round(axMatch.rect.y));
+            // Click to focus (stealth: use Bézier mouse path)
+            const axClickX = Math.round(axMatch.rect.x);
+            const axClickY = Math.round(axMatch.rect.y);
+            const isStealth = sessionManager.isStealthTarget(tabId);
+            if (isStealth) await humanMouseMove(page, axClickX, axClickY);
+            await page.mouse.click(axClickX, axClickY);
             await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
             // Type value (AX path handles text inputs only — no checkbox/select special-casing needed here
@@ -182,7 +187,12 @@ const handler: ToolHandler = async (
               await page.keyboard.up(modifier);
               await page.keyboard.press('Backspace');
             }
-            await page.keyboard.type(String(fieldValue));
+            // Stealth: type character-by-character with human-like delays
+            if (isStealth) {
+              await humanType(page, String(fieldValue));
+            } else {
+              await page.keyboard.type(String(fieldValue));
+            }
 
             invalidateAXCache(getTargetId(page.target()));
             filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
@@ -247,8 +257,12 @@ const handler: ToolHandler = async (
             });
           }
 
-          // Click to focus
-          await page.mouse.click(Math.round(bestMatch.rect.x), Math.round(bestMatch.rect.y));
+          // Click to focus (stealth: use Bézier mouse path)
+          const cssClickX = Math.round(bestMatch.rect.x);
+          const cssClickY = Math.round(bestMatch.rect.y);
+          const isStealthCSS = sessionManager.isStealthTarget(tabId);
+          if (isStealthCSS) await humanMouseMove(page, cssClickX, cssClickY);
+          await page.mouse.click(cssClickX, cssClickY);
           await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
           // Handle different field types
@@ -301,7 +315,12 @@ const handler: ToolHandler = async (
               await page.keyboard.up(modifier);
               await page.keyboard.press('Backspace');
             }
-            await page.keyboard.type(String(fieldValue));
+            // Stealth: type character-by-character with human-like delays
+            if (isStealthCSS) {
+              await humanType(page, String(fieldValue));
+            } else {
+              await page.keyboard.type(String(fieldValue));
+            }
           }
 
           filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);

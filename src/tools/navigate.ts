@@ -13,6 +13,7 @@ import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { detectBlockingPage } from '../utils/page-diagnostics';
 import { withTimeout } from '../utils/with-timeout';
+import { simulatePresence } from '../stealth/human-behavior';
 import type { Page } from 'puppeteer-core';
 
 /** Compute readiness data for navigate responses. Non-critical — returns defaults on failure. */
@@ -232,6 +233,12 @@ const handler: ToolHandler = async (
       const { targetId, page, workerId: assignedWorkerId } = stealth
         ? await sessionManager.createTargetStealth(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory)
         : await sessionManager.createTarget(sessionId, targetUrl, workerId, profileDirectory);
+
+      // Stealth mode: simulate human presence to generate behavioral telemetry
+      // that enterprise anti-bot sensors (Radware, PerimeterX, Akamai) require.
+      if (stealth) {
+        await simulatePresence(page);
+      }
 
       AdaptiveScreenshot.getInstance().reset(targetId);
       const [newTabSummary, newTabBlocking] = await Promise.all([
