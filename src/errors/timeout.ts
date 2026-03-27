@@ -9,14 +9,20 @@ export class OpenChromeTimeoutError extends Error {
   readonly label: string;
   /** Timeout duration in milliseconds. */
   readonly timeoutMs: number;
+  /** True when the error was caused by overall tool deadline exhaustion, not an individual operation timeout. */
+  readonly deadline: boolean;
 
-  constructor(label: string, timeoutMs: number, recoverable = false) {
-    super(`${label} timed out after ${timeoutMs}ms`);
+  constructor(label: string, timeoutMs: number, recoverable = false, deadline = false) {
+    const msg = deadline
+      ? `${label}: deadline exceeded (budget exhausted)`
+      : `${label} timed out after ${timeoutMs}ms`;
+    super(msg);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'OpenChromeTimeoutError';
     this.label = label;
     this.timeoutMs = timeoutMs;
     this.recoverable = recoverable;
+    this.deadline = deadline;
   }
 }
 
