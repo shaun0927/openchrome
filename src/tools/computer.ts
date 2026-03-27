@@ -4,7 +4,7 @@
 
 import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
@@ -87,7 +87,8 @@ const definition: MCPToolDefinition = {
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const action = args.action as string;

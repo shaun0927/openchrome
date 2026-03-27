@@ -5,7 +5,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, DEFAULT_VIEWPORT } from '../config/defaults';
@@ -58,7 +58,8 @@ const definition: MCPToolDefinition = {
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const query = args.query as string;
@@ -161,6 +162,13 @@ const handler: ToolHandler = async (
       // AX non-fatal — fall through to CSS
     }
 
+    // Budget check before expensive CSS discovery
+    if (context && !hasBudget(context, 15_000)) {
+      return {
+        content: [{ type: 'text', text: `click_element: deadline approaching — skipped CSS fallback for "${query}"` }],
+        isError: true,
+      };
+    }
     // ─── CSS Fallback ───
     do { // --- polling loop start ---
     // Find elements matching the query
