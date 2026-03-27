@@ -18,6 +18,7 @@ import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
+import { humanMouseMove } from '../stealth/human-behavior';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
@@ -154,9 +155,12 @@ const handler: ToolHandler = async (
         const axY = Math.round(ax.rect.y);
 
         // Perform action with DOM delta
+        const isStealth = sessionManager.isStealthTarget(tabId);
         const { delta: axDelta } = await withDomDelta(page, async () => {
+          // Stealth: use Bézier curve mouse path to avoid bot detection
+          if (isStealth) await humanMouseMove(page, axX, axY);
           if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
-          else if (action === 'hover') await page.mouse.move(axX, axY);
+          else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
           else await page.mouse.click(axX, axY);
         }, { settleMs: Math.max(150, waitAfter) });
 
@@ -314,13 +318,16 @@ const handler: ToolHandler = async (
     const finalY = Math.round(bestMatch.rect.y);
 
     // Perform the action with DOM delta capture
+    const isStealthCSS = sessionManager.isStealthTarget(tabId);
     const { delta } = await withDomDelta(
       page,
       async () => {
+        // Stealth: use Bézier curve mouse path to avoid bot detection
+        if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
         if (action === 'double_click') {
           await page.mouse.click(finalX, finalY, { clickCount: 2 });
         } else if (action === 'hover') {
-          await page.mouse.move(finalX, finalY);
+          if (!isStealthCSS) await page.mouse.move(finalX, finalY);
         } else {
           await page.mouse.click(finalX, finalY);
         }

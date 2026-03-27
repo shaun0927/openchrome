@@ -91,6 +91,9 @@ export class SessionManager {
   private storageStateConfig: StorageStateConfig | null = null;
   private pendingCreations = new Map<string, Promise<Session>>();
 
+  // Stealth mode tracking — targets opened via createTargetStealth
+  private stealthTargets = new Set<string>();
+
   // TTL & Stats
   private config: Required<SessionManagerConfig>;
   private cleanupTimer: NodeJS.Timeout | null = null;
@@ -957,6 +960,9 @@ export class SessionManager {
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
 
+    // Track as stealth target for human-behavior integration in tools
+    this.stealthTargets.add(targetId);
+
     this.emitEvent({
       type: 'session:target-added',
       sessionId,
@@ -1349,6 +1355,7 @@ export class SessionManager {
         getRefIdManager().clearTargetRefs(ownerInfo.sessionId, targetId);
 
         this.targetToWorker.delete(targetId);
+        this.stealthTargets.delete(targetId);
 
         this.emitEvent({
           type: 'session:target-removed',
@@ -1359,6 +1366,14 @@ export class SessionManager {
         });
       }
     }
+  }
+
+  /**
+   * Check whether a target was opened via stealth navigation.
+   * Tools use this to decide whether to apply human-like behavior simulation.
+   */
+  isStealthTarget(targetId: string): boolean {
+    return this.stealthTargets.has(targetId);
   }
 
   /**
