@@ -5,7 +5,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
@@ -57,7 +57,8 @@ const definition: MCPToolDefinition = {
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const fields = args.fields as Record<string, string | boolean | number>;
@@ -127,6 +128,11 @@ const handler: ToolHandler = async (
       let submitted = false;
       // Match and fill each requested field
       for (const [fieldKey, fieldValue] of Object.entries(fields)) {
+        // Budget check: skip remaining fields if deadline approaching
+        if (context && !hasBudget(context, 15_000)) {
+          errors.push(`${fieldKey}: ⚠ skipped (deadline approaching)`);
+          continue;
+        }
         const keyLower = normalizeQuery(fieldKey);
 
         // ─── AX-First Resolution ───
@@ -139,7 +145,8 @@ const handler: ToolHandler = async (
               useCenter: true,
             }),
             5000,
-            'fill-form-ax'
+            'fill-form-ax',
+            context
           );
           if (axResults.length > 0) {
             axMatch = axResults[0];

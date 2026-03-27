@@ -6,7 +6,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -67,7 +67,8 @@ const definition: MCPToolDefinition = {
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const query = args.query as string;
@@ -127,7 +128,8 @@ const handler: ToolHandler = async (
           maxResults: 3,
         }),
         10000,
-        'ax-resolution'
+        'ax-resolution',
+        context
       );
       if (axMatches.length > 0) {
         const ax = axMatches[0];
@@ -210,7 +212,8 @@ const handler: ToolHandler = async (
             const screenshotBuf = await withTimeout(
               page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
               DEFAULT_SCREENSHOT_TIMEOUT_MS,
-              'verify-screenshot'
+              'verify-screenshot',
+              context
             ) as string;
             resultContent.push({ type: 'image' as const, data: screenshotBuf, mimeType: 'image/webp' });
           } catch { /* screenshot failed, non-fatal */ }
@@ -223,6 +226,13 @@ const handler: ToolHandler = async (
       console.error(`[interact] AX resolution failed, falling back to CSS: ${axError instanceof Error ? axError.message : String(axError)}`);
     }
 
+    // Budget check before expensive CSS discovery path
+    if (context && !hasBudget(context, 15_000)) {
+      return {
+        content: [{ type: 'text', text: `interact: deadline approaching — skipped CSS fallback for "${query}"` }],
+        isError: true,
+      };
+    }
     // ─── CSS Fallback (existing logic) ───
     do {
     // Find elements matching the query using the shared discovery module
