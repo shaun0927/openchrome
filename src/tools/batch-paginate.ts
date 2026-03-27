@@ -8,7 +8,7 @@
 
 import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
@@ -105,7 +105,8 @@ function createLimiter(concurrency: number) {
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const strategy = args.strategy as string;
@@ -251,6 +252,10 @@ const handler: ToolHandler = async (
       let failureCount = 0;
 
       for (let i = startPage; i <= totalPages!; i++) {
+        if (context && !hasBudget(context, 10_000)) {
+          pages.push({ pageNumber: i, error: 'deadline approaching' });
+          break;
+        }
         const pageResult = await capturePageContent(page, i);
         pages.push(pageResult);
 
