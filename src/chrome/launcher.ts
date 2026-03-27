@@ -440,6 +440,7 @@ export class ChromeLauncher {
       ?? globalConfig.restoreLastSession
       ?? DEFAULT_RESTORE_LAST_SESSION;
 
+    // Essential flags — required for all modes
     args.push(
       '--no-first-run',
       '--no-default-browser-check',
@@ -448,16 +449,6 @@ export class ChromeLauncher {
       '--start-maximized',
       // Fallback window size if maximize doesn't work
       `--window-size=${DEFAULT_VIEWPORT.width},${DEFAULT_VIEWPORT.height}`,
-      // Memory-saving flags (applies to all profile types)
-      '--renderer-process-limit=16',
-      '--js-flags=--max-old-space-size=1024',
-      '--disable-backgrounding-occluded-windows',
-      // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
-      '--disable-gpu-crash-limit',
-      // Suppress crash UI that blocks automation in long sessions (#347)
-      '--disable-crash-reporter',
-      '--disable-session-crashed-bubble',
-      '--hide-crash-restore-bubble',
     );
 
     // Prevent Blink from setting navigator.webdriver = true when CDP is connected.
@@ -469,17 +460,27 @@ export class ChromeLauncher {
       args.push('--disable-blink-features=AutomationControlled');
     }
 
-    // Only disable background features for non-real profiles.
-    // Several flags previously included here were removed as known bot-detection signals
-    // per Patchright's stealth analysis (issue #257). Specifically omitted: metrics
-    // recording, extension disabling, component extension pages, and default apps flags.
+    // Stability flags — suppress crash UI that blocks automation in long sessions (#347).
+    // Applied only to managed profiles; real profiles retain stock Chrome behavior
+    // to minimize fingerprint divergence.
     if (profileType !== 'real') {
       args.push(
-        '--disable-background-networking',
-        '--disable-sync',
-        '--disable-translate',
+        '--disable-backgrounding-occluded-windows',
+        // Prevent Chrome from self-terminating after repeated GPU crashes (headed mode)
+        '--disable-gpu-crash-limit',
+        '--disable-session-crashed-bubble',
+        '--hide-crash-restore-bubble',
       );
     }
+
+    // NOTE: The following flags were removed as known bot-detection signals
+    // per Patchright and undetected-chromedriver analysis (#257, #453):
+    //   --disable-background-networking  (Akamai/Imperva fingerprint signal)
+    //   --disable-sync                   (automation fingerprint signal)
+    //   --disable-translate              (automation fingerprint signal)
+    //   --renderer-process-limit=N       (non-standard, reveals automation)
+    //   --js-flags=--max-old-space-size  (non-standard V8 config)
+    //   --disable-crash-reporter         (automation fingerprint signal)
 
     // Headless mode: explicit option > global config (default when auto-launch)
     const headless = options.headless ?? globalConfig.headless ?? false;
