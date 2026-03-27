@@ -11,7 +11,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
-import { FoundElement, scoreElement, tokenizeQuery } from '../utils/element-finder';
+import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getTargetId } from '../utils/puppeteer-helpers';
@@ -78,7 +78,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    const queryLower = query.toLowerCase();
+    const queryLower = normalizeQuery(query);
     const queryTokens = tokenizeQuery(query);
 
     const startTime = Date.now();
