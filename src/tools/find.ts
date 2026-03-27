@@ -10,6 +10,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { resolveElementsByAXTree, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
+import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 
 const definition: MCPToolDefinition = {
   name: 'find',
@@ -121,6 +122,7 @@ const handler: ToolHandler = async (
     }
 
     // ─── CSS Fallback ───
+    const cb = getCircuitBreaker();
     do { // --- polling loop start ---
     let scored: FoundElement[];
     try {
@@ -129,6 +131,11 @@ const handler: ToolHandler = async (
         useCenter: false,
         timeout: 10000,
         toolName: 'find',
+        circuitBreaker: {
+          check: (_pageUrl: string) => !cb.check(tabId, queryLower).allowed,
+          recordFailure: (_pageUrl: string) => cb.recordElementFailure(tabId, queryLower),
+          recordSuccess: (_pageUrl: string) => cb.recordElementSuccess(tabId, queryLower),
+        },
       });
 
       const queryTokens = tokenizeQuery(query);

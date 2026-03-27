@@ -240,4 +240,84 @@ describe('Circuit Breaker', () => {
       expect(hash.length).toBeGreaterThan(0);
     });
   });
+
+  describe('DiscoveryCircuitBreaker integration', () => {
+    // Tests the contract between CircuitBreaker and the DiscoveryCircuitBreaker
+    // interface used by discoverElements() in element-discovery.ts.
+    //
+    // Checklist items from issue #440:
+    // - 3 failures → 4th call fails fast (circuit open)
+    // - After circuit opens, wait for reset → next call attempts full discovery
+    // - Circuit breaker state is per-page, not global
+    // - Intermittent failures (1 out of 3) do not trip the circuit breaker
+
+    function makeAdapter(cb: CircuitBreaker, tabId: string, query: string) {
+      return {
+        check: (_pageUrl: string) => !cb.check(tabId, query).allowed,
+        recordFailure: (_pageUrl: string) => cb.recordElementFailure(tabId, query),
+        recordSuccess: (_pageUrl: string) => cb.recordElementSuccess(tabId, query),
+      };
+    }
+
+    test('3 failures → 4th check returns true (circuit open, skip discovery)', () => {
+      const adapter = makeAdapter(breaker, 'tab1', 'missing-btn');
+      const pageUrl = 'https://example.com';
+
+      // First 3 calls: circuit closed, discovery should proceed
+      expect(adapter.check(pageUrl)).toBe(false);
+      adapter.recordFailure(pageUrl);
+
+      expect(adapter.check(pageUrl)).toBe(false);
+      adapter.recordFailure(pageUrl);
+
+      expect(adapter.check(pageUrl)).toBe(false);
+      adapter.recordFailure(pageUrl);
+
+      // 4th call: circuit open, discovery should be skipped
+      expect(adapter.check(pageUrl)).toBe(true);
+    });
+
+    test('after circuit opens, reset timeout allows probe (HALF_OPEN)', async () => {
+      const adapter = makeAdapter(breaker, 'tab1', 'missing-btn');
+      const pageUrl = 'https://example.com';
+
+      adapter.recordFailure(pageUrl);
+      adapter.recordFailure(pageUrl);
+      adapter.recordFailure(pageUrl);
+      expect(adapter.check(pageUrl)).toBe(true); // OPEN
+
+      // Wait for elementResetMs (200ms in test config)
+      await new Promise(r => setTimeout(r, 250));
+
+      // HALF_OPEN: probe allowed
+      expect(adapter.check(pageUrl)).toBe(false);
+    });
+
+    test('circuit state is per-tab — failures on tab1 do not affect tab2', () => {
+      const adapter1 = makeAdapter(breaker, 'tab1', 'missing-btn');
+      const adapter2 = makeAdapter(breaker, 'tab2', 'missing-btn');
+      const pageUrl = 'https://example.com';
+
+      // Trip circuit on tab1
+      adapter1.recordFailure(pageUrl);
+      adapter1.recordFailure(pageUrl);
+      adapter1.recordFailure(pageUrl);
+
+      expect(adapter1.check(pageUrl)).toBe(true);  // tab1: OPEN
+      expect(adapter2.check(pageUrl)).toBe(false);  // tab2: still CLOSED
+    });
+
+    test('intermittent failures (1 out of 3) do not trip the circuit', () => {
+      const adapter = makeAdapter(breaker, 'tab1', 'flaky-btn');
+      const pageUrl = 'https://example.com';
+
+      // Fail once, succeed, fail once, succeed — never hits threshold
+      adapter.recordFailure(pageUrl);
+      adapter.recordSuccess(pageUrl); // resets to CLOSED
+      adapter.recordFailure(pageUrl);
+      adapter.recordSuccess(pageUrl); // resets again
+
+      expect(adapter.check(pageUrl)).toBe(false); // still CLOSED
+    });
+  });
 });

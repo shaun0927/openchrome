@@ -10,6 +10,7 @@ import {
   MCPError,
   MCPToolDefinition,
   ToolHandler,
+  ToolContext,
   ToolRegistry,
   MCPErrorCodes,
 } from './types/mcp';
@@ -714,9 +715,13 @@ export class MCPServer {
 
       let result: MCPResult;
       try {
+        const toolContext: ToolContext = {
+          startTime: Date.now(),
+          deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+        };
         let tid: ReturnType<typeof setTimeout>;
         result = await Promise.race([
-          Promise.resolve(tool.handler(sessionId, toolArgs)).finally(() => clearTimeout(tid)),
+          Promise.resolve(tool.handler(sessionId, toolArgs, toolContext)).finally(() => clearTimeout(tid)),
           new Promise<never>((_, reject) => {
             tid = setTimeout(
               () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms`)),
@@ -745,9 +750,13 @@ export class MCPServer {
               console.error('[MCPServer] Post-reconnect reconciliation failed, aborting retry:', reconcileErr);
               throw handlerError; // Abort retry — stale state would cause wrong-target errors
             }
+            const retryToolContext: ToolContext = {
+              startTime: Date.now(),
+              deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+            };
             let tid2: ReturnType<typeof setTimeout>;
             result = await Promise.race([
-              Promise.resolve(tool.handler(sessionId, toolArgs)).finally(() => clearTimeout(tid2)),
+              Promise.resolve(tool.handler(sessionId, toolArgs, retryToolContext)).finally(() => clearTimeout(tid2)),
               new Promise<never>((_, reject) => {
                 tid2 = setTimeout(
                   () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (retry)`)),
@@ -779,7 +788,11 @@ export class MCPServer {
             const cdpClientRetry = getCDPClient();
             await cdpClientRetry.forceReconnect();
             // Retry the tool call once
-            result = await Promise.resolve(tool.handler(sessionId, toolArgs));
+            const swallowedRetryContext: ToolContext = {
+              startTime: Date.now(),
+              deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+            };
+            result = await Promise.resolve(tool.handler(sessionId, toolArgs, swallowedRetryContext));
             console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);
           } catch (retryError) {
             console.error(`[MCPServer] Retry after swallowed connection error failed for "${toolName}":`, retryError);

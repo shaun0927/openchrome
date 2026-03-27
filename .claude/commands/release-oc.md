@@ -1,11 +1,70 @@
 ---
 name: release-oc
-description: OpenChrome release workflow — triage, review, fix own PRs, merge, and optionally publish
+description: OpenChrome release workflow — issue verification, triage, review, fix own PRs, merge, and optionally publish
 ---
 
 # OpenChrome Release Workflow
 
 $ARGUMENTS
+
+---
+
+## STEP 0: Issue Audit (CRITICAL — do this BEFORE reviewing PRs)
+
+If the release involves specific issues (e.g., `#440`), audit each issue FIRST:
+
+### 0a. Extract Requirements
+
+```bash
+gh issue view <N> --json title,body,labels,state
+```
+
+For each issue, create a **Requirements Matrix**:
+
+```
+| Req ID | Description | Files That Should Change | Verification Method |
+|--------|-------------|-------------------------|---------------------|
+| P0-1   | normalizeQuery in all tools | fill-form, interact, find, click-element, wait-and-click | grep for normalizeQuery import |
+| P0-2   | In-page duplicate comment | element-discovery.ts | Read file, check comment |
+| ...    | ... | ... | ... |
+```
+
+### 0b. Map PRs to Requirements
+
+```bash
+git log --oneline --all --grep="<issue-number>"
+gh pr list --search "<issue-number>" --state all --json number,title,state,mergedAt,headRefName
+```
+
+Create a **Coverage Matrix**:
+
+```
+| Req ID | Covered By | PR Status | Verified in Code |
+|--------|-----------|-----------|-----------------|
+| P0-1   | PR #442   | merged    | [ ] not yet checked |
+| P2-1   | PR #???   | NOT FOUND | [ ] MISSING |
+```
+
+**Gate**: If any requirement has NO PR and NO code change, flag it as a **RELEASE BLOCKER**. Do NOT proceed to merge until all requirements are accounted for.
+
+### 0c. Verify Each Requirement in Code
+
+For each requirement, actually check the codebase — not just the PR diff:
+
+```bash
+# Example: "normalizeQuery applied in all tools that accept text queries"
+grep -r "normalizeQuery" src/tools/ --include="*.ts" -l
+# Compare against the list of tools that SHOULD have it
+```
+
+Mark each requirement as:
+- **PASS** — implemented and verified in current code
+- **PARTIAL** — implemented in some but not all required locations
+- **MISSING** — not implemented at all
+- **UNTESTED** — implemented but no tests exist
+
+**Gate**: Any PARTIAL or MISSING requirement is a **RELEASE BLOCKER**.
+UNTESTED requirements should have tests added before release.
 
 ---
 
@@ -31,14 +90,14 @@ For each open PR, determine ownership:
 
 | Type | How to Identify | Action |
 |------|----------------|--------|
-| **MY PR** | `author.login` matches repo owner | Review → Fix P0/P1 → Merge |
-| **OTHER's PR** | Different author | Review → Post comment → Do NOT merge |
+| **MY PR** | `author.login` matches repo owner | Review -> Fix P0/P1 -> Merge |
+| **OTHER's PR** | Different author | Review -> Post comment -> Do NOT merge |
 
 List all PRs in a table:
 
 ```
-| PR # | Title | Author | Type | Files Changed |
-|------|-------|--------|------|---------------|
+| PR # | Title | Author | Type | Linked Issue | Files Changed |
+|------|-------|--------|------|-------------|---------------|
 ```
 
 ## STEP 3: Triage Local Changes
@@ -87,7 +146,32 @@ This spawns 3 specialist agents in parallel:
 
 Merge the findings from both 4a and 4b. Use the higher-confidence finding when duplicates exist.
 
-### 4c. Check Greptile review (if available)
+### 4c. Issue-Requirement Verification (NEW — prevents incomplete merges)
+
+For each PR that references an issue:
+
+1. **Scope Check**: Does the PR implement ALL parts of the issue it claims to address, or only a subset?
+   - If subset: Is this clearly scoped in the PR title/description? Are there other PRs for remaining parts?
+   - If "centralize X across all tools" but only 3 of 7 tools are changed: **P0 BLOCKER**
+
+2. **Test Coverage Check**: Does the PR include tests for new functionality?
+   - New function/module with 0 tests: **P1 — must add tests before merge**
+   - New behavior branch with 0 coverage: **P1**
+   - Refactored code with existing tests still passing: **OK** (no new tests required)
+
+3. **Completeness Grep**: Verify the change was applied everywhere it should be:
+   ```bash
+   # Example: if PR adds normalizeQuery to tools, verify ALL tools have it
+   # List tools that accept text queries:
+   grep -rn "query.*as string\|query.*string" src/tools/ --include="*.ts" -l
+   # List tools that import normalizeQuery:
+   grep -rn "normalizeQuery" src/tools/ --include="*.ts" -l
+   # The two lists should match (minus tools that don't need normalization)
+   ```
+
+4. **Cross-Reference with STEP 0**: Update the Coverage Matrix. If this PR marks a requirement as PASS, verify it in code.
+
+### 4d. Check Greptile review (if available)
 
 Greptile AI automatically reviews PRs via GitHub App. Fetch its review:
 
@@ -104,17 +188,17 @@ If Greptile posted a review:
 
 If no Greptile review yet, proceed — it may arrive later.
 
-### 4d. Check for file conflicts with other PRs
+### 4e. Check for file conflicts with other PRs
 
 ```bash
 gh pr view <N> --json files
 ```
 
-### 4e. Take action based on ownership + verdict
+### 4f. Take action based on ownership + verdict
 
 **MY PR with P0s**:
 1. `git checkout <branch>`
-2. Fix ALL P0 issues
+2. Fix ALL P0 issues (including scope/test gaps from 4c)
 3. `npm run build` — must pass
 4. Commit and push fixes
 5. Re-run `/pr-review-oc <N>` — must have P0 = 0
@@ -161,6 +245,22 @@ grep -r "console\.log(" src/ --include="*.ts"          # must be 0 in tool handl
 
 **If `npm ci` fails**: Run `npm install`, commit `package-lock.json`, then retry.
 
+### Test Coverage Gate (NEW)
+
+For each PR being merged, verify test coverage for new code:
+
+```bash
+# Count new/modified source lines vs new test lines
+gh pr diff <N> --stat
+# If >50 new source lines and 0 new test lines: WARN
+# If new exported function/class with 0 test references: BLOCK
+```
+
+Specifically check:
+- New exported functions: `grep -rn "export function\|export class" <changed-files>`
+- Test references: `grep -rn "<function-name>" tests/`
+- If a new exported function has zero test references: **P1 — add tests before merge**
+
 ### MCP Protocol Conformance
 
 Verify the MCP server produces spec-compliant responses:
@@ -191,8 +291,8 @@ echo "Server version: $SERVER_VERSION, Package version: $PACKAGE_VERSION"
 ## STEP 6: Merge (MY PRs only)
 
 Merge order:
-- If PRs modify the same files → merge base PR first, rebase dependent PRs
-- If no conflicts → merge in PR number order
+- If PRs modify the same files -> merge base PR first, rebase dependent PRs
+- If no conflicts -> merge in PR number order
 
 For each MY PR:
 
@@ -212,6 +312,21 @@ git push origin main
 ```
 
 Do NOT merge OTHER's PRs unless the user explicitly says to.
+
+### Post-Merge Issue Verification (NEW — prevents "merged but incomplete")
+
+After ALL PRs for an issue are merged, re-run the STEP 0 verification:
+
+```bash
+# Re-check the Coverage Matrix from STEP 0
+# Every requirement should now be PASS
+# If any requirement is still PARTIAL/MISSING/UNTESTED: DO NOT close the issue
+```
+
+If requirements remain incomplete after all PRs are merged:
+1. Create new PRs for the remaining work
+2. Update the issue with a status comment listing what's done and what's pending
+3. Do NOT close the issue until ALL requirements are verified as PASS
 
 ## STEP 7: Cleanup
 
@@ -237,7 +352,7 @@ gh run list --branch main --limit 1 --json status,conclusion,databaseId
 # If conclusion is "failure", fix before publishing.
 ```
 
-**Gate**: CI must pass (all 9 matrix jobs: 3 OS × 3 Node versions). Do NOT proceed if any job failed.
+**Gate**: CI must pass (all 9 matrix jobs: 3 OS x 3 Node versions). Do NOT proceed if any job failed.
 
 ### 8b. Publish to npm
 
@@ -298,21 +413,43 @@ After verification, the user must **restart Claude Code** for the new MCP server
 
 ## Completion Checklist
 
+### Issue Verification (STEP 0)
+- [ ] Requirements Matrix created for each target issue
+- [ ] Coverage Matrix maps every requirement to a PR or code change
+- [ ] No requirement is MISSING or PARTIAL — all accounted for
+- [ ] Every requirement verified in actual code (not just PR diff)
+
+### PR Review (STEP 4)
 - [ ] Every open PR has a GitHub review comment posted
 - [ ] Every PR passed deep code review (`/code-review-oc`) including platform specialist
 - [ ] Greptile review checked and new findings addressed (if review available)
-- [ ] All MY PRs: P0 = 0, P1 = 0, merged
-- [ ] All OTHER's PRs: reviewed and commented (NOT merged)
-- [ ] Pre-merge platform anti-pattern grep: all clean
+- [ ] **Issue-Requirement Verification**: Every PR implements its full claimed scope
+- [ ] **Test Coverage**: Every new exported function/class has test references
+- [ ] **Completeness Grep**: Changes applied to ALL required locations (not just some)
+
+### Pre-merge (STEP 5)
+- [ ] `npm ci` passes (lockfile in sync)
+- [ ] `npm run build` passes
+- [ ] `npm run lint` passes — no errors
+- [ ] `npm test` passes — ALL test suites green
+- [ ] Platform anti-pattern grep: all clean
 - [ ] MCP Protocol: `initialize` response contains only `protocolVersion`, `capabilities`, `serverInfo`
 - [ ] MCP Protocol: Tool schemas use only basic JSON Schema (no `oneOf`/`anyOf`/`allOf` in properties)
 - [ ] MCP Protocol: `serverInfo.version` matches `package.json` version
-- [ ] `npm run build` passes on develop (and main after release merge)
-- [ ] `npm test` passes — ALL test suites green
-- [ ] `npm run lint` passes — no errors
+
+### Merge & Post-merge (STEP 6)
+- [ ] All MY PRs: P0 = 0, P1 = 0, merged
+- [ ] All OTHER's PRs: reviewed and commented (NOT merged)
+- [ ] **Post-merge issue verification**: Re-checked Coverage Matrix, all requirements PASS
+- [ ] Issues with incomplete requirements: NOT closed, status comment posted
+
+### Cleanup (STEP 7)
 - [ ] No unnecessary branches remain
 - [ ] Working tree is clean
-- [ ] (If published) CI green on main before publish (all 9 matrix jobs)
-- [ ] (If published) Global npm package matches published version
-- [ ] (If published) npx cache cleared (`~/.npm/_npx/*/node_modules/openchrome-mcp` removed)
-- [ ] (If published) No zombie MCP server processes running old version
+- [ ] Build passes on develop
+
+### Publish (STEP 8, if applicable)
+- [ ] CI green on main before publish (all 9 matrix jobs)
+- [ ] Global npm package matches published version
+- [ ] npx cache cleared (`~/.npm/_npx/*/node_modules/openchrome-mcp` removed)
+- [ ] No zombie MCP server processes running old version

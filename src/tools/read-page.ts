@@ -91,7 +91,7 @@ const handler: ToolHandler = async (
   const filter = (args.filter as string) || 'all';
   const defaultDepth = filter === 'interactive' ? 5 : 8;
   const maxDepth = (args.depth as number) || defaultDepth;
-  const fetchDepth = filter === 'interactive' ? Math.min(maxDepth, 5) : maxDepth;
+  const fetchDepth = maxDepth;
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
