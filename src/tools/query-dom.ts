@@ -5,7 +5,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
@@ -230,7 +230,8 @@ async function shadowCSSFallback(
 
 async function handleCSS(
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> {
   const tabId = args.tabId as string;
   const selector = args.selector as string;
@@ -306,6 +307,10 @@ async function handleCSS(
     const elementInfos: CSSElementInfo[] = [];
 
     for (let i = 0; i < limitedElements.length; i++) {
+      // Budget check: return partial results if deadline is approaching
+      if (context && !hasBudget(context, 10_000)) {
+        break;
+      }
       const element = limitedElements[i];
       const info = await withTimeout(page.evaluate(
         (el: Element, index: number): CSSElementInfo => {
@@ -726,7 +731,7 @@ const handler: ToolHandler = async (
   try {
     switch (method) {
       case 'css':
-        return await handleCSS(sessionId, args);
+        return await handleCSS(sessionId, args, context);
       case 'xpath':
         return await handleXPath(sessionId, args);
       default:

@@ -3,7 +3,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -60,6 +60,14 @@ const handler: ToolHandler = async (
   if (value === undefined) {
     return {
       content: [{ type: 'text', text: 'Error: value is required' }],
+      isError: true,
+    };
+  }
+
+  // Budget gate: form_input involves multiple sequential CDP calls (resolve + focus + evaluate + type)
+  if (context && !hasBudget(context, 10_000)) {
+    return {
+      content: [{ type: 'text', text: 'form_input: skipped (deadline approaching)' }],
       isError: true,
     };
   }

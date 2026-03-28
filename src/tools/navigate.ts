@@ -3,7 +3,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
@@ -193,7 +193,7 @@ const handler: ToolHandler = async (
             }
             AdaptiveScreenshot.getInstance().reset(existingTabId);
             const [summary, reuseBlocking] = await Promise.all([
-              generateVisualSummary(page),
+              (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
               Promise.race([
                 detectBlockingPage(page),
                 new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -243,7 +243,7 @@ const handler: ToolHandler = async (
 
       AdaptiveScreenshot.getInstance().reset(targetId);
       const [newTabSummary, newTabBlocking] = await Promise.all([
-        generateVisualSummary(page),
+        (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
         Promise.race([
           detectBlockingPage(page),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -327,7 +327,7 @@ const handler: ToolHandler = async (
       await page.goBack({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       AdaptiveScreenshot.getInstance().reset(tabId);
       const [backSummary, backBlocking] = await Promise.all([
-        generateVisualSummary(page),
+        (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
         Promise.race([
           detectBlockingPage(page),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -361,7 +361,7 @@ const handler: ToolHandler = async (
       await page.goForward({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       AdaptiveScreenshot.getInstance().reset(tabId);
       const [fwdSummary, fwdBlocking] = await Promise.all([
-        generateVisualSummary(page),
+        (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
         Promise.race([
           detectBlockingPage(page),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -484,7 +484,7 @@ const handler: ToolHandler = async (
 
     AdaptiveScreenshot.getInstance().reset(tabId);
     const [navSummary, navBlocking] = await Promise.all([
-      generateVisualSummary(page),
+      (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
       Promise.race([
         detectBlockingPage(page),
         new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),

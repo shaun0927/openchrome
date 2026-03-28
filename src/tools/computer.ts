@@ -163,7 +163,7 @@ const handler: ToolHandler = async (
 
         // text_only mode: skip expensive screenshot, return visual summary
         if (effectiveMode === 'text_only') {
-          const summary = await generateVisualSummary(page);
+          const summary = (context && !hasBudget(context, 5_000)) ? null : await generateVisualSummary(page);
           return {
             content: [{
               type: 'text',
@@ -283,7 +283,7 @@ const handler: ToolHandler = async (
 
         if (refInfo) {
           const { delta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
-          const summary = await generateVisualSummary(page);
+          const summary = (context && !hasBudget(context, 5_000)) ? null : await generateVisualSummary(page);
           const summaryText = summary ? `\n${summary}` : '';
           return {
             content: [{ type: 'text', text: `Clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})${delta}${summaryText}` }],
@@ -303,7 +303,7 @@ const handler: ToolHandler = async (
 
         // Internal fallback: if hit non-interactive element, suggest but don't auto-retry
         // (auto-retry could cause unintended side effects on elements the LLM didn't intend)
-        const summary = await generateVisualSummary(page);
+        const summary = (context && !hasBudget(context, 5_000)) ? null : await generateVisualSummary(page);
         const summaryText = summary ? `\n${summary}` : '';
 
         const resultText = leftClickValidation.warning
