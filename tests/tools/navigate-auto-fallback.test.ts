@@ -46,6 +46,19 @@ jest.mock('../../src/stealth/human-behavior', () => ({
   simulatePresence: mockSimulatePresence,
 }));
 
+// Mock headed-fallback to prevent real Chrome launch in tests (#459 Tier 3)
+jest.mock('../../src/chrome/headed-fallback', () => ({
+  getHeadedFallback: () => ({
+    isAvailable: () => false,
+    navigate: jest.fn(),
+  }),
+}));
+
+// Mock global config
+jest.mock('../../src/config/global', () => ({
+  getGlobalConfig: () => ({ port: 9222 }),
+}));
+
 import { getSessionManager } from '../../src/session-manager';
 
 describe('NavigateTool - Auto-fallback (#459)', () => {
@@ -69,6 +82,15 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
     }));
     jest.doMock('../../src/stealth/human-behavior', () => ({
       simulatePresence: mockSimulatePresence,
+    }));
+    jest.doMock('../../src/chrome/headed-fallback', () => ({
+      getHeadedFallback: () => ({
+        isAvailable: () => false,
+        navigate: jest.fn(),
+      }),
+    }));
+    jest.doMock('../../src/config/global', () => ({
+      getGlobalConfig: () => ({ port: 9222 }),
     }));
     const { registerNavigateTool } = await import('../../src/tools/navigate');
 
