@@ -11,10 +11,13 @@ import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
-import { detectBlockingPage } from '../utils/page-diagnostics';
+import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { withTimeout } from '../utils/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
 import type { Page } from 'puppeteer-core';
+
+/** Blocking types that warrant automatic stealth retry (#459) */
+const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
 
 /** Compute readiness data for navigate responses. Non-critical — returns defaults on failure. */
 async function getReadiness(page: Page): Promise<{ readyState: string; domStable: boolean; framework: string }> {
@@ -34,6 +37,69 @@ async function getReadiness(page: Page): Promise<{ readyState: string; domStable
   } catch {
     return { readyState: 'unknown', domStable: false, framework: 'unknown' };
   }
+}
+
+/**
+ * Auto-fallback: retry navigation with stealth mode when a CDN/WAF block is detected.
+ * Closes the original blocked tab (if just created), creates a new stealth tab,
+ * and returns the result with fallbackTier/fallbackReason metadata. (#459)
+ */
+async function stealthAutoRetry(
+  sessionId: string,
+  targetUrl: string,
+  workerId: string | undefined,
+  stealthSettleMs: number,
+  profileDirectory: string | undefined,
+  blockingInfo: BlockingInfo,
+  closeTabId?: string,
+): Promise<MCPResult> {
+  const sessionManager = getSessionManager();
+
+  if (closeTabId) {
+    await sessionManager.closeTarget(sessionId, closeTabId).catch(() => {});
+  }
+
+  console.error(`[navigate] Auto-fallback: block detected (${blockingInfo.type}), retrying with stealth...`);
+
+  const { targetId, page, workerId: assignedWorkerId } =
+    await sessionManager.createTargetStealth(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory);
+
+  await simulatePresence(page);
+
+  AdaptiveScreenshot.getInstance().reset(targetId);
+  const [summary, blocking] = await Promise.all([
+    generateVisualSummary(page),
+    Promise.race([
+      detectBlockingPage(page),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
+    ]).catch(() => null),
+  ]);
+
+  let elementCount = 0;
+  try {
+    elementCount = await withTimeout(
+      page.evaluate(() => document.querySelectorAll('*').length),
+      3000, 'elementCount',
+    );
+  } catch { /* non-critical */ }
+
+  const readiness = await getReadiness(page);
+  const resultText = JSON.stringify({
+    action: 'navigate',
+    url: page.url(),
+    title: await safeTitle(page),
+    tabId: targetId,
+    workerId: assignedWorkerId,
+    created: true,
+    elementCount,
+    readiness,
+    stealth: true,
+    fallbackTier: 2,
+    fallbackReason: blockingInfo.type,
+    ...(summary && { visualSummary: summary }),
+    ...(blocking && { blockingPage: blocking }),
+  });
+  return { content: [{ type: 'text', text: resultText }] };
 }
 
 const definition: MCPToolDefinition = {
@@ -61,6 +127,10 @@ const definition: MCPToolDefinition = {
       stealthSettleMs: {
         type: 'number',
         description: 'How long to wait (ms) before attaching CDP in stealth mode. Default: 8000. Range: 1000-30000.',
+      },
+      autoFallback: {
+        type: 'boolean',
+        description: 'Auto-retry with stealth when CDN/WAF block is detected (access-denied, bot-check, captcha). Default: true. Set false to disable.',
       },
       profileDirectory: {
         type: 'string',
@@ -90,6 +160,7 @@ const handler: ToolHandler = async (
   const workerId = (args.workerId as string | undefined) || (profileDirectory ? `profile:${profileDirectory}` : undefined);
   const stealth = args.stealth as boolean | undefined;
   const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 8000, 1000), 30000);
+  const autoFallback = args.autoFallback !== false; // default: true
   const stealthIgnoredWarning = stealth && tabId ? 'stealth mode only works when creating new tabs (omit tabId). The stealth parameter was ignored for this navigation.' : undefined;
   const sessionManager = getSessionManager();
 
@@ -210,6 +281,12 @@ const handler: ToolHandler = async (
               // Non-critical — proceed without count
             }
             const reuseReadiness = await getReadiness(page);
+
+            // Auto-fallback: if reused tab hit a CDN/WAF block, retry with stealth in a new tab (#459)
+            if (reuseBlocking && autoFallback && RETRYABLE_BLOCK_TYPES.has(reuseBlocking.type)) {
+              return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking);
+            }
+
             const reuseResultText = JSON.stringify({
               action: 'navigate',
               url: page.url(),
@@ -260,6 +337,12 @@ const handler: ToolHandler = async (
         // Non-critical — proceed without count
       }
       const newTabReadiness = await getReadiness(page);
+
+      // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
+      if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
+        return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId);
+      }
+
       const newTabResultText = JSON.stringify({
         action: 'navigate',
         url: page.url(),
