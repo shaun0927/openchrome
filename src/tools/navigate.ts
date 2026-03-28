@@ -14,6 +14,8 @@ import { assertDomainAllowed } from '../security/domain-guard';
 import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { withTimeout } from '../utils/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
+import { getHeadedFallback } from '../chrome/headed-fallback';
+import { getGlobalConfig } from '../config/global';
 import type { Page } from 'puppeteer-core';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
@@ -52,6 +54,7 @@ async function stealthAutoRetry(
   profileDirectory: string | undefined,
   blockingInfo: BlockingInfo,
   closeTabId?: string,
+  autoFallbackToHeaded: boolean = false,
 ): Promise<MCPResult> {
   const sessionManager = getSessionManager();
 
@@ -99,7 +102,50 @@ async function stealthAutoRetry(
     ...(summary && { visualSummary: summary }),
     ...(blocking && { blockingPage: blocking }),
   });
+  // Tier 3: if stealth retry also got blocked and headed Chrome is available, escalate (#459)
+  if (blocking && autoFallbackToHeaded && RETRYABLE_BLOCK_TYPES.has(blocking.type)) {
+    const headedResult = await headedAutoRetry(targetUrl, blocking);
+    if (headedResult) return headedResult;
+  }
+
   return { content: [{ type: 'text', text: resultText }] };
+}
+
+/**
+ * Tier 3 fallback: retry navigation in headed Chrome when stealth also fails.
+ * Headed Chrome has a real user-agent and TLS fingerprint, bypassing CDN/WAF detection. (#459)
+ * Returns null if headed fallback is not available (no display, no Chrome binary).
+ */
+async function headedAutoRetry(
+  targetUrl: string,
+  blockingInfo: BlockingInfo,
+): Promise<MCPResult | null> {
+  const headedFallback = getHeadedFallback(getGlobalConfig().port);
+  if (!headedFallback.isAvailable()) {
+    console.error('[navigate] Tier 3 skipped: no display available for headed Chrome');
+    return null;
+  }
+
+  console.error(`[navigate] Auto-fallback Tier 3: stealth also blocked (${blockingInfo.type}), retrying in headed Chrome...`);
+
+  try {
+    const result = await headedFallback.navigate(targetUrl);
+    const resultText = JSON.stringify({
+      action: 'navigate',
+      url: result.url,
+      title: result.title,
+      elementCount: result.elementCount,
+      headed: true,
+      stealth: true,
+      fallbackTier: 3,
+      fallbackReason: blockingInfo.type,
+      ...(result.blockingPage && { blockingPage: result.blockingPage }),
+    });
+    return { content: [{ type: 'text', text: resultText }] };
+  } catch (err) {
+    console.error('[navigate] Tier 3 headed fallback failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 const definition: MCPToolDefinition = {
@@ -132,6 +178,10 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Auto-retry with stealth when CDN/WAF block is detected (access-denied, bot-check, captcha). Default: true. Set false to disable.',
       },
+      headed: {
+        type: 'boolean',
+        description: 'Force navigation in headed (non-headless) Chrome. Bypasses CDN/TLS-level blocking by using a real Chrome user-agent and TLS fingerprint. Requires a display. Default: false.',
+      },
       profileDirectory: {
         type: 'string',
         description: 'Chrome profile directory name (e.g., "Profile 1"). Use list_profiles to see available profiles. Launches a separate Chrome instance for each profile. If omitted, uses the server default. Cannot be combined with workerId.',
@@ -161,6 +211,7 @@ const handler: ToolHandler = async (
   const stealth = args.stealth as boolean | undefined;
   const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 8000, 1000), 30000);
   const autoFallback = args.autoFallback !== false; // default: true
+  const headed = args.headed as boolean | undefined;
   const stealthIgnoredWarning = stealth && tabId ? 'stealth mode only works when creating new tabs (omit tabId). The stealth parameter was ignored for this navigation.' : undefined;
   const sessionManager = getSessionManager();
 
@@ -226,6 +277,16 @@ const handler: ToolHandler = async (
       // Domain blocklist check on normalized URL
       assertDomainAllowed(targetUrl);
 
+      // headed=true: skip headless entirely, navigate directly in headed Chrome (#459)
+      if (headed) {
+        const headedResult = await headedAutoRetry(targetUrl, { type: 'access-denied', detail: 'user-requested headed mode' });
+        if (headedResult) return headedResult;
+        return {
+          content: [{ type: 'text', text: 'Error: headed mode requested but no display available for headed Chrome.' }],
+          isError: true,
+        };
+      }
+
       // Tab reuse: if worker has exactly 1 existing tab, reuse it instead of creating new
       const resolvedWorkerId = workerId || 'default';
       const existingTargets = sessionManager.getWorkerTargetIds(sessionId, resolvedWorkerId);
@@ -284,7 +345,7 @@ const handler: ToolHandler = async (
 
             // Auto-fallback: if reused tab hit a CDN/WAF block, retry with stealth in a new tab (#459)
             if (reuseBlocking && autoFallback && RETRYABLE_BLOCK_TYPES.has(reuseBlocking.type)) {
-              return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking);
+              return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback);
             }
 
             const reuseResultText = JSON.stringify({
@@ -340,7 +401,7 @@ const handler: ToolHandler = async (
 
       // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
       if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
-        return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId);
+        return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback);
       }
 
       const newTabResultText = JSON.stringify({
