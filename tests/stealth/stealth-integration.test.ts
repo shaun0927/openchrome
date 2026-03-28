@@ -23,21 +23,29 @@ describe('Stealth v2 Integration: navigate.ts', () => {
   });
 
   test('calls simulatePresence only when stealth is true', () => {
-    // Find the stealth block
-    const stealthBlock = source.slice(
-      source.indexOf('if (stealth) {'),
-      source.indexOf('AdaptiveScreenshot.getInstance().reset(targetId)')
+    // Find the stealth block in the handler (after 'if (stealth) {'),
+    // scoped to the handler to avoid matching stealthAutoRetry helper (#459)
+    const handlerStart = source.indexOf('const handler: ToolHandler');
+    const handlerSource = source.slice(handlerStart);
+    const stealthBlock = handlerSource.slice(
+      handlerSource.indexOf('if (stealth) {'),
+      handlerSource.indexOf('AdaptiveScreenshot.getInstance().reset(targetId)')
     );
     expect(stealthBlock).toContain('simulatePresence(page)');
   });
 
   test('non-stealth path does not call simulatePresence', () => {
-    // The simulatePresence call should be guarded by if (stealth)
-    const lines = source.split('\n');
-    const presenceLine = lines.findIndex(l => l.includes('simulatePresence(page)'));
+    // The simulatePresence call inside the handler should be guarded by if (stealth).
+    // Find the handler's simulatePresence call (inside the 'if (stealth)' block),
+    // not the one in stealthAutoRetry helper which is always-stealth by design (#459).
+    const handlerStart = source.indexOf('const handler: ToolHandler');
+    expect(handlerStart).toBeGreaterThan(-1);
+    const handlerSource = source.slice(handlerStart);
+    const handlerLines = handlerSource.split('\n');
+    const presenceLine = handlerLines.findIndex(l => l.includes('simulatePresence(page)'));
     expect(presenceLine).toBeGreaterThan(-1);
     // Check the guard exists before it
-    const guardLine = lines.slice(Math.max(0, presenceLine - 5), presenceLine)
+    const guardLine = handlerLines.slice(Math.max(0, presenceLine - 5), presenceLine)
       .some(l => l.includes('if (stealth)'));
     expect(guardLine).toBe(true);
   });
