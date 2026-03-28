@@ -22,9 +22,9 @@ import type { Page } from 'puppeteer-core';
 const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
 
 /** Compute readiness data for navigate responses. Non-critical — returns defaults on failure. */
-async function getReadiness(page: Page): Promise<{ readyState: string; domStable: boolean; framework: string }> {
+async function getReadiness(page: Page, context?: ToolContext): Promise<{ readyState: string; domStable: boolean; framework: string }> {
   try {
-    const readyState = await withTimeout(page.evaluate(() => document.readyState), 3000, 'readyState');
+    const readyState = await withTimeout(page.evaluate(() => document.readyState), 3000, 'readyState', context);
     let framework = 'none';
     try {
       framework = await withTimeout(page.evaluate(() => {
@@ -33,7 +33,7 @@ async function getReadiness(page: Page): Promise<{ readyState: string; domStable
         if ((window as any).__VUE__) return 'vue';
         if ((window as any).__ANGULAR_DEVTOOLS_BACKEND_API__) return 'angular';
         return 'none';
-      }), 2000, 'framework');
+      }), 2000, 'framework', context);
     } catch { /* ignore */ }
     return { readyState, domStable: true, framework };
   } catch {
@@ -55,6 +55,7 @@ async function stealthAutoRetry(
   blockingInfo: BlockingInfo,
   closeTabId?: string,
   autoFallbackToHeaded: boolean = false,
+  context?: ToolContext,
 ): Promise<MCPResult> {
   const sessionManager = getSessionManager();
 
@@ -82,11 +83,10 @@ async function stealthAutoRetry(
   try {
     elementCount = await withTimeout(
       page.evaluate(() => document.querySelectorAll('*').length),
-      3000, 'elementCount',
-    );
+      3000, 'elementCount', context);
   } catch { /* non-critical */ }
 
-  const readiness = await getReadiness(page);
+  const readiness = await getReadiness(page, context);
   const resultText = JSON.stringify({
     action: 'navigate',
     url: page.url(),
@@ -299,7 +299,7 @@ const handler: ToolHandler = async (
               smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }),
               DEFAULT_NAVIGATION_TIMEOUT_MS + 5000,
               `navigate to ${targetUrl}`
-            );
+            , context);
             if (authRedirect) {
               AdaptiveScreenshot.getInstance().reset(existingTabId);
               return {
@@ -337,15 +337,15 @@ const handler: ToolHandler = async (
               reuseElementCount = await withTimeout(
                 page.evaluate(() => document.querySelectorAll('*').length),
                 3000, 'elementCount'
-              );
+              , context);
             } catch {
               // Non-critical — proceed without count
             }
-            const reuseReadiness = await getReadiness(page);
+            const reuseReadiness = await getReadiness(page, context);
 
             // Auto-fallback: if reused tab hit a CDN/WAF block, retry with stealth in a new tab (#459)
             if (reuseBlocking && autoFallback && RETRYABLE_BLOCK_TYPES.has(reuseBlocking.type)) {
-              return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback);
+              return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context);
             }
 
             const reuseResultText = JSON.stringify({
@@ -393,15 +393,15 @@ const handler: ToolHandler = async (
         newTabElementCount = await withTimeout(
           page.evaluate(() => document.querySelectorAll('*').length),
           3000, 'elementCount'
-        );
+        , context);
       } catch {
         // Non-critical — proceed without count
       }
-      const newTabReadiness = await getReadiness(page);
+      const newTabReadiness = await getReadiness(page, context);
 
       // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
       if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
-        return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback);
+        return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context);
       }
 
       const newTabResultText = JSON.stringify({
@@ -483,7 +483,7 @@ const handler: ToolHandler = async (
         backElementCount = await withTimeout(
           page.evaluate(() => document.querySelectorAll('*').length),
           3000, 'elementCount'
-        );
+        , context);
       } catch {
         // Non-critical — proceed without count
       }
@@ -517,7 +517,7 @@ const handler: ToolHandler = async (
         fwdElementCount = await withTimeout(
           page.evaluate(() => document.querySelectorAll('*').length),
           3000, 'elementCount'
-        );
+        , context);
       } catch {
         // Non-critical — proceed without count
       }
@@ -601,7 +601,7 @@ const handler: ToolHandler = async (
       smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }),
       DEFAULT_NAVIGATION_TIMEOUT_MS + 5000,
       `navigate to ${targetUrl}`
-    );
+    , context);
 
     // Auth redirect = fail-fast with clear error
     if (authRedirect) {
@@ -640,11 +640,11 @@ const handler: ToolHandler = async (
       navElementCount = await withTimeout(
         page.evaluate(() => document.querySelectorAll('*').length),
         3000, 'elementCount'
-      );
+      , context);
     } catch {
       // Non-critical — proceed without count
     }
-    const navReadiness = await getReadiness(page);
+    const navReadiness = await getReadiness(page, context);
     const navResultText = JSON.stringify({
       action: 'navigate',
       url: page.url(),
@@ -667,13 +667,13 @@ const handler: ToolHandler = async (
       try {
         const timeoutPage = await sessionManager.getPage(sessionId, tabId, undefined, 'navigate');
         if (timeoutPage) {
-          const timeoutReadiness = await getReadiness(timeoutPage);
+          const timeoutReadiness = await getReadiness(timeoutPage, context);
           let timeoutElementCount = 0;
           try {
             timeoutElementCount = await withTimeout(
               timeoutPage.evaluate(() => document.querySelectorAll('*').length),
               3000, 'elementCount'
-            );
+            , context);
           } catch { /* ignore */ }
 
           const hasContent = (timeoutReadiness.readyState === 'interactive' || timeoutReadiness.readyState === 'complete') && timeoutElementCount > 10;
