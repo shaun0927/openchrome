@@ -5,7 +5,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
@@ -308,6 +308,10 @@ async function handleCSS(
     const elementInfos: CSSElementInfo[] = [];
 
     for (let i = 0; i < limitedElements.length; i++) {
+      // Budget check: return partial results if deadline is approaching
+      if (context && !hasBudget(context, 10_000)) {
+        break;
+      }
       const element = limitedElements[i];
       const info = await withTimeout(page.evaluate(
         (el: Element, index: number): CSSElementInfo => {
