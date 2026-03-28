@@ -3,7 +3,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 
 interface Position {
@@ -108,6 +108,14 @@ const handler: ToolHandler = async (
           text: 'Error: Either targetSelector or both targetX and targetY are required',
         },
       ],
+      isError: true,
+    };
+  }
+
+  // Budget gate: drag_drop involves multiple sequential CDP calls (resolve + mouseDown + mouseMove × steps + mouseUp)
+  if (context && !hasBudget(context, 10_000)) {
+    return {
+      content: [{ type: 'text', text: 'drag_drop: skipped (deadline approaching)' }],
       isError: true,
     };
   }
