@@ -3,7 +3,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
@@ -11,15 +11,20 @@ import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
-import { detectBlockingPage } from '../utils/page-diagnostics';
+import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { withTimeout } from '../utils/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
+import { getHeadedFallback } from '../chrome/headed-fallback';
+import { getGlobalConfig } from '../config/global';
 import type { Page } from 'puppeteer-core';
 
+/** Blocking types that warrant automatic stealth retry (#459) */
+const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
+
 /** Compute readiness data for navigate responses. Non-critical — returns defaults on failure. */
-async function getReadiness(page: Page): Promise<{ readyState: string; domStable: boolean; framework: string }> {
+async function getReadiness(page: Page, context?: ToolContext): Promise<{ readyState: string; domStable: boolean; framework: string }> {
   try {
-    const readyState = await withTimeout(page.evaluate(() => document.readyState), 3000, 'readyState');
+    const readyState = await withTimeout(page.evaluate(() => document.readyState), 3000, 'readyState', context);
     let framework = 'none';
     try {
       framework = await withTimeout(page.evaluate(() => {
@@ -28,11 +33,118 @@ async function getReadiness(page: Page): Promise<{ readyState: string; domStable
         if ((window as any).__VUE__) return 'vue';
         if ((window as any).__ANGULAR_DEVTOOLS_BACKEND_API__) return 'angular';
         return 'none';
-      }), 2000, 'framework');
+      }), 2000, 'framework', context);
     } catch { /* ignore */ }
     return { readyState, domStable: true, framework };
   } catch {
     return { readyState: 'unknown', domStable: false, framework: 'unknown' };
+  }
+}
+
+/**
+ * Auto-fallback: retry navigation with stealth mode when a CDN/WAF block is detected.
+ * Closes the original blocked tab (if just created), creates a new stealth tab,
+ * and returns the result with fallbackTier/fallbackReason metadata. (#459)
+ */
+async function stealthAutoRetry(
+  sessionId: string,
+  targetUrl: string,
+  workerId: string | undefined,
+  stealthSettleMs: number,
+  profileDirectory: string | undefined,
+  blockingInfo: BlockingInfo,
+  closeTabId?: string,
+  autoFallbackToHeaded: boolean = false,
+  context?: ToolContext,
+): Promise<MCPResult> {
+  const sessionManager = getSessionManager();
+
+  if (closeTabId) {
+    await sessionManager.closeTarget(sessionId, closeTabId).catch(() => {});
+  }
+
+  console.error(`[navigate] Auto-fallback: block detected (${blockingInfo.type}), retrying with stealth...`);
+
+  const { targetId, page, workerId: assignedWorkerId } =
+    await sessionManager.createTargetStealth(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory);
+
+  await simulatePresence(page);
+
+  AdaptiveScreenshot.getInstance().reset(targetId);
+  const [summary, blocking] = await Promise.all([
+    (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
+    Promise.race([
+      detectBlockingPage(page),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
+    ]).catch(() => null),
+  ]);
+
+  let elementCount = 0;
+  try {
+    elementCount = await withTimeout(
+      page.evaluate(() => document.querySelectorAll('*').length),
+      3000, 'elementCount', context);
+  } catch { /* non-critical */ }
+
+  const readiness = await getReadiness(page, context);
+  const resultText = JSON.stringify({
+    action: 'navigate',
+    url: page.url(),
+    title: await safeTitle(page),
+    tabId: targetId,
+    workerId: assignedWorkerId,
+    created: true,
+    elementCount,
+    readiness,
+    stealth: true,
+    fallbackTier: 2,
+    fallbackReason: blockingInfo.type,
+    ...(summary && { visualSummary: summary }),
+    ...(blocking && { blockingPage: blocking }),
+  });
+  // Tier 3: if stealth retry also got blocked and headed Chrome is available, escalate (#459)
+  if (blocking && autoFallbackToHeaded && RETRYABLE_BLOCK_TYPES.has(blocking.type)) {
+    const headedResult = await headedAutoRetry(targetUrl, blocking);
+    if (headedResult) return headedResult;
+  }
+
+  return { content: [{ type: 'text', text: resultText }] };
+}
+
+/**
+ * Tier 3 fallback: retry navigation in headed Chrome when stealth also fails.
+ * Headed Chrome has a real user-agent and TLS fingerprint, bypassing CDN/WAF detection. (#459)
+ * Returns null if headed fallback is not available (no display, no Chrome binary).
+ */
+async function headedAutoRetry(
+  targetUrl: string,
+  blockingInfo: BlockingInfo,
+): Promise<MCPResult | null> {
+  const headedFallback = getHeadedFallback(getGlobalConfig().port);
+  if (!headedFallback.isAvailable()) {
+    console.error('[navigate] Tier 3 skipped: no display available for headed Chrome');
+    return null;
+  }
+
+  console.error(`[navigate] Auto-fallback Tier 3: stealth also blocked (${blockingInfo.type}), retrying in headed Chrome...`);
+
+  try {
+    const result = await headedFallback.navigate(targetUrl);
+    const resultText = JSON.stringify({
+      action: 'navigate',
+      url: result.url,
+      title: result.title,
+      elementCount: result.elementCount,
+      headed: true,
+      stealth: true,
+      fallbackTier: 3,
+      fallbackReason: blockingInfo.type,
+      ...(result.blockingPage && { blockingPage: result.blockingPage }),
+    });
+    return { content: [{ type: 'text', text: resultText }] };
+  } catch (err) {
+    console.error('[navigate] Tier 3 headed fallback failed:', err instanceof Error ? err.message : err);
+    return null;
   }
 }
 
@@ -62,6 +174,14 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'How long to wait (ms) before attaching CDP in stealth mode. Default: 8000. Range: 1000-30000.',
       },
+      autoFallback: {
+        type: 'boolean',
+        description: 'Auto-retry with stealth when CDN/WAF block is detected (access-denied, bot-check, captcha). Default: true. Set false to disable.',
+      },
+      headed: {
+        type: 'boolean',
+        description: 'Force navigation in headed (non-headless) Chrome. Bypasses CDN/TLS-level blocking by using a real Chrome user-agent and TLS fingerprint. Requires a display. Default: false.',
+      },
       profileDirectory: {
         type: 'string',
         description: 'Chrome profile directory name (e.g., "Profile 1"). Use list_profiles to see available profiles. Launches a separate Chrome instance for each profile. If omitted, uses the server default. Cannot be combined with workerId.',
@@ -90,6 +210,8 @@ const handler: ToolHandler = async (
   const workerId = (args.workerId as string | undefined) || (profileDirectory ? `profile:${profileDirectory}` : undefined);
   const stealth = args.stealth as boolean | undefined;
   const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 8000, 1000), 30000);
+  const autoFallback = args.autoFallback !== false; // default: true
+  const headed = args.headed as boolean | undefined;
   const stealthIgnoredWarning = stealth && tabId ? 'stealth mode only works when creating new tabs (omit tabId). The stealth parameter was ignored for this navigation.' : undefined;
   const sessionManager = getSessionManager();
 
@@ -155,6 +277,16 @@ const handler: ToolHandler = async (
       // Domain blocklist check on normalized URL
       assertDomainAllowed(targetUrl);
 
+      // headed=true: skip headless entirely, navigate directly in headed Chrome (#459)
+      if (headed) {
+        const headedResult = await headedAutoRetry(targetUrl, { type: 'access-denied', detail: 'user-requested headed mode' });
+        if (headedResult) return headedResult;
+        return {
+          content: [{ type: 'text', text: 'Error: headed mode requested but no display available for headed Chrome.' }],
+          isError: true,
+        };
+      }
+
       // Tab reuse: if worker has exactly 1 existing tab, reuse it instead of creating new
       const resolvedWorkerId = workerId || 'default';
       const existingTargets = sessionManager.getWorkerTargetIds(sessionId, resolvedWorkerId);
@@ -167,7 +299,7 @@ const handler: ToolHandler = async (
               smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }),
               DEFAULT_NAVIGATION_TIMEOUT_MS + 5000,
               `navigate to ${targetUrl}`
-            );
+            , context);
             if (authRedirect) {
               AdaptiveScreenshot.getInstance().reset(existingTabId);
               return {
@@ -193,7 +325,7 @@ const handler: ToolHandler = async (
             }
             AdaptiveScreenshot.getInstance().reset(existingTabId);
             const [summary, reuseBlocking] = await Promise.all([
-              generateVisualSummary(page),
+              (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
               Promise.race([
                 detectBlockingPage(page),
                 new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -205,11 +337,17 @@ const handler: ToolHandler = async (
               reuseElementCount = await withTimeout(
                 page.evaluate(() => document.querySelectorAll('*').length),
                 3000, 'elementCount'
-              );
+              , context);
             } catch {
               // Non-critical — proceed without count
             }
-            const reuseReadiness = await getReadiness(page);
+            const reuseReadiness = await getReadiness(page, context);
+
+            // Auto-fallback: if reused tab hit a CDN/WAF block, retry with stealth in a new tab (#459)
+            if (reuseBlocking && autoFallback && RETRYABLE_BLOCK_TYPES.has(reuseBlocking.type)) {
+              return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context);
+            }
+
             const reuseResultText = JSON.stringify({
               action: 'navigate',
               url: page.url(),
@@ -243,7 +381,7 @@ const handler: ToolHandler = async (
 
       AdaptiveScreenshot.getInstance().reset(targetId);
       const [newTabSummary, newTabBlocking] = await Promise.all([
-        generateVisualSummary(page),
+        (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
         Promise.race([
           detectBlockingPage(page),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -255,11 +393,17 @@ const handler: ToolHandler = async (
         newTabElementCount = await withTimeout(
           page.evaluate(() => document.querySelectorAll('*').length),
           3000, 'elementCount'
-        );
+        , context);
       } catch {
         // Non-critical — proceed without count
       }
-      const newTabReadiness = await getReadiness(page);
+      const newTabReadiness = await getReadiness(page, context);
+
+      // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
+      if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
+        return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context);
+      }
+
       const newTabResultText = JSON.stringify({
         action: 'navigate',
         url: page.url(),
@@ -327,7 +471,7 @@ const handler: ToolHandler = async (
       await page.goBack({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       AdaptiveScreenshot.getInstance().reset(tabId);
       const [backSummary, backBlocking] = await Promise.all([
-        generateVisualSummary(page),
+        (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
         Promise.race([
           detectBlockingPage(page),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -339,7 +483,7 @@ const handler: ToolHandler = async (
         backElementCount = await withTimeout(
           page.evaluate(() => document.querySelectorAll('*').length),
           3000, 'elementCount'
-        );
+        , context);
       } catch {
         // Non-critical — proceed without count
       }
@@ -361,7 +505,7 @@ const handler: ToolHandler = async (
       await page.goForward({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       AdaptiveScreenshot.getInstance().reset(tabId);
       const [fwdSummary, fwdBlocking] = await Promise.all([
-        generateVisualSummary(page),
+        (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
         Promise.race([
           detectBlockingPage(page),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -373,7 +517,7 @@ const handler: ToolHandler = async (
         fwdElementCount = await withTimeout(
           page.evaluate(() => document.querySelectorAll('*').length),
           3000, 'elementCount'
-        );
+        , context);
       } catch {
         // Non-critical — proceed without count
       }
@@ -457,7 +601,7 @@ const handler: ToolHandler = async (
       smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }),
       DEFAULT_NAVIGATION_TIMEOUT_MS + 5000,
       `navigate to ${targetUrl}`
-    );
+    , context);
 
     // Auth redirect = fail-fast with clear error
     if (authRedirect) {
@@ -484,7 +628,7 @@ const handler: ToolHandler = async (
 
     AdaptiveScreenshot.getInstance().reset(tabId);
     const [navSummary, navBlocking] = await Promise.all([
-      generateVisualSummary(page),
+      (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
       Promise.race([
         detectBlockingPage(page),
         new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
@@ -496,11 +640,11 @@ const handler: ToolHandler = async (
       navElementCount = await withTimeout(
         page.evaluate(() => document.querySelectorAll('*').length),
         3000, 'elementCount'
-      );
+      , context);
     } catch {
       // Non-critical — proceed without count
     }
-    const navReadiness = await getReadiness(page);
+    const navReadiness = await getReadiness(page, context);
     const navResultText = JSON.stringify({
       action: 'navigate',
       url: page.url(),
@@ -523,13 +667,13 @@ const handler: ToolHandler = async (
       try {
         const timeoutPage = await sessionManager.getPage(sessionId, tabId, undefined, 'navigate');
         if (timeoutPage) {
-          const timeoutReadiness = await getReadiness(timeoutPage);
+          const timeoutReadiness = await getReadiness(timeoutPage, context);
           let timeoutElementCount = 0;
           try {
             timeoutElementCount = await withTimeout(
               timeoutPage.evaluate(() => document.querySelectorAll('*').length),
               3000, 'elementCount'
-            );
+            , context);
           } catch { /* ignore */ }
 
           const hasContent = (timeoutReadiness.readyState === 'interactive' || timeoutReadiness.readyState === 'complete') && timeoutElementCount > 10;

@@ -5,7 +5,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
@@ -94,7 +94,8 @@ interface QueryDomDiagnostics {
 
 async function gatherDiagnostics(
   page: import('puppeteer-core').Page,
-  selector: string
+  selector: string,
+  context?: ToolContext
 ): Promise<QueryDomDiagnostics | null> {
   try {
     // Single atomic evaluate to avoid race conditions if page navigates between calls
@@ -133,7 +134,7 @@ async function gatherDiagnostics(
         framework,
         closestMatch,
       };
-    }, selector), 15000, 'query_dom');
+    }, selector), 15000, 'query_dom', context);
   } catch (err) {
     console.error('[query_dom] diagnostics failed:', err);
     return null;
@@ -230,7 +231,8 @@ async function shadowCSSFallback(
 
 async function handleCSS(
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> {
   const tabId = args.tabId as string;
   const selector = args.selector as string;
@@ -280,7 +282,7 @@ async function handleCSS(
         }
       }
 
-      const diag = await gatherDiagnostics(page, selector);
+      const diag = await gatherDiagnostics(page, selector, context);
       return {
         content: [
           {
@@ -306,6 +308,10 @@ async function handleCSS(
     const elementInfos: CSSElementInfo[] = [];
 
     for (let i = 0; i < limitedElements.length; i++) {
+      // Budget check: return partial results if deadline is approaching
+      if (context && !hasBudget(context, 10_000)) {
+        break;
+      }
       const element = limitedElements[i];
       const info = await withTimeout(page.evaluate(
         (el: Element, index: number): CSSElementInfo => {
@@ -345,7 +351,7 @@ async function handleCSS(
         element,
         i
       ), 2000, 'query_dom'
-      );
+      , context);
       elementInfos.push(info);
     }
 
@@ -390,7 +396,7 @@ async function handleCSS(
         }
       }
 
-      const diag = await gatherDiagnostics(page, selector);
+      const diag = await gatherDiagnostics(page, selector, context);
       return {
         content: [
           {
@@ -442,7 +448,7 @@ async function handleCSS(
               }
             : null,
       };
-    }, element), 15000, 'query_dom');
+    }, element), 15000, 'query_dom', context);
 
     return {
       content: [
@@ -467,7 +473,8 @@ async function handleCSS(
 
 async function handleXPath(
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> {
   const tabId = args.tabId as string;
   const xpath = args.xpath as string;
@@ -574,7 +581,7 @@ async function handleXPath(
       },
       xpath,
       limit
-    ), 15000, 'query_dom');
+    ), 15000, 'query_dom', context);
 
     return {
       content: [
@@ -666,7 +673,7 @@ async function handleXPath(
       if (shadowNode) return extractElementInfo(shadowNode, xpathExpr);
 
       return null;
-    }, xpath), 15000, 'query_dom');
+    }, xpath), 15000, 'query_dom', context);
 
     if (!element) {
       return {
@@ -726,9 +733,9 @@ const handler: ToolHandler = async (
   try {
     switch (method) {
       case 'css':
-        return await handleCSS(sessionId, args);
+        return await handleCSS(sessionId, args, context);
       case 'xpath':
-        return await handleXPath(sessionId, args);
+        return await handleXPath(sessionId, args, context);
       default:
         return {
           content: [

@@ -126,7 +126,7 @@ const handler: ToolHandler = async (
       case 'screenshot': {
         // Phase 1: Page readiness guard
         try {
-          const readyState = await withTimeout(page.evaluate(() => document.readyState), 10000, 'computer');
+          const readyState = await withTimeout(page.evaluate(() => document.readyState), 10000, 'computer', context);
           if (readyState !== 'complete') {
             await page.waitForFunction(() => document.readyState === 'complete', { timeout: 3000 }).catch(() => {});
           }
@@ -163,7 +163,7 @@ const handler: ToolHandler = async (
 
         // text_only mode: skip expensive screenshot, return visual summary
         if (effectiveMode === 'text_only') {
-          const summary = await generateVisualSummary(page);
+          const summary = (context && !hasBudget(context, 5_000)) ? null : await generateVisualSummary(page);
           return {
             content: [{
               type: 'text',
@@ -233,7 +233,7 @@ const handler: ToolHandler = async (
               readyState: document.readyState,
               textPreview: text,
             };
-          }), 10000, 'computer');
+          }), 10000, 'computer', context);
 
           return {
             content: [{
@@ -283,7 +283,7 @@ const handler: ToolHandler = async (
 
         if (refInfo) {
           const { delta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
-          const summary = await generateVisualSummary(page);
+          const summary = (context && !hasBudget(context, 5_000)) ? null : await generateVisualSummary(page);
           const summaryText = summary ? `\n${summary}` : '';
           return {
             content: [{ type: 'text', text: `Clicked element ${ref} at (${clickCoord[0]}, ${clickCoord[1]})${delta}${summaryText}` }],
@@ -298,12 +298,12 @@ const handler: ToolHandler = async (
           };
         }
 
-        const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
+        const leftClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow, context);
         const { delta: leftDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1]));
 
         // Internal fallback: if hit non-interactive element, suggest but don't auto-retry
         // (auto-retry could cause unintended side effects on elements the LLM didn't intend)
-        const summary = await generateVisualSummary(page);
+        const summary = (context && !hasBudget(context, 5_000)) ? null : await generateVisualSummary(page);
         const summaryText = summary ? `\n${summary}` : '';
 
         const resultText = leftClickValidation.warning
@@ -347,7 +347,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const rightClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
+        const rightClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow, context);
         const { delta: rightDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { button: 'right' }));
 
         const rightClickText = rightClickValidation.warning
@@ -393,7 +393,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const doubleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
+        const doubleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow, context);
         const { delta: doubleDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 2 }));
 
         const doubleClickText = doubleClickValidation.warning
@@ -439,7 +439,7 @@ const handler: ToolHandler = async (
           };
         }
 
-        const tripleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow);
+        const tripleClickHitInfo = await getHitElementInfo(page, sessionManager.getCDPClient(), clickCoord[0], clickCoord[1], includeUAShadow, context);
         const { delta: tripleDelta } = await withDomDelta(page, () => page.mouse.click(clickCoord[0], clickCoord[1], { clickCount: 3 }));
 
         const tripleClickText = tripleClickValidation.warning
@@ -619,7 +619,7 @@ const handler: ToolHandler = async (
           page.evaluate((dx: number, dy: number) => window.scrollBy(dx, dy), deltaX, deltaY),
           5000,
           'scroll-fallback'
-        );
+        , context);
 
         const { recovered: scrollRecovered, method: scrollMethod } = await retryWithFallback(
           primaryWheel,
@@ -796,6 +796,7 @@ async function getHitElementInfo(
   x: number,
   y: number,
   includeUserAgentShadowDOM = false,
+  context?: ToolContext
 ): Promise<string> {
   try {
     const locationResult = await cdpClient.send<{ backendNodeId: number; nodeId: number }>(
@@ -848,7 +849,7 @@ async function getHitElementInfo(
         },
         x,
         y
-      ), 3000, 'computer');
+      ), 3000, 'computer', context);
     } catch { /* skip */ }
 
     // Build hit tag representation
@@ -892,7 +893,7 @@ async function getHitElementInfo(
           },
           x,
           y
-        ), 3000, 'computer');
+        ), 3000, 'computer', context);
 
         if (nearestInfo) {
           const absDx = Math.abs(nearestInfo.dx);

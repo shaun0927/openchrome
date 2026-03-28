@@ -221,11 +221,11 @@ const handler: ToolHandler = async (
       }
 
       if (captureMode === 'text' || captureMode === 'both') {
-        result.text = await withTimeout(page.evaluate(() => document.body.innerText), 10000, 'batch_paginate.evaluate');
+        result.text = await withTimeout(page.evaluate(() => document.body.innerText), 10000, 'batch_paginate.evaluate', context);
       }
 
       if (captureMode === 'dom') {
-        const rawHtml = await withTimeout(page.evaluate(() => document.body.innerHTML), 10000, 'batch_paginate.evaluate');
+        const rawHtml = await withTimeout(page.evaluate(() => document.body.innerHTML), 10000, 'batch_paginate.evaluate', context);
         // Trim to avoid huge payloads
         result.dom = rawHtml.length > MAX_OUTPUT_CHARS ? rawHtml.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]' : rawHtml;
       }
@@ -336,7 +336,7 @@ const handler: ToolHandler = async (
         };
       }
 
-      let lastScrollHeight = await withTimeout(page.evaluate(() => document.documentElement.scrollHeight), 10000, 'batch_paginate.evaluate');
+      let lastScrollHeight = await withTimeout(page.evaluate(() => document.documentElement.scrollHeight), 10000, 'batch_paginate.evaluate', context);
       let stepNumber = 1;
 
       // Capture initial view
@@ -354,7 +354,7 @@ const handler: ToolHandler = async (
             newScrollHeight: scrollHeight,
             atBottom: scrollTop + viewportHeight >= scrollHeight - 10,
           };
-        }, scrollAmount), 10000, 'batch_paginate.evaluate');
+        }, scrollAmount), 10000, 'batch_paginate.evaluate', context);
 
         await new Promise((r) => setTimeout(r, waitBetweenPages));
 
