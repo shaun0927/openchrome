@@ -285,7 +285,7 @@ const handler: ToolHandler = async (
                 }
               }
               return false;
-            }, formFields.indexOf(bestMatch), FORM_FIELD_TAG), 10000, 'fill_form');
+            }, formFields.indexOf(bestMatch), FORM_FIELD_TAG), 10000, 'fill_form', context);
 
             const shouldBeChecked = fieldValue === true || fieldValue === 'true' || fieldValue === '1';
             if (isChecked !== shouldBeChecked) {
@@ -311,7 +311,7 @@ const handler: ToolHandler = async (
                   break;
                 }
               }
-            }, formFields.indexOf(bestMatch), String(fieldValue), FORM_FIELD_TAG), 10000, 'fill_form');
+            }, formFields.indexOf(bestMatch), String(fieldValue), FORM_FIELD_TAG), 10000, 'fill_form', context);
           } else {
             // For text inputs/textareas
             if (clearFirst) {
@@ -367,7 +367,7 @@ const handler: ToolHandler = async (
               }
             }
             return null;
-          }, submitLower), 10000, 'fill_form');
+          }, submitLower), 10000, 'fill_form', context);
 
           if (submitButton) {
             await page.mouse.click(Math.round(submitButton.x), Math.round(submitButton.y));

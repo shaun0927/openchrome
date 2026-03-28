@@ -204,7 +204,7 @@ const handler: ToolHandler = async (
           url: document.location.href,
           readyState: document.readyState,
           totalElements: document.querySelectorAll('*').length,
-        })), 5000, 'find'));
+        })), 5000, 'find', context));
       } catch {
         // Page may have navigated — use defaults
       }

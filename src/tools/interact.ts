@@ -196,7 +196,7 @@ const handler: ToolHandler = async (
             activeInfo = `${role}: "${name}"`;
           }
           return { url, title, activeInfo };
-        }), 3000, 'state-summary').catch(() => ({ url: '', title: '', activeInfo: 'unknown' }));
+        }), 3000, 'state-summary', context).catch(() => ({ url: '', title: '', activeInfo: 'unknown' }));
 
         const lines: string[] = [axLine];
         if (axDelta) lines.push('', '[DOM Delta]', axDelta);
@@ -445,7 +445,7 @@ const handler: ToolHandler = async (
       }
 
       return { url, title, scrollX, scrollY, activeInfo, panels, headings };
-    }), 10000, 'interact').catch(() => ({
+    }), 10000, 'interact', context).catch(() => ({
       url: '', title: '', scrollX: 0, scrollY: 0,
       activeInfo: 'unknown', panels: [] as string[], headings: [] as string[],
     }));
