@@ -65,7 +65,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
   let testSessionId: string;
 
-  const getNavigateHandler = async () => {
+  const getNavigateHandler = async (opts?: { headedAvailable?: boolean; headedResult?: any }) => {
     jest.resetModules();
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
@@ -85,8 +85,13 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
     }));
     jest.doMock('../../src/chrome/headed-fallback', () => ({
       getHeadedFallback: () => ({
-        isAvailable: () => false,
-        navigate: jest.fn(),
+        isAvailable: () => opts?.headedAvailable ?? false,
+        navigate: jest.fn().mockResolvedValue(opts?.headedResult ?? {
+          url: 'https://www.coupang.com/',
+          title: 'Coupang',
+          elementCount: 977,
+          blockingPage: null,
+        }),
       }),
     }));
     jest.doMock('../../src/config/global', () => ({
@@ -198,7 +203,8 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       expect((mockSessionManager as any).createTargetStealth).not.toHaveBeenCalled();
     });
 
-    test('does NOT retry when stealth was already explicitly used', async () => {
+    test('does NOT retry stealth-to-stealth when stealth was already explicitly used', async () => {
+      // Headed is unavailable (default) — escalation returns null, falls through to blocked result
       const handler = await getNavigateHandler();
 
       mockDetectBlockingPage
@@ -207,7 +213,8 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       const result = await handler(testSessionId, { url: 'https://www.coupang.com', stealth: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
-      // Stealth was already used — should NOT trigger auto-fallback
+      // Stealth was already used — stealth-to-stealth should NOT be triggered.
+      // Headed is not available, so escalation returns null and the blocked result is returned.
       expect(parsed.stealth).toBe(true);
       expect(parsed.blockingPage).toBeDefined();
       expect(parsed.fallbackTier).toBeUndefined();
@@ -333,6 +340,81 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       expect(parsed.blockingPage).toBeDefined();
       expect(parsed.fallbackTier).toBeUndefined();
       expect((mockSessionManager as any).createTargetStealth).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('explicit stealth → headed escalation (#453)', () => {
+    test('escalates to headed when explicit stealth hits access-denied block', async () => {
+      const handler = await getNavigateHandler({ headedAvailable: true });
+
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
+
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com', stealth: true });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.headed).toBe(true);
+      expect(parsed.fallbackTier).toBe(3);
+      expect(parsed.fallbackReason).toBe('access-denied');
+    });
+
+    test('escalates to headed when explicit stealth hits bot-check block', async () => {
+      const handler = await getNavigateHandler({ headedAvailable: true });
+
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'bot-check', detail: 'Security Check' });
+
+      const result = await handler(testSessionId, { url: 'https://www.example.com', stealth: true });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.headed).toBe(true);
+      expect(parsed.fallbackTier).toBe(3);
+      expect(parsed.fallbackReason).toBe('bot-check');
+    });
+
+    test('does NOT escalate to headed when autoFallback is false', async () => {
+      const handler = await getNavigateHandler({ headedAvailable: true });
+
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
+
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com', stealth: true, autoFallback: false });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.blockingPage).toBeDefined();
+      expect(parsed.fallbackTier).toBeUndefined();
+      expect(parsed.headed).toBeUndefined();
+    });
+
+    test('returns stealth blocked result when headed is not available', async () => {
+      // headedAvailable defaults to false
+      const handler = await getNavigateHandler();
+
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
+
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com', stealth: true });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.stealth).toBe(true);
+      expect(parsed.blockingPage).toBeDefined();
+      expect(parsed.fallbackTier).toBeUndefined();
+      expect(parsed.headed).toBeUndefined();
+    });
+
+    test('does NOT escalate for js-required block type', async () => {
+      const handler = await getNavigateHandler({ headedAvailable: true });
+
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'js-required', detail: 'Page requires JavaScript' });
+
+      const result = await handler(testSessionId, { url: 'https://www.example.com', stealth: true });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.blockingPage).toBeDefined();
+      expect(parsed.blockingPage.type).toBe('js-required');
+      expect(parsed.fallbackTier).toBeUndefined();
+      expect(parsed.headed).toBeUndefined();
     });
   });
 

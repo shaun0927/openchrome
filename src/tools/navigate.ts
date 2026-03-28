@@ -404,6 +404,13 @@ const handler: ToolHandler = async (
         return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context);
       }
 
+      // When explicit stealth hits a block, escalate directly to tier 3 (headed Chrome)
+      // since tier 2 (stealth) is already being used. (#453)
+      if (newTabBlocking && stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
+        const headedResult = await headedAutoRetry(targetUrl, newTabBlocking);
+        if (headedResult) return headedResult;
+      }
+
       const newTabResultText = JSON.stringify({
         action: 'navigate',
         url: page.url(),
