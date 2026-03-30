@@ -118,6 +118,8 @@ export class CDPClient {
   private reconnecting = false;
   private reconnectingAttempt = 0;
   private reconnectNextRetryAt = 0;
+  /** Set by disconnect() to abort any in-progress reconnection loop. */
+  private disconnectRequested = false;
 
   constructor(options: CDPClientOptions = {}) {
     const globalConfig = getGlobalConfig();
@@ -478,7 +480,7 @@ export class CDPClient {
     // If Chrome was closed by the user, we should stay disconnected and only
     // re-launch when the next tool call arrives (lazy launch). This prevents
     // the "Chrome keeps reopening" loop reported in issue #159.
-    while (this.maxReconnectAttempts === Infinity || this.reconnectAttempts < this.maxReconnectAttempts) {
+    while (!this.disconnectRequested && (this.maxReconnectAttempts === Infinity || this.reconnectAttempts < this.maxReconnectAttempts)) {
       this.reconnectAttempts++;
       this.reconnectingAttempt = this.reconnectAttempts;
       const maxLabel = this.maxReconnectAttempts === Infinity ? '∞' : String(this.maxReconnectAttempts);
@@ -537,6 +539,9 @@ export class CDPClient {
           this.reconnectNextRetryAt = Date.now() + backoffDelay;
           console.error(`[CDPClient] Waiting ${backoffDelay}ms before next attempt (exponential backoff)...`);
           await new Promise(resolve => setTimeout(resolve, backoffDelay));
+          if (this.disconnectRequested) {
+            return;
+          }
         }
       }
     }
@@ -562,6 +567,7 @@ export class CDPClient {
    * Internal connect logic
    */
   private async connectInternal(options?: { autoLaunch?: boolean }): Promise<void> {
+    this.disconnectRequested = false;
     const launcher = getChromeLauncher(this.port);
     const autoLaunch = options?.autoLaunch ?? this.autoLaunch;
 
@@ -797,6 +803,10 @@ export class CDPClient {
       this.inFlightCookieScans.clear();
     }
 
+    if (this.disconnectRequested) {
+      return;
+    }
+
     this.connectionState = 'reconnecting';
     this.lastVerifiedAt = 0;
     try {
@@ -859,6 +869,7 @@ export class CDPClient {
    * Disconnect from Chrome
    */
   async disconnect(): Promise<void> {
+    this.disconnectRequested = true;
     this.stopHeartbeat();
 
     if (this.heartbeatModeTimer) {
