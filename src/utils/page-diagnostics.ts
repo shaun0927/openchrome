@@ -85,11 +85,14 @@ export async function detectBlockingPage(page: Page): Promise<BlockingInfo | nul
         return { type: 'bot-check' as const, detail: document.title };
       }
 
-      // Access denied
+      // Access denied / blocked
       if (title.includes('access denied') ||
           title.includes('403 forbidden') ||
           title.includes('forbidden') ||
-          (bodyText.includes('access denied') && bodyText.length < 500)) {
+          title.includes('blocked') ||
+          bodyText.includes('blocked by network security') ||
+          (bodyText.includes('access denied') && bodyText.length < 500) ||
+          ((bodyText.includes('you\'ve been blocked') || bodyText.includes('you have been blocked')) && bodyText.length < 500)) {
         return { type: 'access-denied' as const, detail: document.title };
       }
 
