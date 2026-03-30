@@ -315,8 +315,17 @@ export class CDPConnectionPool {
       return;
     }
 
-    // Clear cookies and storage via CDP session (with proper cleanup in finally)
-    const client = await page.createCDPSession();
+    // Clear cookies and storage via CDP session.
+    // If createCDPSession() fails (page destroyed, Chrome under pressure),
+    // the page is unusable — close it to prevent an orphan leak.
+    let client;
+    try {
+      client = await page.createCDPSession();
+    } catch (err) {
+      console.error(`[ConnectionPool] createCDPSession failed during cleanup, discarding page: ${err instanceof Error ? err.message : String(err)}`);
+      await page.close().catch(() => {});
+      return;
+    }
     try {
       await client.send('Network.clearBrowserCookies');
 
