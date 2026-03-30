@@ -1,8 +1,13 @@
 /**
  * Console Capture Tool - Capture and manage browser console logs
+ *
+ * Uses CDP Runtime.consoleAPICalled + Runtime.exceptionThrown directly
+ * instead of Puppeteer's page.on('console'), because rebrowser-puppeteer-core
+ * skips Runtime.enable to avoid bot detection. We enable it on a dedicated
+ * CDPSession so console events are reliably captured.
  */
 
-import { ConsoleMessage, Page } from 'puppeteer-core';
+import { CDPSession, Page } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
@@ -20,10 +25,45 @@ interface ConsoleLogEntry {
   args?: string[];
 }
 
+// CDP event payload types
+interface CDPConsoleAPICalledEvent {
+  type: string;
+  args: Array<{ type: string; value?: unknown; description?: string; preview?: { properties?: Array<{ value?: string }> } }>;
+  executionContextId: number;
+  timestamp: number;
+  stackTrace?: {
+    callFrames: Array<{
+      url: string;
+      lineNumber: number;
+      columnNumber: number;
+    }>;
+  };
+}
+
+interface CDPExceptionThrownEvent {
+  timestamp: number;
+  exceptionDetails: {
+    text: string;
+    exception?: { description?: string; value?: unknown };
+    lineNumber?: number;
+    columnNumber?: number;
+    url?: string;
+    stackTrace?: {
+      callFrames: Array<{
+        url: string;
+        lineNumber: number;
+        columnNumber: number;
+      }>;
+    };
+  };
+}
+
 // Capture state for each tab
 interface CaptureState {
   logs: ConsoleLogEntry[];
-  listener: (msg: ConsoleMessage) => void;
+  cdpSession: CDPSession;
+  consoleHandler: (event: CDPConsoleAPICalledEvent) => void;
+  exceptionHandler: (event: CDPExceptionThrownEvent) => void;
   startedAt: number;
   filter?: string[];
   maxLogs: number;
@@ -164,6 +204,7 @@ const setupCleanupListener = (() => {
         if (targetId) {
           const state = captureStates.get(targetId);
           if (state) {
+            state.cdpSession.detach().catch(() => {});
             captureStates.delete(targetId);
             console.error(`[ConsoleCapture] Cleaned up capture state for closed tab ${targetId}`);
           }
@@ -229,49 +270,64 @@ const handler: ToolHandler = async (
           };
         }
 
-        // Create listener
+        // Create a dedicated CDP session and enable Runtime domain
+        // so we receive consoleAPICalled and exceptionThrown events.
+        // rebrowser-puppeteer-core skips Runtime.enable by default,
+        // so Puppeteer's page.on('console') never fires.
+        const cdpSession = await page.createCDPSession();
+        await cdpSession.send('Runtime.enable');
+
         const state: CaptureState = {
           logs: [],
-          listener: () => {},
+          cdpSession,
+          consoleHandler: () => {},
+          exceptionHandler: () => {},
           startedAt: Date.now(),
           filter,
           maxLogs,
         };
 
-        state.listener = (msg: ConsoleMessage) => {
-          const logType = msg.type();
+        // Map CDP console types to Puppeteer-style types
+        const mapType = (cdpType: string): string => {
+          // CDP uses 'warning' but Puppeteer normalizes to 'warn' in some versions
+          if (cdpType === 'warning') return 'warning';
+          return cdpType;
+        };
+
+        state.consoleHandler = (event: CDPConsoleAPICalledEvent) => {
+          const logType = mapType(event.type);
 
           // Apply filter if specified
           if (filter && filter.length > 0 && !filter.includes(logType)) {
             return;
           }
 
-          const location = msg.location();
+          const callFrame = event.stackTrace?.callFrames?.[0];
+          const text = event.args
+            .map((arg) => {
+              if (arg.value !== undefined) return String(arg.value);
+              if (arg.description) return arg.description;
+              return `[${arg.type}]`;
+            })
+            .join(' ');
+
           const entry: ConsoleLogEntry = {
             type: logType,
-            text: msg.text(),
+            text,
             timestamp: Date.now(),
-            location: location
+            location: callFrame
               ? {
-                  url: location.url,
-                  lineNumber: location.lineNumber,
-                  columnNumber: location.columnNumber,
+                  url: callFrame.url,
+                  lineNumber: callFrame.lineNumber,
+                  columnNumber: callFrame.columnNumber,
                 }
               : undefined,
+            args: event.args.map((arg) => {
+              if (arg.value !== undefined) return String(arg.value);
+              if (arg.description) return arg.description;
+              return `[${arg.type}]`;
+            }),
           };
-
-          // Try to serialize args
-          try {
-            entry.args = msg.args().map((arg) => {
-              try {
-                return arg.toString();
-              } catch {
-                return '[unable to serialize]';
-              }
-            });
-          } catch {
-            // Ignore serialization errors
-          }
 
           state.logs.push(entry);
 
@@ -281,7 +337,46 @@ const handler: ToolHandler = async (
           }
         };
 
-        page.on('console', state.listener);
+        // Capture unhandled promise rejections
+        state.exceptionHandler = (event: CDPExceptionThrownEvent) => {
+          const details = event.exceptionDetails;
+
+          // Apply filter — map exceptions to 'error' type
+          if (filter && filter.length > 0 && !filter.includes('error')) {
+            return;
+          }
+
+          const text =
+            details.exception?.description ||
+            details.exception?.value?.toString() ||
+            details.text ||
+            'Unknown error';
+          const callFrame = details.stackTrace?.callFrames?.[0];
+
+          const entry: ConsoleLogEntry = {
+            type: 'error',
+            text,
+            timestamp: Date.now(),
+            location: callFrame
+              ? {
+                  url: callFrame.url,
+                  lineNumber: callFrame.lineNumber,
+                  columnNumber: callFrame.columnNumber,
+                }
+              : details.url
+                ? { url: details.url, lineNumber: details.lineNumber, columnNumber: details.columnNumber }
+                : undefined,
+          };
+
+          state.logs.push(entry);
+
+          if (state.logs.length > state.maxLogs) {
+            state.logs = state.logs.slice(-state.maxLogs);
+          }
+        };
+
+        cdpSession.on('Runtime.consoleAPICalled', state.consoleHandler as any);
+        cdpSession.on('Runtime.exceptionThrown', state.exceptionHandler as any);
         captureStates.set(tabId, state);
 
         return {
@@ -317,8 +412,11 @@ const handler: ToolHandler = async (
           };
         }
 
-        // Remove listener
-        page.off('console', state.listener);
+        // Remove CDP listeners and detach session
+        state.cdpSession.off('Runtime.consoleAPICalled', state.consoleHandler as any);
+        state.cdpSession.off('Runtime.exceptionThrown', state.exceptionHandler as any);
+        await state.cdpSession.send('Runtime.disable').catch(() => {});
+        await state.cdpSession.detach().catch(() => {});
         const logCount = state.logs.length;
         const duration = Date.now() - state.startedAt;
         captureStates.delete(tabId);
