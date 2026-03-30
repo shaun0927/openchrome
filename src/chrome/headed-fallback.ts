@@ -19,6 +19,7 @@ import * as path from 'path';
 import { hasDisplay } from '../utils/display-detect';
 import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { safeTitle } from '../utils/safe-title';
+import { getTargetId } from '../utils/puppeteer-helpers';
 
 /** Default port offset from main Chrome port for the headed fallback */
 const HEADED_PORT_OFFSET = 100;
@@ -29,6 +30,11 @@ export interface HeadedNavigateResult {
   title: string;
   elementCount: number;
   blockingPage: BlockingInfo | null;
+}
+
+/** Navigate result that keeps the page alive for session integration */
+export interface HeadedPersistentResult extends HeadedNavigateResult {
+  targetId: string;
 }
 
 /**
@@ -61,6 +67,7 @@ class HeadedFallbackManager {
   private chromeProcess: ChildProcess | null = null;
   private launching: Promise<Browser> | null = null;
   private port: number;
+  private alivePages: Map<string, Page> = new Map();
 
   constructor(basePort: number = 9222) {
     this.port = basePort + HEADED_PORT_OFFSET;
@@ -75,6 +82,11 @@ class HeadedFallbackManager {
   /** Check if headed fallback is available in this environment */
   isAvailable(): boolean {
     return hasDisplay() && findChromeBinary() !== null;
+  }
+
+  /** Get the debug port for the headed Chrome instance */
+  getPort(): number {
+    return this.port;
   }
 
   /** Get or launch the headed Chrome browser */
@@ -155,8 +167,8 @@ class HeadedFallbackManager {
   }
 
   /**
-   * Navigate to a URL in the headed Chrome fallback.
-   * Creates a temporary page, navigates, extracts results, and closes the page.
+   * Navigate to a URL in the headed Chrome fallback (one-shot, closes page).
+   * Use navigatePersistent() when you need to keep the page alive for tool interaction.
    */
   async navigate(url: string): Promise<HeadedNavigateResult> {
     const browser = await this.ensureBrowser();
@@ -188,8 +200,54 @@ class HeadedFallbackManager {
     }
   }
 
+  /**
+   * Navigate to a URL and keep the page alive for session manager integration.
+   * The page remains open so tools (read_page, interact, screenshot) can use it
+   * via the session manager's headed worker. (#485)
+   */
+  async navigatePersistent(url: string): Promise<HeadedPersistentResult> {
+    const browser = await this.ensureBrowser();
+    const page = await browser.newPage();
+
+    try {
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+
+      // Wait a moment for any JS to execute
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      const [title, elementCount, blocking] = await Promise.all([
+        safeTitle(page as unknown as Page),
+        page.evaluate(() => document.querySelectorAll('*').length).catch(() => 0),
+        detectBlockingPage(page as unknown as Page).catch(() => null),
+      ]);
+
+      const targetId = getTargetId(page.target());
+      this.alivePages.set(targetId, page as unknown as Page);
+
+      return {
+        targetId,
+        url: page.url(),
+        title,
+        elementCount,
+        blockingPage: blocking,
+      };
+    } catch (err) {
+      await page.close().catch(() => {});
+      throw err;
+    }
+  }
+
   /** Shut down the headed Chrome instance */
   shutdown(): void {
+    // Close any kept-alive pages
+    for (const [, page] of this.alivePages) {
+      try { page.close().catch(() => {}); } catch { /* ignore */ }
+    }
+    this.alivePages.clear();
+
     if (this.browser) {
       try { this.browser.disconnect(); } catch { /* ignore */ }
       this.browser = null;
@@ -209,4 +267,12 @@ export function getHeadedFallback(basePort: number = 9222): HeadedFallbackManage
     instance = new HeadedFallbackManager(basePort);
   }
   return instance;
+}
+
+/** Shut down the headed fallback if it was ever initialized. Safe to call unconditionally. */
+export function shutdownHeadedFallback(): void {
+  if (instance) {
+    instance.shutdown();
+    instance = null;
+  }
 }
