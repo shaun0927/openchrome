@@ -110,15 +110,15 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const strategy = args.strategy as string;
-  const totalPages = args.totalPages as number | undefined;
-  const startPage = (args.startPage as number) || 1;
+  const totalPages = args.totalPages != null ? Number(args.totalPages) : undefined;
+  const startPage = Number(args.startPage) || 1;
   const captureMode = (args.captureMode as string) || 'text';
   const keyAction = (args.keyAction as string) || 'ArrowRight';
   const nextSelector = args.nextSelector as string | undefined;
   const urlTemplate = args.urlTemplate as string | undefined;
-  const waitBetweenPages = (args.waitBetweenPages as number) ?? 500;
-  const scrollAmount = (args.scrollAmount as number) || 1;
-  const maxScrolls = (args.maxScrolls as number) || 50;
+  const waitBetweenPages = args.waitBetweenPages != null ? Number(args.waitBetweenPages) : 500;
+  const scrollAmount = Number(args.scrollAmount) || 1;
+  const maxScrolls = Number(args.maxScrolls) || 50;
 
   if (!tabId) {
     return {
