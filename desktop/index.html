@@ -15,6 +15,9 @@
           <span class="status-label" id="status-label">Stopped</span>
         </div>
         <div class="titlebar-center">
+          <select id="profile-select" class="profile-select" title="Chrome Profile">
+            <option value="">Default</option>
+          </select>
           <button class="tab-btn active" id="tab-dashboard" data-tab="dashboard">Dashboard</button>
           <button class="tab-btn" id="tab-connect" data-tab="connect">Connect</button>
         </div>
@@ -96,6 +99,12 @@
             <ul class="connect-notes" id="connect-notes"></ul>
           </div>
         </div>
+      </div>
+
+      <div class="error-banner" id="error-banner" hidden>
+        <span class="error-icon">⚠️</span>
+        <span class="error-text" id="error-text"></span>
+        <button class="error-dismiss" id="error-dismiss">✕</button>
       </div>
 
       <footer class="statusbar">
