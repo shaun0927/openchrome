@@ -8,24 +8,55 @@
   </head>
   <body>
     <div id="app">
-      <header>
-        <h1>OpenChrome</h1>
-        <p class="subtitle">Desktop Server Manager</p>
-      </header>
-      <main>
-        <div class="status-card">
-          <div class="status-row">
-            <span class="status-dot stopped" id="status-indicator"></span>
-            <span class="status-text" id="status-text">Stopped</span>
-          </div>
+      <header class="titlebar">
+        <div class="titlebar-left">
+          <span class="logo">OpenChrome</span>
+          <span class="status-dot" id="status-dot"></span>
+          <span class="status-label" id="status-label">Stopped</span>
+        </div>
+        <div class="titlebar-right">
           <button id="btn-toggle" class="btn btn-start">Start Server</button>
         </div>
-        <div class="metrics-card">
-          <div class="metric" id="metric-uptime">Uptime: --</div>
-          <div class="metric" id="metric-ram">RAM: --</div>
-          <div class="metric" id="metric-tabs">Tabs: --</div>
-        </div>
-      </main>
+      </header>
+
+      <div class="dashboard">
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-header">Connections</div>
+          <div class="connection-list" id="connection-list">
+            <div class="empty-state" id="empty-connections">
+              Waiting for connections...
+            </div>
+          </div>
+        </aside>
+
+        <main class="main-area">
+          <div class="screenshot-panel" id="screenshot-panel">
+            <div class="screenshot-placeholder" id="screenshot-placeholder">
+              <p>Select a connection to view</p>
+            </div>
+            <img id="screenshot-img" class="screenshot-img" hidden />
+            <div class="screenshot-meta" id="screenshot-meta" hidden>
+              <span id="screenshot-title"></span>
+              <span id="screenshot-age"></span>
+            </div>
+          </div>
+
+          <div class="tool-feed" id="tool-feed">
+            <div class="tool-feed-header">Tool Calls</div>
+            <div class="tool-feed-list" id="tool-feed-list">
+              <div class="empty-state">No tool calls yet</div>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      <footer class="statusbar">
+        <span class="statusbar-item" id="metric-ram">RAM: --</span>
+        <span class="statusbar-sep"></span>
+        <span class="statusbar-item" id="metric-tabs">Chrome: 0 tabs</span>
+        <span class="statusbar-sep"></span>
+        <span class="statusbar-item" id="metric-uptime">Uptime: --</span>
+      </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
