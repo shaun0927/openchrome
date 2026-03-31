@@ -8,29 +8,48 @@
   </head>
   <body>
     <div id="app">
-      <header>
-        <h1>OpenChrome</h1>
-        <p class="subtitle">Browser automation server</p>
+      <header class="app-header">
+        <div class="logo">OpenChrome</div>
       </header>
 
-      <div class="status-card">
-        <div class="profile-row">
-          <label for="profile-select">Chrome Profile</label>
+      <main class="app-main">
+        <div class="profile-section">
+          <label for="profile-select">Chrome Profile:</label>
           <select id="profile-select" class="profile-select">
             <option value="">Loading...</option>
           </select>
+          <div id="profile-hint" class="hint" hidden></div>
         </div>
-        <div class="status-row">
-          <div class="status-dot" id="status-dot"></div>
-          <span class="status-text" id="status-text">Stopped</span>
-        </div>
-        <button id="btn-toggle" class="btn btn-start">Start Server</button>
-      </div>
 
-      <div class="metrics-card" id="metrics-card">
-        <span class="metric" id="metric-uptime">Uptime: --</span>
-        <span class="metric" id="metric-port">Port: 3100</span>
-      </div>
+        <button id="btn-toggle" class="btn-toggle btn-start">
+          <span class="btn-icon" id="btn-icon">&#9654;</span>
+          <span id="btn-label">Start Server</span>
+        </button>
+
+        <div id="error-banner" class="error-banner" hidden>
+          <span id="error-text"></span>
+          <button id="error-dismiss" class="error-dismiss">&times;</button>
+        </div>
+
+        <div class="status-bar">
+          <span class="status-indicator">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">Stopped</span>
+          </span>
+          <span class="status-meta" id="status-meta"></span>
+        </div>
+
+        <div class="metrics">
+          <div class="metric-item">
+            <span class="metric-label">Port</span>
+            <span class="metric-value" id="metric-port">3100</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">Uptime</span>
+            <span class="metric-value" id="metric-uptime">--</span>
+          </div>
+        </div>
+      </main>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
