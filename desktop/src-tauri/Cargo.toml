@@ -19,3 +19,4 @@ serde_json = "1"
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["sync", "time"] }
 getrandom = "0.2"
+dirs = "6"
