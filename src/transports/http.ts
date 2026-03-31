@@ -109,8 +109,8 @@ export class HTTPTransport implements MCPTransport {
     const url = new URL(req.url || '/', `http://${this.host}:${this.port}`);
     const pathname = url.pathname;
 
-    // CORS headers for all responses
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // CORS headers for all responses — restrict origin when auth is enabled
+    res.setHeader('Access-Control-Allow-Origin', this.authToken ? 'null' : '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id, Authorization');
     res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
@@ -131,8 +131,10 @@ export class HTTPTransport implements MCPTransport {
     // Bearer token validation: reject requests without valid token when configured
     if (this.authToken) {
       const authHeader = req.headers['authorization'];
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
-      if (token !== this.authToken) {
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      const expected = Buffer.from(this.authToken);
+      const provided = Buffer.from(token);
+      if (provided.length !== expected.length || !crypto.timingSafeEqual(expected, provided)) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized' }));
         return;

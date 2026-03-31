@@ -253,7 +253,6 @@ program
     // Resolve auth token: CLI flag takes precedence over env var
     const authToken = options.authToken || process.env.OPENCHROME_AUTH_TOKEN || undefined;
     if (authToken) {
-      setGlobalConfig({ authToken });
       console.error('[openchrome] Bearer token authentication: enabled');
     }
 
