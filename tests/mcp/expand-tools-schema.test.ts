@@ -100,9 +100,9 @@ describe('expand_tools schema (Gemini compatibility)', () => {
 
   test('expand_tools response includes newly available tool definitions', async () => {
     // Register a tool that is mapped to tier 2 in TOOL_TIERS
-    server.registerTool('click_element', jest.fn(), {
-      name: 'click_element',
-      description: 'Click an element by selector',
+    server.registerTool('drag_drop', jest.fn(), {
+      name: 'drag_drop',
+      description: 'Drag and drop an element',
       inputSchema: { type: 'object', properties: {} },
     });
 

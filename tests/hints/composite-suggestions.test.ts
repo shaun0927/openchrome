@@ -39,26 +39,6 @@ describe('composite-suggestions: inspect-tool rules', () => {
       expect(hint!.hint).toContain('after actions');
     });
 
-    it('click_element → read_page should trigger inspect hint', () => {
-      const tracker = makeTracker([{ toolName: 'click_element' }]);
-      const engine = new HintEngine(tracker);
-      const result = makeResult('page content here');
-      const hint = engine.getHint('read_page', result, false);
-      expect(hint).not.toBeNull();
-      expect(hint!.rule).toBe('state-check-after-action');
-      expect(hint!.hint).toContain('inspect(query)');
-    });
-
-    it('wait_and_click → read_page should trigger inspect hint', () => {
-      const tracker = makeTracker([{ toolName: 'wait_and_click' }]);
-      const engine = new HintEngine(tracker);
-      const result = makeResult('page content here');
-      const hint = engine.getHint('read_page', result, false);
-      expect(hint).not.toBeNull();
-      expect(hint!.rule).toBe('state-check-after-action');
-      expect(hint!.hint).toContain('inspect(query)');
-    });
-
     it('interact → read_page should trigger inspect hint', () => {
       const tracker = makeTracker([{ toolName: 'interact' }]);
       const engine = new HintEngine(tracker);
