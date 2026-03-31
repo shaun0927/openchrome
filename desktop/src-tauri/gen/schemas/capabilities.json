@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capability for the main window","local":true,"windows":["main"],"permissions":["core:default",{"identifier":"shell:allow-execute","allow":[{"args":["serve",{"validator":"\\S+"}],"name":"binaries/openchrome-sidecar","sidecar":true}]}]}}
