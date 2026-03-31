@@ -44,6 +44,8 @@ jobs:
   build:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     timeout-minutes: 60
 
     strategy:
@@ -147,12 +149,14 @@ jobs:
           bun build src/index.ts \
             --compile \
             --target=${{ matrix.bun_target }} \
-            --outfile desktop/src-tauri/binaries/openchrome-server-${{ matrix.target }}
+            --outfile desktop/src-tauri/binaries/openchrome-sidecar-${{ matrix.target }}
 
-          # Windows: Bun appends .exe automatically; ensure consistent naming.
+          # Windows: Bun may or may not append .exe; ensure .exe suffix exists.
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            mv desktop/src-tauri/binaries/openchrome-server-${{ matrix.target }}.exe \
-               desktop/src-tauri/binaries/openchrome-server-${{ matrix.target }}.exe || true
+            if [[ ! -f "desktop/src-tauri/binaries/openchrome-sidecar-${{ matrix.target }}.exe" ]]; then
+              mv "desktop/src-tauri/binaries/openchrome-sidecar-${{ matrix.target }}" \
+                 "desktop/src-tauri/binaries/openchrome-sidecar-${{ matrix.target }}.exe"
+            fi
           fi
 
           echo "Sidecar binary:"
@@ -216,23 +220,6 @@ jobs:
           rm -f /tmp/certificate.p12
 
       # -----------------------------------------------------------------------
-      # Windows: import signing certificate
-      # -----------------------------------------------------------------------
-      - name: Import Windows signing certificate
-        if: runner.os == 'Windows'
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        shell: pwsh
-        run: |
-          $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
-          $certPath = Join-Path $env:TEMP "certificate.pfx"
-          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-          Write-Host "Certificate written to $certPath"
-          # The path is consumed by signtool inside tauri-action via WINDOWS_SIGN_COMMAND.
-          echo "WINDOWS_CERTIFICATE_PATH=$certPath" >> $env:GITHUB_ENV
-
-      # -----------------------------------------------------------------------
       # Build the Tauri application (handles Rust compilation, bundling,
       # signing, and notarization for each platform).
       # -----------------------------------------------------------------------
@@ -247,15 +234,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows signing — signtool is invoked by the action if this is set.
-          WINDOWS_SIGN_COMMAND: >-
-            signtool sign
-            /f "${{ env.WINDOWS_CERTIFICATE_PATH }}"
-            /p "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}"
-            /tr http://timestamp.digicert.com
-            /td sha256
-            /fd sha256
-            __INPUT__
+          # Windows signing — tauri-action handles signtool natively via these env vars.
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           projectPath: desktop
           # Do not create a GitHub release here; the publish job does that
