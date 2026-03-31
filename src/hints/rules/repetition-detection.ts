@@ -113,7 +113,7 @@ export const repetitionDetectionRules: HintRule[] = [
       // 3+ coordinate clicks in recent 5 calls = potential stall
       return (
         'CLICK STALL: Multiple coordinate clicks without apparent progress. ' +
-        'Try: (1) click_element with a text/semantic query, ' +
+        'Try: (1) interact with a text/semantic query, ' +
         '(2) read_page mode="dom" to get exact backendNodeIds, then use ref parameter, ' +
         '(3) javascript_tool with document.querySelector().click() for programmatic click.'
       );
@@ -187,7 +187,7 @@ export const repetitionDetectionRules: HintRule[] = [
       // 3+ JS calls in recent 5 = escalation ladder
       return (
         'Hint: Multiple javascript_tool calls detected — possible escalation ladder. ' +
-        'If trying to interact with an element: use click_element or computer with ref parameter instead. ' +
+        'If trying to interact with an element: use interact or computer with ref parameter instead. ' +
         'If debugging state: use read_page mode="dom" for a structured view.'
       );
     },

@@ -36,7 +36,7 @@ export const successHintRules: HintRule[] = [
     priority: 402,
     match(ctx) {
       if ((ctx.fireCounts.get('click-element-success') ?? 0) > 0) return null;
-      if (ctx.toolName !== 'click_element') return null;
+      if (ctx.toolName !== 'interact') return null;
       if (ctx.isError) return null;
       // Only hint if the delta suggests navigation or URL change
       if (/\[Page navigated|URL:/.test(ctx.resultText)) {

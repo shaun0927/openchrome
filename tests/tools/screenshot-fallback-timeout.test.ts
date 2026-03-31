@@ -22,7 +22,6 @@ describe('fallback screenshot timeout — source verification', () => {
   const srcDir = path.join(__dirname, '../../src/tools');
 
   const files = [
-    { name: 'click-element.ts', tool: 'click_element' },
     { name: 'interact.ts', tool: 'interact' },
     { name: 'batch-paginate.ts', tool: 'batch_paginate' },
   ];

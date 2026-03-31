@@ -20,7 +20,7 @@ export const compositeSuggestionRules: HintRule[] = [
     match(ctx) {
       if (ctx.toolName !== 'computer' && ctx.toolName !== 'click') return null;
       if (!lastToolWas(ctx, 'find')) return null;
-      return 'Hint: Use click_element to find+click in one call.';
+      return 'Hint: Use interact(action:"click", query:"...") to find+click in one call.';
     },
   },
   {
@@ -40,11 +40,11 @@ export const compositeSuggestionRules: HintRule[] = [
     priority: 202,
     maxSeverity: 'info',
     match(ctx) {
-      if (ctx.toolName !== 'computer' && ctx.toolName !== 'click' && ctx.toolName !== 'click_element') return null;
+      if (ctx.toolName !== 'computer' && ctx.toolName !== 'click' && ctx.toolName !== 'interact') return null;
       if (!lastToolWas(ctx, 'navigate')) return null;
       // Don't match screenshot operations — handled by sequence-detection
       if (/screenshot/i.test(ctx.resultText)) return null;
-      return 'Hint: Use wait_and_click to handle loading delays.';
+      return 'Hint: Use interact with waitForMs parameter to handle loading delays.';
     },
   },
   {
@@ -73,7 +73,7 @@ export const compositeSuggestionRules: HintRule[] = [
         return (
           'Hint: Click inside a rich text editor (contenteditable). ' +
           'Editor frameworks may intercept click events. ' +
-          'Prefer: (1) click_element with text query, (2) javascript_tool for direct element.click(), ' +
+          'Prefer: (1) interact with text query, (2) javascript_tool for direct element.click(), ' +
           '(3) read_page mode="dom" to get backendNodeId then use computer ref parameter.'
         );
       }
@@ -93,7 +93,7 @@ export const compositeSuggestionRules: HintRule[] = [
       // Check if the hit was not interactive
       if (/\[not interactive\]/.test(ctx.resultText)) {
         return (
-          'Hint: Clicked a non-interactive element. Use click_element with a text query ' +
+          'Hint: Clicked a non-interactive element. Use interact with a text query ' +
           'or read_page mode="dom" to find the correct target.'
         );
       }
@@ -108,8 +108,6 @@ export const compositeSuggestionRules: HintRule[] = [
       if (ctx.toolName !== 'read_page') return null;
       if (
         lastToolWas(ctx, 'navigate') ||
-        lastToolWas(ctx, 'click_element') ||
-        lastToolWas(ctx, 'wait_and_click') ||
         lastToolWas(ctx, 'interact')
       ) {
         return 'Hint: Use inspect(query) for quick page state checks after actions — e.g. inspect("error messages") or inspect("form field values").';

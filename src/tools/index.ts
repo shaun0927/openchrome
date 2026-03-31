@@ -37,9 +37,6 @@ import { registerRequestInterceptTool } from './request-intercept';
 import { registerFileUploadTool } from './file-upload';
 import { registerHttpAuthTool } from './http-auth';
 import { registerDragDropTool } from './drag-drop';
-import { registerClickElementTool } from './click-element';
-import { registerWaitAndClickTool } from './wait-and-click';
-
 // UX improvement composite tools
 import { registerFillFormTool } from './fill-form';
 
@@ -106,10 +103,6 @@ export function registerAllTools(server: MCPServer): void {
   registerFileUploadTool(server);
   registerHttpAuthTool(server);
   registerDragDropTool(server);
-
-  // Click tools
-  registerClickElementTool(server);
-  registerWaitAndClickTool(server);
 
   // UX improvement composite tools (reduce tool call count)
   registerFillFormTool(server);
