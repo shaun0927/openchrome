@@ -1,0 +1,510 @@
+# Desktop App Release Pipeline
+#
+# Triggered by tags matching "desktop-v*" (e.g. desktop-v1.0.0).
+# This is intentionally separate from the CLI release track.
+#
+# Build matrix:
+#   - macOS arm64  (Apple Silicon)
+#   - macOS x64    (Intel, supports older Macs)
+#   - Windows x64
+#   - Linux x64    (AppImage, no signing required)
+#
+# Required repository secrets:
+#   APPLE_CERTIFICATE          - Base64-encoded .p12 signing certificate
+#   APPLE_CERTIFICATE_PASSWORD - Password for the .p12 file
+#   APPLE_SIGNING_IDENTITY     - e.g. "Developer ID Application: Acme Corp (TEAMID)"
+#   APPLE_ID                   - Apple ID email used for notarization
+#   APPLE_PASSWORD             - App-specific password for notarization
+#   APPLE_TEAM_ID              - Apple Developer Team ID
+#   WINDOWS_CERTIFICATE        - Base64-encoded .pfx signing certificate
+#   WINDOWS_CERTIFICATE_PASSWORD - Password for the .pfx file
+
+name: Desktop App Release
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+
+# Only one release per tag; cancel any stale run for the same ref.
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Node version used everywhere in this workflow.
+  NODE_VERSION: '20'
+  # Rust toolchain pinned for reproducible builds.
+  RUST_TOOLCHAIN: 'stable'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build — one runner per target platform
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest       # macOS 14 (arm64 runner)
+            target: aarch64-apple-darwin
+            platform_name: macos-arm64
+            cloudflared_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz
+            cloudflared_archive: tgz
+            bun_target: bun-darwin-arm64
+
+          - os: macos-13           # macOS 13 (x64 runner)
+            target: x86_64-apple-darwin
+            platform_name: macos-x64
+            cloudflared_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz
+            cloudflared_archive: tgz
+            bun_target: bun-darwin-x64
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform_name: windows-x64
+            cloudflared_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
+            cloudflared_archive: exe
+            bun_target: bun-windows-x64
+
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform_name: linux-x64
+            cloudflared_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+            cloudflared_archive: bin
+            bun_target: bun-linux-x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # -----------------------------------------------------------------------
+      # Node.js + npm cache
+      # -----------------------------------------------------------------------
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      # -----------------------------------------------------------------------
+      # Rust toolchain + cargo cache
+      # -----------------------------------------------------------------------
+      - name: Setup Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2.7.5
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: ${{ matrix.target }}
+
+      # -----------------------------------------------------------------------
+      # Install Linux system dependencies required by Tauri / WebKit
+      # -----------------------------------------------------------------------
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            pkg-config
+
+      # -----------------------------------------------------------------------
+      # Node.js dependencies
+      # -----------------------------------------------------------------------
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      # -----------------------------------------------------------------------
+      # Build the MCP server sidecar binary for each target platform.
+      # The binary is placed where Tauri's externalBin config expects it.
+      # -----------------------------------------------------------------------
+      - name: Install Bun (for sidecar compilation)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build sidecar binary
+        shell: bash
+        run: |
+          mkdir -p desktop/src-tauri/binaries
+
+          # Compile the openchrome server into a self-contained binary.
+          # The output name must match the externalBin entry in tauri.conf.json
+          # and include the target triple so Tauri can resolve it at runtime.
+          bun build src/index.ts \
+            --compile \
+            --target=${{ matrix.bun_target }} \
+            --outfile desktop/src-tauri/binaries/openchrome-server-${{ matrix.target }}
+
+          # Windows: Bun appends .exe automatically; ensure consistent naming.
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            mv desktop/src-tauri/binaries/openchrome-server-${{ matrix.target }}.exe \
+               desktop/src-tauri/binaries/openchrome-server-${{ matrix.target }}.exe || true
+          fi
+
+          echo "Sidecar binary:"
+          ls -lh desktop/src-tauri/binaries/
+
+      # -----------------------------------------------------------------------
+      # Download the platform-specific cloudflared binary.
+      # Placed alongside the sidecar so Tauri can bundle both.
+      # -----------------------------------------------------------------------
+      - name: Download cloudflared (tgz — macOS)
+        if: matrix.cloudflared_archive == 'tgz'
+        shell: bash
+        run: |
+          curl -fsSL "${{ matrix.cloudflared_url }}" -o /tmp/cloudflared.tgz
+          tar -xzf /tmp/cloudflared.tgz -C /tmp
+          mv /tmp/cloudflared desktop/src-tauri/binaries/cloudflared-${{ matrix.target }}
+          chmod +x desktop/src-tauri/binaries/cloudflared-${{ matrix.target }}
+
+      - name: Download cloudflared (exe — Windows)
+        if: matrix.cloudflared_archive == 'exe'
+        shell: bash
+        run: |
+          curl -fsSL "${{ matrix.cloudflared_url }}" \
+            -o desktop/src-tauri/binaries/cloudflared-${{ matrix.target }}.exe
+
+      - name: Download cloudflared (bin — Linux)
+        if: matrix.cloudflared_archive == 'bin'
+        shell: bash
+        run: |
+          curl -fsSL "${{ matrix.cloudflared_url }}" \
+            -o desktop/src-tauri/binaries/cloudflared-${{ matrix.target }}
+          chmod +x desktop/src-tauri/binaries/cloudflared-${{ matrix.target }}
+
+      - name: Verify bundled binaries
+        shell: bash
+        run: |
+          echo "=== desktop/src-tauri/binaries ==="
+          ls -lh desktop/src-tauri/binaries/
+
+      # -----------------------------------------------------------------------
+      # macOS: import signing certificate into the keychain
+      # -----------------------------------------------------------------------
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Decode the base64 certificate and import it into a temporary keychain.
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/certificate.p12
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import /tmp/certificate.p12 \
+            -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s -k "" build.keychain
+          rm -f /tmp/certificate.p12
+
+      # -----------------------------------------------------------------------
+      # Windows: import signing certificate
+      # -----------------------------------------------------------------------
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath = Join-Path $env:TEMP "certificate.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          Write-Host "Certificate written to $certPath"
+          # The path is consumed by signtool inside tauri-action via WINDOWS_SIGN_COMMAND.
+          echo "WINDOWS_CERTIFICATE_PATH=$certPath" >> $env:GITHUB_ENV
+
+      # -----------------------------------------------------------------------
+      # Build the Tauri application (handles Rust compilation, bundling,
+      # signing, and notarization for each platform).
+      # -----------------------------------------------------------------------
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows signing — signtool is invoked by the action if this is set.
+          WINDOWS_SIGN_COMMAND: >-
+            signtool sign
+            /f "${{ env.WINDOWS_CERTIFICATE_PATH }}"
+            /p "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}"
+            /tr http://timestamp.digicert.com
+            /td sha256
+            /fd sha256
+            __INPUT__
+        with:
+          projectPath: desktop
+          # Do not create a GitHub release here; the publish job does that
+          # after all platform builds complete.
+          tagName: ${{ github.ref_name }}
+          releaseName: ''
+          releaseBody: ''
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      # -----------------------------------------------------------------------
+      # Upload per-platform artifacts so the publish job can collect them all.
+      # -----------------------------------------------------------------------
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-artifacts-${{ matrix.platform_name }}
+          # Tauri places bundles under src-tauri/target/<target>/release/bundle/
+          path: |
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz.sig
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi.zip
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi.zip.sig
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Publish — runs after all platform builds succeed
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write   # Required to create/edit GitHub Releases
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Fetch full history so we can diff commits since the last desktop tag.
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # Extract the semver portion from the tag (desktop-v1.2.3 → 1.2.3)
+      # -----------------------------------------------------------------------
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#desktop-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # Generate CHANGELOG from commits since the previous desktop-v* tag.
+      # Falls back to all commits if this is the first desktop release.
+      # -----------------------------------------------------------------------
+      - name: Generate CHANGELOG
+        id: changelog
+        run: |
+          CURRENT_TAG="${{ github.ref_name }}"
+
+          # Find the most recent desktop-v* tag before the current one.
+          PREV_TAG=$(git tag --list 'desktop-v*' --sort=-version:refname \
+            | grep -v "^${CURRENT_TAG}$" | head -1)
+
+          if [[ -n "$PREV_TAG" ]]; then
+            echo "Generating changelog from $PREV_TAG to $CURRENT_TAG"
+            RANGE="${PREV_TAG}..HEAD"
+          else
+            echo "No previous desktop tag found — including all commits"
+            RANGE="HEAD"
+          fi
+
+          # Format each commit as a bullet point.
+          CHANGES=$(git log "$RANGE" \
+            --pretty=format:"- %s (%h)" \
+            --no-merges)
+
+          if [[ -z "$CHANGES" ]]; then
+            CHANGES="- No notable changes"
+          fi
+
+          # Write to a temp file to avoid shell quoting issues with multiline text.
+          cat > /tmp/changelog.md <<'CHANGELOG_EOF'
+          ## What's Changed
+          CHANGELOG_EOF
+          echo "$CHANGES" >> /tmp/changelog.md
+
+          echo "Changelog preview:"
+          cat /tmp/changelog.md
+
+      # -----------------------------------------------------------------------
+      # Download all platform artifacts into a staging directory.
+      # -----------------------------------------------------------------------
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-artifacts-*
+          path: /tmp/release-artifacts
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Release artifacts ==="
+          find /tmp/release-artifacts -type f | sort
+
+      # -----------------------------------------------------------------------
+      # Generate latest.json — the Tauri auto-updater manifest.
+      #
+      # Format: https://tauri.app/plugin/updater/#update-server
+      #
+      # The manifest includes per-platform download URLs and the Ed25519
+      # signature (.sig files) generated during the Tauri build.
+      # -----------------------------------------------------------------------
+      - name: Generate latest.json updater manifest
+        id: manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+
+          read_sig() {
+            local sig_file="$1"
+            if [[ -f "$sig_file" ]]; then
+              cat "$sig_file"
+            else
+              echo ""
+            fi
+          }
+
+          # Locate per-platform artifacts (glob-first-match strategy).
+          MACOS_ARM_DMG=$(find /tmp/release-artifacts -name "*.dmg" | grep -i "aarch64\|arm64" | head -1 || true)
+          MACOS_ARM_SIG=$(find /tmp/release-artifacts -name "*.app.tar.gz.sig" | grep -i "aarch64\|arm64" | head -1 || true)
+          MACOS_ARM_TAR=$(find /tmp/release-artifacts -name "*.app.tar.gz" | grep -i "aarch64\|arm64" | head -1 || true)
+
+          MACOS_X64_DMG=$(find /tmp/release-artifacts -name "*.dmg" | grep -i "x86_64\|x64" | head -1 || true)
+          MACOS_X64_SIG=$(find /tmp/release-artifacts -name "*.app.tar.gz.sig" | grep -i "x86_64\|x64" | head -1 || true)
+          MACOS_X64_TAR=$(find /tmp/release-artifacts -name "*.app.tar.gz" | grep -i "x86_64\|x64" | head -1 || true)
+
+          WIN_MSI=$(find /tmp/release-artifacts -name "*.msi.zip" | head -1 || true)
+          WIN_SIG=$(find /tmp/release-artifacts -name "*.msi.zip.sig" | head -1 || true)
+
+          LINUX_APPIMAGE=$(find /tmp/release-artifacts -name "*.AppImage.tar.gz" | head -1 || true)
+          LINUX_SIG=$(find /tmp/release-artifacts -name "*.AppImage.tar.gz.sig" | head -1 || true)
+
+          # Helper: derive the release-asset filename from a local path.
+          asset_name() { basename "$1"; }
+
+          # Build the JSON manifest.
+          python3 - <<PYEOF
+          import json, sys
+
+          version = "${VERSION}"
+          base_url = "${BASE_URL}"
+
+          def entry(tar_path, sig_path):
+              if not tar_path:
+                  return None
+              sig = open(sig_path).read().strip() if sig_path else ""
+              return {
+                  "signature": sig,
+                  "url": f"{base_url}/{__import__('os').path.basename(tar_path)}"
+              }
+
+          platforms = {}
+
+          arm_tar  = """${MACOS_ARM_TAR}"""
+          arm_sig  = """${MACOS_ARM_SIG}"""
+          x64_tar  = """${MACOS_X64_TAR}"""
+          x64_sig  = """${MACOS_X64_SIG}"""
+          win_zip  = """${WIN_MSI}"""
+          win_sig  = """${WIN_SIG}"""
+          lnx_tar  = """${LINUX_APPIMAGE}"""
+          lnx_sig  = """${LINUX_SIG}"""
+
+          e = entry(arm_tar.strip(), arm_sig.strip())
+          if e: platforms["darwin-aarch64"] = e
+
+          e = entry(x64_tar.strip(), x64_sig.strip())
+          if e: platforms["darwin-x86_64"] = e
+
+          e = entry(win_zip.strip(), win_sig.strip())
+          if e:
+              platforms["windows-x86_64"] = e
+
+          e = entry(lnx_tar.strip(), lnx_sig.strip())
+          if e: platforms["linux-x86_64"] = e
+
+          manifest = {
+              "version": f"v{version}",
+              "notes": f"OpenChrome Desktop v{version}",
+              "pub_date": __import__('datetime').datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": platforms
+          }
+
+          with open("/tmp/latest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+
+          print("Generated latest.json:")
+          print(json.dumps(manifest, indent=2))
+          PYEOF
+
+      # -----------------------------------------------------------------------
+      # Create the GitHub Release and upload all artifacts + latest.json.
+      # -----------------------------------------------------------------------
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: OpenChrome Desktop ${{ steps.version.outputs.version }}
+          body_path: /tmp/changelog.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          files: |
+            /tmp/release-artifacts/**
+            /tmp/latest.json
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # Summary — print useful links to the Actions run summary.
+      # -----------------------------------------------------------------------
+      - name: Print release summary
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          REPO="${{ github.repository }}"
+
+          echo "## Desktop Release Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Version:** \`${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Tag:** \`${TAG}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**GitHub Release:** https://github.com/${REPO}/releases/tag/${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Auto-updater manifest (latest.json):**" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/latest.json >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
