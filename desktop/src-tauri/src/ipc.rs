@@ -2,17 +2,13 @@
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::profiles;
 use crate::sidecar::{self, SidecarState, SidecarStatus};
 
 #[tauri::command]
 pub async fn start_server(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, Arc<Mutex<SidecarState>>>,
-    port: Option<u16>,
+    app: tauri::AppHandle, state: tauri::State<'_, Arc<Mutex<SidecarState>>>, port: Option<u16>,
 ) -> Result<SidecarStatus, String> {
-    let port = port.unwrap_or(3100);
-    sidecar::spawn_sidecar(&app, &state, port).await
+    sidecar::spawn_sidecar(&app, &state, port.unwrap_or(3100)).await
 }
 
 #[tauri::command]
@@ -51,20 +47,10 @@ pub async fn get_health(
 
     match client.get(&url).send().await {
         Ok(resp) => {
-            let body = resp
-                .json::<serde_json::Value>()
-                .await
+            let body = resp.json::<serde_json::Value>().await
                 .unwrap_or(serde_json::json!({ "status": "ok" }));
             Ok(body)
         }
-        Err(e) => Ok(serde_json::json!({
-            "status": "error",
-            "error": format!("{}", e)
-        })),
+        Err(e) => Ok(serde_json::json!({ "status": "error", "error": format!("{}", e) })),
     }
-}
-
-#[tauri::command]
-pub fn get_chrome_profiles() -> Result<Vec<profiles::ChromeProfile>, String> {
-    Ok(profiles::detect_profiles())
 }
