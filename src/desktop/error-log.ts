@@ -45,6 +45,9 @@ export class ErrorLogBuffer {
     if (maxEntries < 1) {
       throw new RangeError('maxEntries must be at least 1');
     }
+    if (maxEntries > 10_000) {
+      throw new RangeError('maxEntries must be at most 10000');
+    }
     this.maxEntries = maxEntries;
     this.buffer = new Array<LogEntry>(maxEntries);
     this.head = 0;
@@ -96,8 +99,11 @@ export class ErrorLogBuffer {
    */
   getLatest(count?: number): LogEntry[] {
     const all = this.getAll();
-    if (count === undefined || count >= all.length) {
+    if (count === undefined || !Number.isFinite(count) || count >= all.length) {
       return all;
+    }
+    if (count <= 0) {
+      return [];
     }
     return all.slice(all.length - count);
   }
