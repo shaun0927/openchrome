@@ -145,20 +145,28 @@ async function headedAutoRetry(
     let tabId: string | undefined;
     let assignedWorkerId: string | undefined;
 
-    // Register the headed tab in the session manager for full tool interoperability
+    // Register the headed tab in the session manager for full tool interoperability.
+    // Instead of creating a second CDPClient for the headed Chrome port (which causes
+    // a dual-connection conflict), we inject the page directly into the main CDPClient's
+    // targetIdIndex. This way all tools (read_page, interact, screenshot) work. (#485)
     if (sessionId) {
       try {
         const sessionManager = getSessionManager();
-        const headedPort = headedFallback.getPort();
 
-        // Create/reuse the headed worker with the headed Chrome port
+        // Create/reuse the headed worker WITHOUT a port — the page is injected into
+        // the main CDPClient, so getCDPClientForWorker() falls through to it.
         await sessionManager.getOrCreateWorker(sessionId, HEADED_WORKER_ID, {
-          port: headedPort,
           shareCookies: true,
         });
 
-        // Register the target in the worker
-        sessionManager.registerExternalTarget(result.targetId, sessionId, HEADED_WORKER_ID);
+        // Get the live Page object from HeadedFallbackManager and register it
+        const page = headedFallback.getPage(result.targetId);
+        if (page) {
+          sessionManager.registerHeadedPage(result.targetId, sessionId, HEADED_WORKER_ID, page);
+        } else {
+          // Fallback: register without page injection (navigation-only, no tool access)
+          sessionManager.registerExternalTarget(result.targetId, sessionId, HEADED_WORKER_ID);
+        }
 
         tabId = result.targetId;
         assignedWorkerId = HEADED_WORKER_ID;

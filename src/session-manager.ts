@@ -1208,6 +1208,20 @@ export class SessionManager {
   }
 
   /**
+   * Register a headed fallback page directly into the session manager.
+   * Injects the page into the main CDPClient's targetIdIndex so all tools
+   * (read_page, interact, screenshot, etc.) work without a separate connection. (#485)
+   */
+  registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): void {
+    // Register target ownership
+    this.registerExternalTarget(targetId, sessionId, workerId);
+
+    // Inject the page into the main CDPClient's index so getPageByTargetId()
+    // returns it and the stale-target guards in getCDPSession()/send() pass.
+    this.cdpClient.indexExternalPage(targetId, page);
+  }
+
+  /**
    * Register an externally-created target (e.g., popup via window.open) into a worker.
    * Only registers if the target is not already tracked, to avoid overwriting ownership.
    */
