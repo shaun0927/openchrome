@@ -580,6 +580,18 @@ export class MCPServer {
       throw new Error(`Unknown tool: ${toolName}`);
     }
 
+    // Validate required arguments before session init (avoids Chrome launch on bad input)
+    const requiredFields = (tool.definition.inputSchema as { required?: string[] }).required;
+    if (requiredFields && requiredFields.length > 0) {
+      const missing = requiredFields.filter((field) => !(field in toolArgs) || toolArgs[field] === undefined || toolArgs[field] === null);
+      if (missing.length > 0) {
+        return {
+          content: [{ type: 'text', text: `Error: Missing required argument(s): ${missing.join(', ')}` }],
+          isError: true,
+        };
+      }
+    }
+
     // Auto-expand tier if a higher-tier tool is called directly
     // This handles the case where the AI learned about the tool from documentation
     const toolTier = getToolTier(toolName);

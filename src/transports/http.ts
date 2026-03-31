@@ -28,12 +28,14 @@ export class HTTPTransport implements MCPTransport {
   private server: http.Server | null = null;
   private messageHandler: ((msg: Record<string, unknown>) => Promise<MCPResponse | null>) | null = null;
   private port: number;
+  private host: string;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
 
-  constructor(port: number) {
+  constructor(port: number, host = '127.0.0.1') {
     this.port = port;
+    this.host = host;
   }
 
   /**
@@ -68,9 +70,9 @@ export class HTTPTransport implements MCPTransport {
       this.handleHTTPRequest(req, res);
     });
 
-    this.server.listen(this.port, () => {
-      console.error(`[HTTPTransport] Listening on port ${this.port}`);
-      console.error(`[HTTPTransport] MCP endpoint: http://localhost:${this.port}/mcp`);
+    this.server.listen(this.port, this.host, () => {
+      console.error(`[HTTPTransport] Listening on ${this.host}:${this.port}`);
+      console.error(`[HTTPTransport] MCP endpoint: http://${this.host}:${this.port}/mcp`);
     });
 
     this.server.on('error', (err) => {
@@ -102,7 +104,7 @@ export class HTTPTransport implements MCPTransport {
   }
 
   private handleHTTPRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const url = new URL(req.url || '/', `http://localhost:${this.port}`);
+    const url = new URL(req.url || '/', `http://${this.host}:${this.port}`);
     const pathname = url.pathname;
 
     // CORS headers for all responses
