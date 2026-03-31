@@ -1,6 +1,8 @@
 // OpenChrome Desktop — Tauri application entry point
 
 mod ipc;
+mod profiles;
+mod settings;
 mod sidecar;
 
 use std::sync::Arc;
@@ -18,6 +20,9 @@ pub fn run() {
             ipc::stop_server,
             ipc::get_server_status,
             ipc::get_health,
+            ipc::get_chrome_profiles,
+            ipc::load_settings,
+            ipc::save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

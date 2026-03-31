@@ -9,7 +9,9 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
+/// Maximum time to wait for the sidecar health check during startup.
 const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+/// Interval between health check polls.
 const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -18,43 +20,93 @@ pub struct SidecarStatus {
     pub port: u16,
     pub error: Option<String>,
     pub uptime_secs: Option<u64>,
+    pub profile: Option<String>,
 }
 
 pub struct SidecarState {
     child: Option<CommandChild>,
     port: u16,
+    profile: Option<String>,
     started_at: Option<std::time::Instant>,
 }
 
 impl SidecarState {
     pub fn new() -> Self {
-        Self { child: None, port: 3100, started_at: None }
+        Self {
+            child: None,
+            port: 3100,
+            profile: None,
+            started_at: None,
+        }
     }
 
-    pub fn port(&self) -> u16 { self.port }
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 
-    pub fn is_running(&self) -> bool { self.child.is_some() }
+    pub fn is_running(&self) -> bool {
+        self.child.is_some()
+    }
+
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
+    }
 
     pub fn status_response(&self) -> SidecarStatus {
         let status = if self.child.is_some() { "running" } else { "stopped" };
         let uptime_secs = self.started_at.map(|t| t.elapsed().as_secs());
-        SidecarStatus { status: status.to_string(), port: self.port, error: None, uptime_secs }
+        SidecarStatus {
+            status: status.to_string(),
+            port: self.port,
+            error: None,
+            uptime_secs,
+            profile: self.profile.clone(),
+        }
     }
 }
 
+/// Spawn the sidecar process and begin monitoring its output.
 pub async fn spawn_sidecar(
-    app: &AppHandle, state: &Arc<Mutex<SidecarState>>, port: u16,
+    app: &AppHandle,
+    state: &Arc<Mutex<SidecarState>>,
+    port: u16,
+    profile_directory: Option<String>,
 ) -> Result<SidecarStatus, String> {
     let mut guard = state.lock().await;
-    if guard.child.is_some() { return Ok(guard.status_response()); }
-    guard.port = port;
 
-    let sidecar_cmd = app.shell()
+    // Already running — return current status
+    if guard.child.is_some() {
+        return Ok(guard.status_response());
+    }
+
+    guard.port = port;
+    guard.profile = profile_directory.clone();
+
+    let mut args = vec![
+        "serve".to_string(),
+        "--http".to_string(),
+        port.to_string(),
+        "--auto-launch".to_string(),
+        "--server-mode".to_string(),
+    ];
+
+    if let Some(ref profile) = profile_directory {
+        if !profile.is_empty() {
+            args.push("--profile-directory".to_string());
+            args.push(profile.clone());
+        }
+    }
+
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+    let sidecar_cmd = app
+        .shell()
         .sidecar("binaries/openchrome-sidecar")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?
-        .args(["serve", "--http", &port.to_string(), "--auto-launch", "--server-mode"]);
+        .args(&arg_refs);
 
-    let (mut rx, child) = sidecar_cmd.spawn()
+    let (mut rx, child) = sidecar_cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
 
     guard.child = Some(child);
@@ -74,7 +126,10 @@ pub async fn spawn_sidecar(
                     eprintln!("[sidecar:stdout] {}", text.trim_end());
                 }
                 CommandEvent::Terminated(payload) => {
-                    eprintln!("[sidecar] terminated: code={:?} signal={:?}", payload.code, payload.signal);
+                    eprintln!(
+                        "[sidecar] terminated: code={:?} signal={:?}",
+                        payload.code, payload.signal
+                    );
                     let _ = app_handle.emit("sidecar-exit", payload.code);
                     break;
                 }
@@ -86,6 +141,7 @@ pub async fn spawn_sidecar(
     let status = guard.status_response();
     drop(guard);
 
+    // Wait for health check in background
     let health_state = Arc::clone(state);
     let health_app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -106,9 +162,13 @@ pub async fn spawn_sidecar(
         }
     });
 
-    Ok(SidecarStatus { status: "starting".to_string(), ..status })
+    Ok(SidecarStatus {
+        status: "starting".to_string(),
+        ..status
+    })
 }
 
+/// Stop the sidecar process gracefully.
 pub async fn stop_sidecar(state: &Arc<Mutex<SidecarState>>) -> SidecarStatus {
     let mut guard = state.lock().await;
     if let Some(child) = guard.child.take() {
@@ -119,21 +179,26 @@ pub async fn stop_sidecar(state: &Arc<Mutex<SidecarState>>) -> SidecarStatus {
     guard.status_response()
 }
 
+/// Poll the sidecar health endpoint until it responds or timeout.
 async fn wait_for_health(port: u16) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/health", port);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
+
     let deadline = tokio::time::Instant::now() + HEALTH_CHECK_TIMEOUT;
+
     loop {
         if tokio::time::Instant::now() > deadline {
             return Err("Health check timed out".to_string());
         }
+
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => return Ok(()),
             _ => {}
         }
+
         sleep(HEALTH_CHECK_INTERVAL).await;
     }
 }

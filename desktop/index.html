@@ -14,19 +14,22 @@
       </header>
 
       <div class="status-card">
-        <div class="status-indicator" id="status-indicator">
-          <div class="status-dot"></div>
+        <div class="profile-row">
+          <label for="profile-select">Chrome Profile</label>
+          <select id="profile-select" class="profile-select">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div class="status-row">
+          <div class="status-dot" id="status-dot"></div>
           <span class="status-text" id="status-text">Stopped</span>
         </div>
-        <div class="controls">
-          <button id="btn-toggle" class="btn btn-start" disabled>
-            Start Server
-          </button>
-        </div>
+        <button id="btn-toggle" class="btn btn-start">Start Server</button>
       </div>
 
-      <div class="health-info" id="health-info">
-        Ready to start. Connect from Claude, Cursor, or any MCP client.
+      <div class="metrics-card" id="metrics-card">
+        <span class="metric" id="metric-uptime">Uptime: --</span>
+        <span class="metric" id="metric-port">Port: 3100</span>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

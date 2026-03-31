@@ -58,6 +58,34 @@ header h1 {
   margin-bottom: 1rem;
 }
 
+.profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.profile-row label {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.profile-select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  min-width: 160px;
+  cursor: pointer;
+}
+
+.profile-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .status-row {
   display: flex;
   align-items: center;
@@ -148,4 +176,48 @@ header h1 {
   font-size: 0.875rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* Profile select dropdown */
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.profile-row label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary, #a0a0b0);
+  white-space: nowrap;
+}
+
+.profile-select {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #2a2a4a);
+  border-radius: var(--radius, 8px);
+  background: var(--bg-secondary, #16213e);
+  color: var(--text-primary, #e8e8e8);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.profile-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Metrics card */
+.metrics-card {
+  display: flex;
+  gap: 16px;
+  padding: 10px 16px;
+  margin-top: 12px;
+  background: var(--bg-secondary, #16213e);
+  border: 1px solid var(--border, #2a2a4a);
+  border-radius: var(--radius, 8px);
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0b0);
 }
