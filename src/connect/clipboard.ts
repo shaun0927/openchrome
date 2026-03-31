@@ -3,25 +3,36 @@
  * Part of #523: Desktop App Web host connection guide.
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
+
+const MAX_CLIPBOARD_BYTES = 100_000;
 
 export function copyToClipboard(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const platform = process.platform;
-    let command: string;
-
-    if (platform === 'darwin') {
-      command = 'pbcopy';
-    } else if (platform === 'win32') {
-      command = 'clip';
-    } else {
-      command = 'xclip -selection clipboard';
+    if (text.length > MAX_CLIPBOARD_BYTES) {
+      reject(new Error(`Text too large for clipboard (${text.length} bytes, max ${MAX_CLIPBOARD_BYTES})`));
+      return;
     }
 
-    const child = exec(command, (error) => {
+    const platform = process.platform;
+    let cmd: string;
+    let args: string[];
+
+    if (platform === 'darwin') {
+      cmd = 'pbcopy';
+      args = [];
+    } else if (platform === 'win32') {
+      cmd = 'clip';
+      args = [];
+    } else {
+      cmd = 'xclip';
+      args = ['-selection', 'clipboard'];
+    }
+
+    const child = execFile(cmd, args, { maxBuffer: 64 * 1024 }, (error) => {
       if (error) {
-        if (platform === 'linux' && command.startsWith('xclip')) {
-          const fallback = exec('xsel --clipboard --input', (fallbackError) => {
+        if (platform === 'linux' && cmd === 'xclip') {
+          const fallback = execFile('xsel', ['--clipboard', '--input'], { maxBuffer: 64 * 1024 }, (fallbackError) => {
             if (fallbackError) {
               reject(new Error('Clipboard copy failed: install xclip or xsel'));
               return;

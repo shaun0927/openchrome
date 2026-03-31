@@ -232,7 +232,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         expect(toolNames).toContain(tool);
       }
 
-      // Total should be 56 (30 T1 + 15 T2 + 9 T3 + 2 uncategorized)
+      // Total should be 54 (30 T1 + 15 T2 + 9 T3)
       expect(toolNames.length).toBe(54);
     });
 
