@@ -44,20 +44,11 @@ impl TunnelState {
     }
 }
 
-/// Generate a cryptographically random Bearer token (UUID v4 format).
+/// Generate a cryptographically random Bearer token (32 hex chars = 128 bits).
 fn generate_token() -> String {
-    // Use random bytes to produce a UUID-v4-like token without external crate
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    let s = RandomState::new();
-    let mut h = s.build_hasher();
-    h.write_usize(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as usize);
-    let a = h.finish();
-    let mut h2 = s.build_hasher();
-    h2.write_u64(a);
-    h2.write_usize(std::process::id() as usize);
-    let b = h2.finish();
-    format!("{:016x}{:016x}", a, b)
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes).expect("OS CSPRNG unavailable");
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 pub async fn start_tunnel(
@@ -142,15 +133,11 @@ pub async fn start_tunnel(
     let timeout_app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(30)).await;
-        let guard = timeout_state.lock().await;
+        let mut guard = timeout_state.lock().await;
         if guard.status == "establishing" {
-            drop(guard);
-            let mut guard = timeout_state.lock().await;
-            if guard.status == "establishing" {
-                guard.status = "failed".to_string();
-                guard.error = Some("Tunnel establishment timed out".to_string());
-                let _ = timeout_app.emit("tunnel-timeout", ());
-            }
+            guard.status = "failed".to_string();
+            guard.error = Some("Tunnel establishment timed out".to_string());
+            let _ = timeout_app.emit("tunnel-timeout", ());
         }
     });
 
