@@ -19,13 +19,13 @@ interface Session {
 
 interface ToolCall {
   id: string;
-  tool_name: string;
-  session_id: string;
-  args_summary: string;
+  toolName: string;
+  sessionId: string;
+  args: string;
   status: "running" | "success" | "error";
-  start_time: number;
-  end_time: number | null;
-  duration_ms: number | null;
+  startTime: number;
+  endTime: number | null;
+  durationMs: number | null;
   error: string | null;
 }
 
@@ -66,6 +66,7 @@ let lastScreenshotTime = 0;
 let screenshotTimer: ReturnType<typeof setInterval> | null = null;
 let toolCallTimer: ReturnType<typeof setInterval> | null = null;
 let metricsTimer: ReturnType<typeof setInterval> | null = null;
+let sessionsTimer: ReturnType<typeof setInterval> | null = null;
 
 // --- Server Control ---
 
@@ -141,16 +142,18 @@ function startDashboardPolling(): void {
   toolCallTimer = setInterval(pollToolCalls, 1000);
   metricsTimer = setInterval(pollMetrics, 5000);
   // Sessions polled less frequently
-  setInterval(pollSessions, 3000);
+  sessionsTimer = setInterval(pollSessions, 3000);
 }
 
 function stopDashboardPolling(): void {
   if (screenshotTimer) clearInterval(screenshotTimer);
   if (toolCallTimer) clearInterval(toolCallTimer);
   if (metricsTimer) clearInterval(metricsTimer);
+  if (sessionsTimer) clearInterval(sessionsTimer);
   screenshotTimer = null;
   toolCallTimer = null;
   metricsTimer = null;
+  sessionsTimer = null;
 }
 
 function clearDashboard(): void {
@@ -260,11 +263,11 @@ setInterval(updateScreenshotAge, 1000);
 
 async function pollToolCalls(): Promise<void> {
   try {
-    const data = await invoke<{ tool_calls: ToolCall[] }>("get_tool_calls", {
+    const data = await invoke<{ calls: ToolCall[] }>("get_tool_calls", {
       sessionId: selectedSessionId,
       limit: 20,
     });
-    renderToolCalls(data.tool_calls || []);
+    renderToolCalls(data.calls || []);
   } catch {
     // Retry on next poll
   }
@@ -296,15 +299,15 @@ function renderToolCalls(calls: ToolCall[]): void {
     }
 
     const duration =
-      c.duration_ms != null ? `${(c.duration_ms / 1000).toFixed(1)}s` : "";
+      c.durationMs != null ? `${(c.durationMs / 1000).toFixed(1)}s` : "";
 
-    const argsSummary = c.args_summary
-      ? ` \u2192 ${escapeHtml(c.args_summary)}`
+    const argsSummary = c.args
+      ? ` \u2192 ${escapeHtml(c.args)}`
       : "";
 
     el.innerHTML = `
       <span class="tool-icon ${iconClass}">${icon}</span>
-      <span class="tool-name">${escapeHtml(c.tool_name)}</span>
+      <span class="tool-name">${escapeHtml(c.toolName)}</span>
       <span class="tool-args">${argsSummary}</span>
       <span class="tool-duration">${duration}</span>`;
 
