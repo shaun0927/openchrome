@@ -11,6 +11,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
+import { withDomDelta } from '../utils/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
@@ -311,8 +312,9 @@ const handler: ToolHandler = async (
               });
               break;
             }
-            await nextButton.click();
-            await new Promise((r) => setTimeout(r, waitBetweenPages));
+            await withDomDelta(page, async () => {
+              await nextButton.click();
+            }, { settleMs: Math.max(150, waitBetweenPages) });
           } catch (err) {
             pages.push({
               pageNumber: i + 1,
