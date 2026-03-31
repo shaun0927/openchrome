@@ -74,7 +74,20 @@ export class StdioTransport implements MCPTransport {
     });
 
     this.rl.on('close', () => {
-      console.error('[StdioTransport] stdin closed, shutting down...');
+      console.error('[StdioTransport] stdin closed (readline), shutting down...');
+      process.exit(0);
+    });
+
+    // Belt-and-suspenders: monitor stdin directly for EOF/error.
+    // When a parent process dies without cleanly closing the pipe,
+    // readline may not fire 'close'. Listening on the raw stream
+    // catches these edge cases.
+    process.stdin.on('end', () => {
+      console.error('[StdioTransport] stdin ended, shutting down...');
+      process.exit(0);
+    });
+    process.stdin.on('error', () => {
+      console.error('[StdioTransport] stdin error, shutting down...');
       process.exit(0);
     });
   }

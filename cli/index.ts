@@ -246,9 +246,14 @@ program
     };
     process.on('SIGTERM', () => forwardSignal('SIGTERM'));
     process.on('SIGINT', () => forwardSignal('SIGINT'));
-    if (process.platform === 'win32') {
-      process.on('SIGHUP', () => forwardSignal('SIGHUP'));
-    }
+    // Forward SIGHUP on all platforms — on Unix this fires when the
+    // controlling terminal closes (e.g., MCP client session ends).
+    process.on('SIGHUP', () => forwardSignal('SIGHUP'));
+
+    // If the parent closes stdin, kill the child to prevent orphaning.
+    process.stdin.on('end', () => {
+      if (!child.killed) child.kill('SIGTERM');
+    });
 
     child.on('exit', (code) => process.exit(code ?? 0));
   });
