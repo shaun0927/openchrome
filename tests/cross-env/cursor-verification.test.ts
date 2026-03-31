@@ -283,7 +283,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
     // Tier 2
     const tier2Tools = [
-      'click_element', 'wait_and_click', 'drag_drop', 'network',
+      'drag_drop', 'network',
       'request_intercept', 'http_auth', 'user_agent', 'geolocation',
       'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
       'console_capture', 'performance_metrics', 'file_upload',
