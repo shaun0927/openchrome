@@ -63,7 +63,7 @@ describe('HintEngine', () => {
     it('should hint on stale ref errors', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('ref not found: abc123', true);
-      const hint = engine.getHint('click_element', result, true);
+      const hint = engine.getHint('interact', result, true);
       expect(hint?.hint).toContain('Refs expire');
       expect(hint?.hint).toContain('read_page');
     });
@@ -82,26 +82,26 @@ describe('HintEngine', () => {
       expect(hint?.hint).toContain('find(query)');
     });
 
-    it('should hint on click_element "no clickable elements found"', () => {
+    it('should hint on interact "no clickable elements found"', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('No clickable elements found matching "Submit"', true);
-      const hint = engine.getHint('click_element', result, true);
-      expect(hint?.hint).toContain('wait_and_click');
+      const hint = engine.getHint('interact', result, true);
+      expect(hint?.hint).toContain('interact');
       expect(hint?.hint).toContain('read_page');
     });
 
-    it('should hint on click_element "no good match found"', () => {
+    it('should hint on interact "no good match found"', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('No good match found for "Login". Best candidate was "Log Out" with low confidence.', true);
-      const hint = engine.getHint('click_element', result, true);
-      expect(hint?.hint).toContain('wait_and_click');
+      const hint = engine.getHint('interact', result, true);
+      expect(hint?.hint).toContain('interact');
     });
 
-    it('should hint on click_element generic error', () => {
+    it('should hint on interact generic error', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Click element error: Cannot read properties of null', true);
-      const hint = engine.getHint('click_element', result, true);
-      expect(hint?.hint).toContain('wait_and_click');
+      const hint = engine.getHint('interact', result, true);
+      expect(hint?.hint).toContain('interact');
     });
 
     it('should hint on timeout errors', () => {
@@ -123,26 +123,26 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('click at position requires x, y coordinates', true);
       const hint = engine.getHint('computer', result, true);
-      expect(hint?.hint).toContain('click_element(query)');
+      expect(hint?.hint).toContain('interact');
     });
 
     it('should not trigger error rules for non-error results', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('ref not found: abc123', false);
       // Error recovery rules require isError=true
-      const hint = engine.getHint('click_element', result, false);
+      const hint = engine.getHint('interact', result, false);
       // Should not get error recovery hint
       expect(hint === null || !hint.hint.includes('Refs expire')).toBe(true);
     });
   });
 
   describe('composite suggestion rules', () => {
-    it('should suggest click_element after find+click pattern', () => {
+    it('should suggest interact after find+click pattern', () => {
       const tracker = makeTracker([{ toolName: 'find' }]);
       const engine = new HintEngine(tracker);
       const result = makeResult('clicked element at position');
       const hint = engine.getHint('click', result, false);
-      expect(hint?.hint).toContain('click_element');
+      expect(hint?.hint).toContain('interact');
     });
 
     it('should suggest fill_form after multiple form_input calls', () => {
@@ -153,12 +153,12 @@ describe('HintEngine', () => {
       expect(hint?.hint).toContain('fill_form');
     });
 
-    it('should suggest wait_and_click after navigate+click', () => {
+    it('should suggest interact with waitForMs after navigate+click', () => {
       const tracker = makeTracker([{ toolName: 'navigate' }]);
       const engine = new HintEngine(tracker);
       const result = makeResult('clicked');
-      const hint = engine.getHint('click_element', result, false);
-      expect(hint?.hint).toContain('wait_and_click');
+      const hint = engine.getHint('interact', result, false);
+      expect(hint?.hint).toContain('interact');
     });
 
     it('should suggest find for truncated read_page', () => {
@@ -210,10 +210,10 @@ describe('HintEngine', () => {
       expect(hint?.hint).toContain('broader query');
     });
 
-    it('should hint after click_element with navigation', () => {
+    it('should hint after interact with navigation', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Clicked "Submit" button [Page navigated to /dashboard]');
-      const hint = engine.getHint('click_element', result, false);
+      const hint = engine.getHint('interact', result, false);
       expect(hint?.hint).toContain('wait_for');
     });
 
@@ -239,12 +239,12 @@ describe('HintEngine', () => {
   describe('repetition detection rules', () => {
     it('should detect same tool failing 3 times in a row', () => {
       const tracker = makeTracker([
-        { toolName: 'click_element', result: 'error', error: 'not found' },
-        { toolName: 'click_element', result: 'error', error: 'not found' },
+        { toolName: 'interact', result: 'error', error: 'not found' },
+        { toolName: 'interact', result: 'error', error: 'not found' },
       ]);
       const engine = new HintEngine(tracker);
       const result = makeResult('element not found', true);
-      const hint = engine.getHint('click_element', result, true);
+      const hint = engine.getHint('interact', result, true);
       // Error recovery (priority 100+) should fire before repetition (250) for known patterns
       // But for unknown error patterns, repetition catches it
       expect(hint).not.toBeNull();
@@ -315,7 +315,7 @@ describe('HintEngine', () => {
       const tracker = makeTracker([
         { toolName: 'find' },
         { toolName: 'navigate' },
-        { toolName: 'click_element' },
+        { toolName: 'interact' },
       ]);
       const engine = new HintEngine(tracker);
       // Warm up to consume setup-permission-hint
@@ -534,7 +534,7 @@ describe('HintEngine', () => {
       engine.enableLogging(tmpDir);
 
       const result = makeResult('ref not found: abc', true);
-      engine.getHint('click_element', result, true);
+      engine.getHint('interact', result, true);
 
       // Flush buffered writes before reading
       engine.destroy();
@@ -547,7 +547,7 @@ describe('HintEngine', () => {
       expect(lines).toHaveLength(1);
 
       const entry = JSON.parse(lines[0]);
-      expect(entry.toolName).toBe('click_element');
+      expect(entry.toolName).toBe('interact');
       expect(entry.isError).toBe(true);
       expect(entry.matchedRule).toContain('error-recovery');
       expect(entry.hint).toContain('Refs expire');
@@ -598,12 +598,12 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('ref not found: abc', true);
 
-      const hint1 = engine.getHint('click_element', result, true);
+      const hint1 = engine.getHint('interact', result, true);
       expect(hint1).not.toBeNull();
       expect(hint1!.severity).toBe('info');
       expect(hint1!.fireCount).toBe(1);
 
-      const hint2 = engine.getHint('click_element', result, true);
+      const hint2 = engine.getHint('interact', result, true);
       expect(hint2!.severity).toBe('info');
       expect(hint2!.fireCount).toBe(2);
     });
@@ -612,14 +612,14 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('ref not found: abc', true);
 
-      engine.getHint('click_element', result, true);
-      engine.getHint('click_element', result, true);
-      const hint3 = engine.getHint('click_element', result, true);
+      engine.getHint('interact', result, true);
+      engine.getHint('interact', result, true);
+      const hint3 = engine.getHint('interact', result, true);
       expect(hint3!.severity).toBe('warning');
       expect(hint3!.fireCount).toBe(3);
       expect(hint3!.hint).toContain('WARNING');
 
-      const hint4 = engine.getHint('click_element', result, true);
+      const hint4 = engine.getHint('interact', result, true);
       expect(hint4!.severity).toBe('warning');
       expect(hint4!.fireCount).toBe(4);
     });
@@ -629,9 +629,9 @@ describe('HintEngine', () => {
       const result = makeResult('ref not found: abc', true);
 
       for (let i = 0; i < 4; i++) {
-        engine.getHint('click_element', result, true);
+        engine.getHint('interact', result, true);
       }
-      const hint5 = engine.getHint('click_element', result, true);
+      const hint5 = engine.getHint('interact', result, true);
       expect(hint5!.severity).toBe('critical');
       expect(hint5!.fireCount).toBe(5);
       expect(hint5!.hint).toContain('CRITICAL');
@@ -642,15 +642,15 @@ describe('HintEngine', () => {
       const engine = new HintEngine(new ActivityTracker());
 
       const errResult = makeResult('ref not found: abc', true);
-      engine.getHint('click_element', errResult, true);
-      const hint2 = engine.getHint('click_element', errResult, true);
+      engine.getHint('interact', errResult, true);
+      const hint2 = engine.getHint('interact', errResult, true);
       expect(hint2!.fireCount).toBe(2);
 
       const navResult = makeResult('{"action":"navigate","url":"https://app.com/dashboard","title":"App","authRedirect":true}');
       const loginHint = engine.getHint('navigate', navResult, false);
       expect(loginHint!.fireCount).toBe(1);
 
-      const hint3 = engine.getHint('click_element', errResult, true);
+      const hint3 = engine.getHint('interact', errResult, true);
       expect(hint3!.fireCount).toBe(3);
       expect(hint3!.severity).toBe('warning');
     });
@@ -664,9 +664,9 @@ describe('HintEngine', () => {
       const result = makeResult('ref not found: abc', true);
 
       for (let i = 0; i < 4; i++) {
-        engine.getHint('click_element', result, true);
+        engine.getHint('interact', result, true);
       }
-      const hint5 = engine.getHint('click_element', result, true);
+      const hint5 = engine.getHint('interact', result, true);
       expect(hint5!.severity).toBe('critical');
       expect(hint5!.fireCount).toBe(5);
 
@@ -806,7 +806,7 @@ describe('HintEngine', () => {
     it('should include rule name and severity', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('ref not found: abc', true);
-      const hint = engine.getHint('click_element', result, true);
+      const hint = engine.getHint('interact', result, true);
       expect(hint).not.toBeNull();
       expect(hint!.rule).toMatch(/^error-recovery/);
       expect(hint!.severity).toBe('info');
@@ -831,7 +831,7 @@ describe('HintEngine', () => {
     it('should extract tool suggestion from hint text', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('ref not found: abc', true);
-      const hint = engine.getHint('click_element', result, true);
+      const hint = engine.getHint('interact', result, true);
       expect(hint!.suggestion).toBeDefined();
       expect(hint!.suggestion!.tool).toBe('read_page');
     });
