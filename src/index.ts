@@ -250,10 +250,13 @@ program
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
     // Start transport (useHttp was determined above, before getMCPServer)
+    // Declare httpTransport at this scope so we can wire the session manager later
+    let httpTransport: import('./transports/http').HTTPTransport | null = null;
     if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
       const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
       const transport = createTransport('http', { port: httpPort, host: httpHost });
+      httpTransport = transport as import('./transports/http').HTTPTransport;
       server.start(transport);
       console.error(`[openchrome] HTTP transport enabled on ${httpHost}:${httpPort}`);
       console.error(`[openchrome] Infinite reconnection: enabled (daemon mode)`);
@@ -266,6 +269,12 @@ program
     const launcher = getChromeLauncher();
     const cdpClient = getCDPClient();
     const sessionManager = getSessionManager();
+
+    // Wire session manager into HTTP transport for dashboard API endpoints
+    if (httpTransport) {
+      httpTransport.setSessionManager(sessionManager);
+      console.error('[openchrome] Dashboard API endpoints wired to session manager');
+    }
 
     // Browser State Snapshot (Gap 2: #416)
     const stateManager = getBrowserStateManager();
