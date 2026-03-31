@@ -316,7 +316,30 @@ Cookies and localStorage are saved atomically every 30 seconds and restored on s
 
 ## Anti-Bot & Turnstile Support
 
-OpenChrome includes built-in defenses against Cloudflare Turnstile and similar anti-bot systems, with additional stealth navigation planned for a future release. See [Turnstile Guide](docs/turnstile-guide.md) for details.
+OpenChrome includes built-in defenses against Cloudflare Turnstile and similar anti-bot systems. See [Turnstile Guide](docs/turnstile-guide.md) for details.
+
+### 3-Tier Auto-Fallback for CDN/WAF Blocks
+
+When a navigation is blocked by CDN/WAF systems (Akamai, Cloudflare, etc.), OpenChrome automatically escalates through three tiers:
+
+| Tier | Mode | What It Bypasses |
+|------|------|-----------------|
+| 1 | Headless Chrome | Normal navigation — works for most sites |
+| 2 | Stealth + Headless | JS-level anti-bot (PerimeterX, Turnstile, basic fingerprinting) |
+| 3 | **Headed Chrome** | TLS/UA-level blocking (Akamai CDN, network security filters) |
+
+Tier 3 launches a real headed Chrome window with a genuine user-agent (`Chrome/...` instead of `HeadlessChrome/...`) and a different TLS fingerprint, bypassing binary-level detection that no JavaScript injection can fix.
+
+**Parameters:**
+- `autoFallback: false` — disable all automatic retry
+- `headed: true` — skip directly to Tier 3 (headed Chrome)
+- `stealth: true` — use stealth mode (Tier 2) explicitly
+
+**Environment:** Tier 3 requires a display (macOS/Windows desktop, or Linux with `$DISPLAY`). In server/container environments without a display, Tier 3 is gracefully skipped.
+
+### Known Limitations
+
+- **CAPTCHA-protected sites (e.g., Reddit):** Auto-fallback correctly detects and escalates through all tiers, but sites that serve CAPTCHA challenges ("Prove your humanity") to all automated clients — regardless of headless/headed mode — require human interaction to solve. This is beyond auto-fallback's scope, which targets CDN/WAF network-level blocking (TLS fingerprint, user-agent detection), not interactive CAPTCHA challenges.
 
 ---
 
