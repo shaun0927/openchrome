@@ -254,7 +254,13 @@ export class SidecarManager extends EventEmitter {
 
       child.once('exit', onExit);
 
-      child.kill('SIGTERM');
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // Already dead — proceed to cleanup
+        onExit();
+        return;
+      }
 
       killTimer = setTimeout(() => {
         child.removeListener('exit', onExit);
