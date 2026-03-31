@@ -328,6 +328,19 @@ body {
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { background: var(--surface-hover); color: var(--text); }
 
+/* Profile selector */
+.profile-select {
+  background: var(--bg-secondary, #2a2a2a);
+  color: var(--text-primary, #e0e0e0);
+  border: 1px solid var(--border, #444);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 140px;
+}
+.profile-select:focus { outline: 1px solid var(--accent, #4a9eff); }
+
 /* Connect view */
 .connect-view {
   flex: 1;

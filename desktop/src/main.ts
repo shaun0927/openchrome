@@ -2,6 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 
 // --- Types ---
 
+interface ChromeProfile {
+  id: string;
+  name: string;
+}
+
+interface AppSettings {
+  selected_profile: string;
+  port: number;
+  auto_start: boolean;
+}
+
 interface ServerStatus {
   status: "stopped" | "starting" | "running" | "error";
   port: number;
@@ -41,6 +52,9 @@ interface Metrics {
 const statusDot = document.getElementById("status-dot")!;
 const statusLabel = document.getElementById("status-label")!;
 const btnToggle = document.getElementById("btn-toggle") as HTMLButtonElement;
+const profileSelect = document.getElementById(
+  "profile-select",
+) as HTMLSelectElement;
 const connectionList = document.getElementById("connection-list")!;
 const emptyConnections = document.getElementById("empty-connections")!;
 const screenshotPanel = document.getElementById("screenshot-panel")!;
@@ -57,6 +71,44 @@ const toolFeedList = document.getElementById("tool-feed-list")!;
 const metricRam = document.getElementById("metric-ram")!;
 const metricTabs = document.getElementById("metric-tabs")!;
 const metricUptime = document.getElementById("metric-uptime")!;
+const errorBanner = document.getElementById("error-banner")!;
+const errorText = document.getElementById("error-text")!;
+const errorDismiss = document.getElementById(
+  "error-dismiss",
+) as HTMLButtonElement;
+
+// --- Error Banner ---
+
+function classifyError(raw: string): string {
+  if (/EADDRINUSE/.test(raw)) {
+    return "Port is already in use. Another server may be running. Try stopping it first or change the port.";
+  }
+  if (/ECONNREFUSED/.test(raw)) {
+    return "Could not connect to Chrome. Make sure Chrome is installed.";
+  }
+  if (/EACCES|EPERM/.test(raw)) {
+    return "Permission denied. Your antivirus may be blocking the server.";
+  }
+  if (/ENOENT.*chrome/i.test(raw)) {
+    return "Chrome was not found. Please install Google Chrome.";
+  }
+  if (/ETIMEDOUT/.test(raw)) {
+    return "Connection timed out. Chrome may be unresponsive — try restarting.";
+  }
+  return `Something went wrong: ${raw.slice(0, 120)}`;
+}
+
+function showError(message: string): void {
+  errorText.textContent = message;
+  errorBanner.hidden = false;
+}
+
+function hideError(): void {
+  errorBanner.hidden = true;
+  errorText.textContent = "";
+}
+
+errorDismiss.addEventListener("click", hideError);
 
 // --- State ---
 
@@ -68,6 +120,49 @@ let toolCallTimer: ReturnType<typeof setInterval> | null = null;
 let metricsTimer: ReturnType<typeof setInterval> | null = null;
 let sessionsTimer: ReturnType<typeof setInterval> | null = null;
 
+// --- Profile Selector ---
+
+async function loadProfiles(): Promise<void> {
+  try {
+    const profiles = await invoke<ChromeProfile[]>("list_chrome_profiles");
+    // Clear existing options except the default
+    profileSelect.innerHTML = '<option value="">Default</option>';
+    for (const p of profiles) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name;
+      profileSelect.appendChild(opt);
+    }
+
+    // Restore saved selection
+    try {
+      const settings = await invoke<AppSettings>("load_settings");
+      if (settings.selected_profile) {
+        profileSelect.value = settings.selected_profile;
+      }
+    } catch {
+      // No saved settings — leave default selected
+    }
+  } catch {
+    // Profile listing not available — dropdown stays with Default only
+  }
+}
+
+profileSelect.addEventListener("change", async () => {
+  const selectedProfile = profileSelect.value;
+  try {
+    await invoke("save_settings", {
+      settings: {
+        selected_profile: selectedProfile,
+        port: 3100,
+        auto_start: false,
+      },
+    });
+  } catch {
+    // Settings save failed — continue without persisting
+  }
+});
+
 // --- Server Control ---
 
 btnToggle.addEventListener("click", async () => {
@@ -77,16 +172,23 @@ btnToggle.addEventListener("click", async () => {
       const resp = await invoke<ServerStatus>("stop_server");
       updateServerStatus(resp);
     } else if (currentStatus === "stopped" || currentStatus === "error") {
+      hideError();
       updateServerStatus({
         status: "starting",
         port: 3100,
         error: null,
         uptime_secs: null,
       });
-      const resp = await invoke<ServerStatus>("start_server", { port: 3100 });
+      const profileDirectory = profileSelect.value || undefined;
+      const resp = await invoke<ServerStatus>("start_server", {
+        port: 3100,
+        profileDirectory,
+      });
       updateServerStatus(resp);
     }
   } catch (err) {
+    const message = classifyError(String(err));
+    showError(message);
     updateServerStatus({
       status: "error",
       port: 3100,
@@ -301,9 +403,7 @@ function renderToolCalls(calls: ToolCall[]): void {
     const duration =
       c.durationMs != null ? `${(c.durationMs / 1000).toFixed(1)}s` : "";
 
-    const argsSummary = c.args
-      ? ` \u2192 ${escapeHtml(c.args)}`
-      : "";
+    const argsSummary = c.args ? ` \u2192 ${escapeHtml(c.args)}` : "";
 
     el.innerHTML = `
       <span class="tool-icon ${iconClass}">${icon}</span>
@@ -378,7 +478,8 @@ const HOST_DEFS: Record<string, HostDefinition> = {
   claude: {
     id: "claude",
     name: "Claude Web",
-    settingsUrl: "https://claude.ai/customize/connectors?modal=add-custom-connector",
+    settingsUrl:
+      "https://claude.ai/customize/connectors?modal=add-custom-connector",
     steps: [
       'Click "Open Settings Page" below',
       "Paste the server URL into the URL field",
@@ -397,9 +498,7 @@ const HOST_DEFS: Record<string, HostDefinition> = {
       "Create or edit an app, then paste the server URL",
       "Save and start a conversation with your app",
     ],
-    notes: [
-      "You may need to enable Developer Mode in ChatGPT settings.",
-    ],
+    notes: ["You may need to enable Developer Mode in ChatGPT settings."],
   },
   gemini: {
     id: "gemini",
@@ -410,9 +509,7 @@ const HOST_DEFS: Record<string, HostDefinition> = {
       "Add a custom MCP server and paste the server URL",
       "Complete any additional Google Cloud setup if prompted",
     ],
-    notes: [
-      "Gemini MCP support may require a Google Cloud project.",
-    ],
+    notes: ["Gemini MCP support may require a Google Cloud project."],
   },
   custom: {
     id: "custom",
@@ -437,18 +534,25 @@ const btnCopyUrl = document.getElementById("btn-copy-url")!;
 const connectToken = document.getElementById("connect-token")!;
 const btnCopyToken = document.getElementById("btn-copy-token")!;
 const connectTokenSection = document.getElementById("connect-token-section")!;
-const connectSettingsSection = document.getElementById("connect-settings-section")!;
+const connectSettingsSection = document.getElementById(
+  "connect-settings-section",
+)!;
 const btnOpenSettings = document.getElementById("btn-open-settings")!;
 const connectSteps = document.getElementById("connect-steps")!;
 const connectNotes = document.getElementById("connect-notes")!;
 const connectNotesSection = document.getElementById("connect-notes-section")!;
 
 platformSelector.addEventListener("click", (e) => {
-  const target = (e.target as HTMLElement).closest("[data-host]") as HTMLElement | null;
+  const target = (e.target as HTMLElement).closest(
+    "[data-host]",
+  ) as HTMLElement | null;
   if (!target) return;
   selectedHost = target.dataset.host!;
   platformSelector.querySelectorAll(".platform-btn").forEach((btn) => {
-    btn.classList.toggle("selected", (btn as HTMLElement).dataset.host === selectedHost);
+    btn.classList.toggle(
+      "selected",
+      (btn as HTMLElement).dataset.host === selectedHost,
+    );
   });
   updateConnectView();
 });
@@ -552,3 +656,4 @@ async function pollStatus(): Promise<void> {
 
 setInterval(pollStatus, 2000);
 pollStatus();
+loadProfiles();
