@@ -51,6 +51,8 @@ jest.mock('../../src/chrome/headed-fallback', () => ({
   getHeadedFallback: () => ({
     isAvailable: () => false,
     navigate: jest.fn(),
+    navigatePersistent: jest.fn(),
+    getPort: jest.fn().mockReturnValue(9322),
   }),
 }));
 
@@ -92,6 +94,14 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
           elementCount: 977,
           blockingPage: null,
         }),
+        navigatePersistent: jest.fn().mockResolvedValue(opts?.headedResult ?? {
+          targetId: 'HEADED_TARGET_001',
+          url: 'https://www.coupang.com/',
+          title: 'Coupang',
+          elementCount: 977,
+          blockingPage: null,
+        }),
+        getPort: jest.fn().mockReturnValue(9322),
       }),
     }));
     jest.doMock('../../src/config/global', () => ({

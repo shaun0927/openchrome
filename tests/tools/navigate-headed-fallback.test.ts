@@ -52,10 +52,20 @@ const mockHeadedNavigate = jest.fn().mockResolvedValue({
   elementCount: 500,
   blockingPage: null,
 });
+const mockHeadedNavigatePersistent = jest.fn().mockResolvedValue({
+  url: 'https://www.coupang.com/',
+  title: 'Coupang',
+  elementCount: 500,
+  blockingPage: null,
+  targetId: 'headed-target-123',
+});
+const mockHeadedGetPort = jest.fn().mockReturnValue(9322);
 jest.mock('../../src/chrome/headed-fallback', () => ({
   getHeadedFallback: () => ({
     isAvailable: mockHeadedIsAvailable,
     navigate: mockHeadedNavigate,
+    navigatePersistent: mockHeadedNavigatePersistent,
+    getPort: mockHeadedGetPort,
   }),
 }));
 
@@ -92,6 +102,8 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       getHeadedFallback: () => ({
         isAvailable: mockHeadedIsAvailable,
         navigate: mockHeadedNavigate,
+        navigatePersistent: mockHeadedNavigatePersistent,
+        getPort: mockHeadedGetPort,
       }),
     }));
     jest.doMock('../../src/config/global', () => ({
@@ -122,6 +134,13 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       title: 'Coupang',
       elementCount: 500,
       blockingPage: null,
+    });
+    mockHeadedNavigatePersistent.mockResolvedValue({
+      url: 'https://www.coupang.com/',
+      title: 'Coupang',
+      elementCount: 500,
+      blockingPage: null,
+      targetId: 'headed-target-123',
     });
 
     (mockSessionManager as any).createTargetStealth = jest.fn().mockImplementation(
@@ -155,7 +174,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed.fallbackTier).toBe(3);
       expect(parsed.fallbackReason).toBe('access-denied');
       expect(parsed.title).toBe('Coupang');
-      expect(mockHeadedNavigate).toHaveBeenCalledWith('https://www.coupang.com');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
     });
 
     test('does not escalate to Tier 3 when Tier 2 succeeds', async () => {
@@ -171,7 +190,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
 
       expect(parsed.fallbackTier).toBe(2);
       expect(parsed.headed).toBeUndefined();
-      expect(mockHeadedNavigate).not.toHaveBeenCalled();
+      expect(mockHeadedNavigatePersistent).not.toHaveBeenCalled();
     });
 
     test('skips Tier 3 when no display available', async () => {
@@ -190,7 +209,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed.fallbackTier).toBe(2);
       expect(parsed.headed).toBeUndefined();
       expect(parsed.blockingPage).toBeDefined();
-      expect(mockHeadedNavigate).not.toHaveBeenCalled();
+      expect(mockHeadedNavigatePersistent).not.toHaveBeenCalled();
     });
 
     test('does not escalate to Tier 3 when autoFallback is false', async () => {
@@ -205,7 +224,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       // No fallback at all
       expect(parsed.blockingPage).toBeDefined();
       expect(parsed.fallbackTier).toBeUndefined();
-      expect(mockHeadedNavigate).not.toHaveBeenCalled();
+      expect(mockHeadedNavigatePersistent).not.toHaveBeenCalled();
     });
 
     test('escalates to Tier 3 when stealth produces empty page (elementCount=0)', async () => {
@@ -233,7 +252,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed.headed).toBe(true);
       expect(parsed.fallbackTier).toBe(3);
       expect(parsed.fallbackReason).toBe('access-denied');
-      expect(mockHeadedNavigate).toHaveBeenCalledWith('https://www.coupang.com');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
     });
 
     test('escalates to Tier 3 when stealth produces broken page (readyState=unknown)', async () => {
@@ -261,7 +280,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed.headed).toBe(true);
       expect(parsed.fallbackTier).toBe(3);
       expect(parsed.fallbackReason).toBe('bot-check');
-      expect(mockHeadedNavigate).toHaveBeenCalledWith('https://www.coupang.com');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
     });
 
     test('does NOT escalate to Tier 3 when autoFallback is false and stealth page is empty', async () => {
@@ -287,11 +306,12 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Still Denied' });
 
       // Headed Chrome also gets blocked
-      mockHeadedNavigate.mockResolvedValue({
+      mockHeadedNavigatePersistent.mockResolvedValue({
         url: 'https://www.coupang.com/',
         title: 'Access Denied',
         elementCount: 7,
         blockingPage: { type: 'access-denied', detail: 'Access Denied' },
+        targetId: 'headed-target-blocked',
       });
 
       const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
@@ -313,7 +333,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed.headed).toBe(true);
       expect(parsed.fallbackTier).toBe(3);
       expect(parsed.title).toBe('Coupang');
-      expect(mockHeadedNavigate).toHaveBeenCalledWith('https://www.coupang.com');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
       // Should NOT create normal or stealth targets
       expect(mockSessionManager.createTarget).not.toHaveBeenCalled();
       expect((mockSessionManager as any).createTargetStealth).not.toHaveBeenCalled();

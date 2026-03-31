@@ -35,6 +35,7 @@ export interface WorkerCreateOptions {
   shareCookies?: boolean;       // If true, use default browser context (shares Chrome profile cookies) instead of isolated context
   targetUrl?: string;           // URL for origin-aware Chrome instance selection
   profileDirectory?: string;    // Chrome profile directory for multi-profile support
+  port?: number;                // Explicit Chrome port for external instances (e.g., headed fallback)
 }
 
 export interface Session {

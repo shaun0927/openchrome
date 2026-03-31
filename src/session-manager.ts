@@ -551,6 +551,21 @@ export class SessionManager {
         console.error(`[SessionManager] Profile acquisition failed for "${options.profileDirectory}":`, err);
         throw err; // Propagate — caller explicitly requested a profile
       }
+    } else if (options.port) {
+      // Explicit port: external Chrome instance (e.g., headed fallback) — no pool allocation
+      workerPort = options.port;
+      try {
+        const workerCdpClient = this.cdpFactory.getOrCreate(workerPort, {
+          autoLaunch: false,
+        });
+        if (!workerCdpClient.isConnected()) {
+          await workerCdpClient.connect();
+        }
+        console.error(`[SessionManager] Worker ${workerId} assigned to external Chrome on port ${workerPort}`);
+      } catch (err) {
+        console.error(`[SessionManager] External Chrome connection failed on port ${workerPort}:`, err);
+        throw err;
+      }
     } else if (this.chromePool && options.targetUrl) {
       // Origin isolation: existing pool behavior
       try {
@@ -622,7 +637,7 @@ export class SessionManager {
   /**
    * Get or create a worker
    */
-  async getOrCreateWorker(sessionId: string, workerId?: string, options?: { profileDirectory?: string; targetUrl?: string }): Promise<Worker> {
+  async getOrCreateWorker(sessionId: string, workerId?: string, options?: { profileDirectory?: string; targetUrl?: string; port?: number; shareCookies?: boolean }): Promise<Worker> {
     const session = await this.getOrCreateSession(sessionId);
 
     // If no workerId specified, use default worker
@@ -634,6 +649,8 @@ export class SessionManager {
         id: targetWorkerId,
         ...(options?.profileDirectory && { profileDirectory: options.profileDirectory }),
         ...(options?.targetUrl && { targetUrl: options.targetUrl }),
+        ...(options?.port != null && { port: options.port }),
+        ...(options?.shareCookies != null && { shareCookies: options.shareCookies }),
       });
     }
 
