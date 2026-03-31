@@ -112,6 +112,14 @@ const openHostSettingsHandler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const hostArg = args.host as string;
+  const validHosts = getHostIds();
+  if (!validHosts.includes(hostArg as WebAIHostId)) {
+    return {
+      content: [{ type: 'text', text: `Invalid host: ${hostArg}. Valid hosts: ${validHosts.join(', ')}` }],
+      isError: true,
+    };
+  }
+
   const state = getServerState();
   const info = generateConnectionInfo(hostArg as WebAIHostId, state);
 

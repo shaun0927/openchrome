@@ -412,7 +412,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
       // Should NOT have expand_tools (progressive disclosure disabled)
       expect(toolNames).not.toContain('expand_tools');
-      // Should have all 54 tools immediately
+      // Total should be 54 (30 T1 + 15 T2 + 9 T3)
       expect(toolNames.length).toBe(54);
     });
   });

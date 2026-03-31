@@ -1808,6 +1808,20 @@ export class CDPClient {
   }
 
   /**
+   * Index an externally-created page (e.g., from headed fallback) so it is
+   * accessible via getPageByTargetId() and passes the stale-target guards
+   * in getCDPSession()/send(). (#485)
+   */
+  indexExternalPage(targetId: string, page: Page): void {
+    this.targetIdIndex.set(targetId, page);
+    this.configurePageDefenses(page);
+    page.once('close', () => {
+      this.targetIdIndex.delete(targetId);
+      // sessions and cookie cache cleanup handled by onTargetDestroyed via browser targetdestroyed event
+    });
+  }
+
+  /**
    * Get CDP session for a page
    */
   async getCDPSession(page: Page): Promise<CDPSession> {

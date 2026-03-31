@@ -1,7 +1,9 @@
 mod sidecar;
+mod tunnel;
 
 use std::sync::Arc;
 use sidecar::{SidecarState, SidecarStatus};
+use tunnel::{TunnelState, TunnelStatus};
 use tokio::sync::Mutex;
 
 #[tauri::command]
@@ -92,15 +94,63 @@ async fn get_metrics(state: tauri::State<'_, Arc<Mutex<SidecarState>>>) -> Resul
     proxy_sidecar_api(&state, "/api/metrics").await
 }
 
+// --- Tunnel IPC Commands ---
+
+#[tauri::command]
+async fn start_tunnel(
+    app: tauri::AppHandle,
+    tunnel_state: tauri::State<'_, Arc<Mutex<TunnelState>>>,
+    sidecar_state: tauri::State<'_, Arc<Mutex<SidecarState>>>,
+) -> Result<TunnelStatus, String> {
+    let sidecar = sidecar_state.lock().await;
+    let port = sidecar.port();
+    drop(sidecar);
+    tunnel::start_tunnel(&app, &tunnel_state, port).await
+}
+
+#[tauri::command]
+async fn stop_tunnel(
+    tunnel_state: tauri::State<'_, Arc<Mutex<TunnelState>>>,
+) -> Result<TunnelStatus, String> {
+    Ok(tunnel::stop_tunnel(&tunnel_state).await)
+}
+
+#[tauri::command]
+async fn get_tunnel_status(
+    tunnel_state: tauri::State<'_, Arc<Mutex<TunnelState>>>,
+) -> Result<TunnelStatus, String> {
+    let guard = tunnel_state.lock().await;
+    Ok(guard.to_status())
+}
+
+#[tauri::command]
+async fn get_tunnel_url(
+    tunnel_state: tauri::State<'_, Arc<Mutex<TunnelState>>>,
+) -> Result<Option<String>, String> {
+    let guard = tunnel_state.lock().await;
+    Ok(guard.to_status().tunnel_url)
+}
+
+#[tauri::command]
+async fn get_bearer_token(
+    tunnel_state: tauri::State<'_, Arc<Mutex<TunnelState>>>,
+) -> Result<Option<String>, String> {
+    let guard = tunnel_state.lock().await;
+    Ok(guard.to_status().bearer_token)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let sidecar_state = Arc::new(Mutex::new(SidecarState::new()));
+    let tunnel_state = Arc::new(Mutex::new(TunnelState::new()));
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(sidecar_state)
+        .manage(tunnel_state)
         .invoke_handler(tauri::generate_handler![
             start_server, stop_server, get_server_status, get_health,
             capture_screenshot, get_sessions, get_tool_calls, get_metrics,
+            start_tunnel, stop_tunnel, get_tunnel_status, get_tunnel_url, get_bearer_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

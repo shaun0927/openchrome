@@ -3,7 +3,7 @@
  * Part of #523: Desktop App Web host connection guide.
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 
 export function openInBrowser(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -15,17 +15,21 @@ export function openInBrowser(url: string): Promise<void> {
     }
 
     const platform = process.platform;
-    let command: string;
+    let cmd: string;
+    let args: string[];
 
     if (platform === 'darwin') {
-      command = `open "${url}"`;
+      cmd = 'open';
+      args = [url];
     } else if (platform === 'win32') {
-      command = `start "" "${url}"`;
+      cmd = 'cmd';
+      args = ['/c', 'start', '', url];
     } else {
-      command = `xdg-open "${url}"`;
+      cmd = 'xdg-open';
+      args = [url];
     }
 
-    exec(command, (error) => {
+    execFile(cmd, args, (error) => {
       if (error) {
         reject(new Error(`Failed to open browser: ${error.message}`));
         return;
