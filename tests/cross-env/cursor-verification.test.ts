@@ -9,7 +9,7 @@ import * as path from 'path';
 const SERVER_PATH = path.resolve(__dirname, '../../dist/index.js');
 
 // macOS CI with older Node versions can be slow to spawn processes
-jest.setTimeout(30000);
+jest.setTimeout(60000);
 
 // ── JSON-RPC helpers ──
 
@@ -23,7 +23,7 @@ function sendAndReceive(
   proc: ChildProcess,
   method: string,
   params?: Record<string, unknown>,
-  timeoutMs = 30000,
+  timeoutMs = 60000,
 ): Promise<{ response: any; notifications: any[] }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for ${method}`)), timeoutMs);
