@@ -29,13 +29,15 @@ export class HTTPTransport implements MCPTransport {
   private messageHandler: ((msg: Record<string, unknown>) => Promise<MCPResponse | null>) | null = null;
   private port: number;
   private host: string;
+  private authToken: string | undefined;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
 
-  constructor(port: number, host = '127.0.0.1') {
+  constructor(port: number, host = '127.0.0.1', authToken?: string) {
     this.port = port;
     this.host = host;
+    this.authToken = authToken;
   }
 
   /**
@@ -110,7 +112,7 @@ export class HTTPTransport implements MCPTransport {
     // CORS headers for all responses
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id, Authorization');
     res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
 
     // Handle CORS preflight
@@ -120,9 +122,21 @@ export class HTTPTransport implements MCPTransport {
       return;
     }
 
+    // /health is always unauthenticated
     if (pathname === '/health') {
       this.handleHealth(res);
       return;
+    }
+
+    // Bearer token validation: reject requests without valid token when configured
+    if (this.authToken) {
+      const authHeader = req.headers['authorization'];
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
+      if (token !== this.authToken) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
     }
 
     if (pathname === '/mcp') {

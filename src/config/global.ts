@@ -24,6 +24,10 @@ export interface GlobalConfig {
   restoreLastSession?: boolean;
   /** If true, skip cookie bridge on page creation (used in server/headless mode) */
   skipCookieBridge?: boolean;
+  /** Bearer token for HTTP transport authentication.
+   *  When set, all HTTP requests (except /health) must include Authorization: Bearer <token>.
+   *  Set via --auth-token CLI flag or OPENCHROME_AUTH_TOKEN env var. */
+  authToken?: string;
   /** Chrome Pool settings for managing multiple Chrome instances */
   pool?: {
     /** Enable the Chrome pool (default: true) */
