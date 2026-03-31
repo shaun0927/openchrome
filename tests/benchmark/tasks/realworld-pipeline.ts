@@ -47,8 +47,8 @@ export function createRealworldPipelineSequentialTask(): BenchmarkTask {
         measureCall(await adapter.callTool('javascript_tool', jsArgs), jsArgs, counters);
 
         // Step 4: Click first anchor element
-        const clickArgs = { tabId, ref: 'a' };
-        measureCall(await adapter.callTool('click_element', clickArgs), clickArgs, counters);
+        const clickArgs = { tabId, query: 'a' };
+        measureCall(await adapter.callTool('interact', clickArgs), clickArgs, counters);
 
         // Step 5: Read page after interaction
         const readResultArgs = { tabId };

@@ -201,6 +201,16 @@ program
     // Clean up orphaned Chrome from previous crashed sessions
     cleanOrphanedChromeProcesses([port, port + 1, port + 2, port + 3, port + 4]);
 
+    // Kill a Chrome process and its entire process group.
+    // Chrome is spawned with detached:true (new process group), so killing
+    // only the main PID leaves renderer/GPU/crashpad children alive.
+    const killChromeTree = (pid: number) => {
+      if (process.platform !== 'win32') {
+        try { process.kill(-pid, 'SIGTERM'); } catch { /* ignore */ }
+      }
+      try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+    };
+
     // Last-resort synchronous Chrome kill on ANY exit path
     // (including uncaughtException, SIGKILL recovery, process.exit())
     process.on('exit', () => {
@@ -208,7 +218,7 @@ program
         const launcher = getChromeLauncher();
         const chromePid = launcher.getChromePid();
         if (chromePid) {
-          try { process.kill(chromePid, 'SIGTERM'); } catch { /* ignore */ }
+          killChromeTree(chromePid);
         }
       } catch { /* launcher may not be initialized */ }
 
@@ -219,7 +229,7 @@ program
         for (const [, instance] of pool.getInstances()) {
           const pid = instance.launcher.getChromePid();
           if (pid) {
-            try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+            killChromeTree(pid);
           }
         }
       } catch { /* pool may not be initialized */ }
