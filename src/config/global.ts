@@ -24,6 +24,7 @@ export interface GlobalConfig {
   restoreLastSession?: boolean;
   /** If true, skip cookie bridge on page creation (used in server/headless mode) */
   skipCookieBridge?: boolean;
+  /** @deprecated authToken removed from GlobalConfig — token flows directly via createTransport() */
   /** Chrome Pool settings for managing multiple Chrome instances */
   pool?: {
     /** Enable the Chrome pool (default: true) */

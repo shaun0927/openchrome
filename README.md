@@ -152,6 +152,37 @@ OpenChrome isn't just a browser API — it's an intelligent harness with 27 subs
 
 ---
 
+## Desktop App
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Intel-black?logo=apple" alt="macOS">
+  <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows" alt="Windows">
+  <img src="https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black" alt="Linux">
+</p>
+
+OpenChrome is also available as a **desktop app** — a signed, one-click installer that runs the MCP server locally without requiring Node.js, npm, or any command-line setup. Designed for non-developers who want browser automation without the terminal.
+
+**[Download the Latest Release](https://github.com/shaun0927/openchrome/releases/latest)**
+
+| Platform | Artifact |
+|----------|----------|
+| macOS (Apple Silicon) | `OpenChrome-{version}-arm64.dmg` |
+| macOS (Intel) | `OpenChrome-{version}-x64.dmg` |
+| Windows | `OpenChrome-{version}-x64-setup.exe` |
+| Linux | `OpenChrome-{version}-x86_64.AppImage` |
+
+### Get Started (non-developers)
+
+1. **Download** the installer for your platform from the [Latest Release](https://github.com/shaun0927/openchrome/releases/latest) page.
+2. **Install** — open the `.dmg` / run the `.exe` installer / make the `.AppImage` executable and launch it.
+3. **Connect** — the app starts the MCP server automatically. Point your MCP client (Claude, Cursor, etc.) to the local server address shown in the app.
+
+The desktop app includes an auto-updater — it will notify you when a new version is available.
+
+> **Note:** The desktop app and the CLI (`openchrome-mcp` on npm) are separate distributions with independent version numbers. You do not need both — use whichever fits your workflow. See [`desktop/RELEASING.md`](desktop/RELEASING.md) for the desktop release process.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -316,7 +347,30 @@ Cookies and localStorage are saved atomically every 30 seconds and restored on s
 
 ## Anti-Bot & Turnstile Support
 
-OpenChrome includes built-in defenses against Cloudflare Turnstile and similar anti-bot systems, with additional stealth navigation planned for a future release. See [Turnstile Guide](docs/turnstile-guide.md) for details.
+OpenChrome includes built-in defenses against Cloudflare Turnstile and similar anti-bot systems. See [Turnstile Guide](docs/turnstile-guide.md) for details.
+
+### 3-Tier Auto-Fallback for CDN/WAF Blocks
+
+When a navigation is blocked by CDN/WAF systems (Akamai, Cloudflare, etc.), OpenChrome automatically escalates through three tiers:
+
+| Tier | Mode | What It Bypasses |
+|------|------|-----------------|
+| 1 | Headless Chrome | Normal navigation — works for most sites |
+| 2 | Stealth + Headless | JS-level anti-bot (PerimeterX, Turnstile, basic fingerprinting) |
+| 3 | **Headed Chrome** | TLS/UA-level blocking (Akamai CDN, network security filters) |
+
+Tier 3 launches a real headed Chrome window with a genuine user-agent (`Chrome/...` instead of `HeadlessChrome/...`) and a different TLS fingerprint, bypassing binary-level detection that no JavaScript injection can fix.
+
+**Parameters:**
+- `autoFallback: false` — disable all automatic retry
+- `headed: true` — skip directly to Tier 3 (headed Chrome)
+- `stealth: true` — use stealth mode (Tier 2) explicitly
+
+**Environment:** Tier 3 requires a display (macOS/Windows desktop, or Linux with `$DISPLAY`). In server/container environments without a display, Tier 3 is gracefully skipped.
+
+### Known Limitations
+
+- **CAPTCHA-protected sites (e.g., Reddit):** Auto-fallback correctly detects and escalates through all tiers, but sites that serve CAPTCHA challenges ("Prove your humanity") to all automated clients — regardless of headless/headed mode — require human interaction to solve. This is beyond auto-fallback's scope, which targets CDN/WAF network-level blocking (TLS fingerprint, user-agent detection), not interactive CAPTCHA challenges.
 
 ---
 

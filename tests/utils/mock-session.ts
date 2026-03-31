@@ -209,6 +209,11 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       targetToWorker.set(targetId, { sessionId, workerId });
     }),
 
+    registerHeadedPage: jest.fn().mockImplementation((targetId: string, sessionId: string, workerId: string, page: Page) => {
+      manager.registerExternalTarget(targetId, sessionId, workerId);
+      pages.set(targetId, page);
+    }),
+
     // Target management (updated for workers)
     createTarget: jest.fn().mockImplementation(async (sessionId: string, url?: string, workerId?: string) => {
       const worker = await manager.getOrCreateWorker(sessionId, workerId);
