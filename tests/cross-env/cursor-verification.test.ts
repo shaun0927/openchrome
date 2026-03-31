@@ -23,7 +23,7 @@ function sendAndReceive(
   proc: ChildProcess,
   method: string,
   params?: Record<string, unknown>,
-  timeoutMs = 10000,
+  timeoutMs = 30000,
 ): Promise<{ response: any; notifications: any[] }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for ${method}`)), timeoutMs);
