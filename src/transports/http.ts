@@ -104,7 +104,7 @@ export class HTTPTransport implements MCPTransport {
   }
 
   private handleHTTPRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const url = new URL(req.url || '/', `http://localhost:${this.port}`);
+    const url = new URL(req.url || '/', `http://${this.host}:${this.port}`);
     const pathname = url.pathname;
 
     // CORS headers for all responses
