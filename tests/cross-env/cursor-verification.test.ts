@@ -8,6 +8,9 @@ import * as path from 'path';
 
 const SERVER_PATH = path.resolve(__dirname, '../../dist/index.js');
 
+// macOS CI with older Node versions can be slow to spawn processes
+jest.setTimeout(30000);
+
 // ── JSON-RPC helpers ──
 
 let msgId = 0;
