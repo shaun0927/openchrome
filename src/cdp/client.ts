@@ -1817,7 +1817,7 @@ export class CDPClient {
     this.configurePageDefenses(page);
     page.once('close', () => {
       this.targetIdIndex.delete(targetId);
-      this.sessions.delete(targetId);
+      // sessions and cookie cache cleanup handled by onTargetDestroyed via browser targetdestroyed event
     });
   }
 
