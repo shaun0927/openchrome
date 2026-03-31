@@ -102,9 +102,13 @@ async function stealthAutoRetry(
     ...(summary && { visualSummary: summary }),
     ...(blocking && { blockingPage: blocking }),
   });
-  // Tier 3: if stealth retry also got blocked and headed Chrome is available, escalate (#459)
-  if (blocking && autoFallbackToHeaded && RETRYABLE_BLOCK_TYPES.has(blocking.type)) {
-    const headedResult = await headedAutoRetry(targetUrl, blocking);
+  // Tier 3: escalate to headed Chrome if stealth retry also got blocked
+  // OR if stealth produced an empty/broken page (can't detect blocking in broken pages).
+  // This is safe because we only reach here after Tier 1 already detected a block. (#459)
+  const stealthBlocked = blocking && RETRYABLE_BLOCK_TYPES.has(blocking.type);
+  const stealthBroken = elementCount === 0 || readiness.readyState === 'unknown';
+  if (autoFallbackToHeaded && (stealthBlocked || stealthBroken)) {
+    const headedResult = await headedAutoRetry(targetUrl, blocking || blockingInfo);
     if (headedResult) return headedResult;
   }
 
