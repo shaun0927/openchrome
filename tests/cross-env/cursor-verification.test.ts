@@ -191,7 +191,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       const toolNames = response.result.tools.map((t: any) => t.name);
 
       const expectedTier2 = [
-        'click_element', 'wait_and_click', 'drag_drop', 'network',
+        'drag_drop', 'network',
         'request_intercept', 'http_auth', 'user_agent', 'geolocation',
         'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
         'console_capture', 'performance_metrics', 'file_upload',
@@ -215,7 +215,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       expect(notifications.some((n: any) => n.method === 'notifications/tools/list_changed')).toBe(true);
     });
 
-    test('After full expansion: all 53 tools visible, expand_tools REMOVED', async () => {
+    test('After full expansion: all 51 tools visible, expand_tools REMOVED', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       const toolNames = response.result.tools.map((t: any) => t.name);
 
@@ -232,8 +232,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         expect(toolNames).toContain(tool);
       }
 
-      // Total should be 53 (27 T1 + 17 T2 + 9 T3)
-      expect(toolNames.length).toBe(53);
+      // Total should be 53 (27 T1 + 15 T2 + 9 T3)
+      expect(toolNames.length).toBe(51);
     });
 
     test('resources/list returns usage guide resource', async () => {
@@ -410,8 +410,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
       // Should NOT have expand_tools (progressive disclosure disabled)
       expect(toolNames).not.toContain('expand_tools');
-      // Should have all 53 tools immediately
-      expect(toolNames.length).toBe(53);
+      // Should have all 51 tools immediately
+      expect(toolNames.length).toBe(51);
     });
   });
 });
