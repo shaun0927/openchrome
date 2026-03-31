@@ -226,6 +226,7 @@ class HeadedFallbackManager {
 
       const targetId = getTargetId(page.target());
       this.alivePages.set(targetId, page as unknown as Page);
+      page.once('close', () => this.alivePages.delete(targetId));
 
       return {
         targetId,
