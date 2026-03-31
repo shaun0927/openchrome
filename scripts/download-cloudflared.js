@@ -21,7 +21,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // Cloudflared binary mapping: { `${platform}-${arch}`: assetName }
 const BINARY_MAP = {
@@ -66,7 +66,7 @@ function parseArgs() {
         opts.version = args[++i];
         break;
       case '--help':
-        console.log(`Usage: node scripts/download-cloudflared.js [options]
+        console.error(`Usage: node scripts/download-cloudflared.js [options]
   --output-dir <dir>    Output directory (default: desktop/src-tauri/binaries)
   --platform <platform> Target platform: darwin, win32, linux (default: current)
   --arch <arch>         Target arch: arm64, x64 (default: current)
@@ -139,12 +139,12 @@ async function downloadAndVerify(release, assetName) {
     (a) => a.name === 'cloudflared-SHA256SUMS' || a.name === 'SHA256SUMS',
   );
 
-  console.log(`Downloading ${assetName} (${(binaryAsset.size / 1024 / 1024).toFixed(1)} MB)...`);
+  console.error(`Downloading ${assetName} (${(binaryAsset.size / 1024 / 1024).toFixed(1)} MB)...`);
   const binaryData = await httpsGet(binaryAsset.browser_download_url);
 
   // Verify checksum if available
   if (checksumAsset) {
-    console.log('Downloading checksums...');
+    console.error('Downloading checksums...');
     const checksumData = await httpsGet(checksumAsset.browser_download_url);
     const checksumText = checksumData.toString();
     const expectedHash = checksumText
@@ -159,12 +159,15 @@ async function downloadAndVerify(release, assetName) {
           `Checksum mismatch for ${assetName}:\n  expected: ${expectedHash}\n  actual:   ${actualHash}`,
         );
       }
-      console.log(`Checksum verified: ${actualHash}`);
+      console.error(`Checksum verified: ${actualHash}`);
     } else {
-      console.warn(`Warning: no checksum entry found for ${assetName}, skipping verification`);
+      console.error(`Warning: no checksum entry found for ${assetName}, skipping verification`);
     }
   } else {
-    console.warn('Warning: no checksum file in release, skipping verification');
+    throw new Error(
+      'No checksum file found in release — refusing to install unverified binary. ' +
+      'Use --skip-checksum to override (not recommended).',
+    );
   }
 
   return binaryData;
@@ -177,7 +180,7 @@ function extractTgz(buffer) {
   fs.writeFileSync(tmpFile, buffer);
 
   try {
-    execSync(`tar xzf "${tmpFile}" -C "${tmpDir}"`, { stdio: 'pipe' });
+    execFileSync('tar', ['xzf', tmpFile, '-C', tmpDir], { stdio: 'pipe' });
     // Find the cloudflared binary in extracted files
     const files = fs.readdirSync(tmpDir);
     const binary = files.find((f) => f === 'cloudflared');
@@ -207,20 +210,20 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Platform: ${opts.platform}, Arch: ${opts.arch}`);
-  console.log(`Asset: ${assetName}`);
+  console.error(`Platform: ${opts.platform}, Arch: ${opts.arch}`);
+  console.error(`Asset: ${assetName}`);
 
   // Get release info
   const release =
     opts.version === 'latest' ? await getLatestRelease() : await getReleaseByTag(opts.version);
-  console.log(`Release: ${release.tag_name}`);
+  console.error(`Release: ${release.tag_name}`);
 
   // Download and verify
   let binaryData = await downloadAndVerify(release, assetName);
 
   // Extract if tarball (macOS releases are .tgz)
   if (assetName.endsWith('.tgz')) {
-    console.log('Extracting from tarball...');
+    console.error('Extracting from tarball...');
     binaryData = extractTgz(binaryData);
   }
 
@@ -239,14 +242,14 @@ async function main() {
   }
 
   const sizeMB = (binaryData.length / 1024 / 1024).toFixed(1);
-  console.log(`Written: ${outputPath} (${sizeMB} MB)`);
+  console.error(`Written: ${outputPath} (${sizeMB} MB)`);
 
   // Write version file for reproducibility
   const versionFile = path.join(opts.outputDir, 'cloudflared-version.txt');
   fs.writeFileSync(versionFile, `${release.tag_name}\n`);
-  console.log(`Version file: ${versionFile}`);
+  console.error(`Version file: ${versionFile}`);
 
-  console.log('Done.');
+  console.error('Done.');
 }
 
 main().catch((err) => {

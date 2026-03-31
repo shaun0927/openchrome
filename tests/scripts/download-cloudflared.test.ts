@@ -74,7 +74,7 @@ describe('download-cloudflared platform mappings', () => {
   it('script prints help without error', () => {
     const { execSync } = require('child_process');
     const scriptPath = require('path').join(__dirname, '..', '..', 'scripts', 'download-cloudflared.js');
-    const output = execSync(`node "${scriptPath}" --help`, { encoding: 'utf-8' });
+    const output = execSync(`node "${scriptPath}" --help 2>&1`, { encoding: 'utf-8' });
     expect(output).toContain('--output-dir');
     expect(output).toContain('--platform');
     expect(output).toContain('--arch');
