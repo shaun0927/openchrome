@@ -81,7 +81,8 @@ program
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
   .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
   .option('--http-host <host>', 'Bind address for HTTP transport (default: 127.0.0.1, use 0.0.0.0 for external access)')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean }) => {
+  .option('--auth-token <token>', 'Bearer token for HTTP transport authentication (also: OPENCHROME_AUTH_TOKEN env var)')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -249,11 +250,17 @@ program
     if (process.platform === 'win32') {
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
+    // Resolve auth token: CLI flag takes precedence over env var
+    const authToken = options.authToken || process.env.OPENCHROME_AUTH_TOKEN || undefined;
+    if (authToken) {
+      console.error('[openchrome] Bearer token authentication: enabled');
+    }
+
     // Start transport (useHttp was determined above, before getMCPServer)
     if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
       const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
-      const transport = createTransport('http', { port: httpPort, host: httpHost });
+      const transport = createTransport('http', { port: httpPort, host: httpHost, authToken });
       server.start(transport);
       console.error(`[openchrome] HTTP transport enabled on ${httpHost}:${httpPort}`);
       console.error(`[openchrome] Infinite reconnection: enabled (daemon mode)`);
