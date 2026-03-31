@@ -135,10 +135,10 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
   describe('C2: Tool Discovery & Listing', () => {
     let tier1Tools: any[];
 
-    test('Initial tools/list returns Tier 1 tools only (27 tools) + expand_tools', async () => {
+    test('Initial tools/list returns Tier 1 tools only (30 tools) + expand_tools', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       tier1Tools = response.result.tools;
-      // 27 Tier 1 tools + 1 expand_tools virtual tool = 28
+      // 30 Tier 1 tools + 1 expand_tools virtual tool = 31
       const toolNames = tier1Tools.map((t: any) => t.name);
       expect(toolNames).toContain('expand_tools');
 
@@ -162,6 +162,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         'cookies', 'storage', 'wait_for', 'memory', 'lightweight_scroll',
         'oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume',
         'oc_journal',
+        'oc_get_connection_info', 'oc_copy_to_clipboard', 'oc_open_host_settings',
       ];
       for (const tool of expectedCore) {
         expect(names).toContain(tool);
@@ -215,7 +216,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       expect(notifications.some((n: any) => n.method === 'notifications/tools/list_changed')).toBe(true);
     });
 
-    test('After full expansion: all 51 tools visible, expand_tools REMOVED', async () => {
+    test('After full expansion: all 54 tools visible, expand_tools REMOVED', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       const toolNames = response.result.tools.map((t: any) => t.name);
 
@@ -232,7 +233,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         expect(toolNames).toContain(tool);
       }
 
-      // Total should be 53 (27 T1 + 15 T2 + 9 T3)
+      // Total should be 54 (30 T1 + 15 T2 + 9 T3)
       expect(toolNames.length).toBe(54);
     });
 
@@ -274,6 +275,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'javascript_tool', 'tabs_context', 'tabs_create', 'tabs_close',
       'cookies', 'storage', 'wait_for', 'memory', 'lightweight_scroll',
       'oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal',
+      'oc_get_connection_info', 'oc_copy_to_clipboard', 'oc_open_host_settings',
     ];
     tier1Tools.forEach(tool => {
       test(`Tier 1: ${tool} registered`, () => {
@@ -410,7 +412,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
       // Should NOT have expand_tools (progressive disclosure disabled)
       expect(toolNames).not.toContain('expand_tools');
-      // Should have all 51 tools immediately
+      // Should have all 54 tools immediately
       expect(toolNames.length).toBe(54);
     });
   });
