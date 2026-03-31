@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenChrome</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>OpenChrome</h1>
+        <p class="subtitle">Browser automation server</p>
+      </header>
+
+      <div class="status-card">
+        <div class="status-indicator" id="status-indicator">
+          <div class="status-dot"></div>
+          <span class="status-text" id="status-text">Stopped</span>
+        </div>
+        <div class="controls">
+          <button id="btn-toggle" class="btn btn-start" disabled>
+            Start Server
+          </button>
+        </div>
+      </div>
+
+      <div class="health-info" id="health-info">
+        Ready to start. Connect from Claude, Cursor, or any MCP client.
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
