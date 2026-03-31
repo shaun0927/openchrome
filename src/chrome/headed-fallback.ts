@@ -210,3 +210,11 @@ export function getHeadedFallback(basePort: number = 9222): HeadedFallbackManage
   }
   return instance;
 }
+
+/** Shut down the headed fallback if it was ever initialized. Safe to call unconditionally. */
+export function shutdownHeadedFallback(): void {
+  if (instance) {
+    instance.shutdown();
+    instance = null;
+  }
+}
