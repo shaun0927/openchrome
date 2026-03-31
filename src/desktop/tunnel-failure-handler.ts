@@ -85,9 +85,13 @@ export class TunnelFailureHandler extends EventEmitter {
       if (this.retryTimer) {
         clearTimeout(this.retryTimer);
       }
+      // Backoff delay — callers should listen to 'tunnel-reconnecting' and re-attempt
+      // connection after the delay expires. The timer itself only resets state.
       this.retryTimer = setTimeout(() => {
         this.retryTimer = null;
+        this.emit('tunnel-retry-ready', { attempt: this.consecutiveFailures });
       }, this.retryDelayMs);
+      this.retryTimer.unref();
     } else {
       this.fallbackToLocalOnly();
     }
