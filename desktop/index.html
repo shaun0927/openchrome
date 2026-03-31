@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenChrome</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>OpenChrome</h1>
+        <p class="subtitle">Desktop Server Manager</p>
+      </header>
+      <main>
+        <div class="status-card">
+          <div class="status-row">
+            <span class="status-dot stopped" id="status-indicator"></span>
+            <span class="status-text" id="status-text">Stopped</span>
+          </div>
+          <button id="btn-toggle" class="btn btn-start">Start Server</button>
+        </div>
+        <div class="metrics-card">
+          <div class="metric" id="metric-uptime">Uptime: --</div>
+          <div class="metric" id="metric-ram">RAM: --</div>
+          <div class="metric" id="metric-tabs">Tabs: --</div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
