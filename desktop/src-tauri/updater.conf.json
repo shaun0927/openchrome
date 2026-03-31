@@ -1,0 +1,12 @@
+{
+  "tauri": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "pubkey": "UPDATER_PUBKEY_PLACEHOLDER",
+      "endpoints": [
+        "https://github.com/shaun0927/openchrome/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
