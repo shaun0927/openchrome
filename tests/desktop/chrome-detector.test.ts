@@ -80,10 +80,15 @@ describe('ChromeDetector', () => {
 
     test('emits "detected" event when Chrome is found', async () => {
       const platform = os.platform();
-      const chromePath =
-        platform === 'darwin'
-          ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-          : '/usr/bin/google-chrome-stable';
+      let chromePath: string;
+      if (platform === 'darwin') {
+        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      } else if (platform === 'win32') {
+        chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+        process.env['PROGRAMFILES'] = 'C:\\Program Files';
+      } else {
+        chromePath = '/usr/bin/google-chrome-stable';
+      }
       mockChromeFound(chromePath);
 
       const handler = jest.fn();
@@ -96,10 +101,15 @@ describe('ChromeDetector', () => {
 
     test('message contains no technical jargon when Chrome is found', async () => {
       const platform = os.platform();
-      const chromePath =
-        platform === 'darwin'
-          ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-          : '/usr/bin/google-chrome-stable';
+      let chromePath: string;
+      if (platform === 'darwin') {
+        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      } else if (platform === 'win32') {
+        chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+        process.env['PROGRAMFILES'] = 'C:\\Program Files';
+      } else {
+        chromePath = '/usr/bin/google-chrome-stable';
+      }
       mockChromeFound(chromePath);
 
       const result = await detector.detect();
@@ -258,10 +268,16 @@ describe('ChromeDetector', () => {
       // After first poll, simulate Chrome being installed
       await new Promise(r => setTimeout(r, 70));
 
-      const chromePath =
-        os.platform() === 'darwin'
-          ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-          : '/usr/bin/google-chrome-stable';
+      const platform = os.platform();
+      let chromePath: string;
+      if (platform === 'darwin') {
+        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      } else if (platform === 'win32') {
+        chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+        process.env['PROGRAMFILES'] = 'C:\\Program Files';
+      } else {
+        chromePath = '/usr/bin/google-chrome-stable';
+      }
       mockChromeFound(chromePath);
 
       await new Promise(r => setTimeout(r, 100));
