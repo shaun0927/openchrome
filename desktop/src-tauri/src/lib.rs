@@ -1,5 +1,7 @@
 mod sidecar;
 mod tunnel;
+mod profiles;
+mod settings;
 
 use std::sync::Arc;
 use sidecar::{SidecarState, SidecarStatus};
@@ -139,6 +141,26 @@ async fn get_bearer_token(
     Ok(guard.to_status().bearer_token)
 }
 
+#[tauri::command]
+fn list_chrome_profiles() -> Vec<profiles::ChromeProfile> {
+    profiles::detect_profiles()
+}
+
+#[tauri::command]
+fn load_settings() -> settings::AppSettings {
+    settings::load()
+}
+
+#[tauri::command]
+fn save_settings(settings: settings::AppSettings) -> Result<(), String> {
+    settings::save(&settings)
+}
+
+#[tauri::command]
+fn get_selected_profile() -> String {
+    settings::load().selected_profile
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let sidecar_state = Arc::new(Mutex::new(SidecarState::new()));
@@ -151,6 +173,7 @@ pub fn run() {
             start_server, stop_server, get_server_status, get_health,
             capture_screenshot, get_sessions, get_tool_calls, get_metrics,
             start_tunnel, stop_tunnel, get_tunnel_status, get_tunnel_url, get_bearer_token,
+            list_chrome_profiles, load_settings, save_settings, get_selected_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
