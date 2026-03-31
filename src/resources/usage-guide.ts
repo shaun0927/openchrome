@@ -105,22 +105,20 @@ Always consider simpler, faster, more reliable alternatives first.
 
 If the browser connection is lost during a session:
 
-1. **Ask the user to run /mcp** in Claude Code to reconnect the MCP server
-2. **NEVER run these commands** to fix connection issues:
-   - \`claude mcp remove openchrome\`
-   - \`claude mcp add openchrome ...\`
-   These commands break multi-scope MCP configurations.
+1. **Simply retry your operation** — the MCP server has built-in auto-reconnect
+   and will automatically attempt to reconnect to Chrome when a connection error
+   is detected.
 
-3. **The MCP server has built-in auto-reconnect**: It will automatically attempt
-   to reconnect to Chrome when a connection error is detected. If auto-reconnect
-   fails, the error message will include recovery instructions.
+2. **If auto-reconnect fails**, the error message will include recovery
+   instructions. In most cases, restarting the MCP server from your IDE or
+   client settings will resolve the issue.
 
-### Why NOT to use "claude mcp remove/add"
-
-When openchrome is configured in both user-level (~/.claude.json) and project-level
-(.claude.json) scopes, running "claude mcp remove" without specifying a scope flag
-(-s local or -s user) causes a conflict error. The /mcp command simply reconnects
-to the existing MCP server process without touching configuration.
+3. **Avoid removing and re-adding the MCP server configuration** to fix
+   connection issues — this can break multi-scope configurations. Instead,
+   use your client's built-in MCP reconnect mechanism:
+   - **Claude Code**: Run the \`/mcp\` command
+   - **Cursor/Windsurf**: Restart the MCP server from settings
+   - **Web clients**: Refresh the page or re-establish the connection
 `;
 
 export function getUsageGuideContent(): string {

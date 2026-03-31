@@ -56,6 +56,11 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   batch_execute: 2,
   batch_paginate: 2,
 
+  // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
+  connection_health: 1,
+  checkpoint: 1,
+  list_profiles: 1,
+
   // Tier 3: Orchestration only
   workflow_init: 3,
   workflow_status: 3,
