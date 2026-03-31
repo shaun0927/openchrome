@@ -10,8 +10,8 @@ jest.mock('child_process');
 
 const mockExistsSync = fs.existsSync as jest.MockedFunction<typeof fs.existsSync>;
 
-import { execSync } from 'child_process';
-const mockExecSync = execSync as jest.MockedFunction<typeof execSync>;
+import { execFileSync } from 'child_process';
+const mockExecFileSync = execFileSync as jest.MockedFunction<typeof execFileSync>;
 
 function mockChromeFound(chromePath: string): void {
   mockExistsSync.mockImplementation((p: fs.PathLike | number) => String(p) === chromePath);
@@ -19,7 +19,7 @@ function mockChromeFound(chromePath: string): void {
 
 function mockChromeNotFound(): void {
   mockExistsSync.mockReturnValue(false);
-  mockExecSync.mockImplementation(() => { throw new Error('not found'); });
+  mockExecFileSync.mockImplementation(() => { throw new Error('not found'); });
 }
 
 describe('ChromeDetector', () => {

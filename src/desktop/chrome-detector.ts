@@ -8,7 +8,7 @@ import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 export const CHROME_DOWNLOAD_URL = 'https://www.google.com/chrome/';
 
@@ -69,14 +69,18 @@ function findChromePath(): string | null {
     for (const p of linuxPaths) {
       if (fs.existsSync(p)) return p;
     }
-    // Fall back to PATH search
-    try {
-      const result = execSync('which google-chrome || which google-chrome-stable || which chromium-browser || which chromium', {
-        encoding: 'utf8',
-      }).trim();
-      if (result) return result;
-    } catch {
-      // not found in PATH
+    // Fall back to PATH search (same order as launcher.ts)
+    const whichCandidates = ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium'];
+    for (const bin of whichCandidates) {
+      try {
+        const result = execFileSync('which', [bin], {
+          encoding: 'utf8',
+          timeout: 5000,
+        }).trim();
+        if (result) return result;
+      } catch {
+        // not found, try next
+      }
     }
   }
 
