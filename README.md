@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Harness-Engineered Browser Automation</b><br>
-  The MCP server that guides AI agents instead of just exposing APIs.
+  The MCP server that guides AI agents.
 </p>
 
 <p align="center">
