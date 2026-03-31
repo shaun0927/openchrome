@@ -11,6 +11,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
+import { withDomDelta } from '../utils/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
@@ -110,15 +111,15 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const strategy = args.strategy as string;
-  const totalPages = args.totalPages as number | undefined;
-  const startPage = (args.startPage as number) || 1;
+  const totalPages = args.totalPages != null ? Number(args.totalPages) : undefined;
+  const startPage = Number(args.startPage) || 1;
   const captureMode = (args.captureMode as string) || 'text';
   const keyAction = (args.keyAction as string) || 'ArrowRight';
   const nextSelector = args.nextSelector as string | undefined;
   const urlTemplate = args.urlTemplate as string | undefined;
-  const waitBetweenPages = (args.waitBetweenPages as number) ?? 500;
-  const scrollAmount = (args.scrollAmount as number) || 1;
-  const maxScrolls = (args.maxScrolls as number) || 50;
+  const waitBetweenPages = args.waitBetweenPages != null ? Number(args.waitBetweenPages) : 500;
+  const scrollAmount = Number(args.scrollAmount) || 1;
+  const maxScrolls = Number(args.maxScrolls) || 50;
 
   if (!tabId) {
     return {
@@ -311,8 +312,9 @@ const handler: ToolHandler = async (
               });
               break;
             }
-            await nextButton.click();
-            await new Promise((r) => setTimeout(r, waitBetweenPages));
+            await withDomDelta(page, async () => {
+              await nextButton.click();
+            }, { settleMs: Math.max(150, waitBetweenPages) });
           } catch (err) {
             pages.push({
               pageNumber: i + 1,
@@ -344,9 +346,16 @@ const handler: ToolHandler = async (
       pages.push(initialResult);
 
       for (let step = 1; step <= maxScrolls; step++) {
-        // Scroll and measure in a single CDP round-trip
-        const { newScrollHeight, atBottom } = await withTimeout(page.evaluate((amount: number) => {
+        // Scroll down
+        await withTimeout(page.evaluate((amount: number) => {
           window.scrollBy(0, window.innerHeight * amount);
+        }, scrollAmount), 10000, 'batch_paginate.evaluate', context);
+
+        // Wait for content to load (AJAX, lazy load, etc.)
+        await new Promise((r) => setTimeout(r, waitBetweenPages));
+
+        // Measure AFTER waiting — content may have loaded dynamically
+        const { newScrollHeight, atBottom } = await withTimeout(page.evaluate(() => {
           const scrollHeight = document.documentElement.scrollHeight;
           const scrollTop = window.scrollY;
           const viewportHeight = window.innerHeight;
@@ -354,15 +363,13 @@ const handler: ToolHandler = async (
             newScrollHeight: scrollHeight,
             atBottom: scrollTop + viewportHeight >= scrollHeight - 10,
           };
-        }, scrollAmount), 10000, 'batch_paginate.evaluate', context);
-
-        await new Promise((r) => setTimeout(r, waitBetweenPages));
+        }), 10000, 'batch_paginate.evaluate', context);
 
         stepNumber++;
         const stepResult = await capturePageContent(page, stepNumber);
         pages.push(stepResult);
 
-        // Stop if reached bottom and height didn't change
+        // Stop if reached bottom and height didn't change (after content had time to load)
         if (atBottom && newScrollHeight === lastScrollHeight) {
           break;
         }

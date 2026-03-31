@@ -100,6 +100,38 @@ export async function detectBlockingPage(page: Page): Promise<BlockingInfo | nul
         return { type: 'js-required' as const, detail: 'Page requires JavaScript' };
       }
 
+      // Structural heuristic: sparse page + blocking vocabulary → likely a block page.
+      // This catches novel CDN/WAF block patterns (e.g. "blocked by network security")
+      // without requiring site-specific text matching. The element count + body length
+      // guard prevents false positives on real pages that happen to mention blocking.
+      const elementCount = document.querySelectorAll('*').length;
+      const isSparsePage = elementCount < 100 && bodyText.length < 800;
+
+      if (isSparsePage) {
+        // Blocking vocabulary — ordered by specificity (most specific first)
+        const BLOCK_SIGNALS = [
+          'blocked by',
+          'been blocked',
+          'request blocked',
+          'ip blocked',
+          'ip has been blocked',
+          'network security',
+          'security policy',
+          'permission denied',
+          'not permitted',
+          'rate limit',
+          'too many requests',
+          'temporarily banned',
+          'your ip',
+          'suspicious activity',
+          'unusual traffic',
+        ];
+
+        if (BLOCK_SIGNALS.some(signal => bodyText.includes(signal))) {
+          return { type: 'access-denied' as const, detail: document.title || bodyText.substring(0, 100) };
+        }
+      }
+
       return null;
     });
   } catch {

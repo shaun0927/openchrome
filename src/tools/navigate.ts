@@ -102,9 +102,13 @@ async function stealthAutoRetry(
     ...(summary && { visualSummary: summary }),
     ...(blocking && { blockingPage: blocking }),
   });
-  // Tier 3: if stealth retry also got blocked and headed Chrome is available, escalate (#459)
-  if (blocking && autoFallbackToHeaded && RETRYABLE_BLOCK_TYPES.has(blocking.type)) {
-    const headedResult = await headedAutoRetry(targetUrl, blocking, sessionId);
+  // Tier 3: escalate to headed Chrome if stealth retry also got blocked
+  // OR if stealth produced an empty/broken page (can't detect blocking in broken pages).
+  // This is safe because we only reach here after Tier 1 already detected a block. (#459)
+  const stealthBlocked = blocking && RETRYABLE_BLOCK_TYPES.has(blocking.type);
+  const stealthBroken = elementCount === 0 || readiness.readyState === 'unknown';
+  if (autoFallbackToHeaded && (stealthBlocked || stealthBroken)) {
+    const headedResult = await headedAutoRetry(targetUrl, blocking || blockingInfo, sessionId);
     if (headedResult) return headedResult;
   }
 
@@ -439,6 +443,13 @@ const handler: ToolHandler = async (
       // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
       if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
         return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context);
+      }
+
+      // When explicit stealth hits a block, escalate directly to tier 3 (headed Chrome)
+      // since tier 2 (stealth) is already being used. (#453)
+      if (newTabBlocking && stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
+        const headedResult = await headedAutoRetry(targetUrl, newTabBlocking, sessionId);
+        if (headedResult) return headedResult;
       }
 
       const newTabResultText = JSON.stringify({

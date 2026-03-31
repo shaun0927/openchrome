@@ -54,6 +54,9 @@ const NON_PROGRESS_SIGNALS = [
   'bot-check',                       // Bot verification page detected
   'captcha detected',                // CAPTCHA page detected
   'Blocking page detected',          // Any blocking page warning from navigate
+  'blocked by',                      // Network security block (e.g. "blocked by network security")
+  'network security',                // CDN/WAF network security block
+  'been blocked',                    // Generic "you've been blocked" messages
 ];
 
 export class ProgressTracker {

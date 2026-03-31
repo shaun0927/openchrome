@@ -227,6 +227,77 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(mockHeadedNavigatePersistent).not.toHaveBeenCalled();
     });
 
+    test('escalates to Tier 3 when stealth produces empty page (elementCount=0)', async () => {
+      const handler = await getNavigateHandler();
+
+      // Normal tab blocked; stealth page has elementCount=0 (evaluate throws) and no JS blocking detected
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })  // Tier 1
+        .mockResolvedValueOnce(null);  // Tier 2: blocking detection returns null (can't run JS)
+
+      // Make the stealth page's evaluate throw so elementCount=0 and readyState='unknown'
+      (mockSessionManager as any).createTargetStealth = jest.fn().mockImplementation(
+        async (sessionId: string, url: string, workerId?: string) => {
+          const resolvedWorkerId = workerId || 'default';
+          const targetId = `stealth-broken-${Date.now()}`;
+          const page = createMockPage({ url, targetId, title: '' });
+          (page.evaluate as jest.Mock).mockRejectedValue(new Error('Target closed'));
+          return { targetId, page, workerId: resolvedWorkerId };
+        },
+      );
+
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.headed).toBe(true);
+      expect(parsed.fallbackTier).toBe(3);
+      expect(parsed.fallbackReason).toBe('access-denied');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
+    });
+
+    test('escalates to Tier 3 when stealth produces broken page (readyState=unknown)', async () => {
+      const handler = await getNavigateHandler();
+
+      // Normal tab blocked; stealth page's readyState evaluation throws → 'unknown'
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'bot-check', detail: 'Security Check' })  // Tier 1
+        .mockResolvedValueOnce(null);  // Tier 2: can't detect blocking
+
+      (mockSessionManager as any).createTargetStealth = jest.fn().mockImplementation(
+        async (sessionId: string, url: string, workerId?: string) => {
+          const resolvedWorkerId = workerId || 'default';
+          const targetId = `stealth-broken-${Date.now()}`;
+          const page = createMockPage({ url, targetId, title: '' });
+          // evaluate throws so readyState becomes 'unknown' and elementCount stays 0
+          (page.evaluate as jest.Mock).mockRejectedValue(new Error('Execution context destroyed'));
+          return { targetId, page, workerId: resolvedWorkerId };
+        },
+      );
+
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.headed).toBe(true);
+      expect(parsed.fallbackTier).toBe(3);
+      expect(parsed.fallbackReason).toBe('bot-check');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
+    });
+
+    test('does NOT escalate to Tier 3 when autoFallback is false and stealth page is empty', async () => {
+      const handler = await getNavigateHandler();
+
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' });
+
+      // autoFallback: false means Tier 2 never happens, so no stealth retry at all
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com', autoFallback: false });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.fallbackTier).toBeUndefined();
+      expect(parsed.headed).toBeUndefined();
+      expect(mockHeadedNavigate).not.toHaveBeenCalled();
+    });
+
     test('Tier 3 returns blockingPage if headed Chrome also gets blocked', async () => {
       const handler = await getNavigateHandler();
 
