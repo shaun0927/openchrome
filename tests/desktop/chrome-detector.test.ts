@@ -179,11 +179,9 @@ describe('ChromeDetector', () => {
       const first = await detector.detect();
       expect(first.found).toBe(false);
 
-      // Simulate user installing Chrome
-      const chromePath =
-        os.platform() === 'darwin'
-          ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-          : '/usr/bin/google-chrome-stable';
+      // Simulate user installing Chrome — use CHROME_PATH for cross-platform reliability
+      const chromePath = os.platform() === 'win32' ? 'C:\\test-chrome.exe' : '/tmp/test-chrome';
+      process.env['CHROME_PATH'] = chromePath;
       mockChromeFound(chromePath);
 
       const second = await detector.retry();
@@ -195,10 +193,9 @@ describe('ChromeDetector', () => {
       mockChromeNotFound();
       await detector.detect();
 
-      const chromePath =
-        os.platform() === 'darwin'
-          ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-          : '/usr/bin/google-chrome-stable';
+      // Use CHROME_PATH for cross-platform reliability
+      const chromePath = os.platform() === 'win32' ? 'C:\\test-chrome.exe' : '/tmp/test-chrome';
+      process.env['CHROME_PATH'] = chromePath;
       mockChromeFound(chromePath);
 
       const detectedHandler = jest.fn();
