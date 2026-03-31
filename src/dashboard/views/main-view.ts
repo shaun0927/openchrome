@@ -168,6 +168,7 @@ export class MainView {
       `${ANSI.bold}[S]${ANSI.reset}essions`,
       `${ANSI.bold}[T]${ANSI.reset}abs`,
       `${ANSI.bold}[C]${ANSI.reset}ancel`,
+      `${ANSI.bold}[W]${ANSI.reset}eb Connect`,
       `${ANSI.bold}[Q]${ANSI.reset}uit`,
     ];
 

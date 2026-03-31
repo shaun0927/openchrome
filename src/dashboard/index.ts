@@ -14,6 +14,7 @@ import { OperationController, getOperationController } from './operation-control
 import { MainView, MainViewData } from './views/main-view.js';
 import { SessionsView, SessionsViewData } from './views/sessions-view.js';
 import { TabsView, TabsViewData } from './views/tabs-view.js';
+import { ConnectView, ConnectViewData } from './views/connect-view.js';
 import type { ViewMode, DashboardConfig, DashboardStats, SessionInfo, TabInfo, ToolCallEvent, DEFAULT_CONFIG } from './types.js';
 import type { SessionManager } from '../session-manager.js';
 
@@ -33,6 +34,7 @@ export class Dashboard extends EventEmitter {
   private mainView: MainView;
   private sessionsView: SessionsView;
   private tabsView: TabsView;
+  private connectView: ConnectView;
 
   private sessionManager: SessionManager | null = null;
   private config: DashboardOptions;
@@ -64,6 +66,7 @@ export class Dashboard extends EventEmitter {
     this.mainView = new MainView(this.renderer);
     this.sessionsView = new SessionsView(this.renderer);
     this.tabsView = new TabsView(this.renderer);
+    this.connectView = new ConnectView(this.renderer);
   }
 
   /**
@@ -191,6 +194,8 @@ export class Dashboard extends EventEmitter {
       this.handleMainViewKey(key);
     } else if (this.currentView === 'sessions') {
       this.handleSessionsViewKey(key, event);
+    } else if (this.currentView === 'connect') {
+      this.handleConnectViewKey(key, event);
     } else if (this.currentView === 'tabs') {
       this.handleTabsViewKey(key, event);
     }
@@ -210,6 +215,10 @@ export class Dashboard extends EventEmitter {
         break;
       case 't':
         this.currentView = 'tabs';
+        this.selectedIndex = 0;
+        break;
+      case 'w':
+        this.currentView = 'connect';
         this.selectedIndex = 0;
         break;
       case 'c':
@@ -265,6 +274,28 @@ export class Dashboard extends EventEmitter {
   /**
    * Cancel the current operation
    */
+  private handleConnectViewKey(key: string, _event: KeyEvent): void {
+    const hostIds = ['claude', 'chatgpt', 'gemini', 'custom'];
+
+    switch (key) {
+      case 'escape':
+        this.currentView = 'activity';
+        break;
+      case 'left':
+        this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+        break;
+      case 'right':
+        this.selectedIndex = Math.min(hostIds.length - 1, this.selectedIndex + 1);
+        break;
+      case 'o':
+        this.emit('open-host-settings', hostIds[this.selectedIndex]);
+        break;
+      case 'y':
+        this.emit('copy-url', hostIds[this.selectedIndex]);
+        break;
+    }
+  }
+
   private cancelCurrentOperation(): void {
     const activeCalls = this.activityTracker.getActiveCalls();
     if (activeCalls.length > 0) {
@@ -292,6 +323,9 @@ export class Dashboard extends EventEmitter {
         break;
       case 'sessions':
         lines = this.sessionsView.render(this.getSessionsViewData(), size);
+        break;
+      case 'connect':
+        lines = this.connectView.render(this.getConnectViewData(), size);
         break;
       case 'tabs':
         lines = this.tabsView.render(this.getTabsViewData(), size);
@@ -346,6 +380,22 @@ export class Dashboard extends EventEmitter {
   /**
    * Get dashboard stats
    */
+  private getConnectViewData(): ConnectViewData {
+    const httpPort = process.env.OPENCHROME_HTTP_PORT || '3100';
+    const httpHost = process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
+    const bindAddr = httpHost === '0.0.0.0' ? '127.0.0.1' : httpHost;
+
+    return {
+      selectedIndex: this.selectedIndex,
+      serverState: {
+        tunnelUrl: process.env.OPENCHROME_TUNNEL_URL || null,
+        localUrl: `http://${bindAddr}:${httpPort}`,
+        authToken: process.env.OPENCHROME_AUTH_TOKEN || null,
+      },
+      version: this.version,
+    };
+  }
+
   private getStats(): DashboardStats {
     if (!this.sessionManager) {
       return {

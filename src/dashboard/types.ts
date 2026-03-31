@@ -8,7 +8,7 @@ export interface DashboardConfig {
   maxLogEntries: number;    // default: 50
 }
 
-export type ViewMode = 'activity' | 'sessions' | 'tabs';
+export type ViewMode = 'activity' | 'sessions' | 'tabs' | 'connect';
 
 export type ToolCallResult = 'success' | 'error' | 'pending';
 
