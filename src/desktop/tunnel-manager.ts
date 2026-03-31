@@ -88,7 +88,7 @@ export class TunnelManager extends EventEmitter {
     this.intentionalStop = true;
     this._clearReconnectTimer();
     if (this.process) {
-      this.process.kill('SIGTERM');
+      try { this.process.kill('SIGTERM'); } catch { /* already exited */ }
       this.process = null;
     }
     this._setStatus('disconnected');
@@ -358,19 +358,24 @@ export class TunnelManager extends EventEmitter {
 
   private _runCommand(cmd: string, args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const done = (fn: () => void): void => { if (!settled) { settled = true; fn(); } };
       const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+      const timer = setTimeout(() => done(() => reject(new Error(`${cmd} timed out`))), 5000);
+      if (timer.unref) timer.unref();
       let output = '';
       proc.stdout?.on('data', (chunk: Buffer) => {
         output += chunk.toString();
       });
-      proc.on('error', reject);
-      proc.on('exit', (code) => {
+      proc.on('error', (err) => done(() => { clearTimeout(timer); reject(err); }));
+      proc.on('exit', (code) => done(() => {
+        clearTimeout(timer);
         if (code === 0) {
           resolve(output);
         } else {
           reject(new Error(`${cmd} exited with code ${code}`));
         }
-      });
+      }));
     });
   }
 }
