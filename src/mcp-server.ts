@@ -1225,7 +1225,7 @@ export class MCPServer {
     if (['user_agent', 'geolocation', 'emulate_device'].includes(toolName)) return 'emulation';
     if (['workflow_init', 'workflow_status', 'workflow_collect', 'workflow_collect_partial', 'workflow_cleanup', 'execute_plan'].includes(toolName)) return 'orchestration';
     if (['worker', 'worker_update', 'worker_complete'].includes(toolName)) return 'worker';
-    if (['click_element', 'fill_form', 'wait_and_click', 'wait_for'].includes(toolName)) return 'composite';
+    if (['fill_form', 'wait_for'].includes(toolName)) return 'composite';
     if (['batch_execute', 'lightweight_scroll'].includes(toolName)) return 'performance';
     if (toolName === 'memory') return 'content';
     if (toolName === 'oc_stop' || toolName === 'oc_profile_status') return 'lifecycle';

@@ -38,8 +38,6 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_journal: 1,
 
   // Tier 2: Specialist (on demand)
-  click_element: 2,
-  wait_and_click: 2,
   drag_drop: 2,
   network: 2,
   request_intercept: 2,

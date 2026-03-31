@@ -41,9 +41,7 @@ const TOOL_ROUTING_MAP: Record<string, ToolRouting> = {
   drag_drop: 'prefer-lightpanda',
 
   // UX composite tools - prefer-lightpanda
-  click_element: 'prefer-lightpanda',
   fill_form: 'prefer-lightpanda',
-  wait_and_click: 'prefer-lightpanda',
 
   // Tab management tools - prefer-lightpanda
   tabs_context: 'prefer-lightpanda',

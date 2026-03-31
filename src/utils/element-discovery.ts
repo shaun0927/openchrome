@@ -1,8 +1,8 @@
 /**
  * Element Discovery - Shared element search and CDP resolution utilities
  *
- * Extracts the duplicated element discovery logic from find, click_element,
- * interact, wait_and_click, and fill_form tools into a single reusable module.
+ * Extracts the duplicated element discovery logic from find,
+ * interact, and fill_form tools into a single reusable module.
  *
  * Flow: in-page search (page.evaluate) → batched CDP backendNodeId resolution
  */

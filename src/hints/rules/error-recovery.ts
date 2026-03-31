@@ -20,7 +20,7 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
   },
   {
     test: /no clickable elements found|no good match found|click element error/i,
-    hint: 'Hint: Element may not be loaded. Try wait_and_click or read_page mode="dom" to verify.',
+    hint: 'Hint: Element may not be loaded. Try interact with waitForMs parameter, or read_page mode="dom" to verify.',
   },
   {
     test: /captureScreenshot.*timed?\s*out|screenshot.*timed?\s*out|screenshot failed/i,
@@ -36,7 +36,7 @@ const patterns: Array<{ test: RegExp; hint: string }> = [
   },
   {
     test: /coordinate|click at position|x,?\s*y/i,
-    hint: 'Hint: Use click_element(query) instead — finds and clicks in one step.',
+    hint: 'Hint: Use interact(action:"click", query:"...") instead — finds and clicks in one step.',
   },
   {
     test: /^\s*\{\s*\}\s*$|"result":\s*\{\s*\}/,

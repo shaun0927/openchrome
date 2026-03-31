@@ -67,7 +67,7 @@ function detectClickPaginationLoop(ctx: HintContext): {
   tabId: string | null;
 } {
   const isClickTool =
-    ctx.toolName === 'click_element' ||
+    ctx.toolName === 'interact' ||
     ctx.toolName === 'click' ||
     (ctx.toolName === 'computer');
 
@@ -85,7 +85,7 @@ function detectClickPaginationLoop(ctx: HintContext): {
     const args = call.args || {};
     const callTabId = args.tabId as string | undefined;
 
-    if (call.toolName === 'click_element' || call.toolName === 'click') {
+    if (call.toolName === 'interact' || call.toolName === 'click') {
       const selector = (args.selector || args.element || args.query || '') as string;
       const text = (args.text || args.label || '') as string;
       if (NEXT_PATTERNS.test(selector) || NEXT_PATTERNS.test(text)) {
