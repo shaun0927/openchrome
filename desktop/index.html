@@ -8,24 +8,103 @@
   </head>
   <body>
     <div id="app">
-      <header>
-        <h1>OpenChrome</h1>
-        <p class="subtitle">Desktop Server Manager</p>
-      </header>
-      <main>
-        <div class="status-card">
-          <div class="status-row">
-            <span class="status-dot stopped" id="status-indicator"></span>
-            <span class="status-text" id="status-text">Stopped</span>
-          </div>
+      <header class="titlebar">
+        <div class="titlebar-left">
+          <span class="logo">OpenChrome</span>
+          <span class="status-dot" id="status-dot"></span>
+          <span class="status-label" id="status-label">Stopped</span>
+        </div>
+        <div class="titlebar-center">
+          <button class="tab-btn active" id="tab-dashboard" data-tab="dashboard">Dashboard</button>
+          <button class="tab-btn" id="tab-connect" data-tab="connect">Connect</button>
+        </div>
+        <div class="titlebar-right">
           <button id="btn-toggle" class="btn btn-start">Start Server</button>
         </div>
-        <div class="metrics-card">
-          <div class="metric" id="metric-uptime">Uptime: --</div>
-          <div class="metric" id="metric-ram">RAM: --</div>
-          <div class="metric" id="metric-tabs">Tabs: --</div>
+      </header>
+
+      <div class="dashboard" id="view-dashboard">
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-header">Connections</div>
+          <div class="connection-list" id="connection-list">
+            <div class="empty-state" id="empty-connections">
+              Waiting for connections...
+            </div>
+          </div>
+        </aside>
+
+        <main class="main-area">
+          <div class="screenshot-panel" id="screenshot-panel">
+            <div class="screenshot-placeholder" id="screenshot-placeholder">
+              <p>Select a connection to view</p>
+            </div>
+            <img id="screenshot-img" class="screenshot-img" hidden />
+            <div class="screenshot-meta" id="screenshot-meta" hidden>
+              <span id="screenshot-title"></span>
+              <span id="screenshot-age"></span>
+            </div>
+          </div>
+
+          <div class="tool-feed" id="tool-feed">
+            <div class="tool-feed-header">Tool Calls</div>
+            <div class="tool-feed-list" id="tool-feed-list">
+              <div class="empty-state">No tool calls yet</div>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      <div class="connect-view" id="view-connect" hidden>
+        <div class="connect-content">
+          <h2 class="connect-title">Connect to Web AI</h2>
+          <p class="connect-subtitle">Select a platform and follow the steps to connect.</p>
+
+          <div class="platform-selector" id="platform-selector">
+            <button class="platform-btn selected" data-host="claude">Claude Web</button>
+            <button class="platform-btn" data-host="chatgpt">ChatGPT</button>
+            <button class="platform-btn" data-host="gemini">Gemini</button>
+            <button class="platform-btn" data-host="custom">Other</button>
+          </div>
+
+          <div class="connect-section" id="connect-server-url">
+            <div class="connect-section-label">Server URL</div>
+            <div class="url-display">
+              <span class="url-text" id="connect-url">Server not running</span>
+              <button class="btn-icon" id="btn-copy-url" title="Copy URL">📋</button>
+            </div>
+          </div>
+
+          <div class="connect-section" id="connect-token-section" hidden>
+            <div class="connect-section-label">Auth Token</div>
+            <div class="url-display">
+              <span class="url-text token-masked" id="connect-token"></span>
+              <button class="btn-icon" id="btn-copy-token" title="Copy token">📋</button>
+            </div>
+          </div>
+
+          <div class="connect-section" id="connect-settings-section" hidden>
+            <button class="btn btn-open-settings" id="btn-open-settings">Open Settings Page</button>
+          </div>
+
+          <div class="connect-section">
+            <div class="connect-section-label">Steps</div>
+            <ol class="connect-steps" id="connect-steps"></ol>
+          </div>
+
+          <div class="connect-section" id="connect-notes-section" hidden>
+            <div class="connect-section-label">Notes</div>
+            <ul class="connect-notes" id="connect-notes"></ul>
+          </div>
         </div>
-      </main>
+      </div>
+
+      <footer class="statusbar">
+        <span class="statusbar-item" id="metric-ram">RAM: --</span>
+        <span class="statusbar-sep"></span>
+        <span class="statusbar-item" id="metric-tabs">Chrome: 0 tabs</span>
+        <span class="statusbar-sep"></span>
+        <span class="statusbar-item" id="metric-uptime">Uptime: --</span>
+      </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

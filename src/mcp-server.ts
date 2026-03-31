@@ -38,6 +38,7 @@ import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
 import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
+import { getDashboardState } from './desktop/dashboard-state';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -671,6 +672,7 @@ export class MCPServer {
 
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
+    getDashboardState().recordToolStart(sessionId || 'default', toolName, toolArgs, callId);
     const toolStartTime = Date.now();
 
     // Adaptive heartbeat: switch to heavy mode during tool execution
@@ -818,6 +820,7 @@ export class MCPServer {
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
+      getDashboardState().recordToolEnd(callId, 'success');
 
       // Record Prometheus metrics
       try {
@@ -958,6 +961,7 @@ export class MCPServer {
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, 'error', message);
+      getDashboardState().recordToolEnd(callId, 'error', message);
 
       // Record Prometheus metrics
       try {
