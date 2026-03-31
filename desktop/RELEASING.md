@@ -73,13 +73,11 @@ Update the desktop app version in `desktop/src-tauri/tauri.conf.json`:
 
 ```json
 {
-  "package": {
-    "version": "1.0.0"
-  }
+  "version": "1.0.0"
 }
 ```
 
-Update `desktop/CHANGELOG.md` with the changes in this release. Commit these changes to `develop`:
+Update `desktop/CHANGELOG.md` with the changes in this release (create the file if it does not exist yet). Commit these changes to `develop`:
 
 ```bash
 git add desktop/src-tauri/tauri.conf.json desktop/CHANGELOG.md
@@ -101,7 +99,9 @@ git tag -a desktop-v1.0.0 -m "Desktop release v1.0.0"
 git push --tags
 ```
 
-Pushing the tag triggers the CI workflow automatically.
+Pushing the tag triggers the CI workflow (`.github/workflows/desktop-release.yml`) automatically.
+
+> **Prerequisite**: The desktop release CI workflow must exist at `.github/workflows/desktop-release.yml` before tagging. See PR #531 for the workflow implementation.
 
 ### 4. CI builds all platforms (20–30 min)
 
