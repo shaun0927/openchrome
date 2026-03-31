@@ -344,9 +344,16 @@ const handler: ToolHandler = async (
       pages.push(initialResult);
 
       for (let step = 1; step <= maxScrolls; step++) {
-        // Scroll and measure in a single CDP round-trip
-        const { newScrollHeight, atBottom } = await withTimeout(page.evaluate((amount: number) => {
+        // Scroll down
+        await withTimeout(page.evaluate((amount: number) => {
           window.scrollBy(0, window.innerHeight * amount);
+        }, scrollAmount), 10000, 'batch_paginate.evaluate', context);
+
+        // Wait for content to load (AJAX, lazy load, etc.)
+        await new Promise((r) => setTimeout(r, waitBetweenPages));
+
+        // Measure AFTER waiting — content may have loaded dynamically
+        const { newScrollHeight, atBottom } = await withTimeout(page.evaluate(() => {
           const scrollHeight = document.documentElement.scrollHeight;
           const scrollTop = window.scrollY;
           const viewportHeight = window.innerHeight;
@@ -354,15 +361,13 @@ const handler: ToolHandler = async (
             newScrollHeight: scrollHeight,
             atBottom: scrollTop + viewportHeight >= scrollHeight - 10,
           };
-        }, scrollAmount), 10000, 'batch_paginate.evaluate', context);
-
-        await new Promise((r) => setTimeout(r, waitBetweenPages));
+        }), 10000, 'batch_paginate.evaluate', context);
 
         stepNumber++;
         const stepResult = await capturePageContent(page, stepNumber);
         pages.push(stepResult);
 
-        // Stop if reached bottom and height didn't change
+        // Stop if reached bottom and height didn't change (after content had time to load)
         if (atBottom && newScrollHeight === lastScrollHeight) {
           break;
         }
