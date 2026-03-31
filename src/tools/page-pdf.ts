@@ -210,7 +210,20 @@ const handler: ToolHandler = async (
         ],
       };
     } else {
-      // Return base64
+      // Check size before returning base64 (5MB limit, matching page_screenshot)
+      const fiveMB = 5 * 1024 * 1024;
+      if (pdfBuffer.length > fiveMB) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error: PDF is ${Math.round(pdfBuffer.length / 1024 / 1024 * 10) / 10}MB which exceeds the 5MB inline limit. Use the 'path' parameter to save to a file instead.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
       const base64 = Buffer.from(pdfBuffer).toString('base64');
 
       return {
@@ -219,13 +232,12 @@ const handler: ToolHandler = async (
             type: 'text',
             text: JSON.stringify({
               action: 'page_pdf',
-              base64: base64.slice(0, 100) + '...',  // Truncate for response
               size: pdfBuffer.length,
               sizeKB: Math.round(pdfBuffer.length / 1024),
               format,
               landscape,
-              message: `PDF generated (${Math.round(pdfBuffer.length / 1024)} KB). Base64 data truncated in response.`,
-              fullBase64: base64,
+              message: `PDF generated (${Math.round(pdfBuffer.length / 1024)} KB). Use the base64 field to access the data.`,
+              base64,
             }),
           },
         ],
