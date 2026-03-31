@@ -9,6 +9,12 @@
 import { EventEmitter } from 'events';
 import * as http from 'http';
 
+/**
+ * 'none'     — no server detected
+ * 'external' — external CLI-spawned server detected via health check
+ * 'built-in' — reserved for the parent application to set when it starts its own server;
+ *              CLICoexistence never sets this value itself.
+ */
 export type ServerSource = 'none' | 'external' | 'built-in';
 
 export interface CoexistenceOptions {
@@ -154,7 +160,6 @@ export class CLICoexistence extends EventEmitter {
 
   private async _monitorTick(): Promise<void> {
     const prevSource = this.source;
-    const prevHealthy = this.healthy;
 
     const healthy = await this._httpGet();
     this.lastHealthCheck = Date.now();
@@ -179,9 +184,6 @@ export class CLICoexistence extends EventEmitter {
       // Built-in server lost health — just update healthy flag, no source change
       this.healthy = false;
     }
-
-    // Suppress unused-variable warning — prevHealthy used as logical guard above
-    void prevHealthy;
   }
 
   /**

@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 
 import * as http from 'http';
+import * as net from 'net';
 import { AddressInfo } from 'net';
 import { CLICoexistence } from '../../src/desktop/cli-coexistence';
 
@@ -30,8 +31,20 @@ function createHealthServer(statusCode = 200): Promise<{ server: http.Server; po
   });
 }
 
-// Port that nothing is listening on (use a known-free ephemeral port approach)
-const UNUSED_PORT = 19999;
+// Get a guaranteed-free port by binding to 0 and immediately closing
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+    srv.on('error', reject);
+  });
+}
+
+// Will be set in beforeAll
+let UNUSED_PORT: number;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -39,6 +52,10 @@ const UNUSED_PORT = 19999;
 
 describe('CLICoexistence', () => {
   let coexistence: CLICoexistence;
+
+  beforeAll(async () => {
+    UNUSED_PORT = await getFreePort();
+  });
 
   afterEach(() => {
     coexistence?.stopMonitoring();
