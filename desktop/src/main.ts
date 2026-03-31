@@ -73,9 +73,7 @@ const metricTabs = document.getElementById("metric-tabs")!;
 const metricUptime = document.getElementById("metric-uptime")!;
 const errorBanner = document.getElementById("error-banner")!;
 const errorText = document.getElementById("error-text")!;
-const errorDismiss = document.getElementById(
-  "error-dismiss",
-) as HTMLButtonElement;
+const errorDismiss = document.getElementById("error-dismiss") as HTMLButtonElement;
 
 // --- Error Banner ---
 
@@ -211,6 +209,12 @@ function updateServerStatus(resp: ServerStatus): void {
     error: resp.error || "Error",
   };
   statusLabel.textContent = labels[resp.status] || resp.status;
+
+  if (resp.status === "error" && resp.error) {
+    showError(classifyError(resp.error));
+  } else if (resp.status === "running") {
+    hideError();
+  }
 
   if (resp.status === "running") {
     btnToggle.textContent = "Stop";

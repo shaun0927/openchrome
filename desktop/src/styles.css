@@ -507,3 +507,27 @@ body {
   left: 4px;
   color: var(--text-muted);
 }
+
+/* Error banner */
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--error-bg, #3a1a1a);
+  border-top: 1px solid var(--error-border, #ff4444);
+  color: var(--error-text, #ff8888);
+  font-size: 12px;
+}
+.error-icon { font-size: 14px; flex-shrink: 0; }
+.error-text { flex: 1; }
+.error-dismiss {
+  background: none;
+  border: none;
+  color: var(--error-text, #ff8888);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 14px;
+  opacity: 0.7;
+}
+.error-dismiss:hover { opacity: 1; }
