@@ -125,6 +125,7 @@ function updateServerStatus(resp: ServerStatus): void {
     stopDashboardPolling();
     clearDashboard();
   }
+  updateConnectView();
 }
 
 // --- Dashboard Polling ---
@@ -342,6 +343,196 @@ function escapeHtml(text: string): string {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// --- Tab Navigation ---
+
+const viewDashboard = document.getElementById("view-dashboard")!;
+const viewConnect = document.getElementById("view-connect")!;
+const tabDashboard = document.getElementById("tab-dashboard")!;
+const tabConnect = document.getElementById("tab-connect")!;
+
+function switchTab(tab: "dashboard" | "connect"): void {
+  viewDashboard.hidden = tab !== "dashboard";
+  viewConnect.hidden = tab !== "connect";
+  tabDashboard.classList.toggle("active", tab === "dashboard");
+  tabConnect.classList.toggle("active", tab === "connect");
+}
+
+tabDashboard.addEventListener("click", () => switchTab("dashboard"));
+tabConnect.addEventListener("click", () => switchTab("connect"));
+
+// --- Connect View ---
+
+interface HostDefinition {
+  id: string;
+  name: string;
+  settingsUrl: string | null;
+  steps: string[];
+  notes: string[];
+}
+
+const HOST_DEFS: Record<string, HostDefinition> = {
+  claude: {
+    id: "claude",
+    name: "Claude Web",
+    settingsUrl: "https://claude.ai/customize/connectors?modal=add-custom-connector",
+    steps: [
+      'Click "Open Settings Page" below',
+      "Paste the server URL into the URL field",
+      "Click Save — you're ready to chat!",
+    ],
+    notes: [
+      "OAuth fields can be left empty — authentication uses the Bearer token.",
+    ],
+  },
+  chatgpt: {
+    id: "chatgpt",
+    name: "ChatGPT",
+    settingsUrl: "https://chatgpt.com/gpts/mine",
+    steps: [
+      'Click "Open Settings Page" below',
+      "Create or edit an app, then paste the server URL",
+      "Save and start a conversation with your app",
+    ],
+    notes: [
+      "You may need to enable Developer Mode in ChatGPT settings.",
+    ],
+  },
+  gemini: {
+    id: "gemini",
+    name: "Gemini",
+    settingsUrl: "https://aistudio.google.com/app/mcpserver",
+    steps: [
+      'Click "Open Settings Page" below',
+      "Add a custom MCP server and paste the server URL",
+      "Complete any additional Google Cloud setup if prompted",
+    ],
+    notes: [
+      "Gemini MCP support may require a Google Cloud project.",
+    ],
+  },
+  custom: {
+    id: "custom",
+    name: "Other / Custom",
+    settingsUrl: null,
+    steps: [
+      "Copy the server URL and Bearer token",
+      "Paste into your MCP client's server configuration",
+      "Start using OpenChrome tools in your client",
+    ],
+    notes: [
+      "Works with Claude Desktop, Cursor, Windsurf, and any MCP-compatible client.",
+    ],
+  },
+};
+
+let selectedHost = "claude";
+
+const platformSelector = document.getElementById("platform-selector")!;
+const connectUrl = document.getElementById("connect-url")!;
+const btnCopyUrl = document.getElementById("btn-copy-url")!;
+const connectToken = document.getElementById("connect-token")!;
+const btnCopyToken = document.getElementById("btn-copy-token")!;
+const connectTokenSection = document.getElementById("connect-token-section")!;
+const connectSettingsSection = document.getElementById("connect-settings-section")!;
+const btnOpenSettings = document.getElementById("btn-open-settings")!;
+const connectSteps = document.getElementById("connect-steps")!;
+const connectNotes = document.getElementById("connect-notes")!;
+const connectNotesSection = document.getElementById("connect-notes-section")!;
+
+platformSelector.addEventListener("click", (e) => {
+  const target = (e.target as HTMLElement).closest("[data-host]") as HTMLElement | null;
+  if (!target) return;
+  selectedHost = target.dataset.host!;
+  platformSelector.querySelectorAll(".platform-btn").forEach((btn) => {
+    btn.classList.toggle("selected", (btn as HTMLElement).dataset.host === selectedHost);
+  });
+  updateConnectView();
+});
+
+function updateConnectView(): void {
+  const host = HOST_DEFS[selectedHost];
+  if (!host) return;
+
+  // URL
+  const port = 3100;
+  if (currentStatus === "running") {
+    const url = `http://localhost:${port}/mcp`;
+    connectUrl.textContent = url;
+    connectUrl.classList.remove("no-server");
+  } else {
+    connectUrl.textContent = "Server not running — start it first";
+    connectUrl.classList.add("no-server");
+  }
+
+  // Token placeholder (shown when tunnel active in future)
+  connectTokenSection.hidden = true;
+
+  // Settings button
+  if (host.settingsUrl) {
+    connectSettingsSection.hidden = false;
+    btnOpenSettings.textContent = `Open ${host.name} Settings`;
+  } else {
+    connectSettingsSection.hidden = true;
+  }
+
+  // Steps
+  connectSteps.innerHTML = "";
+  for (const step of host.steps) {
+    const li = document.createElement("li");
+    li.textContent = step;
+    connectSteps.appendChild(li);
+  }
+
+  // Notes
+  if (host.notes.length > 0) {
+    connectNotesSection.hidden = false;
+    connectNotes.innerHTML = "";
+    for (const note of host.notes) {
+      const li = document.createElement("li");
+      li.textContent = note;
+      connectNotes.appendChild(li);
+    }
+  } else {
+    connectNotesSection.hidden = true;
+  }
+}
+
+btnCopyUrl.addEventListener("click", async () => {
+  const text = connectUrl.textContent || "";
+  if (text && !text.startsWith("Server not")) {
+    await navigator.clipboard.writeText(text);
+    btnCopyUrl.textContent = "✓";
+    btnCopyUrl.classList.add("copied");
+    setTimeout(() => {
+      btnCopyUrl.textContent = "📋";
+      btnCopyUrl.classList.remove("copied");
+    }, 1500);
+  }
+});
+
+btnCopyToken.addEventListener("click", async () => {
+  const text = connectToken.dataset.fullToken || "";
+  if (text) {
+    await navigator.clipboard.writeText(text);
+    btnCopyToken.textContent = "✓";
+    btnCopyToken.classList.add("copied");
+    setTimeout(() => {
+      btnCopyToken.textContent = "📋";
+      btnCopyToken.classList.remove("copied");
+    }, 1500);
+  }
+});
+
+btnOpenSettings.addEventListener("click", () => {
+  const host = HOST_DEFS[selectedHost];
+  if (host?.settingsUrl) {
+    window.open(host.settingsUrl, "_blank");
+  }
+});
+
+// Initialize connect view
+updateConnectView();
 
 // --- Status Polling ---
 

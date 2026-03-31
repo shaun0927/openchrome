@@ -14,12 +14,16 @@
           <span class="status-dot" id="status-dot"></span>
           <span class="status-label" id="status-label">Stopped</span>
         </div>
+        <div class="titlebar-center">
+          <button class="tab-btn active" id="tab-dashboard" data-tab="dashboard">Dashboard</button>
+          <button class="tab-btn" id="tab-connect" data-tab="connect">Connect</button>
+        </div>
         <div class="titlebar-right">
           <button id="btn-toggle" class="btn btn-start">Start Server</button>
         </div>
       </header>
 
-      <div class="dashboard">
+      <div class="dashboard" id="view-dashboard">
         <aside class="sidebar" id="sidebar">
           <div class="sidebar-header">Connections</div>
           <div class="connection-list" id="connection-list">
@@ -48,6 +52,50 @@
             </div>
           </div>
         </main>
+      </div>
+
+      <div class="connect-view" id="view-connect" hidden>
+        <div class="connect-content">
+          <h2 class="connect-title">Connect to Web AI</h2>
+          <p class="connect-subtitle">Select a platform and follow the steps to connect.</p>
+
+          <div class="platform-selector" id="platform-selector">
+            <button class="platform-btn selected" data-host="claude">Claude Web</button>
+            <button class="platform-btn" data-host="chatgpt">ChatGPT</button>
+            <button class="platform-btn" data-host="gemini">Gemini</button>
+            <button class="platform-btn" data-host="custom">Other</button>
+          </div>
+
+          <div class="connect-section" id="connect-server-url">
+            <div class="connect-section-label">Server URL</div>
+            <div class="url-display">
+              <span class="url-text" id="connect-url">Server not running</span>
+              <button class="btn-icon" id="btn-copy-url" title="Copy URL">📋</button>
+            </div>
+          </div>
+
+          <div class="connect-section" id="connect-token-section" hidden>
+            <div class="connect-section-label">Auth Token</div>
+            <div class="url-display">
+              <span class="url-text token-masked" id="connect-token"></span>
+              <button class="btn-icon" id="btn-copy-token" title="Copy token">📋</button>
+            </div>
+          </div>
+
+          <div class="connect-section" id="connect-settings-section" hidden>
+            <button class="btn btn-open-settings" id="btn-open-settings">Open Settings Page</button>
+          </div>
+
+          <div class="connect-section">
+            <div class="connect-section-label">Steps</div>
+            <ol class="connect-steps" id="connect-steps"></ol>
+          </div>
+
+          <div class="connect-section" id="connect-notes-section" hidden>
+            <div class="connect-section-label">Notes</div>
+            <ul class="connect-notes" id="connect-notes"></ul>
+          </div>
+        </div>
       </div>
 
       <footer class="statusbar">
