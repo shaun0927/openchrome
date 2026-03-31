@@ -152,6 +152,37 @@ OpenChrome isn't just a browser API — it's an intelligent harness with 27 subs
 
 ---
 
+## Desktop App
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Intel-black?logo=apple" alt="macOS">
+  <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows" alt="Windows">
+  <img src="https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black" alt="Linux">
+</p>
+
+OpenChrome is also available as a **desktop app** — a signed, one-click installer that runs the MCP server locally without requiring Node.js, npm, or any command-line setup. Designed for non-developers who want browser automation without the terminal.
+
+**[Download the Latest Release](https://github.com/shaun0927/openchrome/releases/latest)**
+
+| Platform | Artifact |
+|----------|----------|
+| macOS (Apple Silicon) | `OpenChrome-{version}-arm64.dmg` |
+| macOS (Intel) | `OpenChrome-{version}-x64.dmg` |
+| Windows | `OpenChrome-{version}-x64-setup.exe` |
+| Linux | `OpenChrome-{version}-x86_64.AppImage` |
+
+### Get Started (non-developers)
+
+1. **Download** the installer for your platform from the [Latest Release](https://github.com/shaun0927/openchrome/releases/latest) page.
+2. **Install** — open the `.dmg` / run the `.exe` installer / make the `.AppImage` executable and launch it.
+3. **Connect** — the app starts the MCP server automatically. Point your MCP client (Claude, Cursor, etc.) to the local server address shown in the app.
+
+The desktop app includes an auto-updater — it will notify you when a new version is available.
+
+> **Note:** The desktop app and the CLI (`openchrome-mcp` on npm) are separate distributions with independent version numbers. You do not need both — use whichever fits your workflow. See [`desktop/RELEASING.md`](desktop/RELEASING.md) for the desktop release process.
+
+---
+
 ## Quick Start
 
 ```bash
