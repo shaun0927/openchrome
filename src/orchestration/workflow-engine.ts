@@ -578,9 +578,10 @@ export class WorkflowEngine {
     } finally {
       release();
     }
-    // Fire-and-forget: persist state outside lock to reduce hold duration
+    // Write-behind outside lock: still awaited so callers see persisted state,
+    // but lock hold time is reduced to in-memory ops only.
     if (stateToWrite) {
-      this._writeOrchestrationStateBehind(stateToWrite);
+      await this._writeOrchestrationStateBehind(stateToWrite);
     }
   }
 
