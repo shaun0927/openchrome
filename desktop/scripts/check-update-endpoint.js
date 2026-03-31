@@ -66,7 +66,7 @@ function parseArgs(argv) {
  * Perform an HTTPS GET and return the response body as a string.
  * Follows a single redirect (GitHub releases redirect to S3).
  */
-function httpsGet(targetUrl, timeoutMs) {
+function httpsGet(targetUrl, timeoutMs, _depth = 0) {
   return new Promise((resolve, reject) => {
     const parsed = url.parse(targetUrl);
     const options = {
@@ -78,9 +78,14 @@ function httpsGet(targetUrl, timeoutMs) {
     };
 
     const req = https.request(options, (res) => {
-      // Follow one level of redirect
+      // Follow redirects (max 5 hops)
       if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && res.headers.location) {
-        httpsGet(res.headers.location, timeoutMs).then(resolve).catch(reject);
+        if (_depth >= 5) {
+          reject(new Error(`Too many redirects (>5) following ${targetUrl}`));
+          res.resume();
+          return;
+        }
+        httpsGet(res.headers.location, timeoutMs, _depth + 1).then(resolve).catch(reject);
         res.resume();
         return;
       }

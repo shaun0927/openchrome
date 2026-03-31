@@ -1,4 +1,5 @@
 {
+  "_WARNING": "UPDATER_PUBKEY_PLACEHOLDER must be replaced with a real key before merging into tauri.conf.json. Generate via: npx @tauri-apps/cli signer generate -w ~/.tauri/openchrome.key",
   "tauri": {
     "updater": {
       "active": true,
