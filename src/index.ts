@@ -80,6 +80,7 @@ program
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
   .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
+  .option('--http-host <host>', 'Bind address for HTTP transport (default: 127.0.0.1, use 0.0.0.0 for external access)')
   .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
@@ -201,6 +202,16 @@ program
     // Clean up orphaned Chrome from previous crashed sessions
     cleanOrphanedChromeProcesses([port, port + 1, port + 2, port + 3, port + 4]);
 
+    // Kill a Chrome process and its entire process group.
+    // Chrome is spawned with detached:true (new process group), so killing
+    // only the main PID leaves renderer/GPU/crashpad children alive.
+    const killChromeTree = (pid: number) => {
+      if (process.platform !== 'win32') {
+        try { process.kill(-pid, 'SIGTERM'); } catch { /* ignore */ }
+      }
+      try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+    };
+
     // Last-resort synchronous Chrome kill on ANY exit path
     // (including uncaughtException, SIGKILL recovery, process.exit())
     process.on('exit', () => {
@@ -208,7 +219,7 @@ program
         const launcher = getChromeLauncher();
         const chromePid = launcher.getChromePid();
         if (chromePid) {
-          try { process.kill(chromePid, 'SIGTERM'); } catch { /* ignore */ }
+          killChromeTree(chromePid);
         }
       } catch { /* launcher may not be initialized */ }
 
@@ -219,7 +230,7 @@ program
         for (const [, instance] of pool.getInstances()) {
           const pid = instance.launcher.getChromePid();
           if (pid) {
-            try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+            killChromeTree(pid);
           }
         }
       } catch { /* pool may not be initialized */ }
@@ -241,9 +252,10 @@ program
     // Start transport (useHttp was determined above, before getMCPServer)
     if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
-      const transport = createTransport('http', { port: httpPort });
+      const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
+      const transport = createTransport('http', { port: httpPort, host: httpHost });
       server.start(transport);
-      console.error(`[openchrome] HTTP transport enabled on port ${httpPort}`);
+      console.error(`[openchrome] HTTP transport enabled on ${httpHost}:${httpPort}`);
       console.error(`[openchrome] Infinite reconnection: enabled (daemon mode)`);
     } else {
       server.start();

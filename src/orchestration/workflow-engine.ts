@@ -498,6 +498,7 @@ export class WorkflowEngine {
 
     // Serialize completion accounting through the lock to prevent lost updates
     const release = await this.acquireLock();
+    let stateToWrite: InMemoryWorkflowState | undefined;
     try {
       // Find the in-memory workflow state that contains this worker
       let memState: InMemoryWorkflowState | undefined;
@@ -572,10 +573,15 @@ export class WorkflowEngine {
         `Overall: ${memState.overallStatus}`
       );
 
-      // Write-behind: persist to file for debugging/visibility (not for correctness)
-      await this._writeOrchestrationStateBehind(memState);
+      // Capture reference for write-behind outside the lock
+      stateToWrite = memState;
     } finally {
       release();
+    }
+    // Write-behind outside lock: still awaited so callers see persisted state,
+    // but lock hold time is reduced to in-memory ops only.
+    if (stateToWrite) {
+      await this._writeOrchestrationStateBehind(stateToWrite);
     }
   }
 

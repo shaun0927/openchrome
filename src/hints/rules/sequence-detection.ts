@@ -72,7 +72,7 @@ export const sequenceDetectionRules: HintRule[] = [
     maxSeverity: 'warning',
     match(ctx) {
       if (ctx.toolName !== 'find' && ctx.toolName !== 'read_page') return null;
-      if (!lastToolWas(ctx, 'click_element')) return null;
+      if (!lastToolWas(ctx, 'interact')) return null;
       if (/modal|overlay|dialog|backdrop|popup|drawer/i.test(ctx.resultText)) {
         return 'Hint: Modal may still be open. Try Escape key via computer(action:"key", text:"Escape") or javascript_tool to remove overlay.';
       }

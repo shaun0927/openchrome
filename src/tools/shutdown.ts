@@ -14,6 +14,7 @@ import { getSessionManager } from '../session-manager';
 import { getCDPConnectionPool } from '../cdp/connection-pool';
 import { getCDPClient } from '../cdp/client';
 import { getChromeLauncher } from '../chrome/launcher';
+import { shutdownHeadedFallback } from '../chrome/headed-fallback';
 
 const definition: MCPToolDefinition = {
   name: 'oc_stop',
@@ -48,6 +49,14 @@ const handler: ToolHandler = async (
       steps.push(`Cleaned up ${sessionCount} session(s)`);
     } catch (e) {
       steps.push(`Session cleanup failed: ${e instanceof Error ? e.message : 'error'} (skipped, continuing)`);
+    }
+
+    // Step 1.5: Shut down headed Chrome fallback if it was ever launched (#485)
+    try {
+      shutdownHeadedFallback();
+      steps.push('Headed Chrome fallback terminated');
+    } catch (e) {
+      steps.push(`Headed Chrome fallback: ${e instanceof Error ? e.message : 'error'}`);
     }
 
     // Step 2: Shutdown connection pool (closes all pooled about:blank pages)

@@ -37,7 +37,6 @@ import { registerRequestInterceptTool } from './request-intercept';
 import { registerFileUploadTool } from './file-upload';
 import { registerHttpAuthTool } from './http-auth';
 import { registerDragDropTool } from './drag-drop';
-
 // UX improvement composite tools
 import { registerFillFormTool } from './fill-form';
 

@@ -38,8 +38,6 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_journal: 1,
 
   // Tier 2: Specialist (on demand)
-  click_element: 2,
-  wait_and_click: 2,
   drag_drop: 2,
   network: 2,
   request_intercept: 2,
@@ -55,6 +53,12 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   file_upload: 2,
   batch_execute: 2,
   batch_paginate: 2,
+
+  // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
+  // Names must match the 'name' field in each tool's definition
+  oc_connection_health: 1,  // src/tools/connection-health.ts
+  oc_checkpoint: 1,         // src/tools/checkpoint.ts
+  list_profiles: 1,         // src/tools/list-profiles.ts
 
   // Tier 3: Orchestration only
   workflow_init: 3,

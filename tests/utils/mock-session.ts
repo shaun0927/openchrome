@@ -198,6 +198,17 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       return Array.from(worker.targets);
     }),
 
+    registerExternalTarget: jest.fn().mockImplementation((targetId: string, sessionId: string, workerId: string) => {
+      const session = sessions.get(sessionId);
+      if (!session) return;
+      const worker = session.workers.get(workerId);
+      if (!worker) return;
+      if (targetToWorker.has(targetId)) return;
+      worker.targets.add(targetId);
+      worker.lastActivityAt = Date.now();
+      targetToWorker.set(targetId, { sessionId, workerId });
+    }),
+
     // Target management (updated for workers)
     createTarget: jest.fn().mockImplementation(async (sessionId: string, url?: string, workerId?: string) => {
       const worker = await manager.getOrCreateWorker(sessionId, workerId);

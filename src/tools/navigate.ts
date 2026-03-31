@@ -102,23 +102,34 @@ async function stealthAutoRetry(
     ...(summary && { visualSummary: summary }),
     ...(blocking && { blockingPage: blocking }),
   });
-  // Tier 3: if stealth retry also got blocked and headed Chrome is available, escalate (#459)
-  if (blocking && autoFallbackToHeaded && RETRYABLE_BLOCK_TYPES.has(blocking.type)) {
-    const headedResult = await headedAutoRetry(targetUrl, blocking);
+  // Tier 3: escalate to headed Chrome if stealth retry also got blocked
+  // OR if stealth produced an empty/broken page (can't detect blocking in broken pages).
+  // This is safe because we only reach here after Tier 1 already detected a block. (#459)
+  const stealthBlocked = blocking && RETRYABLE_BLOCK_TYPES.has(blocking.type);
+  const stealthBroken = elementCount === 0 || readiness.readyState === 'unknown';
+  if (autoFallbackToHeaded && (stealthBlocked || stealthBroken)) {
+    const headedResult = await headedAutoRetry(targetUrl, blocking || blockingInfo, sessionId);
     if (headedResult) return headedResult;
   }
 
   return { content: [{ type: 'text', text: resultText }] };
 }
 
+/** Worker ID used for all headed fallback tabs */
+const HEADED_WORKER_ID = 'headed';
+
 /**
  * Tier 3 fallback: retry navigation in headed Chrome when stealth also fails.
  * Headed Chrome has a real user-agent and TLS fingerprint, bypassing CDN/WAF detection. (#459)
  * Returns null if headed fallback is not available (no display, no Chrome binary).
+ *
+ * When sessionId is provided, the headed tab is registered in the session manager
+ * so subsequent tools (read_page, interact, screenshot) can access it. (#485)
  */
 async function headedAutoRetry(
   targetUrl: string,
   blockingInfo: BlockingInfo,
+  sessionId?: string,
 ): Promise<MCPResult | null> {
   const headedFallback = getHeadedFallback(getGlobalConfig().port);
   if (!headedFallback.isAvailable()) {
@@ -129,11 +140,41 @@ async function headedAutoRetry(
   console.error(`[navigate] Auto-fallback Tier 3: stealth also blocked (${blockingInfo.type}), retrying in headed Chrome...`);
 
   try {
-    const result = await headedFallback.navigate(targetUrl);
+    // Use persistent navigation so the page stays alive for tool interaction (#485)
+    const result = await headedFallback.navigatePersistent(targetUrl);
+    let tabId: string | undefined;
+    let assignedWorkerId: string | undefined;
+
+    // Register the headed tab in the session manager for full tool interoperability
+    if (sessionId) {
+      try {
+        const sessionManager = getSessionManager();
+        const headedPort = headedFallback.getPort();
+
+        // Create/reuse the headed worker with the headed Chrome port
+        await sessionManager.getOrCreateWorker(sessionId, HEADED_WORKER_ID, {
+          port: headedPort,
+          shareCookies: true,
+        });
+
+        // Register the target in the worker
+        sessionManager.registerExternalTarget(result.targetId, sessionId, HEADED_WORKER_ID);
+
+        tabId = result.targetId;
+        assignedWorkerId = HEADED_WORKER_ID;
+        console.error(`[navigate] Headed tab registered: tabId=${tabId.slice(0, 8)}... workerId=${HEADED_WORKER_ID}`);
+      } catch (regErr) {
+        console.error('[navigate] Headed tab registration failed (page still accessible via headed Chrome):', regErr instanceof Error ? regErr.message : regErr);
+      }
+    }
+
     const resultText = JSON.stringify({
       action: 'navigate',
       url: result.url,
       title: result.title,
+      ...(tabId && { tabId }),
+      ...(assignedWorkerId && { workerId: assignedWorkerId }),
+      created: true,
       elementCount: result.elementCount,
       headed: true,
       stealth: true,
@@ -279,7 +320,7 @@ const handler: ToolHandler = async (
 
       // headed=true: skip headless entirely, navigate directly in headed Chrome (#459)
       if (headed) {
-        const headedResult = await headedAutoRetry(targetUrl, { type: 'access-denied', detail: 'user-requested headed mode' });
+        const headedResult = await headedAutoRetry(targetUrl, { type: 'access-denied', detail: 'user-requested headed mode' }, sessionId);
         if (headedResult) return headedResult;
         return {
           content: [{ type: 'text', text: 'Error: headed mode requested but no display available for headed Chrome.' }],
@@ -402,6 +443,13 @@ const handler: ToolHandler = async (
       // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
       if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
         return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context);
+      }
+
+      // When explicit stealth hits a block, escalate directly to tier 3 (headed Chrome)
+      // since tier 2 (stealth) is already being used. (#453)
+      if (newTabBlocking && stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
+        const headedResult = await headedAutoRetry(targetUrl, newTabBlocking, sessionId);
+        if (headedResult) return headedResult;
       }
 
       const newTabResultText = JSON.stringify({

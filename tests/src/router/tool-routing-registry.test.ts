@@ -37,9 +37,9 @@ describe('ToolRoutingRegistry', () => {
     expect(chromeOnlyTools).toContain('page_pdf');
   });
 
-  it('should return prefer-lightpanda count of at least 32', () => {
+  it('should return prefer-lightpanda count of at least 31', () => {
     const preferLightpandaTools = ToolRoutingRegistry.getPreferLightpandaTools();
-    expect(preferLightpandaTools.length).toBeGreaterThanOrEqual(32);
+    expect(preferLightpandaTools.length).toBeGreaterThanOrEqual(31);
   });
 
   it('should handle unknown tool name with default "chrome-only"', () => {

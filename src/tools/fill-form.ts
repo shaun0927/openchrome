@@ -1,7 +1,7 @@
 /**
  * Fill Form Tool - Composite tool that fills multiple form fields and optionally submits
  *
- * This reduces the typical pattern of multiple form_input + click_element calls into one operation.
+ * This reduces the typical pattern of multiple form_input + interact calls into one operation.
  */
 
 import { MCPServer } from '../mcp-server';
