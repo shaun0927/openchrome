@@ -57,6 +57,42 @@ const toolFeedList = document.getElementById("tool-feed-list")!;
 const metricRam = document.getElementById("metric-ram")!;
 const metricTabs = document.getElementById("metric-tabs")!;
 const metricUptime = document.getElementById("metric-uptime")!;
+const errorBanner = document.getElementById("error-banner")!;
+const errorText = document.getElementById("error-text")!;
+const errorDismiss = document.getElementById("error-dismiss") as HTMLButtonElement;
+
+// --- Error Banner ---
+
+function classifyError(raw: string): string {
+  if (/EADDRINUSE/.test(raw)) {
+    return "Port is already in use. Another server may be running. Try stopping it first or change the port.";
+  }
+  if (/ECONNREFUSED/.test(raw)) {
+    return "Could not connect to Chrome. Make sure Chrome is installed.";
+  }
+  if (/EACCES|EPERM/.test(raw)) {
+    return "Permission denied. Your antivirus may be blocking the server.";
+  }
+  if (/ENOENT.*chrome/i.test(raw)) {
+    return "Chrome was not found. Please install Google Chrome.";
+  }
+  if (/ETIMEDOUT/.test(raw)) {
+    return "Connection timed out. Chrome may be unresponsive — try restarting.";
+  }
+  return `Something went wrong: ${raw.slice(0, 120)}`;
+}
+
+function showError(message: string): void {
+  errorText.textContent = message;
+  errorBanner.hidden = false;
+}
+
+function hideError(): void {
+  errorBanner.hidden = true;
+  errorText.textContent = "";
+}
+
+errorDismiss.addEventListener("click", hideError);
 
 // --- State ---
 
@@ -109,6 +145,12 @@ function updateServerStatus(resp: ServerStatus): void {
     error: resp.error || "Error",
   };
   statusLabel.textContent = labels[resp.status] || resp.status;
+
+  if (resp.status === "error" && resp.error) {
+    showError(classifyError(resp.error));
+  } else if (resp.status === "running") {
+    hideError();
+  }
 
   if (resp.status === "running") {
     btnToggle.textContent = "Stop";

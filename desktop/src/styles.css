@@ -328,6 +328,19 @@ body {
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { background: var(--surface-hover); color: var(--text); }
 
+/* Profile selector */
+.profile-select {
+  background: var(--bg-secondary, #2a2a2a);
+  color: var(--text-primary, #e0e0e0);
+  border: 1px solid var(--border, #444);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 140px;
+}
+.profile-select:focus { outline: 1px solid var(--accent, #4a9eff); }
+
 /* Connect view */
 .connect-view {
   flex: 1;
@@ -494,3 +507,27 @@ body {
   left: 4px;
   color: var(--text-muted);
 }
+
+/* Error banner */
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--error-bg, #3a1a1a);
+  border-top: 1px solid var(--error-border, #ff4444);
+  color: var(--error-text, #ff8888);
+  font-size: 12px;
+}
+.error-icon { font-size: 14px; flex-shrink: 0; }
+.error-text { flex: 1; }
+.error-dismiss {
+  background: none;
+  border: none;
+  color: var(--error-text, #ff8888);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 14px;
+  opacity: 0.7;
+}
+.error-dismiss:hover { opacity: 1; }
