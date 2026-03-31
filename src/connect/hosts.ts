@@ -21,7 +21,6 @@ export const HOST_DEFINITIONS: Record<WebAIHostId, HostDefinition> = {
       'OAuth fields can be left empty — authentication uses the Bearer token in the Authorization header.',
     ],
   },
-
   chatgpt: {
     id: 'chatgpt',
     name: 'ChatGPT',
@@ -38,7 +37,6 @@ export const HOST_DEFINITIONS: Record<WebAIHostId, HostDefinition> = {
       'You may need to enable Developer Mode in ChatGPT settings.',
     ],
   },
-
   gemini: {
     id: 'gemini',
     name: 'Gemini',
@@ -55,7 +53,6 @@ export const HOST_DEFINITIONS: Record<WebAIHostId, HostDefinition> = {
       'Check Google AI Studio for the latest MCP integration steps.',
     ],
   },
-
   custom: {
     id: 'custom',
     name: 'Other / Custom',
@@ -74,16 +71,10 @@ export const HOST_DEFINITIONS: Record<WebAIHostId, HostDefinition> = {
   },
 };
 
-/**
- * Get a host definition by ID.
- */
 export function getHostDefinition(hostId: WebAIHostId): HostDefinition {
   return HOST_DEFINITIONS[hostId];
 }
 
-/**
- * Get all supported host IDs.
- */
 export function getHostIds(): WebAIHostId[] {
   return Object.keys(HOST_DEFINITIONS) as WebAIHostId[];
 }

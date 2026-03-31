@@ -71,6 +71,9 @@ import { registerConnectionHealthTool } from './connection-health';
 // AI Agent Continuity tools (#347 Phase 4)
 import { registerCheckpointTool } from './checkpoint';
 
+// Web AI host connection tools (#523)
+import { registerConnectTools } from './connect';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -145,6 +148,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // AI Agent Continuity tools (#347 Phase 4)
   registerCheckpointTool(server);
+
+  // Web AI host connection tools (#523)
+  registerConnectTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
