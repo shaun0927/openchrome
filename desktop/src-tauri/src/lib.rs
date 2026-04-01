@@ -10,9 +10,10 @@ use tokio::sync::Mutex;
 
 #[tauri::command]
 async fn start_server(
-    app: tauri::AppHandle, state: tauri::State<'_, Arc<Mutex<SidecarState>>>, port: Option<u16>,
+    app: tauri::AppHandle, state: tauri::State<'_, Arc<Mutex<SidecarState>>>,
+    port: Option<u16>, profile_directory: Option<String>,
 ) -> Result<SidecarStatus, String> {
-    sidecar::spawn_sidecar(&app, &state, port.unwrap_or(3100)).await
+    sidecar::spawn_sidecar(&app, &state, port.unwrap_or(3100), profile_directory).await
 }
 
 #[tauri::command]
