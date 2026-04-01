@@ -241,6 +241,11 @@ class HeadedFallbackManager {
     }
   }
 
+  /** Get a kept-alive page by its target ID. Returns null if not found. (#485) */
+  getPage(targetId: string): Page | null {
+    return this.alivePages.get(targetId) ?? null;
+  }
+
   /** Shut down the headed Chrome instance */
   shutdown(): void {
     // Close any kept-alive pages

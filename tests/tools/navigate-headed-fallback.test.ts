@@ -60,12 +60,14 @@ const mockHeadedNavigatePersistent = jest.fn().mockResolvedValue({
   targetId: 'headed-target-123',
 });
 const mockHeadedGetPort = jest.fn().mockReturnValue(9322);
+const mockHeadedGetPage = jest.fn().mockReturnValue(null);
 jest.mock('../../src/chrome/headed-fallback', () => ({
   getHeadedFallback: () => ({
     isAvailable: mockHeadedIsAvailable,
     navigate: mockHeadedNavigate,
     navigatePersistent: mockHeadedNavigatePersistent,
     getPort: mockHeadedGetPort,
+    getPage: mockHeadedGetPage,
   }),
 }));
 
@@ -104,6 +106,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         navigate: mockHeadedNavigate,
         navigatePersistent: mockHeadedNavigatePersistent,
         getPort: mockHeadedGetPort,
+        getPage: mockHeadedGetPage,
       }),
     }));
     jest.doMock('../../src/config/global', () => ({
@@ -142,6 +145,8 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       blockingPage: null,
       targetId: 'headed-target-123',
     });
+
+    mockHeadedGetPage.mockReturnValue(null);
 
     (mockSessionManager as any).createTargetStealth = jest.fn().mockImplementation(
       async (sessionId: string, url: string, workerId?: string) => {
@@ -366,6 +371,83 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed).toHaveProperty('fallbackTier', 3);
       expect(parsed).toHaveProperty('fallbackReason', 'bot-check');
       expect(parsed).toHaveProperty('action', 'navigate');
+    });
+  });
+
+  describe('session integration (#485)', () => {
+    test('headed=true registers page via registerHeadedPage when getPage returns a page', async () => {
+      const handler = await getNavigateHandler();
+      const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-target-123' });
+      mockHeadedGetPage.mockReturnValue(mockPage);
+
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.headed).toBe(true);
+      expect(parsed.tabId).toBe('headed-target-123');
+      expect(parsed.workerId).toBe('headed');
+      expect(mockSessionManager.registerHeadedPage).toHaveBeenCalledWith(
+        'headed-target-123',
+        testSessionId,
+        'headed',
+        mockPage,
+      );
+    });
+
+    test('headed=true falls back to registerExternalTarget when getPage returns null', async () => {
+      const handler = await getNavigateHandler();
+      mockHeadedGetPage.mockReturnValue(null);
+
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.headed).toBe(true);
+      expect(parsed.tabId).toBe('headed-target-123');
+      expect(mockSessionManager.registerExternalTarget).toHaveBeenCalledWith(
+        'headed-target-123',
+        testSessionId,
+        'headed',
+      );
+    });
+
+    test('headed worker is created without a port parameter', async () => {
+      const handler = await getNavigateHandler();
+      const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-target-123' });
+      mockHeadedGetPage.mockReturnValue(mockPage);
+
+      await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
+
+      expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
+        testSessionId,
+        'headed',
+        { shareCookies: true },
+      );
+      const callArgs = (mockSessionManager.getOrCreateWorker as jest.Mock).mock.calls;
+      const headedCall = callArgs.find((args: any[]) => args[1] === 'headed');
+      expect(headedCall).toBeDefined();
+      expect(headedCall![2]).not.toHaveProperty('port');
+    });
+
+    test('Tier 3 auto-escalation registers headed page via registerHeadedPage', async () => {
+      const handler = await getNavigateHandler();
+      const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-target-123' });
+      mockHeadedGetPage.mockReturnValue(mockPage);
+
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Still Denied' });
+
+      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.headed).toBe(true);
+      expect(parsed.fallbackTier).toBe(3);
+      expect(mockSessionManager.registerHeadedPage).toHaveBeenCalledWith(
+        'headed-target-123',
+        testSessionId,
+        'headed',
+        mockPage,
+      );
     });
   });
 });

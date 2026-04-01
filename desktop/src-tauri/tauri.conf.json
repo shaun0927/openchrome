@@ -16,7 +16,7 @@
     "externalBin": ["binaries/openchrome-sidecar"]
   },
   "app": {
-    "windows": [{"label":"main","title":"OpenChrome","width":520,"height":440,"resizable":true,"center":true}],
+    "windows": [{"label":"main","title":"OpenChrome","width":960,"height":680,"minWidth":800,"minHeight":600,"resizable":true,"center":true}],
     "security": {}
   }
 }

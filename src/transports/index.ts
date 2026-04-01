@@ -38,6 +38,7 @@ export type TransportMode = 'stdio' | 'http';
 export interface TransportOptions {
   port?: number;
   host?: string;
+  authToken?: string;
 }
 
 /**
@@ -48,7 +49,7 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
     // Use require to avoid loading HTTP module when not needed
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { HTTPTransport } = require('./http');
-    return new HTTPTransport(options?.port || 3100, options?.host || '127.0.0.1');
+    return new HTTPTransport(options?.port || 3100, options?.host || '127.0.0.1', options?.authToken);
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { StdioTransport } = require('./stdio');

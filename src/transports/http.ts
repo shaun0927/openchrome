@@ -14,6 +14,8 @@ import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { MCPTransport } from './index';
+import { getDashboardState } from '../desktop/dashboard-state';
+import type { SessionManager } from '../session-manager';
 
 /** Maximum allowed HTTP request body size (10 MB) to prevent OOM from oversized requests */
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -29,13 +31,17 @@ export class HTTPTransport implements MCPTransport {
   private messageHandler: ((msg: Record<string, unknown>) => Promise<MCPResponse | null>) | null = null;
   private port: number;
   private host: string;
+  private authToken: string | undefined;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
+  private sessionManager: SessionManager | null = null;
+  private readonly serverStartTime: number = Date.now();
 
-  constructor(port: number, host = '127.0.0.1') {
+  constructor(port: number, host = '127.0.0.1', authToken?: string) {
     this.port = port;
     this.host = host;
+    this.authToken = authToken;
   }
 
   /**
@@ -44,6 +50,13 @@ export class HTTPTransport implements MCPTransport {
    */
   onSessionDelete(handler: (sessionId: string) => void): void {
     this.sessionDeleteHandler = handler;
+  }
+
+  /**
+   * Set the session manager so dashboard API endpoints can access session/tab data.
+   */
+  setSessionManager(sm: SessionManager): void {
+    this.sessionManager = sm;
   }
 
   onMessage(handler: (msg: Record<string, unknown>) => Promise<MCPResponse | null>): void {
@@ -107,10 +120,10 @@ export class HTTPTransport implements MCPTransport {
     const url = new URL(req.url || '/', `http://${this.host}:${this.port}`);
     const pathname = url.pathname;
 
-    // CORS headers for all responses
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // CORS headers for all responses — restrict origin when auth is enabled
+    res.setHeader('Access-Control-Allow-Origin', this.authToken ? 'null' : '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id, Authorization');
     res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
 
     // Handle CORS preflight
@@ -120,8 +133,40 @@ export class HTTPTransport implements MCPTransport {
       return;
     }
 
+    // /health is always unauthenticated
     if (pathname === '/health') {
       this.handleHealth(res);
+      return;
+    }
+
+    // Bearer token validation: reject requests without valid token when configured
+    if (this.authToken) {
+      const authHeader = req.headers['authorization'];
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      const expected = Buffer.from(this.authToken);
+      const provided = Buffer.from(token);
+      if (provided.length !== expected.length || !crypto.timingSafeEqual(expected, provided)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+    }
+
+    // ─── Dashboard REST API ────────────────────────────────────────────
+    if (pathname === '/api/screenshot' && req.method === 'GET') {
+      this.handleScreenshot(url, res);
+      return;
+    }
+    if (pathname === '/api/sessions' && req.method === 'GET') {
+      this.handleSessions(res);
+      return;
+    }
+    if (pathname === '/api/tool-calls' && req.method === 'GET') {
+      this.handleToolCalls(url, res);
+      return;
+    }
+    if (pathname === '/api/metrics' && req.method === 'GET') {
+      this.handleMetrics(res);
       return;
     }
 
@@ -159,6 +204,142 @@ export class HTTPTransport implements MCPTransport {
       activeSessions: this.sessions.size,
       sseConnections: this.sseConnections.length,
     }));
+  }
+
+  // ─── Dashboard API Handlers ──────────────────────────────────────────
+
+  /**
+   * GET /api/screenshot - capture active tab screenshot as base64 WebP
+   */
+  private handleScreenshot(url: URL, res: http.ServerResponse): void {
+    const sessionId = url.searchParams.get('session_id') || 'default';
+
+    if (!this.sessionManager) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Session manager not available' }));
+      return;
+    }
+
+    this.captureScreenshot(sessionId)
+      .then((data) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      })
+      .catch((err) => {
+        console.error('[HTTPTransport] Screenshot error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Screenshot failed' }));
+      });
+  }
+
+  private async captureScreenshot(sessionId: string): Promise<{ base64: string; format: string; sessionId: string }> {
+    const sm = this.sessionManager!;
+    const infos = sm.getAllSessionInfos();
+    const sessionInfo = infos.find((s) => s.id === sessionId);
+
+    if (!sessionInfo || sessionInfo.targetCount === 0) {
+      throw new Error(`No tabs found for session "${sessionId}"`);
+    }
+
+    // Get the first worker's first target as the "active" page
+    const cdpClient = sm.getCDPClient();
+    let targetId: string | undefined;
+
+    for (const worker of sessionInfo.workers) {
+      const workerData = sm.getWorker(sessionId, worker.id);
+      if (workerData && workerData.targets.size > 0) {
+        // Get the most recently added target (last in insertion order)
+        for (const tid of workerData.targets) {
+          targetId = tid;
+        }
+        break;
+      }
+    }
+
+    if (!targetId) {
+      throw new Error(`No active target found for session "${sessionId}"`);
+    }
+
+    const page = await cdpClient.getPageByTargetId(targetId);
+    if (!page || page.isClosed()) {
+      throw new Error(`Page for target ${targetId} is closed or unavailable`);
+    }
+
+    const cdpSession = await page.createCDPSession();
+    try {
+      const result = await cdpSession.send('Page.captureScreenshot', {
+        format: 'webp',
+        quality: 60,
+      }) as { data: string };
+      return { base64: result.data, format: 'webp', sessionId };
+    } finally {
+      await cdpSession.detach().catch(() => { /* ignore */ });
+    }
+  }
+
+  /**
+   * GET /api/sessions - return connected sessions with tab counts
+   */
+  private handleSessions(res: http.ServerResponse): void {
+    if (!this.sessionManager) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessions: [] }));
+      return;
+    }
+
+    const infos = this.sessionManager.getAllSessionInfos();
+    const sessions = infos.map((info) => ({
+      id: info.id,
+      name: info.name,
+      tabCount: info.targetCount,
+      workerCount: info.workerCount,
+      createdAt: info.createdAt,
+      lastActivityAt: info.lastActivityAt,
+    }));
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ sessions }));
+  }
+
+  /**
+   * GET /api/tool-calls - return recent tool calls from dashboard state
+   */
+  private handleToolCalls(url: URL, res: http.ServerResponse): void {
+    const sessionId = url.searchParams.get('session_id') || undefined;
+    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+    const clampedLimit = Math.min(Math.max(1, limit), 100);
+
+    const dashboardState = getDashboardState();
+    const calls = dashboardState.getToolCalls(sessionId, clampedLimit);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ calls }));
+  }
+
+  /**
+   * GET /api/metrics - return server metrics
+   */
+  private handleMetrics(res: http.ServerResponse): void {
+    const mem = process.memoryUsage();
+    const dashboardState = getDashboardState();
+
+    let tabCount = 0;
+    let sessionCount = 0;
+    if (this.sessionManager) {
+      const stats = this.sessionManager.getStats();
+      tabCount = stats.totalTargets;
+      sessionCount = stats.activeSessions;
+    }
+
+    const metrics = {
+      ram_mb: Math.round(mem.rss / 1024 / 1024 * 100) / 100,
+      tab_count: tabCount,
+      uptime_secs: dashboardState.getUptimeSecs(),
+      session_count: sessionCount,
+    };
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(metrics));
   }
 
   /**

@@ -1,0 +1,13 @@
+{
+  "_WARNING": "UPDATER_PUBKEY_PLACEHOLDER must be replaced with a real key before merging into tauri.conf.json. Generate via: npx @tauri-apps/cli signer generate -w ~/.tauri/openchrome.key",
+  "tauri": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "pubkey": "UPDATER_PUBKEY_PLACEHOLDER",
+      "endpoints": [
+        "https://github.com/shaun0927/openchrome/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
