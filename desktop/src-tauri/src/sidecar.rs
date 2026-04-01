@@ -39,14 +39,27 @@ impl SidecarState {
 
 pub async fn spawn_sidecar(
     app: &AppHandle, state: &Arc<Mutex<SidecarState>>, port: u16,
+    profile_directory: Option<String>,
 ) -> Result<SidecarStatus, String> {
     let mut guard = state.lock().await;
     if guard.child.is_some() { return Ok(guard.status_response()); }
     guard.port = port;
 
+    let mut args = vec![
+        "serve".to_string(),
+        "--http".to_string(),
+        port.to_string(),
+        "--auto-launch".to_string(),
+        "--server-mode".to_string(),
+    ];
+    if let Some(ref dir) = profile_directory {
+        args.push("--profile-directory".to_string());
+        args.push(dir.clone());
+    }
+
     let cmd = app.shell().sidecar("binaries/openchrome-sidecar")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?
-        .args(["serve", "--http", &port.to_string(), "--auto-launch", "--server-mode"]);
+        .args(&args);
 
     let (mut rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
     guard.child = Some(child);
