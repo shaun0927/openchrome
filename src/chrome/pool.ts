@@ -355,6 +355,27 @@ export class ChromePool {
       ? path.join(os.homedir(), '.openchrome', 'profiles', profileDirectory.replace(/[^a-zA-Z0-9_\- ]/g, '_'))
       : undefined;
 
+    // Sync cookies from the real Chrome profile into the isolated user-data-dir
+    // so that profile instances start with up-to-date session data.
+    if (profileDirectory && profileUserDataDir) {
+      try {
+        const profileManager = new ProfileManager();
+        const realProfileDir = profileManager.getDefaultUserDataDir();
+        if (realProfileDir && profileManager.needsSync(realProfileDir, profileDirectory)) {
+          const result = profileManager.syncProfileData(realProfileDir, profileUserDataDir, profileDirectory);
+          console.error(
+            `[ChromePool] Cookie sync for profile "${profileDirectory}": ` +
+            `success=${result.success}, atomic=${result.atomic}`
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[ChromePool] Warning: cookie sync failed for profile "${profileDirectory}":`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
     const launchOptions: LaunchOptions = {
       port,
       autoLaunch: profileDirectory ? true : this.config.autoLaunch,
