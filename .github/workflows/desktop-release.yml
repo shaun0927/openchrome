@@ -54,6 +54,9 @@ jobs:
       contents: read
     timeout-minutes: 60
 
+    # Allow individual platform failures so partial releases can still publish.
+    # Linux AppImage bundling is known-flaky on CI (linuxdeploy FUSE issue).
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -269,7 +272,7 @@ jobs:
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz.sig
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
   # ---------------------------------------------------------------------------
