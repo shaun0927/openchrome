@@ -66,6 +66,7 @@ pub async fn spawn_sidecar(
     guard.started_at = Some(std::time::Instant::now());
 
     let app_handle = app.clone();
+    let monitor_state = Arc::clone(state);
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
@@ -81,6 +82,9 @@ pub async fn spawn_sidecar(
                 CommandEvent::Terminated(payload) => {
                     eprintln!("[sidecar] terminated: code={:?} signal={:?}", payload.code, payload.signal);
                     let _ = app_handle.emit("sidecar-exit", payload.code);
+                    let mut guard = monitor_state.lock().await;
+                    guard.child = None;
+                    guard.started_at = None;
                     break;
                 }
                 _ => {}
