@@ -432,6 +432,40 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(headedCall![2]).toHaveProperty('port', 9322);
     });
 
+    test('headed=true with profileDirectory passes profile to headed Chrome (#562)', async () => {
+      const handler = await getNavigateHandler();
+      const mockPage = createMockPage({ url: 'https://aws.amazon.com/', targetId: 'headed-profile-123' });
+      mockHeadedGetPage.mockReturnValue(mockPage);
+
+      const result = await handler(testSessionId, {
+        url: 'https://aws.amazon.com',
+        headed: true,
+        profileDirectory: 'Profile 1',
+      });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      // Should use profile-scoped workerId, not "headed"
+      expect(parsed.workerId).toBe('profile:Profile 1');
+      expect(parsed.profileDirectory).toBe('Profile 1');
+      expect(parsed.headed).toBe(true);
+      expect(parsed.userRequested).toBe(true);
+      // profileDirectory should be passed to navigatePersistent
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith(
+        'https://aws.amazon.com',
+        'Profile 1',
+      );
+      // Worker should be created with profile-scoped ID and port
+      expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
+        testSessionId,
+        'profile:Profile 1',
+        expect.objectContaining({
+          shareCookies: true,
+          port: 9322,
+          profileDirectory: 'Profile 1',
+        }),
+      );
+    });
+
     test('Tier 3 auto-escalation registers headed page via registerHeadedPage', async () => {
       const handler = await getNavigateHandler();
       const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-target-123' });
