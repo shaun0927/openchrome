@@ -240,6 +240,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # linuxdeploy AppImage requires FUSE; CI runners lack /dev/fuse,
+          # so tell linuxdeploy to extract-and-run instead.
+          APPIMAGE_EXTRACT_AND_RUN: '1'
         with:
           projectPath: desktop
           # Do not pass tagName — let the publish job create the release.
