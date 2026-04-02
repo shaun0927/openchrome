@@ -153,10 +153,12 @@ async function headedAutoRetry(
       try {
         const sessionManager = getSessionManager();
 
-        // Create/reuse the headed worker WITHOUT a port — the page is injected into
-        // the main CDPClient, so getCDPClientForWorker() falls through to it.
+        // Create/reuse the headed worker WITH the headed Chrome port so that
+        // getCDPClientForWorker() routes CDP commands to the correct instance. (#561)
+        const headedPort = headedFallback.getPort();
         await sessionManager.getOrCreateWorker(sessionId, HEADED_WORKER_ID, {
           shareCookies: true,
+          port: headedPort,
         });
 
         // Get the live Page object from HeadedFallbackManager and register it
@@ -193,6 +195,74 @@ async function headedAutoRetry(
     return { content: [{ type: 'text', text: resultText }] };
   } catch (err) {
     console.error('[navigate] Tier 3 headed fallback failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/**
+ * Direct headed navigation — user explicitly requested headed: true.
+ * Unlike headedAutoRetry (Tier 3 fallback), this does NOT fabricate a BlockingInfo
+ * and supports profileDirectory for cookie/session access. (#560, #562)
+ */
+async function headedNavigateDirect(
+  targetUrl: string,
+  sessionId: string | undefined,
+  options: { profileDirectory?: string } = {},
+): Promise<MCPResult | null> {
+  const headedFallback = getHeadedFallback(getGlobalConfig().port);
+  if (!headedFallback.isAvailable()) {
+    return null;
+  }
+
+  console.error(`[navigate] User-requested headed mode${options.profileDirectory ? ` with profile "${options.profileDirectory}"` : ''}`);
+
+  try {
+    const result = await headedFallback.navigatePersistent(targetUrl, options.profileDirectory);
+    let tabId: string | undefined;
+    const resolvedWorkerId = options.profileDirectory
+      ? `profile:${options.profileDirectory}`
+      : HEADED_WORKER_ID;
+
+    if (sessionId) {
+      try {
+        const sessionManager = getSessionManager();
+        const headedPort = headedFallback.getPort();
+
+        await sessionManager.getOrCreateWorker(sessionId, resolvedWorkerId, {
+          shareCookies: true,
+          port: headedPort,
+          ...(options.profileDirectory && { profileDirectory: options.profileDirectory }),
+        });
+
+        const page = headedFallback.getPage(result.targetId);
+        if (page) {
+          sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
+        } else {
+          sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
+        }
+
+        tabId = result.targetId;
+      } catch (regErr) {
+        console.error('[navigate] Headed tab registration failed:', regErr instanceof Error ? regErr.message : regErr);
+      }
+    }
+
+    const resultText = JSON.stringify({
+      action: 'navigate',
+      url: result.url,
+      title: result.title,
+      ...(tabId && { tabId }),
+      ...(resolvedWorkerId && { workerId: resolvedWorkerId }),
+      created: true,
+      elementCount: result.elementCount,
+      headed: true,
+      userRequested: true,
+      ...(options.profileDirectory && { profileDirectory: options.profileDirectory }),
+      ...(result.blockingPage && { blockingPage: result.blockingPage }),
+    });
+    return { content: [{ type: 'text', text: resultText }] };
+  } catch (err) {
+    console.error('[navigate] Headed navigation failed:', err instanceof Error ? err.message : err);
     return null;
   }
 }
@@ -326,9 +396,10 @@ const handler: ToolHandler = async (
       // Domain blocklist check on normalized URL
       assertDomainAllowed(targetUrl);
 
-      // headed=true: skip headless entirely, navigate directly in headed Chrome (#459)
+      // headed=true: skip headless entirely, navigate directly in headed Chrome.
+      // Uses headedNavigateDirect() which does NOT fabricate a BlockingInfo. (#560, #561, #562)
       if (headed) {
-        const headedResult = await headedAutoRetry(targetUrl, { type: 'access-denied', detail: 'user-requested headed mode' }, sessionId);
+        const headedResult = await headedNavigateDirect(targetUrl, sessionId, { profileDirectory });
         if (headedResult) return headedResult;
         return {
           content: [{ type: 'text', text: 'Error: headed mode requested but no display available for headed Chrome.' }],
