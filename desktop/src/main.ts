@@ -112,6 +112,7 @@ errorDismiss.addEventListener("click", hideError);
 
 let currentStatus: ServerStatus["status"] = "stopped";
 let selectedSessionId: string | null = null;
+let savedPort = 3100;
 let lastScreenshotTime = 0;
 let screenshotTimer: ReturnType<typeof setInterval> | null = null;
 let toolCallTimer: ReturnType<typeof setInterval> | null = null;
@@ -132,11 +133,14 @@ async function loadProfiles(): Promise<void> {
       profileSelect.appendChild(opt);
     }
 
-    // Restore saved selection
+    // Restore saved selection and port
     try {
       const settings = await invoke<AppSettings>("load_settings");
       if (settings.selected_profile) {
         profileSelect.value = settings.selected_profile;
+      }
+      if (settings.port) {
+        savedPort = settings.port;
       }
     } catch {
       // No saved settings — leave default selected
@@ -152,7 +156,7 @@ profileSelect.addEventListener("change", async () => {
     await invoke("save_settings", {
       settings: {
         selected_profile: selectedProfile,
-        port: 3100,
+        port: savedPort,
         auto_start: false,
       },
     });
@@ -173,13 +177,13 @@ btnToggle.addEventListener("click", async () => {
       hideError();
       updateServerStatus({
         status: "starting",
-        port: 3100,
+        port: savedPort,
         error: null,
         uptime_secs: null,
       });
       const profileDirectory = profileSelect.value || undefined;
       const resp = await invoke<ServerStatus>("start_server", {
-        port: 3100,
+        port: savedPort,
         profileDirectory,
       });
       updateServerStatus(resp);
@@ -189,7 +193,7 @@ btnToggle.addEventListener("click", async () => {
     showError(message);
     updateServerStatus({
       status: "error",
-      port: 3100,
+      port: savedPort,
       error: String(err),
       uptime_secs: null,
     });
@@ -566,7 +570,7 @@ function updateConnectView(): void {
   if (!host) return;
 
   // URL
-  const port = 3100;
+  const port = savedPort;
   if (currentStatus === "running") {
     const url = `http://localhost:${port}/mcp`;
     connectUrl.textContent = url;
