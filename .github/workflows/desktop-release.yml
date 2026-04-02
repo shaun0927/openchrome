@@ -234,37 +234,12 @@ jobs:
       # Build the Tauri application (handles Rust compilation, bundling,
       # signing, and notarization for each platform).
       # -----------------------------------------------------------------------
-      # Build unsigned when no signing secrets are configured.
-      # Tauri attempts codesign even with empty env vars, so we split
-      # into two steps: one with signing env vars, one without.
-      - name: Build Tauri app (unsigned)
-        if: ${{ secrets.APPLE_CERTIFICATE == '' }}
+      # Build without code signing. To enable signing later, add the
+      # APPLE_*/WINDOWS_* secrets and pass them as env vars here.
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # No signing env vars — produces unsigned binaries
-        with:
-          projectPath: desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: ''
-          releaseBody: ''
-          releaseDraft: false
-          prerelease: false
-          args: --target ${{ matrix.target }}
-
-      - name: Build Tauri app (signed)
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
