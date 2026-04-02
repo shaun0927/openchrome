@@ -10,7 +10,7 @@ const os = require("os");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const binDir = path.resolve(__dirname, "..", "src-tauri", "binaries");
-const entryPoint = path.resolve(repoRoot, "dist", "index.js");
+const entryPoint = path.resolve(repoRoot, "dist", "cli", "index.js");
 
 function getTauriTarget() {
   const p = os.platform(), a = os.arch();
