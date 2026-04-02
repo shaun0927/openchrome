@@ -242,11 +242,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: ''
-          releaseBody: ''
-          releaseDraft: false
-          prerelease: false
+          # Do not pass tagName — let the publish job create the release.
+          # tauri-action with tagName tries to create/find a release and fails
+          # on re-tagged builds.
           args: --target ${{ matrix.target }}
 
       # -----------------------------------------------------------------------
