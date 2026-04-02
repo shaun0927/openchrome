@@ -152,7 +152,7 @@ OpenChrome isn't just a browser API — it's an intelligent harness with 27 subs
 
 ---
 
-## Desktop App
+## Desktop App (Beta)
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Intel-black?logo=apple" alt="macOS">
@@ -160,24 +160,36 @@ OpenChrome isn't just a browser API — it's an intelligent harness with 27 subs
   <img src="https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black" alt="Linux">
 </p>
 
-OpenChrome is also available as a **desktop app** — a signed, one-click installer that runs the MCP server locally without requiring Node.js, npm, or any command-line setup. Designed for non-developers who want browser automation without the terminal.
+OpenChrome is also available as a **desktop app** — a one-click installer that runs the MCP server locally without requiring Node.js, npm, or any command-line setup. Designed for non-developers who want browser automation without the terminal.
 
-**[Download the Latest Release](https://github.com/shaun0927/openchrome/releases/latest)**
+> **Note:** These are unsigned builds. See [installation notes](#installation-notes) below.
 
-| Platform | Artifact |
+### Download
+
+| Platform | Download |
 |----------|----------|
-| macOS (Apple Silicon) | `OpenChrome-{version}-arm64.dmg` |
-| macOS (Intel) | `OpenChrome-{version}-x64.dmg` |
-| Windows | `OpenChrome-{version}-x64-setup.exe` |
-| Linux | `OpenChrome-{version}-x86_64.AppImage` |
+| macOS (Apple Silicon) | [GitHub Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) |
+| macOS (Intel) | [GitHub Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) |
+| Windows | [GitHub Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) |
+| Linux | [GitHub Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) |
 
 ### Get Started (non-developers)
 
-1. **Download** the installer for your platform from the [Latest Release](https://github.com/shaun0927/openchrome/releases/latest) page.
+1. **Download** the installer for your platform from the [Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) page.
 2. **Install** — open the `.dmg` / run the `.exe` installer / make the `.AppImage` executable and launch it.
 3. **Connect** — the app starts the MCP server automatically. Point your MCP client (Claude, Cursor, etc.) to the local server address shown in the app.
 
-The desktop app includes an auto-updater — it will notify you when a new version is available.
+### Installation Notes
+
+**macOS:** The app is not notarized. On first launch, macOS will block it. To fix:
+```bash
+xattr -cr /Applications/OpenChrome.app
+```
+Or right-click the app → Open → Open.
+
+**Windows:** SmartScreen will show "Windows protected your PC". Click "More info" → "Run anyway".
+
+**Linux:** No additional steps needed. Download the AppImage, make it executable (`chmod +x`), and run.
 
 > **Note:** The desktop app and the CLI (`openchrome-mcp` on npm) are separate distributions with independent version numbers. You do not need both — use whichever fits your workflow. See [`desktop/RELEASING.md`](desktop/RELEASING.md) for the desktop release process.
 

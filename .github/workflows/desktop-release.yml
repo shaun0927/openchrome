@@ -18,6 +18,12 @@
 #   APPLE_TEAM_ID              - Apple Developer Team ID
 #   WINDOWS_CERTIFICATE        - Base64-encoded .pfx signing certificate
 #   WINDOWS_CERTIFICATE_PASSWORD - Password for the .pfx file
+#
+# All signing secrets are OPTIONAL. Without them, the app builds and
+# runs normally but shows OS security warnings on first launch:
+#   macOS: run `xattr -cr OpenChrome.app` to bypass Gatekeeper
+#   Windows: click "More info" → "Run anyway" in SmartScreen
+#   Linux: no warnings (AppImage doesn't require signing)
 
 name: Desktop App Release
 
@@ -200,7 +206,7 @@ jobs:
       # macOS: import signing certificate into the keychain
       # -----------------------------------------------------------------------
       - name: Import macOS signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
