@@ -68,6 +68,7 @@ class HeadedFallbackManager {
   private launching: Promise<Browser> | null = null;
   private port: number;
   private alivePages: Map<string, Page> = new Map();
+  private profileDirectory?: string;
 
   constructor(basePort: number = 9222) {
     this.port = basePort + HEADED_PORT_OFFSET;
@@ -96,7 +97,7 @@ class HeadedFallbackManager {
     // Prevent concurrent launches
     if (this.launching) return this.launching;
 
-    this.launching = this.launchHeadedChrome();
+    this.launching = this.launchHeadedChrome(this.profileDirectory);
     try {
       this.browser = await this.launching;
       return this.browser;
@@ -105,7 +106,7 @@ class HeadedFallbackManager {
     }
   }
 
-  private async launchHeadedChrome(): Promise<Browser> {
+  private async launchHeadedChrome(profileDirectory?: string): Promise<Browser> {
     const chromePath = findChromeBinary();
     if (!chromePath) {
       throw new Error('[HeadedFallback] Chrome binary not found');
@@ -115,13 +116,34 @@ class HeadedFallbackManager {
       throw new Error('[HeadedFallback] No display available for headed Chrome');
     }
 
-    // Use a temp profile to avoid conflicting with the user's Chrome
-    const userDataDir = path.join(os.tmpdir(), `openchrome-headed-fallback-${this.port}`);
+    // When profileDirectory is specified, use a persistent profile dir with cookie sync.
+    // Otherwise, use a temp profile to avoid conflicting with the user's Chrome. (#562)
+    let userDataDir: string;
+    if (profileDirectory) {
+      const safeName = profileDirectory.replace(/[^a-zA-Z0-9_\- ]/g, '_');
+      userDataDir = path.join(os.homedir(), '.openchrome', 'profiles', safeName);
+
+      // Sync cookies from real Chrome profile (non-fatal)
+      try {
+        const { ProfileManager } = await import('./profile-manager');
+        const profileManager = new ProfileManager();
+        const realProfileDir = profileManager.getDefaultUserDataDir();
+        if (realProfileDir && profileManager.needsSync(realProfileDir, profileDirectory)) {
+          const result = profileManager.syncProfileData(realProfileDir, userDataDir, profileDirectory);
+          console.error(`[HeadedFallback] Cookie sync: atomic=${result.atomic}, success=${result.success}`);
+        }
+      } catch (err) {
+        console.error('[HeadedFallback] Cookie sync failed (non-fatal):', err);
+      }
+    } else {
+      userDataDir = path.join(os.tmpdir(), `openchrome-headed-fallback-${this.port}`);
+    }
     fs.mkdirSync(userDataDir, { recursive: true });
 
     const args = [
       `--remote-debugging-port=${this.port}`,
       `--user-data-dir=${userDataDir}`,
+      ...(profileDirectory ? [`--profile-directory=${profileDirectory}`] : []),
       '--no-first-run',
       '--no-default-browser-check',
       '--start-maximized',
@@ -204,8 +226,18 @@ class HeadedFallbackManager {
    * Navigate to a URL and keep the page alive for session manager integration.
    * The page remains open so tools (read_page, interact, screenshot) can use it
    * via the session manager's headed worker. (#485)
+   *
+   * When profileDirectory is provided, the headed Chrome is launched with that
+   * profile and cookies are synced from the real Chrome installation. (#562)
    */
-  async navigatePersistent(url: string): Promise<HeadedPersistentResult> {
+  async navigatePersistent(url: string, profileDirectory?: string): Promise<HeadedPersistentResult> {
+    // If a different profile is requested than what the browser was launched with,
+    // shut down and relaunch with the new profile. (#562)
+    if (profileDirectory !== this.profileDirectory && this.browser) {
+      console.error(`[HeadedFallback] Profile changed from "${this.profileDirectory ?? '(none)'}" to "${profileDirectory ?? '(none)'}", restarting browser`);
+      this.shutdown();
+    }
+    this.profileDirectory = profileDirectory;
     const browser = await this.ensureBrowser();
     const page = await browser.newPage();
 
