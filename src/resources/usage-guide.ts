@@ -117,7 +117,7 @@ If the browser connection is lost during a session:
    connection issues — this can break multi-scope configurations. Instead,
    use your client's built-in MCP reconnect mechanism:
    - **IDE clients (Cursor, Windsurf, VS Code)**: Restart the MCP server from settings
-   - **CLI clients (Claude Code)**: Reconnect using the built-in MCP management command
+   - **CLI clients (Claude Code, Codex CLI)**: Reconnect using the client's built-in MCP management command or restart the CLI session
    - **Web clients**: Refresh the page or re-establish the connection
 `;
 
