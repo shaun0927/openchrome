@@ -132,8 +132,12 @@ jobs:
       # -----------------------------------------------------------------------
       # Node.js dependencies
       # -----------------------------------------------------------------------
-      - name: Install Node.js dependencies
+      - name: Install Node.js dependencies (root)
         run: npm ci
+
+      - name: Install Node.js dependencies (desktop)
+        run: npm install
+        working-directory: desktop
 
       # -----------------------------------------------------------------------
       # Build the MCP server sidecar binary for each target platform.
