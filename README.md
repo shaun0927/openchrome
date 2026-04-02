@@ -168,10 +168,11 @@ OpenChrome is also available as a **desktop app** — a one-click installer that
 
 | Platform | Download |
 |----------|----------|
-| macOS (Apple Silicon) | [GitHub Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) |
-| macOS (Intel) | [GitHub Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) |
-| Windows | [GitHub Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) |
-| Linux | [GitHub Releases](https://github.com/shaun0927/openchrome/releases?q=desktop) |
+| macOS (Apple Silicon) | [OpenChrome_0.1.0_aarch64.dmg](https://github.com/shaun0927/openchrome/releases/download/desktop-v0.1.0/OpenChrome_0.1.0_aarch64.dmg) |
+| macOS (Intel) | [OpenChrome_0.1.0_x64.dmg](https://github.com/shaun0927/openchrome/releases/download/desktop-v0.1.0/OpenChrome_0.1.0_x64.dmg) |
+| Windows (EXE) | [OpenChrome_0.1.0_x64-setup.exe](https://github.com/shaun0927/openchrome/releases/download/desktop-v0.1.0/OpenChrome_0.1.0_x64-setup.exe) |
+| Windows (MSI) | [OpenChrome_0.1.0_x64_en-US.msi](https://github.com/shaun0927/openchrome/releases/download/desktop-v0.1.0/OpenChrome_0.1.0_x64_en-US.msi) |
+| Linux | Coming soon (deb/rpm available in [Releases](https://github.com/shaun0927/openchrome/releases/tag/desktop-v0.1.0)) |
 
 ### Get Started (non-developers)
 
