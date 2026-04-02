@@ -127,7 +127,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            pkg-config
+            pkg-config \
+            libfuse2
 
       # -----------------------------------------------------------------------
       # Node.js dependencies
@@ -233,24 +234,39 @@ jobs:
       # Build the Tauri application (handles Rust compilation, bundling,
       # signing, and notarization for each platform).
       # -----------------------------------------------------------------------
-      - name: Build Tauri app
+      # Build unsigned when no signing secrets are configured.
+      # Tauri attempts codesign even with empty env vars, so we split
+      # into two steps: one with signing env vars, one without.
+      - name: Build Tauri app (unsigned)
+        if: ${{ secrets.APPLE_CERTIFICATE == '' }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing + notarization
+          # No signing env vars — produces unsigned binaries
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: ''
+          releaseBody: ''
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      - name: Build Tauri app (signed)
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows signing — tauri-action handles signtool natively via these env vars.
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           projectPath: desktop
-          # Do not create a GitHub release here; the publish job does that
-          # after all platform builds complete.
           tagName: ${{ github.ref_name }}
           releaseName: ''
           releaseBody: ''
