@@ -329,16 +329,19 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
   });
 
   describe('headed parameter (direct)', () => {
-    test('headed=true navigates directly in headed Chrome', async () => {
+    test('headed=true navigates directly in headed Chrome without fake BlockingInfo (#560)', async () => {
       const handler = await getNavigateHandler();
 
       const result = await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
-      expect(parsed.fallbackTier).toBe(3);
+      expect(parsed.userRequested).toBe(true);
+      // #560: should NOT have fallbackTier/fallbackReason (no fake BlockingInfo)
+      expect(parsed.fallbackTier).toBeUndefined();
+      expect(parsed.fallbackReason).toBeUndefined();
       expect(parsed.title).toBe('Coupang');
-      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com', undefined);
       // Should NOT create normal or stealth targets
       expect(mockSessionManager.createTarget).not.toHaveBeenCalled();
       expect((mockSessionManager as any).createTargetStealth).not.toHaveBeenCalled();
@@ -410,7 +413,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       );
     });
 
-    test('headed worker is created without a port parameter', async () => {
+    test('headed worker is created with the headed Chrome port (#561)', async () => {
       const handler = await getNavigateHandler();
       const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-target-123' });
       mockHeadedGetPage.mockReturnValue(mockPage);
@@ -420,12 +423,47 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
         testSessionId,
         'headed',
-        { shareCookies: true },
+        { shareCookies: true, port: 9322 },
       );
       const callArgs = (mockSessionManager.getOrCreateWorker as jest.Mock).mock.calls;
       const headedCall = callArgs.find((args: any[]) => args[1] === 'headed');
       expect(headedCall).toBeDefined();
-      expect(headedCall![2]).not.toHaveProperty('port');
+      // #561: port must be present so getCDPClientForWorker routes to the correct Chrome
+      expect(headedCall![2]).toHaveProperty('port', 9322);
+    });
+
+    test('headed=true with profileDirectory passes profile to headed Chrome (#562)', async () => {
+      const handler = await getNavigateHandler();
+      const mockPage = createMockPage({ url: 'https://aws.amazon.com/', targetId: 'headed-profile-123' });
+      mockHeadedGetPage.mockReturnValue(mockPage);
+
+      const result = await handler(testSessionId, {
+        url: 'https://aws.amazon.com',
+        headed: true,
+        profileDirectory: 'Profile 1',
+      });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      // Should use profile-scoped workerId, not "headed"
+      expect(parsed.workerId).toBe('profile:Profile 1');
+      expect(parsed.profileDirectory).toBe('Profile 1');
+      expect(parsed.headed).toBe(true);
+      expect(parsed.userRequested).toBe(true);
+      // profileDirectory should be passed to navigatePersistent
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith(
+        'https://aws.amazon.com',
+        'Profile 1',
+      );
+      // Worker should be created with profile-scoped ID and port
+      expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
+        testSessionId,
+        'profile:Profile 1',
+        expect.objectContaining({
+          shareCookies: true,
+          port: 9322,
+          profileDirectory: 'Profile 1',
+        }),
+      );
     });
 
     test('Tier 3 auto-escalation registers headed page via registerHeadedPage', async () => {
