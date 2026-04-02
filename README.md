@@ -197,12 +197,18 @@ Or right-click the app → Open → Open.
 
 ## Quick Start
 
+**Claude Code**
 ```bash
 npx openchrome-mcp setup
 ```
 
-One command. Configures MCP server + auto-approves tool permissions.
-Restart Claude Code, then say `oc`.
+**Codex CLI**
+```bash
+npx openchrome-mcp setup --client codex
+```
+
+One command. Configures the MCP server for the selected client.
+Restart your MCP client after setup completes.
 
 <details>
 <summary>Manual config</summary>
@@ -225,7 +231,19 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
 }
 ```
 
-**Cursor / Windsurf / Other MCP clients:**
+**Codex CLI** (`~/.codex/mcp.json`):
+```json
+{
+  "mcpServers": {
+    "openchrome": {
+      "command": "npm",
+      "args": ["exec", "--yes", "--prefer-online", "openchrome-mcp@latest", "--", "serve", "--auto-launch"]
+    }
+  }
+}
+```
+
+**Cursor / Windsurf / Other stdio MCP clients:**
 ```json
 {
   "mcpServers": {
@@ -236,6 +254,10 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
   }
 }
 ```
+
+> Some stdio clients wrap `npx` through `npm exec` and may parse flags differently.
+> If your client misinterprets `-y`, prefer a client-specific command shape (for example the Codex CLI config above)
+> or run a locally installed `openchrome` binary directly.
 
 </details>
 
