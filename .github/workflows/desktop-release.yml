@@ -65,7 +65,7 @@ jobs:
             cloudflared_archive: tgz
             bun_target: bun-darwin-arm64
 
-          - os: macos-13           # macOS 13 (x64 runner)
+          - os: macos-latest       # macOS (x64 cross-compile on arm64 runner)
             target: x86_64-apple-darwin
             platform_name: macos-x64
             cloudflared_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz
