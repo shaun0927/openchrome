@@ -66,7 +66,7 @@ export const HOST_DEFINITIONS: Record<WebAIHostId, HostDefinition> = {
     ],
     notes: [
       'Works with Claude Desktop, Cursor, Windsurf, and any MCP-compatible client.',
-      'For stdio clients, use: npx openchrome serve (no tunnel needed).',
+      'For stdio clients, use a client-specific command. Example for Codex CLI: npm exec --yes openchrome-mcp@latest -- serve --auto-launch.',
     ],
   },
 };

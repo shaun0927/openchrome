@@ -21,6 +21,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
 import { checkForUpdates } from './update-check';
+import {
+  formatMCPServerConfigSnippet,
+  getClientLabel,
+  getClaudeManualServerConfig,
+  getClaudeSetupCommand,
+  getCodexServerConfig,
+  getSupportedMCPClients,
+  isSupportedMCPClient,
+  upsertMCPServerConfig,
+} from './mcp-client-config';
 
 const program = new Command();
 
@@ -75,116 +85,169 @@ program
 
 program
   .command('setup')
-  .description('Automatically configure MCP server for Claude Code')
+  .description('Automatically configure MCP server for Claude Code or Codex CLI')
+  .option('--client <client>', 'Client to configure: "claude" (default) or "codex"', 'claude')
   .option('--dashboard', 'Enable terminal dashboard')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
   .option('-s, --scope <scope>', 'Installation scope: "user" (global, default) or "project" (current project only)', 'user')
-  .action(async (options: { dashboard?: boolean; autoLaunch?: boolean; scope?: string }) => {
-    const { execSync, spawnSync } = require('child_process');
+  .action(async (options: { client?: string; dashboard?: boolean; autoLaunch?: boolean; scope?: string }) => {
+    const { execFileSync } = require('child_process');
 
-    console.log('Setting up OpenChrome for Claude Code...\n');
-
-    // Check if claude CLI is available
-    try {
-      execSync('claude --version', { stdio: 'pipe' });
-    } catch {
-      console.error('❌ Claude Code CLI not found.');
-      console.error('   Please install Claude Code first: https://claude.ai/code');
+    const requestedClient = options.client || 'claude';
+    if (!isSupportedMCPClient(requestedClient)) {
+      console.error(`❌ Invalid client. Use one of: ${getSupportedMCPClients().join(', ')}`);
       process.exit(1);
     }
 
-    // Validate scope
+    const client = requestedClient;
+    console.log(`Setting up OpenChrome for ${getClientLabel(client)}...\n`);
+
+    // Check if claude CLI is available
     const scope = options.scope || 'user';
     if (scope !== 'user' && scope !== 'project') {
       console.error('❌ Invalid scope. Use "user" (global) or "project" (current project only).');
       process.exit(1);
     }
 
-    // Build the serve arguments
-    const serveArgs = ['serve', '--auto-launch'];
-    if (options.dashboard) {
-      serveArgs.push('--dashboard');
-    }
+    const serveArgOptions = { autoLaunch: options.autoLaunch, dashboard: options.dashboard };
 
-    // Remove existing configuration from ALL scopes to prevent duplicates.
-    // Without explicit scope flags, `claude mcp remove` only targets one scope,
-    // leaving the other intact and causing dual-registration conflicts.
-    for (const removeScope of ['user', 'project']) {
+    if (client === 'claude') {
       try {
-        execSync(`claude mcp remove openchrome -s ${removeScope} 2>/dev/null`, { stdio: 'pipe' });
+        execFileSync('claude', ['--version'], { stdio: 'pipe' });
       } catch {
-        // Ignore if not exists in this scope
+        console.error('❌ Claude Code CLI not found.');
+        console.error('   Please install Claude Code first: https://claude.ai/code');
+        process.exit(1);
       }
+
+      // Remove existing configuration from ALL scopes to prevent duplicates.
+      // Without explicit scope flags, `claude mcp remove` only targets one scope,
+      // leaving the other intact and causing dual-registration conflicts.
+      for (const removeScope of ['user', 'project'] as const) {
+        try {
+          execFileSync('claude', ['mcp', 'remove', 'openchrome', '-s', removeScope], { stdio: 'pipe' });
+        } catch {
+          // Ignore if not exists in this scope
+        }
+      }
+
+      // Use npx @latest with --prefer-online for reliable auto-updates.
+      // Without --prefer-online, npx caches a semver range (e.g. ^1.4.0) in ~/.npm/_npx/
+      // and never re-checks the registry, so @latest effectively becomes @cached.
+      const setupArgs = getClaudeSetupCommand(scope, serveArgOptions);
+
+      console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
+
+      try {
+        execFileSync('claude', setupArgs, { stdio: 'inherit' });
+        console.log('\n✅ MCP server configured successfully!\n');
+
+        // Configure tool permissions in ~/.claude/settings.json
+        const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+        const permissionEntry = 'mcp__openchrome__*';
+        try {
+          let settings: Record<string, unknown> = {};
+          if (fs.existsSync(settingsPath)) {
+            settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+          } else {
+            // Ensure ~/.claude/ directory exists
+            fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+          }
+
+          // Ensure permissions.allow array exists
+          if (!settings.permissions || typeof settings.permissions !== 'object') {
+            settings.permissions = {};
+          }
+          const permissions = settings.permissions as Record<string, unknown>;
+          if (!Array.isArray(permissions.allow)) {
+            permissions.allow = [];
+          }
+          const allowList = permissions.allow as string[];
+
+          if (allowList.includes(permissionEntry)) {
+            console.log('✓ Tool permissions already configured (auto-approve OpenChrome tools)');
+          } else {
+            allowList.push(permissionEntry);
+            fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+            console.log('✓ Tool permissions configured (auto-approve OpenChrome tools)');
+          }
+        } catch {
+          console.warn('⚠️  Could not configure tool permissions automatically.');
+          console.warn(`   Manually add "${permissionEntry}" to permissions.allow in ${settingsPath}`);
+        }
+
+        console.log(`\nScope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}`);
+        console.log('Auto-updates: enabled (via npx)\n');
+        console.log('Next steps:');
+        console.log('  1. Restart Claude Code');
+        console.log('  2. Just say "oc" — that\'s it.\n');
+        console.log('Examples:');
+        console.log('  "oc screenshot my Gmail"');
+        console.log('  "use oc to check AWS billing"');
+        console.log('  "oc search on naver.com"\n');
+      } catch {
+        console.error('\n❌ Failed to configure MCP server.');
+        console.error('   You can manually add to ~/.claude.json:');
+        console.error(formatMCPServerConfigSnippet('openchrome', getClaudeManualServerConfig(serveArgOptions)));
+        process.exit(1);
+      }
+
+      return;
     }
 
-    // Use npx @latest with --prefer-online for reliable auto-updates.
-    // Without --prefer-online, npx caches a semver range (e.g. ^1.4.0) in ~/.npm/_npx/
-    // and never re-checks the registry, so @latest effectively becomes @cached.
-    const fullCommand = `claude mcp add openchrome -s ${scope} -- npx --prefer-online -y openchrome-mcp@latest ${serveArgs.join(' ')}`;
-
-    console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
+    if (scope !== 'user') {
+      console.warn('⚠️  Scope is not used for Codex CLI; writing to ~/.codex/mcp.json.');
+    }
 
     try {
-      execSync(fullCommand, { stdio: 'inherit' });
-      console.log('\n✅ MCP server configured successfully!\n');
+      const codexConfigPath = path.join(os.homedir(), '.codex', 'mcp.json');
+      fs.mkdirSync(path.dirname(codexConfigPath), { recursive: true });
 
-      // Configure tool permissions in ~/.claude/settings.json
-      const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
-      const permissionEntry = 'mcp__openchrome__*';
-      try {
-        let settings: Record<string, unknown> = {};
-        if (fs.existsSync(settingsPath)) {
-          settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        } else {
-          // Ensure ~/.claude/ directory exists
-          fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-        }
-
-        // Ensure permissions.allow array exists
-        if (!settings.permissions || typeof settings.permissions !== 'object') {
-          settings.permissions = {};
-        }
-        const permissions = settings.permissions as Record<string, unknown>;
-        if (!Array.isArray(permissions.allow)) {
-          permissions.allow = [];
-        }
-        const allowList = permissions.allow as string[];
-
-        if (allowList.includes(permissionEntry)) {
-          console.log('✓ Tool permissions already configured (auto-approve OpenChrome tools)');
-        } else {
-          allowList.push(permissionEntry);
-          fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-          console.log('✓ Tool permissions configured (auto-approve OpenChrome tools)');
-        }
-      } catch (permError) {
-        console.warn('⚠️  Could not configure tool permissions automatically.');
-        console.warn(`   Manually add "${permissionEntry}" to permissions.allow in ${settingsPath}`);
+      let config: Record<string, unknown> = {};
+      if (fs.existsSync(codexConfigPath)) {
+        config = JSON.parse(fs.readFileSync(codexConfigPath, 'utf8'));
       }
 
-      console.log(`\nScope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}`);
-      console.log('Auto-updates: enabled (via npx)\n');
+      const updatedConfig = upsertMCPServerConfig(config, 'openchrome', getCodexServerConfig(serveArgOptions));
+      fs.writeFileSync(codexConfigPath, JSON.stringify(updatedConfig, null, 2) + '\n');
+
+      console.log('\n✅ MCP server configured successfully!\n');
+      console.log(`Config file: ${codexConfigPath}`);
+      console.log('Auto-updates: enabled (via npm exec)\n');
       console.log('Next steps:');
-      console.log('  1. Restart Claude Code');
-      console.log('  2. Just say "oc" — that\'s it.\n');
-      console.log('Examples:');
-      console.log('  "oc screenshot my Gmail"');
-      console.log('  "use oc to check AWS billing"');
-      console.log('  "oc search on naver.com"\n');
+      console.log('  1. Restart Codex CLI');
+      console.log('  2. Verify the openchrome MCP server reconnects cleanly\n');
+      console.log('Installed MCP snippet:');
+      console.log(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
     } catch (error) {
-      console.error('\n❌ Failed to configure MCP server.');
-      console.error('   You can manually add to ~/.claude.json:');
-      console.error('   {');
-      console.error('     "mcpServers": {');
-      console.error('       "openchrome": {');
-      console.error('         "command": "npx",');
-      console.error(`         "args": ["-y", "openchrome-mcp@latest", ${serveArgs.map(a => `"${a}"`).join(', ')}]`);
-      console.error('       }');
-      console.error('     }');
-      console.error('   }');
+      console.error('\n❌ Failed to configure MCP server for Codex CLI.');
+      console.error(`   ${error instanceof Error ? error.message : String(error)}`);
+      console.error('   You can manually add this to ~/.codex/mcp.json:');
+      console.error(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('config')
+  .description('Print MCP configuration for a supported client')
+  .requiredOption('--client <client>', 'Client to generate config for: "claude" or "codex"')
+  .option('--dashboard', 'Enable terminal dashboard')
+  .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
+  .action((options: { client: string; dashboard?: boolean; autoLaunch?: boolean }) => {
+    if (!isSupportedMCPClient(options.client)) {
+      console.error(`❌ Invalid client. Use one of: ${getSupportedMCPClients().join(', ')}`);
       process.exit(1);
     }
 
+    const serveArgOptions = { autoLaunch: options.autoLaunch, dashboard: options.dashboard };
+
+    if (options.client === 'claude') {
+      console.log(['claude', ...getClaudeSetupCommand('user', serveArgOptions)].join(' '));
+      return;
+    }
+
+    console.log(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
   });
 
 program
