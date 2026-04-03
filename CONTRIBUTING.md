@@ -176,13 +176,14 @@ Looking for something to work on? Here are the key areas where contributions wou
 ### Multi-Client Compatibility
 
 OpenChrome is a standard MCP server, but currently only tested with Claude Code. Help us verify and support other MCP clients.
+Codex CLI now has a dedicated setup/config preset, but runtime validation is still needed across real environments.
 
 | Client | Status | What's Needed |
 |--------|--------|---------------|
 | Claude Code | Verified | - |
 | Cursor | Untested | Test all 36 tools, verify `instructions` field |
 | Windsurf | Untested | Test all 36 tools, verify `instructions` field |
-| Codex CLI | Untested | Test all 36 tools, verify `instructions` field |
+| Codex CLI | Preset added, runtime validation needed | Verify `initialize`, `tools/list`, and at least one browser-backed tool call using the documented Codex config |
 | VS Code + MCP | Untested | Test basic tool flow |
 
 **How to contribute**: Pick a client, run the test suite against it, report what works and what doesn't. Adapt `oc setup` to support the client if needed.
