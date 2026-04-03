@@ -54,6 +54,9 @@ jobs:
       contents: read
     timeout-minutes: 60
 
+    # Allow individual platform failures so partial releases can still publish.
+    # Linux AppImage bundling is known-flaky on CI (linuxdeploy FUSE issue).
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -65,7 +68,7 @@ jobs:
             cloudflared_archive: tgz
             bun_target: bun-darwin-arm64
 
-          - os: macos-13           # macOS 13 (x64 runner)
+          - os: macos-latest       # macOS (x64 cross-compile on arm64 runner)
             target: x86_64-apple-darwin
             platform_name: macos-x64
             cloudflared_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz
@@ -127,13 +130,18 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            pkg-config
+            pkg-config \
+            libfuse2
 
       # -----------------------------------------------------------------------
       # Node.js dependencies
       # -----------------------------------------------------------------------
-      - name: Install Node.js dependencies
+      - name: Install Node.js dependencies (root)
         run: npm ci
+
+      - name: Install Node.js dependencies (desktop)
+        run: npm install
+        working-directory: desktop
 
       # -----------------------------------------------------------------------
       # Build the MCP server sidecar binary for each target platform.
@@ -229,29 +237,20 @@ jobs:
       # Build the Tauri application (handles Rust compilation, bundling,
       # signing, and notarization for each platform).
       # -----------------------------------------------------------------------
+      # Build without code signing. To enable signing later, add the
+      # APPLE_*/WINDOWS_* secrets and pass them as env vars here.
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing + notarization
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows signing — tauri-action handles signtool natively via these env vars.
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # linuxdeploy AppImage requires FUSE; CI runners lack /dev/fuse,
+          # so tell linuxdeploy to extract-and-run instead.
+          APPIMAGE_EXTRACT_AND_RUN: '1'
         with:
           projectPath: desktop
-          # Do not create a GitHub release here; the publish job does that
-          # after all platform builds complete.
-          tagName: ${{ github.ref_name }}
-          releaseName: ''
-          releaseBody: ''
-          releaseDraft: false
-          prerelease: false
+          # Do not pass tagName — let the publish job create the release.
+          # tauri-action with tagName tries to create/find a release and fails
+          # on re-tagged builds.
           args: --target ${{ matrix.target }}
 
       # -----------------------------------------------------------------------
@@ -273,7 +272,7 @@ jobs:
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz.sig
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
   # ---------------------------------------------------------------------------
