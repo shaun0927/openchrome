@@ -529,7 +529,7 @@ export class SessionManager {
     let workerPoolOrigin: string | undefined;
     let workerProfileDirectory: string | undefined;
 
-    if (options.profileDirectory) {
+    if (options.profileDirectory && !options.port) {
       // Multi-profile: lazily enable pool and acquire profile-specific instance
       try {
         const pool = this.ensurePool();
