@@ -230,8 +230,11 @@ async function headedNavigateDirect(
 
         await sessionManager.getOrCreateWorker(sessionId, resolvedWorkerId, {
           shareCookies: true,
-          port: headedPort,
-          ...(options.profileDirectory && { profileDirectory: options.profileDirectory }),
+          // Don't pass port or profileDirectory — the headed page is managed by
+          // HeadedFallbackManager and indexed via registerHeadedPage() into the
+          // main CDPClient. Passing port would create a duplicate puppeteer
+          // connection; passing profileDirectory would trigger ChromePool. (#562)
+          ...(!options.profileDirectory && { port: headedPort }),
         });
 
         const page = headedFallback.getPage(result.targetId);
