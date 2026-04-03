@@ -346,6 +346,8 @@ export class HTTPTransport implements MCPTransport {
    * POST /mcp - handle JSON-RPC request or batch
    */
   private handlePost(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const acceptSSE = (req.headers['accept'] || '').includes('text/event-stream');
+
     const chunks: Buffer[] = [];
     let bodyBytes = 0;
 
@@ -449,6 +451,18 @@ export class HTTPTransport implements MCPTransport {
         if (response === null) {
           // Notification — no response body
           res.writeHead(202);
+          res.end();
+        } else if (acceptSSE) {
+          // Streamable HTTP: return response as SSE stream
+          if (sessionId) {
+            res.setHeader('Mcp-Session-Id', sessionId);
+          }
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+          res.write(`data: ${JSON.stringify(response)}\n\n`);
           res.end();
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' });
