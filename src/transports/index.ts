@@ -33,7 +33,7 @@ export interface MCPTransport {
   close(): Promise<void>;
 }
 
-export type TransportMode = 'stdio' | 'http';
+export type TransportMode = 'stdio' | 'http' | 'both';
 
 export interface TransportOptions {
   port?: number;
@@ -43,9 +43,10 @@ export interface TransportOptions {
 
 /**
  * Factory: create the appropriate transport based on mode.
+ * For 'both' mode, use createDualTransport() instead.
  */
 export function createTransport(mode: TransportMode, options?: TransportOptions): MCPTransport {
-  if (mode === 'http') {
+  if (mode === 'http' || mode === 'both') {
     // Use require to avoid loading HTTP module when not needed
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { HTTPTransport } = require('./http');
@@ -54,4 +55,18 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { StdioTransport } = require('./stdio');
   return new StdioTransport();
+}
+
+/**
+ * Create both stdio and HTTP transports for dual mode.
+ * Returns [stdioTransport, httpTransport].
+ */
+export function createDualTransport(options?: TransportOptions): [MCPTransport, MCPTransport] {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { StdioTransport } = require('./stdio');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { HTTPTransport } = require('./http');
+  const stdio = new StdioTransport();
+  const httpT = new HTTPTransport(options?.port || 3100, options?.host || '127.0.0.1', options?.authToken);
+  return [stdio, httpT];
 }
