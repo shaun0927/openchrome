@@ -56,6 +56,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   file_upload: 2,
   batch_execute: 2,
   batch_paginate: 2,
+  crawl: 2,
 
   // Session recording tools (#572) — opt-in, not needed for every session
   oc_recording_start: 2,
