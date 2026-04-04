@@ -197,6 +197,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
         'console_capture', 'performance_metrics', 'file_upload',
         'batch_execute', 'batch_paginate',
+        'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
       ];
       for (const tool of expectedTier2) {
         expect(toolNames).toContain(tool);
@@ -233,8 +234,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         expect(toolNames).toContain(tool);
       }
 
-      // Total should be 54 (30 T1 + 15 T2 + 9 T3)
-      expect(toolNames.length).toBe(54);
+      // Total should be 58 (30 T1 + 19 T2 + 9 T3)
+      expect(toolNames.length).toBe(58);
     });
 
     test('resources/list returns usage guide resource', async () => {
@@ -290,6 +291,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
       'console_capture', 'performance_metrics', 'file_upload',
       'batch_execute', 'batch_paginate',
+      'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
     ];
     tier2Tools.forEach(tool => {
       test(`Tier 2: ${tool} registered`, () => {
@@ -412,8 +414,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
       // Should NOT have expand_tools (progressive disclosure disabled)
       expect(toolNames).not.toContain('expand_tools');
-      // Total should be 54 (30 T1 + 15 T2 + 9 T3)
-      expect(toolNames.length).toBe(54);
+      // Total should be 58 (30 T1 + 19 T2 + 9 T3)
+      expect(toolNames.length).toBe(58);
     });
   });
 });
