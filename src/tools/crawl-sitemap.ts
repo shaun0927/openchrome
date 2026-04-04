@@ -118,15 +118,16 @@ async function fetchRawText(
     const { targetId: tid, page } = await sessionManager.createTarget(sessionId, url);
     targetId = tid;
 
-    await withTimeout(
-      page.waitForNavigation({ waitUntil: 'domcontentloaded' }).catch(() => {}),
-      15000,
-      'crawl_sitemap.fetchRawText.waitForNavigation',
-      context,
-    );
-
     const bodyText = await withTimeout(
-      page.evaluate(() => document.body?.innerText || ''),
+      page.evaluate(() => {
+        // For XML documents (sitemaps), Chrome XSLT-renders the content.
+        // Use XMLSerializer to get the raw XML source.
+        if (document.contentType && document.contentType.includes('xml')) {
+          return new XMLSerializer().serializeToString(document);
+        }
+        // For HTML documents (robots.txt served as HTML, error pages), use innerText
+        return document.body?.innerText || '';
+      }),
       5000,
       'crawl_sitemap.fetchRawText.evaluate',
       context,
@@ -272,13 +273,6 @@ async function fetchPage(
     const { targetId: tid, page } = await sessionManager.createTarget(sessionId, url);
     targetId = tid;
 
-    await withTimeout(
-      page.waitForNavigation({ waitUntil: 'domcontentloaded' }).catch(() => {}),
-      15000,
-      'crawl_sitemap.page.waitForNavigation',
-      context,
-    );
-
     // Small settle delay for dynamic content
     await new Promise((r) => setTimeout(r, 500));
 
@@ -299,18 +293,19 @@ async function fetchPage(
         // Extract content based on format
         let content = '';
         if (format === 'markdown') {
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
+            acceptNode(n: Node) {
+              const t = (n as HTMLElement).tagName?.toLowerCase();
+              if (t === 'script' || t === 'style' || t === 'noscript') return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_ACCEPT;
+            },
+          });
           const parts: string[] = [];
           let node: Node | null = walker.currentNode;
 
           while (node) {
             const el = node as HTMLElement;
             const tag = el.tagName?.toLowerCase();
-
-            if (tag === 'script' || tag === 'style' || tag === 'noscript') {
-              node = walker.nextSibling() || walker.parentNode();
-              continue;
-            }
 
             if (tag === 'h1') parts.push(`\n# ${el.textContent?.trim()}\n`);
             else if (tag === 'h2') parts.push(`\n## ${el.textContent?.trim()}\n`);
