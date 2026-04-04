@@ -12,14 +12,11 @@ export const blockingPageRules: HintRule[] = [
       if (ctx.toolName !== 'navigate') return null;
       if (ctx.isError) return null;
       if (/"blockingPage"\s*:\s*\{[^}]*"type"\s*:\s*"captcha"/i.test(ctx.resultText)) {
-        const typeMatch = ctx.resultText.match(/"captcha_type"\s*:\s*"([^"]+)"/);
+        const typeMatch = ctx.resultText.match(/"captchaType"\s*:\s*"([^"]+)"/);
         const captchaType = typeMatch ? typeMatch[1] : 'unknown';
-        const solverHint = process.env.OPENCHROME_CAPTCHA_API_KEY
-          ? ' A CAPTCHA solver is configured - auto-solve will be attempted if enabled.'
-          : ' No CAPTCHA solver configured. Set OPENCHROME_CAPTCHA_PROVIDER and OPENCHROME_CAPTCHA_API_KEY to enable auto-solving.';
         return (
-          'Hint: CAPTCHA detected (type: ' + captchaType + '). OpenChrome cannot solve CAPTCHAs programmatically.' +
-          solverHint + ' STOP all interaction attempts with this page. ' +
+          'Hint: CAPTCHA detected (type: ' + captchaType + '). ' +
+          'STOP all interaction attempts with this page. ' +
           'Ask the user to solve the CAPTCHA in their Chrome browser, then use wait_for to detect when the page changes, and resume automation.'
         );
       }
