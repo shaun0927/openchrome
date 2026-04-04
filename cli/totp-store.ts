@@ -5,7 +5,8 @@
  * encrypted storage of TOTP secrets using AES-256-GCM.
  *
  * Storage path: ~/.openchrome/credentials/totp-secrets.enc
- * Encryption key: scrypt(hostname + username, salt, 32)
+ * File format:  [salt(16)][iv(16)][authTag(16)][ciphertext]
+ * Key derivation: scrypt('openchrome-totp-v1' + hostname + username, randomSalt, 32)
  * File permissions: 0o600 (directory: 0o700)
  */
 
@@ -98,33 +99,38 @@ export function totpSecondsRemaining(): number {
 // Encryption helpers (AES-256-GCM)
 // ---------------------------------------------------------------------------
 
-const SALT = 'openchrome-totp-v1';
-const SCRYPT_N = 16384;
-const SCRYPT_R = 8;
-const SCRYPT_P = 1;
-const KEY_LEN = 32;
+const PASSPHRASE = 'openchrome-totp-v1';
+const SALT_LENGTH = 16;
+const IV_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
+// File format: [salt(16)][iv(16)][authTag(16)][ciphertext]
 
-function deriveKey(): Buffer {
-  const passphrase = `${os.hostname()}:${os.userInfo().username}`;
-  return crypto.scryptSync(passphrase, SALT, KEY_LEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
+function deriveKey(salt: Buffer): Buffer {
+  const machineId = os.hostname() + os.userInfo().username;
+  return crypto.scryptSync(PASSPHRASE + machineId, salt, 32) as Buffer;
 }
 
-function encrypt(plaintext: string, key: Buffer): string {
-  const iv = crypto.randomBytes(12);
+function encrypt(plaintext: string): Buffer {
+  const salt = crypto.randomBytes(SALT_LENGTH);
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const key = deriveKey(salt);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  // Format: iv(12) + tag(16) + ciphertext — all hex-encoded
-  return Buffer.concat([iv, tag, encrypted]).toString('hex');
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([salt, iv, authTag, encrypted]);
 }
 
-function decrypt(hexData: string, key: Buffer): string {
-  const data = Buffer.from(hexData, 'hex');
-  const iv = data.subarray(0, 12);
-  const tag = data.subarray(12, 28);
-  const ciphertext = data.subarray(28);
+function decrypt(data: Buffer): string {
+  if (data.length < SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH) {
+    throw new Error('Credential file is too short or corrupted');
+  }
+  const salt = data.subarray(0, SALT_LENGTH);
+  const iv = data.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
+  const authTag = data.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
+  const ciphertext = data.subarray(SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
+  const key = deriveKey(salt);
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAuthTag(tag);
+  decipher.setAuthTag(authTag);
   return decipher.update(ciphertext) + decipher.final('utf8');
 }
 
@@ -138,24 +144,37 @@ function getStoragePath(): string {
 
 interface TotpEntry {
   domain: string;
-  encryptedSecret: string;
+  secret: string;
   issuer?: string;
   addedAt: string;
+}
+
+interface TotpStore {
+  entries: TotpEntry[];
 }
 
 function readEntries(): TotpEntry[] {
   const storagePath = getStoragePath();
   if (!fs.existsSync(storagePath)) return [];
 
+  const data = fs.readFileSync(storagePath);
+  if (data.length === 0) return [];
+
+  let plaintext: string;
   try {
-    const raw = fs.readFileSync(storagePath, 'utf8').trim();
-    if (!raw) return [];
-    const key = deriveKey();
-    const plaintext = decrypt(raw, key);
-    return JSON.parse(plaintext) as TotpEntry[];
+    plaintext = decrypt(data);
   } catch {
-    return [];
+    throw new Error('Failed to decrypt credential store');
   }
+
+  let store: TotpStore;
+  try {
+    store = JSON.parse(plaintext) as TotpStore;
+  } catch {
+    throw new Error('Credential store corrupted');
+  }
+
+  return store.entries;
 }
 
 function writeEntries(entries: TotpEntry[]): void {
@@ -166,11 +185,10 @@ function writeEntries(entries: TotpEntry[]): void {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
-  const key = deriveKey();
-  const plaintext = JSON.stringify(entries, null, 2);
-  const encrypted = encrypt(plaintext, key);
+  const plaintext = JSON.stringify({ entries });
+  const encrypted = encrypt(plaintext);
 
-  fs.writeFileSync(storagePath, encrypted, { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(storagePath, encrypted, { mode: 0o600 });
 }
 
 // ---------------------------------------------------------------------------
@@ -184,12 +202,9 @@ export async function addTotpSecret(domain: string, secret: string, issuer?: str
   const entries = readEntries();
   const idx = entries.findIndex((e) => e.domain === domain);
 
-  const key = deriveKey();
-  const encryptedSecret = encrypt(secret.toUpperCase().replace(/\s/g, ''), key);
-
   const entry: TotpEntry = {
     domain,
-    encryptedSecret,
+    secret: secret.toUpperCase().replace(/\s/g, ''),
     issuer,
     addedAt: new Date().toISOString(),
   };
@@ -231,12 +246,5 @@ export async function listTotpDomains(): Promise<Array<{ domain: string; issuer?
 export async function getTotpSecret(domain: string): Promise<string | null> {
   const entries = readEntries();
   const entry = entries.find((e) => e.domain === domain);
-  if (!entry) return null;
-
-  try {
-    const key = deriveKey();
-    return decrypt(entry.encryptedSecret, key);
-  } catch {
-    return null;
-  }
+  return entry?.secret ?? null;
 }
