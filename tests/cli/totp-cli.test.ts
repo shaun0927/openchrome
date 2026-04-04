@@ -215,6 +215,49 @@ describe('totp storage', () => {
     const stat = fs.statSync(storePath);
     expect(stat.mode & 0o777).toBe(0o600);
   });
+
+  test('storage file is binary (not hex text)', async () => {
+    await addTotpSecret(DOMAIN, SECRET);
+    const storePath = path.join(tempDir, '.openchrome', 'credentials', 'totp-secrets.enc');
+    const data = fs.readFileSync(storePath);
+    // Binary buffer: length should be 16(salt) + 16(iv) + 16(tag) + ciphertext
+    // Minimum length is 48 bytes (header alone), actual ciphertext adds more
+    expect(data.length).toBeGreaterThan(48);
+    // Must NOT be valid UTF-8 hex string (i.e., not all hex chars)
+    const asHex = data.toString('hex');
+    expect(asHex.length).toBe(data.length * 2); // hex is double length of binary
+    // The raw buffer should NOT equal its own hex re-encoding as string bytes
+    expect(data.toString('utf8')).not.toMatch(/^[0-9a-f]+$/i);
+  });
+
+  test('decryption failure throws with clear message', async () => {
+    const storePath = path.join(tempDir, '.openchrome', 'credentials', 'totp-secrets.enc');
+    const dir = path.dirname(storePath);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // Write a file that is large enough to pass the length check but has garbage data
+    fs.writeFileSync(storePath, crypto.randomBytes(64), { mode: 0o600 });
+    await expect(getTotpSecret(DOMAIN)).rejects.toThrow('Failed to decrypt credential store');
+  });
+
+  test('corrupted JSON throws with clear message', async () => {
+    const storePath = path.join(tempDir, '.openchrome', 'credentials', 'totp-secrets.enc');
+    const dir = path.dirname(storePath);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+    // Encrypt invalid JSON and write it directly
+    const { createCipheriv, randomBytes, scryptSync } = crypto;
+    const salt = randomBytes(16);
+    const iv = randomBytes(16);
+    const machineId = os.hostname() + os.userInfo().username;
+    const key = scryptSync('openchrome-totp-v1' + machineId, salt, 32) as Buffer;
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update('not valid json', 'utf8'), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    const fileData = Buffer.concat([salt, iv, authTag, encrypted]);
+    fs.writeFileSync(storePath, fileData, { mode: 0o600 });
+
+    await expect(getTotpSecret(DOMAIN)).rejects.toThrow('Credential store corrupted');
+  });
 });
 
 // ---------------------------------------------------------------------------
