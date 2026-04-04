@@ -12,6 +12,8 @@ import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
+import { handleCaptcha } from '../captcha/handler';
+import { getSolverRegistry } from '../captcha/solver-registry';
 import { withTimeout } from '../utils/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
 import { getHeadedFallback } from '../chrome/headed-fallback';
@@ -118,6 +120,33 @@ async function stealthAutoRetry(
   // This is safe because we only reach here after Tier 1 already detected a block. (#459)
   const stealthBlocked = blocking && RETRYABLE_BLOCK_TYPES.has(blocking.type);
   const stealthBroken = elementCount === 0 || readiness.readyState === 'unknown';
+  // Try CAPTCHA solver before escalating to headed Chrome (#574)
+  if (stealthBlocked && blocking?.type === 'captcha' && getSolverRegistry().isAutoSolveEnabled()) {
+    const solveResult = await handleCaptcha(page, blocking);
+    if (solveResult.solved) {
+      console.error(`[navigate] CAPTCHA solved via ${getSolverRegistry().getProviderName()} in ${solveResult.solveTimeMs}ms`);
+      const postSolveSummary = await generateVisualSummary(page).catch(() => null);
+      const resultText = JSON.stringify({
+        action: 'navigate',
+        url: page.url(),
+        title: await safeTitle(page),
+        tabId: targetId,
+        workerId: assignedWorkerId,
+        created: true,
+        elementCount,
+        readiness,
+        stealth: true,
+        fallbackTier: 2,
+        fallbackReason: blockingInfo.type,
+        captcha_solved: true,
+        captcha_type: solveResult.captchaType,
+        captcha_solve_time_ms: solveResult.solveTimeMs,
+        ...(postSolveSummary && { visualSummary: postSolveSummary }),
+      });
+      return { content: [{ type: 'text', text: resultText }] };
+    }
+    console.error(`[navigate] CAPTCHA solve failed: ${solveResult.error}, escalating to Tier 3`);
+  }
   if (autoFallbackToHeaded && (stealthBlocked || stealthBroken)) {
     const headedResult = await headedAutoRetry(targetUrl, blocking || blockingInfo, sessionId);
     if (headedResult) return headedResult;
