@@ -208,7 +208,8 @@ describe('totp storage', () => {
     expect(result).toBe(secret);
   });
 
-  test('storage file is created with mode 0o600', async () => {
+  const isWindows = os.platform() === 'win32';
+  (isWindows ? test.skip : test)('storage file is created with mode 0o600', async () => {
     await addTotpSecret(DOMAIN, SECRET);
     const storePath = path.join(tempDir, '.openchrome', 'credentials', 'totp-secrets.enc');
     const stat = fs.statSync(storePath);
