@@ -84,6 +84,9 @@ import { registerRecordingTools } from './recording';
 import { registerCrawlTool } from './crawl';
 import { registerCrawlSitemapTool } from './crawl-sitemap';
 
+// Natural language action API (#578)
+import { registerActTool } from './act';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -171,6 +174,9 @@ export function registerAllTools(server: MCPServer): void {
   // Crawl tools (#576)
   registerCrawlTool(server);
   registerCrawlSitemapTool(server);
+
+  // Natural language action API (#578)
+  registerActTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
