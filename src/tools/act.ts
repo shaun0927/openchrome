@@ -19,6 +19,8 @@ import { humanMouseMove, humanType } from '../stealth/human-behavior';
 import { withTimeout } from '../utils/with-timeout';
 import { cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
+import { matchTemplate } from '../actions/action-templates';
+import { getCachedSequence, cacheSequence, validateCachedSequence } from '../actions/action-cache';
 
 // ─── Types ───
 
@@ -416,20 +418,6 @@ const handler: ToolHandler = async (
     return { content: [{ type: 'text', text: 'Error: instruction is required' }], isError: true };
   }
 
-  // Parse the instruction
-  const parseResult = parseInstruction(instruction);
-  if (!parseResult.success || parseResult.actions.length === 0) {
-    const errMsg = parseResult.error || 'Could not parse instruction';
-    const suggestion = parseResult.suggestion || 'Try individual steps like "click X", "type Y in Z".';
-    return {
-      content: [{
-        type: 'text',
-        text: `[act] Parse error: ${errMsg}\n\nSuggestion: ${suggestion}`,
-      }],
-      isError: true,
-    };
-  }
-
   const sessionManager = getSessionManager();
 
   let page: any;
@@ -453,9 +441,43 @@ const handler: ToolHandler = async (
     };
   }
 
+  // 1. Try template match first (no page URL needed)
+  const templateMatch = matchTemplate(instruction);
+  let actions: ParsedAction[];
+  let source: 'template' | 'cache' | 'parsed' = 'parsed';
+  let parseWarning: string | undefined;
+
+  if (templateMatch) {
+    actions = templateMatch.actions;
+    source = 'template';
+  } else {
+    // 2. Try cached sequence for this domain
+    const pageUrl = page.url();
+    const cached = getCachedSequence(pageUrl, instruction);
+    if (cached) {
+      actions = cached.actions;
+      source = 'cache';
+    } else {
+      // 3. Fall back to NL parsing
+      const parseResult = parseInstruction(instruction);
+      if (!parseResult.success || parseResult.actions.length === 0) {
+        const errMsg = parseResult.error || 'Could not parse instruction';
+        const suggestion = parseResult.suggestion || 'Try individual steps like "click X", "type Y in Z".';
+        return {
+          content: [{
+            type: 'text',
+            text: `[act] Parse error: ${errMsg}\n\nSuggestion: ${suggestion}`,
+          }],
+          isError: true,
+        };
+      }
+      actions = parseResult.actions;
+      parseWarning = parseResult.suggestion;
+    }
+  }
+
   const cdpClient = sessionManager.getCDPClient();
   const isStealth = sessionManager.isStealthTarget(tabId);
-  const actions = parseResult.actions;
   const stepResults: StepResult[] = [];
   let failedAt: number | null = null;
 
@@ -528,9 +550,24 @@ const handler: ToolHandler = async (
   const executed = stepResults.length;
   const success = failedAt === null;
 
+  // Cache successful parsed sequences for future use
+  if (success && source === 'parsed') {
+    try {
+      cacheSequence(page.url(), instruction, actions);
+    } catch { /* non-fatal */ }
+  }
+
+  // If cached sequence failed, reduce confidence
+  if (!success && source === 'cache') {
+    try {
+      validateCachedSequence(page.url(), instruction, false);
+    } catch { /* non-fatal */ }
+  }
+
+  const sourceTag = source !== 'parsed' ? ` [${source}]` : '';
   const headerLine = success
-    ? `[act] Executed ${executed}/${total} steps \u2713`
-    : `[act] Executed ${executed - 1}/${total} steps (failed at step ${failedAt})`;
+    ? `[act] Executed ${executed}/${total} steps \u2713${sourceTag}`
+    : `[act] Executed ${executed - 1}/${total} steps (failed at step ${failedAt})${sourceTag}`;
 
   const stepLines: string[] = [];
   for (const r of stepResults) {
@@ -554,8 +591,8 @@ const handler: ToolHandler = async (
   }
 
   // Surface parse warning if present
-  if (parseResult.suggestion) {
-    lines.push('', `[Warning] ${parseResult.suggestion}`);
+  if (parseWarning) {
+    lines.push('', `[Warning] ${parseWarning}`);
   }
 
   return {
