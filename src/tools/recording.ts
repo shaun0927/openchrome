@@ -12,6 +12,12 @@ import { getActionRecorder } from '../recording/action-recorder';
 import { getRecordingStore } from '../recording/recording-store';
 import { RecordingAction, RecordingMetadata } from '../recording/types';
 
+/** Validate recording ID format to prevent path traversal */
+const RECORDING_ID_PATTERN = /^rec-\d{8}-\d{6}-[a-z0-9]{4}$/;
+function isValidRecordingId(id: string): boolean {
+  return RECORDING_ID_PATTERN.test(id);
+}
+
 // ─── oc_recording_start ───────────────────────────────────────────────────────
 
 const startDefinition: MCPToolDefinition = {
@@ -221,6 +227,12 @@ const exportHandler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const recordingId = args.recordingId as string;
+  if (!recordingId || !isValidRecordingId(recordingId)) {
+    return {
+      content: [{ type: 'text', text: `Error: Invalid recording ID format. Expected "rec-YYYYMMDD-HHMMSS-xxxx".` }],
+      isError: true,
+    };
+  }
   const format = (args.format as string) || 'json';
   const store = getRecordingStore();
 
@@ -398,7 +410,8 @@ function escapeHtml(str: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ─── Registration ─────────────────────────────────────────────────────────────

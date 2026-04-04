@@ -842,10 +842,10 @@ export class MCPServer {
         // Best-effort journal recording
       }
 
-      // Record to session recording (best-effort)
+      // Record to session recording (best-effort, skip recording tools themselves)
       try {
         const recorder = getActionRecorder();
-        if (recorder.isRecording) {
+        if (recorder.isRecording && !toolName.startsWith('oc_recording_')) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const summary = (result as Record<string, unknown>)?._summary as string | undefined;
           recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
@@ -995,10 +995,10 @@ export class MCPServer {
         // Best-effort journal recording
       }
 
-      // Record to session recording (best-effort)
+      // Record to session recording (best-effort, skip recording tools themselves)
       try {
         const recorder = getActionRecorder();
-        if (recorder.isRecording) {
+        if (recorder.isRecording && !toolName.startsWith('oc_recording_')) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const errMsg = message;
           recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});

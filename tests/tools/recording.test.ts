@@ -390,7 +390,7 @@ describe('recording tools', () => {
     test('returns error for nonexistent recording', async () => {
       mockReadMetadata.mockResolvedValue(null);
 
-      const result = await handler('default', { recordingId: 'rec-does-not-exist' });
+      const result = await handler('default', { recordingId: 'rec-20260101-000000-zzzz' });
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not found');
