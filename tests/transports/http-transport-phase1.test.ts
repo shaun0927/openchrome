@@ -125,9 +125,9 @@ describe('HTTP Transport Phase 1', () => {
       await new Promise((r) => setTimeout(r, 100));
     });
 
-    it('returns 404 for /mcp/sse with POST method', async () => {
+    it('returns 405 for /mcp/sse with POST method', async () => {
       const res = await request('/mcp/sse', 'POST', { 'Content-Type': 'application/json' }, '{}');
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(405);
     });
   });
 });

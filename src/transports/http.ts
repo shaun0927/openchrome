@@ -194,8 +194,13 @@ export class HTTPTransport implements MCPTransport {
     }
 
     // Explicit /mcp/sse endpoint (MCP spec alias for GET /mcp SSE stream)
-    if (pathname === '/mcp/sse' && req.method === 'GET') {
-      this.handleSSE(req, res);
+    if (pathname === '/mcp/sse') {
+      if (req.method === 'GET') {
+        this.handleSSE(req, res);
+      } else {
+        res.writeHead(405, { 'Allow': 'GET', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Method not allowed' }));
+      }
       return;
     }
 

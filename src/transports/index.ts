@@ -43,7 +43,8 @@ export interface TransportOptions {
 
 /**
  * Factory: create the appropriate transport based on mode.
- * For 'both' mode, use createDualTransport() instead.
+ * For 'both' mode, this returns an HTTP transport; stdio is handled
+ * separately in the CLI entry point (index.ts).
  */
 export function createTransport(mode: TransportMode, options?: TransportOptions): MCPTransport {
   if (mode === 'http' || mode === 'both') {
@@ -57,16 +58,3 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
   return new StdioTransport();
 }
 
-/**
- * Create both stdio and HTTP transports for dual mode.
- * Returns [stdioTransport, httpTransport].
- */
-export function createDualTransport(options?: TransportOptions): [MCPTransport, MCPTransport] {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { StdioTransport } = require('./stdio');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { HTTPTransport } = require('./http');
-  const stdio = new StdioTransport();
-  const httpT = new HTTPTransport(options?.port || 3100, options?.host || '127.0.0.1', options?.authToken);
-  return [stdio, httpT];
-}

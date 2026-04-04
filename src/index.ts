@@ -82,7 +82,7 @@ program
   .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
   .option('--http-host <host>', 'Bind address for HTTP transport (default: 127.0.0.1, use 0.0.0.0 for external access)')
   .option('--auth-token <token>', 'Bearer token for HTTP transport authentication (also: OPENCHROME_AUTH_TOKEN env var)')
-  .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)', process.env.OPENCHROME_TRANSPORT || undefined)
+  .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
@@ -191,7 +191,7 @@ program
     // Set infinite reconnection for HTTP daemon mode BEFORE creating CDPClient singleton.
     // getMCPServer() → SessionManager → getCDPClient() reads this env var at construction.
     // Resolve transport mode: --transport flag takes precedence over --http flag
-    const transportMode = options.transport || (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
+    const transportMode = options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
     const useHttp = transportMode === 'http' || transportMode === 'both';
     if (useHttp && !process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) {
       process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
@@ -261,24 +261,39 @@ program
 
     // Start transport (useHttp/transportMode determined above, before getMCPServer)
     let httpTransport: import('./transports/http').HTTPTransport | null = null;
-    const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
-    const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
 
     if (transportMode === 'both') {
       // Dual mode: run both stdio and HTTP transports simultaneously
-      const { StdioTransport } = require('./transports/stdio');
+      const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
+      const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
       const { HTTPTransport } = require('./transports/http');
-      const stdioTransport = new StdioTransport();
-      const httpTrans = new HTTPTransport(httpPort, httpHost, authToken);
-      httpTransport = httpTrans as import('./transports/http').HTTPTransport;
-      server.start(stdioTransport);
-      httpTransport.onMessage(async (msg: Record<string, unknown>) => {
+      const httpTrans = new HTTPTransport(httpPort, httpHost, authToken) as import('./transports/http').HTTPTransport;
+      httpTransport = httpTrans;
+
+      // Start server with stdio as primary transport (wires JSON-RPC validation, rate-limiter, etc.)
+      server.start();
+
+      // Wire HTTP transport with the same JSON-RPC validation that server.start() applies
+      httpTrans.onMessage(async (msg: Record<string, unknown>) => {
+        if (typeof msg !== 'object' || msg === null || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
+          return {
+            jsonrpc: '2.0' as const,
+            id: (msg as Record<string, unknown>).id as string | number ?? 0,
+            error: { code: -32600, message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field' },
+          };
+        }
+        if (msg.id === undefined || msg.id === null) {
+          return null;
+        }
         return server.handleRequest(msg as unknown as import('./types/mcp').MCPRequest);
       });
-      httpTransport.start();
+      httpTrans.start();
+
       console.error(`[openchrome] Dual transport mode: stdio + HTTP on ${httpHost}:${httpPort}`);
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
     } else if (useHttp) {
+      const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
+      const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
       const transport = createTransport('http', { port: httpPort, host: httpHost, authToken });
       httpTransport = transport as import('./transports/http').HTTPTransport;
       server.start(transport);
