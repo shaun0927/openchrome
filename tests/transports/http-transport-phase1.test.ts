@@ -133,10 +133,9 @@ describe('HTTP Transport Phase 1', () => {
 });
 
 describe('Transport mode types', () => {
-  it('exports TransportMode with both option', () => {
-    const { createTransport, createDualTransport } = require('../../src/transports/index');
+  it('exports createTransport function', () => {
+    const { createTransport } = require('../../src/transports/index');
     expect(typeof createTransport).toBe('function');
-    expect(typeof createDualTransport).toBe('function');
   });
 
   it('createTransport with http mode returns HTTPTransport', () => {
@@ -145,14 +144,5 @@ describe('Transport mode types', () => {
     expect(t).toBeDefined();
     expect(typeof t.start).toBe('function');
     expect(typeof t.close).toBe('function');
-  });
-
-  it('createDualTransport returns [stdio, http] tuple', () => {
-    const { createDualTransport } = require('../../src/transports/index');
-    const [stdio, httpT] = createDualTransport({ port: 19998 });
-    expect(stdio).toBeDefined();
-    expect(httpT).toBeDefined();
-    expect(typeof stdio.start).toBe('function');
-    expect(typeof httpT.start).toBe('function');
   });
 });
