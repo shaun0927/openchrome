@@ -76,7 +76,7 @@ describe('handleTwoFA', () => {
       const detection = makeDetection({ type: TwoFAType.TOTP });
       const page = makePage();
       const credentialProvider = {
-        getTOTPSecret: jest.fn().mockResolvedValue(undefined),
+        getCredentials: jest.fn().mockResolvedValue(null),
       };
       const options: TwoFAHandlerOptions = { domain: 'github.com', credentialProvider };
 
@@ -94,7 +94,7 @@ describe('handleTwoFA', () => {
         urlSequence: ['https://github.com/login/two-factor', 'https://github.com/dashboard'],
       });
       const credentialProvider = {
-        getTOTPSecret: jest.fn().mockResolvedValue('JBSWY3DPEHPK3PXP'),
+        getCredentials: jest.fn().mockResolvedValue({ totpSecret: 'JBSWY3DPEHPK3PXP' }),
       };
       const options: TwoFAHandlerOptions = {
         domain: 'github.com',
@@ -118,7 +118,7 @@ describe('handleTwoFA', () => {
         urlSequence: ['https://github.com/login/two-factor'],
       });
       const credentialProvider = {
-        getTOTPSecret: jest.fn().mockResolvedValue('JBSWY3DPEHPK3PXP'),
+        getCredentials: jest.fn().mockResolvedValue({ totpSecret: 'JBSWY3DPEHPK3PXP' }),
       };
       const options: TwoFAHandlerOptions = {
         domain: 'github.com',
@@ -141,7 +141,7 @@ describe('handleTwoFA', () => {
         urlSequence: ['https://github.com/login/two-factor'],
       });
       const credentialProvider = {
-        getTOTPSecret: jest.fn().mockResolvedValue('JBSWY3DPEHPK3PXP'),
+        getCredentials: jest.fn().mockResolvedValue({ totpSecret: 'JBSWY3DPEHPK3PXP' }),
       };
       const options: TwoFAHandlerOptions = {
         domain: 'github.com',
