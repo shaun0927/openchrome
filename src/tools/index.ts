@@ -79,6 +79,7 @@ import { registerRecordingTools } from './recording';
 
 // Crawl tools (#576)
 import { registerCrawlTool } from './crawl';
+import { registerCrawlSitemapTool } from './crawl-sitemap';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -163,6 +164,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Crawl tools (#576)
   registerCrawlTool(server);
+  registerCrawlSitemapTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
