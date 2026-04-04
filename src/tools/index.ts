@@ -49,6 +49,9 @@ import { registerBatchPaginateTool } from './batch-paginate';
 import { registerInteractTool } from './interact';
 import { registerInspectTool } from './inspect';
 
+// Natural language composite action tool (issue #578)
+import { registerActTool } from './act';
+
 // Memory tools (domain knowledge persistence)
 import { registerMemoryTools } from './memory';
 
@@ -129,6 +132,9 @@ export function registerAllTools(server: MCPServer): void {
   // Smart Tools (reduce LLM wandering — response enrichment + composite tools)
   registerInteractTool(server);
   registerInspectTool(server);
+
+  // Natural language composite action tool (issue #578)
+  registerActTool(server);
 
   // Memory tools (domain knowledge persistence)
   registerMemoryTools(server);
