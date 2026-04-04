@@ -2,7 +2,7 @@
  * TOTP Generate Tool - Generate current TOTP 2FA codes for configured domains
  */
 
-import * as crypto from 'crypto';
+import { generateTOTP } from '../auth/totp-manager';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 
@@ -23,73 +23,18 @@ const definition: MCPToolDefinition = {
 };
 
 /**
- * Generate a TOTP code from a base32-encoded secret.
- * Implements RFC 6238 (TOTP) using HMAC-SHA1 per RFC 4226 (HOTP).
- * Returns the 6-digit code and seconds remaining in the current 30s period.
- */
-function generateTOTPCode(secret: string): { code: string; secondsRemaining: number } {
-  const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const cleanSecret = secret.toUpperCase().replace(/[^A-Z2-7]/g, '');
-
-  // Decode base32 to bytes
-  let bits = '';
-  for (const char of cleanSecret) {
-    const val = base32Chars.indexOf(char);
-    if (val === -1) continue;
-    bits += val.toString(2).padStart(5, '0');
-  }
-
-  const keyBytes = Buffer.alloc(Math.floor(bits.length / 8));
-  for (let i = 0; i < keyBytes.length; i++) {
-    keyBytes[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
-  }
-
-  // Current time step (30-second intervals)
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const timeStep = Math.floor(nowSeconds / 30);
-  const secondsRemaining = 30 - (nowSeconds % 30);
-
-  // Pack time step as 8-byte big-endian buffer
-  const timeBuffer = Buffer.alloc(8);
-  let t = timeStep;
-  for (let i = 7; i >= 0; i--) {
-    timeBuffer[i] = t & 0xff;
-    t = Math.floor(t / 256);
-  }
-
-  // HMAC-SHA1
-  const hmac = crypto.createHmac('sha1', keyBytes);
-  hmac.update(timeBuffer);
-  const digest = hmac.digest();
-
-  // Dynamic truncation (RFC 4226 §5.3)
-  const offset = digest[digest.length - 1] & 0x0f;
-  const code =
-    (((digest[offset] & 0x7f) << 24) |
-      ((digest[offset + 1] & 0xff) << 16) |
-      ((digest[offset + 2] & 0xff) << 8) |
-      (digest[offset + 3] & 0xff)) %
-    1_000_000;
-
-  return {
-    code: code.toString().padStart(6, '0'),
-    secondsRemaining,
-  };
-}
-
-/**
  * Look up TOTP secret for a domain.
- * Stub implementation — integrates with credential store when PR 1 lands.
  * Falls back to environment variable OPENCHROME_TOTP_<DOMAIN> for testing.
  */
 async function getTOTPSecret(domain: string): Promise<string | undefined> {
-  // Try to load the credential store dynamically (available when PR 1 is merged).
+  // Try to load the credential store dynamically (available when PR lands).
   // Using require() at runtime so TypeScript does not resolve the module at compile time.
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const credModule = require('../security/credential-store') as { getTOTPSecret?: (d: string) => Promise<string | undefined> };
-    if (typeof credModule.getTOTPSecret === 'function') {
-      return credModule.getTOTPSecret(domain);
+    const credModule = require('../auth/credential-store') as { getTotpSecret?: (d: string) => Promise<string | null> };
+    if (typeof credModule.getTotpSecret === 'function') {
+      const result = await credModule.getTotpSecret(domain);
+      return result ?? undefined;
     }
   } catch {
     // Credential store not available yet — fall through to env var fallback
@@ -133,7 +78,9 @@ const handler: ToolHandler = async (
       };
     }
 
-    const { code, secondsRemaining } = generateTOTPCode(secret);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const secondsRemaining = 30 - (nowSeconds % 30);
+    const code = generateTOTP(secret);
 
     return {
       content: [

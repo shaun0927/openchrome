@@ -3,10 +3,14 @@
  */
 
 import { TwoFAType, TwoFADetectionResult } from './twofa-detector';
+import { generateTOTP } from './totp-manager';
 
-/** Minimal interface for a credential provider (stub for standalone compilation) */
+/**
+ * Minimal credential provider interface compatible with PR #582's shape.
+ * When credential-provider.ts lands, this can be replaced with an import.
+ */
 interface CredentialProvider {
-  getTOTPSecret(domain: string): Promise<string | undefined>;
+  getCredentials(domain: string): Promise<{ totpSecret?: string } | null>;
 }
 
 export interface TwoFAHandlerOptions {
@@ -21,57 +25,6 @@ export interface TwoFAHandlerResult {
   type: TwoFAType;
   method: 'auto-fill' | 'manual-hint' | 'timeout' | 'not-detected';
   message: string;
-}
-
-/**
- * Generate a TOTP code from a base32 secret.
- * Implements RFC 6238 (TOTP) over RFC 4226 (HOTP).
- */
-function generateTOTPCode(secret: string, offsetSeconds = 0): string {
-  const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const cleanSecret = secret.toUpperCase().replace(/[^A-Z2-7]/g, '');
-
-  // Decode base32
-  let bits = '';
-  for (const char of cleanSecret) {
-    const val = base32Chars.indexOf(char);
-    if (val === -1) continue;
-    bits += val.toString(2).padStart(5, '0');
-  }
-
-  const bytes = new Uint8Array(Math.floor(bits.length / 8));
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
-  }
-
-  // Time step (30s intervals)
-  const timeStep = Math.floor((Date.now() / 1000 + offsetSeconds) / 30);
-
-  // Pack time step as 8-byte big-endian
-  const timeBytes = new Uint8Array(8);
-  let t = timeStep;
-  for (let i = 7; i >= 0; i--) {
-    timeBytes[i] = t & 0xff;
-    t = Math.floor(t / 256);
-  }
-
-  // HMAC-SHA1 using Node.js crypto
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const crypto = require('crypto') as typeof import('crypto');
-  const hmac = crypto.createHmac('sha1', Buffer.from(bytes));
-  hmac.update(Buffer.from(timeBytes));
-  const digest = hmac.digest();
-
-  // Dynamic truncation
-  const offset = digest[digest.length - 1] & 0x0f;
-  const code =
-    (((digest[offset] & 0x7f) << 24) |
-      ((digest[offset + 1] & 0xff) << 16) |
-      ((digest[offset + 2] & 0xff) << 8) |
-      (digest[offset + 3] & 0xff)) %
-    1000000;
-
-  return code.toString().padStart(6, '0');
 }
 
 /**
@@ -156,18 +109,19 @@ export async function handleTwoFA(
     case TwoFAType.TOTP: {
       // Try to auto-fill if a credential provider is available
       if (credentialProvider && detection.inputSelector) {
-        const secret = await credentialProvider.getTOTPSecret(domain);
+        const credentials = await credentialProvider.getCredentials(domain);
+        const secret = credentials?.totpSecret;
         if (secret) {
           const originalUrl = page.url();
           let filled = false;
 
           for (let attempt = 0; attempt < maxRetries; attempt++) {
-            // On retries, apply ±30s offset for clock drift
-            const offsets = [0, 30, -30];
-            const offsetSeconds = offsets[attempt] || 0;
+            // On retries, apply ±1 step offset for clock drift
+            const stepOffsets = [0, 1, -1];
+            const timeOffset = stepOffsets[attempt] || 0;
 
             try {
-              const code = generateTOTPCode(secret, offsetSeconds);
+              const code = generateTOTP(secret, { timeOffset });
               await fillAndSubmit(
                 page,
                 detection.inputSelector,
