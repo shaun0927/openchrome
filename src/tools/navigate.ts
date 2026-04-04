@@ -21,6 +21,16 @@ import type { Page } from 'puppeteer-core';
 /** Blocking types that warrant automatic stealth retry (#459) */
 const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
 
+/** Build CAPTCHA metadata fields for navigate responses (#574) */
+function buildCaptchaFields(blocking: BlockingInfo | null): Record<string, unknown> {
+  if (!blocking || blocking.type !== 'captcha') return {};
+  return {
+    captcha_detected: true,
+    ...(blocking.captchaType && { captcha_type: blocking.captchaType }),
+    ...(blocking.captchaSiteKey && { captcha_site_key: blocking.captchaSiteKey }),
+  };
+}
+
 /** Compute readiness data for navigate responses. Non-critical — returns defaults on failure. */
 async function getReadiness(page: Page, context?: ToolContext): Promise<{ readyState: string; domStable: boolean; framework: string }> {
   try {
@@ -100,6 +110,7 @@ async function stealthAutoRetry(
     fallbackTier: 2,
     fallbackReason: blockingInfo.type,
     ...(summary && { visualSummary: summary }),
+    ...buildCaptchaFields(blocking),
     ...(blocking && { blockingPage: blocking }),
   });
   // Tier 3: escalate to headed Chrome if stealth retry also got blocked
@@ -478,6 +489,7 @@ const handler: ToolHandler = async (
               elementCount: reuseElementCount,
               readiness: reuseReadiness,
               ...(summary && { visualSummary: summary }),
+              ...buildCaptchaFields(reuseBlocking),
               ...(reuseBlocking && { blockingPage: reuseBlocking }),
             });
             return {
@@ -542,6 +554,7 @@ const handler: ToolHandler = async (
         readiness: newTabReadiness,
         ...(stealth && { stealth: true }),
         ...(newTabSummary && { visualSummary: newTabSummary }),
+        ...buildCaptchaFields(newTabBlocking),
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
       });
       return {
@@ -620,6 +633,7 @@ const handler: ToolHandler = async (
         title: await safeTitle(page),
         elementCount: backElementCount,
         ...(backSummary && { visualSummary: backSummary }),
+        ...buildCaptchaFields(backBlocking),
         ...(backBlocking && { blockingPage: backBlocking }),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       });
@@ -654,6 +668,7 @@ const handler: ToolHandler = async (
         title: await safeTitle(page),
         elementCount: fwdElementCount,
         ...(fwdSummary && { visualSummary: fwdSummary }),
+        ...buildCaptchaFields(fwdBlocking),
         ...(fwdBlocking && { blockingPage: fwdBlocking }),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       });
@@ -779,6 +794,7 @@ const handler: ToolHandler = async (
       elementCount: navElementCount,
       readiness: navReadiness,
       ...(navSummary && { visualSummary: navSummary }),
+      ...buildCaptchaFields(navBlocking),
       ...(navBlocking && { blockingPage: navBlocking }),
       ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
     });

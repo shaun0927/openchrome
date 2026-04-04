@@ -11,6 +11,10 @@ export interface PageDiagnostics {
 export interface BlockingInfo {
   type: 'captcha' | 'bot-check' | 'access-denied' | 'js-required';
   detail: string;
+  /** Classified CAPTCHA type when type === 'captcha' (#574) */
+  captchaType?: 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'turnstile' | 'aws_waf' | 'unknown';
+  /** Extracted site key when type === 'captcha' (#574) */
+  captchaSiteKey?: string;
 }
 
 /**
@@ -25,7 +29,6 @@ export async function getPageDiagnostics(page: Page): Promise<PageDiagnostics> {
       else if (document.querySelector('[data-v-], #app[data-v-]')) framework = 'vue';
       else if (document.querySelector('[ng-version], [_nghost]')) framework = 'angular';
 
-      // Count elements including those inside open shadow roots
       function deepElementCount(root: Element | Document | ShadowRoot): number {
         let count = root.querySelectorAll('*').length;
         const allEls = root.querySelectorAll('*');
@@ -46,19 +49,14 @@ export async function getPageDiagnostics(page: Page): Promise<PageDiagnostics> {
       };
     });
   } catch {
-    return {
-      url: 'unknown',
-      readyState: 'unknown',
-      totalElements: 0,
-      framework: null,
-      title: 'unknown',
-    };
+    return { url: 'unknown', readyState: 'unknown', totalElements: 0, framework: null, title: 'unknown' };
   }
 }
 
 /**
  * Detect if the page is showing a blocking verification/captcha/access-denied page.
  * Returns null if page appears normal.
+ * When a CAPTCHA is detected, classifies the type and extracts the site key (#574).
  */
 export async function detectBlockingPage(page: Page): Promise<BlockingInfo | null> {
   try {
@@ -66,67 +64,68 @@ export async function detectBlockingPage(page: Page): Promise<BlockingInfo | nul
       const title = document.title.toLowerCase();
       const bodyText = document.body?.innerText?.substring(0, 1000).toLowerCase() || '';
 
-      // CAPTCHA detection (includes Cloudflare Turnstile)
-      if (bodyText.includes('captcha') ||
-          bodyText.includes('recaptcha') ||
-          document.querySelector('iframe[src*="captcha"], iframe[src*="recaptcha"], iframe[src*="challenges.cloudflare.com"], .g-recaptcha, .h-captcha, .cf-turnstile')) {
-        return { type: 'captcha' as const, detail: document.title };
+      // reCAPTCHA v2
+      const rv2 = document.querySelector('.g-recaptcha, iframe[src*="google.com/recaptcha/api2"], iframe[src*="google.com/recaptcha/enterprise"]') as HTMLElement | null;
+      if (rv2) {
+        const isInvisible = rv2.getAttribute?.('data-size') === 'invisible';
+        const sk = rv2.getAttribute?.('data-sitekey') || undefined;
+        const captchaType = isInvisible ? 'recaptcha_v3' as const : 'recaptcha_v2' as const;
+        return { type: 'captcha' as const, detail: document.title, captchaType, captchaSiteKey: sk };
+      }
+      // reCAPTCHA v3 (script-only, invisible)
+      const rv3 = document.querySelector('script[src*="google.com/recaptcha/api.js?render="], script[src*="google.com/recaptcha/enterprise.js?render="]') as HTMLScriptElement | null;
+      if (rv3) {
+        const m = rv3.src.match(/render=([^&]+)/);
+        const sk = m && m[1] !== 'explicit' ? m[1] : undefined;
+        return { type: 'captcha' as const, detail: document.title, captchaType: 'recaptcha_v3' as const, captchaSiteKey: sk };
+      }
+      // hCaptcha
+      const hc = document.querySelector('.h-captcha, iframe[src*="hcaptcha.com/captcha"]') as HTMLElement | null;
+      if (hc) {
+        const sk = hc.getAttribute?.('data-sitekey') || undefined;
+        return { type: 'captcha' as const, detail: document.title, captchaType: 'hcaptcha' as const, captchaSiteKey: sk };
+      }
+      // Cloudflare Turnstile
+      const ts = document.querySelector('.cf-turnstile, iframe[src*="challenges.cloudflare.com"]') as HTMLElement | null;
+      if (ts) {
+        const sk = ts.getAttribute?.('data-sitekey') || undefined;
+        return { type: 'captcha' as const, detail: document.title, captchaType: 'turnstile' as const, captchaSiteKey: sk };
+      }
+      // AWS WAF CAPTCHA
+      if (document.querySelector('iframe[src*="awswaf"], iframe[src*="aws-waf-captcha"], #awswaf-captcha')) {
+        return { type: 'captcha' as const, detail: document.title, captchaType: 'aws_waf' as const, captchaSiteKey: undefined };
+      }
+      // Generic captcha fallback
+      if (bodyText.includes('captcha') || bodyText.includes('recaptcha') || document.querySelector('iframe[src*="captcha"]')) {
+        return { type: 'captcha' as const, detail: document.title, captchaType: 'unknown' as const, captchaSiteKey: undefined };
       }
 
       // Bot verification
-      if (bodyText.includes('verify you are human') ||
-          bodyText.includes('are you a robot') ||
-          bodyText.includes('bot protection') ||
-          bodyText.includes('automated access') ||
-          bodyText.includes('please verify') ||
-          title.includes('robot check') ||
-          title.includes('security check') ||
-          title.includes('just a moment')) {  // Cloudflare
+      if (bodyText.includes('verify you are human') || bodyText.includes('are you a robot') ||
+          bodyText.includes('bot protection') || bodyText.includes('automated access') ||
+          bodyText.includes('please verify') || title.includes('robot check') ||
+          title.includes('security check') || title.includes('just a moment')) {
         return { type: 'bot-check' as const, detail: document.title };
       }
 
       // Access denied
-      if (title.includes('access denied') ||
-          title.includes('403 forbidden') ||
-          title.includes('forbidden') ||
-          (bodyText.includes('access denied') && bodyText.length < 500)) {
+      if (title.includes('access denied') || title.includes('403 forbidden') ||
+          title.includes('forbidden') || (bodyText.includes('access denied') && bodyText.length < 500)) {
         return { type: 'access-denied' as const, detail: document.title };
       }
 
       // JS required
-      if (bodyText.includes('please enable javascript') ||
-          bodyText.includes('javascript is required') ||
+      if (bodyText.includes('please enable javascript') || bodyText.includes('javascript is required') ||
           bodyText.includes('this site requires javascript')) {
         return { type: 'js-required' as const, detail: 'Page requires JavaScript' };
       }
 
-      // Structural heuristic: sparse page + blocking vocabulary → likely a block page.
-      // This catches novel CDN/WAF block patterns (e.g. "blocked by network security")
-      // without requiring site-specific text matching. The element count + body length
-      // guard prevents false positives on real pages that happen to mention blocking.
       const elementCount = document.querySelectorAll('*').length;
       const isSparsePage = elementCount < 100 && bodyText.length < 800;
-
       if (isSparsePage) {
-        // Blocking vocabulary — ordered by specificity (most specific first)
-        const BLOCK_SIGNALS = [
-          'blocked by',
-          'been blocked',
-          'request blocked',
-          'ip blocked',
-          'ip has been blocked',
-          'network security',
-          'security policy',
-          'permission denied',
-          'not permitted',
-          'rate limit',
-          'too many requests',
-          'temporarily banned',
-          'your ip',
-          'suspicious activity',
-          'unusual traffic',
-        ];
-
+        const BLOCK_SIGNALS = ['blocked by','been blocked','request blocked','ip blocked','ip has been blocked',
+          'network security','security policy','permission denied','not permitted','rate limit',
+          'too many requests','temporarily banned','your ip','suspicious activity','unusual traffic'];
         if (BLOCK_SIGNALS.some(signal => bodyText.includes(signal))) {
           return { type: 'access-denied' as const, detail: document.title || bodyText.substring(0, 100) };
         }
