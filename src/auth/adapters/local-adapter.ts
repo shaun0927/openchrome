@@ -23,8 +23,11 @@ export class LocalAdapter implements CredentialProvider {
       // Dynamic import to avoid hard dependency until PR 1 lands
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { CredentialStore } = require('../credential-store');
-        this.store = new CredentialStore();
+        const credentialStore = require('../credential-store');
+        this.store = {
+          getTotpSecret: credentialStore.getTotpSecret,
+          listTotpDomains: credentialStore.listTotpDomains,
+        };
       } catch {
         // credential-store not yet available — use no-op stub
         this.store = {
