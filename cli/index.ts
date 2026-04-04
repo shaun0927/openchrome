@@ -31,6 +31,15 @@ import {
   isSupportedMCPClient,
   upsertMCPServerConfig,
 } from './mcp-client-config';
+import {
+  addTotpSecret,
+  generateTOTP,
+  getTotpSecret,
+  listTotpDomains,
+  removeTotpSecret,
+  totpSecondsRemaining,
+  validateBase32,
+} from './totp-store';
 
 const program = new Command();
 
@@ -1140,5 +1149,98 @@ function attemptJsonRecovery(content: string): object | null {
 
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// totp command group
+// ---------------------------------------------------------------------------
+
+const totp = program.command('totp').description('Manage TOTP secrets for 2FA automation');
+
+totp
+  .command('add')
+  .description('Add a TOTP secret for a domain')
+  .requiredOption('--domain <domain>', 'Domain the secret belongs to (e.g. github.com)')
+  .requiredOption('--secret <base32-secret>', 'TOTP secret in base32 format')
+  .option('--issuer <name>', 'Human-readable issuer name (e.g. GitHub)')
+  .action(async (options: { domain: string; secret: string; issuer?: string }) => {
+    if (!validateBase32(options.secret)) {
+      console.error(`❌ Invalid base32 secret. Ensure the secret only contains characters A-Z and 2-7.`);
+      process.exit(1);
+    }
+    try {
+      await addTotpSecret(options.domain, options.secret, options.issuer);
+      console.error(`TOTP secret added for ${options.domain}`);
+    } catch (error) {
+      console.error(`❌ Failed to store TOTP secret: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+totp
+  .command('list')
+  .description('List all configured TOTP domains')
+  .action(async () => {
+    try {
+      const domains = await listTotpDomains();
+      if (domains.length === 0) {
+        console.error('No TOTP secrets configured.');
+        return;
+      }
+      // Table header
+      const domainWidth = Math.max(6, ...domains.map((d) => d.domain.length));
+      const issuerWidth = Math.max(6, ...domains.map((d) => (d.issuer ?? '').length));
+      const header = `${'Domain'.padEnd(domainWidth)}  ${'Issuer'.padEnd(issuerWidth)}  Added`;
+      const separator = '-'.repeat(header.length);
+      console.error(header);
+      console.error(separator);
+      for (const entry of domains) {
+        const addedAt = new Date(entry.addedAt).toISOString().split('T')[0];
+        console.error(
+          `${entry.domain.padEnd(domainWidth)}  ${(entry.issuer ?? '').padEnd(issuerWidth)}  ${addedAt}`
+        );
+      }
+    } catch (error) {
+      console.error(`❌ Failed to list TOTP secrets: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+totp
+  .command('remove')
+  .description('Remove the TOTP secret for a domain')
+  .requiredOption('--domain <domain>', 'Domain to remove')
+  .action(async (options: { domain: string }) => {
+    try {
+      const removed = await removeTotpSecret(options.domain);
+      if (!removed) {
+        console.error(`❌ No TOTP secret found for ${options.domain}`);
+        process.exit(1);
+      }
+      console.error(`TOTP secret removed for ${options.domain}`);
+    } catch (error) {
+      console.error(`❌ Failed to remove TOTP secret: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+totp
+  .command('generate')
+  .description('Generate the current TOTP code for a domain')
+  .requiredOption('--domain <domain>', 'Domain to generate code for')
+  .action(async (options: { domain: string }) => {
+    try {
+      const secret = await getTotpSecret(options.domain);
+      if (secret === null) {
+        console.error(`❌ No TOTP secret configured for ${options.domain}`);
+        process.exit(1);
+      }
+      const code = generateTOTP(secret);
+      const secondsLeft = totpSecondsRemaining();
+      console.error(`${code} (${secondsLeft}s remaining)`);
+    } catch (error) {
+      console.error(`❌ Failed to generate TOTP code: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
 
 program.parse();
