@@ -39,6 +39,7 @@ import { isTimeoutError } from './errors/timeout';
 import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
+import { getActionRecorder } from './recording/action-recorder';
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -841,6 +842,18 @@ export class MCPServer {
         // Best-effort journal recording
       }
 
+      // Record to session recording (best-effort)
+      try {
+        const recorder = getActionRecorder();
+        if (recorder.isRecording) {
+          const tabId = toolArgs['tabId'] as string | undefined;
+          const summary = (result as Record<string, unknown>)?._summary as string | undefined;
+          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
+        }
+      } catch {
+        // Best-effort recording
+      }
+
       // Transition from heavy back to active after tool completes
       try {
         const cdpClient = getCDPClient();
@@ -980,6 +993,18 @@ export class MCPServer {
         journal.record(entry);
       } catch {
         // Best-effort journal recording
+      }
+
+      // Record to session recording (best-effort)
+      try {
+        const recorder = getActionRecorder();
+        if (recorder.isRecording) {
+          const tabId = toolArgs['tabId'] as string | undefined;
+          const errMsg = message;
+          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
+        }
+      } catch {
+        // Best-effort recording
       }
 
       // Transition from heavy back to active after tool completes
