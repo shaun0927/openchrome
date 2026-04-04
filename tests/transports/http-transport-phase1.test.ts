@@ -133,6 +133,11 @@ describe('HTTP Transport Phase 1', () => {
 });
 
 describe('Transport mode types', () => {
+  it('exports createTransport function', () => {
+    const { createTransport } = require('../../src/transports/index');
+    expect(typeof createTransport).toBe('function');
+  });
+
   it('createTransport with http mode returns HTTPTransport', () => {
     const { createTransport } = require('../../src/transports/index');
     const t = createTransport('http', { port: 19999 });
