@@ -1,4 +1,5 @@
 import type { Page } from 'puppeteer-core';
+import type { CaptchaType } from '../types/captcha';
 
 export interface PageDiagnostics {
   url: string;
@@ -12,7 +13,7 @@ export interface BlockingInfo {
   type: 'captcha' | 'bot-check' | 'access-denied' | 'js-required';
   detail: string;
   /** Classified CAPTCHA type when type === 'captcha' (#574) */
-  captchaType?: 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'turnstile' | 'aws_waf' | 'unknown';
+  captchaType?: CaptchaType;
   /** Extracted site key when type === 'captcha' (#574) */
   captchaSiteKey?: string;
 }
@@ -64,13 +65,11 @@ export async function detectBlockingPage(page: Page): Promise<BlockingInfo | nul
       const title = document.title.toLowerCase();
       const bodyText = document.body?.innerText?.substring(0, 1000).toLowerCase() || '';
 
-      // reCAPTCHA v2
+      // reCAPTCHA v2 (including invisible variant — invisible v2 uses the same API as v2, not v3)
       const rv2 = document.querySelector('.g-recaptcha, iframe[src*="google.com/recaptcha/api2"], iframe[src*="google.com/recaptcha/enterprise"]') as HTMLElement | null;
       if (rv2) {
-        const isInvisible = rv2.getAttribute?.('data-size') === 'invisible';
         const sk = rv2.getAttribute?.('data-sitekey') || undefined;
-        const captchaType = isInvisible ? 'recaptcha_v3' as const : 'recaptcha_v2' as const;
-        return { type: 'captcha' as const, detail: document.title, captchaType, captchaSiteKey: sk };
+        return { type: 'captcha' as const, detail: document.title, captchaType: 'recaptcha_v2' as const, captchaSiteKey: sk };
       }
       // reCAPTCHA v3 (script-only, invisible)
       const rv3 = document.querySelector('script[src*="google.com/recaptcha/api.js?render="], script[src*="google.com/recaptcha/enterprise.js?render="]') as HTMLScriptElement | null;

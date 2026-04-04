@@ -9,7 +9,7 @@ function detectCaptchaInPage(): { captchaType: CaptchaType; siteKey: CaptchaSite
   if (rv2) {
     const isInvisible = rv2.getAttribute?.('data-size') === 'invisible';
     const sk = rv2.getAttribute?.('data-sitekey');
-    return { captchaType: isInvisible ? 'recaptcha_v3' : 'recaptcha_v2', siteKey: sk ? { key: sk, source: 'attribute' } : null, invisible: isInvisible };
+    return { captchaType: 'recaptcha_v2', siteKey: sk ? { key: sk, source: 'attribute' } : null, invisible: isInvisible };
   }
   const rv3 = document.querySelector('script[src*="google.com/recaptcha/api.js?render="], script[src*="google.com/recaptcha/enterprise.js?render="]') as HTMLScriptElement | null;
   if (rv3) {
