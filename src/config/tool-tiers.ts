@@ -41,6 +41,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_open_host_settings: 1,
 
   // Tier 2: Specialist (on demand)
+  oc_totp_generate: 2,
   drag_drop: 2,
   network: 2,
   request_intercept: 2,
