@@ -74,6 +74,9 @@ import { registerCheckpointTool } from './checkpoint';
 // Web AI host connection tools (#523)
 import { registerConnectTools } from './connect';
 
+// Session recording tools (#572)
+import { registerRecordingTools } from './recording';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -151,6 +154,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Web AI host connection tools (#523)
   registerConnectTools(server);
+
+  // Session recording tools (#572)
+  registerRecordingTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
