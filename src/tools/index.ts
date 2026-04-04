@@ -87,6 +87,9 @@ import { registerCrawlSitemapTool } from './crawl-sitemap';
 // Natural language action API (#578)
 import { registerActTool } from './act';
 
+// Structured extraction (#571)
+import { registerExtractDataTool } from './extract-data';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -177,6 +180,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Natural language action API (#578)
   registerActTool(server);
+
+  // Structured extraction (#571)
+  registerExtractDataTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
