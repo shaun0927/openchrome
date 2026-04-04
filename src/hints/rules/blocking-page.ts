@@ -12,13 +12,19 @@ export const blockingPageRules: HintRule[] = [
       if (ctx.toolName !== 'navigate') return null;
       if (ctx.isError) return null;
       if (/"blockingPage"\s*:\s*\{[^}]*"type"\s*:\s*"captcha"/i.test(ctx.resultText)) {
+        // If CAPTCHA was already auto-solved, don't fire the hint
+        if (/"captcha_solved"\s*:\s*true/.test(ctx.resultText)) return null;
+
         const typeMatch = ctx.resultText.match(/"captchaType"\s*:\s*"([^"]+)"/);
         const captchaType = typeMatch ? typeMatch[1] : 'unknown';
-        return (
-          'Hint: CAPTCHA detected (type: ' + captchaType + '). ' +
-          'STOP all interaction attempts with this page. ' +
-          'Ask the user to solve the CAPTCHA in their Chrome browser, then use wait_for to detect when the page changes, and resume automation.'
-        );
+        const canAutoSolve = process.env.OPENCHROME_CAPTCHA_API_KEY &&
+          process.env.OPENCHROME_CAPTCHA_AUTO_SOLVE === 'true';
+
+        return canAutoSolve
+          ? 'Hint: CAPTCHA detected (type: ' + captchaType + '). Auto-solve is active and will attempt to dismiss it. Wait for the result before retrying.'
+          : 'Hint: CAPTCHA detected (type: ' + captchaType + '). ' +
+            'STOP all interaction attempts with this page. ' +
+            'Ask the user to solve the CAPTCHA in their Chrome browser, then use wait_for to detect when the page changes, and resume automation.';
       }
       return null;
     },

@@ -10,7 +10,7 @@
 import type { Page } from 'puppeteer-core';
 import type { BlockingInfo } from '../utils/page-diagnostics';
 import { detectCaptcha } from './detect';
-import { getSolverRegistry } from './solver-registry';
+import { getSolverRegistry, waitForSolverReady } from './solver-registry';
 import { injectSolution } from './inject-solution';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 
@@ -30,6 +30,8 @@ export async function handleCaptcha(
   page: Page,
   blockingInfo: BlockingInfo,
 ): Promise<CaptchaHandleResult> {
+  // Ensure solver is fully initialized before checking configuration
+  await waitForSolverReady();
   const registry = getSolverRegistry();
 
   // Check if solver is available
@@ -41,20 +43,28 @@ export async function handleCaptcha(
     };
   }
 
-  // Detailed detection to get site key
-  const detection = await detectCaptcha(page);
-  if (!detection) {
-    return {
-      solved: false,
-      captchaType: blockingInfo.captchaType || 'unknown',
-      error: 'CAPTCHA detection failed during solve attempt',
-    };
+  // Use already-captured data from blockingInfo when available to avoid
+  // redundant CDP round-trips and TOCTOU issues. Fall back to detectCaptcha
+  // only when the site key is missing from blockingInfo.
+  const captchaType = blockingInfo.captchaType || 'unknown';
+  let siteKey: { key: string; source: string } | null = null;
+
+  if (blockingInfo.captchaSiteKey) {
+    siteKey = { key: blockingInfo.captchaSiteKey, source: 'blockingInfo' };
+  } else {
+    const detection = await detectCaptcha(page);
+    if (!detection) {
+      return {
+        solved: false,
+        captchaType,
+        error: 'CAPTCHA detection failed during solve attempt',
+      };
+    }
+    siteKey = detection.siteKey ?? null;
   }
 
-  const captchaType = detection.captchaType;
-
   // Check if solver supports this type
-  if (!registry.canSolve(captchaType)) {
+  if (!registry.canSolve(captchaType as any)) {
     return {
       solved: false,
       captchaType,
@@ -63,7 +73,7 @@ export async function handleCaptcha(
   }
 
   // Need site key for solving
-  if (!detection.siteKey) {
+  if (!siteKey) {
     return {
       solved: false,
       captchaType,
@@ -72,7 +82,9 @@ export async function handleCaptcha(
   }
 
   // Record CAPTCHA encounter in domain memory
-  const domain = extractDomainFromUrl(detection.pageUrl);
+  let pageUrl: string;
+  try { pageUrl = page.url(); } catch { pageUrl = 'unknown'; }
+  const domain = extractDomainFromUrl(pageUrl);
   if (domain) {
     const memory = getDomainMemory();
     memory.record(domain, 'captcha:type', captchaType);
@@ -82,17 +94,16 @@ export async function handleCaptcha(
   try {
     // Submit to solver
     const result = await registry.solve({
-      captchaType,
-      siteKey: detection.siteKey.key,
-      pageUrl: detection.pageUrl,
-      invisible: detection.invisible,
+      captchaType: captchaType as any,
+      siteKey: siteKey.key,
+      pageUrl,
+      invisible: false,
     });
 
     // Inject solution into page
-    const injected = await injectSolution(page, captchaType, result.token);
+    const injected = await injectSolution(page, captchaType as any, result.token);
 
     if (!injected) {
-      // Record failure in domain memory
       if (domain) {
         getDomainMemory().record(domain, 'captcha:inject_failed', 'true');
       }
@@ -105,8 +116,24 @@ export async function handleCaptcha(
       };
     }
 
-    // Wait briefly for the page to process the solution
+    // Wait for the page to process the solution, then verify dismissal
     await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Post-injection verification: confirm the CAPTCHA is actually dismissed
+    const { detectBlockingPage } = await import('../utils/page-diagnostics');
+    const stillBlocked = await detectBlockingPage(page).catch(() => null);
+    if (stillBlocked?.type === 'captcha') {
+      if (domain) {
+        getDomainMemory().record(domain, 'captcha:inject_failed', 'verification');
+      }
+      return {
+        solved: false,
+        captchaType,
+        solveTimeMs: result.solveTimeMs,
+        costUsd: result.costUsd,
+        error: 'Token injected but CAPTCHA still present after verification',
+      };
+    }
 
     // Record success in domain memory
     if (domain) {

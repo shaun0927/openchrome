@@ -101,15 +101,23 @@ export class CapSolverSolver extends CaptchaSolver {
 
   private async pollResult(taskId: string): Promise<string> {
     const deadline = Date.now() + this.timeoutMs;
+    let consecutiveErrors = 0;
 
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
-      const response = await fetch(`${API_BASE}/getTaskResult`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientKey: this.config.apiKey, taskId }),
-      });
-      const data = await response.json() as { status: string; errorId: number; errorDescription?: string; solution?: { gRecaptchaResponse?: string; token?: string } };
+      let data: { status: string; errorId: number; errorDescription?: string; solution?: { gRecaptchaResponse?: string; token?: string } };
+      try {
+        const response = await fetch(`${API_BASE}/getTaskResult`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientKey: this.config.apiKey, taskId }),
+        });
+        data = await response.json() as typeof data;
+        consecutiveErrors = 0;
+      } catch (err) {
+        if (++consecutiveErrors >= 3) throw new Error(`CapSolver poll failed after 3 consecutive network errors: ${err}`);
+        continue;
+      }
 
       if (data.status === 'processing') continue;
       if (data.errorId !== 0) throw new Error(`CapSolver solve failed: ${data.errorDescription}`);

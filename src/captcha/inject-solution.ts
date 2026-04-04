@@ -47,22 +47,17 @@ export async function injectSolution(
               }
             }
           } catch { /* fallback: just set textarea */ }
-          // Try grecaptcha.enterprise or grecaptcha
-          try {
-            const g = (window as any).grecaptcha?.enterprise || (window as any).grecaptcha;
-            if (g?.getResponse) return true;
-          } catch { /* ignore */ }
           return !!textarea;
         }
 
         case 'hcaptcha': {
           const textarea = document.querySelector('[name="h-captcha-response"], textarea[name="g-recaptcha-response"]') as HTMLTextAreaElement | null;
           if (textarea) textarea.value = tok;
+          // Call hcaptcha.setResponse if available to register the token,
+          // NOT hcaptcha.execute() which starts a new challenge
           try {
-            const iframe = document.querySelector('iframe[src*="hcaptcha.com"]') as HTMLIFrameElement | null;
-            if (iframe) {
-              (window as any).hcaptcha?.execute?.();
-            }
+            const w = (window as any).hcaptcha;
+            if (w && typeof w.setResponse === 'function') w.setResponse(tok);
           } catch { /* ignore */ }
           return !!textarea;
         }

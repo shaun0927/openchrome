@@ -26,10 +26,13 @@ export class TwoCaptchaSolver extends CaptchaSolver {
   async solve(request: SolveRequest): Promise<SolveResult> {
     const startTime = Date.now();
 
-    // Submit task
+    // Submit task via POST to avoid leaking API key in access logs
     const submitParams = this.buildSubmitParams(request);
-    const submitUrl = `${API_BASE}/in.php?${submitParams}`;
-    const submitResponse = await fetch(submitUrl);
+    const submitResponse = await fetch(`${API_BASE}/in.php`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: submitParams,
+    });
     const submitText = await submitResponse.text();
 
     if (!submitText.startsWith('OK|')) {
@@ -51,8 +54,12 @@ export class TwoCaptchaSolver extends CaptchaSolver {
   }
 
   async getBalance(): Promise<number> {
-    const url = `${API_BASE}/res.php?key=${this.config.apiKey}&action=getbalance&json=1`;
-    const response = await fetch(url);
+    // Use POST to avoid leaking API key in server access logs
+    const response = await fetch(`${API_BASE}/res.php`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ key: this.config.apiKey, action: 'getbalance', json: '1' }).toString(),
+    });
     const data = await response.json() as { status: number; request: string };
     return parseFloat(data.request);
   }
@@ -92,16 +99,27 @@ export class TwoCaptchaSolver extends CaptchaSolver {
 
   private async pollResult(taskId: string): Promise<string> {
     const deadline = Date.now() + this.timeoutMs;
-    const url = `${API_BASE}/res.php?key=${this.config.apiKey}&action=get&id=${taskId}&json=0`;
+    const params = new URLSearchParams({ key: this.config.apiKey, action: 'get', id: taskId, json: '0' }).toString();
+    let consecutiveErrors = 0;
 
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
-      const response = await fetch(url);
-      const text = await response.text();
+      try {
+        const response = await fetch(`${API_BASE}/res.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params,
+        });
+        const text = await response.text();
+        consecutiveErrors = 0;
 
-      if (text === 'CAPCHA_NOT_READY') continue;
-      if (text.startsWith('OK|')) return text.split('|')[1];
-      throw new Error(`2Captcha solve failed: ${text}`);
+        if (text === 'CAPCHA_NOT_READY') continue;
+        if (text.startsWith('OK|')) return text.split('|')[1];
+        throw new Error(`2Captcha solve failed: ${text}`);
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('2Captcha solve failed')) throw err;
+        if (++consecutiveErrors >= 3) throw new Error(`2Captcha poll failed after 3 consecutive network errors: ${err}`);
+      }
     }
 
     throw new Error(`2Captcha solve timed out after ${this.timeoutMs}ms`);

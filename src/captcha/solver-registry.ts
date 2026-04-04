@@ -149,13 +149,20 @@ export class SolverRegistry {
 
 // Singleton
 let instance: SolverRegistry | null = null;
+let initPromise: Promise<void> | null = null;
 
 export function getSolverRegistry(): SolverRegistry {
   if (!instance) {
     instance = new SolverRegistry();
-    instance.initialize().catch(err => {
+    initPromise = instance.initialize().catch(err => {
       console.error('[CaptchaSolver] Initialization failed:', err instanceof Error ? err.message : err);
     });
   }
   return instance;
+}
+
+/** Wait for the solver registry to finish initialization. */
+export async function waitForSolverReady(): Promise<void> {
+  getSolverRegistry();
+  if (initPromise) await initPromise;
 }
