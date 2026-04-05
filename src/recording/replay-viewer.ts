@@ -66,7 +66,7 @@ export class ReplayViewer {
 
     const html = generateHtmlReport(metadata, actions, screenshots);
 
-    const reportPath = path.join(this.baseDir, recordingId, REPORT_FILENAME);
+    const reportPath = path.join(this.store.getRecordingDir(recordingId), REPORT_FILENAME);
     await fs.promises.writeFile(reportPath, html, 'utf-8');
 
     return reportPath;
