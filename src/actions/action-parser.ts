@@ -121,11 +121,10 @@ function splitOnConjunctions(text: string): string[] {
   let remaining = text;
 
   // Pattern: (", " | " then " | " and ") followed by a verb-starting token
-  const pattern = /(?:,\s+|\s+then\s+|\s+and\s+)(?=[a-z\u3131-\uD7A3\u4E00-\u9FFF])/gi;
+  const re = /(?:,\s+|\s+then\s+|\s+and\s+)(?=[a-z\u3131-\uD7A3\u4E00-\u9FFF])/gi;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
-  const re = new RegExp(pattern.source, 'gi');
 
   while ((match = re.exec(remaining)) !== null) {
     const afterSplit = remaining.slice(match.index + match[0].length);
@@ -153,7 +152,7 @@ function parseClickPhrase(phrase: string): ParsedAction {
   const s = phrase.trim();
 
   // Korean: "{target}을/를 클릭" or "{target} 클릭"
-  const krMatch = s.match(/^(.+?)(?:을|를)?\s+클릭|누르|탭/u);
+  const krMatch = s.match(/^(.+?)(?:을|를)?\s+(?:클릭|누르|탭)/u);
   if (krMatch) {
     return { action: 'click', target: krMatch[1].trim() };
   }
