@@ -378,7 +378,7 @@ describe('ReplayViewer.generateReport', () => {
   it('generates report.html file in the recording directory', async () => {
     const metadata = makeMetadata({ actionCount: 1 });
     await store.createRecording(metadata);
-    store.appendAction(metadata.id, makeAction(1));
+    await store.appendAction(metadata.id, makeAction(1));
 
     const reportPath = await viewer.generateReport(metadata.id);
 
@@ -389,8 +389,8 @@ describe('ReplayViewer.generateReport', () => {
   it('written HTML contains expected content', async () => {
     const metadata = makeMetadata({ actionCount: 2 });
     await store.createRecording(metadata);
-    store.appendAction(metadata.id, makeAction(1, { tool: 'navigate' }));
-    store.appendAction(metadata.id, makeAction(2, { tool: 'interact' }));
+    await store.appendAction(metadata.id, makeAction(1, { tool: 'navigate' }));
+    await store.appendAction(metadata.id, makeAction(2, { tool: 'interact' }));
 
     const reportPath = await viewer.generateReport(metadata.id);
     const html = fs.readFileSync(reportPath, 'utf-8');
@@ -414,7 +414,7 @@ describe('ReplayViewer.generateReport', () => {
     const screenshotBuf = Buffer.from('fake-png-data');
     await store.saveScreenshot(metadata.id, 'screenshot-1-before.png', screenshotBuf);
 
-    store.appendAction(
+    await store.appendAction(
       metadata.id,
       makeAction(1, { screenshotBefore: 'screenshot-1-before.png' }),
     );
@@ -430,8 +430,8 @@ describe('ReplayViewer.generateReport', () => {
   it('handles recording with all failed actions', async () => {
     const metadata = makeMetadata({ actionCount: 2 });
     await store.createRecording(metadata);
-    store.appendAction(metadata.id, makeAction(1, { ok: false, error: 'Network error' }));
-    store.appendAction(metadata.id, makeAction(2, { ok: false, error: 'Timeout' }));
+    await store.appendAction(metadata.id, makeAction(1, { ok: false, error: 'Network error' }));
+    await store.appendAction(metadata.id, makeAction(2, { ok: false, error: 'Timeout' }));
 
     const reportPath = await viewer.generateReport(metadata.id);
     const html = fs.readFileSync(reportPath, 'utf-8');
@@ -463,7 +463,7 @@ describe('ReplayViewer.generateTerminalReplay', () => {
   it('returns terminal timeline string for an existing recording', async () => {
     const metadata = makeMetadata({ actionCount: 1 });
     await store.createRecording(metadata);
-    store.appendAction(metadata.id, makeAction(1, { tool: 'navigate', summary: 'opened page' }));
+    await store.appendAction(metadata.id, makeAction(1, { tool: 'navigate', summary: 'opened page' }));
 
     const output = await viewer.generateTerminalReplay(metadata.id);
 
