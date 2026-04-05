@@ -39,6 +39,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_get_connection_info: 1,
   oc_copy_to_clipboard: 1,
   oc_open_host_settings: 1,
+  act: 1,
 
   // Tier 2: Specialist (on demand)
   drag_drop: 2,
