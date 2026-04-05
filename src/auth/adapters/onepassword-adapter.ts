@@ -68,6 +68,9 @@ export class OnePasswordAdapter implements CredentialProvider {
   }
 
   async getCredentials(domain: string): Promise<Credentials | null> {
+    if (!/^[a-zA-Z0-9._\-]+$/.test(domain)) {
+      throw new Error(`Invalid domain format: "${domain}"`);
+    }
     let stdout: string;
     try {
       const result = await this.exec(
@@ -111,12 +114,27 @@ export class OnePasswordAdapter implements CredentialProvider {
     const passwordField = fields.find(
       (f) => f.purpose === 'PASSWORD' || f.id === 'password'
     );
+    // OTP field: `value` contains the live TOTP code (6-digit), not the base32 seed.
+    // The `totp` field contains the otpauth:// URI with the actual secret.
     const otpField = fields.find((f) => f.type === 'OTP');
+    let totpSecret: string | undefined;
+    if (otpField) {
+      // Try to extract base32 secret from otpauth:// URI (e.g., otpauth://totp/...?secret=BASE32)
+      const totpUri = (otpField as Record<string, unknown>).totp as string | undefined;
+      if (totpUri) {
+        const secretMatch = totpUri.match(/[?&]secret=([A-Z2-7]+=*)/i);
+        if (secretMatch) totpSecret = secretMatch[1];
+      }
+      // Fallback: if value looks like a base32 string (not a 6-digit code), use it
+      if (!totpSecret && otpField.value && /^[A-Z2-7]+=*$/i.test(otpField.value) && otpField.value.length > 10) {
+        totpSecret = otpField.value;
+      }
+    }
 
     return {
       username: usernameField?.value ?? '',
       password: passwordField?.value ?? '',
-      totpSecret: otpField?.value,
+      totpSecret,
     };
   }
 

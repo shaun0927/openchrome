@@ -66,6 +66,9 @@ export class BitwardenAdapter implements CredentialProvider {
   }
 
   async getCredentials(domain: string): Promise<Credentials | null> {
+    if (!/^[a-zA-Z0-9._\-]+$/.test(domain)) {
+      throw new Error(`Invalid domain format: "${domain}"`);
+    }
     const session = this.getSession();
 
     let stdout: string;

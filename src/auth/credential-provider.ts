@@ -3,6 +3,10 @@
  * Supports local, 1Password, and Bitwarden credential stores
  */
 
+import { OnePasswordAdapter } from './adapters/onepassword-adapter';
+import { BitwardenAdapter } from './adapters/bitwarden-adapter';
+import { LocalAdapter } from './adapters/local-adapter';
+
 export interface Credentials {
   username: string;
   password: string;
@@ -27,18 +31,12 @@ export function getCredentialProvider(): CredentialProvider {
 
   switch (providerName.toLowerCase()) {
     case '1password':
-    case 'onepassword': {
-      const { OnePasswordAdapter } = require('./adapters/onepassword-adapter');
+    case 'onepassword':
       return new OnePasswordAdapter();
-    }
-    case 'bitwarden': {
-      const { BitwardenAdapter } = require('./adapters/bitwarden-adapter');
+    case 'bitwarden':
       return new BitwardenAdapter();
-    }
     case 'local':
-    default: {
-      const { LocalAdapter } = require('./adapters/local-adapter');
+    default:
       return new LocalAdapter();
-    }
   }
 }
