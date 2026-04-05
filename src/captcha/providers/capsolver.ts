@@ -31,6 +31,7 @@ export class CapSolverSolver extends CaptchaSolver {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientKey: this.config.apiKey, task }),
+      signal: AbortSignal.timeout(15000),
     });
     const createData = await createResponse.json() as { errorId: number; errorDescription?: string; taskId?: string };
 
@@ -55,6 +56,7 @@ export class CapSolverSolver extends CaptchaSolver {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientKey: this.config.apiKey }),
+      signal: AbortSignal.timeout(15000),
     });
     const data = await response.json() as { balance: number };
     return data.balance;
@@ -111,6 +113,7 @@ export class CapSolverSolver extends CaptchaSolver {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ clientKey: this.config.apiKey, taskId }),
+          signal: AbortSignal.timeout(15000),
         });
         data = await response.json() as typeof data;
         consecutiveErrors = 0;

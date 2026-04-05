@@ -32,6 +32,7 @@ export class TwoCaptchaSolver extends CaptchaSolver {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: submitParams,
+      signal: AbortSignal.timeout(15000),
     });
     const submitText = await submitResponse.text();
 
@@ -59,6 +60,7 @@ export class TwoCaptchaSolver extends CaptchaSolver {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ key: this.config.apiKey, action: 'getbalance', json: '1' }).toString(),
+      signal: AbortSignal.timeout(15000),
     });
     const data = await response.json() as { status: number; request: string };
     return parseFloat(data.request);
@@ -109,6 +111,7 @@ export class TwoCaptchaSolver extends CaptchaSolver {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: params,
+          signal: AbortSignal.timeout(15000),
         });
         const text = await response.text();
         consecutiveErrors = 0;
