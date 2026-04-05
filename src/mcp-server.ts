@@ -41,6 +41,14 @@ import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
 
+/** Recording tools excluded from session recording to prevent infinite loops */
+const SKIP_RECORDING_TOOLS = new Set([
+  'oc_recording_start',
+  'oc_recording_stop',
+  'oc_recording_list',
+  'oc_recording_export',
+]);
+
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
  * by reconnecting to the browser.
@@ -842,10 +850,10 @@ export class MCPServer {
         // Best-effort journal recording
       }
 
-      // Record to session recording (best-effort)
+      // Record to session recording (best-effort, skip recording tools themselves)
       try {
         const recorder = getActionRecorder();
-        if (recorder.isRecording) {
+        if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const summary = (result as Record<string, unknown>)?._summary as string | undefined;
           recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
@@ -995,10 +1003,10 @@ export class MCPServer {
         // Best-effort journal recording
       }
 
-      // Record to session recording (best-effort)
+      // Record to session recording (best-effort, skip recording tools themselves)
       try {
         const recorder = getActionRecorder();
-        if (recorder.isRecording) {
+        if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const errMsg = message;
           recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});

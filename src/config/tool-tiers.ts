@@ -57,6 +57,12 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   batch_execute: 2,
   batch_paginate: 2,
 
+  // Session recording tools (#572) — opt-in, not needed for every session
+  oc_recording_start: 2,
+  oc_recording_stop: 2,
+  oc_recording_list: 2,
+  oc_recording_export: 2,
+
   // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
   // Names must match the 'name' field in each tool's definition
   oc_connection_health: 1,  // src/tools/connection-health.ts
