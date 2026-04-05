@@ -1,0 +1,1 @@
+export { detectCaptcha } from './detect';

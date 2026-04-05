@@ -196,7 +196,7 @@ describe('detectBlockingPage - structural heuristics', () => {
         'Cloudflare',
         'just a moment...',
         80,
-        { 'iframe[src*="captcha"], iframe[src*="recaptcha"], iframe[src*="challenges.cloudflare.com"], .g-recaptcha, .h-captcha, .cf-turnstile': true },
+        { '.cf-turnstile, iframe[src*="challenges.cloudflare.com"]': true },
       );
       const result = await detectBlockingPage(page);
       expect(result).not.toBeNull();
