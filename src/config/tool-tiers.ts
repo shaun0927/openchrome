@@ -56,6 +56,8 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   file_upload: 2,
   batch_execute: 2,
   batch_paginate: 2,
+  crawl: 2,
+  crawl_sitemap: 2,
 
   // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
   // Names must match the 'name' field in each tool's definition
