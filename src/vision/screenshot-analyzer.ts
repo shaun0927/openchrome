@@ -16,7 +16,11 @@
  */
 
 import type { Page } from 'puppeteer-core';
-import { DEFAULT_SCREENSHOT_QUALITY } from '../config/defaults';
+import {
+  DEFAULT_SCREENSHOT_QUALITY,
+  DEFAULT_DOM_SETTLE_DELAY_MS,
+  DEFAULT_SCREENSHOT_TIMEOUT_MS,
+} from '../config/defaults';
 import type {
   AnnotationOptions,
   AnnotatedScreenshotResult,
@@ -284,13 +288,19 @@ async function captureAnnotatedScreenshot(
       OVERLAY_ID
     );
 
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
-    const buffer = await page.screenshot({
-      type: options.format,
-      quality: options.format === 'png' ? undefined : options.quality,
-      fullPage: false,
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const buffer = await Promise.race([
+      page.screenshot({
+        type: options.format,
+        quality: options.format === 'png' ? undefined : options.quality,
+        fullPage: false,
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
+      }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
 
     const screenshotBuffer = Buffer.from(buffer);
     const mimeType = options.format === 'webp' ? 'image/webp' : 'image/png';
