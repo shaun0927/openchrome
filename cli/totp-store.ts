@@ -129,9 +129,13 @@ function decrypt(data: Buffer): string {
   const authTag = data.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
   const ciphertext = data.subarray(SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
   const key = deriveKey(salt);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAuthTag(authTag);
-  return decipher.update(ciphertext) + decipher.final('utf8');
+  try {
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    return decipher.update(ciphertext) + decipher.final('utf8');
+  } catch {
+    throw new Error('Failed to decrypt credential store: wrong passphrase or corrupted data');
+  }
 }
 
 // ---------------------------------------------------------------------------
