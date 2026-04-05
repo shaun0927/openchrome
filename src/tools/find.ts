@@ -207,7 +207,8 @@ const handler: ToolHandler = async (
 
     if (output.length === 0) {
       // ─── Vision Fallback ───
-      const shouldUseVision = (visionFallback || visionMode === 'auto') && visionMode !== 'off';
+      const shouldUseVision = visionMode !== 'off' &&
+        (visionFallback === true || visionMode === 'fallback' || visionMode === 'auto');
       if (shouldUseVision && context && hasBudget(context, 10_000)) {
         try {
           console.error(`[find] DOM discovery found nothing for "${query}" — trying vision fallback`);
