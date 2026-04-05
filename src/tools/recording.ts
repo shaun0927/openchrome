@@ -12,8 +12,9 @@ import { getActionRecorder } from '../recording/action-recorder';
 import { getRecordingStore } from '../recording/recording-store';
 import { RecordingAction, RecordingMetadata } from '../recording/types';
 
-/** Validate recording ID format to prevent path traversal */
-const RECORDING_ID_PATTERN = /^rec-\d{8}-\d{6}-[a-z0-9]{4}$/;
+/** Matches the RECORDING_ID_PATTERN exported from recording-store */
+const RECORDING_ID_PATTERN = /^rec-\d{8}-\d{6}-[a-z0-9]{4,6}$/;
+
 function isValidRecordingId(id: string): boolean {
   return RECORDING_ID_PATTERN.test(id);
 }
@@ -306,7 +307,8 @@ async function generateHtmlReport(
           const b64 = buf.toString('base64');
           const ext = action.screenshotBefore.split('.').pop() ?? 'webp';
           const mime = ext === 'png' ? 'image/png' : ext === 'jpeg' ? 'image/jpeg' : 'image/webp';
-          screenshotHtml += `<div class="screenshot"><div class="screenshot-label">Before</div><img src="data:${mime};base64,${b64}" /></div>`;
+          const dataUri = escapeHtml(`data:${mime};base64,${b64}`);
+          screenshotHtml += `<div class="screenshot"><div class="screenshot-label">Before</div><img src="${dataUri}" /></div>`;
         }
       }
       if (action.screenshotAfter) {
@@ -315,7 +317,8 @@ async function generateHtmlReport(
           const b64 = buf.toString('base64');
           const ext = action.screenshotAfter.split('.').pop() ?? 'webp';
           const mime = ext === 'png' ? 'image/png' : ext === 'jpeg' ? 'image/jpeg' : 'image/webp';
-          screenshotHtml += `<div class="screenshot"><div class="screenshot-label">After</div><img src="data:${mime};base64,${b64}" /></div>`;
+          const dataUri = escapeHtml(`data:${mime};base64,${b64}`);
+          screenshotHtml += `<div class="screenshot"><div class="screenshot-label">After</div><img src="${dataUri}" /></div>`;
         }
       }
       screenshotHtml += '</div>';
