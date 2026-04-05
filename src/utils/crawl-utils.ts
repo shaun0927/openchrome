@@ -5,6 +5,14 @@
  * @see https://github.com/shaun0927/openchrome/issues/576
  */
 
+/** Check if a URL string uses http or https scheme */
+function isHttpUrl(url: string): boolean {
+  try {
+    const p = new URL(url).protocol;
+    return p === 'http:' || p === 'https:';
+  } catch { return false; }
+}
+
 // ---------------------------------------------------------------------------
 // URL Normalization
 // ---------------------------------------------------------------------------
@@ -119,20 +127,14 @@ export function discoverLinks(html: string, baseUrl: string): string[] {
     const href = match[1];
     if (!href) continue;
 
-    // Skip non-http links
-    if (
-      href.startsWith('javascript:') ||
-      href.startsWith('mailto:') ||
-      href.startsWith('tel:') ||
-      href.startsWith('data:') ||
-      href.startsWith('#')
-    ) {
-      continue;
-    }
+    // Skip fragment-only links early
+    if (href.startsWith('#')) continue;
 
     try {
-      const resolved = new URL(href, baseUrl).toString();
-      const normalized = normalizeUrl(resolved);
+      const resolved = new URL(href, baseUrl);
+      // Only allow http/https schemes (blocks file://, ftp://, javascript:, etc.)
+      if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue;
+      const normalized = normalizeUrl(resolved.toString());
       if (!seen.has(normalized)) {
         seen.add(normalized);
         results.push(normalized);
@@ -187,7 +189,8 @@ export function parseRobotsTxt(
     // Extract sitemap directives (global, not agent-specific)
     const sitemapMatch = line.match(/^sitemap:\s*(.+)$/i);
     if (sitemapMatch) {
-      result.sitemaps.push(sitemapMatch[1].trim());
+      const sitemapUrl = sitemapMatch[1].trim();
+      if (isHttpUrl(sitemapUrl)) result.sitemaps.push(sitemapUrl);
       continue;
     }
 
@@ -312,7 +315,7 @@ export function parseSitemapXml(xml: string): SitemapParseResult {
     while ((sitemapMatch = sitemapRegex.exec(xml)) !== null) {
       const block = sitemapMatch[1];
       const locMatch = block.match(/<loc[^>]*>\s*([\s\S]*?)\s*<\/loc>/i);
-      if (locMatch) {
+      if (locMatch && isHttpUrl(locMatch[1].trim())) {
         result.sitemapIndexUrls.push(locMatch[1].trim());
       }
     }
@@ -326,7 +329,9 @@ export function parseSitemapXml(xml: string): SitemapParseResult {
       const locMatch = block.match(/<loc[^>]*>\s*([\s\S]*?)\s*<\/loc>/i);
       if (!locMatch) continue;
 
-      const entry: SitemapUrl = { loc: locMatch[1].trim() };
+      const loc = locMatch[1].trim();
+      if (!isHttpUrl(loc)) continue;
+      const entry: SitemapUrl = { loc };
 
       const lastmodMatch = block.match(
         /<lastmod[^>]*>\s*([\s\S]*?)\s*<\/lastmod>/i,
