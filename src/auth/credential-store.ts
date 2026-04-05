@@ -46,7 +46,13 @@ function getLockPath(): string {
 // ---------------------------------------------------------------------------
 
 function getMachineId(): string {
-  return os.hostname() + os.userInfo().username;
+  let username = 'unknown';
+  try {
+    username = os.userInfo().username;
+  } catch {
+    username = process.env.USER ?? process.env.USERNAME ?? 'unknown';
+  }
+  return os.hostname() + username;
 }
 
 function deriveKey(passphrase: string, salt: Buffer): Buffer {
@@ -138,11 +144,22 @@ function writeStore(store: TotpStore, passphrase: string): void {
 // Passphrase resolution
 // ---------------------------------------------------------------------------
 
-// Default passphrase: machine-bound (no user input required for basic usage)
+// WARNING: The built-in default passphrase provides only obfuscation, not real
+// encryption. It is mixed with hostname + username via scrypt, but all components
+// are trivially discoverable on the local machine. For meaningful security, set
+// OPENCHROME_TOTP_PASSPHRASE to a strong user-supplied secret.
 const DEFAULT_PASSPHRASE = 'openchrome-totp-v1';
+let passphraseWarned = false;
 
 function resolvePassphrase(passphrase?: string): string {
-  return passphrase ?? DEFAULT_PASSPHRASE;
+  if (passphrase) return passphrase;
+  const envPassphrase = process.env.OPENCHROME_TOTP_PASSPHRASE;
+  if (envPassphrase) return envPassphrase;
+  if (!passphraseWarned) {
+    console.error('[credential-store] Using default passphrase (obfuscation only). Set OPENCHROME_TOTP_PASSPHRASE for stronger encryption.');
+    passphraseWarned = true;
+  }
+  return DEFAULT_PASSPHRASE;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,8 +187,9 @@ export async function addTotpSecret(
 
   // Ensure lock file exists before locking
   const lockPath = getLockPath();
-  if (!fs.existsSync(lockPath)) {
-    fs.writeFileSync(lockPath, '', { mode: 0o600 });
+  const lockExists = await fs.promises.access(lockPath).then(() => true).catch(() => false);
+  if (!lockExists) {
+    await fs.promises.writeFile(lockPath, '', { mode: 0o600 });
   }
 
   const release = await lockfile.lock(lockPath, { retries: { retries: 5, minTimeout: 50 } });
@@ -203,11 +221,13 @@ export async function removeTotpSecret(domain: string, passphrase?: string): Pro
   const pp = resolvePassphrase(passphrase);
   ensureCredentialsDir();
   const storePath = getStorePath();
-  if (!fs.existsSync(storePath)) return false;
+  const storeExists = await fs.promises.access(storePath).then(() => true).catch(() => false);
+  if (!storeExists) return false;
 
   const lockPath = getLockPath();
-  if (!fs.existsSync(lockPath)) {
-    fs.writeFileSync(lockPath, '', { mode: 0o600 });
+  const lockExists = await fs.promises.access(lockPath).then(() => true).catch(() => false);
+  if (!lockExists) {
+    await fs.promises.writeFile(lockPath, '', { mode: 0o600 });
   }
 
   const release = await lockfile.lock(lockPath, { retries: { retries: 5, minTimeout: 50 } });
@@ -234,9 +254,10 @@ export async function listTotpDomains(
   const pp = resolvePassphrase(passphrase);
   ensureCredentialsDir();
   const storePath = getStorePath();
-  if (!fs.existsSync(storePath)) return [];
+  const storeExists = await fs.promises.access(storePath).then(() => true).catch(() => false);
+  if (!storeExists) return [];
 
-  const data = fs.readFileSync(storePath);
+  const data = await fs.promises.readFile(storePath);
   if (data.length === 0) return [];
 
   const store: TotpStore = JSON.parse(decrypt(data, pp));
@@ -251,9 +272,10 @@ export async function getTotpSecret(domain: string, passphrase?: string): Promis
   const pp = resolvePassphrase(passphrase);
   ensureCredentialsDir();
   const storePath = getStorePath();
-  if (!fs.existsSync(storePath)) return null;
+  const storeExists = await fs.promises.access(storePath).then(() => true).catch(() => false);
+  if (!storeExists) return null;
 
-  const data = fs.readFileSync(storePath);
+  const data = await fs.promises.readFile(storePath);
   if (data.length === 0) return null;
 
   const store: TotpStore = JSON.parse(decrypt(data, pp));
