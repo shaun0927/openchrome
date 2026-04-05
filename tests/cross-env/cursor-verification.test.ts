@@ -234,8 +234,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         expect(toolNames).toContain(tool);
       }
 
-      // Total should be 60 (30 T1 + 21 T2 + 9 T3)
-      expect(toolNames.length).toBe(60);
+      // Total should be 61 (30 T1 + 22 T2 + 9 T3)
+      expect(toolNames.length).toBe(61);
     });
 
     test('resources/list returns usage guide resource', async () => {
@@ -292,7 +292,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'console_capture', 'performance_metrics', 'file_upload',
       'batch_execute', 'batch_paginate',
       'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
-      'crawl', 'crawl_sitemap',
+      'crawl', 'crawl_sitemap', 'vision_find',
     ];
     tier2Tools.forEach(tool => {
       test(`Tier 2: ${tool} registered`, () => {
@@ -415,8 +415,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
       // Should NOT have expand_tools (progressive disclosure disabled)
       expect(toolNames).not.toContain('expand_tools');
-      // Total should be 60 (30 T1 + 21 T2 + 9 T3)
-      expect(toolNames.length).toBe(60);
+      // Total should be 61 (30 T1 + 22 T2 + 9 T3)
+      expect(toolNames.length).toBe(61);
     });
   });
 });

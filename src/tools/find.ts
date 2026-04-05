@@ -11,6 +11,8 @@ import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-d
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { resolveElementsByAXTree, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
+import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
+import { getVisionMode } from '../vision/config';
 
 const definition: MCPToolDefinition = {
   name: 'find',
@@ -34,6 +36,10 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      vision_fallback: {
+        type: 'boolean',
+        description: 'Use vision-based screenshot analysis if DOM discovery finds nothing. Default: follows OPENCHROME_VISION_MODE env.',
+      },
     },
     required: ['query', 'tabId'],
   },
@@ -48,6 +54,8 @@ const handler: ToolHandler = async (
   const query = args.query as string;
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
+  const visionFallback = args.vision_fallback as boolean | undefined;
+  const visionMode = getVisionMode();
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -198,6 +206,39 @@ const handler: ToolHandler = async (
     await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
     if (output.length === 0) {
+      // ─── Vision Fallback ───
+      const shouldUseVision = visionMode !== 'off' &&
+        (visionFallback === true || visionMode === 'fallback' || visionMode === 'auto');
+      if (shouldUseVision && context && hasBudget(context, 10_000)) {
+        try {
+          console.error(`[find] DOM discovery found nothing for "${query}" — trying vision fallback`);
+          const visionResult = await analyzeScreenshot(page, {
+            interactiveOnly: true,
+            showBoundingBoxes: true,
+          });
+
+          if (visionResult.elementCount > 0) {
+            const textMap = formatElementMapAsText(visionResult.elementMap);
+            console.error(`[find] Vision fallback found ${visionResult.elementCount} elements for "${query}"`);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `DOM found nothing for "${query}" — vision fallback found ${visionResult.elementCount} elements:\n\n${textMap}`,
+                },
+                {
+                  type: 'image',
+                  data: visionResult.screenshot,
+                  mimeType: visionResult.mimeType,
+                },
+              ],
+            };
+          }
+        } catch (visionError) {
+          console.error(`[find] Vision fallback failed: ${visionError instanceof Error ? visionError.message : String(visionError)}`);
+        }
+      }
+
       let url = 'unknown', readyState = 'unknown', totalElements = 0;
       try {
         ({ url, readyState, totalElements } = await withTimeout(page.evaluate(() => ({

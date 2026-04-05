@@ -49,6 +49,9 @@ import { registerBatchPaginateTool } from './batch-paginate';
 import { registerInteractTool } from './interact';
 import { registerInspectTool } from './inspect';
 
+// Vision tools (vision-based element discovery #577)
+import { registerVisionFindTool } from './vision-find';
+
 // Memory tools (domain knowledge persistence)
 import { registerMemoryTools } from './memory';
 
@@ -136,6 +139,9 @@ export function registerAllTools(server: MCPServer): void {
   // Smart Tools (reduce LLM wandering — response enrichment + composite tools)
   registerInteractTool(server);
   registerInspectTool(server);
+
+  // Vision tools (vision-based element discovery #577)
+  registerVisionFindTool(server);
 
   // Memory tools (domain knowledge persistence)
   registerMemoryTools(server);
