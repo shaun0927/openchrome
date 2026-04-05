@@ -353,6 +353,12 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+  if (startUrl.protocol !== 'http:' && startUrl.protocol !== 'https:') {
+    return {
+      content: [{ type: 'text', text: 'Error: url must use http or https scheme' }],
+      isError: true,
+    };
+  }
 
   const maxDepth = args.max_depth != null ? Number(args.max_depth) : 2;
   const maxPages = args.max_pages != null ? Number(args.max_pages) : 20;

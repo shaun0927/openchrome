@@ -411,6 +411,12 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    return {
+      content: [{ type: 'text', text: 'Error: url must use http or https scheme' }],
+      isError: true,
+    };
+  }
 
   const sitemapUrlArg = args.sitemap_url as string | undefined;
   const filterPattern = args.filter as string | undefined;
@@ -430,6 +436,15 @@ const handler: ToolHandler = async (
     let sitemapUrls: string[];
 
     if (sitemapUrlArg) {
+      // Validate sitemap URL scheme
+      try {
+        const sp = new URL(sitemapUrlArg);
+        if (sp.protocol !== 'http:' && sp.protocol !== 'https:') {
+          return { content: [{ type: 'text', text: 'Error: sitemap_url must use http or https scheme' }], isError: true };
+        }
+      } catch {
+        return { content: [{ type: 'text', text: `Error: Invalid sitemap_url "${sitemapUrlArg}"` }], isError: true };
+      }
       // Explicit sitemap URL provided
       sitemapUrls = [sitemapUrlArg];
       sitemapSource = sitemapUrlArg;
