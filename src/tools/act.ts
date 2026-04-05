@@ -28,6 +28,7 @@ interface StepResult {
   target?: string;
   outcome: string;
   delta?: string;
+  message?: string;
   error?: string;
 }
 
@@ -77,7 +78,7 @@ async function resolveElement(
 ): Promise<AXResolvedElement | null> {
   try {
     const matches = await withTimeout(
-      resolveElementsByAXTree(page, cdpClient, query, { useCenter: true, maxResults: 3 }),
+      resolveElementsByAXTree(page, cdpClient, normalizeQuery(query), { useCenter: true, maxResults: 3 }),
       8000,
       'ax-resolution',
       context
@@ -148,7 +149,7 @@ async function executeClick(
   const outcome = classifyOutcome(delta, el.role);
   const line = formatOutcomeLine(outcome, 'Clicked', `${el.role} "${el.name}"`, `[${ref}]`, '[via AX tree]');
 
-  return { step: stepIndex, action: 'click', target, outcome, delta: delta || undefined, error: line };
+  return { step: stepIndex, action: 'click', target, outcome, delta: delta || undefined, message: line };
 }
 
 async function executeType(
@@ -178,10 +179,11 @@ async function executeType(
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 
-  // Clear existing content and type new value
-  await page.keyboard.down('Control');
+  // Clear existing content and type new value (Meta on macOS, Control elsewhere)
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+  await page.keyboard.down(modifier);
   await page.keyboard.press('KeyA');
-  await page.keyboard.up('Control');
+  await page.keyboard.up(modifier);
   await page.keyboard.press('Backspace');
 
   if (isStealth) {
@@ -195,7 +197,7 @@ async function executeType(
     action: 'type',
     target: parsedAction.target,
     outcome: 'SUCCESS',
-    error: `Typed "${value}"${parsedAction.target ? ` in "${parsedAction.target}"` : ''}`,
+    message: `Typed "${value}"${parsedAction.target ? ` in "${parsedAction.target}"` : ''}`,
   };
 }
 
@@ -248,7 +250,7 @@ async function executeSelect(
     action: 'select',
     target: query,
     outcome: 'SUCCESS',
-    error: `Selected "${value || query}"`,
+    message: `Selected "${value || query}"`,
   };
 }
 
@@ -273,7 +275,7 @@ async function executeHover(
   const y = Math.round(el.rect.y);
   await page.mouse.move(x, y);
 
-  return { step: stepIndex, action: 'hover', target, outcome: 'SUCCESS', error: `Hovered "${target}"` };
+  return { step: stepIndex, action: 'hover', target, outcome: 'SUCCESS', message: `Hovered "${target}"` };
 }
 
 async function executeScroll(
@@ -299,7 +301,7 @@ async function executeScroll(
     await page.evaluate((dy: number) => window.scrollBy(0, dy), direction);
   }
 
-  return { step: stepIndex, action: 'scroll', target: parsedAction.target, outcome: 'SUCCESS', error: `Scrolled ${parsedAction.value || parsedAction.target || 'down'}` };
+  return { step: stepIndex, action: 'scroll', target: parsedAction.target, outcome: 'SUCCESS', message: `Scrolled ${parsedAction.value || parsedAction.target || 'down'}` };
 }
 
 async function executeWait(
@@ -330,7 +332,7 @@ async function executeWait(
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
-  return { step: stepIndex, action: 'wait', target: parsedAction.target, outcome: 'SUCCESS', error: `Waited for "${parsedAction.target || '1s'}"` };
+  return { step: stepIndex, action: 'wait', target: parsedAction.target, outcome: 'SUCCESS', message: `Waited for "${parsedAction.target || '1s'}"` };
 }
 
 async function executeNavigate(
@@ -349,7 +351,7 @@ async function executeNavigate(
     return { step: stepIndex, action: 'navigate', target: url, outcome: 'EXCEPTION', error: `Navigation failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  return { step: stepIndex, action: 'navigate', target: url, outcome: 'SUCCESS', error: `Navigated to "${url}"` };
+  return { step: stepIndex, action: 'navigate', target: url, outcome: 'SUCCESS', message: `Navigated to "${url}"` };
 }
 
 async function executeCheckUncheck(
@@ -392,7 +394,7 @@ async function executeCheckUncheck(
   }
 
   // Already in desired state
-  return { step: stepIndex, action: parsedAction.action, target, outcome: 'SUCCESS', error: `"${target}" already ${parsedAction.action}ed` };
+  return { step: stepIndex, action: parsedAction.action, target, outcome: 'SUCCESS', message: `"${target}" already ${parsedAction.action}ed` };
 }
 
 // ─── Handler ───
@@ -534,7 +536,7 @@ const handler: ToolHandler = async (
   for (const r of stepResults) {
     const isFailed = r.outcome === 'ELEMENT_NOT_FOUND' || r.outcome === 'EXCEPTION' || r.outcome === 'TIMEOUT';
     const symbol = isFailed ? '\u2717' : '\u2713';
-    const label = r.error || `${r.action}${r.target ? ` "${r.target}"` : ''}`;
+    const label = r.message || r.error || `${r.action}${r.target ? ` "${r.target}"` : ''}`;
     stepLines.push(`Step ${r.step}: ${symbol} ${label}`);
   }
 
