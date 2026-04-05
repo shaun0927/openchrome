@@ -191,7 +191,12 @@ program
     // Set infinite reconnection for HTTP daemon mode BEFORE creating CDPClient singleton.
     // getMCPServer() → SessionManager → getCDPClient() reads this env var at construction.
     // Resolve transport mode: --transport flag takes precedence over --http flag
-    const transportMode = options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
+    const validModes = ['stdio', 'http', 'both'];
+    const rawMode = options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
+    if (!validModes.includes(rawMode)) {
+      console.error(`[openchrome] Unknown transport mode "${rawMode}", falling back to stdio`);
+    }
+    const transportMode = validModes.includes(rawMode) ? rawMode : 'stdio';
     const useHttp = transportMode === 'http' || transportMode === 'both';
     if (useHttp && !process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) {
       process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
