@@ -33,7 +33,7 @@ export interface MCPTransport {
   close(): Promise<void>;
 }
 
-export type TransportMode = 'stdio' | 'http';
+export type TransportMode = 'stdio' | 'http' | 'both';
 
 export interface TransportOptions {
   port?: number;
@@ -43,9 +43,11 @@ export interface TransportOptions {
 
 /**
  * Factory: create the appropriate transport based on mode.
+ * For 'both' mode, this returns an HTTP transport; stdio is handled
+ * separately in the CLI entry point (index.ts).
  */
 export function createTransport(mode: TransportMode, options?: TransportOptions): MCPTransport {
-  if (mode === 'http') {
+  if (mode === 'http' || mode === 'both') {
     // Use require to avoid loading HTTP module when not needed
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { HTTPTransport } = require('./http');
@@ -55,3 +57,4 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
   const { StdioTransport } = require('./stdio');
   return new StdioTransport();
 }
+

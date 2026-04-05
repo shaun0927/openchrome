@@ -82,7 +82,8 @@ program
   .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
   .option('--http-host <host>', 'Bind address for HTTP transport (default: 127.0.0.1, use 0.0.0.0 for external access)')
   .option('--auth-token <token>', 'Bearer token for HTTP transport authentication (also: OPENCHROME_AUTH_TOKEN env var)')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string }) => {
+  .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -189,7 +190,14 @@ program
 
     // Set infinite reconnection for HTTP daemon mode BEFORE creating CDPClient singleton.
     // getMCPServer() → SessionManager → getCDPClient() reads this env var at construction.
-    const useHttp = options.http !== undefined && options.http !== false;
+    // Resolve transport mode: --transport flag takes precedence over --http flag
+    const validModes = ['stdio', 'http', 'both'];
+    const rawMode = options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
+    if (!validModes.includes(rawMode)) {
+      console.error(`[openchrome] Unknown transport mode "${rawMode}", falling back to stdio`);
+    }
+    const transportMode = validModes.includes(rawMode) ? rawMode : 'stdio';
+    const useHttp = transportMode === 'http' || transportMode === 'both';
     if (useHttp && !process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) {
       process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
     }
@@ -256,19 +264,39 @@ program
       console.error('[openchrome] Bearer token authentication: enabled');
     }
 
-    // Start transport (useHttp was determined above, before getMCPServer)
-    // Declare httpTransport at this scope so we can wire the session manager later
+    // Start transport (useHttp/transportMode determined above, before getMCPServer)
     let httpTransport: import('./transports/http').HTTPTransport | null = null;
-    if (useHttp) {
+
+    if (transportMode === 'both') {
+      // Dual mode: run both stdio and HTTP transports simultaneously
+      const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
+      const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
+      const { HTTPTransport } = require('./transports/http');
+      const httpTrans = new HTTPTransport(httpPort, httpHost, authToken) as import('./transports/http').HTTPTransport;
+      httpTransport = httpTrans;
+
+      // Start server with stdio as primary transport (wires JSON-RPC validation, rate-limiter, etc.)
+      server.start();
+
+      // Wire HTTP transport through MCPServer.handleMessage() — single source of
+      // truth for JSON-RPC validation, notification handling, and request routing.
+      httpTrans.onMessage(async (msg: Record<string, unknown>) => server.handleMessage(msg));
+      server.wireRateLimiterCleanup(httpTrans);
+      httpTrans.start();
+
+      console.error(`[openchrome] Dual transport mode: stdio + HTTP on ${httpHost}:${httpPort}`);
+      console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
+    } else if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
       const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
       const transport = createTransport('http', { port: httpPort, host: httpHost, authToken });
       httpTransport = transport as import('./transports/http').HTTPTransport;
       server.start(transport);
       console.error(`[openchrome] HTTP transport enabled on ${httpHost}:${httpPort}`);
-      console.error(`[openchrome] Infinite reconnection: enabled (daemon mode)`);
+      console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
     } else {
       server.start();
+      console.error('[openchrome] STDIO transport enabled');
     }
 
     // ─── Self-Healing Module Wiring (#354) ──────────────────────────────────
