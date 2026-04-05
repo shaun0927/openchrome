@@ -453,10 +453,7 @@ export class HTTPTransport implements MCPTransport {
           res.writeHead(202);
           res.end();
         } else if (acceptSSE) {
-          // Streamable HTTP: return response as SSE stream
-          if (sessionId) {
-            res.setHeader('Mcp-Session-Id', sessionId);
-          }
+          // Streamable HTTP: return response as SSE stream (single-response mode)
           res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
