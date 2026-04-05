@@ -39,8 +39,10 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_get_connection_info: 1,
   oc_copy_to_clipboard: 1,
   oc_open_host_settings: 1,
+  act: 1,
 
   // Tier 2: Specialist (on demand)
+  extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
   drag_drop: 2,
   network: 2,
   request_intercept: 2,
@@ -56,6 +58,15 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   file_upload: 2,
   batch_execute: 2,
   batch_paginate: 2,
+  crawl: 2,
+  crawl_sitemap: 2,
+  vision_find: 2,
+
+  // Session recording tools (#572) — opt-in, not needed for every session
+  oc_recording_start: 2,
+  oc_recording_stop: 2,
+  oc_recording_list: 2,
+  oc_recording_export: 2,
 
   // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
   // Names must match the 'name' field in each tool's definition

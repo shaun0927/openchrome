@@ -49,6 +49,9 @@ import { registerBatchPaginateTool } from './batch-paginate';
 import { registerInteractTool } from './interact';
 import { registerInspectTool } from './inspect';
 
+// Vision tools (vision-based element discovery #577)
+import { registerVisionFindTool } from './vision-find';
+
 // Memory tools (domain knowledge persistence)
 import { registerMemoryTools } from './memory';
 
@@ -73,6 +76,19 @@ import { registerCheckpointTool } from './checkpoint';
 
 // Web AI host connection tools (#523)
 import { registerConnectTools } from './connect';
+
+// Session recording tools (#572)
+import { registerRecordingTools } from './recording';
+
+// Crawl tools (#576)
+import { registerCrawlTool } from './crawl';
+import { registerCrawlSitemapTool } from './crawl-sitemap';
+
+// Natural language action API (#578)
+import { registerActTool } from './act';
+
+// Structured extraction (#571)
+import { registerExtractDataTool } from './extract-data';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -130,6 +146,9 @@ export function registerAllTools(server: MCPServer): void {
   registerInteractTool(server);
   registerInspectTool(server);
 
+  // Vision tools (vision-based element discovery #577)
+  registerVisionFindTool(server);
+
   // Memory tools (domain knowledge persistence)
   registerMemoryTools(server);
 
@@ -151,6 +170,19 @@ export function registerAllTools(server: MCPServer): void {
 
   // Web AI host connection tools (#523)
   registerConnectTools(server);
+
+  // Session recording tools (#572)
+  registerRecordingTools(server);
+
+  // Crawl tools (#576)
+  registerCrawlTool(server);
+  registerCrawlSitemapTool(server);
+
+  // Natural language action API (#578)
+  registerActTool(server);
+
+  // Structured extraction (#571)
+  registerExtractDataTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

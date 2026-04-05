@@ -12,6 +12,8 @@ import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
+import { handleCaptcha } from '../captcha/handler';
+import { getSolverRegistry } from '../captcha/solver-registry';
 import { withTimeout } from '../utils/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
 import { getHeadedFallback } from '../chrome/headed-fallback';
@@ -20,6 +22,16 @@ import type { Page } from 'puppeteer-core';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
 const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
+
+/** Build CAPTCHA metadata fields for navigate responses (#574) */
+function buildCaptchaFields(blocking: BlockingInfo | null): Record<string, unknown> {
+  if (!blocking || blocking.type !== 'captcha') return {};
+  return {
+    captcha_detected: true,
+    ...(blocking.captchaType && { captcha_type: blocking.captchaType }),
+    ...(blocking.captchaSiteKey && { captcha_site_key: blocking.captchaSiteKey }),
+  };
+}
 
 /** Compute readiness data for navigate responses. Non-critical — returns defaults on failure. */
 async function getReadiness(page: Page, context?: ToolContext): Promise<{ readyState: string; domStable: boolean; framework: string }> {
@@ -100,6 +112,7 @@ async function stealthAutoRetry(
     fallbackTier: 2,
     fallbackReason: blockingInfo.type,
     ...(summary && { visualSummary: summary }),
+    ...buildCaptchaFields(blocking),
     ...(blocking && { blockingPage: blocking }),
   });
   // Tier 3: escalate to headed Chrome if stealth retry also got blocked
@@ -107,6 +120,33 @@ async function stealthAutoRetry(
   // This is safe because we only reach here after Tier 1 already detected a block. (#459)
   const stealthBlocked = blocking && RETRYABLE_BLOCK_TYPES.has(blocking.type);
   const stealthBroken = elementCount === 0 || readiness.readyState === 'unknown';
+  // Try CAPTCHA solver before escalating to headed Chrome (#574)
+  if (stealthBlocked && blocking?.type === 'captcha' && getSolverRegistry().isAutoSolveEnabled()) {
+    const solveResult = await handleCaptcha(page, blocking);
+    if (solveResult.solved) {
+      console.error(`[navigate] CAPTCHA solved via ${getSolverRegistry().getProviderName()} in ${solveResult.solveTimeMs}ms`);
+      const postSolveSummary = await generateVisualSummary(page).catch(() => null);
+      const resultText = JSON.stringify({
+        action: 'navigate',
+        url: page.url(),
+        title: await safeTitle(page),
+        tabId: targetId,
+        workerId: assignedWorkerId,
+        created: true,
+        elementCount,
+        readiness,
+        stealth: true,
+        fallbackTier: 2,
+        fallbackReason: blockingInfo.type,
+        captcha_solved: true,
+        captcha_type: solveResult.captchaType,
+        captcha_solve_time_ms: solveResult.solveTimeMs,
+        ...(postSolveSummary && { visualSummary: postSolveSummary }),
+      });
+      return { content: [{ type: 'text', text: resultText }] };
+    }
+    console.error(`[navigate] CAPTCHA solve failed: ${solveResult.error}, escalating to Tier 3`);
+  }
   if (autoFallbackToHeaded && (stealthBlocked || stealthBroken)) {
     const headedResult = await headedAutoRetry(targetUrl, blocking || blockingInfo, sessionId);
     if (headedResult) return headedResult;
@@ -481,6 +521,7 @@ const handler: ToolHandler = async (
               elementCount: reuseElementCount,
               readiness: reuseReadiness,
               ...(summary && { visualSummary: summary }),
+              ...buildCaptchaFields(reuseBlocking),
               ...(reuseBlocking && { blockingPage: reuseBlocking }),
             });
             return {
@@ -545,6 +586,7 @@ const handler: ToolHandler = async (
         readiness: newTabReadiness,
         ...(stealth && { stealth: true }),
         ...(newTabSummary && { visualSummary: newTabSummary }),
+        ...buildCaptchaFields(newTabBlocking),
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
       });
       return {
@@ -623,6 +665,7 @@ const handler: ToolHandler = async (
         title: await safeTitle(page),
         elementCount: backElementCount,
         ...(backSummary && { visualSummary: backSummary }),
+        ...buildCaptchaFields(backBlocking),
         ...(backBlocking && { blockingPage: backBlocking }),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       });
@@ -657,6 +700,7 @@ const handler: ToolHandler = async (
         title: await safeTitle(page),
         elementCount: fwdElementCount,
         ...(fwdSummary && { visualSummary: fwdSummary }),
+        ...buildCaptchaFields(fwdBlocking),
         ...(fwdBlocking && { blockingPage: fwdBlocking }),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       });
@@ -782,6 +826,7 @@ const handler: ToolHandler = async (
       elementCount: navElementCount,
       readiness: navReadiness,
       ...(navSummary && { visualSummary: navSummary }),
+      ...buildCaptchaFields(navBlocking),
       ...(navBlocking && { blockingPage: navBlocking }),
       ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
     });

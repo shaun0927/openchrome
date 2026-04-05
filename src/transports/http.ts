@@ -20,6 +20,9 @@ import type { SessionManager } from '../session-manager';
 /** Maximum allowed HTTP request body size (10 MB) to prevent OOM from oversized requests */
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
+/** SSE keepalive ping interval in milliseconds */
+const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
+
 /** Active SSE connections for server-initiated notifications */
 interface SSEConnection {
   res: http.ServerResponse;
@@ -37,6 +40,7 @@ export class HTTPTransport implements MCPTransport {
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
   private sessionManager: SessionManager | null = null;
   private readonly serverStartTime: number = Date.now();
+  private sseKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(port: number, host = '127.0.0.1', authToken?: string) {
     this.port = port;
@@ -86,14 +90,33 @@ export class HTTPTransport implements MCPTransport {
     this.server.listen(this.port, this.host, () => {
       console.error(`[HTTPTransport] Listening on ${this.host}:${this.port}`);
       console.error(`[HTTPTransport] MCP endpoint: http://${this.host}:${this.port}/mcp`);
+      console.error(`[HTTPTransport] SSE endpoint: http://${this.host}:${this.port}/mcp/sse`);
     });
 
     this.server.on('error', (err) => {
       console.error(`[HTTPTransport] Server error:`, err);
     });
+
+    // Periodic SSE keepalive pings to prevent proxy/LB connection drops
+    this.sseKeepaliveTimer = setInterval(() => {
+      for (const conn of this.sseConnections) {
+        try {
+          conn.res.write(': keepalive\n\n');
+        } catch {
+          // Connection already closed; cleaned up on 'close' event
+        }
+      }
+    }, SSE_KEEPALIVE_INTERVAL_MS);
+    this.sseKeepaliveTimer.unref();
   }
 
   async close(): Promise<void> {
+    // Stop keepalive timer
+    if (this.sseKeepaliveTimer) {
+      clearInterval(this.sseKeepaliveTimer);
+      this.sseKeepaliveTimer = null;
+    }
+
     // Close all SSE connections
     for (const conn of this.sseConnections) {
       try {
@@ -167,6 +190,17 @@ export class HTTPTransport implements MCPTransport {
     }
     if (pathname === '/api/metrics' && req.method === 'GET') {
       this.handleMetrics(res);
+      return;
+    }
+
+    // Explicit /mcp/sse endpoint (MCP spec alias for GET /mcp SSE stream)
+    if (pathname === '/mcp/sse') {
+      if (req.method === 'GET') {
+        this.handleSSE(req, res);
+      } else {
+        res.writeHead(405, { 'Allow': 'GET', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Method not allowed' }));
+      }
       return;
     }
 
@@ -346,6 +380,8 @@ export class HTTPTransport implements MCPTransport {
    * POST /mcp - handle JSON-RPC request or batch
    */
   private handlePost(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const acceptSSE = (req.headers['accept'] || '').includes('text/event-stream');
+
     const chunks: Buffer[] = [];
     let bodyBytes = 0;
 
@@ -450,6 +486,15 @@ export class HTTPTransport implements MCPTransport {
           // Notification — no response body
           res.writeHead(202);
           res.end();
+        } else if (acceptSSE) {
+          // Streamable HTTP: return response as SSE stream (single-response mode)
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+          res.write(`data: ${JSON.stringify(response)}\n\n`);
+          res.end();
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(response));
@@ -482,7 +527,7 @@ export class HTTPTransport implements MCPTransport {
   }
 
   /**
-   * GET /mcp - Server-Sent Events for server-initiated notifications
+   * GET /mcp or GET /mcp/sse - Server-Sent Events for server-initiated notifications
    */
   private handleSSE(req: http.IncomingMessage, res: http.ServerResponse): void {
     const sessionId = req.headers['mcp-session-id'] as string || 'anonymous';

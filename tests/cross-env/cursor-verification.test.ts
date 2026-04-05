@@ -135,15 +135,15 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
   describe('C2: Tool Discovery & Listing', () => {
     let tier1Tools: any[];
 
-    test('Initial tools/list returns Tier 1 tools only (30 tools) + expand_tools', async () => {
+    test('Initial tools/list returns Tier 1 tools only (31 tools) + expand_tools', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       tier1Tools = response.result.tools;
-      // 30 Tier 1 tools + 1 expand_tools virtual tool = 31
+      // 31 Tier 1 tools + 1 expand_tools virtual tool = 32
       const toolNames = tier1Tools.map((t: any) => t.name);
       expect(toolNames).toContain('expand_tools');
 
       const nonExpandTools = tier1Tools.filter((t: any) => t.name !== 'expand_tools');
-      expect(nonExpandTools.length).toBe(30);
+      expect(nonExpandTools.length).toBe(31);
     });
 
     test('expand_tools virtual tool present in initial list', () => {
@@ -163,6 +163,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         'oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume',
         'oc_journal',
         'oc_get_connection_info', 'oc_copy_to_clipboard', 'oc_open_host_settings',
+        'act',
       ];
       for (const tool of expectedCore) {
         expect(names).toContain(tool);
@@ -192,11 +193,12 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       const toolNames = response.result.tools.map((t: any) => t.name);
 
       const expectedTier2 = [
-        'drag_drop', 'network',
+        'extract_data', 'drag_drop', 'network',
         'request_intercept', 'http_auth', 'user_agent', 'geolocation',
         'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
         'console_capture', 'performance_metrics', 'file_upload',
         'batch_execute', 'batch_paginate',
+        'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
       ];
       for (const tool of expectedTier2) {
         expect(toolNames).toContain(tool);
@@ -233,8 +235,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         expect(toolNames).toContain(tool);
       }
 
-      // Total should be 54 (30 T1 + 15 T2 + 9 T3)
-      expect(toolNames.length).toBe(54);
+      // Total should be 63 (31 T1 + 23 T2 + 9 T3)
+      expect(toolNames.length).toBe(63);
     });
 
     test('resources/list returns usage guide resource', async () => {
@@ -276,6 +278,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'cookies', 'storage', 'wait_for', 'memory', 'lightweight_scroll',
       'oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal',
       'oc_get_connection_info', 'oc_copy_to_clipboard', 'oc_open_host_settings',
+      'act',
     ];
     tier1Tools.forEach(tool => {
       test(`Tier 1: ${tool} registered`, () => {
@@ -285,11 +288,13 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
     // Tier 2
     const tier2Tools = [
-      'drag_drop', 'network',
+      'extract_data', 'drag_drop', 'network',
       'request_intercept', 'http_auth', 'user_agent', 'geolocation',
       'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
       'console_capture', 'performance_metrics', 'file_upload',
       'batch_execute', 'batch_paginate',
+      'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
+      'crawl', 'crawl_sitemap', 'vision_find', 'extract_data',
     ];
     tier2Tools.forEach(tool => {
       test(`Tier 2: ${tool} registered`, () => {
@@ -412,8 +417,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
       // Should NOT have expand_tools (progressive disclosure disabled)
       expect(toolNames).not.toContain('expand_tools');
-      // Total should be 54 (30 T1 + 15 T2 + 9 T3)
-      expect(toolNames.length).toBe(54);
+      // Total should be 63 (31 T1 + 23 T2 + 9 T3)
+      expect(toolNames.length).toBe(63);
     });
   });
 });
