@@ -6,3 +6,5 @@
 export * from './types';
 export * from './recording-store';
 export * from './action-recorder';
+export * from './html-template';
+export * from './replay-viewer';
