@@ -101,7 +101,9 @@ const handler: ToolHandler = async (
     const schemaProps: Record<string, SchemaProperty> = multiple
       ? (schema.items?.properties || schema.properties || {})
       : (schema.properties || {});
-    const fieldNames = Object.keys(schemaProps);
+    // Sanitize field names to prevent CSS selector injection in strategy builders
+    const safeFieldPattern = /^[a-zA-Z0-9_-]+$/;
+    const fieldNames = Object.keys(schemaProps).filter(f => safeFieldPattern.test(f));
 
     if (fieldNames.length === 0) {
       return { content: [{ type: 'text', text: 'Error: Schema must define at least one property' }], isError: true };
