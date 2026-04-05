@@ -34,13 +34,14 @@ async function getTOTPSecret(domain: string): Promise<string | undefined> {
     const credModule = require('../auth/credential-store') as { getTotpSecret?: (d: string) => Promise<string | null> };
     if (typeof credModule.getTotpSecret === 'function') {
       const result = await credModule.getTotpSecret(domain);
-      return result ?? undefined;
+      if (result) return result;
+      // Not in store — fall through to env var fallback
     }
   } catch {
     // Credential store not available yet — fall through to env var fallback
   }
 
-  // Environment variable fallback for testing:
+  // Environment variable fallback for testing and quick setup:
   // OPENCHROME_TOTP_GITHUB_COM=JBSWY3DPEHPK3PXP
   const envKey = `OPENCHROME_TOTP_${domain.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
   return process.env[envKey];
