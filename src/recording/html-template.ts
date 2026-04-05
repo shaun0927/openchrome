@@ -50,7 +50,7 @@ function formatDuration(ms: number): string {
 function formatIso(iso: string | undefined): string {
   if (!iso) return '—';
   try {
-    return new Date(iso).toLocaleString();
+    return new Date(iso).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
   } catch {
     return iso;
   }
@@ -96,7 +96,7 @@ function renderActionCard(action: RecordingAction, screenshots: Map<string, stri
       screenshotBefore = `
         <div class="screenshot-pair">
           <span class="screenshot-label">Before</span>
-          <img class="screenshot" src="${dataUri}" alt="Screenshot before action ${action.seq}" loading="lazy" />
+          <img class="screenshot" src="${escapeHtml(dataUri)}" alt="Screenshot before action ${action.seq}" loading="lazy" />
         </div>`;
     }
   }
@@ -108,7 +108,7 @@ function renderActionCard(action: RecordingAction, screenshots: Map<string, stri
       screenshotAfter = `
         <div class="screenshot-pair">
           <span class="screenshot-label">After</span>
-          <img class="screenshot" src="${dataUri}" alt="Screenshot after action ${action.seq}" loading="lazy" />
+          <img class="screenshot" src="${escapeHtml(dataUri)}" alt="Screenshot after action ${action.seq}" loading="lazy" />
         </div>`;
     }
   }

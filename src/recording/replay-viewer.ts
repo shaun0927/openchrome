@@ -162,10 +162,17 @@ export class ReplayViewer {
    * Load screenshot files for a recording and encode them as base64 data URIs.
    * Filenames referenced in actions that cannot be read are silently skipped.
    */
+  /**
+   * Load screenshot files for a recording and encode them as base64 data URIs.
+   * Stops embedding if total encoded size exceeds MAX_EMBEDDED_BYTES (20 MB).
+   * Filenames referenced in actions that cannot be read are silently skipped.
+   */
   private async loadScreenshots(
     recordingId: string,
     actions: RecordingAction[],
   ): Promise<Map<string, string>> {
+    const MAX_EMBEDDED_BYTES = 20 * 1024 * 1024; // 20 MB
+
     const filenames = new Set<string>();
     for (const action of actions) {
       if (action.screenshotBefore) filenames.add(action.screenshotBefore);
@@ -173,12 +180,18 @@ export class ReplayViewer {
     }
 
     const map = new Map<string, string>();
+    let totalBytes = 0;
     for (const filename of filenames) {
       try {
         const buf = await this.store.readScreenshot(recordingId, filename);
         if (buf) {
           const mime = getScreenshotMime(filename);
           const b64 = buf.toString('base64');
+          totalBytes += b64.length;
+          if (totalBytes > MAX_EMBEDDED_BYTES) {
+            console.error(`[ReplayViewer] Screenshot embedding limit reached (${(MAX_EMBEDDED_BYTES / 1024 / 1024).toFixed(0)} MB). Remaining screenshots skipped.`);
+            break;
+          }
           map.set(filename, `data:${mime};base64,${b64}`);
         }
       } catch {

@@ -402,8 +402,8 @@ describe('ReplayViewer.generateReport', () => {
   });
 
   it('throws if recording does not exist', async () => {
-    await expect(viewer.generateReport('rec-nonexistent-id')).rejects.toThrow(
-      'Recording not found: rec-nonexistent-id',
+    await expect(viewer.generateReport('rec-20240101-120000-miss')).rejects.toThrow(
+      'Recording not found: rec-20240101-120000-miss',
     );
   });
 
@@ -474,8 +474,8 @@ describe('ReplayViewer.generateTerminalReplay', () => {
   });
 
   it('throws if recording does not exist', async () => {
-    await expect(viewer.generateTerminalReplay('rec-missing-xyz')).rejects.toThrow(
-      'Recording not found: rec-missing-xyz',
+    await expect(viewer.generateTerminalReplay('rec-20240101-120000-nope')).rejects.toThrow(
+      'Recording not found: rec-20240101-120000-nope',
     );
   });
 });
