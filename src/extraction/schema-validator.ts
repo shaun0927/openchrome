@@ -62,7 +62,7 @@ function coerceValue(value: unknown, prop: SchemaProperty): unknown {
     case 'number':
     case 'integer': {
       if (typeof value === 'string') {
-        const cleaned = value.replace(/[^0-9.\-]/g, '');
+        const cleaned = value.replace(/[^0-9.-]/g, '');
         const num = parseFloat(cleaned);
         if (!isNaN(num)) return targetType === 'integer' ? Math.round(num) : num;
       }
