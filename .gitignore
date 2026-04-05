@@ -46,6 +46,7 @@ extension-unpacked/
 
 # AI session/orchestration state
 .omc/
+.ouroboros/seeds/
 
 # Local MCP configuration
 .mcp.json
