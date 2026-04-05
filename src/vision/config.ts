@@ -18,3 +18,22 @@ export function getVisionMode(): VisionMode {
   if (env === 'off' || env === 'auto') return env;
   return 'fallback';
 }
+
+// ─── Cost Tracking ───
+
+let visionCallCount = 0;
+let totalVisionTimeMs = 0;
+
+export function trackVisionUsage(timeMs: number): void {
+  visionCallCount++;
+  totalVisionTimeMs += timeMs;
+}
+
+export function getVisionStats(): { calls: number; totalTimeMs: number } {
+  return { calls: visionCallCount, totalTimeMs: totalVisionTimeMs };
+}
+
+export function resetVisionStats(): void {
+  visionCallCount = 0;
+  totalVisionTimeMs = 0;
+}

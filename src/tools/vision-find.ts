@@ -12,6 +12,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
+import { trackVisionUsage } from '../vision/config';
 
 const definition: MCPToolDefinition = {
   name: 'vision_find',
@@ -91,6 +92,7 @@ const handler: ToolHandler = async (
       interactiveOnly,
     });
 
+    trackVisionUsage(result.annotationTimeMs);
     const textMap = formatElementMapAsText(result.elementMap);
     console.error(`[vision_find] Analyzed tab ${tabId}: ${result.elementCount} elements in ${result.annotationTimeMs}ms`);
 

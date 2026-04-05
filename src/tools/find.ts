@@ -12,7 +12,8 @@ import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../ut
 import { resolveElementsByAXTree, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
-import { getVisionMode } from '../vision/config';
+import { getVisionMode, trackVisionUsage } from '../vision/config';
+import { detectVisionHints, formatVisionHints } from '../vision/auto-detect';
 
 const definition: MCPToolDefinition = {
   name: 'find',
@@ -207,8 +208,20 @@ const handler: ToolHandler = async (
 
     if (output.length === 0) {
       // ─── Vision Fallback ───
-      const shouldUseVision = visionMode !== 'off' &&
-        (visionFallback === true || visionMode === 'fallback' || visionMode === 'auto');
+      const explicitlyRequested = visionFallback === true;
+      let shouldUseVision = visionMode !== 'off' &&
+        (explicitlyRequested || visionMode === 'fallback' || visionMode === 'auto');
+
+      // In auto mode without explicit request, check if the page actually needs vision
+      if (shouldUseVision && visionMode === 'auto' && !explicitlyRequested) {
+        const hints = await detectVisionHints(page);
+        if (hints.length === 0) {
+          shouldUseVision = false;
+        } else {
+          console.error(`[find] Auto-detection for "${query}":\n${formatVisionHints(hints)}`);
+        }
+      }
+
       if (shouldUseVision && context && hasBudget(context, 10_000)) {
         try {
           console.error(`[find] DOM discovery found nothing for "${query}" — trying vision fallback`);
@@ -217,6 +230,7 @@ const handler: ToolHandler = async (
             showBoundingBoxes: true,
           });
 
+          trackVisionUsage(visionResult.annotationTimeMs);
           if (visionResult.elementCount > 0) {
             const textMap = formatElementMapAsText(visionResult.elementMap);
             console.error(`[find] Vision fallback found ${visionResult.elementCount} elements for "${query}"`);
