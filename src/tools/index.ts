@@ -90,6 +90,9 @@ import { registerActTool } from './act';
 // Structured extraction (#571)
 import { registerExtractDataTool } from './extract-data';
 
+// 2FA tools (#575)
+import { registerTotpGenerateTool } from './totp-generate';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -183,6 +186,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Structured extraction (#571)
   registerExtractDataTool(server);
+
+  // 2FA tools (#575)
+  registerTotpGenerateTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

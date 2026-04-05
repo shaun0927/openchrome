@@ -43,6 +43,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
+  oc_totp_generate: 2,
   drag_drop: 2,
   network: 2,
   request_intercept: 2,
