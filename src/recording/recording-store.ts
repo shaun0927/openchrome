@@ -12,6 +12,9 @@ import { RecordingAction, RecordingMetadata, RecordingConfig, DEFAULT_RECORDING_
 /** Default base directory for all recordings */
 export const RECORDINGS_DIR = path.join(os.homedir(), '.openchrome', 'recordings');
 
+/** Valid recording ID format: rec-YYYYMMDD-HHMMSS-xxxx (4-6 alphanumeric suffix) */
+export const RECORDING_ID_PATTERN = /^rec-\d{8}-\d{6}-[a-z0-9]{4,6}$/;
+
 /** Filename for metadata within a recording directory */
 const METADATA_FILE = 'metadata.json';
 
@@ -38,6 +41,24 @@ export class RecordingStore {
   }
 
   /**
+   * Validate that a recording ID matches the expected format (prevents path traversal).
+   */
+  static validateRecordingId(id: string): void {
+    if (!RECORDING_ID_PATTERN.test(id)) {
+      throw new Error(`Invalid recording id: ${id}`);
+    }
+  }
+
+  /**
+   * Validate that a filename is a bare name with no path separators.
+   */
+  private static validateFilename(filename: string): void {
+    if (path.basename(filename) !== filename || filename.includes('\0')) {
+      throw new Error(`Invalid filename: ${filename}`);
+    }
+  }
+
+  /**
    * Initialize the recordings base directory.
    * Must be called before using other methods.
    */
@@ -49,6 +70,7 @@ export class RecordingStore {
    * Get the absolute path to a recording's directory.
    */
   getRecordingDir(id: string): string {
+    RecordingStore.validateRecordingId(id);
     return path.join(this.baseDir, id);
   }
 
@@ -119,6 +141,7 @@ export class RecordingStore {
    * Save a screenshot buffer to the recording directory.
    */
   async saveScreenshot(id: string, filename: string, buffer: Buffer | Uint8Array): Promise<void> {
+    RecordingStore.validateFilename(filename);
     const filepath = path.join(this.getRecordingDir(id), filename);
     await fs.promises.writeFile(filepath, buffer);
   }
@@ -127,6 +150,7 @@ export class RecordingStore {
    * Read a screenshot from the recording directory. Returns null if not found.
    */
   async readScreenshot(id: string, filename: string): Promise<Buffer | null> {
+    RecordingStore.validateFilename(filename);
     const filepath = path.join(this.getRecordingDir(id), filename);
     try {
       return await fs.promises.readFile(filepath);
@@ -142,7 +166,7 @@ export class RecordingStore {
     try {
       const entries = await fs.promises.readdir(this.baseDir);
       const recordings = entries
-        .filter(name => name.startsWith('rec-'))
+        .filter(name => RECORDING_ID_PATTERN.test(name))
         .sort()
         .reverse();
       return recordings;
@@ -170,8 +194,8 @@ export class RecordingStore {
 
       for (const id of recordings) {
         // Parse date from id: rec-YYYYMMDD-HHMMSS-xxxx
-        const dateStr = this.parseDateFromId(id);
-        if (dateStr && dateStr < cutoffMs) {
+        const dateMs = this.parseDateFromId(id);
+        if (dateMs !== null && dateMs < cutoffMs) {
           await this.deleteRecording(id).catch(() => {/* best-effort */});
         }
       }

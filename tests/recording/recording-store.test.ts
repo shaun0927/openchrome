@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { RecordingStore } from '../../src/recording/recording-store';
+import { RecordingStore, RECORDING_ID_PATTERN } from '../../src/recording/recording-store';
 import { RecordingAction, RecordingMetadata, DEFAULT_RECORDING_CONFIG } from '../../src/recording/types';
 
 function makeTmpDir(): string {
@@ -144,7 +144,7 @@ describe('RecordingStore', () => {
     });
 
     it('skips malformed JSONL lines when reading', async () => {
-      const id = 'rec-20240101-120000-bad';
+      const id = 'rec-20240101-120000-baad';
       await store.createRecording(makeMetadata(id));
       store.appendAction(id, makeAction(1));
 
@@ -161,7 +161,7 @@ describe('RecordingStore', () => {
     });
 
     it('returns empty array when actions file does not exist', () => {
-      const actions = store.readActions('nonexistent-recording');
+      const actions = store.readActions('rec-20240101-120000-none');
       expect(actions).toEqual([]);
     });
   });
@@ -181,7 +181,7 @@ describe('RecordingStore', () => {
     });
 
     it('overwrites metadata with writeMetadata()', async () => {
-      const id = 'rec-20240101-120000-upd';
+      const id = 'rec-20240101-120000-upd1';
       const metadata = makeMetadata(id);
       await store.createRecording(metadata);
 
@@ -194,7 +194,7 @@ describe('RecordingStore', () => {
     });
 
     it('returns null when metadata does not exist', async () => {
-      const result = await store.readMetadata('does-not-exist');
+      const result = await store.readMetadata('rec-20240101-120000-nope');
       expect(result).toBeNull();
     });
   });
@@ -204,7 +204,7 @@ describe('RecordingStore', () => {
   // -------------------------------------------------------------------------
   describe('saveScreenshot() + readScreenshot()', () => {
     it('saves and reads back a screenshot buffer', async () => {
-      const id = 'rec-20240101-120000-ss';
+      const id = 'rec-20240101-120000-ss01';
       await store.createRecording(makeMetadata(id));
 
       const buf = Buffer.from('fake-screenshot-data');
@@ -216,7 +216,7 @@ describe('RecordingStore', () => {
     });
 
     it('returns null when screenshot does not exist', async () => {
-      const id = 'rec-20240101-120000-ss2';
+      const id = 'rec-20240101-120000-ss02';
       await store.createRecording(makeMetadata(id));
 
       const result = await store.readScreenshot(id, 'nonexistent.webp');
@@ -267,7 +267,7 @@ describe('RecordingStore', () => {
   // -------------------------------------------------------------------------
   describe('deleteRecording()', () => {
     it('deletes a recording directory and its contents', async () => {
-      const id = 'rec-20240101-120000-del';
+      const id = 'rec-20240101-120000-del1';
       await store.createRecording(makeMetadata(id));
       store.appendAction(id, makeAction(1));
 
@@ -279,7 +279,7 @@ describe('RecordingStore', () => {
     });
 
     it('does not throw when deleting a nonexistent recording', async () => {
-      await expect(store.deleteRecording('nonexistent-id')).resolves.not.toThrow();
+      await expect(store.deleteRecording('rec-20240101-120000-noid')).resolves.not.toThrow();
     });
   });
 
@@ -342,17 +342,60 @@ describe('RecordingStore', () => {
   // -------------------------------------------------------------------------
   describe('getRecordingSize()', () => {
     it('returns 0 for nonexistent recording', async () => {
-      const size = await store.getRecordingSize('nonexistent');
+      const size = await store.getRecordingSize('rec-20240101-120000-nosz');
       expect(size).toBe(0);
     });
 
     it('returns total size of all files in the recording directory', async () => {
-      const id = 'rec-20240101-120000-sz';
+      const id = 'rec-20240101-120000-sz01';
       await store.createRecording(makeMetadata(id));
       store.appendAction(id, makeAction(1));
 
       const size = await store.getRecordingSize(id);
       expect(size).toBeGreaterThan(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Security: path traversal & filename validation
+  // -------------------------------------------------------------------------
+  describe('security', () => {
+    it('rejects recording IDs with path traversal', () => {
+      expect(() => store.getRecordingDir('../../etc')).toThrow('Invalid recording id');
+      expect(() => store.getRecordingDir('../../../tmp/evil')).toThrow('Invalid recording id');
+    });
+
+    it('rejects recording IDs that do not match the expected format', () => {
+      expect(() => store.getRecordingDir('nonexistent')).toThrow('Invalid recording id');
+      expect(() => store.getRecordingDir('')).toThrow('Invalid recording id');
+      expect(() => store.getRecordingDir('rec-bad')).toThrow('Invalid recording id');
+    });
+
+    it('accepts valid recording IDs', () => {
+      expect(() => store.getRecordingDir('rec-20240101-120000-abcd')).not.toThrow();
+      expect(() => store.getRecordingDir('rec-20240101-120000-ab01cd')).not.toThrow();
+    });
+
+    it('rejects screenshot filenames with path separators', async () => {
+      const id = 'rec-20240101-120000-sec1';
+      await store.createRecording(makeMetadata(id));
+
+      await expect(store.saveScreenshot(id, '../../../etc/passwd', Buffer.from('x'))).rejects.toThrow('Invalid filename');
+      await expect(store.readScreenshot(id, '../../secret.txt')).rejects.toThrow('Invalid filename');
+    });
+
+    it('accepts valid screenshot filenames', async () => {
+      const id = 'rec-20240101-120000-sec2';
+      await store.createRecording(makeMetadata(id));
+
+      await expect(store.saveScreenshot(id, 'screenshot-1-before.webp', Buffer.from('data'))).resolves.not.toThrow();
+    });
+
+    it('RECORDING_ID_PATTERN matches expected format', () => {
+      expect(RECORDING_ID_PATTERN.test('rec-20240101-120000-abcd')).toBe(true);
+      expect(RECORDING_ID_PATTERN.test('rec-20240101-120000-ab01cd')).toBe(true);
+      expect(RECORDING_ID_PATTERN.test('../../etc')).toBe(false);
+      expect(RECORDING_ID_PATTERN.test('rec-bad')).toBe(false);
     });
   });
 });

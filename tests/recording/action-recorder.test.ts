@@ -24,14 +24,13 @@ function cleanupDir(dir: string): void {
 }
 
 describe('generateRecordingId()', () => {
-  it('returns a string matching the rec-YYYYMMDD-HHMMSS-xxxx format', () => {
+  it('returns a string matching the rec-YYYYMMDD-HHMMSS-xxxxxx format', () => {
     const id = generateRecordingId();
-    expect(id).toMatch(/^rec-\d{8}-\d{6}-[a-z0-9]{4}$/);
+    expect(id).toMatch(/^rec-\d{8}-\d{6}-[a-z0-9]{6}$/);
   });
 
   it('generates unique IDs on consecutive calls', () => {
     const ids = new Set(Array.from({ length: 20 }, () => generateRecordingId()));
-    // With random 4-char suffix, collisions are extremely unlikely
     expect(ids.size).toBeGreaterThan(1);
   });
 });
@@ -79,7 +78,7 @@ describe('ActionRecorder', () => {
 
     it('start() sets activeRecordingId to a valid id', async () => {
       await recorder.start('sess-1');
-      expect(recorder.activeRecordingId).toMatch(/^rec-\d{8}-\d{6}-[a-z0-9]{4}$/);
+      expect(recorder.activeRecordingId).toMatch(/^rec-\d{8}-\d{6}-[a-z0-9]{6}$/);
     });
 
     it('start() sets activeMetadata with correct fields', async () => {
@@ -308,6 +307,23 @@ describe('ActionRecorder', () => {
       const actions = store.readActions(id);
       expect(actions[0].args['url']).toBe('https://example.com');
       expect(actions[0].args['tabId']).toBe('tab-1');
+    });
+
+    it('redacts nested sensitive fields recursively', async () => {
+      await recorder.start('sess-1');
+      const id = recorder.activeRecordingId!;
+
+      await recorder.recordAction('fill_form', {
+        auth: { password: 'hunter2', username: 'alice' },
+        headers: { Authorization: 'Bearer token' },
+        url: 'https://example.com',
+      }, 10, true);
+
+      const actions = store.readActions(id);
+      const args = actions[0].args as Record<string, Record<string, unknown>>;
+      expect(args['auth']['password']).toBe('[REDACTED]');
+      expect(args['auth']['username']).toBe('alice');
+      expect(args['url']).toBe('https://example.com');
     });
   });
 

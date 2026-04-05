@@ -5,7 +5,7 @@
  * Part of #572: Session Recording & Replay.
  */
 
-import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { RecordingStore, getRecordingStore } from './recording-store';
 import { RecordingAction, RecordingMetadata, RecordingConfig, DEFAULT_RECORDING_CONFIG } from './types';
 
@@ -27,7 +27,7 @@ export function generateRecordingId(): string {
   const hour = String(now.getUTCHours()).padStart(2, '0');
   const min = String(now.getUTCMinutes()).padStart(2, '0');
   const sec = String(now.getUTCSeconds()).padStart(2, '0');
-  const rand = Math.random().toString(36).slice(2, 6);
+  const rand = randomBytes(3).toString('hex');
   return `rec-${year}${month}${day}-${hour}${min}${sec}-${rand}`;
 }
 
@@ -158,25 +158,26 @@ export class ActionRecorder {
     }
 
     const id = this._activeRecordingId;
-    const seq = ++this._seq;
-
-    const action: RecordingAction = {
-      seq,
-      ts: Date.now(),
-      tool,
-      args: this.sanitizeArgs(args),
-      durationMs,
-      ok,
-      summary: opts?.summary ?? `${ok ? '✓' : '✗'} ${tool}`,
-      url: opts?.url,
-      tabId: opts?.tabId ?? (args['tabId'] as string | undefined),
-      error: opts?.error,
-    };
 
     try {
+      const seq = this._seq + 1;
+      const action: RecordingAction = {
+        seq,
+        ts: Date.now(),
+        tool,
+        args: this.sanitizeArgs(args),
+        durationMs,
+        ok,
+        summary: opts?.summary ?? `${ok ? '✓' : '✗'} ${tool}`,
+        url: opts?.url,
+        tabId: opts?.tabId ?? (args['tabId'] as string | undefined),
+        error: opts?.error,
+      };
+
       this.store.appendAction(id, action);
 
-      // Update action count in metadata
+      // Only advance seq and actionCount after successful write
+      this._seq = seq;
       this._activeMetadata.actionCount = seq;
     } catch (err) {
       console.error('[ActionRecorder] Failed to record action:', err instanceof Error ? err.message : err);
@@ -197,24 +198,26 @@ export class ActionRecorder {
       const { getSessionManager } = await import('../session-manager');
       const sessionManager = getSessionManager();
 
+      let timer1: ReturnType<typeof setTimeout> | undefined;
       const page = await Promise.race([
-        sessionManager.getPage(this._activeMetadata?.sessionId ?? 'default', tabId),
-        new Promise<null>((_, reject) =>
-          setTimeout(() => reject(new Error('Screenshot page lookup timed out')), SCREENSHOT_TIMEOUT_MS),
-        ),
-      ]);
+        sessionManager.getPage(this._activeMetadata!.sessionId, tabId),
+        new Promise<null>((_, reject) => {
+          timer1 = setTimeout(() => reject(new Error('Screenshot page lookup timed out')), SCREENSHOT_TIMEOUT_MS);
+        }),
+      ]).finally(() => clearTimeout(timer1));
 
       if (!page) return null;
 
+      let timer2: ReturnType<typeof setTimeout> | undefined;
       const buf = await Promise.race([
         page.screenshot({
           type: this.config.screenshotFormat === 'png' ? 'png' : this.config.screenshotFormat,
           quality: this.config.screenshotFormat !== 'png' ? this.config.screenshotQuality : undefined,
         }),
-        new Promise<null>((_, reject) =>
-          setTimeout(() => reject(new Error('Screenshot capture timed out')), SCREENSHOT_TIMEOUT_MS),
-        ),
-      ]);
+        new Promise<null>((_, reject) => {
+          timer2 = setTimeout(() => reject(new Error('Screenshot capture timed out')), SCREENSHOT_TIMEOUT_MS);
+        }),
+      ]).finally(() => clearTimeout(timer2));
 
       if (!buf) return null;
 
@@ -236,6 +239,8 @@ export class ActionRecorder {
     for (const [k, v] of Object.entries(args)) {
       if (REDACT_KEYS.test(k)) {
         sanitized[k] = '[REDACTED]';
+      } else if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        sanitized[k] = this.sanitizeArgs(v as Record<string, unknown>);
       } else {
         sanitized[k] = v;
       }
