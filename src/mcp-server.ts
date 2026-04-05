@@ -256,6 +256,68 @@ export class MCPServer {
   }
 
   /**
+   * Wire rate-limiter session cleanup into the given transport so that
+   * bucket memory is freed immediately when a client sends DELETE /mcp.
+   */
+  wireRateLimiterCleanup(transport: MCPTransport): void {
+    if (this.rateLimiter && typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function') {
+      (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
+        (sessionId: string) => this.rateLimiter!.removeSession(sessionId),
+      );
+    }
+  }
+
+  /**
+   * Handle a raw parsed message: validate the JSON-RPC 2.0 envelope, log
+   * notifications, and route requests through handleRequest().
+   * This is the single source of truth for protocol-level validation used by
+   * all transports (stdio and HTTP in dual mode).
+   */
+  async handleMessage(parsed: Record<string, unknown>): Promise<MCPResponse | null> {
+    // Validate JSON-RPC 2.0 envelope
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      parsed.jsonrpc !== '2.0' ||
+      typeof parsed.method !== 'string'
+    ) {
+      return {
+        jsonrpc: '2.0' as const,
+        id: (parsed.id as string | number) ?? 0,
+        error: {
+          code: MCPErrorCodes.INVALID_REQUEST,
+          message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
+        },
+      };
+    }
+
+    // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
+    if (parsed.id === undefined || parsed.id === null) {
+      const method = parsed.method as string;
+      if (method === 'notifications/initialized' || method === 'initialized') {
+        console.error(`[MCPServer] Received notification: ${method}`);
+      }
+      // All notifications are silently ignored (no response sent)
+      return null;
+    }
+
+    const request = parsed as unknown as MCPRequest;
+
+    try {
+      return await this.handleRequest(request);
+    } catch (error) {
+      return {
+        jsonrpc: '2.0' as const,
+        id: request.id,
+        error: {
+          code: MCPErrorCodes.INTERNAL_ERROR,
+          message: error instanceof Error ? error.message : 'Internal error',
+        },
+      };
+    }
+  }
+
+  /**
    * Start the MCP server with the given transport.
    * If no transport is provided, defaults to stdio (backward compatible).
    */
@@ -266,13 +328,8 @@ export class MCPServer {
       this.transport = createTransport('stdio');
     }
 
-    // Wire rate-limiter session cleanup into the HTTP transport so that
-    // bucket memory is freed immediately when a client sends DELETE /mcp.
-    if (this.rateLimiter && typeof (this.transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function') {
-      (this.transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
-        (sessionId: string) => this.rateLimiter!.removeSession(sessionId),
-      );
-    }
+    // Wire rate-limiter session cleanup into the transport
+    this.wireRateLimiterCleanup(this.transport);
 
     console.error('[MCPServer] Starting server...');
 
@@ -287,49 +344,7 @@ export class MCPServer {
     }
 
     // Wire the transport message handler to MCPServer protocol logic
-    this.transport.onMessage(async (parsed: Record<string, unknown>) => {
-      // Validate JSON-RPC 2.0 envelope
-      if (
-        typeof parsed !== 'object' ||
-        parsed === null ||
-        parsed.jsonrpc !== '2.0' ||
-        typeof parsed.method !== 'string'
-      ) {
-        return {
-          jsonrpc: '2.0' as const,
-          id: (parsed.id as string | number) ?? 0,
-          error: {
-            code: MCPErrorCodes.INVALID_REQUEST,
-            message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
-          },
-        };
-      }
-
-      // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
-      if (parsed.id === undefined || parsed.id === null) {
-        const method = parsed.method as string;
-        if (method === 'notifications/initialized' || method === 'initialized') {
-          console.error(`[MCPServer] Received notification: ${method}`);
-        }
-        // All notifications are silently ignored (no response sent)
-        return null;
-      }
-
-      const request = parsed as unknown as MCPRequest;
-
-      try {
-        return await this.handleRequest(request);
-      } catch (error) {
-        return {
-          jsonrpc: '2.0' as const,
-          id: request.id,
-          error: {
-            code: MCPErrorCodes.INTERNAL_ERROR,
-            message: error instanceof Error ? error.message : 'Internal error',
-          },
-        };
-      }
-    });
+    this.transport.onMessage(async (parsed: Record<string, unknown>) => this.handleMessage(parsed));
 
     this.transport.start();
 

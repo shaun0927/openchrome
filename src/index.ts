@@ -273,20 +273,10 @@ program
       // Start server with stdio as primary transport (wires JSON-RPC validation, rate-limiter, etc.)
       server.start();
 
-      // Wire HTTP transport with the same JSON-RPC validation that server.start() applies
-      httpTrans.onMessage(async (msg: Record<string, unknown>) => {
-        if (typeof msg !== 'object' || msg === null || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
-          return {
-            jsonrpc: '2.0' as const,
-            id: (msg as Record<string, unknown>).id as string | number ?? 0,
-            error: { code: -32600, message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field' },
-          };
-        }
-        if (msg.id === undefined || msg.id === null) {
-          return null;
-        }
-        return server.handleRequest(msg as unknown as import('./types/mcp').MCPRequest);
-      });
+      // Wire HTTP transport through MCPServer.handleMessage() — single source of
+      // truth for JSON-RPC validation, notification handling, and request routing.
+      httpTrans.onMessage(async (msg: Record<string, unknown>) => server.handleMessage(msg));
+      server.wireRateLimiterCleanup(httpTrans);
       httpTrans.start();
 
       console.error(`[openchrome] Dual transport mode: stdio + HTTP on ${httpHost}:${httpPort}`);
