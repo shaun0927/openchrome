@@ -554,6 +554,15 @@ const handler: ToolHandler = async (
   if (success && source === 'parsed') {
     try {
       cacheSequence(page.url(), instruction, actions);
+      // Boost confidence above MIN_CONFIDENCE so the entry is retrievable immediately
+      validateCachedSequence(page.url(), instruction, true);
+    } catch { /* non-fatal */ }
+  }
+
+  // Boost confidence on successful cache hit
+  if (success && source === 'cache') {
+    try {
+      validateCachedSequence(page.url(), instruction, true);
     } catch { /* non-fatal */ }
   }
 

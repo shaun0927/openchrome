@@ -5,7 +5,7 @@
  * instead of NL parsing. This is faster and more reliable for known patterns.
  */
 
-import { ParsedAction } from './action-parser';
+import { ParsedAction, parseInstruction } from './action-parser';
 
 export interface ActionTemplate {
   id: string;
@@ -101,7 +101,6 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
     build: (vars) => {
       // The remaining action part will be parsed by the action parser
       // For templates, we just handle the navigate part
-      const { parseInstruction } = require('./action-parser');
       const parsed = parseInstruction(vars.action);
       return [
         { action: 'navigate', value: vars.url },
