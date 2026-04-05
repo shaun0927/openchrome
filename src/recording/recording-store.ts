@@ -85,11 +85,11 @@ export class RecordingStore {
 
   /**
    * Append a single action to the recording's JSONL file.
-   * Uses appendFileSync for crash safety.
+   * Uses async appendFile — JSONL append is atomic at the OS level per line.
    */
-  appendAction(id: string, action: RecordingAction): void {
+  async appendAction(id: string, action: RecordingAction): Promise<void> {
     const filepath = path.join(this.getRecordingDir(id), ACTIONS_FILE);
-    fs.appendFileSync(filepath, JSON.stringify(action) + '\n');
+    await fs.promises.appendFile(filepath, JSON.stringify(action) + '\n');
   }
 
   /**
@@ -97,7 +97,9 @@ export class RecordingStore {
    */
   async writeMetadata(metadata: RecordingMetadata): Promise<void> {
     const filepath = path.join(this.getRecordingDir(metadata.id), METADATA_FILE);
-    await fs.promises.writeFile(filepath, JSON.stringify(metadata, null, 2));
+    const tmp = filepath + '.tmp';
+    await fs.promises.writeFile(tmp, JSON.stringify(metadata, null, 2));
+    await fs.promises.rename(tmp, filepath);
   }
 
   /**

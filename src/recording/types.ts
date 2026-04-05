@@ -75,7 +75,7 @@ export interface RecordingConfig {
  * Default configuration values for the recording subsystem.
  */
 export const DEFAULT_RECORDING_CONFIG: RecordingConfig = {
-  captureScreenshots: true,
+  captureScreenshots: false,
   screenshotFormat: 'webp',
   screenshotQuality: 60,
   retentionDays: 7,

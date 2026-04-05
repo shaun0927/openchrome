@@ -10,7 +10,7 @@ import { RecordingStore, getRecordingStore } from './recording-store';
 import { RecordingAction, RecordingMetadata, RecordingConfig, DEFAULT_RECORDING_CONFIG } from './types';
 
 /** Arg keys that are always redacted */
-const REDACT_KEYS = /password|token|secret|credential|api[_-]?key/i;
+const REDACT_KEYS = /password|token|secret|credential|api[_-]?key|authorization|auth[_-]token/i;
 
 /** Screenshot timeout in milliseconds */
 const SCREENSHOT_TIMEOUT_MS = 5000;
@@ -174,7 +174,7 @@ export class ActionRecorder {
         error: opts?.error,
       };
 
-      this.store.appendAction(id, action);
+      await this.store.appendAction(id, action);
 
       // Only advance seq and actionCount after successful write
       this._seq = seq;

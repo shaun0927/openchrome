@@ -108,7 +108,7 @@ describe('RecordingStore', () => {
       const id = 'rec-20240101-120000-act1';
       await store.createRecording(makeMetadata(id));
       const action = makeAction(1);
-      store.appendAction(id, action);
+      await store.appendAction(id, action);
 
       const actions = store.readActions(id);
       expect(actions).toHaveLength(1);
@@ -121,7 +121,7 @@ describe('RecordingStore', () => {
       await store.createRecording(makeMetadata(id));
 
       for (let i = 1; i <= 5; i++) {
-        store.appendAction(id, makeAction(i));
+        await store.appendAction(id, makeAction(i));
       }
 
       const actions = store.readActions(id);
@@ -132,8 +132,8 @@ describe('RecordingStore', () => {
     it('each line in actions.jsonl is valid JSON', async () => {
       const id = 'rec-20240101-120000-jsonl';
       await store.createRecording(makeMetadata(id));
-      store.appendAction(id, makeAction(1));
-      store.appendAction(id, makeAction(2));
+      await store.appendAction(id, makeAction(1));
+      await store.appendAction(id, makeAction(2));
 
       const actionsFile = path.join(store.getRecordingDir(id), 'actions.jsonl');
       const lines = fs.readFileSync(actionsFile, 'utf-8').split('\n').filter(l => l.trim());
@@ -146,13 +146,13 @@ describe('RecordingStore', () => {
     it('skips malformed JSONL lines when reading', async () => {
       const id = 'rec-20240101-120000-baad';
       await store.createRecording(makeMetadata(id));
-      store.appendAction(id, makeAction(1));
+      await store.appendAction(id, makeAction(1));
 
       // Inject a corrupt line
       const actionsFile = path.join(store.getRecordingDir(id), 'actions.jsonl');
       fs.appendFileSync(actionsFile, 'NOT_VALID_JSON\n');
 
-      store.appendAction(id, makeAction(2));
+      await store.appendAction(id, makeAction(2));
 
       const actions = store.readActions(id);
       expect(actions).toHaveLength(2);
@@ -269,7 +269,7 @@ describe('RecordingStore', () => {
     it('deletes a recording directory and its contents', async () => {
       const id = 'rec-20240101-120000-del1';
       await store.createRecording(makeMetadata(id));
-      store.appendAction(id, makeAction(1));
+      await store.appendAction(id, makeAction(1));
 
       const recDir = store.getRecordingDir(id);
       expect(fs.existsSync(recDir)).toBe(true);
@@ -349,7 +349,7 @@ describe('RecordingStore', () => {
     it('returns total size of all files in the recording directory', async () => {
       const id = 'rec-20240101-120000-sz01';
       await store.createRecording(makeMetadata(id));
-      store.appendAction(id, makeAction(1));
+      await store.appendAction(id, makeAction(1));
 
       const size = await store.getRecordingSize(id);
       expect(size).toBeGreaterThan(0);
