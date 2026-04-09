@@ -536,9 +536,20 @@ program
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
       diskMonitor?.stop();
-      stateManager.stop();
       chromeProcessMonitor.stop();
       await healthEndpoint.stop();
+
+      // Force-save storage state before exit to preserve cookies across restarts
+      try {
+        await Promise.race([
+          sessionManager.saveAllStorageState(),
+          new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+        ]);
+      } catch (err) {
+        console.error(`[openchrome] Storage state save on shutdown failed (non-fatal): ${err}`);
+      }
+
+      stateManager.stop();
       sessionPersistence.cancelPendingSave();
       await originalShutdown(signal);
     };
