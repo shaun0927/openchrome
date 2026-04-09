@@ -507,7 +507,7 @@ describe('ProfileManager', () => {
       expect(result.syncPerformed).toBe(false);
     });
 
-    it('should return temp profile when usingHeadlessShell is true', () => {
+    it('should return stable headless-shell profile when usingHeadlessShell is true', () => {
       const manager = new ProfileManager();
       const result = manager.resolveProfile({
         realProfileDir: '/some/chrome/profile',
@@ -515,7 +515,8 @@ describe('ProfileManager', () => {
         usingHeadlessShell: true,
       });
 
-      expect(result.profileType).toBe('temp');
+      expect(result.profileType).toBe('headless-shell');
+      expect(result.userDataDir).toContain('headless-shell-profile');
       expect(result.syncPerformed).toBe(false);
     });
 
