@@ -454,15 +454,14 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         'https://aws.amazon.com',
         'Profile 1',
       );
-      // Worker should be created with profile-scoped ID and port
+      // Worker should be created with profile-scoped ID but WITHOUT port/profileDirectory —
+      // the headed page is managed by HeadedFallbackManager and indexed via registerHeadedPage()
+      // into the main CDPClient. Passing port would create a duplicate puppeteer connection;
+      // passing profileDirectory would trigger ChromePool. (#562)
       expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
         testSessionId,
         'profile:Profile 1',
-        expect.objectContaining({
-          shareCookies: true,
-          port: 9322,
-          profileDirectory: 'Profile 1',
-        }),
+        { shareCookies: true },
       );
     });
 
