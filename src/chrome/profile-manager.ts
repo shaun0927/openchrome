@@ -197,6 +197,25 @@ export class ProfileManager {
       return false;
     }
 
+    // Guard: if the persistent profile's Cookies file has been modified after
+    // the last sync, a headless session wrote cookies — do not overwrite them.
+    const persistentCookiesPath = path.join(
+      ProfileManager.PERSISTENT_PROFILE_DIR,
+      profileSubdir,
+      'Cookies'
+    );
+    try {
+      const persistentStat = fs.statSync(persistentCookiesPath);
+      if (persistentStat.mtimeMs > metadata.lastSyncTimestamp) {
+        console.error(
+          '[ProfileManager] Persistent profile cookies modified after last sync — skipping overwrite to preserve headless-acquired session'
+        );
+        return false;
+      }
+    } catch {
+      // Persistent Cookies file doesn't exist yet — sync is needed
+    }
+
     if (currentHash !== metadata.sourceProfileHash) {
       return true; // Source has changed
     }

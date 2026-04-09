@@ -180,6 +180,35 @@ describe('ProfileManager', () => {
       const manager = new ProfileManager();
       expect(manager.needsSync(sourceDir)).toBe(false);
     });
+
+    it('should return false when persistent profile Cookies were modified after last sync (headless guard)', () => {
+      // Set up source Cookies file and compute its hash
+      const cookiesPath = path.join(sourceDir, 'Default', 'Cookies');
+      fs.writeFileSync(cookiesPath, 'source-cookie-data');
+      const stat = fs.statSync(cookiesPath);
+      const hash = `${stat.mtimeMs}:${stat.size}`;
+
+      // Write metadata with an old timestamp (simulating last sync happened in the past)
+      const oldTimestamp = Date.now() - (40 * 60 * 1000); // 40 minutes ago
+      const metadata: SyncMetadata = {
+        lastSyncTimestamp: oldTimestamp,
+        sourceProfileHash: hash,
+        syncCount: 1,
+        sourceProfileDir: sourceDir,
+      };
+      fs.writeFileSync(ProfileManager.SYNC_METADATA_PATH, JSON.stringify(metadata));
+
+      // Create the persistent profile's Cookies file with a recent mtime
+      // (simulating a headless session that wrote cookies after the last sync)
+      const persistentCookiesDir = path.join(ProfileManager.PERSISTENT_PROFILE_DIR, 'Default');
+      fs.mkdirSync(persistentCookiesDir, { recursive: true });
+      fs.writeFileSync(path.join(persistentCookiesDir, 'Cookies'), 'headless-acquired-cookies');
+      // The persistent Cookies file was just written — its mtime is newer than oldTimestamp
+
+      const manager = new ProfileManager();
+      // Should NOT sync: persistent cookies were written after the last sync by a headless session
+      expect(manager.needsSync(sourceDir)).toBe(false);
+    });
   });
 
   // =========================================================================
