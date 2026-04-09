@@ -130,10 +130,8 @@ program
       console.error(`[openchrome] Restart Chrome mode: enabled (will quit existing Chrome)`);
     }
 
-    // Apply server mode config (skip cookie bridge)
-    if (options.serverMode) {
-      setGlobalConfig({ skipCookieBridge: true });
-    }
+    // Server mode: cookie bridge remains active for normal page creation.
+    // Pool pre-warming passes skipCookieBridge per-call to avoid CDP conflicts.
 
     // Configure hybrid mode if enabled
     const hybrid = options.hybrid || false;
