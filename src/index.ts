@@ -130,10 +130,8 @@ program
       console.error(`[openchrome] Restart Chrome mode: enabled (will quit existing Chrome)`);
     }
 
-    // Apply server mode config (skip cookie bridge)
-    if (options.serverMode) {
-      setGlobalConfig({ skipCookieBridge: true });
-    }
+    // Server mode: cookie bridge remains active for normal page creation.
+    // Pool pre-warming passes skipCookieBridge per-call to avoid CDP conflicts.
 
     // Configure hybrid mode if enabled
     const hybrid = options.hybrid || false;
@@ -538,9 +536,20 @@ program
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
       diskMonitor?.stop();
-      stateManager.stop();
       chromeProcessMonitor.stop();
       await healthEndpoint.stop();
+
+      // Force-save storage state before exit to preserve cookies across restarts
+      try {
+        await Promise.race([
+          sessionManager.saveAllStorageState(),
+          new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+        ]);
+      } catch (err) {
+        console.error(`[openchrome] Storage state save on shutdown failed (non-fatal): ${err}`);
+      }
+
+      stateManager.stop();
       sessionPersistence.cancelPendingSave();
       await originalShutdown(signal);
     };

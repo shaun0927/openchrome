@@ -15,7 +15,7 @@ import { execFileSync } from 'child_process';
 // Types
 // ---------------------------------------------------------------------------
 
-export type ProfileType = 'real' | 'persistent' | 'temp' | 'explicit';
+export type ProfileType = 'real' | 'persistent' | 'temp' | 'explicit' | 'headless-shell';
 
 export interface SyncMetadata {
   lastSyncTimestamp: number;
@@ -195,6 +195,25 @@ export class ProfileManager {
         console.error('[ProfileManager] Source Cookies not found and no prior sync — persistent profile will have no cookies');
       }
       return false;
+    }
+
+    // Guard: if the persistent profile's Cookies file has been modified after
+    // the last sync, a headless session wrote cookies — do not overwrite them.
+    const persistentCookiesPath = path.join(
+      ProfileManager.PERSISTENT_PROFILE_DIR,
+      profileSubdir,
+      'Cookies'
+    );
+    try {
+      const persistentStat = fs.statSync(persistentCookiesPath);
+      if (persistentStat.mtimeMs > metadata.lastSyncTimestamp) {
+        console.error(
+          '[ProfileManager] Persistent profile cookies modified after last sync — skipping overwrite to preserve headless-acquired session'
+        );
+        return false;
+      }
+    } catch {
+      // Persistent Cookies file doesn't exist yet — sync is needed
     }
 
     if (currentHash !== metadata.sourceProfileHash) {
@@ -467,12 +486,22 @@ export class ProfileManager {
       };
     }
 
-    // 2. Temp profile requested or headless-shell (no profile support)
-    if (useTempProfile || usingHeadlessShell) {
+    // 2. Temp profile or headless-shell
+    if (useTempProfile) {
       const tempDir = path.join(os.tmpdir(), `openchrome-${Date.now()}`);
       return {
         userDataDir: tempDir,
         profileType: 'temp',
+        syncPerformed: false,
+        ...(profileDirectory && { profileDirectory }),
+      };
+    }
+
+    if (usingHeadlessShell) {
+      const stableDir = path.join(os.homedir(), '.openchrome', 'headless-shell-profile');
+      return {
+        userDataDir: stableDir,
+        profileType: 'headless-shell',
         syncPerformed: false,
         ...(profileDirectory && { profileDirectory }),
       };

@@ -1670,6 +1670,35 @@ export class SessionManager {
   }
 
   /**
+   * Force-save storage state for all active sessions.
+   * Called during graceful shutdown to preserve cookies across restarts.
+   */
+  async saveAllStorageState(): Promise<void> {
+    if (!this.storageStateConfig?.enabled) return;
+
+    for (const [sessionId, session] of this.sessions) {
+      const manager = this.storageStateManagers.get(sessionId);
+      if (!manager) continue;
+
+      try {
+        for (const worker of session.workers.values()) {
+          for (const tid of worker.targets) {
+            const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
+            const p = await cdpClient.getPageByTargetId(tid);
+            if (p) {
+              await manager.save(p, cdpClient, this.getStorageStatePath(sessionId));
+              console.error(`[SessionManager] Storage state saved for session ${sessionId} on shutdown`);
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`[SessionManager] Storage state save failed for session ${sessionId} (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  /**
    * Get the storage state file path for a session
    */
   private getStorageStatePath(sessionId: string): string {

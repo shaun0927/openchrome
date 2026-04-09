@@ -416,6 +416,8 @@ export class ChromeLauncher {
       console.error(`[ChromeLauncher] Using real Chrome profile: ${userDataDir}`);
     } else if (profileType === 'temp') {
       console.error(`[ChromeLauncher] Using temp profile: ${userDataDir}`);
+    } else if (profileType === 'headless-shell') {
+      console.error(`[ChromeLauncher] Using stable headless-shell profile: ${userDataDir}`);
     } else {
       console.error(`[ChromeLauncher] Using explicit profile: ${userDataDir}`);
     }
