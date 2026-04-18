@@ -122,9 +122,53 @@ function findChromeHeadlessShell(): string | null {
 }
 
 /**
- * Check if Chrome debug port is already available
+ * Error thrown when the Chrome debug port fails to become available
+ * within the requested monotonic deadline. Distinct from the generic
+ * "Chrome exited" error so callers can distinguish startup slowness
+ * from early process termination.
  */
-async function checkDebugPort(port: number): Promise<string | null> {
+export class DebugPortTimeoutError extends Error {
+  readonly port: number;
+  readonly timeoutMs: number;
+  readonly attempts: number;
+
+  constructor(port: number, timeoutMs: number, attempts: number) {
+    super(
+      `Chrome debug port ${port} not available after ${timeoutMs}ms ` +
+      `(${attempts} probe attempts). Chrome may still be starting, ` +
+      `or the port may be blocked by a firewall or in use by another process.`
+    );
+    this.name = 'DebugPortTimeoutError';
+    this.port = port;
+    this.timeoutMs = timeoutMs;
+    this.attempts = attempts;
+  }
+}
+
+const DEBUG_PORT_MIN_HTTP_TIMEOUT_MS = 100;
+const DEBUG_PORT_MAX_HTTP_TIMEOUT_MS = 2000;
+const DEBUG_PORT_INITIAL_BACKOFF_MS = 200;
+const DEBUG_PORT_MAX_BACKOFF_MS = 2000;
+const DEBUG_PORT_BACKOFF_FACTOR = 1.5;
+const DEBUG_PORT_PROGRESS_LOG_INTERVAL = 10;
+
+/**
+ * Check if Chrome debug port is already available.
+ *
+ * @param port TCP port where Chrome's `/json/version` endpoint is expected.
+ * @param timeoutMs Per-request HTTP timeout. Defaults to
+ *   {@link DEBUG_PORT_MAX_HTTP_TIMEOUT_MS}. Callers should cap this at the
+ *   remaining budget when polling so a single slow probe cannot exceed the
+ *   outer deadline.
+ */
+async function checkDebugPort(
+  port: number,
+  timeoutMs: number = DEBUG_PORT_MAX_HTTP_TIMEOUT_MS,
+): Promise<string | null> {
+  const clampedTimeout = Math.max(
+    DEBUG_PORT_MIN_HTTP_TIMEOUT_MS,
+    Math.min(timeoutMs, DEBUG_PORT_MAX_HTTP_TIMEOUT_MS),
+  );
   return new Promise((resolve) => {
     const req = http.request(
       {
@@ -132,7 +176,7 @@ async function checkDebugPort(port: number): Promise<string | null> {
         port,
         path: '/json/version',
         method: 'GET',
-        timeout: 2000,
+        timeout: clampedTimeout,
       },
       (res) => {
         let data = '';
@@ -159,17 +203,38 @@ async function checkDebugPort(port: number): Promise<string | null> {
 }
 
 /**
- * Wait for debug port to become available.
- * Optionally accepts a chromeProcess to fast-fail if Chrome exits before the port opens.
+ * Wait for Chrome's debug port to become available.
+ *
+ * Uses a monotonic deadline (`Date.now() + timeout`) rather than a
+ * running elapsed counter so the total wall time is strictly bounded.
+ * On every iteration the remaining budget caps both the HTTP probe
+ * timeout and the post-failure backoff, guaranteeing that a single
+ * slow iteration cannot push the total past `timeout` by more than
+ * one clamped HTTP attempt.
+ *
+ * Backoff grows exponentially from {@link DEBUG_PORT_INITIAL_BACKOFF_MS}
+ * so early probes are tight (catches fast startups) while later probes
+ * avoid busy-looping against a port that is genuinely unreachable.
+ *
+ * @throws {DebugPortTimeoutError} when `timeout` elapses without a
+ *   successful probe. The chromeProcess fast-fail path continues to
+ *   throw a generic `Error` with the exit code.
  */
-async function waitForDebugPort(
+export async function waitForDebugPort(
   port: number,
   timeout = 30000,
   chromeProcess?: ChildProcess
 ): Promise<string> {
-  const startTime = Date.now();
+  const deadline = Date.now() + timeout;
+  let attempts = 0;
+  let backoff = DEBUG_PORT_INITIAL_BACKOFF_MS;
 
-  while (Date.now() - startTime < timeout) {
+  while (true) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new DebugPortTimeoutError(port, timeout, attempts);
+    }
+
     // Fast-fail if the spawned Chrome process has already exited
     if (chromeProcess && chromeProcess.exitCode !== null) {
       throw new Error(
@@ -178,14 +243,40 @@ async function waitForDebugPort(
       );
     }
 
-    const wsEndpoint = await checkDebugPort(port);
+    // Skip probing if we don't even have time for the minimum HTTP attempt
+    if (remaining < DEBUG_PORT_MIN_HTTP_TIMEOUT_MS) {
+      throw new DebugPortTimeoutError(port, timeout, attempts);
+    }
+
+    attempts += 1;
+    const probeTimeout = Math.min(remaining, DEBUG_PORT_MAX_HTTP_TIMEOUT_MS);
+    const wsEndpoint = await checkDebugPort(port, probeTimeout);
     if (wsEndpoint) {
       return wsEndpoint;
     }
-    await new Promise((r) => setTimeout(r, 500));
-  }
 
-  throw new Error(`Chrome debug port ${port} not available after ${timeout}ms. Chrome may still be starting, or the port may be blocked.`);
+    // Periodic progress log for operator diagnostics on slow startups
+    if (attempts % DEBUG_PORT_PROGRESS_LOG_INTERVAL === 0) {
+      const elapsed = timeout - remaining;
+      console.error(
+        `[Launcher] Debug port ${port} not ready yet ` +
+        `(attempt ${attempts}, elapsed ${elapsed}ms, remaining ${Math.max(0, deadline - Date.now())}ms)`
+      );
+    }
+
+    // Cap backoff at both the per-iteration maximum and the remaining budget.
+    // Remaining-1 ensures we always enter the next iteration past the deadline
+    // check rather than burning the last millisecond in setTimeout.
+    const remainingAfterProbe = deadline - Date.now();
+    if (remainingAfterProbe <= 0) {
+      throw new DebugPortTimeoutError(port, timeout, attempts);
+    }
+    const sleepFor = Math.min(backoff, DEBUG_PORT_MAX_BACKOFF_MS, Math.max(0, remainingAfterProbe - 1));
+    if (sleepFor > 0) {
+      await new Promise((r) => setTimeout(r, sleepFor));
+    }
+    backoff = Math.min(backoff * DEBUG_PORT_BACKOFF_FACTOR, DEBUG_PORT_MAX_BACKOFF_MS);
+  }
 }
 
 export interface ProfileState {
