@@ -1027,6 +1027,34 @@ export class CDPClient {
     const browser = this.getBrowser();
     const session = await browser.target().createCDPSession();
 
+    // Outcome tracking — one of these is set before every return path so we
+    // always surface to metrics whether the scan ran to completion, timed
+    // out partway, or short-circuited because there were no candidates.
+    type ScanOutcome = 'complete' | 'partial' | 'no_candidates' | 'no_cookies';
+    let targetsScanned = 0;
+
+    const recordOutcome = (
+      finalOutcome: ScanOutcome,
+      totalCandidates: number,
+    ) => {
+      const durationSec = (Date.now() - scanStart) / 1000;
+      try {
+        const m = getMetricsCollector();
+        m.inc('openchrome_cookie_scan_total', { status: finalOutcome });
+        m.observe('openchrome_cookie_scan_duration_seconds', { status: finalOutcome }, durationSec);
+        m.observe('openchrome_cookie_scan_targets_scanned', { status: finalOutcome }, targetsScanned);
+      } catch {
+        // Metrics collector unavailable — scan behavior must not depend on it.
+      }
+      if (finalOutcome === 'partial') {
+        console.error(
+          `[CDPClient] Cookie scan partial: scanned ${targetsScanned}/${totalCandidates} targets ` +
+          `in ${(durationSec * 1000).toFixed(0)}ms before ${DEFAULT_COOKIE_SCAN_TIMEOUT_MS}ms timeout — ` +
+          `no authenticated tab matched among scanned targets; remaining ${totalCandidates - targetsScanned} were skipped.`,
+        );
+      }
+    };
+
     try {
       const { targetInfos } = await session.send('Target.getTargets') as {
         targetInfos: Array<{ targetId: string; browserContextId?: string; type: string; url: string }>;
@@ -1045,6 +1073,7 @@ export class CDPClient {
 
       if (candidates.length === 0) {
         console.error('[CDPClient] No candidate pages found for cookie source');
+        recordOutcome('no_candidates', 0);
         return null;
       }
 
@@ -1081,8 +1110,10 @@ export class CDPClient {
         // Check overall scan timeout to prevent cascading hangs
         if (Date.now() - scanStart > DEFAULT_COOKIE_SCAN_TIMEOUT_MS) {
           console.error(`[CDPClient] Cookie scan timed out after ${Date.now() - scanStart}ms`);
+          recordOutcome('partial', candidates.length);
           return null;
         }
+        targetsScanned += 1;
 
         let attachedSessionId: string | null = null;
         try {
@@ -1113,6 +1144,7 @@ export class CDPClient {
             const domainScore = targetDomain ? this.domainMatchScore(candidate.url, targetDomain) : 0;
             console.error(`[CDPClient] Found authenticated page ${candidate.targetId.slice(0, 8)} at ${candidate.url.slice(0, 50)} (${cookieCount} cookies, domain score: ${domainScore})`);
             this.cookieSourceCache.set(cacheKey, { targetId: candidate.targetId, timestamp: Date.now() });
+            recordOutcome('complete', candidates.length);
             return candidate.targetId;
           }
         } catch {
@@ -1125,6 +1157,7 @@ export class CDPClient {
       }
 
       console.error('[CDPClient] No pages with cookies found');
+      recordOutcome('no_cookies', candidates.length);
       return null;
     } finally {
       await session.detach().catch(() => {});

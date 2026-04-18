@@ -204,6 +204,11 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
     instance.registerCounter('openchrome_listener_errors_total', 'Async EventEmitter listener errors surfaced by safeAsyncListener');
     instance.registerCounter('openchrome_unhandled_rejections_total', 'Process-level unhandled promise rejections (safety-net counter)');
+    instance.registerCounter('openchrome_cookie_scan_total', 'Cookie source scans by outcome (complete/partial/no_candidates/no_cookies)');
+    instance.registerHistogram('openchrome_cookie_scan_duration_seconds', 'Cookie source scan duration in seconds',
+      [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]);
+    instance.registerHistogram('openchrome_cookie_scan_targets_scanned', 'Number of targets actually probed in each cookie scan',
+      [1, 2, 5, 10, 20, 50, 100]);
   }
   return instance;
 }
