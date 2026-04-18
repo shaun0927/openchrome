@@ -202,6 +202,8 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');
     instance.registerGauge('openchrome_tabs_health', 'Tab health status count');
     instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
+    instance.registerCounter('openchrome_listener_errors_total', 'Async EventEmitter listener errors surfaced by safeAsyncListener');
+    instance.registerCounter('openchrome_unhandled_rejections_total', 'Process-level unhandled promise rejections (safety-net counter)');
   }
   return instance;
 }

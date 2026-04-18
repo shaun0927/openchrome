@@ -43,8 +43,18 @@ import {
   DEFAULT_CHROME_MEMORY_CRITICAL_BYTES,
 } from './config/defaults';
 
-// Prevent silent crashes from unhandled promise rejections in background tasks
+// Prevent silent crashes from unhandled promise rejections in background tasks.
+// Also counts them via openchrome_unhandled_rejections_total for observability.
 process.on('unhandledRejection', (reason) => {
+  try {
+    // Lazy-require to avoid a module cycle at startup; metric registration
+    // happens on first getMetricsCollector() call.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getMetricsCollector } = require('./metrics/collector');
+    getMetricsCollector().inc('openchrome_unhandled_rejections_total');
+  } catch {
+    // Metrics not available (very early startup) — ignore.
+  }
   console.error('[openchrome] Unhandled promise rejection:', reason);
 });
 

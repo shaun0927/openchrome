@@ -8,6 +8,7 @@ import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../utils/smart-goto';
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { getRefIdManager } from '../utils/ref-id-manager';
+import { safeAsyncListener } from '../utils/safe-listener';
 import {
   DEFAULT_VIEWPORT,
   DEFAULT_NAVIGATION_TIMEOUT_MS,
@@ -650,52 +651,50 @@ export class CDPClient {
     // However, we DO selectively track page-type targets opened by already-managed pages
     // (popup/window.open). This makes OAuth redirects, popups, and cross-origin navigations
     // visible without materializing unrelated Chrome-internal targets.
-    this.browser!.on('targetcreated', async (target) => {
+    this.browser!.on('targetcreated', safeAsyncListener('targetcreated', async (target: Target) => {
+      // Only track 'page' type targets (skip service_worker, browser, etc.)
+      if (target.type() !== 'page') return;
+
+      const url = target.url();
+      // Filter out Chrome internal pages and blank pages
+      if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
+          url.startsWith('devtools://') || url === 'about:blank') return;
+
+      // Check if this target was opened by a tracked page (popup/window.open)
+      const opener = target.opener();
+      if (!opener) return; // Not a popup - skip to avoid ghost tabs
+
+      // Get the opener's target ID to check if it's managed
+      const openerTargetId = getTargetId(opener);
+      if (!openerTargetId) return;
+
+      // Check if opener is managed by SessionManager (dynamic import to avoid circular dep)
+      const { getSessionManager } = await import('../session-manager');
+      const sessionManager = getSessionManager();
+      const ownerInfo = sessionManager.getTargetOwner(openerTargetId);
+      if (!ownerInfo) return; // Opener not tracked, skip
+
+      // This is a popup from a managed page - track it
+      const targetId = getTargetId(target);
+      if (!targetId) return;
+
+      // Register in the same worker as opener
+      sessionManager.registerExternalTarget(targetId, ownerInfo.sessionId, ownerInfo.workerId);
+
+      // target.page() can race with target close — keep the inner try/catch
+      // as a localized best-effort, but any *other* failure in this handler
+      // now surfaces via safeAsyncListener → openchrome_listener_errors_total.
       try {
-        // Only track 'page' type targets (skip service_worker, browser, etc.)
-        if (target.type() !== 'page') return;
-
-        const url = target.url();
-        // Filter out Chrome internal pages and blank pages
-        if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
-            url.startsWith('devtools://') || url === 'about:blank') return;
-
-        // Check if this target was opened by a tracked page (popup/window.open)
-        const opener = target.opener();
-        if (!opener) return; // Not a popup - skip to avoid ghost tabs
-
-        // Get the opener's target ID to check if it's managed
-        const openerTargetId = getTargetId(opener);
-        if (!openerTargetId) return;
-
-        // Check if opener is managed by SessionManager (dynamic import to avoid circular dep)
-        const { getSessionManager } = await import('../session-manager');
-        const sessionManager = getSessionManager();
-        const ownerInfo = sessionManager.getTargetOwner(openerTargetId);
-        if (!ownerInfo) return; // Opener not tracked, skip
-
-        // This is a popup from a managed page - track it
-        const targetId = getTargetId(target);
-        if (!targetId) return;
-
-        // Register in the same worker as opener
-        sessionManager.registerExternalTarget(targetId, ownerInfo.sessionId, ownerInfo.workerId);
-
-        // Now safe to get the page object and index it
-        try {
-          const page = await target.page();
-          if (page) {
-            this.targetIdIndex.set(targetId, page);
-            this.configurePageDefenses(page);
-            console.error(`[CDPClient] Indexed popup target ${targetId} (URL: ${url})`);
-          }
-        } catch {
-          // Target may have already closed
+        const page = await target.page();
+        if (page) {
+          this.targetIdIndex.set(targetId, page);
+          this.configurePageDefenses(page);
+          console.error(`[CDPClient] Indexed popup target ${targetId} (URL: ${url})`);
         }
       } catch {
-        // Best effort - don't crash on target tracking failures
+        // Target may have already closed — expected race, not an error.
       }
-    });
+    }));
 
     this.connectionState = 'connected';
     this.emitConnectionEvent({
