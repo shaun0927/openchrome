@@ -26,3 +26,11 @@ export interface ApiKeyCreateResult {
   record: ApiKey;
   plaintext: string;
 }
+
+// Request-scoped identity derived by the auth middleware. See src/middleware/auth.ts.
+export interface Principal {
+  tenantId: string;
+  scopes: Scope[];
+  keyId?: string;
+  mode: 'disabled' | 'legacy' | 'api-key';
+}

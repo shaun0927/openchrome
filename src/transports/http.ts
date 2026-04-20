@@ -16,6 +16,14 @@ import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { MCPTransport } from './index';
 import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
+import type { ApiKeyStore } from '../auth/api-key-store';
+import {
+  authenticate,
+  requestPrincipals,
+  type AuthMode,
+  type Principal,
+} from '../middleware/auth';
+import { logAuditEntry } from '../security/audit-logger';
 
 /** Maximum allowed HTTP request body size (10 MB) to prevent OOM from oversized requests */
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -29,12 +37,17 @@ interface SSEConnection {
   sessionId: string;
 }
 
+export interface HTTPTransportOptions {
+  apiKeyStore?: ApiKeyStore;
+}
+
 export class HTTPTransport implements MCPTransport {
   private server: http.Server | null = null;
   private messageHandler: ((msg: Record<string, unknown>) => Promise<MCPResponse | null>) | null = null;
   private port: number;
   private host: string;
   private authToken: string | undefined;
+  private authMode: AuthMode;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
@@ -42,10 +55,43 @@ export class HTTPTransport implements MCPTransport {
   private readonly serverStartTime: number = Date.now();
   private sseKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(port: number, host = '127.0.0.1', authToken?: string) {
+  constructor(
+    port: number,
+    host = '127.0.0.1',
+    authToken?: string,
+    options: HTTPTransportOptions = {},
+  ) {
     this.port = port;
     this.host = host;
     this.authToken = authToken;
+    this.authMode = HTTPTransport.resolveAuthMode(authToken, options.apiKeyStore);
+  }
+
+  /**
+   * Resolve the runtime auth mode from env + ctor args.
+   * Precedence:
+   *   1. Explicit env OPENCHROME_AUTH_MODE=legacy-shared-token with a token -> legacy
+   *   2. ApiKeyStore provided -> api-key
+   *   3. authToken provided (backwards compat) -> legacy
+   *   4. Nothing configured -> disabled
+   */
+  static resolveAuthMode(authToken: string | undefined, store: ApiKeyStore | undefined): AuthMode {
+    const envMode = process.env.OPENCHROME_AUTH_MODE;
+    if (envMode === 'legacy-shared-token' && authToken) {
+      return { kind: 'legacy-shared-token', token: authToken };
+    }
+    if (store) {
+      return { kind: 'api-key', store };
+    }
+    if (authToken) {
+      return { kind: 'legacy-shared-token', token: authToken };
+    }
+    return { kind: 'disabled' };
+  }
+
+  /** Returns the resolved principal for a given request, if any. */
+  static getPrincipal(req: http.IncomingMessage): Principal | undefined {
+    return requestPrincipals.get(req);
   }
 
   /**
@@ -143,8 +189,9 @@ export class HTTPTransport implements MCPTransport {
     const url = new URL(req.url || '/', `http://${this.host}:${this.port}`);
     const pathname = url.pathname;
 
-    // CORS headers for all responses — restrict origin when auth is enabled
-    res.setHeader('Access-Control-Allow-Origin', this.authToken ? 'null' : '*');
+    // CORS headers for all responses — restrict origin when auth is enforced
+    const authEnforced = this.authMode.kind !== 'disabled';
+    res.setHeader('Access-Control-Allow-Origin', authEnforced ? 'null' : '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id, Authorization');
     res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
@@ -162,18 +209,52 @@ export class HTTPTransport implements MCPTransport {
       return;
     }
 
-    // Bearer token validation: reject requests without valid token when configured
-    if (this.authToken) {
-      const authHeader = req.headers['authorization'];
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
-      const expected = Buffer.from(this.authToken);
-      const provided = Buffer.from(token);
-      if (provided.length !== expected.length || !crypto.timingSafeEqual(expected, provided)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
+    // Pluggable auth: resolves Principal or returns a structured failure.
+    // Route through a helper so we can keep this method synchronous in layout
+    // while awaiting the async middleware.
+    this.authenticateAndContinue(req, res, pathname, url).catch((err) => {
+      console.error('[HTTPTransport] Auth error:', err);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal auth error' }));
       }
+    });
+  }
+
+  private async authenticateAndContinue(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    pathname: string,
+    url: URL,
+  ): Promise<void> {
+    const result = await authenticate(req, this.authMode);
+    if (!result.ok) {
+      // Audit the failure with the attempted keyId (never plaintext).
+      try {
+        logAuditEntry(
+          'auth_failure',
+          'anonymous',
+          { path: pathname, status: result.status },
+          undefined,
+          result.keyId ? { keyId: result.keyId } : undefined,
+        );
+      } catch {
+        // best-effort
+      }
+      res.writeHead(result.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result.keyId ? { error: result.error, keyId: result.keyId } : { error: result.error }));
+      return;
     }
+    requestPrincipals.set(req, result.principal);
+    this.routeAuthenticated(req, res, pathname, url);
+  }
+
+  private routeAuthenticated(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    pathname: string,
+    url: URL,
+  ): void {
 
     // ─── Dashboard REST API ────────────────────────────────────────────
     if (pathname === '/api/screenshot' && req.method === 'GET') {
@@ -442,9 +523,11 @@ export class HTTPTransport implements MCPTransport {
         return;
       }
 
+      const principal = requestPrincipals.get(req);
+
       // Handle JSON-RPC batch (array of requests)
       if (Array.isArray(parsed)) {
-        const results = await this.processBatch(parsed, sessionId);
+        const results = await this.processBatch(parsed, sessionId, principal);
         // Filter out null results (notifications don't produce responses)
         const responses = results.filter((r): r is MCPResponse => r !== null);
 
@@ -473,6 +556,10 @@ export class HTTPTransport implements MCPTransport {
       if (msg.method === 'initialize' && !sessionId) {
         sessionId = crypto.randomUUID();
         this.sessions.add(sessionId);
+      }
+
+      if (principal) {
+        (msg as Record<string, unknown>).__principal = principal;
       }
 
       try {
@@ -595,6 +682,7 @@ export class HTTPTransport implements MCPTransport {
   private async processBatch(
     messages: unknown[],
     sessionId: string | undefined,
+    principal?: Principal,
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
 
@@ -623,6 +711,9 @@ export class HTTPTransport implements MCPTransport {
       }
 
       const record = msg as Record<string, unknown>;
+      if (principal) {
+        record.__principal = principal;
+      }
 
       try {
         return await handler(record);

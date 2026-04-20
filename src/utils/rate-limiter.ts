@@ -74,8 +74,12 @@ export class TokenBucket {
 }
 
 /**
- * Manages per-session rate limiters.
- * Creates a bucket for each session on first use; cleans up when sessions are removed.
+ * Manages rate limiters keyed by an opaque identifier (tenant id, session id, ...).
+ * Creates a bucket for each key on first use; cleans up when keys are removed.
+ *
+ * Backwards compat: `check(id)` works with any string, so existing callers
+ * that pass a session id continue to work unchanged. New callers may pass
+ * a tenant id (via `tenantLimiter()`) to share one bucket across sessions.
  */
 export class SessionRateLimiter {
   private buckets: Map<string, TokenBucket> = new Map();
@@ -89,14 +93,14 @@ export class SessionRateLimiter {
   }
 
   /**
-   * Check if a request from the given session is allowed.
+   * Check if a request identified by the given key is allowed.
    * Returns { allowed: true } or { allowed: false, retryAfterSec }.
    */
-  check(sessionId: string): { allowed: true } | { allowed: false; retryAfterSec: number } {
-    let bucket = this.buckets.get(sessionId);
+  check(key: string): { allowed: true } | { allowed: false; retryAfterSec: number } {
+    let bucket = this.buckets.get(key);
     if (!bucket) {
       bucket = new TokenBucket(this.options);
-      this.buckets.set(sessionId, bucket);
+      this.buckets.set(key, bucket);
     }
 
     if (bucket.consume()) {
@@ -110,10 +114,23 @@ export class SessionRateLimiter {
   }
 
   /**
-   * Remove a session's bucket (call on session cleanup).
+   * Remove a key's bucket (call on session or tenant cleanup).
    */
-  removeSession(sessionId: string): void {
-    this.buckets.delete(sessionId);
+  removeSession(key: string): void {
+    this.buckets.delete(key);
+  }
+
+  /** Alias of removeSession for tenant-keyed callers. */
+  removeKey(key: string): void {
+    this.buckets.delete(key);
+  }
+
+  /**
+   * Return a stable key for a tenant. Prefix keeps it disjoint from session ids
+   * so an attacker cannot collide on a session id they happen to know.
+   */
+  static tenantKey(tenantId: string): string {
+    return `tenant:${tenantId}`;
   }
 
   /**

@@ -14,6 +14,25 @@ interface AuditEntry {
   domain: string | null;  // extracted from page URL, null if N/A
   sessionId: string;
   args_summary: string;   // brief summary, no sensitive data
+  keyId?: string;         // api-key id (sha256-derived); never plaintext
+  tenantId?: string;      // tenant owner of the key
+  scopes?: string[];      // scopes granted by the key
+}
+
+export interface AuditEntryExtras {
+  keyId?: string;
+  tenantId?: string;
+  scopes?: readonly string[];
+}
+
+const PLAINTEXT_KEY_PREFIX = 'oc_live_';
+
+// Belt-and-braces: strip anything that looks like a plaintext API key from
+// audit inputs. The store never emits these, but defensive redaction here
+// prevents accidental leaks via caller-supplied args.
+function redactPlaintextKeys(value: string): string {
+  if (!value.includes(PLAINTEXT_KEY_PREFIX)) return value;
+  return value.replace(/oc_live_[A-Za-z0-9_]+/g, '[REDACTED]');
 }
 
 let logDirEnsured = false;
@@ -45,16 +64,23 @@ function summarizeArgs(args: Record<string, unknown>): string {
   for (const [key, value] of Object.entries(args)) {
     if (isSensitiveKey(key)) {
       safe[key] = '[REDACTED]';
-    } else if (typeof value === 'string' && value.length > 100) {
-      safe[key] = value.slice(0, 100) + '...';
+    } else if (typeof value === 'string') {
+      const redacted = redactPlaintextKeys(value);
+      safe[key] = redacted.length > 100 ? redacted.slice(0, 100) + '...' : redacted;
     } else {
       safe[key] = value;
     }
   }
-  return JSON.stringify(safe);
+  return redactPlaintextKeys(JSON.stringify(safe));
 }
 
-export function logAuditEntry(tool: string, sessionId: string, args: Record<string, unknown>, pageUrl?: string): void {
+export function logAuditEntry(
+  tool: string,
+  sessionId: string,
+  args: Record<string, unknown>,
+  pageUrl?: string,
+  extras?: AuditEntryExtras,
+): void {
   const config = getGlobalConfig();
   if (!config.security?.audit_log) return; // Disabled by default
 
@@ -64,6 +90,9 @@ export function logAuditEntry(tool: string, sessionId: string, args: Record<stri
     domain: extractDomain(pageUrl || (args.url as string)),
     sessionId,
     args_summary: summarizeArgs(args),
+    ...(extras?.keyId ? { keyId: extras.keyId } : {}),
+    ...(extras?.tenantId ? { tenantId: extras.tenantId } : {}),
+    ...(extras?.scopes ? { scopes: [...extras.scopes] } : {}),
   };
 
   const logPath = getLogPath();

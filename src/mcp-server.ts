@@ -34,6 +34,8 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
+import { isAllowed, requiredScope } from './auth/scope-policy';
+import type { Principal } from './auth/api-key-types';
 import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
 import { OpenChromeConnectionError } from './errors/connection';
@@ -291,6 +293,12 @@ export class MCPServer {
       };
     }
 
+    // Extract + remove the transport-injected principal. Absent for stdio.
+    const principal = (parsed as Record<string, unknown>).__principal as Principal | undefined;
+    if ('__principal' in parsed) {
+      delete (parsed as Record<string, unknown>).__principal;
+    }
+
     // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
     if (parsed.id === undefined || parsed.id === null) {
       const method = parsed.method as string;
@@ -304,7 +312,7 @@ export class MCPServer {
     const request = parsed as unknown as MCPRequest;
 
     try {
-      return await this.handleRequest(request);
+      return await this.handleRequest(request, principal);
     } catch (error) {
       return {
         jsonrpc: '2.0' as const,
@@ -366,7 +374,7 @@ export class MCPServer {
   /**
    * Handle incoming MCP request
    */
-  async handleRequest(request: MCPRequest): Promise<MCPResponse> {
+  async handleRequest(request: MCPRequest, principal?: Principal): Promise<MCPResponse> {
     const requestReceivedAt = Date.now();
     const { id, method, params } = request;
 
@@ -383,7 +391,7 @@ export class MCPServer {
           break;
 
         case 'tools/call':
-          result = await this.handleToolsCall(params, id);
+          result = await this.handleToolsCall(params, id, principal);
           break;
 
         case 'resources/list':
@@ -558,7 +566,11 @@ export class MCPServer {
   /**
    * Handle tools/call request
    */
-  private async handleToolsCall(params?: Record<string, unknown>, requestId?: number | string): Promise<MCPResult> {
+  private async handleToolsCall(
+    params?: Record<string, unknown>,
+    requestId?: number | string,
+    principal?: Principal,
+  ): Promise<MCPResult> {
     if (!params) {
       throw new Error('Missing params for tools/call');
     }
@@ -570,6 +582,40 @@ export class MCPServer {
 
     if (!toolName) {
       throw new Error('Missing tool name');
+    }
+
+    // Scope gate: if a principal was provided by the transport, check it can
+    // call this tool. Absent principal (e.g. stdio) is treated as full access
+    // so there is no regression for non-HTTP users.
+    if (principal && !isAllowed(toolName, principal.scopes)) {
+      const needed = requiredScope(toolName);
+      console.error(
+        `[MCPServer] scope denied: tool=${toolName} tenant=${principal.tenantId} required=${needed} granted=${principal.scopes.join(',')}`,
+      );
+      try {
+        logAuditEntry(
+          toolName,
+          sessionId,
+          toolArgs,
+          undefined,
+          {
+            keyId: principal.keyId,
+            tenantId: principal.tenantId,
+            scopes: principal.scopes,
+          },
+        );
+      } catch {
+        // best-effort
+      }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Forbidden: tool '${toolName}' requires scope '${needed}'.`,
+          },
+        ],
+        isError: true,
+      };
     }
 
     // Handle the expand_tools meta-tool before normal tool lookup
@@ -624,9 +670,14 @@ export class MCPServer {
       this.expandToolTier(toolTier);
     }
 
-    // Rate limit check — reject before doing any work
+    // Rate limit check — reject before doing any work.
+    // Key by tenantId when a principal is present so all sessions from the
+    // same tenant share one bucket; fall back to sessionId for stdio callers.
     if (this.rateLimiter) {
-      const rateResult = this.rateLimiter.check(sessionId);
+      const rateLimitKey = principal
+        ? SessionRateLimiter.tenantKey(principal.tenantId)
+        : sessionId;
+      const rateResult = this.rateLimiter.check(rateLimitKey);
       if (!rateResult.allowed) {
         console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
         try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', { tool: toolName }); } catch { /* best-effort */ }
@@ -839,8 +890,10 @@ export class MCPServer {
         }
       }
 
-      // Audit log successful invocation
-      logAuditEntry(toolName, sessionId, toolArgs);
+      // Audit log successful invocation (include auth context when present)
+      logAuditEntry(toolName, sessionId, toolArgs, undefined, principal
+        ? { keyId: principal.keyId, tenantId: principal.tenantId, scopes: principal.scopes }
+        : undefined);
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
