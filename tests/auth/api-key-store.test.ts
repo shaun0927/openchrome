@@ -140,6 +140,70 @@ describe('ApiKeyStore', () => {
     expect(await b.verify(plaintext)).toBeNull();
   });
 
+  // Regression: Codex P1 on commit 64af728. create() previously appended
+  // without syncing while holding the lock, so appendRecord advanced the
+  // cursor to EOF past any peer appends that landed in the gap — those peer
+  // records were then permanently invisible to this instance. Simulate the
+  // peer by writing a record directly to the file before calling create().
+  test('create() ingests peer appends that landed before we took the lock', async () => {
+    const p = tmpStore();
+    const a = await ApiKeyStore.open(p);
+
+    // Craft a plausible record as if appended by a peer process. The hash
+    // field is opaque to the store — we never verify against it here.
+    const peerKeyId = 'k_peerZZZZZ1';
+    const peerRecord = {
+      keyId: peerKeyId,
+      keyHash: 'peer-hash-placeholder',
+      tenantId: 'peer-tenant',
+      scopes: ['read'],
+      createdAt: Date.now(),
+      description: 'peer-appended',
+    };
+    await fs.promises.appendFile(p, JSON.stringify(peerRecord) + '\n');
+
+    // Now create via instance `a`. With the fix, sync happens inside the
+    // lock before appendRecord advances the cursor, so the peer record is
+    // replayed into a's index.
+    const { record } = await a.create({
+      tenantId: 'self',
+      scopes: ['read'],
+      description: '',
+    });
+
+    const listed = await a.list();
+    const ids = listed.map((r) => r.keyId);
+    expect(ids).toContain(peerKeyId);
+    expect(ids).toContain(record.keyId);
+  });
+
+  // Regression: Codex P1 on commit 64af728. touchLastUsed() previously
+  // synced before acquiring the lock, so a peer revoke appended in the gap
+  // between outer-sync and lock-acquire was missed; the subsequent merged
+  // write clobbered the peer revoke. We simulate that gap deterministically
+  // by writing the revoke directly to disk — with sync-inside-lock, the
+  // lock-held sync replays the revoke into `current` and the merged record
+  // preserves `revokedAt`, so verify() correctly rejects the key afterwards.
+  test('touchLastUsed() does not clobber a peer revoke', async () => {
+    const p = tmpStore();
+    const a = await ApiKeyStore.open(p);
+    const { plaintext, record } = await a.create({
+      tenantId: 't1',
+      scopes: ['read'],
+      description: '',
+    });
+
+    // Peer revoke: append a revoked copy of the record directly to the file.
+    const revokedRecord = { ...record, revokedAt: Date.now() };
+    await fs.promises.appendFile(p, JSON.stringify(revokedRecord) + '\n');
+
+    // Call touchLastUsed; with the fix, the under-lock sync picks up the
+    // peer revoke, so the merged append inherits revokedAt.
+    await a.touchLastUsed(record.keyId);
+
+    expect(await a.verify(plaintext)).toBeNull();
+  });
+
   test('reopen preserves revocation across instances', async () => {
     const p = tmpStore();
     const a = await ApiKeyStore.open(p);

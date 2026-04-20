@@ -286,6 +286,11 @@ export class ApiKeyStore {
       description: input.description ?? '',
     };
     await this.withLock(async () => {
+      // Ingest peer appends made between our last sync and this lock
+      // acquisition BEFORE we advance the cursor via appendRecord. Otherwise
+      // appendRecord jumps lastReadSize to EOF and this process would never
+      // replay those peer records (Codex P1 on commit 64af728).
+      await this.syncFromDisk();
       await this.appendRecord(record);
       this.index.set(keyId, record);
     });
@@ -360,16 +365,17 @@ export class ApiKeyStore {
   }
 
   async touchLastUsed(keyId: string): Promise<void> {
-    await this.syncFromDisk();
-    const existing = this.index.get(keyId);
-    if (!existing) return;
-    const updated: ApiKey = { ...existing, lastUsedAt: Date.now() };
-    // lastUsedAt churn can be frequent; keep file writes serialized but cheap
-    // via append. Preserves replay semantics (latest wins, revokedAt sticks).
+    // Sync INSIDE the lock so a peer revoke that lands between any pre-lock
+    // sync and our lock acquisition is observed before we build `merged`.
+    // Syncing outside the lock would leave `current.revokedAt` absent, and
+    // appending `{ ...current, lastUsedAt }` plus the subsequent cursor
+    // advance to EOF would clobber the peer revoke in this instance's view
+    // (Codex P1 on commit 64af728).
     await this.withLock(async () => {
+      await this.syncFromDisk();
       const current = this.index.get(keyId);
       if (!current) return;
-      const merged: ApiKey = { ...current, lastUsedAt: updated.lastUsedAt };
+      const merged: ApiKey = { ...current, lastUsedAt: Date.now() };
       await this.appendRecord(merged);
       this.index.set(keyId, merged);
     });
