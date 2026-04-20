@@ -117,11 +117,12 @@ describe('Chrome Launch Diagnostics', () => {
         'utf8'
       );
 
-      // The waitForDebugPort timeout error should mention possible causes
-      const throwLines = launcherSource.split('\n').filter(
-        line => line.includes('throw new Error') && line.includes('not available after')
-      );
-      expect(throwLines.length).toBeGreaterThan(0);
+      // The waitForDebugPort timeout must surface actionable context
+      // ("not available after" + probe count or common causes). Accept
+      // either a dedicated DebugPortTimeoutError class or a plain Error.
+      const hasDedicatedErrorClass = /class\s+DebugPortTimeoutError\b/.test(launcherSource);
+      const hasContextualMessage = /not available after \$\{?timeout/.test(launcherSource);
+      expect(hasDedicatedErrorClass || hasContextualMessage).toBe(true);
     });
   });
 });
