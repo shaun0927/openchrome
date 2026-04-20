@@ -70,14 +70,25 @@ export class HTTPTransport implements MCPTransport {
   /**
    * Resolve the runtime auth mode from env + ctor args.
    * Precedence:
-   *   1. Explicit env OPENCHROME_AUTH_MODE=legacy-shared-token with a token -> legacy
+   *   1. Explicit env OPENCHROME_AUTH_MODE=legacy-shared-token -> legacy
+   *      (fail-closed: throws if no token is configured; setting this env is
+   *      an explicit operator request to enforce auth, so we must not silently
+   *      downgrade to `disabled` on a wiring/secret-injection failure).
    *   2. ApiKeyStore provided -> api-key
    *   3. authToken provided (backwards compat) -> legacy
    *   4. Nothing configured -> disabled
    */
   static resolveAuthMode(authToken: string | undefined, store: ApiKeyStore | undefined): AuthMode {
     const envMode = process.env.OPENCHROME_AUTH_MODE;
-    if (envMode === 'legacy-shared-token' && authToken) {
+    if (envMode === 'legacy-shared-token') {
+      if (!authToken) {
+        throw new Error(
+          'OPENCHROME_AUTH_MODE=legacy-shared-token requires a shared token ' +
+            '(set OPENCHROME_AUTH_TOKEN or pass authToken to HTTPTransport). ' +
+            'Refusing to start with the env flag set but no token configured — ' +
+            'silently falling back to unauthenticated mode would be a security regression.',
+        );
+      }
       return { kind: 'legacy-shared-token', token: authToken };
     }
     if (store) {

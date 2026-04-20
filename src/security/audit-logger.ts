@@ -30,9 +30,17 @@ const PLAINTEXT_KEY_PREFIX = 'oc_live_';
 // Belt-and-braces: strip anything that looks like a plaintext API key from
 // audit inputs. The store never emits these, but defensive redaction here
 // prevents accidental leaks via caller-supplied args.
-function redactPlaintextKeys(value: string): string {
+//
+// Plaintext format: `oc_live_{tenantId}_{32 base62 chars}`. tenantId is
+// operator-supplied and is NOT restricted to [A-Za-z0-9_] — hyphens, dots,
+// and other characters are valid. Matching only `[A-Za-z0-9_]+` after the
+// prefix would stop at the first hyphen and leak the remainder of the key.
+// We therefore match greedily up to a JSON/log delimiter (whitespace, string
+// quote, or backslash) so the entire plaintext is redacted regardless of
+// the tenantId character set.
+export function redactPlaintextKeys(value: string): string {
   if (!value.includes(PLAINTEXT_KEY_PREFIX)) return value;
-  return value.replace(/oc_live_[A-Za-z0-9_]+/g, '[REDACTED]');
+  return value.replace(/oc_live_[^\s"'\\]+/g, '[REDACTED]');
 }
 
 let logDirEnsured = false;
