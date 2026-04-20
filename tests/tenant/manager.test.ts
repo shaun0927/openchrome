@@ -309,6 +309,25 @@ describe('TenantManager', () => {
     await expect(mgr2.getOrCreate('gamma')).resolves.toBeDefined();
   });
 
+  it('does not leak pending when createContext throws synchronously', async () => {
+    const factory = jest.fn(() => {
+      throw new Error('sync-boom');
+    }) as unknown as () => Promise<BrowserContext>;
+    const mgr = new TenantManager({ createContext: factory });
+    await expect(mgr.getOrCreate('alpha')).rejects.toThrow('sync-boom');
+    // Capacity should be free: 1-tenant cap still allows a fresh attempt.
+    const mgr2 = new TenantManager({
+      createContext: factory,
+      config: { maxTenants: 1 },
+    });
+    await expect(mgr2.getOrCreate('alpha')).rejects.toThrow('sync-boom');
+    await expect(mgr2.getOrCreate('beta')).rejects.toThrow('sync-boom');
+    expect(mgr2.stats().active).toBe(0);
+    // If pending leaked, the third call would hit "max tenants reached"
+    // instead of reaching the factory — verify factory was actually invoked.
+    expect((factory as unknown as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
   it('clears in-flight entry on createContext failure so retries can succeed', async () => {
     let calls = 0;
     const factory = jest.fn(async () => {

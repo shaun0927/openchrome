@@ -90,7 +90,14 @@ export class TenantManager {
         `TenantManager: max tenants reached (${this.maxTenants}). Active: ${this.tenants.size}, pending: ${this.pending.size}`,
       );
     }
-    const creation = (async () => {
+    const creation = (async (): Promise<TenantContext> => {
+      // Yield once so `this.pending.set(id, creation)` below executes before
+      // any factory code runs. Without this, a factory that throws
+      // synchronously (not via a rejected promise) would reach the `finally`
+      // block *before* the pending slot is installed — the delete would be a
+      // no-op and the rejected promise would be stored permanently, pinning
+      // the id and consuming maxTenants capacity forever.
+      await Promise.resolve();
       try {
         const browserContext = await this.createContext();
         const ts = this.now();
