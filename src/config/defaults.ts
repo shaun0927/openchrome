@@ -100,6 +100,18 @@ export const DEFAULT_CHROME_LAUNCH_TIMEOUT_MS = 60000;
  *  own error (with stderr diagnostics) to propagate instead of a generic timeout. */
 export const DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS = 75000;
 
+/** Session-init budget fractions (A-3). Must sum to <= 1.0; remainder is buffer.
+ *  Used by `connectInternal()` to carve child budgets from the session-init budget.
+ *  Override via OPENCHROME_SESSION_INIT_BUDGET_MODE=legacy to fall back to fixed retries. */
+export const DEFAULT_SESSION_INIT_BUDGET_LAUNCH_FRACTION = 0.30;
+export const DEFAULT_SESSION_INIT_BUDGET_CONNECT_FRACTION = 0.25;
+export const DEFAULT_SESSION_INIT_BUDGET_COOKIE_SCAN_FRACTION = 0.10;
+export const DEFAULT_SESSION_INIT_BUDGET_FIRST_TAB_FRACTION = 0.25;
+
+/** Minimum ms per connect attempt that's worth starting. Below this, the
+ *  budget-driven loop gives up rather than firing a doomed retry. */
+export const DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS = 3000;
+
 /** Heartbeat interval in milliseconds. How frequently the CDP connection health is probed.
  *  Override with OPENCHROME_HEARTBEAT_INTERVAL_MS environment variable.
  *  Lower values detect disconnects faster but increase Chrome CPU overhead. */
