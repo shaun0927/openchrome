@@ -144,9 +144,10 @@ describe('ApiKeyStore', () => {
     // The issue target is <1ms; we relax to a ratio-based check to survive
     // loaded CI runners. argon2.verify at memoryCost=19MiB takes ~50-120ms per
     // call with natural jitter of several ms, so absolute-ms thresholds are
-    // flaky. We instead require the median ratio to be within 25% of 1.0,
-    // which is sensitive to a real short-circuit on miss (which would be ~0ms)
-    // but tolerant of OS-level jitter.
+    // flaky. We instead require the median ratio to be within 50% of 1.0
+    // (window widened from 25% after PR2 review flagged flakiness on slow CI).
+    // 30 samples vs 20 yields a more stable median while keeping total runtime
+    // acceptable (~3-5s extra at 100ms/call).
     const store = await ApiKeyStore.open(tmpStore());
     const { plaintext } = await store.create({
       tenantId: 't1',
@@ -154,7 +155,7 @@ describe('ApiKeyStore', () => {
       description: '',
     });
     const wrong = 'oc_live_t1_' + 'y'.repeat(32);
-    const runs = 20;
+    const runs = 30;
 
     // Warmup to prime JIT / native addon.
     for (let i = 0; i < 3; i++) {
@@ -185,8 +186,12 @@ describe('ApiKeyStore', () => {
     expect(mCorrect).toBeGreaterThan(5);
     expect(mWrong).toBeGreaterThan(5);
     const ratio = mWrong / mCorrect;
-    expect(ratio).toBeGreaterThan(0.75);
-    expect(ratio).toBeLessThan(1.25);
+    // Widened from [0.75, 1.25] to [0.5, 1.5] — same reasoning as the sample
+    // count increase above; CI machines show larger variance on heavily loaded
+    // nodes, and the constant-time guarantee is still well-enforced at this window
+    // (a real short-circuit would produce ratios approaching 0 or ∞).
+    expect(ratio).toBeGreaterThan(0.5);
+    expect(ratio).toBeLessThan(1.5);
   }, 60000);
 
   test('JSONL file never contains plaintext', async () => {

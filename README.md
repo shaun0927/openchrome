@@ -514,6 +514,12 @@ openchrome serve \
 
 ---
 
+## Authentication
+
+OpenChrome supports per-tenant API keys, JWT/OAuth, a legacy shared token, and an unauthenticated mode. See **[docs/auth.md](docs/auth.md)** for the full guide including quickstart, scope table, key rotation, revocation, and troubleshooting.
+
+---
+
 ## Under the Hood: 8-Layer Reliability
 
 OpenChrome has **49 distinct reliability mechanisms** across 8 defense layers — ensuring no single failure can hang the MCP server.
