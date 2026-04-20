@@ -32,5 +32,5 @@ export interface Principal {
   tenantId: string;
   scopes: Scope[];
   keyId?: string;
-  mode: 'disabled' | 'legacy' | 'api-key';
+  mode: 'disabled' | 'legacy' | 'api-key' | 'jwt';
 }

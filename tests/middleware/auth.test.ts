@@ -8,6 +8,8 @@ import { IncomingMessage } from 'http';
 import { Socket } from 'net';
 import { ApiKeyStore } from '../../src/auth/api-key-store';
 import { authenticate, type AuthMode } from '../../src/middleware/auth';
+import type { JwtVerifier } from '../../src/auth/jwt-verifier';
+import type { Principal } from '../../src/auth/api-key-types';
 
 function makeReq(headers: Record<string, string> = {}): IncomingMessage {
   const req = new IncomingMessage(new Socket());
@@ -156,4 +158,93 @@ describe('api-key mode', () => {
     }
     expect(key?.lastUsedAt).toBeGreaterThanOrEqual(before);
   }, 20000);
+});
+
+// ─── jwt mode ────────────────────────────────────────────────────────────────
+
+function stubVerifier(principal: Principal | null): JwtVerifier {
+  return {
+    verify: async () => (principal ? { ...principal, scopes: [...principal.scopes] } : null),
+  };
+}
+
+describe('jwt mode', () => {
+  it('happy path — verifier returns principal, middleware wraps as ok', async () => {
+    const verifier = stubVerifier({
+      tenantId: 'acme',
+      scopes: ['read', 'write'],
+      mode: 'jwt',
+      keyId: 'kid-abc',
+    });
+    const mode: AuthMode = { kind: 'jwt', verifier };
+    const req = makeReq({ authorization: 'Bearer header.payload.sig' });
+    const result = await authenticate(req, mode);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.principal.tenantId).toBe('acme');
+    expect(result.principal.mode).toBe('jwt');
+    expect(result.principal.scopes).toEqual(['read', 'write']);
+    expect(result.principal.keyId).toBe('kid-abc');
+  });
+
+  it('verifier returning null yields 401', async () => {
+    const verifier = stubVerifier(null);
+    const mode: AuthMode = { kind: 'jwt', verifier };
+    const req = makeReq({ authorization: 'Bearer bad.token' });
+    const result = await authenticate(req, mode);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(401);
+  });
+});
+
+// ─── api-key-or-jwt mode ─────────────────────────────────────────────────────
+
+describe('api-key-or-jwt mode', () => {
+  let store: ApiKeyStore;
+
+  beforeEach(async () => {
+    store = await ApiKeyStore.open(tmpStore());
+  });
+
+  it('routes oc_live_* tokens through the api-key store', async () => {
+    const verifier = stubVerifier(null); // would fail if asked
+    const { plaintext, record } = await store.create({
+      tenantId: 'acme',
+      scopes: ['read'],
+      description: '',
+    });
+    const mode: AuthMode = { kind: 'api-key-or-jwt', store, verifier };
+    const req = makeReq({ authorization: `Bearer ${plaintext}` });
+    const result = await authenticate(req, mode);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.principal.mode).toBe('api-key');
+    expect(result.principal.keyId).toBe(record.keyId);
+  }, 20000);
+
+  it('routes non-prefix tokens through the jwt verifier', async () => {
+    const verifier = stubVerifier({
+      tenantId: 'jwt-tenant',
+      scopes: ['read'],
+      mode: 'jwt',
+    });
+    const mode: AuthMode = { kind: 'api-key-or-jwt', store, verifier };
+    const req = makeReq({ authorization: 'Bearer eyJ.looks.likeajwt' });
+    const result = await authenticate(req, mode);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.principal.mode).toBe('jwt');
+    expect(result.principal.tenantId).toBe('jwt-tenant');
+  });
+
+  it('jwt path returning null yields 401', async () => {
+    const verifier = stubVerifier(null);
+    const mode: AuthMode = { kind: 'api-key-or-jwt', store, verifier };
+    const req = makeReq({ authorization: 'Bearer nope.nope.nope' });
+    const result = await authenticate(req, mode);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(401);
+  });
 });

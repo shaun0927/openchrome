@@ -17,6 +17,7 @@ import { MCPTransport } from './index';
 import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
 import type { ApiKeyStore } from '../auth/api-key-store';
+import { createJwtVerifier, type JwtConfig, type JwtVerifier } from '../auth/jwt-verifier';
 import {
   authenticate,
   requestPrincipals,
@@ -39,6 +40,7 @@ interface SSEConnection {
 
 export interface HTTPTransportOptions {
   apiKeyStore?: ApiKeyStore;
+  jwt?: JwtConfig;
 }
 
 export class HTTPTransport implements MCPTransport {
@@ -64,24 +66,37 @@ export class HTTPTransport implements MCPTransport {
     this.port = port;
     this.host = host;
     this.authToken = authToken;
-    this.authMode = HTTPTransport.resolveAuthMode(authToken, options.apiKeyStore);
+    const verifier = options.jwt ? createJwtVerifier(options.jwt) : undefined;
+    this.authMode = HTTPTransport.resolveAuthMode(authToken, options.apiKeyStore, verifier);
   }
 
   /**
    * Resolve the runtime auth mode from env + ctor args.
    * Precedence:
    *   1. Explicit env OPENCHROME_AUTH_MODE=legacy-shared-token with a token -> legacy
-   *   2. ApiKeyStore provided -> api-key
-   *   3. authToken provided (backwards compat) -> legacy
-   *   4. Nothing configured -> disabled
+   *   2. store && jwt -> api-key-or-jwt
+   *   3. ApiKeyStore provided -> api-key
+   *   4. jwt provided -> jwt
+   *   5. authToken provided (backwards compat) -> legacy
+   *   6. Nothing configured -> disabled
    */
-  static resolveAuthMode(authToken: string | undefined, store: ApiKeyStore | undefined): AuthMode {
+  static resolveAuthMode(
+    authToken: string | undefined,
+    store: ApiKeyStore | undefined,
+    verifier?: JwtVerifier,
+  ): AuthMode {
     const envMode = process.env.OPENCHROME_AUTH_MODE;
     if (envMode === 'legacy-shared-token' && authToken) {
       return { kind: 'legacy-shared-token', token: authToken };
     }
+    if (store && verifier) {
+      return { kind: 'api-key-or-jwt', store, verifier };
+    }
     if (store) {
       return { kind: 'api-key', store };
+    }
+    if (verifier) {
+      return { kind: 'jwt', verifier };
     }
     if (authToken) {
       return { kind: 'legacy-shared-token', token: authToken };

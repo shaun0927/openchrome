@@ -10,13 +10,16 @@ import * as crypto from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { ApiKeyStore } from '../auth/api-key-store';
 import type { Principal, Scope } from '../auth/api-key-types';
+import type { JwtVerifier } from '../auth/jwt-verifier';
 
 export type { Principal };
 
 export type AuthMode =
   | { kind: 'disabled' }
   | { kind: 'legacy-shared-token'; token: string }
-  | { kind: 'api-key'; store: ApiKeyStore };
+  | { kind: 'api-key'; store: ApiKeyStore }
+  | { kind: 'jwt'; verifier: JwtVerifier }
+  | { kind: 'api-key-or-jwt'; store: ApiKeyStore; verifier: JwtVerifier };
 
 export type AuthResult =
   | { ok: true; principal: Principal }
@@ -92,17 +95,32 @@ export async function authenticate(
     };
   }
 
-  // mode.kind === 'api-key'
+  if (mode.kind === 'api-key') {
+    return authenticateApiKey(token, mode.store);
+  }
+
+  if (mode.kind === 'jwt') {
+    return authenticateJwt(token, mode.verifier);
+  }
+
+  // mode.kind === 'api-key-or-jwt' — route by prefix.
+  if (token.startsWith(KEY_PREFIX)) {
+    return authenticateApiKey(token, mode.store);
+  }
+  return authenticateJwt(token, mode.verifier);
+}
+
+async function authenticateApiKey(token: string, store: ApiKeyStore): Promise<AuthResult> {
   if (!token.startsWith(KEY_PREFIX)) {
     return { ok: false, status: 401, error: 'Unauthorized' };
   }
   const attemptKeyId = computeKeyIdFromPlaintext(token);
-  const record = await mode.store.verify(token);
+  const record = await store.verify(token);
   if (!record) {
     return { ok: false, status: 401, error: 'Unauthorized', keyId: attemptKeyId };
   }
   // Fire-and-forget lastUsedAt update; failures must not block the request.
-  mode.store.touchLastUsed(record.keyId).catch((err) => {
+  store.touchLastUsed(record.keyId).catch((err) => {
     console.error('[auth] touchLastUsed failed:', err);
   });
   return {
@@ -114,4 +132,12 @@ export async function authenticate(
       mode: 'api-key',
     },
   };
+}
+
+async function authenticateJwt(token: string, verifier: JwtVerifier): Promise<AuthResult> {
+  const principal = await verifier.verify(token);
+  if (!principal) {
+    return { ok: false, status: 401, error: 'Unauthorized' };
+  }
+  return { ok: true, principal };
 }

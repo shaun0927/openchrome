@@ -102,7 +102,8 @@ export class ApiKeyStore {
   }
 
   static async open(storePath?: string): Promise<ApiKeyStore> {
-    const finalPath = storePath ?? defaultStorePath();
+    const envOverride = process.env.OPENCHROME_API_KEY_STORE_PATH;
+    const finalPath = storePath ?? (envOverride && envOverride.length > 0 ? envOverride : defaultStorePath());
     const dir = path.dirname(finalPath);
     await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
     // Tighten perms on existing dir (mkdir mode only applies on create).
