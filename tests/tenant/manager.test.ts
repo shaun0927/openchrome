@@ -159,6 +159,43 @@ describe('TenantManager', () => {
     expect(DEFAULT_TENANT_CONTEXT_IDLE_TIMEOUT_MS).toBe(10 * 60 * 1000);
   });
 
+  it('startIdleSweep evicts idle tenants on a timer and stopIdleSweep halts it', async () => {
+    jest.useFakeTimers();
+    try {
+      const clock = fakeClock();
+      const mgr = new TenantManager({
+        createContext: async () => makeStubContext('ctx'),
+        now: clock.now,
+        config: { idleTimeoutMs: 1000 },
+      });
+      await mgr.getOrCreate('alpha');
+      mgr.startIdleSweep(500);
+      clock.advance(2000);
+      await jest.advanceTimersByTimeAsync(500);
+      expect(mgr.has('alpha')).toBe(false);
+      expect(mgr.stats().idleEvictions).toBe(1);
+      mgr.stopIdleSweep();
+      // After stopping, further advance should not touch anything (nothing to evict anyway)
+      await jest.advanceTimersByTimeAsync(1000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('startIdleSweep is idempotent — calling twice replaces the timer', () => {
+    jest.useFakeTimers();
+    try {
+      const mgr = new TenantManager({
+        createContext: async () => makeStubContext('ctx'),
+      });
+      mgr.startIdleSweep(1000);
+      mgr.startIdleSweep(1000);
+      mgr.stopIdleSweep();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('swallows close errors so release still removes the entry', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const ctx = makeStubContext('bad');

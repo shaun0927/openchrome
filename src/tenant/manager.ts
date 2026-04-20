@@ -29,6 +29,9 @@ export const DEFAULT_TENANT_CONTEXT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 /** Default tenant concurrency cap. Conservative; tune per deployment. */
 export const DEFAULT_MAX_TENANTS = 500;
 
+/** Default periodic sweep interval (1 minute) for the idle GC timer. */
+export const DEFAULT_TENANT_IDLE_SWEEP_INTERVAL_MS = 60 * 1000;
+
 const defaultCloser: BrowserContextCloser = async (ctx) => {
   await ctx.close();
 };
@@ -50,6 +53,7 @@ export class TenantManager {
   private totalCreated = 0;
   private totalClosed = 0;
   private idleEvictions = 0;
+  private idleSweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: TenantManagerDeps) {
     this.createContext = deps.createContext;
@@ -157,5 +161,32 @@ export class TenantManager {
       totalClosed: this.totalClosed,
       idleEvictions: this.idleEvictions,
     };
+  }
+
+  /**
+   * Start a periodic background timer that calls `sweepIdle()` every
+   * `intervalMs`. Safe to call multiple times — a second call replaces the
+   * existing timer. The timer is `unref()`ed so it does not keep a Node
+   * process alive on its own.
+   */
+  startIdleSweep(intervalMs = DEFAULT_TENANT_IDLE_SWEEP_INTERVAL_MS): void {
+    this.stopIdleSweep();
+    this.idleSweepTimer = setInterval(() => {
+      this.sweepIdle().catch((err) => {
+        console.error(
+          '[TenantManager] idle sweep failed:',
+          err instanceof Error ? err.message : err,
+        );
+      });
+    }, intervalMs);
+    this.idleSweepTimer.unref?.();
+  }
+
+  /** Stop the periodic idle sweep timer started by `startIdleSweep()`. */
+  stopIdleSweep(): void {
+    if (this.idleSweepTimer) {
+      clearInterval(this.idleSweepTimer);
+      this.idleSweepTimer = null;
+    }
   }
 }
