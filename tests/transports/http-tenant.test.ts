@@ -184,7 +184,10 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
     const mcpSession = first.headers['mcp-session-id'] as string;
     expect(transport.getTenantForMcpSession(mcpSession)).toBe('acme');
 
-    const del = await request('/mcp', 'DELETE', { 'Mcp-Session-Id': mcpSession });
+    const del = await request('/mcp', 'DELETE', {
+      'Mcp-Session-Id': mcpSession,
+      'X-Tenant-Id': 'acme',
+    });
     expect(del.status).toBe(200);
     expect(transport.getTenantForMcpSession(mcpSession)).toBeUndefined();
   });
@@ -221,6 +224,60 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
     const err = JSON.parse(res.body);
     expect(err.error.data.reason).toBe('unexpected_on_initialize');
     expect(transport.getTenantForMcpSession('client-chosen-id')).toBeUndefined();
+  });
+
+  it('rejects DELETE /mcp from a different tenant (no cross-tenant DoS)', async () => {
+    // Regression for Codex P1 #2: DELETE /mcp previously skipped
+    // resolveRequestTenant, so any caller who learned another tenant's
+    // Mcp-Session-Id could terminate that session by sending DELETE with
+    // no X-Tenant-Id or a mismatched one. Now DELETE runs through the
+    // same tenant_mismatch guard as POST/GET.
+    await boot();
+    const init = await mcpPost(
+      { 'X-Tenant-Id': 'acme' },
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    );
+    const mcpSession = init.headers['mcp-session-id'] as string;
+    expect(transport.getTenantForMcpSession(mcpSession)).toBe('acme');
+
+    // Attacker (different tenant) tries to DELETE acme's session.
+    const evil = await request('/mcp', 'DELETE', {
+      'Mcp-Session-Id': mcpSession,
+      'X-Tenant-Id': 'evil',
+    });
+    expect(evil.status).toBe(400);
+    const err = JSON.parse(evil.body);
+    expect(err.error.data.reason).toBe('tenant_mismatch');
+    // Binding must still be intact.
+    expect(transport.getTenantForMcpSession(mcpSession)).toBe('acme');
+
+    // Owner can still DELETE.
+    const ownDel = await request('/mcp', 'DELETE', {
+      'Mcp-Session-Id': mcpSession,
+      'X-Tenant-Id': 'acme',
+    });
+    expect(ownDel.status).toBe(200);
+    expect(transport.getTenantForMcpSession(mcpSession)).toBeUndefined();
+  });
+
+  it('STRICT mode rejects DELETE /mcp missing X-Tenant-Id with 400', async () => {
+    // In STRICT mode a DELETE with no X-Tenant-Id would otherwise hit the
+    // missing-header 400 from the extractor — assert that behaviour so it
+    // does not regress to silently terminating the session.
+    process.env.OPENCHROME_STRICT_TENANT_ISOLATION = 'true';
+    await boot();
+    const init = await mcpPost(
+      { 'X-Tenant-Id': 'acme' },
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    );
+    const mcpSession = init.headers['mcp-session-id'] as string;
+
+    const del = await request('/mcp', 'DELETE', { 'Mcp-Session-Id': mcpSession });
+    expect(del.status).toBe(400);
+    const err = JSON.parse(del.body);
+    expect(err.error.data.reason).toBe('missing');
+    // Session must still be alive.
+    expect(transport.getTenantForMcpSession(mcpSession)).toBe('acme');
   });
 
   it('advertises X-Tenant-Id in CORS Allow-Headers', async () => {

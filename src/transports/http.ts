@@ -236,9 +236,17 @@ export class HTTPTransport implements MCPTransport {
           this.handleSSE(req, res, tenantId);
           return;
         }
-        case 'DELETE':
-          this.handleDelete(req, res);
+        case 'DELETE': {
+          // Tenant guard: DELETE /mcp terminates the session, so an attacker
+          // who learns another tenant's Mcp-Session-Id could otherwise
+          // cross-tenant-DoS them by calling DELETE without X-Tenant-Id or
+          // with a mismatched one. Route through resolveRequestTenant so
+          // the `tenant_mismatch` check applies here too. (#7 security)
+          const tenantId = this.resolveRequestTenant(req, res);
+          if (tenantId === null) return;
+          this.handleDelete(req, res, tenantId);
           return;
+        }
         default:
           res.writeHead(405, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Method not allowed' }));
@@ -683,9 +691,19 @@ export class HTTPTransport implements MCPTransport {
   }
 
   /**
-   * DELETE /mcp - Session termination
+   * DELETE /mcp - Session termination.
+   *
+   * The caller has already passed `resolveRequestTenant`, so any provided
+   * Mcp-Session-Id is guaranteed to either be unbound or belong to the
+   * resolved tenant. `_tenantId` is accepted for symmetry with handlePost
+   * / handleSSE and to let future hooks (audit log, per-tenant metrics)
+   * attribute the termination correctly.
    */
-  private handleDelete(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handleDelete(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _tenantId: TenantId,
+  ): void {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (sessionId && this.sessions.has(sessionId)) {
