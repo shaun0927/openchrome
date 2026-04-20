@@ -165,6 +165,17 @@ export class MCPServer {
       this.exposedTier = options.initialToolTier;
     }
 
+    // Release the tenant binding as soon as the underlying session is
+    // destroyed (tool-triggered cascade, cleanup-on-shutdown, etc.) rather
+    // than waiting for the periodic sweep. This is the authoritative signal
+    // — sessionTenants is always keyed by the same sessionId space that
+    // sessionManager uses, unlike the transport's Mcp-Session-Id.
+    this.sessionManager.addEventListener((event) => {
+      if (event.type === 'session:deleted') {
+        this.sessionTenants.delete(event.sessionId);
+      }
+    });
+
     // Register built-in resources
     this.registerResource(usageGuideResource);
 
@@ -299,12 +310,41 @@ export class MCPServer {
         if (this.rateLimiter) {
           this.rateLimiter.removeSession(sessionId);
         }
-        // Also release the session-tenant binding so a future session with
-        // the same id (after UUID reuse across restarts, or an explicit
-        // client-chosen id) can be claimed by any tenant again.
-        this.sessionTenants.delete(sessionId);
+        // Intentionally NOT clearing sessionTenants here: the transport
+        // callback receives the HTTP `Mcp-Session-Id` (a UUID assigned at
+        // initialize), whereas tenant claims are keyed by the tool-call
+        // sessionId (client-supplied via params/toolArgs, defaulting to
+        // 'default'). Those two spaces don't match, so deleting by this id
+        // would usually be a no-op, and on an unlucky collision would drop
+        // someone else's binding. sessionTenants is instead reclaimed by
+        // (a) the MCP `sessions/delete` handler and (b) the periodic
+        // `sweepSessionTenants()` tick scheduled in start().
       },
     );
+  }
+
+  /**
+   * Remove `sessionTenants` entries whose underlying session no longer
+   * exists in sessionManager. Called on the same interval as the
+   * rate-limiter sweep so stale bindings don't accumulate when a tenant
+   * abandons a session without calling `sessions/delete` explicitly.
+   */
+  private sweepSessionTenants(): number {
+    if (this.sessionTenants.size === 0) return 0;
+    let live: Set<string>;
+    try {
+      live = new Set(this.sessionManager.getAllSessionInfos().map((s) => s.id));
+    } catch {
+      return 0;
+    }
+    let removed = 0;
+    for (const id of this.sessionTenants.keys()) {
+      if (!live.has(id)) {
+        this.sessionTenants.delete(id);
+        removed++;
+      }
+    }
+    return removed;
   }
 
   /**
@@ -405,6 +445,19 @@ export class MCPServer {
           }
         } catch (err) {
           console.error('[MCPServer] Rate-limiter sweep failed:', err);
+        }
+        // Piggyback: reclaim tenant-session bindings whose session no
+        // longer exists. Cheap (a single set-diff) and closes the gap
+        // that the transport onSessionDelete hook cannot cover — tool
+        // sessionIds are a separate namespace from the transport's
+        // Mcp-Session-Id UUIDs.
+        try {
+          const released = this.sweepSessionTenants();
+          if (released > 0) {
+            console.error(`[MCPServer] Tenant-binding sweep: released ${released} stale binding(s)`);
+          }
+        } catch (err) {
+          console.error('[MCPServer] Tenant-binding sweep failed:', err);
         }
       }, sweepIntervalMs);
       this.rateLimiterSweepTimer.unref();
@@ -656,15 +709,16 @@ export class MCPServer {
     }
 
     // Session-tenant binding (api-key mode only): reject if the session was
-    // already claimed by a different tenant. First api-key caller wins; other
-    // auth modes (disabled/legacy) and stdio callers are not subject to this
-    // check. Structural session-create binding lands in B-1 (#30/#31); this
-    // is the PR-2-scope defense-in-depth against cross-tenant session access.
+    // already claimed by a different tenant. First api-key caller to COMPLETE
+    // an authorized + validated call wins — the claim itself is deferred
+    // until after scope / tool / args checks pass, so a denied or invalid
+    // request cannot lock a sessionId and block other tenants.
+    // Other auth modes (disabled/legacy) and stdio callers are not subject
+    // to this check. Structural session-create binding lands in B-1
+    // (#30/#31); this is the PR-2-scope defense-in-depth.
     if (principal && principal.mode === 'api-key') {
       const claimedBy = this.sessionTenants.get(sessionId);
-      if (claimedBy === undefined) {
-        this.sessionTenants.set(sessionId, principal.tenantId);
-      } else if (claimedBy !== principal.tenantId) {
+      if (claimedBy !== undefined && claimedBy !== principal.tenantId) {
         console.error(
           `[MCPServer] tenant binding violation: session=${sessionId} claimedBy=${claimedBy} requestedBy=${principal.tenantId} tool=${toolName}`,
         );
@@ -766,6 +820,18 @@ export class MCPServer {
           isError: true,
         };
       }
+    }
+
+    // All static gates passed (scope, tool existence, required args). Only
+    // now do we claim the session for the caller's tenant — a denied or
+    // invalid call must NOT be able to lock a sessionId that would then
+    // block other tenants. (Codex round-6 P1.)
+    if (
+      principal &&
+      principal.mode === 'api-key' &&
+      !this.sessionTenants.has(sessionId)
+    ) {
+      this.sessionTenants.set(sessionId, principal.tenantId);
     }
 
     // Auto-expand tier if a higher-tier tool is called directly
