@@ -474,15 +474,15 @@ export class MCPServer {
           break;
 
         case 'sessions/list':
-          result = await this.handleSessionsList();
+          result = await this.handleSessionsList(principal);
           break;
 
         case 'sessions/create':
-          result = await this.handleSessionsCreate(params);
+          result = await this.handleSessionsCreate(params, principal);
           break;
 
         case 'sessions/delete':
-          result = await this.handleSessionsDelete(params);
+          result = await this.handleSessionsDelete(params, principal);
           break;
 
         default:
@@ -1290,31 +1290,106 @@ export class MCPServer {
   }
 
   /**
-   * Handle sessions/list request
+   * Scope implication check (admin > write > read) without using a tool id.
+   * Used by session-management methods that are not registered tools.
    */
-  private async handleSessionsList(): Promise<MCPResult> {
-    const sessions = this.sessionManager.getAllSessionInfos();
+  private hasScope(principal: Principal, needed: 'read' | 'write' | 'admin'): boolean {
+    if (principal.scopes.includes('admin')) return true;
+    if (needed === 'admin') return false;
+    if (principal.scopes.includes('write')) return true;
+    if (needed === 'write') return false;
+    return principal.scopes.includes('read');
+  }
+
+  /**
+   * Return an MCP "Forbidden" error result; also emits an audit entry so
+   * the rejection is observable in the existing audit stream.
+   */
+  private forbiddenResult(
+    method: string,
+    sessionId: string,
+    principal: Principal,
+    text: string,
+  ): MCPResult {
+    try {
+      logAuditEntry(method, sessionId, {}, undefined, {
+        keyId: principal.keyId,
+        tenantId: principal.tenantId,
+        scopes: principal.scopes,
+      });
+    } catch {
+      // best-effort
+    }
+    return {
+      content: [{ type: 'text', text: `Forbidden: ${text}` }],
+      isError: true,
+    };
+  }
+
+  /**
+   * Handle sessions/list request. In api-key mode the result is filtered to
+   * sessions claimed by the caller's tenant (see sessionTenants); other auth
+   * modes and stdio callers see all sessions (no regression).
+   */
+  private async handleSessionsList(principal?: Principal): Promise<MCPResult> {
+    if (principal && !this.hasScope(principal, 'read')) {
+      return this.forbiddenResult('sessions/list', 'n/a', principal, `scope 'read' required`);
+    }
+    const all = this.sessionManager.getAllSessionInfos();
+    const visible = principal && principal.mode === 'api-key'
+      ? all.filter((s) => this.sessionTenants.get(s.id) === principal.tenantId)
+      : all;
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify(sessions, null, 2),
+          text: JSON.stringify(visible, null, 2),
         },
       ],
     };
   }
 
   /**
-   * Handle sessions/create request
+   * Handle sessions/create request. Requires 'write' scope for authenticated
+   * callers. In api-key mode, a requested sessionId that is already claimed
+   * by a different tenant is rejected; on success the new session is bound
+   * to the caller's tenantId in sessionTenants.
    */
-  private async handleSessionsCreate(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleSessionsCreate(
+    params?: Record<string, unknown>,
+    principal?: Principal,
+  ): Promise<MCPResult> {
     const sessionId = params?.sessionId as string | undefined;
     const name = params?.name as string | undefined;
+
+    if (principal && !this.hasScope(principal, 'write')) {
+      return this.forbiddenResult(
+        'sessions/create',
+        sessionId ?? 'n/a',
+        principal,
+        `scope 'write' required`,
+      );
+    }
+    if (principal && principal.mode === 'api-key' && sessionId) {
+      const owner = this.sessionTenants.get(sessionId);
+      if (owner !== undefined && owner !== principal.tenantId) {
+        return this.forbiddenResult(
+          'sessions/create',
+          sessionId,
+          principal,
+          `session '${sessionId}' is owned by another tenant`,
+        );
+      }
+    }
 
     const session = await this.sessionManager.createSession({
       id: sessionId,
       name,
     });
+
+    if (principal && principal.mode === 'api-key') {
+      this.sessionTenants.set(session.id, principal.tenantId);
+    }
 
     return {
       content: [
@@ -1335,15 +1410,48 @@ export class MCPServer {
   }
 
   /**
-   * Handle sessions/delete request
+   * Handle sessions/delete request. Requires 'write' scope and, in api-key
+   * mode, matching tenant ownership of the session. On successful delete
+   * the session-tenant binding is released so a later caller (possibly a
+   * different tenant) can claim the same sessionId — this is the MCP-method
+   * twin of the transport-level onSessionDelete hook wired in
+   * wireRateLimiterCleanup(), closing the cleanup gap that otherwise
+   * leaves stale bindings behind and produces spurious "owned by another
+   * tenant" rejections after logical deletion.
    */
-  private async handleSessionsDelete(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleSessionsDelete(
+    params?: Record<string, unknown>,
+    principal?: Principal,
+  ): Promise<MCPResult> {
     const sessionId = params?.sessionId as string;
     if (!sessionId) {
       throw new Error('Missing sessionId');
     }
 
+    if (principal && !this.hasScope(principal, 'write')) {
+      return this.forbiddenResult(
+        'sessions/delete',
+        sessionId,
+        principal,
+        `scope 'write' required`,
+      );
+    }
+    if (principal && principal.mode === 'api-key') {
+      const owner = this.sessionTenants.get(sessionId);
+      if (owner !== undefined && owner !== principal.tenantId) {
+        return this.forbiddenResult(
+          'sessions/delete',
+          sessionId,
+          principal,
+          `session '${sessionId}' is owned by another tenant`,
+        );
+      }
+    }
+
     await this.sessionManager.deleteSession(sessionId);
+    // Release the binding so sessionId (notably 'default') can be reclaimed
+    // by a subsequent tenant after MCP-level deletion.
+    this.sessionTenants.delete(sessionId);
 
     return {
       content: [
