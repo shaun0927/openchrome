@@ -133,11 +133,15 @@ export class HTTPTransport implements MCPTransport {
     this.server.headersTimeout   = HTTP_HEADERS_TIMEOUT_MS;
     this.server.keepAliveTimeout = HTTP_KEEPALIVE_TIMEOUT_MS;
 
-    // Per-socket idle timeout. Node destroys the socket automatically when
-    // this fires, which propagates to `req` as an 'error' or 'close' event
-    // and unblocks any pending body-read loop.
+    // Per-socket idle timeout. socket.setTimeout() only emits a 'timeout'
+    // event — the socket is NOT destroyed automatically, so we destroy it
+    // here. Closing the socket propagates to `req` as an 'error' or 'close'
+    // event and unblocks any pending body-read loop.
     this.server.on('connection', (socket) => {
       socket.setTimeout(HTTP_SOCKET_TIMEOUT_MS);
+      socket.on('timeout', () => {
+        socket.destroy();
+      });
     });
 
     this.server.listen(this.port, this.host, () => {
