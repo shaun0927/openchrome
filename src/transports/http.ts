@@ -16,6 +16,9 @@ import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { MCPTransport } from './index';
 import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
+import { extractTenantId, TenantIdError } from '../middleware/tenant-extractor';
+import { isStrictTenantIsolationEnabled } from '../tenant/registry';
+import type { TenantId } from '../tenant/types';
 
 /** Maximum allowed HTTP request body size (10 MB) to prevent OOM from oversized requests */
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -41,11 +44,23 @@ export class HTTPTransport implements MCPTransport {
   private sessionManager: SessionManager | null = null;
   private readonly serverStartTime: number = Date.now();
   private sseKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  /** Tenant bound to each MCP session. Populated on initialize and checked
+   *  on subsequent requests so a leaked session id cannot swap tenants. (#7) */
+  private sessionTenants: Map<string, TenantId> = new Map();
 
   constructor(port: number, host = '127.0.0.1', authToken?: string) {
     this.port = port;
     this.host = host;
     this.authToken = authToken;
+  }
+
+  /**
+   * Look up the tenant bound to an MCP session id. Callers outside this
+   * transport (e.g. MCPServer handlers) use this to resolve the tenant for
+   * the currently-processed request. Returns undefined when unknown. (#7)
+   */
+  getTenantForMcpSession(mcpSessionId: string): TenantId | undefined {
+    return this.sessionTenants.get(mcpSessionId);
   }
 
   /**
@@ -126,6 +141,7 @@ export class HTTPTransport implements MCPTransport {
       }
     }
     this.sseConnections = [];
+    this.sessionTenants.clear();
 
     return new Promise((resolve) => {
       if (this.server) {
@@ -146,7 +162,7 @@ export class HTTPTransport implements MCPTransport {
     // CORS headers for all responses — restrict origin when auth is enabled
     res.setHeader('Access-Control-Allow-Origin', this.authToken ? 'null' : '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id, Authorization, X-Tenant-Id');
     res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
 
     // Handle CORS preflight
@@ -196,7 +212,9 @@ export class HTTPTransport implements MCPTransport {
     // Explicit /mcp/sse endpoint (MCP spec alias for GET /mcp SSE stream)
     if (pathname === '/mcp/sse') {
       if (req.method === 'GET') {
-        this.handleSSE(req, res);
+        const tenantId = this.resolveRequestTenant(req, res);
+        if (tenantId === null) return;
+        this.handleSSE(req, res, tenantId);
       } else {
         res.writeHead(405, { 'Allow': 'GET', 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Method not allowed' }));
@@ -206,12 +224,18 @@ export class HTTPTransport implements MCPTransport {
 
     if (pathname === '/mcp') {
       switch (req.method) {
-        case 'POST':
-          this.handlePost(req, res);
+        case 'POST': {
+          const tenantId = this.resolveRequestTenant(req, res);
+          if (tenantId === null) return;
+          this.handlePost(req, res, tenantId);
           return;
-        case 'GET':
-          this.handleSSE(req, res);
+        }
+        case 'GET': {
+          const tenantId = this.resolveRequestTenant(req, res);
+          if (tenantId === null) return;
+          this.handleSSE(req, res, tenantId);
           return;
+        }
         case 'DELETE':
           this.handleDelete(req, res);
           return;
@@ -225,6 +249,65 @@ export class HTTPTransport implements MCPTransport {
     // Unknown path
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
+  }
+
+  /**
+   * Validate `X-Tenant-Id` on an incoming /mcp request and resolve the
+   * effective tenant. Writes a 400 JSON-RPC error and returns `null` on
+   * failure so the caller can bail out without doing further work. (#7)
+   *
+   * - Missing header in STRICT mode                   → 400 (code `missing`)
+   * - Invalid header format                           → 400 (code `invalid`)
+   * - Header present but differs from a tenant already bound to the
+   *   same Mcp-Session-Id                             → 400 (code `invalid`)
+   */
+  private resolveRequestTenant(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): TenantId | null {
+    const strict = isStrictTenantIsolationEnabled();
+    let tenantId: TenantId;
+    try {
+      tenantId = extractTenantId(req.headers, { required: strict });
+    } catch (err) {
+      if (err instanceof TenantIdError) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: err.message,
+              data: { field: 'X-Tenant-Id', reason: err.code },
+            },
+          }),
+        );
+        return null;
+      }
+      throw err;
+    }
+
+    const mcpSessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (mcpSessionId) {
+      const bound = this.sessionTenants.get(mcpSessionId);
+      if (bound !== undefined && bound !== tenantId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: 'X-Tenant-Id does not match the tenant bound to this Mcp-Session-Id',
+              data: { field: 'X-Tenant-Id', reason: 'tenant_mismatch' },
+            },
+          }),
+        );
+        return null;
+      }
+    }
+    return tenantId;
   }
 
   /**
@@ -379,7 +462,11 @@ export class HTTPTransport implements MCPTransport {
   /**
    * POST /mcp - handle JSON-RPC request or batch
    */
-  private handlePost(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handlePost(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    tenantId: TenantId,
+  ): void {
     const acceptSSE = (req.headers['accept'] || '').includes('text/event-stream');
 
     const chunks: Buffer[] = [];
@@ -444,7 +531,7 @@ export class HTTPTransport implements MCPTransport {
 
       // Handle JSON-RPC batch (array of requests)
       if (Array.isArray(parsed)) {
-        const results = await this.processBatch(parsed, sessionId);
+        const results = await this.processBatch(parsed, sessionId, tenantId);
         // Filter out null results (notifications don't produce responses)
         const responses = results.filter((r): r is MCPResponse => r !== null);
 
@@ -473,6 +560,7 @@ export class HTTPTransport implements MCPTransport {
       if (msg.method === 'initialize' && !sessionId) {
         sessionId = crypto.randomUUID();
         this.sessions.add(sessionId);
+        this.sessionTenants.set(sessionId, tenantId);
       }
 
       try {
@@ -529,7 +617,11 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /mcp or GET /mcp/sse - Server-Sent Events for server-initiated notifications
    */
-  private handleSSE(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handleSSE(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    _tenantId: TenantId,
+  ): void {
     const sessionId = req.headers['mcp-session-id'] as string || 'anonymous';
 
     res.writeHead(200, {
@@ -562,6 +654,7 @@ export class HTTPTransport implements MCPTransport {
 
     if (sessionId && this.sessions.has(sessionId)) {
       this.sessions.delete(sessionId);
+      this.sessionTenants.delete(sessionId);
 
       // Notify session-delete listeners (e.g. rate-limiter cleanup)
       if (this.sessionDeleteHandler) {
@@ -595,6 +688,7 @@ export class HTTPTransport implements MCPTransport {
   private async processBatch(
     messages: unknown[],
     sessionId: string | undefined,
+    tenantId: TenantId,
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
 
@@ -607,6 +701,7 @@ export class HTTPTransport implements MCPTransport {
       if (hasInitialize) {
         sessionId = crypto.randomUUID();
         this.sessions.add(sessionId);
+        this.sessionTenants.set(sessionId, tenantId);
       }
     }
 
