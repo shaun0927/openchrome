@@ -216,6 +216,31 @@ describe('TenantManager', () => {
     expect(mgr.stats().active).toBe(2);
   });
 
+  it('closeAll drains in-flight creations and closes the resulting contexts', async () => {
+    const ctx = makeStubContext('late');
+    let releaseCreate: (() => void) | null = null;
+    const factory = jest.fn(async () => {
+      await new Promise<void>((r) => {
+        releaseCreate = r;
+      });
+      return ctx;
+    });
+    const mgr = new TenantManager({ createContext: factory });
+    const creating = mgr.getOrCreate('alpha');
+    // createContext is now awaiting; start closeAll before it resolves.
+    const closing = mgr.closeAll();
+    // Wait one microtask so closeAll can install its pending await.
+    await Promise.resolve();
+    expect(releaseCreate).not.toBeNull();
+    (releaseCreate as unknown as () => void)();
+    await creating;
+    await closing;
+    expect(ctx.__closed).toBe(true);
+    expect(mgr.has('alpha')).toBe(false);
+    expect(mgr.stats().active).toBe(0);
+    expect(mgr.stats().totalClosed).toBe(1);
+  });
+
   it('clears in-flight entry on createContext failure so retries can succeed', async () => {
     let calls = 0;
     const factory = jest.fn(async () => {

@@ -138,8 +138,19 @@ export class TenantManager {
     return true;
   }
 
-  /** Close every tenant context. Safe to call on shutdown / Chrome reconnect. */
+  /**
+   * Close every tenant context. Safe to call on shutdown / Chrome reconnect.
+   *
+   * Drains in-flight `getOrCreate` promises first so their resulting contexts
+   * land in `this.tenants` and can be released; otherwise a creation that is
+   * mid-await when closeAll starts would insert after we snapshot the map and
+   * leak a live BrowserContext. Pending rejections are intentionally ignored
+   * — a failed create has nothing to close.
+   */
   async closeAll(): Promise<void> {
+    if (this.pending.size > 0) {
+      await Promise.allSettled(Array.from(this.pending.values()));
+    }
     const ids = Array.from(this.tenants.keys());
     await Promise.all(ids.map((id) => this.release(id)));
   }
