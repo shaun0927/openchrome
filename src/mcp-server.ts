@@ -32,7 +32,7 @@ import { getGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
-import { getMetricsCollector } from './metrics/collector';
+import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
 import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
@@ -629,7 +629,7 @@ export class MCPServer {
       const rateResult = this.rateLimiter.check(sessionId);
       if (!rateResult.allowed) {
         console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
-        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', { tool: toolName }); } catch { /* best-effort */ }
+        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', withTenantLabel({ tool: toolName })); } catch { /* best-effort */ }
         return {
           content: [
             {
@@ -649,7 +649,7 @@ export class MCPServer {
       const cdpClient = getCDPClient();
       if (cdpClient.isReconnecting()) {
         console.error(`[MCPServer] Tool call "${toolName}" arrived during reconnection, waiting...`);
-        try { getMetricsCollector().inc('openchrome_tool_calls_total', { tool: toolName, status: 'reconnecting_wait' }); } catch { /* best-effort */ }
+        try { getMetricsCollector().inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'reconnecting_wait' })); } catch { /* best-effort */ }
         const reconnectResult = await new Promise<'reconnected' | 'failed' | 'timeout'>((resolve) => {
           const timeout = setTimeout(() => {
             cdpClient.removeConnectionListener(listener);
@@ -850,8 +850,8 @@ export class MCPServer {
       try {
         const metrics = getMetricsCollector();
         const durationSec = (Date.now() - toolStartTime) / 1000;
-        metrics.inc('openchrome_tool_calls_total', { tool: toolName, status: 'success' });
-        metrics.observe('openchrome_tool_duration_seconds', { tool: toolName }, durationSec);
+        metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'success' }));
+        metrics.observe('openchrome_tool_duration_seconds', withTenantLabel({ tool: toolName }), durationSec);
       } catch {
         // Best-effort metrics
       }
@@ -1003,8 +1003,8 @@ export class MCPServer {
       try {
         const metrics = getMetricsCollector();
         const durationSec = (Date.now() - toolStartTime) / 1000;
-        metrics.inc('openchrome_tool_calls_total', { tool: toolName, status: 'error' });
-        metrics.observe('openchrome_tool_duration_seconds', { tool: toolName }, durationSec);
+        metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'error' }));
+        metrics.observe('openchrome_tool_duration_seconds', withTenantLabel({ tool: toolName }), durationSec);
       } catch {
         // Best-effort metrics
       }
