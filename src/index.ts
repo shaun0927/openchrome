@@ -26,6 +26,7 @@ import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';
 import { getBrowserStateManager } from './browser-state';
+import { installUnhandledRejectionSafetyNet } from './utils/safe-listener';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -43,10 +44,9 @@ import {
   DEFAULT_CHROME_MEMORY_CRITICAL_BYTES,
 } from './config/defaults';
 
-// Prevent silent crashes from unhandled promise rejections in background tasks
-process.on('unhandledRejection', (reason) => {
-  console.error('[openchrome] Unhandled promise rejection:', reason);
-});
+// Prevent silent crashes from unhandled promise rejections in background tasks.
+// Counted via openchrome_unhandled_rejections_total (see safe-listener.ts).
+installUnhandledRejectionSafetyNet();
 
 process.on('uncaughtException', (error) => {
   console.error('[openchrome] Uncaught exception:', error);
