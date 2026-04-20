@@ -77,4 +77,44 @@ describe('redactArgs', () => {
     const out = redactArgs('no_such_tool', { Authorization: 'Bearer xyz' }, cfg);
     expect(out.redacted.Authorization).toBe(REDACTED);
   });
+
+  test('heuristic redacts {name, value} form-field shape without per-tool rule', () => {
+    // Reproduces the missing-config fallback scenario: even when no per-tool
+    // rule exists for the form payload, the {name: "password", value: "..."}
+    // shape must not leak.
+    const out = redactArgs(
+      'no_rule_tool',
+      {
+        fields: [
+          { name: 'email', value: 'a@b.c' },
+          { name: 'password', value: 'hunter2' },
+          { name: 'apiKey', value: 'k-123' },
+        ],
+      },
+      BUILTIN_REDACTION_CONFIG,
+    );
+    const fields = out.redacted.fields as Array<{ name: string; value: string }>;
+    expect(fields[0].value).toBe('a@b.c');
+    expect(fields[1].value).toBe(REDACTED);
+    expect(fields[2].value).toBe(REDACTED);
+  });
+
+  test('truncate enforces byte cap, not character count, on multi-byte input', () => {
+    // Each Korean char encodes to 3 UTF-8 bytes. With maxBytes=16, a 10-char
+    // string would be 30 bytes; truncation must cap by bytes (≤16), not by
+    // string length, and must not split a multi-byte code point.
+    const args = { code: '한글한글한글한글한글' };
+    const out = redactArgs('javascript_tool', args, cfg);
+    const code = out.redacted.code as { preview: string; hash: string; truncated: boolean };
+    expect(code.truncated).toBe(true);
+    expect(Buffer.byteLength(code.preview, 'utf8')).toBeLessThanOrEqual(16);
+    // No replacement chars from a split multi-byte sequence.
+    expect(code.preview).not.toContain('\uFFFD');
+  });
+
+  test('argsHash is canonical (insertion-order independent)', () => {
+    const a = redactArgs('any', { a: 1, b: 2, nested: { x: 1, y: 2 } }, cfg);
+    const b = redactArgs('any', { nested: { y: 2, x: 1 }, b: 2, a: 1 }, cfg);
+    expect(a.argsHash).toBe(b.argsHash);
+  });
 });

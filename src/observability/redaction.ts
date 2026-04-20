@@ -20,7 +20,7 @@ export interface RedactionRule {
   /** Dot-path into args; `[*]` matches any array index. */
   path: string;
   mode: RedactionMode;
-  /** For `truncate`: keep first N bytes of the serialised value. */
+  /** For `truncate`: keep first N UTF-8 bytes of the serialised value. */
   maxBytes?: number;
 }
 
@@ -93,6 +93,37 @@ function stringify(value: unknown): string {
   try { return JSON.stringify(value) ?? ''; } catch { return ''; }
 }
 
+/**
+ * Stable JSON stringification with sorted object keys, so that equivalent
+ * payloads produced by different callers hash identically. Arrays preserve
+ * order. Cycles are not expected in audit args.
+ */
+function canonicalStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return '[' + value.map(canonicalStringify).join(',') + ']';
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalStringify(obj[k])).join(',') + '}';
+}
+
+/**
+ * Truncate a UTF-8 string to at most `maxBytes` bytes without splitting a
+ * multi-byte code point. JS string `.length` and `.slice()` count UTF-16 code
+ * units, which can underestimate byte size for non-ASCII payloads.
+ */
+function truncateUtf8(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  let bytes = 0;
+  let out = '';
+  for (const ch of text) {
+    const chBytes = Buffer.byteLength(ch, 'utf8');
+    if (bytes + chBytes > maxBytes) break;
+    out += ch;
+    bytes += chBytes;
+  }
+  return out;
+}
+
 function isSensitiveName(name: string, sensitiveNames: string[]): boolean {
   const lower = name.toLowerCase();
   return sensitiveNames.some((s) => lower.includes(s));
@@ -107,8 +138,8 @@ function applyMode(value: unknown, mode: RedactionMode, opts: { maxBytes?: numbe
     case 'truncate': {
       const text = stringify(value);
       const max = opts.maxBytes ?? DEFAULT_TRUNCATE_MAX_BYTES;
-      if (text.length <= max) return text;
-      return { preview: text.slice(0, max), hash: sha256(text), truncated: true };
+      if (Buffer.byteLength(text, 'utf8') <= max) return text;
+      return { preview: truncateUtf8(text, max), hash: sha256(text), truncated: true };
     }
     case 'redactIfSensitiveName': {
       // Check the containing field name first (for rules like {path: 'password'})
@@ -195,9 +226,20 @@ function walkAndRedactByName(value: unknown, cfg: RedactionConfig): unknown {
     return value.map((v) => walkAndRedactByName(v, cfg));
   }
   if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    // Detect `{name, value}` form-field shape: when `name` is a sensitive
+    // identifier, treat the sibling `value` as a secret. This catches form
+    // payloads even when no per-tool rule is configured (e.g. when the config
+    // file is missing and we fall back to the built-in policy).
+    const looksLikeFormField =
+      typeof obj.name === 'string' &&
+      'value' in obj &&
+      isSensitiveName(obj.name as string, cfg.defaultSensitiveFieldNames);
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    for (const [k, v] of Object.entries(obj)) {
       if (isSensitiveName(k, cfg.defaultSensitiveFieldNames)) {
+        out[k] = REDACTED;
+      } else if (looksLikeFormField && k === 'value') {
         out[k] = REDACTED;
       } else {
         out[k] = walkAndRedactByName(v, cfg);
@@ -230,6 +272,8 @@ export function redactArgs(
     applyRuleAt(clone as Record<string, unknown>, segments, rule, cfg);
   }
   const afterHeuristic = walkAndRedactByName(clone, cfg) as Record<string, unknown>;
-  const argsHash = sha256(stringify(args));
+  // Hash the canonicalised original args so equivalent payloads with different
+  // key insertion order produce the same hash (stable integrity / dedup).
+  const argsHash = sha256(canonicalStringify(args));
   return { redacted: afterHeuristic, argsHash };
 }
