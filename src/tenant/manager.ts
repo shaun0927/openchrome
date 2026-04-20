@@ -42,6 +42,10 @@ export interface TenantManagerDeps {
 
 export class TenantManager {
   private readonly tenants = new Map<TenantId, TenantContext>();
+  // In-flight creations keyed by tenant id. Concurrent getOrCreate calls for
+  // the same tenant share a single promise so only one BrowserContext is
+  // created, and the cap accounting below counts pending slots as occupied.
+  private readonly pending = new Map<TenantId, Promise<TenantContext>>();
   private readonly createContext: BrowserContextFactory;
   private readonly closeContext: BrowserContextCloser;
   private readonly now: () => number;
@@ -67,22 +71,34 @@ export class TenantManager {
       existing.lastActivityAt = this.now();
       return existing;
     }
-    if (this.tenants.size >= this.maxTenants) {
+    const inFlight = this.pending.get(id);
+    if (inFlight) {
+      return inFlight;
+    }
+    if (this.tenants.size + this.pending.size >= this.maxTenants) {
       throw new Error(
-        `TenantManager: max tenants reached (${this.maxTenants}). Active: ${this.tenants.size}`,
+        `TenantManager: max tenants reached (${this.maxTenants}). Active: ${this.tenants.size}, pending: ${this.pending.size}`,
       );
     }
-    const browserContext = await this.createContext();
-    const ts = this.now();
-    const entry: TenantContext = {
-      id,
-      browserContext,
-      createdAt: ts,
-      lastActivityAt: ts,
-    };
-    this.tenants.set(id, entry);
-    this.totalCreated++;
-    return entry;
+    const creation = (async () => {
+      try {
+        const browserContext = await this.createContext();
+        const ts = this.now();
+        const entry: TenantContext = {
+          id,
+          browserContext,
+          createdAt: ts,
+          lastActivityAt: ts,
+        };
+        this.tenants.set(id, entry);
+        this.totalCreated++;
+        return entry;
+      } finally {
+        this.pending.delete(id);
+      }
+    })();
+    this.pending.set(id, creation);
+    return creation;
   }
 
   /** Mark a tenant as recently used without creating it. No-op if missing. */

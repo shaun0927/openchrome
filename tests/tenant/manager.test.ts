@@ -172,4 +172,62 @@ describe('TenantManager', () => {
     expect(mgr.has('alpha')).toBe(false);
     errorSpy.mockRestore();
   });
+
+  it('deduplicates concurrent getOrCreate for the same tenant', async () => {
+    let n = 0;
+    const factory = jest.fn(async () => {
+      n++;
+      await new Promise((r) => setImmediate(r));
+      return makeStubContext(`ctx-${n}`);
+    });
+    const mgr = new TenantManager({ createContext: factory });
+    const [a, b, c] = await Promise.all([
+      mgr.getOrCreate('alpha'),
+      mgr.getOrCreate('alpha'),
+      mgr.getOrCreate('alpha'),
+    ]);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+    expect(mgr.stats().active).toBe(1);
+    expect(mgr.stats().totalCreated).toBe(1);
+  });
+
+  it('enforces maxTenants atomically under concurrent creates', async () => {
+    const factory = jest.fn(async () => {
+      await new Promise((r) => setImmediate(r));
+      return makeStubContext('c');
+    });
+    const mgr = new TenantManager({
+      createContext: factory,
+      config: { maxTenants: 2 },
+    });
+    const results = await Promise.allSettled([
+      mgr.getOrCreate('a'),
+      mgr.getOrCreate('b'),
+      mgr.getOrCreate('c'),
+    ]);
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      message: expect.stringMatching(/max tenants reached/i),
+    });
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(mgr.stats().active).toBe(2);
+  });
+
+  it('clears in-flight entry on createContext failure so retries can succeed', async () => {
+    let calls = 0;
+    const factory = jest.fn(async () => {
+      calls++;
+      if (calls === 1) throw new Error('boom');
+      return makeStubContext('ok');
+    });
+    const mgr = new TenantManager({ createContext: factory });
+    await expect(mgr.getOrCreate('alpha')).rejects.toThrow('boom');
+    const entry = await mgr.getOrCreate('alpha');
+    expect(entry.id).toBe('alpha');
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(mgr.stats().active).toBe(1);
+  });
 });
