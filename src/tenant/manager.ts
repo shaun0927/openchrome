@@ -231,6 +231,12 @@ export class TenantManager {
       const entry = this.tenants.get(id);
       if (!entry) continue;
       if (entry.lastActivityAt > cutoff) continue;
+      // SAFETY: no `await` between the `lastActivityAt` check above and the
+      // synchronous `this.tenants.delete(id)` inside `release()` (which runs
+      // before release's first await). Node's single-threaded event loop
+      // guarantees no concurrent `touch` can interleave in that gap. If a
+      // future refactor adds an await here, move the activity check inside
+      // release() (atomic with the delete) to preserve the invariant.
       const removed = await this.release(id);
       if (removed) {
         this.idleEvictions++;

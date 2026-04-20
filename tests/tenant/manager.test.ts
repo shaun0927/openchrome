@@ -285,13 +285,17 @@ describe('TenantManager', () => {
   });
 
   it('rejects getOrCreate while closeAll is in progress', async () => {
-    const ctx = makeStubContext('a');
+    const alphaCtx = makeStubContext('a');
+    let stall = true;
     let releaseCreate: (() => void) | null = null;
     const factory = jest.fn(async () => {
-      await new Promise<void>((r) => {
-        releaseCreate = r;
-      });
-      return ctx;
+      if (stall) {
+        await new Promise<void>((r) => {
+          releaseCreate = r;
+        });
+        return alphaCtx;
+      }
+      return makeStubContext('fresh');
     });
     const mgr = new TenantManager({ createContext: factory });
     const creating = mgr.getOrCreate('alpha');
@@ -302,11 +306,11 @@ describe('TenantManager', () => {
     (releaseCreate as unknown as () => void)();
     await creating;
     await closing;
-    // After closeAll finishes, the manager is reusable
-    const fresh = makeStubContext('fresh');
-    const mgr2 = new TenantManager({ createContext: async () => fresh });
-    await mgr2.closeAll();
-    await expect(mgr2.getOrCreate('gamma')).resolves.toBeDefined();
+    // Same manager must be reusable after the drain — proves the guard is
+    // released (not permanently sticky).
+    stall = false;
+    const entry = await mgr.getOrCreate('gamma');
+    expect(entry.id).toBe('gamma');
   });
 
   it('does not leak pending when createContext throws synchronously', async () => {
@@ -329,31 +333,37 @@ describe('TenantManager', () => {
   });
 
   it('closeAll is single-flight so concurrent callers share one drain', async () => {
-    const ctx = makeStubContext('a');
+    const alphaCtx = makeStubContext('a');
+    let stall = true;
     let releaseCreate: (() => void) | null = null;
     const factory = jest.fn(async () => {
-      await new Promise<void>((r) => {
-        releaseCreate = r;
-      });
-      return ctx;
+      if (stall) {
+        await new Promise<void>((r) => {
+          releaseCreate = r;
+        });
+        return alphaCtx;
+      }
+      return makeStubContext('fresh');
     });
     const mgr = new TenantManager({ createContext: factory });
     const creating = mgr.getOrCreate('alpha');
     const closeA = mgr.closeAll();
     const closeB = mgr.closeAll();
-    // Both closes share the same underlying promise.
+    // Both closes share the same underlying promise — proves single-flight.
     expect(closeA).toBe(closeB);
     // getOrCreate must reject throughout the full drain, even after
-    // closeA's finally would have fired on a bool flag.
+    // closeA's finally would have fired on the old bool flag.
     await Promise.resolve();
     await expect(mgr.getOrCreate('beta')).rejects.toThrow(/closeAll in progress/);
     (releaseCreate as unknown as () => void)();
     await creating;
     await closeA;
-    // After close resolves, the manager is reusable.
-    const fresh = makeStubContext('fresh');
-    const mgr2 = new TenantManager({ createContext: async () => fresh });
-    await expect(mgr2.getOrCreate('gamma')).resolves.toBeDefined();
+    // Same manager is reusable after the drain completes — proves the
+    // closingPromise is cleared (not left permanently truthy).
+    stall = false;
+    const entry = await mgr.getOrCreate('gamma');
+    expect(entry.id).toBe('gamma');
+    expect(mgr.stats().active).toBe(1);
   });
 
   it('sweepIdle re-checks activity before eviction', async () => {
