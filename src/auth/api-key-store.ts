@@ -197,8 +197,24 @@ export class ApiKeyStore {
     const fd = await fs.promises.open(this.storePath, 'r');
     try {
       const buf = Buffer.allocUnsafe(toRead);
-      await fd.read(buf, 0, toRead, this.lastReadSize);
-      const text = buf.toString('utf8');
+      // fd.read can return fewer bytes than requested if the file was
+      // truncated/replaced between stat() and read(). Only decode the
+      // prefix that was actually filled — the tail of `allocUnsafe` is
+      // uninitialized memory and must never be interpreted as content
+      // (Codex P1 on a7e216b).
+      const { bytesRead } = await fd.read(buf, 0, toRead, this.lastReadSize);
+      if (bytesRead <= 0) return;
+      if (bytesRead < toRead) {
+        // Short read: the file was truncated or replaced between our stat()
+        // and read(). Cached state may no longer reflect disk, so drop it;
+        // the next syncFromDisk will re-replay from offset 0 (or via the
+        // inode-change branch if the file was rotated).
+        this.index.clear();
+        this.lastReadSize = 0;
+        this.lastReadIno = 0;
+        return;
+      }
+      const text = buf.subarray(0, bytesRead).toString('utf8');
       const lastNewline = text.lastIndexOf('\n');
       if (lastNewline < 0) return;
       const complete = text.slice(0, lastNewline + 1);
