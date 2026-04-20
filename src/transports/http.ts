@@ -29,6 +29,45 @@ const MAX_BODY_BYTES = 10 * 1024 * 1024;
 /** SSE keepalive ping interval in milliseconds */
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 
+// ─── Request/socket timeouts (Slowloris defense) ─────────────────────────
+// Node's http.Server has two of these built-in (requestTimeout,
+// headersTimeout, keepAliveTimeout) but their defaults vary across Node
+// versions and platforms. Explicit values make behavior deterministic.
+// All values in milliseconds; override via OPENCHROME_HTTP_* env vars.
+
+/** Max wall time between accepting the connection and finishing the request. */
+const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 30_000;
+/** Max time to receive the full request headers. */
+const DEFAULT_HTTP_HEADERS_TIMEOUT_MS = 10_000;
+/** Idle timeout between keep-alive requests on the same connection. */
+const DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS = 5_000;
+/** Per-socket idle timeout (triggers automatic socket destroy). */
+const DEFAULT_HTTP_SOCKET_TIMEOUT_MS = 60_000;
+/** Max time to receive the full request body after headers. */
+const DEFAULT_HTTP_BODY_TIMEOUT_MS = 15_000;
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+const HTTP_REQUEST_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_REQUEST_TIMEOUT_MS',  DEFAULT_HTTP_REQUEST_TIMEOUT_MS);
+const HTTP_HEADERS_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_HEADERS_TIMEOUT_MS',  DEFAULT_HTTP_HEADERS_TIMEOUT_MS);
+const HTTP_KEEPALIVE_TIMEOUT_MS = envInt('OPENCHROME_HTTP_KEEPALIVE_TIMEOUT_MS', DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS);
+const HTTP_SOCKET_TIMEOUT_MS   = envInt('OPENCHROME_HTTP_SOCKET_TIMEOUT_MS',   DEFAULT_HTTP_SOCKET_TIMEOUT_MS);
+const HTTP_BODY_TIMEOUT_MS     = envInt('OPENCHROME_HTTP_BODY_TIMEOUT_MS',     DEFAULT_HTTP_BODY_TIMEOUT_MS);
+
+/** Exported for tests to assert current effective values. */
+export const HTTP_TIMEOUTS = Object.freeze({
+  requestTimeoutMs:   HTTP_REQUEST_TIMEOUT_MS,
+  headersTimeoutMs:   HTTP_HEADERS_TIMEOUT_MS,
+  keepAliveTimeoutMs: HTTP_KEEPALIVE_TIMEOUT_MS,
+  socketTimeoutMs:    HTTP_SOCKET_TIMEOUT_MS,
+  bodyTimeoutMs:      HTTP_BODY_TIMEOUT_MS,
+});
+
 /** Active SSE connections for server-initiated notifications */
 interface SSEConnection {
   res: http.ServerResponse;
@@ -93,10 +132,33 @@ export class HTTPTransport implements MCPTransport {
       this.handleHTTPRequest(req, res);
     });
 
+    // Explicit timeout configuration so behavior is deterministic across
+    // Node versions. These bound the wall time of a single request and
+    // prevent Slowloris-style resource exhaustion.
+    this.server.requestTimeout   = HTTP_REQUEST_TIMEOUT_MS;
+    this.server.headersTimeout   = HTTP_HEADERS_TIMEOUT_MS;
+    this.server.keepAliveTimeout = HTTP_KEEPALIVE_TIMEOUT_MS;
+
+    // Per-socket idle timeout. socket.setTimeout() only emits a 'timeout'
+    // event — the socket is NOT destroyed automatically, so we destroy it
+    // here. Closing the socket propagates to `req` as an 'error' or 'close'
+    // event and unblocks any pending body-read loop.
+    this.server.on('connection', (socket) => {
+      socket.setTimeout(HTTP_SOCKET_TIMEOUT_MS);
+      socket.on('timeout', () => {
+        socket.destroy();
+      });
+    });
+
     this.server.listen(this.port, this.host, () => {
       console.error(`[HTTPTransport] Listening on ${this.host}:${this.port}`);
       console.error(`[HTTPTransport] MCP endpoint: http://${this.host}:${this.port}/mcp`);
       console.error(`[HTTPTransport] SSE endpoint: http://${this.host}:${this.port}/mcp/sse`);
+      console.error(
+        `[HTTPTransport] Timeouts: request=${HTTP_REQUEST_TIMEOUT_MS}ms ` +
+        `headers=${HTTP_HEADERS_TIMEOUT_MS}ms body=${HTTP_BODY_TIMEOUT_MS}ms ` +
+        `socket=${HTTP_SOCKET_TIMEOUT_MS}ms keepalive=${HTTP_KEEPALIVE_TIMEOUT_MS}ms`,
+      );
     });
 
     this.server.on('error', (err) => {
@@ -398,16 +460,67 @@ export class HTTPTransport implements MCPTransport {
 
     const chunks: Buffer[] = [];
     let bodyBytes = 0;
+    let finished = false;
+
+    // Body receive deadline — independent of per-request timeout so it
+    // catches slow-body (Slowloris-style) clients that stream bytes at
+    // sub-threshold rates. Unrefed so it never prevents process exit.
+    // HTTP_BODY_TIMEOUT_MS === 0 disables the deadline (documented rollback
+    // path): skip the timer entirely, otherwise setTimeout(..., 0) would fire
+    // on the next tick and 408 every request before any bytes are read.
+    let bodyTimer: NodeJS.Timeout | null = null;
+    if (HTTP_BODY_TIMEOUT_MS > 0) {
+      bodyTimer = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        if (!res.headersSent) {
+          res.writeHead(408, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: `Request body not received within ${HTTP_BODY_TIMEOUT_MS}ms`,
+            },
+          }));
+        }
+        req.destroy();
+      }, HTTP_BODY_TIMEOUT_MS);
+      bodyTimer.unref();
+    }
+
+    const clearBodyTimer = () => {
+      if (bodyTimer !== null) clearTimeout(bodyTimer);
+    };
+
+    // If the socket closes (client disconnect, server socket timeout, etc.)
+    // we cannot send a response; just free the timer and bail out.
+    req.on('close', () => {
+      if (finished) return;
+      finished = true;
+      clearBodyTimer();
+    });
+
+    req.on('error', () => {
+      if (finished) return;
+      finished = true;
+      clearBodyTimer();
+    });
 
     req.on('data', (chunk: Buffer) => {
+      if (finished) return;
       bodyBytes += chunk.length;
       if (bodyBytes > MAX_BODY_BYTES) {
-        res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          jsonrpc: '2.0',
-          id: 0,
-          error: { code: MCPErrorCodes.INVALID_REQUEST, message: 'Request body too large' },
-        }));
+        finished = true;
+        clearBodyTimer();
+        if (!res.headersSent) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            id: 0,
+            error: { code: MCPErrorCodes.INVALID_REQUEST, message: 'Request body too large' },
+          }));
+        }
         req.destroy();
         return;
       }
@@ -415,6 +528,9 @@ export class HTTPTransport implements MCPTransport {
     });
 
     req.on('end', async () => {
+      if (finished) return;
+      finished = true;
+      clearBodyTimer();
       const body = Buffer.concat(chunks).toString('utf-8');
 
       if (!body.trim()) {
