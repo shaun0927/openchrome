@@ -55,12 +55,18 @@ export interface MCPToolDefinition {
  * Context passed to tool handlers for budget-aware execution.
  * Tools can use getRemainingBudget() to check how much time remains
  * before the tool execution timeout fires.
+ *
+ * The optional `signal` is wired by the transport layer to the underlying
+ * HTTP request lifecycle so that tool calls abort when the client disconnects
+ * (see issue #8 — B-2: Tool-call AbortSignal propagation).
  */
 export interface ToolContext {
   /** When the tool handler started executing */
   startTime: number;
   /** Total budget in milliseconds (default: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS) */
   deadlineMs: number;
+  /** AbortSignal that fires when the originating HTTP request is closed. */
+  signal?: AbortSignal;
 }
 
 /** Returns the number of milliseconds remaining before the tool deadline. */
@@ -71,6 +77,20 @@ export function getRemainingBudget(ctx: ToolContext): number {
 /** Returns true if at least `needed` ms remain before the tool deadline. */
 export function hasBudget(ctx: ToolContext, needed = 0): boolean {
   return getRemainingBudget(ctx) > needed;
+}
+
+/** True when the optional ToolContext signal has been aborted. */
+export function isAborted(ctx?: ToolContext): boolean {
+  return ctx?.signal?.aborted === true;
+}
+
+/** Throws the AbortSignal reason if the context's signal is aborted. */
+export function throwIfAborted(ctx?: ToolContext): void {
+  if (ctx?.signal?.aborted) {
+    throw ctx.signal.reason instanceof Error
+      ? ctx.signal.reason
+      : new Error(String(ctx.signal.reason ?? 'Aborted'));
+  }
 }
 
 export type ToolHandler = (
