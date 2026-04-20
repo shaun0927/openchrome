@@ -447,26 +447,32 @@ export class HTTPTransport implements MCPTransport {
     // Body receive deadline — independent of per-request timeout so it
     // catches slow-body (Slowloris-style) clients that stream bytes at
     // sub-threshold rates. Unrefed so it never prevents process exit.
-    const bodyTimer = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      if (!res.headersSent) {
-        res.writeHead(408, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          jsonrpc: '2.0',
-          id: 0,
-          error: {
-            code: MCPErrorCodes.INVALID_REQUEST,
-            message: `Request body not received within ${HTTP_BODY_TIMEOUT_MS}ms`,
-          },
-        }));
-      }
-      req.destroy();
-    }, HTTP_BODY_TIMEOUT_MS);
-    bodyTimer.unref();
+    // HTTP_BODY_TIMEOUT_MS === 0 disables the deadline (documented rollback
+    // path): skip the timer entirely, otherwise setTimeout(..., 0) would fire
+    // on the next tick and 408 every request before any bytes are read.
+    let bodyTimer: NodeJS.Timeout | null = null;
+    if (HTTP_BODY_TIMEOUT_MS > 0) {
+      bodyTimer = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        if (!res.headersSent) {
+          res.writeHead(408, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: `Request body not received within ${HTTP_BODY_TIMEOUT_MS}ms`,
+            },
+          }));
+        }
+        req.destroy();
+      }, HTTP_BODY_TIMEOUT_MS);
+      bodyTimer.unref();
+    }
 
     const clearBodyTimer = () => {
-      clearTimeout(bodyTimer);
+      if (bodyTimer !== null) clearTimeout(bodyTimer);
     };
 
     // If the socket closes (client disconnect, server socket timeout, etc.)
