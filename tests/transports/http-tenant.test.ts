@@ -189,6 +189,40 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
     expect(transport.getTenantForMcpSession(mcpSession)).toBeUndefined();
   });
 
+  it('rejects initialize that carries a client-supplied Mcp-Session-Id (no tenant bypass)', async () => {
+    // Regression for the Codex P1: previously, `initialize` with a
+    // pre-supplied Mcp-Session-Id would skip `sessionTenants.set(...)`,
+    // leaving the id unbound. A subsequent request could then present a
+    // different X-Tenant-Id because the mismatch guard only fires when
+    // a binding already exists. The transport now rejects such requests.
+    await boot();
+    const res = await mcpPost(
+      { 'X-Tenant-Id': 'acme', 'Mcp-Session-Id': 'client-chosen-id' },
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    );
+    expect(res.status).toBe(400);
+    const err = JSON.parse(res.body);
+    expect(err.error.data.reason).toBe('unexpected_on_initialize');
+    expect(err.error.data.field).toBe('Mcp-Session-Id');
+    // And the client-chosen id must not have become a live binding.
+    expect(transport.getTenantForMcpSession('client-chosen-id')).toBeUndefined();
+  });
+
+  it('rejects batch containing initialize with client-supplied Mcp-Session-Id', async () => {
+    await boot();
+    const res = await mcpPost(
+      { 'X-Tenant-Id': 'acme', 'Mcp-Session-Id': 'client-chosen-id' },
+      [
+        { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+        { jsonrpc: '2.0', id: 2, method: 'ping' },
+      ],
+    );
+    expect(res.status).toBe(400);
+    const err = JSON.parse(res.body);
+    expect(err.error.data.reason).toBe('unexpected_on_initialize');
+    expect(transport.getTenantForMcpSession('client-chosen-id')).toBeUndefined();
+  });
+
   it('advertises X-Tenant-Id in CORS Allow-Headers', async () => {
     await boot();
     const res = await request('/mcp', 'OPTIONS', {

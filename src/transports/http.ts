@@ -531,6 +531,24 @@ export class HTTPTransport implements MCPTransport {
 
       // Handle JSON-RPC batch (array of requests)
       if (Array.isArray(parsed)) {
+        // Same guard as the single-message path: forbid client-supplied
+        // Mcp-Session-Id when the batch contains an `initialize`. (#7 security)
+        if (sessionId && parsed.some(
+          (m) => typeof m === 'object' && m !== null
+            && (m as Record<string, unknown>).method === 'initialize',
+        )) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: 'Mcp-Session-Id must not be supplied on initialize',
+              data: { field: 'Mcp-Session-Id', reason: 'unexpected_on_initialize' },
+            },
+          }));
+          return;
+        }
         const results = await this.processBatch(parsed, sessionId, tenantId);
         // Filter out null results (notifications don't produce responses)
         const responses = results.filter((r): r is MCPResponse => r !== null);
@@ -555,6 +573,24 @@ export class HTTPTransport implements MCPTransport {
 
       // Single request/notification
       const msg = parsed as Record<string, unknown>;
+
+      // Per MCP spec the server assigns Mcp-Session-Id on initialize.
+      // A client-supplied session id on initialize would skip the
+      // `sessionTenants` binding below (and thus the tenant_mismatch guard),
+      // so reject those requests up front. (#7 security)
+      if (msg.method === 'initialize' && sessionId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id: (msg.id as string | number) ?? 0,
+          error: {
+            code: MCPErrorCodes.INVALID_REQUEST,
+            message: 'Mcp-Session-Id must not be supplied on initialize',
+            data: { field: 'Mcp-Session-Id', reason: 'unexpected_on_initialize' },
+          },
+        }));
+        return;
+      }
 
       // Check if this is an initialize request — assign session ID
       if (msg.method === 'initialize' && !sessionId) {
