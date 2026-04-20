@@ -44,8 +44,11 @@ function timingSafeStringEqual(a: string, b: string): boolean {
 }
 
 function computeKeyIdFromPlaintext(plaintext: string): string {
-  // Mirrors the derivation in ApiKeyStore so audit logs on failure can
-  // reference the same opaque id the store would have assigned.
+  // Mirrors the derivation in ApiKeyStore.base62Encode exactly — including
+  // the fixed-length left-padding — so audit logs on failure reference the
+  // same opaque id the store would have assigned. Without the pad, digests
+  // starting with zero bytes produced a shorter bigint string and a keyId
+  // that disagreed with the stored record, breaking correlation.
   const digest = crypto.createHash('sha256').update(plaintext).digest();
   const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
   let num = 0n;
@@ -54,6 +57,10 @@ function computeKeyIdFromPlaintext(plaintext: string): string {
   while (num > 0n) {
     out = ALPHABET[Number(num % 62n)] + out;
     num = num / 62n;
+  }
+  const targetLen = Math.ceil((digest.length * Math.log(256)) / Math.log(62));
+  if (out.length < targetLen) {
+    out = ALPHABET[0].repeat(targetLen - out.length) + out;
   }
   return 'k_' + out.slice(0, 10);
 }

@@ -671,12 +671,17 @@ export class MCPServer {
     }
 
     // Rate limit check — reject before doing any work.
-    // Key by tenantId when a principal is present so all sessions from the
-    // same tenant share one bucket; fall back to sessionId for stdio callers.
+    // Only switch to tenant-scoped keying in real api-key mode; disabled and
+    // legacy modes synthesize a fixed principal ('anonymous' / 'legacy'), so
+    // keying by their tenantId would collapse every HTTP session into one
+    // bucket and let one noisy client throttle unrelated sessions. Fall back
+    // to per-session keying for stdio callers (no principal) and for the
+    // synthetic disabled/legacy principals.
     if (this.rateLimiter) {
-      const rateLimitKey = principal
-        ? SessionRateLimiter.tenantKey(principal.tenantId)
-        : sessionId;
+      const rateLimitKey =
+        principal && principal.mode === 'api-key'
+          ? SessionRateLimiter.tenantKey(principal.tenantId)
+          : sessionId;
       const rateResult = this.rateLimiter.check(rateLimitKey);
       if (!rateResult.allowed) {
         console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);

@@ -107,6 +107,25 @@ describe('api-key mode', () => {
     expect(result.keyId).toMatch(/^k_/);
   }, 20000);
 
+  it('successful auth produces the same keyId as the store (base62 padding parity)', async () => {
+    // Regression guard for Codex P2: middleware's computeKeyIdFromPlaintext
+    // omitted the base62 left-pad used by ApiKeyStore. Any drift re-surfaces
+    // as the middleware's attempt-keyId disagreeing with record.keyId.
+    const samples = 12;
+    for (let i = 0; i < samples; i++) {
+      const { plaintext, record } = await store.create({
+        tenantId: `t-${i}`,
+        scopes: ['read'],
+        description: '',
+      });
+      const req = makeReq({ authorization: `Bearer ${plaintext}` });
+      const result = await authenticate(req, mode);
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(result.principal.keyId).toBe(record.keyId);
+    }
+  }, 60000);
+
   it('revoked key returns 401', async () => {
     const { plaintext, record } = await store.create({
       tenantId: 't1',
