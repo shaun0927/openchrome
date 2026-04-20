@@ -165,9 +165,13 @@ async function checkDebugPort(
   port: number,
   timeoutMs: number = DEBUG_PORT_MAX_HTTP_TIMEOUT_MS,
 ): Promise<string | null> {
-  const clampedTimeout = Math.max(
-    DEBUG_PORT_MIN_HTTP_TIMEOUT_MS,
-    Math.min(timeoutMs, DEBUG_PORT_MAX_HTTP_TIMEOUT_MS),
+  // Clamp to [1, MAX]. A lower bound of 1ms (not the old 100ms floor) lets
+  // waitForDebugPort use the last sliver of its remaining budget — localhost
+  // probes often complete in well under 10ms, so short windows can still
+  // succeed instead of being thrown away.
+  const clampedTimeout = Math.min(
+    Math.max(1, timeoutMs),
+    DEBUG_PORT_MAX_HTTP_TIMEOUT_MS,
   );
   return new Promise((resolve) => {
     const req = http.request(
@@ -243,11 +247,10 @@ export async function waitForDebugPort(
       );
     }
 
-    // Skip probing if we don't even have time for the minimum HTTP attempt
-    if (remaining < DEBUG_PORT_MIN_HTTP_TIMEOUT_MS) {
-      throw new DebugPortTimeoutError(port, timeout, attempts);
-    }
-
+    // Always probe with whatever budget remains. Dropping the old
+    // `remaining < MIN_HTTP_TIMEOUT` short-circuit lets launches that become
+    // ready in the last moments of the timeout window actually succeed, and
+    // lets callers pass sub-100ms timeouts without deterministic failure.
     attempts += 1;
     const probeTimeout = Math.min(remaining, DEBUG_PORT_MAX_HTTP_TIMEOUT_MS);
     const wsEndpoint = await checkDebugPort(port, probeTimeout);

@@ -101,6 +101,74 @@ describe('waitForDebugPort monotonic deadline', () => {
     }
   }, 10_000);
 
+  it('succeeds with sub-100ms timeout when port is already serving', async () => {
+    // Regression: the previous implementation floored the HTTP probe timeout
+    // at 100ms and threw DebugPortTimeoutError whenever the remaining budget
+    // fell below 100ms, so callers passing timeout < 100ms failed
+    // deterministically even though localhost probes usually complete in
+    // under 10ms. See Codex review on PR #11.
+    const server = http.createServer((req, res) => {
+      if (req.url === '/json/version') {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:0/devtools/browser/tiny' }));
+      } else {
+        res.statusCode = 404;
+        res.end();
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      const ws = await waitForDebugPort(port, 75);
+      expect(ws).toBe('ws://127.0.0.1:0/devtools/browser/tiny');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 10_000);
+
+  it('catches a port that starts serving in the last sliver of the deadline', async () => {
+    // Regression: without the short-circuit guard, waitForDebugPort must still
+    // probe when only tens of milliseconds remain, so Chrome instances that
+    // come online near the deadline are not falsely timed out. See Codex
+    // review on PR #11.
+    let server: http.Server | null = null;
+
+    // Port will start answering after ~250ms. With the default backoff
+    // schedule (200ms initial) a 400ms timeout leaves ~150ms for a final
+    // probe that must succeed.
+    const startDelayMs = 250;
+    // Reserve a port first, then close-and-reopen so we can control when it
+    // actually begins answering.
+    const reserver = http.createServer();
+    await new Promise<void>((resolve) => reserver.listen(0, '127.0.0.1', resolve));
+    const port = (reserver.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => reserver.close(() => resolve()));
+
+    const startServerTimer = setTimeout(() => {
+      server = http.createServer((req, res) => {
+        if (req.url === '/json/version') {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:0/devtools/browser/late' }));
+        } else {
+          res.statusCode = 404;
+          res.end();
+        }
+      });
+      server.listen(port, '127.0.0.1');
+    }, startDelayMs);
+
+    try {
+      const ws = await waitForDebugPort(port, 2000);
+      expect(ws).toBe('ws://127.0.0.1:0/devtools/browser/late');
+    } finally {
+      clearTimeout(startServerTimer);
+      if (server) {
+        await new Promise<void>((resolve) => server!.close(() => resolve()));
+      }
+    }
+  }, 15_000);
+
   it('fast-fails with a non-DebugPortTimeoutError when chromeProcess has exited', async () => {
     const fakeProcess = {
       exitCode: 1,
