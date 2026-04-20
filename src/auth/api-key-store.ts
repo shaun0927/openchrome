@@ -167,54 +167,83 @@ export class ApiKeyStore {
     }
   }
 
-  // Incrementally replay appended JSONL lines since the last sync. Callers
-  // that rely on fresh state (verify, list, revoke, rotate, touchLastUsed)
-  // invoke this before reading the index so peer-process writes become
-  // visible without a restart. Read-only: safe to call without holding the
-  // write lock. Torn-appends are tolerated by consuming only up to the last
-  // newline; a partial trailing record is deferred to the next sync.
+  // The actual stat+read body. Never touches `pendingSync` — callers own
+  // the coalescing decision. Tolerates torn peer appends by consuming only
+  // up to the last newline; a partial trailing record is deferred.
+  private async doSyncFromDisk(): Promise<void> {
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.stat(this.storePath);
+    } catch {
+      // File is gone: drop cached state so we don't keep answering for
+      // keys that no longer exist on disk.
+      this.index.clear();
+      this.lastReadSize = 0;
+      this.lastReadIno = 0;
+      return;
+    }
+    // File replaced (rotated) or truncated: re-replay from scratch.
+    if (
+      (this.lastReadIno !== 0 && stat.ino !== this.lastReadIno) ||
+      stat.size < this.lastReadSize
+    ) {
+      this.index.clear();
+      this.lastReadSize = 0;
+    }
+    this.lastReadIno = stat.ino;
+    if (stat.size === this.lastReadSize) return;
+
+    const toRead = stat.size - this.lastReadSize;
+    const fd = await fs.promises.open(this.storePath, 'r');
+    try {
+      const buf = Buffer.allocUnsafe(toRead);
+      await fd.read(buf, 0, toRead, this.lastReadSize);
+      const text = buf.toString('utf8');
+      const lastNewline = text.lastIndexOf('\n');
+      if (lastNewline < 0) return;
+      const complete = text.slice(0, lastNewline + 1);
+      this.applyLines(complete);
+      this.lastReadSize += Buffer.byteLength(complete, 'utf8');
+    } finally {
+      await fd.close();
+    }
+  }
+
+  // Coalesced sync for unlocked read paths (verify, list, rotate-precheck).
+  // Concurrent callers share a single in-flight sync to avoid redundant
+  // stat+read under burst traffic. NOT safe for writers inside the cross-
+  // process lock — use syncInsideLock() there.
   private async syncFromDisk(): Promise<void> {
     if (this.pendingSync) return this.pendingSync;
     this.pendingSync = (async () => {
       try {
-        let stat: fs.Stats;
-        try {
-          stat = await fs.promises.stat(this.storePath);
-        } catch {
-          // File is gone: drop cached state so we don't keep answering for
-          // keys that no longer exist on disk.
-          this.index.clear();
-          this.lastReadSize = 0;
-          this.lastReadIno = 0;
-          return;
-        }
-        // File replaced (rotated) or truncated: re-replay from scratch.
-        if (
-          (this.lastReadIno !== 0 && stat.ino !== this.lastReadIno) ||
-          stat.size < this.lastReadSize
-        ) {
-          this.index.clear();
-          this.lastReadSize = 0;
-        }
-        this.lastReadIno = stat.ino;
-        if (stat.size === this.lastReadSize) return;
+        await this.doSyncFromDisk();
+      } finally {
+        this.pendingSync = null;
+      }
+    })();
+    return this.pendingSync;
+  }
 
-        const toRead = stat.size - this.lastReadSize;
-        const fd = await fs.promises.open(this.storePath, 'r');
-        try {
-          const buf = Buffer.allocUnsafe(toRead);
-          await fd.read(buf, 0, toRead, this.lastReadSize);
-          const text = buf.toString('utf8');
-          // Only consume complete lines. Any trailing bytes after the last
-          // newline are a torn/in-flight append from a peer — defer them.
-          const lastNewline = text.lastIndexOf('\n');
-          if (lastNewline < 0) return;
-          const complete = text.slice(0, lastNewline + 1);
-          this.applyLines(complete);
-          this.lastReadSize += Buffer.byteLength(complete, 'utf8');
-        } finally {
-          await fd.close();
-        }
+  // Writer sync: runs INSIDE the cross-process file lock. Must not reuse
+  // an in-flight `pendingSync` because that promise's `stat` may have been
+  // taken BEFORE a peer append landed — sharing it would hand the writer a
+  // stale EOF, appendRecord would then jump lastReadSize past those peer
+  // bytes, and this process would skip them forever. Instead, drain any
+  // in-flight sync (to avoid clobbering its lastReadSize mutation) and
+  // then run a guaranteed-fresh stat+read ourselves (Codex P1 on 0538a8c).
+  private async syncInsideLock(): Promise<void> {
+    while (this.pendingSync) {
+      try {
+        await this.pendingSync;
+      } catch {
+        // Broken sync: retry until the flag clears (doSyncFromDisk's own
+        // errors will re-surface when we run our own fresh sync below).
+      }
+    }
+    this.pendingSync = (async () => {
+      try {
+        await this.doSyncFromDisk();
       } finally {
         this.pendingSync = null;
       }
@@ -286,11 +315,12 @@ export class ApiKeyStore {
       description: input.description ?? '',
     };
     await this.withLock(async () => {
-      // Ingest peer appends made between our last sync and this lock
-      // acquisition BEFORE we advance the cursor via appendRecord. Otherwise
-      // appendRecord jumps lastReadSize to EOF and this process would never
-      // replay those peer records (Codex P1 on commit 64af728).
-      await this.syncFromDisk();
+      // Guaranteed-fresh sync inside the cross-process lock: MUST NOT reuse
+      // a pre-lock coalesced pendingSync whose stat may predate a peer
+      // append, which would leave this process blind to those bytes after
+      // appendRecord advances the cursor to EOF (Codex P1 on commits
+      // 64af728 + 0538a8c).
+      await this.syncInsideLock();
       await this.appendRecord(record);
       this.index.set(keyId, record);
     });
@@ -304,7 +334,7 @@ export class ApiKeyStore {
 
   async revoke(keyId: string): Promise<boolean> {
     return this.withLock(async () => {
-      await this.syncFromDisk();
+      await this.syncInsideLock();
       const existing = this.index.get(keyId);
       if (!existing) return false;
       if (existing.revokedAt) return true; // idempotent
@@ -372,7 +402,7 @@ export class ApiKeyStore {
     // advance to EOF would clobber the peer revoke in this instance's view
     // (Codex P1 on commit 64af728).
     await this.withLock(async () => {
-      await this.syncFromDisk();
+      await this.syncInsideLock();
       const current = this.index.get(keyId);
       if (!current) return;
       const merged: ApiKey = { ...current, lastUsedAt: Date.now() };
