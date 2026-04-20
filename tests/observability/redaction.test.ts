@@ -54,7 +54,7 @@ describe('redactArgs', () => {
     const out = redactArgs('javascript_tool', args, cfg);
     const code = out.redacted.code as { preview: string; hash: string; truncated: boolean };
     expect(code.truncated).toBe(true);
-    expect(code.preview.length).toBeLessThanOrEqual(16);
+    expect(Buffer.byteLength(code.preview, 'utf8')).toBeLessThanOrEqual(16);
     expect(code.hash.startsWith('sha256:')).toBe(true);
   });
 
@@ -116,5 +116,37 @@ describe('redactArgs', () => {
     const a = redactArgs('any', { a: 1, b: 2, nested: { x: 1, y: 2 } }, cfg);
     const b = redactArgs('any', { nested: { y: 2, x: 1 }, b: 2, a: 1 }, cfg);
     expect(a.argsHash).toBe(b.argsHash);
+  });
+
+  test('argsHash treats undefined fields the same as omitted fields', () => {
+    // Matches JSON.stringify default: undefined object values are dropped.
+    const a = redactArgs('any', { a: 1 }, cfg);
+    const b = redactArgs('any', { a: 1, b: undefined as unknown as never }, cfg);
+    expect(a.argsHash).toBe(b.argsHash);
+  });
+
+  test('token-aware sensitivity does not over-redact lookalike names', () => {
+    // `auth` is a sensitive token, but `author` / `authentication_method`
+    // contain `auth` only as a substring of a longer word. They must NOT
+    // be redacted, and their `value` siblings must survive intact.
+    const out = redactArgs(
+      'no_rule_tool',
+      {
+        author: 'Jane Doe',
+        authentication_method: 'oauth',
+        fields: [
+          { name: 'author', value: 'Jane Doe' },
+          { name: 'apiKey', value: 'k-123' },
+        ],
+      },
+      BUILTIN_REDACTION_CONFIG,
+    );
+    expect(out.redacted.author).toBe('Jane Doe');
+    expect(out.redacted.authentication_method).toBe('oauth');
+    const fields = out.redacted.fields as Array<{ name: string; value: string }>;
+    expect(fields[0].value).toBe('Jane Doe');
+    // apiKey tokenises to ['api','key'] which contains the multi-token
+    // sensitive entry `api_key` → must redact.
+    expect(fields[1].value).toBe(REDACTED);
   });
 });

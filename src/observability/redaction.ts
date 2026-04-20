@@ -99,10 +99,13 @@ function stringify(value: unknown): string {
  * order. Cycles are not expected in audit args.
  */
 function canonicalStringify(value: unknown): string {
+  if (value === undefined) return 'null';
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return '[' + value.map(canonicalStringify).join(',') + ']';
   const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
+  // Drop keys whose value is `undefined`, matching JSON.stringify's behaviour
+  // so that `{a:1, b:undefined}` and `{a:1}` produce the same hash.
+  const keys = Object.keys(obj).filter((k) => obj[k] !== undefined).sort();
   return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalStringify(obj[k])).join(',') + '}';
 }
 
@@ -114,19 +117,46 @@ function canonicalStringify(value: unknown): string {
 function truncateUtf8(text: string, maxBytes: number): string {
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
   let bytes = 0;
-  let out = '';
+  const chars: string[] = [];
   for (const ch of text) {
     const chBytes = Buffer.byteLength(ch, 'utf8');
     if (bytes + chBytes > maxBytes) break;
-    out += ch;
+    chars.push(ch);
     bytes += chBytes;
   }
-  return out;
+  return chars.join('');
 }
 
+/**
+ * Tokenise an identifier into lowercase word tokens. Splits on
+ * camelCase boundaries and any non-alphanumeric separator, so
+ * `apiKey`, `api_key`, `api-key` all yield `['api', 'key']`.
+ */
+function tokenize(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Token-aware sensitivity check. A sensitive entry matches when its
+ * own tokens appear as a contiguous run in the field name's tokens.
+ * This avoids false positives like `author` ⊃ `auth` or
+ * `authentication_method` ⊃ `auth` that a naive substring check
+ * would produce.
+ */
 function isSensitiveName(name: string, sensitiveNames: string[]): boolean {
-  const lower = name.toLowerCase();
-  return sensitiveNames.some((s) => lower.includes(s));
+  const tokens = tokenize(name);
+  if (tokens.length === 0) return false;
+  const joined = ' ' + tokens.join(' ') + ' ';
+  for (const sensitive of sensitiveNames) {
+    const sensTokens = tokenize(sensitive);
+    if (sensTokens.length === 0) continue;
+    if (joined.includes(' ' + sensTokens.join(' ') + ' ')) return true;
+  }
+  return false;
 }
 
 function applyMode(value: unknown, mode: RedactionMode, opts: { maxBytes?: number; sensitiveNames: string[]; name?: string; siblingName?: unknown }): unknown {
