@@ -98,6 +98,36 @@ describe('audit-logger extended fields', () => {
     delete process.env.OPENCHROME_AUDIT_EXTENDED;
   });
 
+  test('cookie value is hashed via built-in rules when no external config is reachable', async () => {
+    const logPath = makeTmpLogPath();
+    (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;
+
+    // Point env config at a path that does not exist so loadRedactionConfig
+    // falls through to the built-in policy. cwd may or may not be the repo
+    // root under jest; either way the built-in rules must cover cookies.
+    process.env.OPENCHROME_AUDIT_REDACTION_CONFIG = path.join(
+      os.tmpdir(),
+      'oc-nonexistent-redaction-config.json',
+    );
+    const prevCwd = process.cwd();
+    const isolatedCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-cwd-'));
+    process.chdir(isolatedCwd);
+    try {
+      __resetAuditLoggerCachesForTests();
+      logAuditEntry('cookies.set', 'sess_1', { name: 'session', value: 'super-secret' });
+      await waitForFlush();
+      await new Promise((r) => setTimeout(r, 50));
+      const entry = readAll(logPath)[0];
+      const args = entry.args as Record<string, unknown>;
+      expect(typeof args.value).toBe('string');
+      expect(args.value as string).toMatch(/^sha256:/);
+      expect(args.value).not.toContain('super-secret');
+    } finally {
+      process.chdir(prevCwd);
+      delete process.env.OPENCHROME_AUDIT_REDACTION_CONFIG;
+    }
+  });
+
   test('error status marks billable=false and carries errorMessage', async () => {
     const logPath = makeTmpLogPath();
     (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;

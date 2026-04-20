@@ -89,13 +89,39 @@ function isExtendedEnabled(): boolean {
   return raw !== 'false' && raw !== '0';
 }
 
+/**
+ * Walk up from the compiled module's directory looking for a sibling
+ * `config/audit-redaction.json`. This finds the config shipped inside the
+ * installed package (e.g. `node_modules/openchrome-mcp/config/…`) regardless
+ * of whether the build layout is `dist/security/…` or `dist/src/security/…`.
+ */
+function findPackageRelativeConfig(): string | null {
+  let dir = __dirname;
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.join(dir, 'config', 'audit-redaction.json');
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // ignore and keep walking
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
 function resolveRedactionConfig(): RedactionConfig {
   if (cachedConfig) return cachedConfig;
   const customPath = process.env.OPENCHROME_AUDIT_REDACTION_CONFIG;
   const candidates = [
     customPath,
+    // Repo/dev path: works when running from the project root.
     path.resolve(process.cwd(), 'config', 'audit-redaction.json'),
-  ].filter(Boolean) as string[];
+    // Installed path: walk up from this module so `npm install`-ed consumers
+    // still pick up the shipped per-tool rules (e.g. cookie `value` hashing).
+    findPackageRelativeConfig(),
+  ].filter((p): p is string => Boolean(p));
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) {

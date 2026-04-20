@@ -34,9 +34,11 @@ export const REDACTED = '[REDACTED]';
 const DEFAULT_TRUNCATE_MAX_BYTES = 200;
 
 /**
- * Built-in minimum policy used when no config file is present. Keeps a safe
- * fallback so that audit log entries never carry raw password/token values
- * just because the operator forgot to ship the config file.
+ * Built-in minimum policy used when no config file is present. Includes
+ * per-tool rules for fields whose names (e.g. `value`, `text`, `code`) are
+ * not in the heuristic sensitive-name list but are sensitive by virtue of
+ * the containing tool — without these rules, raw cookie values or typed
+ * text would end up in the audit log in cleartext.
  */
 export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
   defaultSensitiveFieldNames: [
@@ -59,7 +61,30 @@ export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
     'ssn',
     'private_key',
   ],
-  tools: {},
+  tools: {
+    cookies: [
+      { path: 'value', mode: 'hash' },
+    ],
+    'cookies.set': [
+      { path: 'value', mode: 'hash' },
+      { path: 'cookies[*].value', mode: 'hash' },
+    ],
+    fill_form: [
+      { path: 'fields[*].value', mode: 'redactIfSensitiveName' },
+    ],
+    form_input: [
+      { path: 'value', mode: 'redactIfSensitiveName' },
+    ],
+    type: [
+      { path: 'text', mode: 'truncate', maxBytes: 200 },
+    ],
+    javascript_tool: [
+      { path: 'code', mode: 'truncate', maxBytes: 200 },
+    ],
+    storage: [
+      { path: 'value', mode: 'truncate', maxBytes: 200 },
+    ],
+  },
 };
 
 export function loadRedactionConfig(filePath: string): RedactionConfig {
@@ -69,7 +94,20 @@ export function loadRedactionConfig(filePath: string): RedactionConfig {
     const sensitive = Array.isArray(parsed.defaultSensitiveFieldNames)
       ? parsed.defaultSensitiveFieldNames.map((s) => String(s).toLowerCase())
       : BUILTIN_REDACTION_CONFIG.defaultSensitiveFieldNames;
-    const tools = (parsed.tools && typeof parsed.tools === 'object') ? parsed.tools : {};
+    // Only keep tool entries whose rules are arrays; a malformed entry
+    // (e.g. a single object) would otherwise crash `for...of` at runtime
+    // and break the tool call the audit log is meant to record.
+    const toolsIn = (parsed.tools && typeof parsed.tools === 'object')
+      ? (parsed.tools as Record<string, unknown>)
+      : {};
+    const tools: Record<string, RedactionRule[]> = {};
+    for (const [name, rules] of Object.entries(toolsIn)) {
+      if (Array.isArray(rules)) {
+        tools[name] = rules as RedactionRule[];
+      } else {
+        console.error(`[redaction] ignoring tool "${name}": rules must be an array, got ${typeof rules}`);
+      }
+    }
     return { defaultSensitiveFieldNames: sensitive, tools };
   } catch {
     return BUILTIN_REDACTION_CONFIG;
@@ -224,7 +262,11 @@ export function redactArgs(
   cfg: RedactionConfig = BUILTIN_REDACTION_CONFIG,
 ): { redacted: Record<string, unknown>; argsHash: string } {
   const clone = deepClone(args);
-  const rules = cfg.tools[toolName] || [];
+  const rawRules = cfg.tools[toolName];
+  // Defense in depth: tolerate a malformed config that somehow reached here
+  // (e.g. programmatic construction bypassing loadRedactionConfig). A bad
+  // audit config must never break the tool call itself.
+  const rules: RedactionRule[] = Array.isArray(rawRules) ? rawRules : [];
   for (const rule of rules) {
     const segments = splitPath(rule.path);
     applyRuleAt(clone as Record<string, unknown>, segments, rule, cfg);

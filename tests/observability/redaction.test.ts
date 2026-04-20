@@ -77,4 +77,22 @@ describe('redactArgs', () => {
     const out = redactArgs('no_such_tool', { Authorization: 'Bearer xyz' }, cfg);
     expect(out.redacted.Authorization).toBe(REDACTED);
   });
+
+  test('built-in config hashes cookie value even without an external config file', () => {
+    const args = { name: 'session', value: 'super-secret' };
+    const out = redactArgs('cookies.set', args, BUILTIN_REDACTION_CONFIG);
+    const v = out.redacted.value as string;
+    expect(v.startsWith('sha256:')).toBe(true);
+    expect(v).not.toContain('super-secret');
+  });
+
+  test('malformed tools entry (not an array) degrades gracefully instead of throwing', () => {
+    const badCfg: RedactionConfig = {
+      defaultSensitiveFieldNames: [...BUILTIN_REDACTION_CONFIG.defaultSensitiveFieldNames],
+      // A typo — single rule object instead of an array. Would crash a naive
+      // `for...of` without the Array.isArray guard.
+      tools: { cookies: { path: 'value', mode: 'hash' } as unknown as never },
+    };
+    expect(() => redactArgs('cookies', { value: 'x' }, badCfg)).not.toThrow();
+  });
 });
