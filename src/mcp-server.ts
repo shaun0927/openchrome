@@ -839,8 +839,12 @@ export class MCPServer {
         }
       }
 
-      // Audit log successful invocation
-      logAuditEntry(toolName, sessionId, toolArgs);
+      // Audit log successful invocation — extended fields (requestId, tenantId,
+      // status, durationMs) come from the active RequestContext + meta.
+      logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+        status: 'success',
+        durationMs: Date.now() - toolStartTime,
+      });
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
@@ -998,6 +1002,18 @@ export class MCPServer {
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, 'error', message);
       getDashboardState().recordToolEnd(callId, 'error', message);
+
+      // Audit log failed invocation — same correlation fields as success path.
+      try {
+        logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+          status: 'error',
+          durationMs: Date.now() - toolStartTime,
+          errorMessage: message,
+          billable: false,
+        });
+      } catch {
+        // best-effort audit
+      }
 
       // Record Prometheus metrics
       try {
