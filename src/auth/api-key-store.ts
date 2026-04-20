@@ -114,9 +114,16 @@ export class ApiKeyStore {
   static async open(storePath?: string): Promise<ApiKeyStore> {
     const finalPath = storePath ?? defaultStorePath();
     const dir = path.dirname(finalPath);
-    await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
-    // Tighten perms on existing dir (mkdir mode only applies on create).
-    if (process.platform !== 'win32') {
+    // mkdir returns the first path it had to create, or undefined if the
+    // directory tree already existed. Only chmod when WE created the dir —
+    // otherwise a caller passing a custom path inside a shared parent
+    // (e.g. `/tmp/api-keys.jsonl`) would have that parent's permissions
+    // silently rewritten (Codex P2 on a9e73c8).
+    const dirCreated = await fs.promises.mkdir(dir, {
+      recursive: true,
+      mode: 0o700,
+    });
+    if (dirCreated && process.platform !== 'win32') {
       try {
         await fs.promises.chmod(dir, 0o700);
       } catch {
@@ -124,13 +131,17 @@ export class ApiKeyStore {
       }
     }
 
-    // Ensure the store file exists with 0600 so proper-lockfile and appends work.
+    // Ensure the store file exists with 0600 so proper-lockfile and appends
+    // work. Only force-chmod if WE just created the file — don't mutate the
+    // mode of a pre-existing caller-owned file.
+    let fileCreated = false;
     try {
       await fs.promises.access(finalPath);
     } catch {
       await fs.promises.writeFile(finalPath, '', { mode: 0o600 });
+      fileCreated = true;
     }
-    if (process.platform !== 'win32') {
+    if (fileCreated && process.platform !== 'win32') {
       try {
         await fs.promises.chmod(finalPath, 0o600);
       } catch {
