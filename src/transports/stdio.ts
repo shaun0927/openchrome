@@ -10,9 +10,13 @@ import { MCPTransport } from './index';
 
 export class StdioTransport implements MCPTransport {
   private rl: readline.Interface | null = null;
-  private messageHandler: ((msg: Record<string, unknown>) => Promise<MCPResponse | null>) | null = null;
+  private messageHandler:
+    | ((msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>)
+    | null = null;
 
-  onMessage(handler: (msg: Record<string, unknown>) => Promise<MCPResponse | null>): void {
+  onMessage(
+    handler: (msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>,
+  ): void {
     this.messageHandler = handler;
   }
 

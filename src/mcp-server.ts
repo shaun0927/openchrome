@@ -273,7 +273,10 @@ export class MCPServer {
    * This is the single source of truth for protocol-level validation used by
    * all transports (stdio and HTTP in dual mode).
    */
-  async handleMessage(parsed: Record<string, unknown>): Promise<MCPResponse | null> {
+  async handleMessage(
+    parsed: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<MCPResponse | null> {
     // Validate JSON-RPC 2.0 envelope
     if (
       typeof parsed !== 'object' ||
@@ -304,7 +307,7 @@ export class MCPServer {
     const request = parsed as unknown as MCPRequest;
 
     try {
-      return await this.handleRequest(request);
+      return await this.handleRequest(request, signal);
     } catch (error) {
       return {
         jsonrpc: '2.0' as const,
@@ -344,7 +347,9 @@ export class MCPServer {
     }
 
     // Wire the transport message handler to MCPServer protocol logic
-    this.transport.onMessage(async (parsed: Record<string, unknown>) => this.handleMessage(parsed));
+    this.transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal) =>
+      this.handleMessage(parsed, signal),
+    );
 
     this.transport.start();
 
@@ -366,7 +371,7 @@ export class MCPServer {
   /**
    * Handle incoming MCP request
    */
-  async handleRequest(request: MCPRequest): Promise<MCPResponse> {
+  async handleRequest(request: MCPRequest, signal?: AbortSignal): Promise<MCPResponse> {
     const requestReceivedAt = Date.now();
     const { id, method, params } = request;
 
@@ -383,7 +388,7 @@ export class MCPServer {
           break;
 
         case 'tools/call':
-          result = await this.handleToolsCall(params, id);
+          result = await this.handleToolsCall(params, id, signal);
           break;
 
         case 'resources/list':
@@ -558,7 +563,11 @@ export class MCPServer {
   /**
    * Handle tools/call request
    */
-  private async handleToolsCall(params?: Record<string, unknown>, requestId?: number | string): Promise<MCPResult> {
+  private async handleToolsCall(
+    params?: Record<string, unknown>,
+    requestId?: number | string,
+    signal?: AbortSignal,
+  ): Promise<MCPResult> {
     if (!params) {
       throw new Error('Missing params for tools/call');
     }
@@ -756,6 +765,7 @@ export class MCPServer {
         const toolContext: ToolContext = {
           startTime: Date.now(),
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+          signal,
         };
         let tid: ReturnType<typeof setTimeout>;
         result = await Promise.race([

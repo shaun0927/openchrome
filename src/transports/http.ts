@@ -13,6 +13,7 @@
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
+import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport } from './index';
 import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
@@ -31,7 +32,9 @@ interface SSEConnection {
 
 export class HTTPTransport implements MCPTransport {
   private server: http.Server | null = null;
-  private messageHandler: ((msg: Record<string, unknown>) => Promise<MCPResponse | null>) | null = null;
+  private messageHandler:
+    | ((msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>)
+    | null = null;
   private port: number;
   private host: string;
   private authToken: string | undefined;
@@ -63,7 +66,9 @@ export class HTTPTransport implements MCPTransport {
     this.sessionManager = sm;
   }
 
-  onMessage(handler: (msg: Record<string, unknown>) => Promise<MCPResponse | null>): void {
+  onMessage(
+    handler: (msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>,
+  ): void {
     this.messageHandler = handler;
   }
 
@@ -378,9 +383,42 @@ export class HTTPTransport implements MCPTransport {
 
   /**
    * POST /mcp - handle JSON-RPC request or batch
+   *
+   * Each request is associated with an AbortController whose signal is wired
+   * through to the tool handler via ToolContext. When the HTTP client
+   * disconnects before the response is sent, the controller aborts with a
+   * ClientDisconnectError so in-flight CDP work can short-circuit (issue #8).
+   *
+   * Set OPENCHROME_ABORT_ON_DISCONNECT=false to disable the disconnect signal
+   * (preserves the legacy "run-to-completion" behaviour).
    */
   private handlePost(req: http.IncomingMessage, res: http.ServerResponse): void {
     const acceptSSE = (req.headers['accept'] || '').includes('text/event-stream');
+
+    const abortOnDisconnect = process.env.OPENCHROME_ABORT_ON_DISCONNECT !== 'false';
+    const controller = new AbortController();
+    const signal = abortOnDisconnect ? controller.signal : undefined;
+
+    if (abortOnDisconnect) {
+      // The only Node event that reliably means "the underlying TCP connection
+      // is gone" is socket 'close'. IncomingMessage 'close' fires as part of
+      // the request stream lifecycle (after body 'end'), so it can't be used
+      // to detect mid-flight disconnect without false positives.
+      //
+      // The listener is removed once the response is fully flushed
+      // ('finish') so it does not survive a keep-alive socket and fire for a
+      // future request.
+      const sock = req.socket;
+      const onSockClose = () => {
+        if (!res.writableEnded && !controller.signal.aborted) {
+          controller.abort(new ClientDisconnectError());
+        }
+      };
+      if (sock) {
+        sock.on('close', onSockClose);
+        res.on('finish', () => sock.removeListener('close', onSockClose));
+      }
+    }
 
     const chunks: Buffer[] = [];
     let bodyBytes = 0;
@@ -444,7 +482,7 @@ export class HTTPTransport implements MCPTransport {
 
       // Handle JSON-RPC batch (array of requests)
       if (Array.isArray(parsed)) {
-        const results = await this.processBatch(parsed, sessionId);
+        const results = await this.processBatch(parsed, sessionId, signal);
         // Filter out null results (notifications don't produce responses)
         const responses = results.filter((r): r is MCPResponse => r !== null);
 
@@ -476,7 +514,7 @@ export class HTTPTransport implements MCPTransport {
       }
 
       try {
-        const response = await this.messageHandler(msg);
+        const response = await this.messageHandler(msg, signal);
 
         if (sessionId) {
           res.setHeader('Mcp-Session-Id', sessionId);
@@ -595,6 +633,7 @@ export class HTTPTransport implements MCPTransport {
   private async processBatch(
     messages: unknown[],
     sessionId: string | undefined,
+    signal?: AbortSignal,
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
 
@@ -625,7 +664,7 @@ export class HTTPTransport implements MCPTransport {
       const record = msg as Record<string, unknown>;
 
       try {
-        return await handler(record);
+        return await handler(record, signal);
       } catch (error) {
         const id = (record.id as string | number) ?? 0;
         return {

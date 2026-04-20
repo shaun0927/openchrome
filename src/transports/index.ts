@@ -15,8 +15,14 @@ export interface MCPTransport {
    * Register the handler that processes incoming parsed JSON-RPC messages.
    * The handler returns a response for requests (those with an id),
    * or null for notifications (no id).
+   *
+   * The optional `signal` is provided by transports that can detect a client
+   * disconnect (e.g. HTTP). When the signal aborts, the handler is expected
+   * to abandon long-running tool calls (see issue #8 — B-2).
    */
-  onMessage(handler: (msg: Record<string, unknown>) => Promise<MCPResponse | null>): void;
+  onMessage(
+    handler: (msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>,
+  ): void;
 
   /**
    * Send a JSON-RPC response or notification to the client.
