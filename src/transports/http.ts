@@ -20,6 +20,7 @@ import type { ApiKeyStore } from '../auth/api-key-store';
 import {
   authenticate,
   requestPrincipals,
+  PRINCIPAL_SYM,
   type AuthMode,
   type Principal,
 } from '../middleware/auth';
@@ -569,8 +570,15 @@ export class HTTPTransport implements MCPTransport {
         this.sessions.add(sessionId);
       }
 
+      // Strip any client-provided `__principal` (defense-in-depth: this field
+      // is a legacy string name; the trusted channel is the non-forgeable
+      // PRINCIPAL_SYM Symbol below, but we still scrub the string key so a
+      // malicious body cannot survive to downstream JSON serialization).
+      if ('__principal' in (msg as Record<string, unknown>)) {
+        delete (msg as Record<string, unknown>).__principal;
+      }
       if (principal) {
-        (msg as Record<string, unknown>).__principal = principal;
+        (msg as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
       }
 
       try {
@@ -722,8 +730,13 @@ export class HTTPTransport implements MCPTransport {
       }
 
       const record = msg as Record<string, unknown>;
+      // Same defense-in-depth as the single-message path: scrub any
+      // client-provided `__principal` and attach the trusted one via Symbol.
+      if ('__principal' in record) {
+        delete record.__principal;
+      }
       if (principal) {
-        record.__principal = principal;
+        (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
       }
 
       try {

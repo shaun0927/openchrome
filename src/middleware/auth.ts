@@ -13,6 +13,20 @@ import type { Principal, Scope } from '../auth/api-key-types';
 
 export type { Principal };
 
+/**
+ * Non-forgeable key used by the transport layer to attach a trusted Principal
+ * to a parsed JSON-RPC message before it reaches the MCP server core.
+ *
+ * Why a Symbol: `JSON.parse` can never produce symbol-keyed properties, so
+ * clients cannot inject this field through the wire payload. A string key
+ * like `__principal` would be forgeable by any caller that controls the
+ * JSON body (notably stdio callers, whose transport does not inject a
+ * principal at all). Using a symbol here eliminates the trust boundary
+ * question entirely — if `msg[PRINCIPAL_SYM]` is present, the transport
+ * set it.
+ */
+export const PRINCIPAL_SYM: unique symbol = Symbol('mcp.auth.principal');
+
 export type AuthMode =
   | { kind: 'disabled' }
   | { kind: 'legacy-shared-token'; token: string }

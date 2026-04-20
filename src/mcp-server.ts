@@ -36,6 +36,7 @@ import { getMetricsCollector } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
 import { isAllowed, requiredScope } from './auth/scope-policy';
 import type { Principal } from './auth/api-key-types';
+import { PRINCIPAL_SYM } from './middleware/auth';
 import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
 import { OpenChromeConnectionError } from './errors/connection';
@@ -132,6 +133,14 @@ export class MCPServer {
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
   private stopPromise: Promise<void> | null = null;
   private rateLimiter: SessionRateLimiter | null = null;
+  /**
+   * Timer that periodically reclaims idle rate-limit buckets. Required because
+   * tenant-keyed buckets (used in api-key mode) are shared across sessions, so
+   * the per-session DELETE /mcp cleanup hook cannot be used to evict them —
+   * without this sweep, the bucket map would grow unbounded with each new
+   * tenant seen over process lifetime.
+   */
+  private rateLimiterSweepTimer: NodeJS.Timeout | null = null;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
@@ -260,6 +269,12 @@ export class MCPServer {
   /**
    * Wire rate-limiter session cleanup into the given transport so that
    * bucket memory is freed immediately when a client sends DELETE /mcp.
+   *
+   * Note: this only reclaims session-keyed buckets (legacy / disabled auth
+   * modes and stdio callers). Tenant-keyed buckets used in api-key mode
+   * are shared across sessions, so they cannot be evicted on a per-session
+   * DELETE — those rely on the periodic `rateLimiterSweepTimer` scheduled
+   * in start().
    */
   wireRateLimiterCleanup(transport: MCPTransport): void {
     if (this.rateLimiter && typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function') {
@@ -293,8 +308,17 @@ export class MCPServer {
       };
     }
 
-    // Extract + remove the transport-injected principal. Absent for stdio.
-    const principal = (parsed as Record<string, unknown>).__principal as Principal | undefined;
+    // Read the transport-injected principal via the non-forgeable Symbol key
+    // (see PRINCIPAL_SYM in src/middleware/auth.ts). JSON.parse cannot produce
+    // symbol-keyed properties, so anything under PRINCIPAL_SYM was placed here
+    // by the transport after authenticating the request — clients cannot
+    // spoof a principal by including `"__principal": {...}` in their JSON body.
+    const principal = (parsed as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] as
+      | Principal
+      | undefined;
+    // Scrub any string-named `__principal` that a malicious caller may have
+    // embedded in the JSON. We don't read it, but deleting here prevents it
+    // from echoing back out via JSON.stringify in later response paths.
     if ('__principal' in parsed) {
       delete (parsed as Record<string, unknown>).__principal;
     }
@@ -338,6 +362,30 @@ export class MCPServer {
 
     // Wire rate-limiter session cleanup into the transport
     this.wireRateLimiterCleanup(this.transport);
+
+    // Schedule periodic sweep of idle rate-limit buckets. Per-session cleanup
+    // (via DELETE /mcp) cannot reclaim tenant-keyed buckets (shared across
+    // sessions in api-key mode), and also does not run for stdio callers, so
+    // without this sweep the bucket map would grow without bound. Defaults
+    // (sweep every 5 min, evict buckets idle > 15 min) are overridable via
+    // env for operators with unusual tenant cardinality.
+    if (this.rateLimiter) {
+      const sweepIntervalMs =
+        parseInt(process.env.OPENCHROME_RATE_LIMIT_SWEEP_INTERVAL_MS || '', 10) || 5 * 60_000;
+      const maxIdleMs =
+        parseInt(process.env.OPENCHROME_RATE_LIMIT_IDLE_MS || '', 10) || 15 * 60_000;
+      this.rateLimiterSweepTimer = setInterval(() => {
+        try {
+          const removed = this.rateLimiter!.sweep(maxIdleMs);
+          if (removed > 0) {
+            console.error(`[MCPServer] Rate-limiter sweep: reclaimed ${removed} idle bucket(s)`);
+          }
+        } catch (err) {
+          console.error('[MCPServer] Rate-limiter sweep failed:', err);
+        }
+      }, sweepIntervalMs);
+      this.rateLimiterSweepTimer.unref();
+    }
 
     console.error('[MCPServer] Starting server...');
 
@@ -1405,6 +1453,13 @@ export class MCPServer {
     // Stop dashboard
     if (this.dashboard) {
       this.dashboard.stop();
+    }
+
+    // Cancel the rate-limiter sweep timer (if running) so the process can
+    // exit cleanly and tests don't leak timers across runs.
+    if (this.rateLimiterSweepTimer) {
+      clearInterval(this.rateLimiterSweepTimer);
+      this.rateLimiterSweepTimer = null;
     }
 
     if (this.transport) {
