@@ -30,6 +30,10 @@ const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 interface SSEConnection {
   res: http.ServerResponse;
   sessionId: string;
+  /** Tenant that opened this stream. Populated for future tenant-scoped
+   *  broadcasts; `send()` still broadcasts to all connections because the
+   *  MCPServer tenant threading lands in part 5/5. (#7) */
+  tenantId: TenantId;
 }
 
 export class HTTPTransport implements MCPTransport {
@@ -541,10 +545,28 @@ export class HTTPTransport implements MCPTransport {
       if (Array.isArray(parsed)) {
         // Same guard as the single-message path: forbid client-supplied
         // Mcp-Session-Id when the batch contains an `initialize`. (#7 security)
-        if (sessionId && parsed.some(
-          (m) => typeof m === 'object' && m !== null
-            && (m as Record<string, unknown>).method === 'initialize',
-        )) {
+        const initializeCount = parsed.reduce<number>((n, m) => (
+          typeof m === 'object' && m !== null
+            && (m as Record<string, unknown>).method === 'initialize'
+            ? n + 1 : n
+        ), 0);
+        if (initializeCount > 1) {
+          // Two `initialize` messages would race over the single
+          // `sessionId` assigned in `processBatch`, producing
+          // ambiguous tenant-binding state. Reject outright.
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: 'A JSON-RPC batch may contain at most one initialize',
+              data: { field: 'method', reason: 'duplicate_initialize' },
+            },
+          }));
+          return;
+        }
+        if (sessionId && initializeCount > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             jsonrpc: '2.0',
@@ -664,7 +686,7 @@ export class HTTPTransport implements MCPTransport {
   private handleSSE(
     req: http.IncomingMessage,
     res: http.ServerResponse,
-    _tenantId: TenantId,
+    tenantId: TenantId,
   ): void {
     const sessionId = req.headers['mcp-session-id'] as string || 'anonymous';
 
@@ -677,7 +699,7 @@ export class HTTPTransport implements MCPTransport {
     // Send initial keepalive
     res.write(': keepalive\n\n');
 
-    const conn: SSEConnection = { res, sessionId };
+    const conn: SSEConnection = { res, sessionId, tenantId };
     this.sseConnections.push(conn);
 
     // Clean up on disconnect

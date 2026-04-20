@@ -211,6 +211,23 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
     expect(transport.getTenantForMcpSession('client-chosen-id')).toBeUndefined();
   });
 
+  it('rejects batch containing multiple initialize requests (no ambiguous tenant binding)', async () => {
+    // Two initialize messages in a single batch would race over the
+    // single `sessionId` minted in `processBatch`, leaving an ambiguous
+    // binding. Reject the batch outright.
+    await boot();
+    const res = await mcpPost(
+      { 'X-Tenant-Id': 'acme' },
+      [
+        { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+        { jsonrpc: '2.0', id: 2, method: 'initialize', params: {} },
+      ],
+    );
+    expect(res.status).toBe(400);
+    const err = JSON.parse(res.body);
+    expect(err.error.data.reason).toBe('duplicate_initialize');
+  });
+
   it('rejects batch containing initialize with client-supplied Mcp-Session-Id', async () => {
     await boot();
     const res = await mcpPost(
