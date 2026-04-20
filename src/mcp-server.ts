@@ -134,6 +134,21 @@ export class MCPServer {
   private stopPromise: Promise<void> | null = null;
   private rateLimiter: SessionRateLimiter | null = null;
   /**
+   * Per-session tenant binding for api-key mode. The first api-key principal
+   * to touch a given sessionId "claims" the session; subsequent tools/call
+   * requests that arrive with a different tenantId are rejected with a 403,
+   * preventing a tenant with a valid API key from operating on a session
+   * created by another tenant (cross-tenant session hijack via a guessed /
+   * leaked sessionId). Cleared when the session is deleted (DELETE /mcp) via
+   * the same hook that reclaims rate-limit buckets.
+   *
+   * Structural enforcement (binding at session-create time via TenantManager,
+   * X-Tenant-Id header validation) lands in the tenant-propagation series
+   * (B-1, PRs #30 / #31). This map is the minimum defense-in-depth so
+   * PR 2/4 does not ship with a cross-tenant access path.
+   */
+  private sessionTenants: Map<string, string> = new Map();
+  /**
    * Timer that periodically reclaims idle rate-limit buckets. Required because
    * tenant-keyed buckets (used in api-key mode) are shared across sessions, so
    * the per-session DELETE /mcp cleanup hook cannot be used to evict them —
@@ -277,11 +292,19 @@ export class MCPServer {
    * in start().
    */
   wireRateLimiterCleanup(transport: MCPTransport): void {
-    if (this.rateLimiter && typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function') {
-      (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
-        (sessionId: string) => this.rateLimiter!.removeSession(sessionId),
-      );
-    }
+    const hasHook = typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function';
+    if (!hasHook) return;
+    (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
+      (sessionId: string) => {
+        if (this.rateLimiter) {
+          this.rateLimiter.removeSession(sessionId);
+        }
+        // Also release the session-tenant binding so a future session with
+        // the same id (after UUID reuse across restarts, or an explicit
+        // client-chosen id) can be claimed by any tenant again.
+        this.sessionTenants.delete(sessionId);
+      },
+    );
   }
 
   /**
@@ -630,6 +653,40 @@ export class MCPServer {
 
     if (!toolName) {
       throw new Error('Missing tool name');
+    }
+
+    // Session-tenant binding (api-key mode only): reject if the session was
+    // already claimed by a different tenant. First api-key caller wins; other
+    // auth modes (disabled/legacy) and stdio callers are not subject to this
+    // check. Structural session-create binding lands in B-1 (#30/#31); this
+    // is the PR-2-scope defense-in-depth against cross-tenant session access.
+    if (principal && principal.mode === 'api-key') {
+      const claimedBy = this.sessionTenants.get(sessionId);
+      if (claimedBy === undefined) {
+        this.sessionTenants.set(sessionId, principal.tenantId);
+      } else if (claimedBy !== principal.tenantId) {
+        console.error(
+          `[MCPServer] tenant binding violation: session=${sessionId} claimedBy=${claimedBy} requestedBy=${principal.tenantId} tool=${toolName}`,
+        );
+        try {
+          logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+            keyId: principal.keyId,
+            tenantId: principal.tenantId,
+            scopes: principal.scopes,
+          });
+        } catch {
+          // best-effort
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Forbidden: session '${sessionId}' is owned by another tenant.`,
+            },
+          ],
+          isError: true,
+        };
+      }
     }
 
     // Scope gate: if a principal was provided by the transport, check it can
