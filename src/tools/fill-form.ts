@@ -5,7 +5,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
@@ -60,6 +60,7 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
   context?: ToolContext
 ): Promise<MCPResult> => {
+  throwIfAborted(context);
   const tabId = args.tabId as string;
   const fields = args.fields as Record<string, string | boolean | number>;
   const submit = args.submit as string | undefined;

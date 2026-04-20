@@ -3,7 +3,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
@@ -85,8 +85,10 @@ interface AXNode {
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> => {
+  throwIfAborted(context);
   const tabId = args.tabId as string;
   const filter = (args.filter as string) || 'all';
   const defaultDepth = filter === 'interactive' ? 5 : 8;
@@ -258,7 +260,7 @@ const handler: ToolHandler = async (
         }
 
         return output;
-      }, targetSelector), 15000, 'read_page');
+      }, targetSelector), 15000, 'read_page', context);
 
       // Format output
       const lines: string[] = ['[CSS Diagnostic Report]', ''];
@@ -382,7 +384,7 @@ const handler: ToolHandler = async (
       scrollHeight: document.documentElement.scrollHeight,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
-    })), 15000, 'read_page');
+    })), 15000, 'read_page', context);
     const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
 
     // Snapshot ref entry BEFORE clearing refs (needed for post-clear recovery)
@@ -394,7 +396,8 @@ const handler: ToolHandler = async (
     const { nodes } = await withTimeout(
       cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
       15000,
-      'Accessibility.getFullAXTree'
+      'Accessibility.getFullAXTree',
+      context,
     );
 
     // Clear previous refs for this target
@@ -619,8 +622,8 @@ const handler: ToolHandler = async (
  * Strips invisible characters, HTML comments, and flags suspicious
  * instruction-like patterns to mitigate indirect prompt injection.
  */
-const sanitizedHandler: ToolHandler = async (sessionId, args) => {
-  const result = await handler(sessionId, args);
+const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
+  const result = await handler(sessionId, args, context);
 
   // Skip sanitization if disabled, if the result is an error, or if no content
   const config = getGlobalConfig();
