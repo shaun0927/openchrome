@@ -54,11 +54,12 @@ export class TenantManager {
   private totalCreated = 0;
   private totalClosed = 0;
   private idleEvictions = 0;
-  // Set while `closeAll` is running to block new tenant creation so a caller
-  // cannot slip a new `getOrCreate` in after closeAll snapshots the tenant
-  // list. Cleared when closeAll finishes so the manager is reusable (e.g.
-  // after a Chrome reconnect).
-  private closing = false;
+  // Holds the in-flight `closeAll` promise while a close is running. Serves
+  // as a single-flight lock so concurrent `closeAll()` calls share the same
+  // drain, and so `getOrCreate` can reject for the full duration (not until
+  // the first caller's finally runs). Cleared after the drain so the manager
+  // is reusable (e.g. after a Chrome reconnect).
+  private closingPromise: Promise<void> | null = null;
 
   constructor(deps: TenantManagerDeps) {
     this.createContext = deps.createContext;
@@ -71,7 +72,7 @@ export class TenantManager {
 
   /** Lazily create (or return existing) tenant context. Updates lastActivityAt. */
   async getOrCreate(id: TenantId): Promise<TenantContext> {
-    if (this.closing) {
+    if (this.closingPromise !== null) {
       throw new Error(
         `TenantManager: closeAll in progress, refusing to create tenant=${id}`,
       );
@@ -175,26 +176,35 @@ export class TenantManager {
   /**
    * Close every tenant context. Safe to call on shutdown / Chrome reconnect.
    *
-   * Sets a `closing` flag so concurrent `getOrCreate` calls are rejected for
-   * the duration of the close, then drains in-flight creations so their
-   * resulting contexts land in `this.tenants` and can be released — otherwise
-   * a creation mid-await when closeAll starts would insert after we snapshot
-   * the map and leak a live BrowserContext. The flag is cleared in a
-   * `finally` so the manager is reusable after a successful close. Pending
-   * rejections from failed creations are intentionally ignored (nothing to
-   * close).
+   * Single-flight: concurrent callers share the in-flight drain via
+   * `closingPromise` so the "no new tenants" window lasts for the full
+   * duration of the slowest caller, not just until the first one returns.
+   * Drains in-flight creations first so their resulting contexts land in
+   * `this.tenants` and can be released — otherwise a creation mid-await when
+   * closeAll starts would insert after we snapshot the map and leak a live
+   * BrowserContext. The lock is released after the drain so the manager is
+   * reusable (e.g. after a Chrome reconnect). Pending rejections from failed
+   * creations are intentionally ignored (nothing to close).
    */
-  async closeAll(): Promise<void> {
-    this.closing = true;
-    try {
-      if (this.pending.size > 0) {
-        await Promise.allSettled(Array.from(this.pending.values()));
-      }
-      const ids = Array.from(this.tenants.keys());
-      await Promise.all(ids.map((id) => this.release(id)));
-    } finally {
-      this.closing = false;
+  closeAll(): Promise<void> {
+    if (this.closingPromise !== null) {
+      return this.closingPromise;
     }
+    // Not `async`: we want `closeAll() === closeAll()` during the window so
+    // concurrent callers truly share one promise (an `async` wrapper would
+    // hand out a distinct resolver-chain promise per call).
+    this.closingPromise = (async () => {
+      try {
+        if (this.pending.size > 0) {
+          await Promise.allSettled(Array.from(this.pending.values()));
+        }
+        const ids = Array.from(this.tenants.keys());
+        await Promise.all(ids.map((id) => this.release(id)));
+      } finally {
+        this.closingPromise = null;
+      }
+    })();
+    return this.closingPromise;
   }
 
   /**
@@ -205,18 +215,29 @@ export class TenantManager {
    */
   async sweepIdle(nowOverride?: number): Promise<TenantId[]> {
     const cutoff = (nowOverride ?? this.now()) - this.idleTimeoutMs;
-    const victims: TenantId[] = [];
+    const candidates: TenantId[] = [];
     for (const entry of this.tenants.values()) {
       if (entry.id === DEFAULT_TENANT_ID) continue;
       if (entry.lastActivityAt <= cutoff) {
-        victims.push(entry.id);
+        candidates.push(entry.id);
       }
     }
-    for (const id of victims) {
+    // Re-check each candidate at release time. Concurrent `touch` /
+    // `getOrCreate` calls on a candidate between iterations update
+    // `lastActivityAt`; evicting on the stale snapshot would kill a tenant
+    // that is actively being used.
+    const evicted: TenantId[] = [];
+    for (const id of candidates) {
+      const entry = this.tenants.get(id);
+      if (!entry) continue;
+      if (entry.lastActivityAt > cutoff) continue;
       const removed = await this.release(id);
-      if (removed) this.idleEvictions++;
+      if (removed) {
+        this.idleEvictions++;
+        evicted.push(id);
+      }
     }
-    return victims;
+    return evicted;
   }
 
   stats(): TenantManagerStats {

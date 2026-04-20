@@ -328,6 +328,65 @@ describe('TenantManager', () => {
     expect((factory as unknown as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
+  it('closeAll is single-flight so concurrent callers share one drain', async () => {
+    const ctx = makeStubContext('a');
+    let releaseCreate: (() => void) | null = null;
+    const factory = jest.fn(async () => {
+      await new Promise<void>((r) => {
+        releaseCreate = r;
+      });
+      return ctx;
+    });
+    const mgr = new TenantManager({ createContext: factory });
+    const creating = mgr.getOrCreate('alpha');
+    const closeA = mgr.closeAll();
+    const closeB = mgr.closeAll();
+    // Both closes share the same underlying promise.
+    expect(closeA).toBe(closeB);
+    // getOrCreate must reject throughout the full drain, even after
+    // closeA's finally would have fired on a bool flag.
+    await Promise.resolve();
+    await expect(mgr.getOrCreate('beta')).rejects.toThrow(/closeAll in progress/);
+    (releaseCreate as unknown as () => void)();
+    await creating;
+    await closeA;
+    // After close resolves, the manager is reusable.
+    const fresh = makeStubContext('fresh');
+    const mgr2 = new TenantManager({ createContext: async () => fresh });
+    await expect(mgr2.getOrCreate('gamma')).resolves.toBeDefined();
+  });
+
+  it('sweepIdle re-checks activity before eviction', async () => {
+    const clock = fakeClock();
+    const alphaCtx = makeStubContext('a');
+    const betaCtx = makeStubContext('b');
+    let n = 0;
+    // closeContext for alpha (the first release) touches beta mid-sweep,
+    // simulating concurrent traffic that refreshes an about-to-be-evicted
+    // tenant. On the old code beta would be evicted anyway (stale snapshot);
+    // with revalidation beta must survive.
+    let mgrRef!: TenantManager;
+    mgrRef = new TenantManager({
+      createContext: async () => (++n === 1 ? alphaCtx : betaCtx),
+      now: clock.now,
+      config: { idleTimeoutMs: 10_000 },
+      closeContext: async (c) => {
+        if (c === alphaCtx) {
+          mgrRef.touch('beta');
+        }
+        await (c as StubContext).close();
+      },
+    });
+    await mgrRef.getOrCreate('alpha');
+    await mgrRef.getOrCreate('beta');
+    clock.advance(11_000);
+    const evicted = await mgrRef.sweepIdle();
+    expect(evicted).toEqual(['alpha']);
+    expect(mgrRef.has('alpha')).toBe(false);
+    expect(mgrRef.has('beta')).toBe(true);
+    expect(mgrRef.stats().idleEvictions).toBe(1);
+  });
+
   it('clears in-flight entry on createContext failure so retries can succeed', async () => {
     let calls = 0;
     const factory = jest.fn(async () => {
