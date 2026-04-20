@@ -16,6 +16,12 @@ import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { MCPTransport } from './index';
 import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
+import {
+  REQUEST_ID_HEADER,
+  REQUEST_ID_HEADER_LOWER,
+  resolveRequestId,
+  runWithRequestContext,
+} from '../observability/request-id';
 
 /** Maximum allowed HTTP request body size (10 MB) to prevent OOM from oversized requests */
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -146,8 +152,16 @@ export class HTTPTransport implements MCPTransport {
     // CORS headers for all responses — restrict origin when auth is enabled
     res.setHeader('Access-Control-Allow-Origin', this.authToken ? 'null' : '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id, Authorization');
-    res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
+    res.setHeader('Access-Control-Allow-Headers', `Content-Type, Mcp-Session-Id, Authorization, ${REQUEST_ID_HEADER}`);
+    res.setHeader('Access-Control-Expose-Headers', `Mcp-Session-Id, ${REQUEST_ID_HEADER}`);
+
+    // Request correlation: honour client-supplied X-Request-Id, otherwise mint
+    // a fresh UUID v7. Echo it back on every response so clients (and
+    // downstream proxies) can correlate logs, metrics, and audit entries for
+    // this request.
+    const requestId = resolveRequestId(req.headers[REQUEST_ID_HEADER_LOWER]);
+    res.setHeader(REQUEST_ID_HEADER, requestId);
+    (req as http.IncomingMessage & { requestId?: string }).requestId = requestId;
 
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
@@ -442,9 +456,16 @@ export class HTTPTransport implements MCPTransport {
         return;
       }
 
+      // Correlation ID for this HTTP request — propagate into handler(s).
+      const requestId = (req as http.IncomingMessage & { requestId?: string }).requestId
+        || resolveRequestId(req.headers[REQUEST_ID_HEADER_LOWER]);
+
       // Handle JSON-RPC batch (array of requests)
       if (Array.isArray(parsed)) {
-        const results = await this.processBatch(parsed, sessionId);
+        const results = await runWithRequestContext(
+          { requestId },
+          () => this.processBatch(parsed, sessionId),
+        );
         // Filter out null results (notifications don't produce responses)
         const responses = results.filter((r): r is MCPResponse => r !== null);
 
@@ -476,7 +497,10 @@ export class HTTPTransport implements MCPTransport {
       }
 
       try {
-        const response = await this.messageHandler(msg);
+        const response = await runWithRequestContext(
+          { requestId },
+          () => this.messageHandler!(msg),
+        );
 
         if (sessionId) {
           res.setHeader('Mcp-Session-Id', sessionId);
