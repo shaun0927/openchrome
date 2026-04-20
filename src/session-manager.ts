@@ -22,6 +22,9 @@ import { StorageStateConfig } from './config';
 import { assertDomainAllowed } from './security/domain-guard';
 import { getTargetId } from './utils/puppeteer-helpers';
 import { safeTitle } from './utils/safe-title';
+import { getTenantManager, isStrictTenantIsolationEnabled } from './tenant/registry';
+import type { TenantManager } from './tenant/manager';
+import { DEFAULT_TENANT_ID, type TenantId } from './tenant/types';
 
 /** The primary session ID used by most single-agent workflows. */
 const DEFAULT_SESSION_ID = 'default';
@@ -49,6 +52,17 @@ export interface SessionManagerConfig {
   usePool?: boolean;
   /** Storage state persistence config (default: disabled) */
   storageState?: StorageStateConfig;
+  /**
+   * TenantManager used to resolve per-tenant BrowserContexts (#7). When
+   * omitted, the process-wide singleton from tenant/registry is used.
+   */
+  tenantManager?: TenantManager;
+  /**
+   * Force strict tenant isolation. When true, `useDefaultContext` is rejected
+   * at session creation time and every session is pinned to a tenant context.
+   * Defaults to reading OPENCHROME_STRICT_TENANT_ISOLATION.
+   */
+  strictTenantIsolation?: boolean;
 }
 
 export interface SessionManagerStats {
@@ -63,7 +77,7 @@ export interface SessionManagerStats {
   connectionPool?: PoolStats;
 }
 
-const DEFAULT_CONFIG: Required<SessionManagerConfig> = {
+const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'strictTenantIsolation'>> = {
   sessionTTL: 30 * 60 * 1000,      // 30 minutes
   cleanupInterval: 60 * 1000,       // 1 minute
   autoCleanup: true,
@@ -95,7 +109,11 @@ export class SessionManager {
   private stealthTargets = new Set<string>();
 
   // TTL & Stats
-  private config: Required<SessionManagerConfig>;
+  private config: Required<Omit<SessionManagerConfig, 'tenantManager' | 'strictTenantIsolation'>>;
+  // Tenant isolation (#7) — lazily bound to the process-wide TenantManager
+  // singleton unless an override was provided via config.
+  private tenantManagerOverride: TenantManager | null;
+  private strictTenantIsolation: boolean;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private startTime: number = Date.now();
   private totalSessionsCreated: number = 0;
@@ -105,7 +123,10 @@ export class SessionManager {
   constructor(cdpClient?: CDPClient, config?: SessionManagerConfig) {
     this.cdpClient = cdpClient || getCDPClient();
     this.queueManager = new RequestQueueManager();
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    const { tenantManager: tenantMgrOverride, strictTenantIsolation, ...rest } = config ?? {};
+    this.config = { ...DEFAULT_CONFIG, ...rest };
+    this.tenantManagerOverride = tenantMgrOverride ?? null;
+    this.strictTenantIsolation = isStrictTenantIsolationEnabled(strictTenantIsolation);
     this.cdpFactory = getCDPClientFactory();
 
     if (this.config.useConnectionPool) {
@@ -262,7 +283,7 @@ export class SessionManager {
   /**
    * Get current configuration
    */
-  getConfig(): Required<SessionManagerConfig> {
+  getConfig(): Required<Omit<SessionManagerConfig, 'tenantManager' | 'strictTenantIsolation'>> {
     return { ...this.config };
   }
 
@@ -293,6 +314,47 @@ export class SessionManager {
   // ==================== SESSION MANAGEMENT ====================
 
   /**
+   * Resolve the TenantManager used by this session manager instance. Prefers
+   * the constructor-injected override so tests can stub context creation.
+   */
+  private getTenantManager(): TenantManager {
+    return this.tenantManagerOverride ?? getTenantManager({ cdpClient: this.cdpClient });
+  }
+
+  /**
+   * Resolve the BrowserContext to assign to a newly created session / worker
+   * based on the requested tenant and strict-isolation policy (#7).
+   *
+   * - STRICT on + `useDefaultContext=true`  → reject (throws)
+   * - STRICT on                             → tenant-scoped context for any tenant
+   * - STRICT off + non-default tenant       → tenant-scoped context
+   * - STRICT off + default tenant           → preserves legacy behavior:
+   *    `useDefaultContext=true`  → null (shares Chrome profile cookies)
+   *    `useDefaultContext=false` → fresh anonymous incognito context
+   */
+  private async resolveSessionContext(
+    tenantId: TenantId,
+    useDefaultContext: boolean,
+  ): Promise<BrowserContext | null> {
+    if (this.strictTenantIsolation) {
+      if (useDefaultContext) {
+        throw new Error(
+          `[SessionManager] STRICT tenant isolation is enabled; ` +
+            `useDefaultContext=true is rejected because it would share the Chrome profile across tenants. ` +
+            `Disable OPENCHROME_STRICT_TENANT_ISOLATION or set useDefaultContext=false.`,
+        );
+      }
+      const tenant = await this.getTenantManager().getOrCreate(tenantId);
+      return tenant.browserContext;
+    }
+    if (tenantId !== DEFAULT_TENANT_ID) {
+      const tenant = await this.getTenantManager().getOrCreate(tenantId);
+      return tenant.browserContext;
+    }
+    return useDefaultContext ? null : await this.cdpClient.createBrowserContext();
+  }
+
+  /**
    * Create a new session with a default worker
    */
   async createSession(options: SessionCreateOptions = {}): Promise<Session> {
@@ -314,12 +376,12 @@ export class SessionManager {
 
     const name = options.name || `Session ${id.slice(0, 8)}`;
     const defaultWorkerId = 'default';
+    const tenantId = options.tenantId ?? DEFAULT_TENANT_ID;
 
-    // Create default worker - use default context if configured (shares Chrome profile's cookies)
-    // or create isolated browser context for session isolation
-    const defaultContext = this.config.useDefaultContext
-      ? null  // null means use default browser context (shares cookies with Chrome profile)
-      : await this.cdpClient.createBrowserContext();
+    // Resolve tenant-scoped context (#7). Falls back to legacy behavior for
+    // the default tenant when STRICT mode is off so stdio callers see no
+    // change in behavior.
+    const defaultContext = await this.resolveSessionContext(tenantId, this.config.useDefaultContext);
     const defaultWorker: Worker = {
       id: defaultWorkerId,
       name: 'Default Worker',
@@ -338,13 +400,14 @@ export class SessionManager {
       lastActivityAt: Date.now(),
       name,
       context: defaultContext,  // Legacy support
+      tenantId,
     };
 
     this.sessions.set(id, session);
     this.totalSessionsCreated++;
     this.emitEvent({ type: 'session:created', sessionId: id, timestamp: Date.now() });
 
-    console.error(`[SessionManager] Created session ${id} with default worker`);
+    console.error(`[SessionManager] Created session ${id} with default worker (tenant=${tenantId})`);
     return session;
   }
 
