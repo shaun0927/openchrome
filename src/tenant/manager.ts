@@ -54,6 +54,11 @@ export class TenantManager {
   private totalCreated = 0;
   private totalClosed = 0;
   private idleEvictions = 0;
+  // Set while `closeAll` is running to block new tenant creation so a caller
+  // cannot slip a new `getOrCreate` in after closeAll snapshots the tenant
+  // list. Cleared when closeAll finishes so the manager is reusable (e.g.
+  // after a Chrome reconnect).
+  private closing = false;
 
   constructor(deps: TenantManagerDeps) {
     this.createContext = deps.createContext;
@@ -66,6 +71,11 @@ export class TenantManager {
 
   /** Lazily create (or return existing) tenant context. Updates lastActivityAt. */
   async getOrCreate(id: TenantId): Promise<TenantContext> {
+    if (this.closing) {
+      throw new Error(
+        `TenantManager: closeAll in progress, refusing to create tenant=${id}`,
+      );
+    }
     const existing = this.tenants.get(id);
     if (existing) {
       existing.lastActivityAt = this.now();
@@ -121,8 +131,25 @@ export class TenantManager {
     return Array.from(this.tenants.values());
   }
 
-  /** Close a single tenant context and remove it. Returns true if removed. */
+  /**
+   * Close a single tenant context and remove it. Returns true if removed.
+   *
+   * If the tenant is still being created (entry is in `pending`), waits for
+   * the creation to finish before releasing — otherwise the in-flight
+   * creation would land in `this.tenants` after release returned, leaving an
+   * orphaned BrowserContext.
+   */
   async release(id: TenantId): Promise<boolean> {
+    const inFlight = this.pending.get(id);
+    if (inFlight) {
+      try {
+        await inFlight;
+      } catch {
+        // createContext failed — nothing to release, `finally` in
+        // getOrCreate already cleared the pending slot.
+        return false;
+      }
+    }
     const entry = this.tenants.get(id);
     if (!entry) return false;
     this.tenants.delete(id);
@@ -141,18 +168,26 @@ export class TenantManager {
   /**
    * Close every tenant context. Safe to call on shutdown / Chrome reconnect.
    *
-   * Drains in-flight `getOrCreate` promises first so their resulting contexts
-   * land in `this.tenants` and can be released; otherwise a creation that is
-   * mid-await when closeAll starts would insert after we snapshot the map and
-   * leak a live BrowserContext. Pending rejections are intentionally ignored
-   * — a failed create has nothing to close.
+   * Sets a `closing` flag so concurrent `getOrCreate` calls are rejected for
+   * the duration of the close, then drains in-flight creations so their
+   * resulting contexts land in `this.tenants` and can be released — otherwise
+   * a creation mid-await when closeAll starts would insert after we snapshot
+   * the map and leak a live BrowserContext. The flag is cleared in a
+   * `finally` so the manager is reusable after a successful close. Pending
+   * rejections from failed creations are intentionally ignored (nothing to
+   * close).
    */
   async closeAll(): Promise<void> {
-    if (this.pending.size > 0) {
-      await Promise.allSettled(Array.from(this.pending.values()));
+    this.closing = true;
+    try {
+      if (this.pending.size > 0) {
+        await Promise.allSettled(Array.from(this.pending.values()));
+      }
+      const ids = Array.from(this.tenants.keys());
+      await Promise.all(ids.map((id) => this.release(id)));
+    } finally {
+      this.closing = false;
     }
-    const ids = Array.from(this.tenants.keys());
-    await Promise.all(ids.map((id) => this.release(id)));
   }
 
   /**

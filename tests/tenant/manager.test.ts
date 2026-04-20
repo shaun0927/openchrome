@@ -241,6 +241,74 @@ describe('TenantManager', () => {
     expect(mgr.stats().totalClosed).toBe(1);
   });
 
+  it('release awaits pending creation and closes the resulting context', async () => {
+    const ctx = makeStubContext('late');
+    let releaseCreate: (() => void) | null = null;
+    const factory = jest.fn(async () => {
+      await new Promise<void>((r) => {
+        releaseCreate = r;
+      });
+      return ctx;
+    });
+    const mgr = new TenantManager({ createContext: factory });
+    const creating = mgr.getOrCreate('alpha');
+    // release is called while createContext is mid-await
+    const releasing = mgr.release('alpha');
+    await Promise.resolve();
+    expect(releaseCreate).not.toBeNull();
+    (releaseCreate as unknown as () => void)();
+    await creating;
+    const removed = await releasing;
+    expect(removed).toBe(true);
+    expect(ctx.__closed).toBe(true);
+    expect(mgr.has('alpha')).toBe(false);
+    expect(mgr.stats().active).toBe(0);
+    expect(mgr.stats().totalClosed).toBe(1);
+  });
+
+  it('release returns false when pending creation fails and leaves no entry', async () => {
+    let releaseReject: ((e: Error) => void) | null = null;
+    const factory = jest.fn(async () => {
+      return new Promise<BrowserContext>((_res, rej) => {
+        releaseReject = rej;
+      });
+    });
+    const mgr = new TenantManager({ createContext: factory });
+    const creating = mgr.getOrCreate('alpha');
+    const releasing = mgr.release('alpha');
+    await Promise.resolve();
+    (releaseReject as unknown as (e: Error) => void)(new Error('create-fail'));
+    await expect(creating).rejects.toThrow('create-fail');
+    await expect(releasing).resolves.toBe(false);
+    expect(mgr.has('alpha')).toBe(false);
+    expect(mgr.stats().active).toBe(0);
+  });
+
+  it('rejects getOrCreate while closeAll is in progress', async () => {
+    const ctx = makeStubContext('a');
+    let releaseCreate: (() => void) | null = null;
+    const factory = jest.fn(async () => {
+      await new Promise<void>((r) => {
+        releaseCreate = r;
+      });
+      return ctx;
+    });
+    const mgr = new TenantManager({ createContext: factory });
+    const creating = mgr.getOrCreate('alpha');
+    const closing = mgr.closeAll();
+    await Promise.resolve();
+    // closing is now in-progress — any new tenant creation must be rejected
+    await expect(mgr.getOrCreate('beta')).rejects.toThrow(/closeAll in progress/);
+    (releaseCreate as unknown as () => void)();
+    await creating;
+    await closing;
+    // After closeAll finishes, the manager is reusable
+    const fresh = makeStubContext('fresh');
+    const mgr2 = new TenantManager({ createContext: async () => fresh });
+    await mgr2.closeAll();
+    await expect(mgr2.getOrCreate('gamma')).resolves.toBeDefined();
+  });
+
   it('clears in-flight entry on createContext failure so retries can succeed', async () => {
     let calls = 0;
     const factory = jest.fn(async () => {
