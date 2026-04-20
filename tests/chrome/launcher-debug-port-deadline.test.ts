@@ -132,12 +132,17 @@ describe('waitForDebugPort monotonic deadline', () => {
     // probe when only tens of milliseconds remain, so Chrome instances that
     // come online near the deadline are not falsely timed out. See Codex
     // review on PR #11.
+    //
+    // Timing: with DEBUG_PORT_INITIAL_BACKOFF_MS=200 and factor=1.5, probes
+    // land at ~t=0, ~t=210, ~t=510. Server starts at 250ms and timeout is
+    // 600ms, so the t=510 probe is the one that succeeds with only ~90ms of
+    // budget left (< DEBUG_PORT_MIN_HTTP_TIMEOUT_MS=100). Under the previous
+    // implementation's short-circuit, that third probe would have been
+    // skipped and the call would have thrown DebugPortTimeoutError.
     let server: http.Server | null = null;
 
-    // Port will start answering after ~250ms. With the default backoff
-    // schedule (200ms initial) a 400ms timeout leaves ~150ms for a final
-    // probe that must succeed.
     const startDelayMs = 250;
+    const timeoutMs = 600;
     // Reserve a port first, then close-and-reopen so we can control when it
     // actually begins answering.
     const reserver = http.createServer();
@@ -159,8 +164,19 @@ describe('waitForDebugPort monotonic deadline', () => {
     }, startDelayMs);
 
     try {
-      const ws = await waitForDebugPort(port, 2000);
+      const start = Date.now();
+      const ws = await waitForDebugPort(port, timeoutMs);
+      const elapsed = Date.now() - start;
       expect(ws).toBe('ws://127.0.0.1:0/devtools/browser/late');
+      // Success must land after the backoff-induced delay that puts the
+      // probe near the deadline — if the old short-circuit returned, this
+      // elapsed time would be unreachable because the call would have
+      // thrown at t~300ms (remaining < MIN_HTTP).
+      expect(elapsed).toBeGreaterThanOrEqual(startDelayMs);
+      // And the call must still respect the outer deadline (plus small slack
+      // for one final HTTP timeout; MAX_HTTP is 2s but the probeTimeout is
+      // clamped to remaining, so worst case is timeoutMs + ~50ms CI jitter).
+      expect(elapsed).toBeLessThanOrEqual(timeoutMs + 300);
     } finally {
       clearTimeout(startServerTimer);
       if (server) {
@@ -168,6 +184,32 @@ describe('waitForDebugPort monotonic deadline', () => {
       }
     }
   }, 15_000);
+
+  it('throws DebugPortTimeoutError immediately when timeout is NaN', async () => {
+    // Regression (Codex P2): a malformed env var run through parseInt yields
+    // NaN. Previously `Date.now() + NaN = NaN`, so `remaining <= 0` never
+    // fired and probeTimeout also became NaN, causing http.request to throw
+    // ERR_OUT_OF_RANGE instead of the documented DebugPortTimeoutError shape.
+    // We now normalize non-finite inputs at the top of waitForDebugPort.
+    let thrown: unknown;
+    try {
+      await waitForDebugPort(9999, Number.NaN);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(DebugPortTimeoutError);
+    expect((thrown as DebugPortTimeoutError).timeoutMs).toBe(0);
+  }, 5_000);
+
+  it('throws DebugPortTimeoutError immediately when timeout is negative', async () => {
+    let thrown: unknown;
+    try {
+      await waitForDebugPort(9999, -1);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(DebugPortTimeoutError);
+  }, 5_000);
 
   it('fast-fails with a non-DebugPortTimeoutError when chromeProcess has exited', async () => {
     const fakeProcess = {

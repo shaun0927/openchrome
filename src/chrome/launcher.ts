@@ -229,6 +229,14 @@ export async function waitForDebugPort(
   timeout = 30000,
   chromeProcess?: ChildProcess
 ): Promise<string> {
+  // Normalize non-finite / negative inputs. A caller could reach this via a
+  // malformed env var that was run through parseInt and silently became NaN;
+  // letting that propagate into `Date.now() + timeout` poisons every downstream
+  // comparison (NaN <= 0 is false) and turns waitForDebugPort into an
+  // indefinite loop that eventually tries to pass NaN to http.request.
+  if (!Number.isFinite(timeout) || timeout < 0) {
+    throw new DebugPortTimeoutError(port, 0, 0);
+  }
   const deadline = Date.now() + timeout;
   let attempts = 0;
   let backoff = DEBUG_PORT_INITIAL_BACKOFF_MS;
