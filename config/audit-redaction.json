@@ -1,0 +1,48 @@
+{
+  "$schema": "./audit-redaction.schema.json",
+  "description": "Per-tool redaction rules applied to audit log entries. Each rule identifies a sensitive field by a JSON-path-like key and describes how the value should be recorded: 'redact' replaces with [REDACTED], 'hash' stores sha256:<hex>, 'truncate' keeps the first N bytes and appends a hash of the full value.",
+  "defaultSensitiveFieldNames": [
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "authorization",
+    "auth",
+    "api_key",
+    "apikey",
+    "access_key",
+    "refresh_token",
+    "id_token",
+    "session_token",
+    "cookie",
+    "set-cookie",
+    "credit_card",
+    "ssn",
+    "private_key"
+  ],
+  "tools": {
+    "cookies": [
+      { "path": "value", "mode": "hash" }
+    ],
+    "cookies.set": [
+      { "path": "value", "mode": "hash" },
+      { "path": "cookies[*].value", "mode": "hash" }
+    ],
+    "fill_form": [
+      { "path": "fields[*].value", "mode": "redactIfSensitiveName" }
+    ],
+    "form_input": [
+      { "path": "value", "mode": "redactIfSensitiveName" }
+    ],
+    "type": [
+      { "path": "text", "mode": "truncate", "maxBytes": 200 }
+    ],
+    "javascript_tool": [
+      { "path": "code", "mode": "truncate", "maxBytes": 200 }
+    ],
+    "storage": [
+      { "path": "value", "mode": "truncate", "maxBytes": 200 }
+    ]
+  }
+}
