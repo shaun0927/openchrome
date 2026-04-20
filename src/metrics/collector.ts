@@ -202,6 +202,10 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');
     instance.registerGauge('openchrome_tabs_health', 'Tab health status count');
     instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
+    instance.registerCounter(
+      'openchrome_session_init_budget_exhausted_total',
+      'Session-init operations that ran out of budget, labeled by exhausting stage (A-3)',
+    );
   }
   return instance;
 }

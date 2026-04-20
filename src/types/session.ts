@@ -65,6 +65,10 @@ export interface SessionInfo {
 export interface SessionCreateOptions {
   id?: string;
   name?: string;
+  /** Optional time budget for the underlying CDP connect path (A-3).
+   *  Typed as `unknown` here to keep the shared types file free of a
+   *  dependency on the utils/budget module; consumers cast to `Budget`. */
+  budget?: unknown;
 }
 
 export interface SessionEvent {

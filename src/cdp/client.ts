@@ -749,8 +749,13 @@ export class CDPClient {
    * Uses promise coalescing: concurrent callers share a single connectInternal() call
    * instead of each independently opening a WebSocket (which would orphan event listeners
    * and heartbeat timers from the first connection).
+   *
+   * When `budget` is provided, it is forwarded to `connectInternal()` so the
+   * retry loop stays within the caller's deadline (A-3). Coalesced callers
+   * share whatever budget the first caller supplied.
    */
-  async connect(): Promise<void> {
+  async connect(options?: { budget?: Budget }): Promise<void> {
+    const budget = options?.budget;
     if (this.browser && this.browser.isConnected()) {
       // Skip active probe if recently verified by heartbeat (avoids per-call overhead)
       if (Date.now() - this.lastVerifiedAt < DEFAULT_CONNECT_VERIFY_STALENESS_MS) {
@@ -793,7 +798,7 @@ export class CDPClient {
     this.connectionState = 'connecting';
     this.pendingConnect = (async () => {
       try {
-        await this.connectInternal();
+        await this.connectInternal({ budget });
         this.lastVerifiedAt = Date.now();
         this.startHeartbeat();
         console.error('[CDPClient] Connected to Chrome');
