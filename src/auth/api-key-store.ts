@@ -95,6 +95,16 @@ export class ApiKeyStore {
   // Precomputed decoy hash so verify(unknown) performs argon2.verify with
   // indistinguishable timing vs verify(known). Initialised in open().
   private decoyHash: string = '';
+  // Byte offset up to which the JSONL has already been replayed into `index`,
+  // plus the inode observed at that time. verify()/list()/revoke() call
+  // syncFromDisk() to incrementally apply lines appended by peer processes so
+  // a long-lived store sees cross-process create/revoke in multi-process
+  // deployments (fixes issue #9 PR1 Codex P1 review).
+  private lastReadSize: number = 0;
+  private lastReadIno: number = 0;
+  // Coalesce concurrent syncFromDisk() callers so we don't issue redundant
+  // reads when verify() is called in a burst.
+  private pendingSync: Promise<void> | null = null;
 
   private constructor(storePath: string) {
     this.storePath = storePath;
@@ -129,7 +139,7 @@ export class ApiKeyStore {
     }
 
     const store = new ApiKeyStore(finalPath);
-    await store.loadFromDisk();
+    await store.syncFromDisk();
     // Pre-hash a throwaway value. Using a random secret each open prevents any
     // adversarial timing signal from a fixed decoy across processes.
     const decoySecret = crypto.randomBytes(32).toString('hex');
@@ -137,16 +147,8 @@ export class ApiKeyStore {
     return store;
   }
 
-  private async loadFromDisk(): Promise<void> {
-    let raw = '';
-    try {
-      raw = await fs.promises.readFile(this.storePath, 'utf8');
-    } catch {
-      return;
-    }
-    if (!raw) return;
-    const lines = raw.split('\n');
-    for (const line of lines) {
+  private applyLines(text: string): void {
+    for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       let parsed: ApiKey;
       try {
@@ -163,6 +165,61 @@ export class ApiKeyStore {
       }
       this.index.set(parsed.keyId, parsed);
     }
+  }
+
+  // Incrementally replay appended JSONL lines since the last sync. Callers
+  // that rely on fresh state (verify, list, revoke, rotate, touchLastUsed)
+  // invoke this before reading the index so peer-process writes become
+  // visible without a restart. Read-only: safe to call without holding the
+  // write lock. Torn-appends are tolerated by consuming only up to the last
+  // newline; a partial trailing record is deferred to the next sync.
+  private async syncFromDisk(): Promise<void> {
+    if (this.pendingSync) return this.pendingSync;
+    this.pendingSync = (async () => {
+      try {
+        let stat: fs.Stats;
+        try {
+          stat = await fs.promises.stat(this.storePath);
+        } catch {
+          // File is gone: drop cached state so we don't keep answering for
+          // keys that no longer exist on disk.
+          this.index.clear();
+          this.lastReadSize = 0;
+          this.lastReadIno = 0;
+          return;
+        }
+        // File replaced (rotated) or truncated: re-replay from scratch.
+        if (
+          (this.lastReadIno !== 0 && stat.ino !== this.lastReadIno) ||
+          stat.size < this.lastReadSize
+        ) {
+          this.index.clear();
+          this.lastReadSize = 0;
+        }
+        this.lastReadIno = stat.ino;
+        if (stat.size === this.lastReadSize) return;
+
+        const toRead = stat.size - this.lastReadSize;
+        const fd = await fs.promises.open(this.storePath, 'r');
+        try {
+          const buf = Buffer.allocUnsafe(toRead);
+          await fd.read(buf, 0, toRead, this.lastReadSize);
+          const text = buf.toString('utf8');
+          // Only consume complete lines. Any trailing bytes after the last
+          // newline are a torn/in-flight append from a peer — defer them.
+          const lastNewline = text.lastIndexOf('\n');
+          if (lastNewline < 0) return;
+          const complete = text.slice(0, lastNewline + 1);
+          this.applyLines(complete);
+          this.lastReadSize += Buffer.byteLength(complete, 'utf8');
+        } finally {
+          await fd.close();
+        }
+      } finally {
+        this.pendingSync = null;
+      }
+    })();
+    return this.pendingSync;
   }
 
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -187,6 +244,15 @@ export class ApiKeyStore {
   private async appendRecord(record: ApiKey): Promise<void> {
     const line = JSON.stringify(record) + '\n';
     await fs.promises.appendFile(this.storePath, line, { mode: 0o600 });
+    // Advance the read cursor so the next syncFromDisk() doesn't re-parse
+    // our own append. Best-effort: on stat failure, the next sync reconciles.
+    try {
+      const st = await fs.promises.stat(this.storePath);
+      this.lastReadSize = st.size;
+      this.lastReadIno = st.ino;
+    } catch {
+      // fallthrough — next sync will detect the change
+    }
   }
 
   private async rewriteAll(records: ApiKey[]): Promise<void> {
@@ -227,11 +293,13 @@ export class ApiKeyStore {
   }
 
   async list(): Promise<ApiKey[]> {
+    await this.syncFromDisk();
     return Array.from(this.index.values()).map(cloneRecord);
   }
 
   async revoke(keyId: string): Promise<boolean> {
     return this.withLock(async () => {
+      await this.syncFromDisk();
       const existing = this.index.get(keyId);
       if (!existing) return false;
       if (existing.revokedAt) return true; // idempotent
@@ -243,6 +311,7 @@ export class ApiKeyStore {
   }
 
   async rotate(keyId: string): Promise<ApiKeyCreateResult> {
+    await this.syncFromDisk();
     const prior = this.index.get(keyId);
     if (!prior) {
       throw new Error(`unknown keyId: ${keyId}`);
@@ -258,6 +327,11 @@ export class ApiKeyStore {
   }
 
   async verify(plaintext: string): Promise<ApiKey | null> {
+    // Pull in any records appended by peer processes (create/revoke) before
+    // we consult the in-memory index. Without this, a long-lived instance
+    // would keep honouring revoked keys or reject freshly created ones until
+    // process restart.
+    await this.syncFromDisk();
     // Constant-ish time: always perform exactly one argon2.verify regardless of
     // miss/hit, against either the real hash or the decoy.
     const now = Date.now();
@@ -286,6 +360,7 @@ export class ApiKeyStore {
   }
 
   async touchLastUsed(keyId: string): Promise<void> {
+    await this.syncFromDisk();
     const existing = this.index.get(keyId);
     if (!existing) return;
     const updated: ApiKey = { ...existing, lastUsedAt: Date.now() };

@@ -111,6 +111,35 @@ describe('ApiKeyStore', () => {
     expect(await b.verify(plaintext)).not.toBeNull();
   });
 
+  // Regression: the Codex P1 review on PR #18. A long-lived store instance
+  // must observe create/revoke performed by a peer process without a restart.
+  // We simulate two processes by opening two stores against the same JSONL
+  // file; `b` is opened BEFORE `a` writes, so `b`'s in-memory index starts
+  // empty and must catch up via the sync-on-verify path.
+  test('verify() picks up peer-process create and revoke without restart', async () => {
+    const p = tmpStore();
+    const a = await ApiKeyStore.open(p);
+    const b = await ApiKeyStore.open(p);
+
+    // b was opened before any writes — its index is empty.
+    expect(await b.list()).toHaveLength(0);
+
+    // Peer (a) creates a key. b must see it on the next verify().
+    const { plaintext, record } = await a.create({
+      tenantId: 't1',
+      scopes: ['read'],
+      description: 'peer-created',
+    });
+    const seen = await b.verify(plaintext);
+    expect(seen).not.toBeNull();
+    expect(seen?.keyId).toBe(record.keyId);
+
+    // Peer (a) revokes the key. b must stop accepting it without restart.
+    const ok = await a.revoke(record.keyId);
+    expect(ok).toBe(true);
+    expect(await b.verify(plaintext)).toBeNull();
+  });
+
   test('reopen preserves revocation across instances', async () => {
     const p = tmpStore();
     const a = await ApiKeyStore.open(p);
