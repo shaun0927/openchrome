@@ -204,6 +204,30 @@ describe('ApiKeyStore', () => {
     expect(await a.verify(plaintext)).toBeNull();
   });
 
+  // Regression: Codex P1 on commit 482f779. If a crash leaves a partial JSONL
+  // tail without a trailing newline, the next append must start on a fresh
+  // line; otherwise the partial fragment and new record become one malformed
+  // JSON line and the new record is lost on replay after restart.
+  test('create() inserts a newline before appending after an unterminated tail', async () => {
+    const p = tmpStore();
+    const store = await ApiKeyStore.open(p);
+
+    await fs.promises.writeFile(p, '{"partial":true');
+
+    const created = await store.create({
+      tenantId: 't1',
+      scopes: ['read'],
+      description: 'after-crash-tail',
+    });
+
+    const raw = await fs.promises.readFile(p, 'utf-8');
+    expect(raw).toContain('\n{"keyId":"');
+
+    const reopened = await ApiKeyStore.open(p);
+    const verified = await reopened.verify(created.plaintext);
+    expect(verified?.keyId).toBe(created.record.keyId);
+  });
+
   test('reopen preserves revocation across instances', async () => {
     const p = tmpStore();
     const a = await ApiKeyStore.open(p);

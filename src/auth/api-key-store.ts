@@ -298,7 +298,25 @@ export class ApiKeyStore {
   }
 
   private async appendRecord(record: ApiKey): Promise<void> {
-    const line = JSON.stringify(record) + '\n';
+    let line = JSON.stringify(record) + '\n';
+    try {
+      const st = await fs.promises.stat(this.storePath);
+      if (st.size > 0) {
+        const fh = await fs.promises.open(this.storePath, 'r');
+        try {
+          const tail = Buffer.alloc(1);
+          const { bytesRead } = await fh.read(tail, 0, 1, st.size - 1);
+          if (bytesRead === 1 && tail[0] !== 0x0a) {
+            line = '\n' + line;
+          }
+        } finally {
+          await fh.close();
+        }
+      }
+    } catch {
+      // Best-effort: if stat/read fails we still append the record and let the
+      // next sync reconcile from disk.
+    }
     await fs.promises.appendFile(this.storePath, line, { mode: 0o600 });
     // Advance the read cursor so the next syncFromDisk() doesn't re-parse
     // our own append. Best-effort: on stat failure, the next sync reconciles.
