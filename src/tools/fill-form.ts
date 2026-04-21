@@ -153,6 +153,7 @@ const handler: ToolHandler = async (
             axMatch = axResults[0];
           }
         } catch {
+          throwIfAborted(context);
           // AX resolution failed — fall through to CSS discovery
         }
 
@@ -205,6 +206,7 @@ const handler: ToolHandler = async (
             invalidateAXCache(getTargetId(page.target()));
             filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
           } catch (e) {
+            throwIfAborted(context);
             errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
           }
           continue;
@@ -333,6 +335,7 @@ const handler: ToolHandler = async (
 
           filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
         } catch (e) {
+          throwIfAborted(context);
           errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
         }
       }
@@ -378,6 +381,7 @@ const handler: ToolHandler = async (
             errors.push(`Could not find submit button matching "${submit}"`);
           }
         } catch (e) {
+          throwIfAborted(context);
           errors.push(`Failed to submit: ${e instanceof Error ? e.message : String(e)}`);
         }
       }

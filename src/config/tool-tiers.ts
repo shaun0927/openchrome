@@ -39,7 +39,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_get_connection_info: 1,
   oc_copy_to_clipboard: 1,
   oc_open_host_settings: 1,
-  act: 1,
+  act: 1,                     // src/tools/act.ts — composite NL action API (#578)
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)

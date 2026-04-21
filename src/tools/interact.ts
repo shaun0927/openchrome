@@ -223,6 +223,7 @@ const handler: ToolHandler = async (
         return { content: resultContent };
       }
     } catch (axError) {
+      throwIfAborted(context);
       // AX resolution failed — fall through to CSS discovery
       console.error(`[interact] AX resolution failed, falling back to CSS: ${axError instanceof Error ? axError.message : String(axError)}`);
     }
@@ -252,6 +253,7 @@ const handler: ToolHandler = async (
         },
       });
     } catch {
+      throwIfAborted(context);
       // CDP evaluate timed out — retry if budget remains
       if (maxWait > 0 && Date.now() - startTime < maxWait) {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
