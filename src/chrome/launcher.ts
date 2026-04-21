@@ -241,7 +241,7 @@ export async function waitForDebugPort(
   let attempts = 0;
   let backoff = DEBUG_PORT_INITIAL_BACKOFF_MS;
 
-  while (true) {
+  while (Date.now() <= deadline) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       throw new DebugPortTimeoutError(port, timeout, attempts);
@@ -288,6 +288,8 @@ export async function waitForDebugPort(
     }
     backoff = Math.min(backoff * DEBUG_PORT_BACKOFF_FACTOR, DEBUG_PORT_MAX_BACKOFF_MS);
   }
+
+  throw new DebugPortTimeoutError(port, timeout, attempts);
 }
 
 export interface ProfileState {
