@@ -590,14 +590,12 @@ export class CDPClient {
     let lastError: Error | null = null;
     let attempt = 0;
 
-    while (true) {
+    while (budgetDriven || attempt < maxConnectRetries) {
       attempt++;
 
       if (budgetDriven) {
         // Give up early if not enough time is left to run a meaningful attempt.
         budget!.requireRemaining(DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS, 'connectInternal.attempt-gate');
-      } else if (attempt > maxConnectRetries) {
-        throw lastError ?? new Error('connectInternal failed with no error recorded');
       }
 
       // Re-fetch instance on each attempt — Chrome may have regenerated its UUID
