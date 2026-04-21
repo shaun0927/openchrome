@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 // Tests for src/auth/scope-policy.ts — PR2 (issue #9)
 
-import { isAllowed, requiredScope, WRITE_TOOLS, ADMIN_TOOLS } from '../../src/auth/scope-policy';
+import { isAllowed, requiredScope, WRITE_TOOLS, READ_TOOLS, ADMIN_TOOLS } from '../../src/auth/scope-policy';
 
 describe('requiredScope', () => {
   it('screenshot -> read', () => {
@@ -12,8 +12,17 @@ describe('requiredScope', () => {
     expect(requiredScope('navigate')).toBe('write');
   });
 
-  it('unknown tool defaults to read', () => {
-    expect(requiredScope('some_future_tool')).toBe('read');
+  it('unknown tool defaults to write (least-privilege fail-safe)', () => {
+    // New/unclassified tools require 'write' so that composite tools added
+    // after PR2 cannot be invoked by read-only keys by default.
+    expect(requiredScope('some_future_tool')).toBe('write');
+  });
+
+  it('composite tools with mutating subactions require write', () => {
+    // `worker` (create/delete) and `memory` (record/validate) must not be
+    // reachable by read-only keys — regression guard for the Codex P1 finding.
+    expect(requiredScope('worker')).toBe('write');
+    expect(requiredScope('memory')).toBe('write');
   });
 
   it('admin tools -> admin (empty set returns read for now)', () => {
@@ -51,19 +60,25 @@ describe('isAllowed', () => {
     expect(isAllowed('page_screenshot', ['write'])).toBe(true);
   });
 
+  it('read-only key is denied unclassified tools (fail-safe default)', () => {
+    expect(isAllowed('some_future_tool', ['read'])).toBe(false);
+    expect(isAllowed('some_future_tool', ['write'])).toBe(true);
+  });
+
   it('WRITE_TOOLS set contains expected browser-mutating tools', () => {
     expect(WRITE_TOOLS.has('navigate')).toBe(true);
     expect(WRITE_TOOLS.has('fill_form')).toBe(true);
     expect(WRITE_TOOLS.has('javascript_tool')).toBe(true);
     expect(WRITE_TOOLS.has('cookies')).toBe(true);
     expect(WRITE_TOOLS.has('interact')).toBe(true);
+    expect(WRITE_TOOLS.has('worker')).toBe(true);
+    expect(WRITE_TOOLS.has('memory')).toBe(true);
   });
 
-  it('read-only tools are NOT in WRITE_TOOLS', () => {
-    expect(WRITE_TOOLS.has('page_screenshot')).toBe(false);
-    expect(WRITE_TOOLS.has('read_page')).toBe(false);
-    expect(WRITE_TOOLS.has('query_dom')).toBe(false);
-    expect(WRITE_TOOLS.has('find')).toBe(false);
-    expect(WRITE_TOOLS.has('wait_for')).toBe(false);
+  it('read-only tools are in READ_TOOLS and NOT in WRITE_TOOLS', () => {
+    for (const t of ['page_screenshot', 'read_page', 'query_dom', 'find', 'wait_for']) {
+      expect(READ_TOOLS.has(t)).toBe(true);
+      expect(WRITE_TOOLS.has(t)).toBe(false);
+    }
   });
 });
