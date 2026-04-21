@@ -46,6 +46,17 @@ describe('sessions/* authz (MCPServer round-5)', () => {
 
   beforeEach(() => {
     server = new MCPServer();
+    server.registerTool(
+      'noop',
+      async () => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
+      {
+        name: 'noop',
+        description: 'test helper',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    );
   });
 
   describe('sessions/create', () => {
@@ -67,7 +78,7 @@ describe('sessions/* authz (MCPServer round-5)', () => {
       await server.handleMessage(
         msg(
           'tools/call',
-          { name: 'wait_for', arguments: { sessionId: 's-create-2', condition: 'timeout', timeoutMs: 1 } },
+          { name: 'noop', arguments: { sessionId: 's-create-2' } },
           alice,
         ),
       );
@@ -98,7 +109,7 @@ describe('sessions/* authz (MCPServer round-5)', () => {
       await server.handleMessage(
         msg(
           'tools/call',
-          { name: 'wait_for', arguments: { sessionId: 's-del-2', condition: 'timeout', timeoutMs: 1 } },
+          { name: 'noop', arguments: { sessionId: 's-del-2' } },
           alice,
         ),
       );
@@ -116,7 +127,7 @@ describe('sessions/* authz (MCPServer round-5)', () => {
       await server.handleMessage(
         msg(
           'tools/call',
-          { name: 'wait_for', arguments: { sessionId: 's-del-3', condition: 'timeout', timeoutMs: 1 } },
+          { name: 'noop', arguments: { sessionId: 's-del-3' } },
           alice,
         ),
       );
@@ -131,7 +142,7 @@ describe('sessions/* authz (MCPServer round-5)', () => {
       const reclaim = await server.handleMessage(
         msg(
           'tools/call',
-          { name: 'wait_for', arguments: { sessionId: 's-del-3', condition: 'timeout', timeoutMs: 1 } },
+          { name: 'noop', arguments: { sessionId: 's-del-3' } },
           bob,
           3,
         ),

@@ -39,13 +39,24 @@ describe('tenant-session binding (MCPServer)', () => {
 
   beforeEach(() => {
     server = new MCPServer();
+    server.registerTool(
+      'noop',
+      async () => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
+      {
+        name: 'noop',
+        description: 'test helper',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    );
   });
 
   it('first api-key caller claims the session; same tenant is allowed to re-enter', async () => {
     const alice = principal('alice');
     // Use a trivial read-only tool so we can avoid heavy fixtures.
     const r1 = await server.handleMessage(
-      msg('tools/call', { name: 'wait_for', arguments: { sessionId: 's-1', condition: 'timeout', timeoutMs: 1 } }, alice),
+      msg('tools/call', { name: 'noop', arguments: { sessionId: 's-1' } }, alice),
     );
     expect(r1).not.toBeNull();
     // Shape: response is a JSON-RPC response (may be error or success — we don't
@@ -54,7 +65,7 @@ describe('tenant-session binding (MCPServer)', () => {
     expect(body1).not.toContain('owned by another tenant');
 
     const r2 = await server.handleMessage(
-      msg('tools/call', { name: 'wait_for', arguments: { sessionId: 's-1', condition: 'timeout', timeoutMs: 1 } }, alice, 2),
+      msg('tools/call', { name: 'noop', arguments: { sessionId: 's-1' } }, alice, 2),
     );
     const body2 = JSON.stringify(r2);
     expect(body2).not.toContain('owned by another tenant');
@@ -64,10 +75,10 @@ describe('tenant-session binding (MCPServer)', () => {
     const alice = principal('alice');
     const bob = principal('bob');
     await server.handleMessage(
-      msg('tools/call', { name: 'wait_for', arguments: { sessionId: 's-2', condition: 'timeout', timeoutMs: 1 } }, alice),
+      msg('tools/call', { name: 'noop', arguments: { sessionId: 's-2' } }, alice),
     );
     const resp = await server.handleMessage(
-      msg('tools/call', { name: 'wait_for', arguments: { sessionId: 's-2', condition: 'timeout', timeoutMs: 1 } }, bob, 2),
+      msg('tools/call', { name: 'noop', arguments: { sessionId: 's-2' } }, bob, 2),
     );
     expect(resp).not.toBeNull();
     const body = JSON.stringify(resp);
@@ -80,10 +91,10 @@ describe('tenant-session binding (MCPServer)', () => {
     const legacy: Principal = { tenantId: 'legacy', scopes: ['admin'], mode: 'legacy' };
     // Both "tenants" share the legacy synthetic id but must still coexist.
     const r1 = await server.handleMessage(
-      msg('tools/call', { name: 'wait_for', arguments: { sessionId: 's-3', condition: 'timeout', timeoutMs: 1 } }, disabled),
+      msg('tools/call', { name: 'noop', arguments: { sessionId: 's-3' } }, disabled),
     );
     const r2 = await server.handleMessage(
-      msg('tools/call', { name: 'wait_for', arguments: { sessionId: 's-3', condition: 'timeout', timeoutMs: 1 } }, legacy, 2),
+      msg('tools/call', { name: 'noop', arguments: { sessionId: 's-3' } }, legacy, 2),
     );
     expect(JSON.stringify(r1)).not.toContain('owned by another tenant');
     expect(JSON.stringify(r2)).not.toContain('owned by another tenant');
