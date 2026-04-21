@@ -75,6 +75,10 @@ export interface SessionCreateOptions {
    * localStorage, IndexedDB, or service worker caches. (#7)
    */
   tenantId?: TenantId;
+  /** Optional time budget for the underlying CDP connect path (A-3).
+   *  Typed as `unknown` here to keep the shared types file free of a
+   *  dependency on the utils/budget module; consumers cast to `Budget`. */
+  budget?: unknown;
 }
 
 export interface SessionEvent {

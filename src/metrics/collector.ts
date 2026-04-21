@@ -259,6 +259,10 @@ export function getMetricsCollector(): MetricsCollector {
       [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]);
     instance.registerHistogram('openchrome_cookie_scan_targets_scanned', 'Number of targets actually probed in each cookie scan',
       [1, 2, 5, 10, 20, 50, 100]);
+    instance.registerCounter(
+      'openchrome_session_init_budget_exhausted_total',
+      'Session-init operations that ran out of budget, labeled by exhausting stage (A-3)',
+    );
   }
   return instance;
 }

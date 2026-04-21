@@ -25,6 +25,11 @@ import { safeTitle } from './utils/safe-title';
 import { getTenantManager, isStrictTenantIsolationEnabled } from './tenant/registry';
 import type { TenantManager } from './tenant/manager';
 import { DEFAULT_TENANT_ID, type TenantId } from './tenant/types';
+import { Budget, isLegacyBudgetMode } from './utils/budget';
+import {
+  DEFAULT_SESSION_INIT_BUDGET_LAUNCH_FRACTION,
+  DEFAULT_SESSION_INIT_BUDGET_CONNECT_FRACTION,
+} from './config/defaults';
 
 /** The primary session ID used by most single-agent workflows. */
 const DEFAULT_SESSION_ID = 'default';
@@ -303,11 +308,23 @@ export class SessionManager {
   }
 
   /**
-   * Ensure connected to Chrome
+   * Ensure connected to Chrome.
+   *
+   * When `budget` is supplied and budget mode is not legacy, a child budget
+   * covering launch + puppeteer.connect share (~55% of the parent) is carved
+   * and passed to `cdpClient.connect()`. This keeps the overall session-init
+   * stage-time sliced as described in A-3 §3-2.
    */
-  async ensureConnected(): Promise<void> {
+  async ensureConnected(budget?: Budget): Promise<void> {
     if (!this.cdpClient.isConnected()) {
-      await this.cdpClient.connect();
+      if (budget && !isLegacyBudgetMode()) {
+        const connectFraction = DEFAULT_SESSION_INIT_BUDGET_LAUNCH_FRACTION
+          + DEFAULT_SESSION_INIT_BUDGET_CONNECT_FRACTION;
+        const connectBudget = budget.slice(Math.min(connectFraction, 1), 'connect');
+        await this.cdpClient.connect({ budget: connectBudget });
+      } else {
+        await this.cdpClient.connect();
+      }
     }
   }
 
@@ -358,7 +375,8 @@ export class SessionManager {
    * Create a new session with a default worker
    */
   async createSession(options: SessionCreateOptions = {}): Promise<Session> {
-    await this.ensureConnected();
+    const budget = options.budget as Budget | undefined;
+    await this.ensureConnected(budget);
 
     const id = options.id || crypto.randomUUID();
 
@@ -412,9 +430,14 @@ export class SessionManager {
   }
 
   /**
-   * Get or create a session
+   * Get or create a session.
+   *
+   * `budget` (A-3) flows through to `createSession()` on cold-start. If a
+   * concurrent creation is already in flight, the pending promise is
+   * returned as-is — the second caller inherits whatever budget the first
+   * caller supplied (or none).
    */
-  async getOrCreateSession(sessionId: string): Promise<Session> {
+  async getOrCreateSession(sessionId: string, budget?: Budget): Promise<Session> {
     const existing = this.sessions.get(sessionId);
     if (existing) {
       this.touchSession(sessionId);
@@ -427,7 +450,7 @@ export class SessionManager {
       return pending;
     }
 
-    const creation = this.createSession({ id: sessionId }).finally(() => {
+    const creation = this.createSession({ id: sessionId, budget }).finally(() => {
       this.pendingCreations.delete(sessionId);
     });
     this.pendingCreations.set(sessionId, creation);

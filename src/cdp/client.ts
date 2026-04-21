@@ -26,7 +26,9 @@ import {
   DEFAULT_HEARTBEAT_INTERVAL_MS,
   DEFAULT_MAX_RECONNECT_ATTEMPTS,
   DEFAULT_RECONNECT_DELAY_MS,
+  DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS,
 } from '../config/defaults';
+import { Budget, isLegacyBudgetMode } from '../utils/budget';
 import { withTimeout } from '../utils/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
@@ -565,12 +567,20 @@ export class CDPClient {
   }
 
   /**
-   * Internal connect logic
+   * Internal connect logic.
+   *
+   * When `budget` is provided and OPENCHROME_SESSION_INIT_BUDGET_MODE is NOT
+   * `legacy`, the retry loop is driven by budget.remaining() rather than a
+   * fixed retry count. Per-attempt WebSocket timeout and inter-attempt backoff
+   * are both capped by the remaining budget so the total wall-clock time
+   * stays within the caller's deadline.
    */
-  private async connectInternal(options?: { autoLaunch?: boolean }): Promise<void> {
+  private async connectInternal(options?: { autoLaunch?: boolean; budget?: Budget }): Promise<void> {
     this.disconnectRequested = false;
     const launcher = getChromeLauncher(this.port);
     const autoLaunch = options?.autoLaunch ?? this.autoLaunch;
+    const budget = options?.budget;
+    const budgetDriven = !!budget && !isLegacyBudgetMode();
 
     // Retry loop: after macOS sleep/wake, Chrome's WebSocket listener may be in a
     // half-open TCP state. The HTTP endpoint (/json/version) works because it's
@@ -578,10 +588,24 @@ export class CDPClient {
     // a TCP RST that clears Chrome's stale state, so the second attempt succeeds.
     const maxConnectRetries = 3;
     let lastError: Error | null = null;
+    let attempt = 0;
 
-    for (let attempt = 1; attempt <= maxConnectRetries; attempt++) {
+    while (true) {
+      attempt++;
+
+      if (budgetDriven) {
+        // Give up early if not enough time is left to run a meaningful attempt.
+        budget!.requireRemaining(DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS, 'connectInternal.attempt-gate');
+      } else if (attempt > maxConnectRetries) {
+        throw lastError ?? new Error('connectInternal failed with no error recorded');
+      }
+
       // Re-fetch instance on each attempt — Chrome may have regenerated its UUID
       const instance = await launcher.ensureChrome({ autoLaunch });
+
+      const wsTimeoutMs = budgetDriven
+        ? Math.max(1, Math.min(DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS, budget!.remaining()))
+        : DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS;
 
       try {
         let wsConnectTid: ReturnType<typeof setTimeout>;
@@ -593,14 +617,15 @@ export class CDPClient {
           }).finally(() => clearTimeout(wsConnectTid)),
           new Promise<never>((_, reject) => {
             wsConnectTid = setTimeout(
-              () => reject(new Error(`puppeteer.connect() timed out after ${DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS}ms (WebSocket to ${instance.wsEndpoint})`)),
-              DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
+              () => reject(new Error(`puppeteer.connect() timed out after ${wsTimeoutMs}ms (WebSocket to ${instance.wsEndpoint})`)),
+              wsTimeoutMs,
             );
           }),
         ]) as Browser;
 
         if (attempt > 1) {
-          console.error(`[CDPClient] connectInternal succeeded on attempt ${attempt}/${maxConnectRetries}`);
+          const remainingStr = budgetDriven ? `, budget remaining=${budget!.remaining()}ms` : `/${maxConnectRetries}`;
+          console.error(`[CDPClient] connectInternal succeeded on attempt ${attempt}${remainingStr}`);
         }
         break; // Success — exit retry loop
       } catch (err) {
@@ -614,7 +639,22 @@ export class CDPClient {
           this.browser = null;
         }
         lastError = err instanceof Error ? err : new Error(String(err));
-        if (attempt < maxConnectRetries) {
+
+        if (budgetDriven) {
+          // If the budget can't fit another meaningful attempt, surface it as
+          // SessionInitBudgetExhausted (caller distinguishes budget vs. real failure).
+          if (budget!.remaining() < DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS) {
+            budget!.requireRemaining(DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS, 'connectInternal.post-attempt');
+          }
+          // Invalidate launcher cache so next ensureChrome() re-checks via HTTP
+          launcher.invalidateInstance();
+          // Backoff: up to 1s, but not more than the remaining budget minus one more attempt.
+          const pauseMs = Math.max(0, Math.min(1000, budget!.remaining() - DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS));
+          console.error(`[CDPClient] connectInternal attempt ${attempt} failed (budget remaining=${budget!.remaining()}ms), retrying in ${pauseMs}ms: ${lastError.message}`);
+          if (pauseMs > 0) {
+            await new Promise(resolve => setTimeout(resolve, pauseMs));
+          }
+        } else if (attempt < maxConnectRetries) {
           console.error(`[CDPClient] connectInternal attempt ${attempt}/${maxConnectRetries} failed, retrying in 1s: ${lastError.message}`);
           // Invalidate launcher cache so next ensureChrome() re-checks via HTTP
           launcher.invalidateInstance();
@@ -708,8 +748,13 @@ export class CDPClient {
    * Uses promise coalescing: concurrent callers share a single connectInternal() call
    * instead of each independently opening a WebSocket (which would orphan event listeners
    * and heartbeat timers from the first connection).
+   *
+   * When `budget` is provided, it is forwarded to `connectInternal()` so the
+   * retry loop stays within the caller's deadline (A-3). Coalesced callers
+   * share whatever budget the first caller supplied.
    */
-  async connect(): Promise<void> {
+  async connect(options?: { budget?: Budget }): Promise<void> {
+    const budget = options?.budget;
     if (this.browser && this.browser.isConnected()) {
       // Skip active probe if recently verified by heartbeat (avoids per-call overhead)
       if (Date.now() - this.lastVerifiedAt < DEFAULT_CONNECT_VERIFY_STALENESS_MS) {
@@ -735,7 +780,7 @@ export class CDPClient {
         return;
       } catch {
         console.error('[CDPClient] Connection probe failed, reconnecting...');
-        await this.forceReconnect();
+        await this.forceReconnect({ budget });
         return;
       }
     }
@@ -752,7 +797,7 @@ export class CDPClient {
     this.connectionState = 'connecting';
     this.pendingConnect = (async () => {
       try {
-        await this.connectInternal();
+        await this.connectInternal({ budget });
         this.lastVerifiedAt = Date.now();
         this.startHeartbeat();
         console.error('[CDPClient] Connected to Chrome');
@@ -778,7 +823,8 @@ export class CDPClient {
    * post-reconnect operations from using orphaned page references that would
    * hang until protocolTimeout (30s).
    */
-  async forceReconnect(): Promise<void> {
+  async forceReconnect(options?: { budget?: Budget }): Promise<void> {
+    const budget = options?.budget;
     // Invalidate any in-flight connect() — we're replacing the connection entirely
     this.pendingConnect = null;
     this.stopHeartbeat();
@@ -811,7 +857,7 @@ export class CDPClient {
     try {
       // Do NOT auto-launch Chrome on heartbeat-triggered reconnect.
       // If Chrome was closed, stay disconnected until the next tool call.
-      await this.connectInternal({ autoLaunch: false });
+      await this.connectInternal({ autoLaunch: false, budget });
       this.lastVerifiedAt = Date.now();
       this.consecutiveHeartbeatFailures = 0;
       this.startHeartbeat();
