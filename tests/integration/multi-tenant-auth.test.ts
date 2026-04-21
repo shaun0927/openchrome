@@ -104,11 +104,11 @@ describe('multi-tenant auth integration', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
-    expect(isAllowed('screenshot', r.principal.scopes)).toBe(true);
+    expect(isAllowed('page_screenshot', r.principal.scopes)).toBe(true);
     expect(isAllowed('navigate', r.principal.scopes)).toBe(false);
     expect(isAllowed('javascript_tool', r.principal.scopes)).toBe(false);
     expect(requiredScope('navigate')).toBe('write');
-    expect(requiredScope('screenshot')).toBe('read');
+    expect(requiredScope('page_screenshot')).toBe('read');
   });
 
   test('rate limiter: tenant A burn does not consume tenant B budget', async () => {
