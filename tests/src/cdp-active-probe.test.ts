@@ -32,6 +32,7 @@ jest.mock('../../src/config/global', () => ({
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
 import { CDPClient } from '../../src/cdp/client';
+import { createBudget } from '../../src/utils/budget';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -240,6 +241,24 @@ describe('CDPClient – connect() active probe', () => {
     await client.connect();
 
     expect(forceReconnectSpy).toHaveBeenCalledTimes(1);
+    stopHeartbeat(client);
+  });
+
+  test('connect() forwards session-init budget into probe-triggered reconnects', async () => {
+    const client = new CDPClient({ port: 9222 });
+    const mockBrowser = createMockBrowser();
+    mockBrowser.version.mockRejectedValue(new Error('dead connection'));
+    (client as any).browser = mockBrowser;
+    (client as any).connectionState = 'connected';
+    (client as any).lastVerifiedAt = 0;
+
+    const budget = createBudget(1_000, 'session-init');
+    const forceReconnectSpy = jest.spyOn(client, 'forceReconnect')
+      .mockResolvedValue(undefined);
+
+    await client.connect({ budget });
+
+    expect(forceReconnectSpy).toHaveBeenCalledWith({ budget });
     stopHeartbeat(client);
   });
 

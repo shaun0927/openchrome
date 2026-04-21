@@ -781,7 +781,7 @@ export class CDPClient {
         return;
       } catch {
         console.error('[CDPClient] Connection probe failed, reconnecting...');
-        await this.forceReconnect();
+        await this.forceReconnect({ budget });
         return;
       }
     }
@@ -824,7 +824,8 @@ export class CDPClient {
    * post-reconnect operations from using orphaned page references that would
    * hang until protocolTimeout (30s).
    */
-  async forceReconnect(): Promise<void> {
+  async forceReconnect(options?: { budget?: Budget }): Promise<void> {
+    const budget = options?.budget;
     // Invalidate any in-flight connect() — we're replacing the connection entirely
     this.pendingConnect = null;
     this.stopHeartbeat();
@@ -857,7 +858,7 @@ export class CDPClient {
     try {
       // Do NOT auto-launch Chrome on heartbeat-triggered reconnect.
       // If Chrome was closed, stay disconnected until the next tool call.
-      await this.connectInternal({ autoLaunch: false });
+      await this.connectInternal({ autoLaunch: false, budget });
       this.lastVerifiedAt = Date.now();
       this.consecutiveHeartbeatFailures = 0;
       this.startHeartbeat();
