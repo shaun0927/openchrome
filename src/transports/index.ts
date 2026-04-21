@@ -4,6 +4,7 @@
  */
 
 import { MCPResponse } from '../types/mcp';
+import type { ApiKeyStore } from '../auth/api-key-store';
 
 /**
  * Abstraction over the wire protocol (stdio or HTTP).
@@ -39,6 +40,15 @@ export interface TransportOptions {
   port?: number;
   host?: string;
   authToken?: string;
+  /**
+   * Optional multi-tenant API key store. When provided, the HTTP transport
+   * resolves auth to `api-key` mode (see HTTPTransport.resolveAuthMode) and
+   * every /mcp request is authenticated against a stored key instead of the
+   * legacy shared token. Without this, the transport silently falls through
+   * to legacy or disabled mode — so real deployments that want per-tenant
+   * keys must pass this option.
+   */
+  apiKeyStore?: ApiKeyStore;
 }
 
 /**
@@ -51,7 +61,12 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
     // Use require to avoid loading HTTP module when not needed
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { HTTPTransport } = require('./http');
-    return new HTTPTransport(options?.port || 3100, options?.host || '127.0.0.1', options?.authToken);
+    return new HTTPTransport(
+      options?.port || 3100,
+      options?.host || '127.0.0.1',
+      options?.authToken,
+      options?.apiKeyStore ? { apiKeyStore: options.apiKeyStore } : undefined,
+    );
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { StdioTransport } = require('./stdio');

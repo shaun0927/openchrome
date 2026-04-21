@@ -31,6 +31,8 @@ export interface AuditLogMeta {
   tenantId?: string;
   /** Hashed prefix of the authenticating API key, when available. */
   keyId?: string;
+  /** Granted scopes for the authenticating principal, when available. */
+  scopes?: readonly string[];
   /** `'success'` | `'error'` | `'aborted'` — mirrors the metric status label. */
   status?: 'success' | 'error' | 'aborted';
   durationMs?: number;
@@ -40,6 +42,24 @@ export interface AuditLogMeta {
   billable?: boolean;
   /** Error message when status === 'error'. Should not contain sensitive data. */
   errorMessage?: string;
+}
+
+const PLAINTEXT_KEY_PREFIX = 'oc_live_';
+
+// Belt-and-braces: strip anything that looks like a plaintext API key from
+// audit inputs. The store never emits these, but defensive redaction here
+// prevents accidental leaks via caller-supplied args.
+//
+// Plaintext format: `oc_live_{tenantId}_{32 base62 chars}`. tenantId is
+// operator-supplied and is NOT restricted to [A-Za-z0-9_] — hyphens, dots,
+// and other characters are valid. Matching only `[A-Za-z0-9_]+` after the
+// prefix would stop at the first hyphen and leak the remainder of the key.
+// We therefore match greedily up to a JSON/log delimiter (whitespace, string
+// quote, or backslash) so the entire plaintext is redacted regardless of
+// the tenantId character set.
+export function redactPlaintextKeys(value: string): string {
+  if (!value.includes(PLAINTEXT_KEY_PREFIX)) return value;
+  return value.replace(/oc_live_[^\s"'\\]+/g, '[REDACTED]');
 }
 
 interface LegacyAuditEntry {
@@ -64,6 +84,7 @@ interface ExtendedAuditEntry {
   billable: boolean;
   argsHash: string;
   args: Record<string, unknown>;
+  scopes?: string[];
   errorMessage?: string;
 }
 
@@ -148,13 +169,14 @@ function summarizeArgsLegacy(args: Record<string, unknown>): string {
   for (const [key, value] of Object.entries(args)) {
     if (isLegacySensitiveKey(key)) {
       safe[key] = '[REDACTED]';
-    } else if (typeof value === 'string' && value.length > 100) {
-      safe[key] = value.slice(0, 100) + '...';
+    } else if (typeof value === 'string') {
+      const redacted = redactPlaintextKeys(value);
+      safe[key] = redacted.length > 100 ? redacted.slice(0, 100) + '...' : redacted;
     } else {
       safe[key] = value;
     }
   }
-  return JSON.stringify(safe);
+  return redactPlaintextKeys(JSON.stringify(safe));
 }
 
 function ensureDir(logPath: string): boolean {
@@ -224,6 +246,7 @@ export function logAuditEntry(
     argsHash,
     args: redacted,
   };
+  if (meta.scopes && meta.scopes.length > 0) entry.scopes = [...meta.scopes];
   if (meta.errorMessage) entry.errorMessage = meta.errorMessage;
 
   appendLine(logPath, JSON.stringify(entry) + '\n');

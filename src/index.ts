@@ -262,6 +262,27 @@ program
       console.error('[openchrome] Bearer token authentication: enabled');
     }
 
+    // Multi-tenant API key store: when OPENCHROME_API_KEYS_PATH points at a
+    // JSONL store file, load it and pass it to the HTTP transport so
+    // resolveAuthMode() selects `api-key` mode. Without this wiring the
+    // middleware/scope/rate-limit code from PR 2/4 would be unreachable from
+    // normal startup (the CLI never constructs a store otherwise). Admin-CLI
+    // key management lands in PR 3/4 (#32); this is the minimum plumbing to
+    // make api-key mode usable in this PR.
+    const apiKeysPath = process.env.OPENCHROME_API_KEYS_PATH;
+    let apiKeyStore: import('./auth/api-key-store').ApiKeyStore | undefined;
+    if (apiKeysPath) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { ApiKeyStore } = require('./auth/api-key-store');
+        apiKeyStore = await ApiKeyStore.open(apiKeysPath);
+        console.error(`[openchrome] API key store loaded from ${apiKeysPath} (api-key auth mode)`);
+      } catch (err) {
+        console.error(`[openchrome] Failed to load API key store at ${apiKeysPath}:`, err);
+        throw err;
+      }
+    }
+
     // Start transport (useHttp/transportMode determined above, before getMCPServer)
     let httpTransport: import('./transports/http').HTTPTransport | null = null;
 
@@ -270,7 +291,12 @@ program
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
       const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
       const { HTTPTransport } = require('./transports/http');
-      const httpTrans = new HTTPTransport(httpPort, httpHost, authToken) as import('./transports/http').HTTPTransport;
+      const httpTrans = new HTTPTransport(
+        httpPort,
+        httpHost,
+        authToken,
+        apiKeyStore ? { apiKeyStore } : undefined,
+      ) as import('./transports/http').HTTPTransport;
       httpTransport = httpTrans;
 
       // Start server with stdio as primary transport (wires JSON-RPC validation, rate-limiter, etc.)
@@ -287,7 +313,7 @@ program
     } else if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
       const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
-      const transport = createTransport('http', { port: httpPort, host: httpHost, authToken });
+      const transport = createTransport('http', { port: httpPort, host: httpHost, authToken, apiKeyStore });
       httpTransport = transport as import('./transports/http').HTTPTransport;
       server.start(transport);
       console.error(`[openchrome] HTTP transport enabled on ${httpHost}:${httpPort}`);

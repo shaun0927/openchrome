@@ -112,7 +112,8 @@ export class ApiKeyStore {
   }
 
   static async open(storePath?: string): Promise<ApiKeyStore> {
-    const finalPath = storePath ?? defaultStorePath();
+    const envOverride = process.env.OPENCHROME_API_KEY_STORE_PATH;
+    const finalPath = storePath ?? (envOverride && envOverride.length > 0 ? envOverride : defaultStorePath());
     const dir = path.dirname(finalPath);
     // mkdir returns the first path it had to create, or undefined if the
     // directory tree already existed. Only chmod when WE created the dir —

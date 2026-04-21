@@ -40,6 +40,7 @@ import {
   totpSecondsRemaining,
   validateBase32,
 } from './totp-store';
+import { registerAdminKeysCommand } from './admin-keys';
 
 const program = new Command();
 
@@ -1242,5 +1243,8 @@ totp
       process.exit(1);
     }
   });
+
+// Admin CLI — tenant API key management (issue #9 / PR3).
+registerAdminKeysCommand(program);
 
 program.parse();
