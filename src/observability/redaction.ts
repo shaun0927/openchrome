@@ -20,7 +20,7 @@ export interface RedactionRule {
   /** Dot-path into args; `[*]` matches any array index. */
   path: string;
   mode: RedactionMode;
-  /** For `truncate`: keep first N UTF-8 bytes of the serialised value. */
+  /** For `truncate`: keep first N bytes of the serialised value. */
   maxBytes?: number;
 }
 
@@ -32,11 +32,19 @@ export interface RedactionConfig {
 export const REDACTED = '[REDACTED]';
 
 const DEFAULT_TRUNCATE_MAX_BYTES = 200;
+const VALID_REDACTION_MODES = new Set<RedactionMode>([
+  'redact',
+  'hash',
+  'truncate',
+  'redactIfSensitiveName',
+]);
 
 /**
- * Built-in minimum policy used when no config file is present. Keeps a safe
- * fallback so that audit log entries never carry raw password/token values
- * just because the operator forgot to ship the config file.
+ * Built-in minimum policy used when no config file is present. Includes
+ * per-tool rules for fields whose names (e.g. `value`, `text`, `code`) are
+ * not in the heuristic sensitive-name list but are sensitive by virtue of
+ * the containing tool — without these rules, raw cookie values or typed
+ * text would end up in the audit log in cleartext.
  */
 export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
   defaultSensitiveFieldNames: [
@@ -59,8 +67,65 @@ export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
     'ssn',
     'private_key',
   ],
-  tools: {},
+  tools: {
+    cookies: [
+      { path: 'value', mode: 'hash' },
+    ],
+    'cookies.set': [
+      { path: 'value', mode: 'hash' },
+      { path: 'cookies[*].value', mode: 'hash' },
+    ],
+    fill_form: [
+      { path: 'fields[*].value', mode: 'redactIfSensitiveName' },
+    ],
+    form_input: [
+      { path: 'value', mode: 'redact' },
+    ],
+    type: [
+      { path: 'text', mode: 'truncate', maxBytes: 200 },
+    ],
+    javascript_tool: [
+      { path: 'code', mode: 'truncate', maxBytes: 200 },
+    ],
+    storage: [
+      { path: 'value', mode: 'truncate', maxBytes: 200 },
+    ],
+  },
 };
+
+function normalizeRule(toolName: string, rawRule: unknown): RedactionRule | null {
+  if (!rawRule || typeof rawRule !== 'object') {
+    console.error(`[redaction] ignoring rule for tool "${toolName}": rule must be an object`);
+    return null;
+  }
+
+  const rule = rawRule as Partial<RedactionRule>;
+  if (typeof rule.path !== 'string' || rule.path.trim() === '') {
+    console.error(`[redaction] ignoring rule for tool "${toolName}": path must be a non-empty string`);
+    return null;
+  }
+  if (!VALID_REDACTION_MODES.has(rule.mode as RedactionMode)) {
+    console.error(`[redaction] ignoring rule for tool "${toolName}": invalid mode "${String(rule.mode)}"`);
+    return null;
+  }
+
+  const normalized: RedactionRule = {
+    path: rule.path,
+    mode: rule.mode as RedactionMode,
+  };
+
+  if (rule.maxBytes !== undefined) {
+    if (typeof rule.maxBytes === 'number' && Number.isFinite(rule.maxBytes) && rule.maxBytes > 0) {
+      normalized.maxBytes = Math.floor(rule.maxBytes);
+    } else {
+      console.error(
+        `[redaction] ignoring maxBytes for tool "${toolName}" path "${rule.path}": expected positive number`,
+      );
+    }
+  }
+
+  return normalized;
+}
 
 export function loadRedactionConfig(filePath: string): RedactionConfig {
   try {
@@ -69,7 +134,23 @@ export function loadRedactionConfig(filePath: string): RedactionConfig {
     const sensitive = Array.isArray(parsed.defaultSensitiveFieldNames)
       ? parsed.defaultSensitiveFieldNames.map((s) => String(s).toLowerCase())
       : BUILTIN_REDACTION_CONFIG.defaultSensitiveFieldNames;
-    const tools = (parsed.tools && typeof parsed.tools === 'object') ? parsed.tools : {};
+    // Only keep tool entries whose rules are arrays; a malformed entry
+    // (e.g. a single object) would otherwise crash `for...of` at runtime
+    // and break the tool call the audit log is meant to record.
+    const toolsIn = (parsed.tools && typeof parsed.tools === 'object')
+      ? (parsed.tools as Record<string, unknown>)
+      : {};
+    const tools: Record<string, RedactionRule[]> = {};
+    for (const [name, rules] of Object.entries(toolsIn)) {
+      if (Array.isArray(rules)) {
+        const normalized = rules
+          .map((rule) => normalizeRule(name, rule))
+          .filter((rule): rule is RedactionRule => rule !== null);
+        tools[name] = normalized;
+      } else {
+        console.error(`[redaction] ignoring tool "${name}": rules must be an array, got ${typeof rules}`);
+      }
+    }
     return { defaultSensitiveFieldNames: sensitive, tools };
   } catch {
     return BUILTIN_REDACTION_CONFIG;
@@ -93,70 +174,9 @@ function stringify(value: unknown): string {
   try { return JSON.stringify(value) ?? ''; } catch { return ''; }
 }
 
-/**
- * Stable JSON stringification with sorted object keys, so that equivalent
- * payloads produced by different callers hash identically. Arrays preserve
- * order. Cycles are not expected in audit args.
- */
-function canonicalStringify(value: unknown): string {
-  if (value === undefined) return 'null';
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
-  if (Array.isArray(value)) return '[' + value.map(canonicalStringify).join(',') + ']';
-  const obj = value as Record<string, unknown>;
-  // Drop keys whose value is `undefined`, matching JSON.stringify's behaviour
-  // so that `{a:1, b:undefined}` and `{a:1}` produce the same hash.
-  const keys = Object.keys(obj).filter((k) => obj[k] !== undefined).sort();
-  return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalStringify(obj[k])).join(',') + '}';
-}
-
-/**
- * Truncate a UTF-8 string to at most `maxBytes` bytes without splitting a
- * multi-byte code point. JS string `.length` and `.slice()` count UTF-16 code
- * units, which can underestimate byte size for non-ASCII payloads.
- */
-function truncateUtf8(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
-  let bytes = 0;
-  const chars: string[] = [];
-  for (const ch of text) {
-    const chBytes = Buffer.byteLength(ch, 'utf8');
-    if (bytes + chBytes > maxBytes) break;
-    chars.push(ch);
-    bytes += chBytes;
-  }
-  return chars.join('');
-}
-
-/**
- * Tokenise an identifier into lowercase word tokens. Splits on
- * camelCase boundaries and any non-alphanumeric separator, so
- * `apiKey`, `api_key`, `api-key` all yield `['api', 'key']`.
- */
-function tokenize(name: string): string[] {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-}
-
-/**
- * Token-aware sensitivity check. A sensitive entry matches when its
- * own tokens appear as a contiguous run in the field name's tokens.
- * This avoids false positives like `author` ⊃ `auth` or
- * `authentication_method` ⊃ `auth` that a naive substring check
- * would produce.
- */
 function isSensitiveName(name: string, sensitiveNames: string[]): boolean {
-  const tokens = tokenize(name);
-  if (tokens.length === 0) return false;
-  const joined = ' ' + tokens.join(' ') + ' ';
-  for (const sensitive of sensitiveNames) {
-    const sensTokens = tokenize(sensitive);
-    if (sensTokens.length === 0) continue;
-    if (joined.includes(' ' + sensTokens.join(' ') + ' ')) return true;
-  }
-  return false;
+  const lower = name.toLowerCase();
+  return sensitiveNames.some((s) => lower.includes(s));
 }
 
 function applyMode(value: unknown, mode: RedactionMode, opts: { maxBytes?: number; sensitiveNames: string[]; name?: string; siblingName?: unknown }): unknown {
@@ -168,8 +188,8 @@ function applyMode(value: unknown, mode: RedactionMode, opts: { maxBytes?: numbe
     case 'truncate': {
       const text = stringify(value);
       const max = opts.maxBytes ?? DEFAULT_TRUNCATE_MAX_BYTES;
-      if (Buffer.byteLength(text, 'utf8') <= max) return text;
-      return { preview: truncateUtf8(text, max), hash: sha256(text), truncated: true };
+      if (text.length <= max) return text;
+      return { preview: text.slice(0, max), hash: sha256(text), truncated: true };
     }
     case 'redactIfSensitiveName': {
       // Check the containing field name first (for rules like {path: 'password'})
@@ -256,20 +276,9 @@ function walkAndRedactByName(value: unknown, cfg: RedactionConfig): unknown {
     return value.map((v) => walkAndRedactByName(v, cfg));
   }
   if (value && typeof value === 'object') {
-    const obj = value as Record<string, unknown>;
-    // Detect `{name, value}` form-field shape: when `name` is a sensitive
-    // identifier, treat the sibling `value` as a secret. This catches form
-    // payloads even when no per-tool rule is configured (e.g. when the config
-    // file is missing and we fall back to the built-in policy).
-    const looksLikeFormField =
-      typeof obj.name === 'string' &&
-      'value' in obj &&
-      isSensitiveName(obj.name as string, cfg.defaultSensitiveFieldNames);
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       if (isSensitiveName(k, cfg.defaultSensitiveFieldNames)) {
-        out[k] = REDACTED;
-      } else if (looksLikeFormField && k === 'value') {
         out[k] = REDACTED;
       } else {
         out[k] = walkAndRedactByName(v, cfg);
@@ -296,14 +305,20 @@ export function redactArgs(
   cfg: RedactionConfig = BUILTIN_REDACTION_CONFIG,
 ): { redacted: Record<string, unknown>; argsHash: string } {
   const clone = deepClone(args);
-  const rules = cfg.tools[toolName] || [];
+  const rawRules = cfg.tools[toolName];
+  // Defense in depth: tolerate a malformed config that somehow reached here
+  // (e.g. programmatic construction bypassing loadRedactionConfig). A bad
+  // audit config must never break the tool call itself.
+  const rules: RedactionRule[] = Array.isArray(rawRules)
+    ? rawRules
+        .map((rule) => normalizeRule(toolName, rule))
+        .filter((rule): rule is RedactionRule => rule !== null)
+    : [];
   for (const rule of rules) {
     const segments = splitPath(rule.path);
     applyRuleAt(clone as Record<string, unknown>, segments, rule, cfg);
   }
   const afterHeuristic = walkAndRedactByName(clone, cfg) as Record<string, unknown>;
-  // Hash the canonicalised original args so equivalent payloads with different
-  // key insertion order produce the same hash (stable integrity / dedup).
-  const argsHash = sha256(canonicalStringify(args));
+  const argsHash = sha256(stringify(args));
   return { redacted: afterHeuristic, argsHash };
 }

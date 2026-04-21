@@ -74,6 +74,7 @@
   "files": [
     "dist",
     "assets",
+    "config",
     "README.md",
     "LICENSE"
   ]
