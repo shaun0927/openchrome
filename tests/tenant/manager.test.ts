@@ -322,13 +322,17 @@ describe('TenantManager', () => {
   });
 
   it('rejects getOrCreate while closeAll is in progress', async () => {
-    const ctx = makeStubContext('a');
+    const alphaCtx = makeStubContext('a');
+    let stall = true;
     let releaseCreate: (() => void) | null = null;
     const factory = jest.fn(async () => {
-      await new Promise<void>((r) => {
-        releaseCreate = r;
-      });
-      return ctx;
+      if (stall) {
+        await new Promise<void>((r) => {
+          releaseCreate = r;
+        });
+        return alphaCtx;
+      }
+      return makeStubContext('fresh');
     });
     const mgr = new TenantManager({ createContext: factory });
     const creating = mgr.getOrCreate('alpha');
@@ -339,11 +343,11 @@ describe('TenantManager', () => {
     (releaseCreate as unknown as () => void)();
     await creating;
     await closing;
-    // After closeAll finishes, the manager is reusable
-    const fresh = makeStubContext('fresh');
-    const mgr2 = new TenantManager({ createContext: async () => fresh });
-    await mgr2.closeAll();
-    await expect(mgr2.getOrCreate('gamma')).resolves.toBeDefined();
+    // Same manager must be reusable after the drain — proves the guard is
+    // released (not permanently sticky).
+    stall = false;
+    const entry = await mgr.getOrCreate('gamma');
+    expect(entry.id).toBe('gamma');
   });
 
   it('does not leak pending when createContext throws synchronously', async () => {
@@ -363,6 +367,71 @@ describe('TenantManager', () => {
     // If pending leaked, the third call would hit "max tenants reached"
     // instead of reaching the factory — verify factory was actually invoked.
     expect((factory as unknown as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('closeAll is single-flight so concurrent callers share one drain', async () => {
+    const alphaCtx = makeStubContext('a');
+    let stall = true;
+    let releaseCreate: (() => void) | null = null;
+    const factory = jest.fn(async () => {
+      if (stall) {
+        await new Promise<void>((r) => {
+          releaseCreate = r;
+        });
+        return alphaCtx;
+      }
+      return makeStubContext('fresh');
+    });
+    const mgr = new TenantManager({ createContext: factory });
+    const creating = mgr.getOrCreate('alpha');
+    const closeA = mgr.closeAll();
+    const closeB = mgr.closeAll();
+    // Both closes share the same underlying promise — proves single-flight.
+    expect(closeA).toBe(closeB);
+    // getOrCreate must reject throughout the full drain, even after
+    // closeA's finally would have fired on the old bool flag.
+    await Promise.resolve();
+    await expect(mgr.getOrCreate('beta')).rejects.toThrow(/closeAll in progress/);
+    (releaseCreate as unknown as () => void)();
+    await creating;
+    await closeA;
+    // Same manager is reusable after the drain completes — proves the
+    // closingPromise is cleared (not left permanently truthy).
+    stall = false;
+    const entry = await mgr.getOrCreate('gamma');
+    expect(entry.id).toBe('gamma');
+    expect(mgr.stats().active).toBe(1);
+  });
+
+  it('sweepIdle re-checks activity before eviction', async () => {
+    const clock = fakeClock();
+    const alphaCtx = makeStubContext('a');
+    const betaCtx = makeStubContext('b');
+    let n = 0;
+    // closeContext for alpha (the first release) touches beta mid-sweep,
+    // simulating concurrent traffic that refreshes an about-to-be-evicted
+    // tenant. On the old code beta would be evicted anyway (stale snapshot);
+    // with revalidation beta must survive.
+    let mgrRef!: TenantManager;
+    mgrRef = new TenantManager({
+      createContext: async () => (++n === 1 ? alphaCtx : betaCtx),
+      now: clock.now,
+      config: { idleTimeoutMs: 10_000 },
+      closeContext: async (c) => {
+        if (c === alphaCtx) {
+          mgrRef.touch('beta');
+        }
+        await (c as StubContext).close();
+      },
+    });
+    await mgrRef.getOrCreate('alpha');
+    await mgrRef.getOrCreate('beta');
+    clock.advance(11_000);
+    const evicted = await mgrRef.sweepIdle();
+    expect(evicted).toEqual(['alpha']);
+    expect(mgrRef.has('alpha')).toBe(false);
+    expect(mgrRef.has('beta')).toBe(true);
+    expect(mgrRef.stats().idleEvictions).toBe(1);
   });
 
   it('clears in-flight entry on createContext failure so retries can succeed', async () => {
