@@ -15,13 +15,17 @@ import {
   DEFAULT_TENANT_CONTEXT_IDLE_TIMEOUT_MS,
   DEFAULT_STRICT_TENANT_ISOLATION,
 } from '../config/defaults';
-import { TenantManager } from './manager';
+import {
+  DEFAULT_TENANT_IDLE_SWEEP_INTERVAL_MS,
+  TenantManager,
+} from './manager';
 
 let singleton: TenantManager | null = null;
 
 export interface TenantRegistryOptions {
   cdpClient?: CDPClient;
   idleTimeoutMs?: number;
+  idleSweepIntervalMs?: number;
 }
 
 function readNumberEnv(name: string): number | undefined {
@@ -38,20 +42,29 @@ export function getTenantManager(options: TenantRegistryOptions = {}): TenantMan
     options.idleTimeoutMs ??
     readNumberEnv('OPENCHROME_TENANT_CONTEXT_IDLE_TIMEOUT_MS') ??
     DEFAULT_TENANT_CONTEXT_IDLE_TIMEOUT_MS;
+  const idleSweepIntervalMs =
+    options.idleSweepIntervalMs ??
+    readNumberEnv('OPENCHROME_TENANT_IDLE_SWEEP_INTERVAL_MS') ??
+    DEFAULT_TENANT_IDLE_SWEEP_INTERVAL_MS;
   singleton = new TenantManager({
     createContext: () => client.createBrowserContext(),
     config: { idleTimeoutMs },
   });
+  singleton.startIdleSweep(idleSweepIntervalMs);
   return singleton;
 }
 
 /** Test-only. Replaces the singleton. Call `resetTenantManager()` to clear. */
 export function setTenantManager(mgr: TenantManager | null): void {
+  if (singleton && singleton !== mgr) {
+    singleton.stopIdleSweep();
+  }
   singleton = mgr;
 }
 
 /** Test-only. Forces the next `getTenantManager()` call to rebuild. */
 export function resetTenantManager(): void {
+  singleton?.stopIdleSweep();
   singleton = null;
 }
 
