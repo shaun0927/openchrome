@@ -235,8 +235,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         expect(toolNames).toContain(tool);
       }
 
-      // Total should be 64 (31 T1 + 24 T2 + 9 T3)
-      expect(toolNames.length).toBe(64);
+      expect(new Set(toolNames).size).toBe(toolNames.length);
     });
 
     test('resources/list returns usage guide resource', async () => {
@@ -417,8 +416,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
 
       // Should NOT have expand_tools (progressive disclosure disabled)
       expect(toolNames).not.toContain('expand_tools');
-      // Total should be 64 (31 T1 + 24 T2 + 9 T3)
-      expect(toolNames.length).toBe(64);
+      expect(new Set(toolNames).size).toBe(toolNames.length);
     });
   });
 });

@@ -304,7 +304,9 @@ program
 
       // Wire HTTP transport through MCPServer.handleMessage() — single source of
       // truth for JSON-RPC validation, notification handling, and request routing.
-      httpTrans.onMessage(async (msg: Record<string, unknown>) => server.handleMessage(msg));
+      httpTrans.onMessage(async (msg: Record<string, unknown>, signal?: AbortSignal) =>
+        server.handleMessage(msg, signal),
+      );
       server.wireRateLimiterCleanup(httpTrans);
       httpTrans.start();
 

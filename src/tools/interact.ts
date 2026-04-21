@@ -6,7 +6,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -70,6 +70,7 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
   context?: ToolContext
 ): Promise<MCPResult> => {
+  throwIfAborted(context);
   const tabId = args.tabId as string;
   const query = args.query as string;
   const action = (args.action as string) || 'click';
@@ -222,6 +223,7 @@ const handler: ToolHandler = async (
         return { content: resultContent };
       }
     } catch (axError) {
+      throwIfAborted(context);
       // AX resolution failed — fall through to CSS discovery
       console.error(`[interact] AX resolution failed, falling back to CSS: ${axError instanceof Error ? axError.message : String(axError)}`);
     }
@@ -251,6 +253,7 @@ const handler: ToolHandler = async (
         },
       });
     } catch {
+      throwIfAborted(context);
       // CDP evaluate timed out — retry if budget remains
       if (maxWait > 0 && Date.now() - startTime < maxWait) {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
