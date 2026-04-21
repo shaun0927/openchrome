@@ -14,6 +14,20 @@ import type { JwtVerifier } from '../auth/jwt-verifier';
 
 export type { Principal };
 
+/**
+ * Non-forgeable key used by the transport layer to attach a trusted Principal
+ * to a parsed JSON-RPC message before it reaches the MCP server core.
+ *
+ * Why a Symbol: `JSON.parse` can never produce symbol-keyed properties, so
+ * clients cannot inject this field through the wire payload. A string key
+ * like `__principal` would be forgeable by any caller that controls the
+ * JSON body (notably stdio callers, whose transport does not inject a
+ * principal at all). Using a symbol here eliminates the trust boundary
+ * question entirely — if `msg[PRINCIPAL_SYM]` is present, the transport
+ * set it.
+ */
+export const PRINCIPAL_SYM: unique symbol = Symbol('mcp.auth.principal');
+
 export type AuthMode =
   | { kind: 'disabled' }
   | { kind: 'legacy-shared-token'; token: string }
@@ -47,8 +61,11 @@ function timingSafeStringEqual(a: string, b: string): boolean {
 }
 
 function computeKeyIdFromPlaintext(plaintext: string): string {
-  // Mirrors the derivation in ApiKeyStore so audit logs on failure can
-  // reference the same opaque id the store would have assigned.
+  // Mirrors the derivation in ApiKeyStore.base62Encode exactly — including
+  // the fixed-length left-padding — so audit logs on failure reference the
+  // same opaque id the store would have assigned. Without the pad, digests
+  // starting with zero bytes produced a shorter bigint string and a keyId
+  // that disagreed with the stored record, breaking correlation.
   const digest = crypto.createHash('sha256').update(plaintext).digest();
   const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
   let num = 0n;
@@ -57,6 +74,10 @@ function computeKeyIdFromPlaintext(plaintext: string): string {
   while (num > 0n) {
     out = ALPHABET[Number(num % 62n)] + out;
     num = num / 62n;
+  }
+  const targetLen = Math.ceil((digest.length * Math.log(256)) / Math.log(62));
+  if (out.length < targetLen) {
+    out = ALPHABET[0].repeat(targetLen - out.length) + out;
   }
   return 'k_' + out.slice(0, 10);
 }
