@@ -4,7 +4,57 @@
  * Supports counters, gauges, and histograms with labels.
  */
 
+import { currentRequestContext } from '../observability/request-id';
+
 export type MetricType = 'counter' | 'gauge' | 'histogram';
+
+/** Max length of a tenant label value — matches issue #10 cardinality guard. */
+export const MAX_TENANT_LABEL_LEN = 64;
+/** Fallback label value when tenant is unknown or invalid. */
+export const TENANT_UNKNOWN = 'unknown';
+
+const TENANT_NORMALIZE_RE = /[^a-zA-Z0-9_]/g;
+
+/**
+ * Normalise a tenant ID for use as a Prometheus label:
+ *   - strips non-[A-Za-z0-9_] characters
+ *   - truncates to MAX_TENANT_LABEL_LEN
+ *   - falls back to `unknown` when input is empty or not a string
+ *
+ * Keeps label cardinality bounded even if an upstream feeds a malformed
+ * tenant identifier.
+ */
+export function normaliseTenantLabel(raw: unknown): string {
+  if (typeof raw !== 'string') return TENANT_UNKNOWN;
+  const cleaned = raw.replace(TENANT_NORMALIZE_RE, '').slice(0, MAX_TENANT_LABEL_LEN);
+  return cleaned.length > 0 ? cleaned : TENANT_UNKNOWN;
+}
+
+/**
+ * Read the `OPENCHROME_TENANT_METRICS` rollback flag. Tenant labels are
+ * attached by default; operators can turn them off to restore pre-B-4
+ * cardinality.
+ */
+export function isTenantLabelEnabled(): boolean {
+  const raw = process.env.OPENCHROME_TENANT_METRICS;
+  if (raw === undefined) return true;
+  return raw !== 'false' && raw !== '0';
+}
+
+/**
+ * Attach a `tenant` label to a metric's label bag. If `tenantId` is omitted,
+ * the active RequestContext is consulted (set by HTTP transport / auth). When
+ * the rollback flag is off, returns labels unchanged so existing dashboards
+ * keep working without the new dimension.
+ */
+export function withTenantLabel(
+  labels: Record<string, string>,
+  tenantId?: string,
+): Record<string, string> {
+  if (!isTenantLabelEnabled()) return labels;
+  const source = tenantId ?? currentRequestContext()?.tenantId;
+  return { ...labels, tenant: normaliseTenantLabel(source) };
+}
 
 interface MetricMeta {
   name: string;
@@ -202,6 +252,17 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');
     instance.registerGauge('openchrome_tabs_health', 'Tab health status count');
     instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
+    instance.registerCounter('openchrome_listener_errors_total', 'Async EventEmitter listener errors surfaced by safeAsyncListener');
+    instance.registerCounter('openchrome_unhandled_rejections_total', 'Process-level unhandled promise rejections (safety-net counter)');
+    instance.registerCounter('openchrome_cookie_scan_total', 'Cookie source scans by outcome (complete/partial/no_candidates/no_cookies)');
+    instance.registerHistogram('openchrome_cookie_scan_duration_seconds', 'Cookie source scan duration in seconds',
+      [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]);
+    instance.registerHistogram('openchrome_cookie_scan_targets_scanned', 'Number of targets actually probed in each cookie scan',
+      [1, 2, 5, 10, 20, 50, 100]);
+    instance.registerCounter(
+      'openchrome_session_init_budget_exhausted_total',
+      'Session-init operations that ran out of budget, labeled by exhausting stage (A-3)',
+    );
   }
   return instance;
 }

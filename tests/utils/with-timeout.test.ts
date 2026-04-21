@@ -92,6 +92,45 @@ describe('withTimeout', () => {
   });
 });
 
+describe('withTimeout — abort signal (issue #8)', () => {
+  test('rejects synchronously when context.signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('client disconnected'));
+    const ctx: ToolContext = { startTime: Date.now(), deadlineMs: 120_000, signal: controller.signal };
+    await expect(withTimeout(Promise.resolve('ok'), 5_000, 'preaborted', ctx)).rejects.toThrow(
+      'client disconnected',
+    );
+  });
+
+  test('rejects with abort reason when signal aborts during the race', async () => {
+    const controller = new AbortController();
+    const ctx: ToolContext = { startTime: Date.now(), deadlineMs: 120_000, signal: controller.signal };
+    const never = new Promise<string>(() => {});
+    setTimeout(() => controller.abort(new Error('mid-flight abort')), 30);
+
+    const start = Date.now();
+    await expect(withTimeout(never, 10_000, 'midflight', ctx)).rejects.toThrow('mid-flight abort');
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  test('does not interfere with normal completion when signal never aborts', async () => {
+    const controller = new AbortController();
+    const ctx: ToolContext = { startTime: Date.now(), deadlineMs: 120_000, signal: controller.signal };
+    const result = await withTimeout(Promise.resolve('ok'), 5_000, 'happy-path', ctx);
+    expect(result).toBe('ok');
+    expect(controller.signal.aborted).toBe(false);
+  });
+
+  test('prefers timeout error over abort when both can fire', async () => {
+    const controller = new AbortController();
+    const ctx: ToolContext = { startTime: Date.now(), deadlineMs: 120_000, signal: controller.signal };
+    const never = new Promise<string>(() => {});
+
+    // Timeout (50ms) fires before any abort.
+    await expect(withTimeout(never, 50, 'race-loser', ctx)).rejects.toThrow(OpenChromeTimeoutError);
+  });
+});
+
 describe('OpenChromeTimeoutError', () => {
   test('should format normal timeout message', () => {
     const err = new OpenChromeTimeoutError('fill_form', 15000);

@@ -409,6 +409,48 @@ Tier 3 launches a real headed Chrome window with a genuine user-agent (`Chrome/.
 
 ---
 
+## FAQ: Comparison with Other Browser MCPs
+
+Common questions from users evaluating OpenChrome against Chrome DevTools MCP, Firefox DevTools MCP, and similar tools (see [#612](https://github.com/shaun0927/openchrome/issues/612)).
+
+### Can multiple MCP clients share tabs safely?
+
+**Yes — tabs cannot clobber each other across clients.**
+
+OpenChrome identifies every tab by its CDP `targetId` — a stable, browser-assigned string — not by a visible 1/2/3 index. On top of stable IDs, two layers of isolation are specifically designed for multi-client scenarios:
+
+- **`workerId`** — logical tab groups per client or parallel lane. A new tab under one `workerId` is invisible to another and never replaces one.
+- **`profileDirectory`** — launches a fully separate Chrome instance bound to that profile, giving OS-level cookie / storage / extension isolation.
+
+If client A opens five tabs and client B opens five tabs, all ten `tabId`s are distinct and stable; a new tab from A can never displace B's tab #3.
+
+### How do I handle sites that require interactive login (password, 2FA, CAPTCHA)?
+
+Two mechanisms, used together in practice:
+
+**1. Persistent-profile headless — log in once, automate forever.**
+Point OpenChrome at a persistent `userDataDir` (+ optional `profileDirectory`) and cookies / `localStorage` / IndexedDB survive across runs. After the first login, subsequent **headless** runs stay logged in until the site invalidates the session.
+
+**2. Headed fallback for the initial login or WAF-blocked sites.**
+When a human action is genuinely required (first-time login, 2FA, CAPTCHA, WebAuthn) or when a Tier-1/Tier-2 headless attempt is blocked by a CDN/WAF, OpenChrome lazy-launches a separate headed Chrome on a different debug port. Cookies are sync'd from the real Chrome profile before launch, and the headed page is registered back into the same logical session so the surrounding workflow continues seamlessly.
+
+**Typical pattern:** bootstrap the login once via the headed path → the persistent profile carries the cookies → all subsequent automation runs headless without a window.
+
+### Does OpenChrome steal focus with popup windows?
+
+**No — the "recurring popup interruptions" problem does not occur in OpenChrome.**
+
+The headed-browser focus-stealing pattern that users encounter with some MCP servers (cross-Space jumps on macOS, un-minimizable popups, per-tool-call window raises) comes from designs where the MCP drives a user-visible browser and creates OS windows as it works. OpenChrome is architected differently:
+
+- **Default mode is headless** — no window exists, so there is nothing to take focus.
+- **`tabs_create` opens a tab, not an OS window.** New tabs are created via CDP inside the already-running Chrome, and OpenChrome never calls `page.bringToFront()` anywhere in the codebase.
+- **The headed fallback is lazy and reused.** When it is needed, it launches **once** per server lifetime; every later navigation/tab runs inside that same instance. At worst you see one focus grab the very first time the fallback activates — not one per action, never one per tab.
+- **The headed fallback is optional.** If persistent-profile headless is sufficient for your sites, you will never see a browser window.
+
+The only scenario in which a window appears at all is the first time the Tier-3 headed fallback activates in a given session.
+
+---
+
 ## Benchmarks
 
 Measure token efficiency and parallel performance:
@@ -511,6 +553,12 @@ openchrome serve \
 | `--headless-shell` | `false` | Use chrome-headless-shell binary |
 | `--visible` | `false` | Show Chrome window (disables headless) |
 | `--server-mode` | `false` | Compound flag for server deployment |
+
+---
+
+## Authentication
+
+OpenChrome supports per-tenant API keys, JWT/OAuth, a legacy shared token, and an unauthenticated mode. See **[docs/auth.md](docs/auth.md)** for the full guide including quickstart, scope table, key rotation, revocation, and troubleshooting.
 
 ---
 

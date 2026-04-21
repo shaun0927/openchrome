@@ -3,7 +3,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
@@ -358,6 +358,7 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
   context?: ToolContext
 ): Promise<MCPResult> => {
+  throwIfAborted(context);
   const tabId = args.tabId as string | undefined;
   const url = args.url as string;
   const profileDirectory = args.profileDirectory as string | undefined;

@@ -5,7 +5,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
@@ -60,6 +60,7 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
   context?: ToolContext
 ): Promise<MCPResult> => {
+  throwIfAborted(context);
   const tabId = args.tabId as string;
   const fields = args.fields as Record<string, string | boolean | number>;
   const submit = args.submit as string | undefined;
@@ -152,6 +153,7 @@ const handler: ToolHandler = async (
             axMatch = axResults[0];
           }
         } catch {
+          throwIfAborted(context);
           // AX resolution failed — fall through to CSS discovery
         }
 
@@ -204,6 +206,7 @@ const handler: ToolHandler = async (
             invalidateAXCache(getTargetId(page.target()));
             filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
           } catch (e) {
+            throwIfAborted(context);
             errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
           }
           continue;
@@ -332,6 +335,7 @@ const handler: ToolHandler = async (
 
           filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
         } catch (e) {
+          throwIfAborted(context);
           errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
         }
       }
@@ -377,6 +381,7 @@ const handler: ToolHandler = async (
             errors.push(`Could not find submit button matching "${submit}"`);
           }
         } catch (e) {
+          throwIfAborted(context);
           errors.push(`Failed to submit: ${e instanceof Error ? e.message : String(e)}`);
         }
       }

@@ -4,6 +4,7 @@
  */
 
 import { MCPResponse } from '../types/mcp';
+import type { ApiKeyStore } from '../auth/api-key-store';
 
 /**
  * Abstraction over the wire protocol (stdio or HTTP).
@@ -15,8 +16,14 @@ export interface MCPTransport {
    * Register the handler that processes incoming parsed JSON-RPC messages.
    * The handler returns a response for requests (those with an id),
    * or null for notifications (no id).
+   *
+   * The optional `signal` is provided by transports that can detect a client
+   * disconnect (e.g. HTTP). When the signal aborts, the handler is expected
+   * to abandon long-running tool calls (see issue #8 — B-2).
    */
-  onMessage(handler: (msg: Record<string, unknown>) => Promise<MCPResponse | null>): void;
+  onMessage(
+    handler: (msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>,
+  ): void;
 
   /**
    * Send a JSON-RPC response or notification to the client.
@@ -39,6 +46,15 @@ export interface TransportOptions {
   port?: number;
   host?: string;
   authToken?: string;
+  /**
+   * Optional multi-tenant API key store. When provided, the HTTP transport
+   * resolves auth to `api-key` mode (see HTTPTransport.resolveAuthMode) and
+   * every /mcp request is authenticated against a stored key instead of the
+   * legacy shared token. Without this, the transport silently falls through
+   * to legacy or disabled mode — so real deployments that want per-tenant
+   * keys must pass this option.
+   */
+  apiKeyStore?: ApiKeyStore;
 }
 
 /**
@@ -51,7 +67,12 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
     // Use require to avoid loading HTTP module when not needed
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { HTTPTransport } = require('./http');
-    return new HTTPTransport(options?.port || 3100, options?.host || '127.0.0.1', options?.authToken);
+    return new HTTPTransport(
+      options?.port || 3100,
+      options?.host || '127.0.0.1',
+      options?.authToken,
+      options?.apiKeyStore ? { apiKeyStore: options.apiKeyStore } : undefined,
+    );
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { StdioTransport } = require('./stdio');

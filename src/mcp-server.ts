@@ -28,12 +28,17 @@ import { getChromeLauncher } from './chrome/launcher';
 import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM } from './config/defaults';
+import { createBudget, isLegacyBudgetMode } from './utils/budget';
+import { SessionInitBudgetExhausted } from './cdp/errors';
 import { getGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
-import { getMetricsCollector } from './metrics/collector';
+import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
+import { isAllowed, requiredScope } from './auth/scope-policy';
+import type { Principal } from './auth/api-key-types';
+import { PRINCIPAL_SYM } from './middleware/auth';
 import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
 import { OpenChromeConnectionError } from './errors/connection';
@@ -130,6 +135,29 @@ export class MCPServer {
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
   private stopPromise: Promise<void> | null = null;
   private rateLimiter: SessionRateLimiter | null = null;
+  /**
+   * Per-session tenant binding for api-key mode. The first api-key principal
+   * to touch a given sessionId "claims" the session; subsequent tools/call
+   * requests that arrive with a different tenantId are rejected with a 403,
+   * preventing a tenant with a valid API key from operating on a session
+   * created by another tenant (cross-tenant session hijack via a guessed /
+   * leaked sessionId). Cleared when the session is deleted (DELETE /mcp) via
+   * the same hook that reclaims rate-limit buckets.
+   *
+   * Structural enforcement (binding at session-create time via TenantManager,
+   * X-Tenant-Id header validation) lands in the tenant-propagation series
+   * (B-1, PRs #30 / #31). This map is the minimum defense-in-depth so
+   * PR 2/4 does not ship with a cross-tenant access path.
+   */
+  private sessionTenants: Map<string, string> = new Map();
+  /**
+   * Timer that periodically reclaims idle rate-limit buckets. Required because
+   * tenant-keyed buckets (used in api-key mode) are shared across sessions, so
+   * the per-session DELETE /mcp cleanup hook cannot be used to evict them —
+   * without this sweep, the bucket map would grow unbounded with each new
+   * tenant seen over process lifetime.
+   */
+  private rateLimiterSweepTimer: NodeJS.Timeout | null = null;
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
@@ -138,6 +166,17 @@ export class MCPServer {
     if (options.initialToolTier) {
       this.exposedTier = options.initialToolTier;
     }
+
+    // Release the tenant binding as soon as the underlying session is
+    // destroyed (tool-triggered cascade, cleanup-on-shutdown, etc.) rather
+    // than waiting for the periodic sweep. This is the authoritative signal
+    // — sessionTenants is always keyed by the same sessionId space that
+    // sessionManager uses, unlike the transport's Mcp-Session-Id.
+    this.sessionManager.addEventListener((event) => {
+      if (event.type === 'session:deleted') {
+        this.sessionTenants.delete(event.sessionId);
+      }
+    });
 
     // Register built-in resources
     this.registerResource(usageGuideResource);
@@ -258,13 +297,56 @@ export class MCPServer {
   /**
    * Wire rate-limiter session cleanup into the given transport so that
    * bucket memory is freed immediately when a client sends DELETE /mcp.
+   *
+   * Note: this only reclaims session-keyed buckets (legacy / disabled auth
+   * modes and stdio callers). Tenant-keyed buckets used in api-key mode
+   * are shared across sessions, so they cannot be evicted on a per-session
+   * DELETE — those rely on the periodic `rateLimiterSweepTimer` scheduled
+   * in start().
    */
   wireRateLimiterCleanup(transport: MCPTransport): void {
-    if (this.rateLimiter && typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function') {
-      (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
-        (sessionId: string) => this.rateLimiter!.removeSession(sessionId),
-      );
+    const hasHook = typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function';
+    if (!hasHook) return;
+    (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
+      (sessionId: string) => {
+        if (this.rateLimiter) {
+          this.rateLimiter.removeSession(sessionId);
+        }
+        // Intentionally NOT clearing sessionTenants here: the transport
+        // callback receives the HTTP `Mcp-Session-Id` (a UUID assigned at
+        // initialize), whereas tenant claims are keyed by the tool-call
+        // sessionId (client-supplied via params/toolArgs, defaulting to
+        // 'default'). Those two spaces don't match, so deleting by this id
+        // would usually be a no-op, and on an unlucky collision would drop
+        // someone else's binding. sessionTenants is instead reclaimed by
+        // (a) the MCP `sessions/delete` handler and (b) the periodic
+        // `sweepSessionTenants()` tick scheduled in start().
+      },
+    );
+  }
+
+  /**
+   * Remove `sessionTenants` entries whose underlying session no longer
+   * exists in sessionManager. Called on the same interval as the
+   * rate-limiter sweep so stale bindings don't accumulate when a tenant
+   * abandons a session without calling `sessions/delete` explicitly.
+   */
+  private sweepSessionTenants(): number {
+    if (this.sessionTenants.size === 0) return 0;
+    let live: Set<string>;
+    try {
+      live = new Set(this.sessionManager.getAllSessionInfos().map((s) => s.id));
+    } catch {
+      return 0;
     }
+    let removed = 0;
+    for (const id of this.sessionTenants.keys()) {
+      if (!live.has(id)) {
+        this.sessionTenants.delete(id);
+        removed++;
+      }
+    }
+    return removed;
   }
 
   /**
@@ -273,7 +355,10 @@ export class MCPServer {
    * This is the single source of truth for protocol-level validation used by
    * all transports (stdio and HTTP in dual mode).
    */
-  async handleMessage(parsed: Record<string, unknown>): Promise<MCPResponse | null> {
+  async handleMessage(
+    parsed: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<MCPResponse | null> {
     // Validate JSON-RPC 2.0 envelope
     if (
       typeof parsed !== 'object' ||
@@ -291,6 +376,21 @@ export class MCPServer {
       };
     }
 
+    // Read the transport-injected principal via the non-forgeable Symbol key
+    // (see PRINCIPAL_SYM in src/middleware/auth.ts). JSON.parse cannot produce
+    // symbol-keyed properties, so anything under PRINCIPAL_SYM was placed here
+    // by the transport after authenticating the request — clients cannot
+    // spoof a principal by including `"__principal": {...}` in their JSON body.
+    const principal = (parsed as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] as
+      | Principal
+      | undefined;
+    // Scrub any string-named `__principal` that a malicious caller may have
+    // embedded in the JSON. We don't read it, but deleting here prevents it
+    // from echoing back out via JSON.stringify in later response paths.
+    if ('__principal' in parsed) {
+      delete (parsed as Record<string, unknown>).__principal;
+    }
+
     // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
     if (parsed.id === undefined || parsed.id === null) {
       const method = parsed.method as string;
@@ -304,7 +404,7 @@ export class MCPServer {
     const request = parsed as unknown as MCPRequest;
 
     try {
-      return await this.handleRequest(request);
+      return await this.handleRequest(request, principal, signal);
     } catch (error) {
       return {
         jsonrpc: '2.0' as const,
@@ -331,6 +431,43 @@ export class MCPServer {
     // Wire rate-limiter session cleanup into the transport
     this.wireRateLimiterCleanup(this.transport);
 
+    // Schedule periodic sweep of idle rate-limit buckets. Per-session cleanup
+    // (via DELETE /mcp) cannot reclaim tenant-keyed buckets (shared across
+    // sessions in api-key mode), and also does not run for stdio callers, so
+    // without this sweep the bucket map would grow without bound. Defaults
+    // (sweep every 5 min, evict buckets idle > 15 min) are overridable via
+    // env for operators with unusual tenant cardinality.
+    if (this.rateLimiter) {
+      const sweepIntervalMs =
+        parseInt(process.env.OPENCHROME_RATE_LIMIT_SWEEP_INTERVAL_MS || '', 10) || 5 * 60_000;
+      const maxIdleMs =
+        parseInt(process.env.OPENCHROME_RATE_LIMIT_IDLE_MS || '', 10) || 15 * 60_000;
+      this.rateLimiterSweepTimer = setInterval(() => {
+        try {
+          const removed = this.rateLimiter!.sweep(maxIdleMs);
+          if (removed > 0) {
+            console.error(`[MCPServer] Rate-limiter sweep: reclaimed ${removed} idle bucket(s)`);
+          }
+        } catch (err) {
+          console.error('[MCPServer] Rate-limiter sweep failed:', err);
+        }
+        // Piggyback: reclaim tenant-session bindings whose session no
+        // longer exists. Cheap (a single set-diff) and closes the gap
+        // that the transport onSessionDelete hook cannot cover — tool
+        // sessionIds are a separate namespace from the transport's
+        // Mcp-Session-Id UUIDs.
+        try {
+          const released = this.sweepSessionTenants();
+          if (released > 0) {
+            console.error(`[MCPServer] Tenant-binding sweep: released ${released} stale binding(s)`);
+          }
+        } catch (err) {
+          console.error('[MCPServer] Tenant-binding sweep failed:', err);
+        }
+      }, sweepIntervalMs);
+      this.rateLimiterSweepTimer.unref();
+    }
+
     console.error('[MCPServer] Starting server...');
 
     // Start dashboard if enabled
@@ -344,7 +481,9 @@ export class MCPServer {
     }
 
     // Wire the transport message handler to MCPServer protocol logic
-    this.transport.onMessage(async (parsed: Record<string, unknown>) => this.handleMessage(parsed));
+    this.transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal) =>
+      this.handleMessage(parsed, signal),
+    );
 
     this.transport.start();
 
@@ -366,7 +505,11 @@ export class MCPServer {
   /**
    * Handle incoming MCP request
    */
-  async handleRequest(request: MCPRequest): Promise<MCPResponse> {
+  async handleRequest(
+    request: MCPRequest,
+    principal?: Principal,
+    signal?: AbortSignal,
+  ): Promise<MCPResponse> {
     const requestReceivedAt = Date.now();
     const { id, method, params } = request;
 
@@ -383,7 +526,7 @@ export class MCPServer {
           break;
 
         case 'tools/call':
-          result = await this.handleToolsCall(params, id);
+          result = await this.handleToolsCall(params, id, principal, signal);
           break;
 
         case 'resources/list':
@@ -395,15 +538,15 @@ export class MCPServer {
           break;
 
         case 'sessions/list':
-          result = await this.handleSessionsList();
+          result = await this.handleSessionsList(principal);
           break;
 
         case 'sessions/create':
-          result = await this.handleSessionsCreate(params);
+          result = await this.handleSessionsCreate(params, principal);
           break;
 
         case 'sessions/delete':
-          result = await this.handleSessionsDelete(params);
+          result = await this.handleSessionsDelete(params, principal);
           break;
 
         default:
@@ -558,7 +701,12 @@ export class MCPServer {
   /**
    * Handle tools/call request
    */
-  private async handleToolsCall(params?: Record<string, unknown>, requestId?: number | string): Promise<MCPResult> {
+  private async handleToolsCall(
+    params?: Record<string, unknown>,
+    requestId?: number | string,
+    principal?: Principal,
+    signal?: AbortSignal,
+  ): Promise<MCPResult> {
     if (!params) {
       throw new Error('Missing params for tools/call');
     }
@@ -570,6 +718,75 @@ export class MCPServer {
 
     if (!toolName) {
       throw new Error('Missing tool name');
+    }
+
+    // Session-tenant binding (api-key mode only): reject if the session was
+    // already claimed by a different tenant. First api-key caller to COMPLETE
+    // an authorized + validated call wins — the claim itself is deferred
+    // until after scope / tool / args checks pass, so a denied or invalid
+    // request cannot lock a sessionId and block other tenants.
+    // Other auth modes (disabled/legacy) and stdio callers are not subject
+    // to this check. Structural session-create binding lands in B-1
+    // (#30/#31); this is the PR-2-scope defense-in-depth.
+    if (principal && principal.mode === 'api-key') {
+      const claimedBy = this.sessionTenants.get(sessionId);
+      if (claimedBy !== undefined && claimedBy !== principal.tenantId) {
+        console.error(
+          `[MCPServer] tenant binding violation: session=${sessionId} claimedBy=${claimedBy} requestedBy=${principal.tenantId} tool=${toolName}`,
+        );
+        try {
+          logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+            keyId: principal.keyId,
+            tenantId: principal.tenantId,
+            scopes: principal.scopes,
+          });
+        } catch {
+          // best-effort
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Forbidden: session '${sessionId}' is owned by another tenant.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    // Scope gate: if a principal was provided by the transport, check it can
+    // call this tool. Absent principal (e.g. stdio) is treated as full access
+    // so there is no regression for non-HTTP users.
+    if (principal && !isAllowed(toolName, principal.scopes)) {
+      const needed = requiredScope(toolName);
+      console.error(
+        `[MCPServer] scope denied: tool=${toolName} tenant=${principal.tenantId} required=${needed} granted=${principal.scopes.join(',')}`,
+      );
+      try {
+        logAuditEntry(
+          toolName,
+          sessionId,
+          toolArgs,
+          undefined,
+          {
+            keyId: principal.keyId,
+            tenantId: principal.tenantId,
+            scopes: principal.scopes,
+          },
+        );
+      } catch {
+        // best-effort
+      }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Forbidden: tool '${toolName}' requires scope '${needed}'.`,
+          },
+        ],
+        isError: true,
+      };
     }
 
     // Handle the expand_tools meta-tool before normal tool lookup
@@ -617,6 +834,18 @@ export class MCPServer {
       }
     }
 
+    // All static gates passed (scope, tool existence, required args). Only
+    // now do we claim the session for the caller's tenant — a denied or
+    // invalid call must NOT be able to lock a sessionId that would then
+    // block other tenants. (Codex round-6 P1.)
+    if (
+      principal &&
+      principal.mode === 'api-key' &&
+      !this.sessionTenants.has(sessionId)
+    ) {
+      this.sessionTenants.set(sessionId, principal.tenantId);
+    }
+
     // Auto-expand tier if a higher-tier tool is called directly
     // This handles the case where the AI learned about the tool from documentation
     const toolTier = getToolTier(toolName);
@@ -624,12 +853,22 @@ export class MCPServer {
       this.expandToolTier(toolTier);
     }
 
-    // Rate limit check — reject before doing any work
+    // Rate limit check — reject before doing any work.
+    // Only switch to tenant-scoped keying in real api-key mode; disabled and
+    // legacy modes synthesize a fixed principal ('anonymous' / 'legacy'), so
+    // keying by their tenantId would collapse every HTTP session into one
+    // bucket and let one noisy client throttle unrelated sessions. Fall back
+    // to per-session keying for stdio callers (no principal) and for the
+    // synthetic disabled/legacy principals.
     if (this.rateLimiter) {
-      const rateResult = this.rateLimiter.check(sessionId);
+      const rateLimitKey =
+        principal && principal.mode === 'api-key'
+          ? SessionRateLimiter.tenantKey(principal.tenantId)
+          : sessionId;
+      const rateResult = this.rateLimiter.check(rateLimitKey);
       if (!rateResult.allowed) {
         console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
-        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', { tool: toolName }); } catch { /* best-effort */ }
+        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', withTenantLabel({ tool: toolName })); } catch { /* best-effort */ }
         return {
           content: [
             {
@@ -649,7 +888,7 @@ export class MCPServer {
       const cdpClient = getCDPClient();
       if (cdpClient.isReconnecting()) {
         console.error(`[MCPServer] Tool call "${toolName}" arrived during reconnection, waiting...`);
-        try { getMetricsCollector().inc('openchrome_tool_calls_total', { tool: toolName, status: 'reconnecting_wait' }); } catch { /* best-effort */ }
+        try { getMetricsCollector().inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'reconnecting_wait' })); } catch { /* best-effort */ }
         const reconnectResult = await new Promise<'reconnected' | 'failed' | 'timeout'>((resolve) => {
           const timeout = setTimeout(() => {
             cdpClient.removeConnectionListener(listener);
@@ -722,13 +961,48 @@ export class MCPServer {
         const sessionInitTimeout = globalConfig.autoLaunch
           ? DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS
           : DEFAULT_SESSION_INIT_TIMEOUT_MS;
-        let sessionInitTid: ReturnType<typeof setTimeout>;
-        await Promise.race([
-          this.sessionManager.getOrCreateSession(sessionId).finally(() => clearTimeout(sessionInitTid)),
-          new Promise<never>((_, reject) => {
-            sessionInitTid = setTimeout(() => reject(new Error(`Session initialization timed out after ${sessionInitTimeout}ms`)), sessionInitTimeout);
-          }),
-        ]);
+
+        // A-3: Time-based budget propagation. In legacy mode, fall back to the
+        // old Promise.race-with-setTimeout pattern so ops can revert instantly
+        // via OPENCHROME_SESSION_INIT_BUDGET_MODE=legacy.
+        if (isLegacyBudgetMode()) {
+          let sessionInitTid: ReturnType<typeof setTimeout>;
+          await Promise.race([
+            this.sessionManager.getOrCreateSession(sessionId).finally(() => clearTimeout(sessionInitTid)),
+            new Promise<never>((_, reject) => {
+              sessionInitTid = setTimeout(() => reject(new Error(`Session initialization timed out after ${sessionInitTimeout}ms`)), sessionInitTimeout);
+            }),
+          ]);
+        } else {
+          const budget = createBudget(sessionInitTimeout, 'session-init');
+          let sessionInitTid: ReturnType<typeof setTimeout>;
+          try {
+            await Promise.race([
+              this.sessionManager.getOrCreateSession(sessionId, budget).finally(() => clearTimeout(sessionInitTid)),
+              // Outer safety net — budget-aware code should always win this race,
+              // but add a small slack (+2s) in case an un-budgeted code path hangs.
+              new Promise<never>((_, reject) => {
+                sessionInitTid = setTimeout(
+                  () => reject(new Error(`Session initialization timed out after ${sessionInitTimeout + 2000}ms (budget outer safety)`)),
+                  sessionInitTimeout + 2000,
+                );
+              }),
+            ]);
+          } catch (err) {
+            if (err instanceof SessionInitBudgetExhausted) {
+              try {
+                getMetricsCollector().inc(
+                  'openchrome_session_init_budget_exhausted_total',
+                  { stage: err.stage },
+                );
+              } catch { /* best-effort */ }
+              console.error(
+                `[MCPServer] Session init budget exhausted: stage=${err.stage} elapsed=${err.elapsedMs}ms total=${err.totalMs}ms`,
+              );
+            }
+            throw err;
+          }
+        }
       }
 
       // Wait at gate if paused
@@ -756,6 +1030,7 @@ export class MCPServer {
         const toolContext: ToolContext = {
           startTime: Date.now(),
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+          signal,
         };
         let tid: ReturnType<typeof setTimeout>;
         result = await Promise.race([
@@ -839,8 +1114,16 @@ export class MCPServer {
         }
       }
 
-      // Audit log successful invocation
-      logAuditEntry(toolName, sessionId, toolArgs);
+      // Audit log successful invocation — correlation/timing fields come from
+      // the active RequestContext + explicit meta, while auth context is added
+      // when this request was authenticated.
+      logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+        keyId: principal?.keyId,
+        tenantId: principal?.tenantId,
+        scopes: principal?.scopes,
+        status: 'success',
+        durationMs: Date.now() - toolStartTime,
+      });
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
@@ -850,8 +1133,8 @@ export class MCPServer {
       try {
         const metrics = getMetricsCollector();
         const durationSec = (Date.now() - toolStartTime) / 1000;
-        metrics.inc('openchrome_tool_calls_total', { tool: toolName, status: 'success' });
-        metrics.observe('openchrome_tool_duration_seconds', { tool: toolName }, durationSec);
+        metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'success' }));
+        metrics.observe('openchrome_tool_duration_seconds', withTenantLabel({ tool: toolName }), durationSec);
       } catch {
         // Best-effort metrics
       }
@@ -999,12 +1282,24 @@ export class MCPServer {
       this.activityTracker!.endCall(callId, 'error', message);
       getDashboardState().recordToolEnd(callId, 'error', message);
 
+      // Audit log failed invocation — same correlation fields as success path.
+      try {
+        logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+          status: 'error',
+          durationMs: Date.now() - toolStartTime,
+          errorMessage: message,
+          billable: false,
+        });
+      } catch {
+        // best-effort audit
+      }
+
       // Record Prometheus metrics
       try {
         const metrics = getMetricsCollector();
         const durationSec = (Date.now() - toolStartTime) / 1000;
-        metrics.inc('openchrome_tool_calls_total', { tool: toolName, status: 'error' });
-        metrics.observe('openchrome_tool_duration_seconds', { tool: toolName }, durationSec);
+        metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'error' }));
+        metrics.observe('openchrome_tool_duration_seconds', withTenantLabel({ tool: toolName }), durationSec);
       } catch {
         // Best-effort metrics
       }
@@ -1127,31 +1422,106 @@ export class MCPServer {
   }
 
   /**
-   * Handle sessions/list request
+   * Scope implication check (admin > write > read) without using a tool id.
+   * Used by session-management methods that are not registered tools.
    */
-  private async handleSessionsList(): Promise<MCPResult> {
-    const sessions = this.sessionManager.getAllSessionInfos();
+  private hasScope(principal: Principal, needed: 'read' | 'write' | 'admin'): boolean {
+    if (principal.scopes.includes('admin')) return true;
+    if (needed === 'admin') return false;
+    if (principal.scopes.includes('write')) return true;
+    if (needed === 'write') return false;
+    return principal.scopes.includes('read');
+  }
+
+  /**
+   * Return an MCP "Forbidden" error result; also emits an audit entry so
+   * the rejection is observable in the existing audit stream.
+   */
+  private forbiddenResult(
+    method: string,
+    sessionId: string,
+    principal: Principal,
+    text: string,
+  ): MCPResult {
+    try {
+      logAuditEntry(method, sessionId, {}, undefined, {
+        keyId: principal.keyId,
+        tenantId: principal.tenantId,
+        scopes: principal.scopes,
+      });
+    } catch {
+      // best-effort
+    }
+    return {
+      content: [{ type: 'text', text: `Forbidden: ${text}` }],
+      isError: true,
+    };
+  }
+
+  /**
+   * Handle sessions/list request. In api-key mode the result is filtered to
+   * sessions claimed by the caller's tenant (see sessionTenants); other auth
+   * modes and stdio callers see all sessions (no regression).
+   */
+  private async handleSessionsList(principal?: Principal): Promise<MCPResult> {
+    if (principal && !this.hasScope(principal, 'read')) {
+      return this.forbiddenResult('sessions/list', 'n/a', principal, `scope 'read' required`);
+    }
+    const all = this.sessionManager.getAllSessionInfos();
+    const visible = principal && principal.mode === 'api-key'
+      ? all.filter((s) => this.sessionTenants.get(s.id) === principal.tenantId)
+      : all;
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify(sessions, null, 2),
+          text: JSON.stringify(visible, null, 2),
         },
       ],
     };
   }
 
   /**
-   * Handle sessions/create request
+   * Handle sessions/create request. Requires 'write' scope for authenticated
+   * callers. In api-key mode, a requested sessionId that is already claimed
+   * by a different tenant is rejected; on success the new session is bound
+   * to the caller's tenantId in sessionTenants.
    */
-  private async handleSessionsCreate(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleSessionsCreate(
+    params?: Record<string, unknown>,
+    principal?: Principal,
+  ): Promise<MCPResult> {
     const sessionId = params?.sessionId as string | undefined;
     const name = params?.name as string | undefined;
+
+    if (principal && !this.hasScope(principal, 'write')) {
+      return this.forbiddenResult(
+        'sessions/create',
+        sessionId ?? 'n/a',
+        principal,
+        `scope 'write' required`,
+      );
+    }
+    if (principal && principal.mode === 'api-key' && sessionId) {
+      const owner = this.sessionTenants.get(sessionId);
+      if (owner !== undefined && owner !== principal.tenantId) {
+        return this.forbiddenResult(
+          'sessions/create',
+          sessionId,
+          principal,
+          `session '${sessionId}' is owned by another tenant`,
+        );
+      }
+    }
 
     const session = await this.sessionManager.createSession({
       id: sessionId,
       name,
     });
+
+    if (principal && principal.mode === 'api-key') {
+      this.sessionTenants.set(session.id, principal.tenantId);
+    }
 
     return {
       content: [
@@ -1172,15 +1542,48 @@ export class MCPServer {
   }
 
   /**
-   * Handle sessions/delete request
+   * Handle sessions/delete request. Requires 'write' scope and, in api-key
+   * mode, matching tenant ownership of the session. On successful delete
+   * the session-tenant binding is released so a later caller (possibly a
+   * different tenant) can claim the same sessionId — this is the MCP-method
+   * twin of the transport-level onSessionDelete hook wired in
+   * wireRateLimiterCleanup(), closing the cleanup gap that otherwise
+   * leaves stale bindings behind and produces spurious "owned by another
+   * tenant" rejections after logical deletion.
    */
-  private async handleSessionsDelete(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleSessionsDelete(
+    params?: Record<string, unknown>,
+    principal?: Principal,
+  ): Promise<MCPResult> {
     const sessionId = params?.sessionId as string;
     if (!sessionId) {
       throw new Error('Missing sessionId');
     }
 
+    if (principal && !this.hasScope(principal, 'write')) {
+      return this.forbiddenResult(
+        'sessions/delete',
+        sessionId,
+        principal,
+        `scope 'write' required`,
+      );
+    }
+    if (principal && principal.mode === 'api-key') {
+      const owner = this.sessionTenants.get(sessionId);
+      if (owner !== undefined && owner !== principal.tenantId) {
+        return this.forbiddenResult(
+          'sessions/delete',
+          sessionId,
+          principal,
+          `session '${sessionId}' is owned by another tenant`,
+        );
+      }
+    }
+
     await this.sessionManager.deleteSession(sessionId);
+    // Release the binding so sessionId (notably 'default') can be reclaimed
+    // by a subsequent tenant after MCP-level deletion.
+    this.sessionTenants.delete(sessionId);
 
     return {
       content: [
@@ -1347,6 +1750,13 @@ export class MCPServer {
     // Stop dashboard
     if (this.dashboard) {
       this.dashboard.stop();
+    }
+
+    // Cancel the rate-limiter sweep timer (if running) so the process can
+    // exit cleanly and tests don't leak timers across runs.
+    if (this.rateLimiterSweepTimer) {
+      clearInterval(this.rateLimiterSweepTimer);
+      this.rateLimiterSweepTimer = null;
     }
 
     if (this.transport) {

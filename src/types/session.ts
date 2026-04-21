@@ -3,6 +3,7 @@
  */
 
 import { BrowserContext } from 'puppeteer-core';
+import type { TenantId } from '../tenant/types';
 
 /**
  * Worker - An isolated browser context within a session
@@ -50,6 +51,8 @@ export interface Session {
   // Legacy: targets directly on session (for backwards compat)
   targets: Set<string>;
   context?: BrowserContext | null;  // null = use default browser context (shares Chrome profile cookies)
+  /** Tenant that owns this session. Defaults to DEFAULT_TENANT_ID. (#7) */
+  tenantId?: TenantId;
 }
 
 export interface SessionInfo {
@@ -65,6 +68,17 @@ export interface SessionInfo {
 export interface SessionCreateOptions {
   id?: string;
   name?: string;
+  /**
+   * Tenant to bind this session to. When omitted, falls back to
+   * DEFAULT_TENANT_ID. The SessionManager resolves the BrowserContext through
+   * TenantManager so sessions in different tenants never share cookies,
+   * localStorage, IndexedDB, or service worker caches. (#7)
+   */
+  tenantId?: TenantId;
+  /** Optional time budget for the underlying CDP connect path (A-3).
+   *  Typed as `unknown` here to keep the shared types file free of a
+   *  dependency on the utils/budget module; consumers cast to `Budget`. */
+  budget?: unknown;
 }
 
 export interface SessionEvent {

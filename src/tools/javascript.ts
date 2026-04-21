@@ -3,9 +3,10 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
@@ -248,8 +249,10 @@ function releaseObject(
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): Promise<MCPResult> => {
+  throwIfAborted(context);
   const tabId = args.tabId as string;
   const code = (args.code as string) || (args.text as string);
   const timeout = (args.timeout as number) || 30000;
@@ -295,24 +298,18 @@ const handler: ToolHandler = async (
 
     const cdpClient = sessionManager.getCDPClient();
 
-    let jsTid: ReturnType<typeof setTimeout>;
-    const cdpResult = await Promise.race([
-      cdpClient
-        .send<CDPEvalResult>(page, 'Runtime.evaluate', {
-          expression: wrapInIIFE(code),
-          returnByValue: false,
-          awaitPromise: true,
-          userGesture: true,
-          replMode: true,
-        })
-        .finally(() => clearTimeout(jsTid)),
-      new Promise<never>((_, reject) => {
-        jsTid = setTimeout(
-          () => reject(new Error(`JS execution timed out after ${timeout}ms`)),
-          timeout
-        );
+    const cdpResult = await withTimeout(
+      cdpClient.send<CDPEvalResult>(page, 'Runtime.evaluate', {
+        expression: wrapInIIFE(code),
+        returnByValue: false,
+        awaitPromise: true,
+        userGesture: true,
+        replMode: true,
       }),
-    ]);
+      timeout,
+      'javascript_tool',
+      context,
+    );
 
     if (cdpResult.exceptionDetails) {
       const errorMsg =
