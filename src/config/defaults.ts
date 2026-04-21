@@ -306,3 +306,21 @@ export const DEFAULT_CHROME_MONITOR_INTERVAL_MS = 30000;
 export const DEFAULT_CHROME_MEMORY_WARN_BYTES = 1024 * 1024 * 1024;
 /** Chrome RSS memory critical threshold in bytes. Default: 2GB */
 export const DEFAULT_CHROME_MEMORY_CRITICAL_BYTES = 2 * 1024 * 1024 * 1024;
+
+// ─── Tenant Isolation (#7) ────────────────────────────────────────────
+
+/**
+ * Strict tenant isolation mode. When true, every session is pinned to a
+ * tenant-scoped BrowserContext and the "use default context" escape hatch is
+ * rejected at session creation time. Default false preserves stdio / single
+ * user backward compatibility. Override via
+ * OPENCHROME_STRICT_TENANT_ISOLATION=true for SaaS deployments.
+ */
+export const DEFAULT_STRICT_TENANT_ISOLATION = false;
+
+/**
+ * Idle timeout in ms before a tenant BrowserContext is eligible for eviction
+ * by TenantManager.sweepIdle(). The `default` tenant is never evicted.
+ * Override via OPENCHROME_TENANT_CONTEXT_IDLE_TIMEOUT_MS.
+ */
+export const DEFAULT_TENANT_CONTEXT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
