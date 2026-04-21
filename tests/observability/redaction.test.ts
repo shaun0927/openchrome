@@ -1,9 +1,13 @@
 import {
   BUILTIN_REDACTION_CONFIG,
   REDACTED,
+  loadRedactionConfig,
   redactArgs,
   type RedactionConfig,
 } from '../../src/observability/redaction';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 const cfg: RedactionConfig = {
   defaultSensitiveFieldNames: [...BUILTIN_REDACTION_CONFIG.defaultSensitiveFieldNames],
@@ -47,6 +51,11 @@ describe('redactArgs', () => {
     const fields = out.redacted.fields as Array<{ name: string; value: string }>;
     expect(fields[0].value).toBe('a@b.c');
     expect(fields[1].value).toBe(REDACTED);
+  });
+
+  test('built-in config always redacts form_input values', () => {
+    const out = redactArgs('form_input', { ref: 'el_1', value: '123456' }, BUILTIN_REDACTION_CONFIG);
+    expect(out.redacted.value).toBe(REDACTED);
   });
 
   test('truncate keeps prefix and adds hash', () => {
@@ -94,5 +103,27 @@ describe('redactArgs', () => {
       tools: { cookies: { path: 'value', mode: 'hash' } as unknown as never },
     };
     expect(() => redactArgs('cookies', { value: 'x' }, badCfg)).not.toThrow();
+  });
+
+  test('loadRedactionConfig drops malformed rules instead of crashing later', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-redaction-'));
+    const cfgPath = path.join(dir, 'audit-redaction.json');
+    fs.writeFileSync(cfgPath, JSON.stringify({
+      defaultSensitiveFieldNames: ['token'],
+      tools: {
+        cookies: [
+          { mode: 'hash' },
+          { path: 'value', mode: 'hash' },
+          { path: 'value', mode: 'truncate', maxBytes: 'bad' },
+        ],
+      },
+    }));
+
+    const loaded = loadRedactionConfig(cfgPath);
+    expect(loaded.tools.cookies).toEqual([
+      { path: 'value', mode: 'hash' },
+      { path: 'value', mode: 'truncate' },
+    ]);
+    expect(() => redactArgs('cookies', { value: 'secret' }, loaded)).not.toThrow();
   });
 });

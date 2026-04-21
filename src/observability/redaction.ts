@@ -32,6 +32,12 @@ export interface RedactionConfig {
 export const REDACTED = '[REDACTED]';
 
 const DEFAULT_TRUNCATE_MAX_BYTES = 200;
+const VALID_REDACTION_MODES = new Set<RedactionMode>([
+  'redact',
+  'hash',
+  'truncate',
+  'redactIfSensitiveName',
+]);
 
 /**
  * Built-in minimum policy used when no config file is present. Includes
@@ -73,7 +79,7 @@ export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
       { path: 'fields[*].value', mode: 'redactIfSensitiveName' },
     ],
     form_input: [
-      { path: 'value', mode: 'redactIfSensitiveName' },
+      { path: 'value', mode: 'redact' },
     ],
     type: [
       { path: 'text', mode: 'truncate', maxBytes: 200 },
@@ -86,6 +92,40 @@ export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
     ],
   },
 };
+
+function normalizeRule(toolName: string, rawRule: unknown): RedactionRule | null {
+  if (!rawRule || typeof rawRule !== 'object') {
+    console.error(`[redaction] ignoring rule for tool "${toolName}": rule must be an object`);
+    return null;
+  }
+
+  const rule = rawRule as Partial<RedactionRule>;
+  if (typeof rule.path !== 'string' || rule.path.trim() === '') {
+    console.error(`[redaction] ignoring rule for tool "${toolName}": path must be a non-empty string`);
+    return null;
+  }
+  if (!VALID_REDACTION_MODES.has(rule.mode as RedactionMode)) {
+    console.error(`[redaction] ignoring rule for tool "${toolName}": invalid mode "${String(rule.mode)}"`);
+    return null;
+  }
+
+  const normalized: RedactionRule = {
+    path: rule.path,
+    mode: rule.mode as RedactionMode,
+  };
+
+  if (rule.maxBytes !== undefined) {
+    if (typeof rule.maxBytes === 'number' && Number.isFinite(rule.maxBytes) && rule.maxBytes > 0) {
+      normalized.maxBytes = Math.floor(rule.maxBytes);
+    } else {
+      console.error(
+        `[redaction] ignoring maxBytes for tool "${toolName}" path "${rule.path}": expected positive number`,
+      );
+    }
+  }
+
+  return normalized;
+}
 
 export function loadRedactionConfig(filePath: string): RedactionConfig {
   try {
@@ -103,7 +143,10 @@ export function loadRedactionConfig(filePath: string): RedactionConfig {
     const tools: Record<string, RedactionRule[]> = {};
     for (const [name, rules] of Object.entries(toolsIn)) {
       if (Array.isArray(rules)) {
-        tools[name] = rules as RedactionRule[];
+        const normalized = rules
+          .map((rule) => normalizeRule(name, rule))
+          .filter((rule): rule is RedactionRule => rule !== null);
+        tools[name] = normalized;
       } else {
         console.error(`[redaction] ignoring tool "${name}": rules must be an array, got ${typeof rules}`);
       }
@@ -266,7 +309,11 @@ export function redactArgs(
   // Defense in depth: tolerate a malformed config that somehow reached here
   // (e.g. programmatic construction bypassing loadRedactionConfig). A bad
   // audit config must never break the tool call itself.
-  const rules: RedactionRule[] = Array.isArray(rawRules) ? rawRules : [];
+  const rules: RedactionRule[] = Array.isArray(rawRules)
+    ? rawRules
+        .map((rule) => normalizeRule(toolName, rule))
+        .filter((rule): rule is RedactionRule => rule !== null)
+    : [];
   for (const rule of rules) {
     const segments = splitPath(rule.path);
     applyRuleAt(clone as Record<string, unknown>, segments, rule, cfg);

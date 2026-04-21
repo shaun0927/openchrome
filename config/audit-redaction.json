@@ -33,7 +33,7 @@
       { "path": "fields[*].value", "mode": "redactIfSensitiveName" }
     ],
     "form_input": [
-      { "path": "value", "mode": "redactIfSensitiveName" }
+      { "path": "value", "mode": "redact" }
     ],
     "type": [
       { "path": "text", "mode": "truncate", "maxBytes": 200 }
