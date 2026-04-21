@@ -83,14 +83,15 @@ Rotate a key when it may be compromised or as part of regular key hygiene:
 openchrome admin keys rotate <keyId>
 ```
 
-The old key continues to work until you explicitly revoke it. This gives you time to distribute the new key to all clients before cutting over.
+Rotation is an immediate revoke-and-reissue operation: the old key is marked
+revoked before the replacement key is returned. Plan cutovers so clients can
+switch promptly after you run the command.
 
 Recommended rotation procedure:
 
 1. Run `openchrome admin keys rotate <keyId>`. Note the new `oc_live_...` key and its `keyId`.
-2. Deploy the new key to all clients.
-3. Verify all clients are using the new key (check `lastUsedAt` in `openchrome admin keys list --json`).
-4. Revoke the old key: `openchrome admin keys revoke <oldKeyId>`.
+2. Immediately deploy the new key to all clients (requests using the old key now receive `401 Unauthorized`).
+3. Verify traffic has switched over by checking `lastUsedAt` in `openchrome admin keys list --json`.
 
 Revocation propagates to in-flight requests within one token-bucket refresh cycle (< 1 second); no server restart is required.
 
@@ -110,22 +111,19 @@ Revocation is idempotent — revoking an already-revoked key is a no-op.
 
 ## JWT / OAuth setup
 
-Use `createJwtVerifier` from `src/auth/jwt-verifier.ts` when constructing an `HTTPTransport` programmatically:
+Pass JWT config through `HTTPTransportOptions.jwt` when constructing an `HTTPTransport` programmatically:
 
 ```ts
 import { HTTPTransport } from './src/transports/http';
-import { createJwtVerifier } from './src/auth/jwt-verifier';
-
-const verifier = createJwtVerifier({
-  jwksUrl:     'https://auth.example.com/.well-known/jwks.json',
-  issuer:      'https://auth.example.com/',
-  audience:    'openchrome',
-  tenantClaim: 'tenantId',   // JWT claim that carries the tenant id; defaults to 'tenantId'
-  scopeClaim:  'scope',      // JWT claim that carries scopes; defaults to 'scope'
-});
 
 const transport = new HTTPTransport(3000, '0.0.0.0', undefined, {
-  auth: { kind: 'jwt', verifier },
+  jwt: {
+    jwksUrl:     'https://auth.example.com/.well-known/jwks.json',
+    issuer:      'https://auth.example.com/',
+    audience:    'openchrome',
+    tenantClaim: 'tenantId',   // JWT claim that carries the tenant id; defaults to 'tenantId'
+    scopeClaim:  'scope',      // JWT claim that carries scopes; defaults to 'scope'
+  },
 });
 transport.start();
 ```
@@ -140,7 +138,7 @@ To revert to the previous single-token behaviour:
 
 ```bash
 export OPENCHROME_AUTH_MODE=legacy-shared-token
-export OPENCHROME_BEARER_TOKEN=<shared-token>
+export OPENCHROME_AUTH_TOKEN=<shared-token>
 ```
 
 The JSONL key store at `~/.openchrome/auth/api-keys.jsonl` is preserved and reactivated automatically when you switch back to `api-key` mode. No data is lost.
