@@ -36,6 +36,7 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
+import { isClientDisconnect } from './errors/abort';
 import { isAllowed, requiredScope } from './auth/scope-policy';
 import type { Principal } from './auth/api-key-types';
 import { PRINCIPAL_SYM } from './middleware/auth';
@@ -1277,16 +1278,21 @@ export class MCPServer {
       return result;
     } catch (error) {
       const message = formatError(error);
+      const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
+      const aborted = abortReason !== null;
 
       // End activity tracking (error)
-      this.activityTracker!.endCall(callId, 'error', message);
-      getDashboardState().recordToolEnd(callId, 'error', message);
+      this.activityTracker!.endCall(callId, aborted ? 'error' : 'error', message);
+      getDashboardState().recordToolEnd(callId, aborted ? 'error' : 'error', message);
 
       // Audit log failed invocation — same correlation fields as success path.
       try {
         logAuditEntry(toolName, sessionId, toolArgs, undefined, {
-          status: 'error',
+          status: aborted ? 'aborted' : 'error',
           durationMs: Date.now() - toolStartTime,
+          aborted,
+          abortedAt: aborted ? new Date().toISOString() : undefined,
+          abortReason: abortReason ?? undefined,
           errorMessage: message,
           billable: false,
         });
@@ -1298,7 +1304,10 @@ export class MCPServer {
       try {
         const metrics = getMetricsCollector();
         const durationSec = (Date.now() - toolStartTime) / 1000;
-        metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'error' }));
+        metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: aborted ? 'aborted' : 'error' }));
+        if (aborted && abortReason) {
+          metrics.inc('openchrome_tool_calls_aborted_total', withTenantLabel({ tool: toolName, reason: abortReason }));
+        }
         metrics.observe('openchrome_tool_duration_seconds', withTenantLabel({ tool: toolName }), durationSec);
       } catch {
         // Best-effort metrics
