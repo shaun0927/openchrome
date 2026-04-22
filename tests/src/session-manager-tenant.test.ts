@@ -48,6 +48,7 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
 }));
 
 import { SessionManager } from '../../src/session-manager';
+import { runWithRequestContext } from '../../src/observability/request-id';
 import { TenantManager } from '../../src/tenant/manager';
 import { DEFAULT_TENANT_ID } from '../../src/tenant/types';
 import { resetTenantManager } from '../../src/tenant/registry';
@@ -115,6 +116,28 @@ describe('SessionManager tenant isolation (#7)', () => {
     expect(n).toBe(1);
   });
 
+
+  it('uses the active request-context tenant when createSession omits tenantId', async () => {
+    const tenantCtx = stubContext('tenant-from-ctx');
+    const tm = new TenantManager({
+      createContext: jest.fn(async () => tenantCtx),
+    });
+    const sm = new SessionManager(undefined, {
+      autoCleanup: false,
+      useConnectionPool: false,
+      useDefaultContext: true,
+      tenantManager: tm,
+    });
+
+    const session = await runWithRequestContext({ requestId: 'req-1', tenantId: 'acme' }, () =>
+      sm.createSession({ id: 'ctx-session' }),
+    );
+
+    expect(session.tenantId).toBe('acme');
+    expect(session.context).toBe(tenantCtx);
+    expect(mockCdpClientInstance.createBrowserContext).not.toHaveBeenCalled();
+  });
+
   it('reuses the same tenant context across multiple sessions for the same tenant', async () => {
     const ctx = stubContext('t');
     const factory = jest.fn(async () => ctx);
@@ -165,6 +188,26 @@ describe('SessionManager tenant isolation (#7)', () => {
     await expect(sm.createSession({ id: 's1' })).rejects.toThrow(
       /STRICT tenant isolation is enabled.*useDefaultContext=true is rejected/,
     );
+  });
+
+
+  it('STRICT mode honors request-context tenant by forcing a tenant-scoped context for HTTP-style calls', async () => {
+    const tenantCtx = stubContext('strict-http-tenant');
+    const tm = new TenantManager({ createContext: async () => tenantCtx });
+    const sm = new SessionManager(undefined, {
+      autoCleanup: false,
+      useConnectionPool: false,
+      useDefaultContext: true,
+      tenantManager: tm,
+      strictTenantIsolation: true,
+    });
+
+    const session = await runWithRequestContext({ requestId: 'req-strict', tenantId: 'alpha' }, () =>
+      sm.createSession({ id: 'strict-http-session' }),
+    );
+
+    expect(session.tenantId).toBe('alpha');
+    expect(session.context).toBe(tenantCtx);
   });
 
   it('STRICT mode assigns a tenant context even for the default tenant', async () => {

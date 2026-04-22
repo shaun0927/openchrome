@@ -819,7 +819,13 @@ export class HTTPTransport implements MCPTransport {
       // Handle JSON-RPC batch (array of requests)
       if (Array.isArray(parsed)) {
         const results = await runWithRequestContext(
-          { requestId },
+          {
+            requestId,
+            tenantId: principal && (principal.mode === 'api-key' || principal.mode === 'jwt')
+              ? principal.tenantId
+              : tenantId,
+            keyId: principal?.mode === 'api-key' ? principal.keyId : undefined,
+          },
           () => this.processBatch(parsed, sessionId, tenantId, signal, principal),
         );
         // Filter out null results (notifications don't produce responses)
@@ -866,7 +872,13 @@ export class HTTPTransport implements MCPTransport {
 
       try {
         const response = await runWithRequestContext(
-          { requestId },
+          {
+            requestId,
+            tenantId: principal && (principal.mode === 'api-key' || principal.mode === 'jwt')
+              ? principal.tenantId
+              : tenantId,
+            keyId: principal?.mode === 'api-key' ? principal.keyId : undefined,
+          },
           () => this.messageHandler!(msg, signal),
         );
 

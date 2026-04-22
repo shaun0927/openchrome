@@ -497,6 +497,7 @@ program
         browserState: stateManager.getStatus(),
         chromeProcess: chromeProcessData,
         sessions: { active: sessionManager?.sessionCount ?? 0 },
+        tenants: { activeContexts: sessionManager?.tenantContextCount ?? 0 },
       };
       return data;
     }, healthPort, healthBind);
