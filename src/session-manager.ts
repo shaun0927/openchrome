@@ -25,6 +25,7 @@ import { safeTitle } from './utils/safe-title';
 import { getTenantManager, isStrictTenantIsolationEnabled } from './tenant/registry';
 import type { TenantManager } from './tenant/manager';
 import { DEFAULT_TENANT_ID, type TenantId } from './tenant/types';
+import { currentRequestContext } from './observability/request-id';
 import { Budget, isLegacyBudgetMode } from './utils/budget';
 import {
   DEFAULT_SESSION_INIT_BUDGET_LAUNCH_FRACTION,
@@ -352,9 +353,10 @@ export class SessionManager {
   private async resolveSessionContext(
     tenantId: TenantId,
     useDefaultContext: boolean,
+    forceTenantContext = false,
   ): Promise<BrowserContext | null> {
     if (this.strictTenantIsolation) {
-      if (useDefaultContext) {
+      if (useDefaultContext && !forceTenantContext) {
         throw new Error(
           `[SessionManager] STRICT tenant isolation is enabled; ` +
             `useDefaultContext=true is rejected because it would share the Chrome profile across tenants. ` +
@@ -394,12 +396,17 @@ export class SessionManager {
 
     const name = options.name || `Session ${id.slice(0, 8)}`;
     const defaultWorkerId = 'default';
-    const tenantId = options.tenantId ?? DEFAULT_TENANT_ID;
+    const tenantId = options.tenantId
+      ?? (currentRequestContext()?.tenantId as TenantId | undefined)
+      ?? DEFAULT_TENANT_ID;
+    const forceTenantContext = options.tenantId !== undefined
+      ? tenantId !== DEFAULT_TENANT_ID
+      : tenantId !== DEFAULT_TENANT_ID && currentRequestContext()?.tenantId === tenantId;
 
     // Resolve tenant-scoped context (#7). Falls back to legacy behavior for
     // the default tenant when STRICT mode is off so stdio callers see no
     // change in behavior.
-    const defaultContext = await this.resolveSessionContext(tenantId, this.config.useDefaultContext);
+    const defaultContext = await this.resolveSessionContext(tenantId, this.config.useDefaultContext, forceTenantContext);
     const defaultWorker: Worker = {
       id: defaultWorkerId,
       name: 'Default Worker',
@@ -741,6 +748,19 @@ export class SessionManager {
     }
 
     return worker;
+  }
+
+  /**
+   * Number of active tenant-scoped BrowserContexts currently held by the tenant manager.
+   * Includes the default tenant only when strict tenant isolation or explicit tenant
+   * allocation has created a dedicated BrowserContext for it.
+   */
+  get tenantContextCount(): number {
+    try {
+      return this.getTenantManager().stats().active;
+    } catch {
+      return 0;
+    }
   }
 
   /**

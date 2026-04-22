@@ -42,6 +42,9 @@ export interface HealthData {
   sessions?: {
     active: number;
   };
+  tenants?: {
+    activeContexts: number;
+  };
 }
 
 export type HealthDataProvider = () => HealthData;
@@ -88,6 +91,7 @@ export class HealthEndpoint {
               metrics.set('openchrome_tabs_health', { status: 'unhealthy' }, data.tabs.unhealthy);
             }
             metrics.set('openchrome_active_sessions', {}, data.sessions?.active ?? 0);
+            metrics.set('openchrome_tenant_contexts_active', {}, data.tenants?.activeContexts ?? 0);
 
             res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
             res.end(metrics.export());
