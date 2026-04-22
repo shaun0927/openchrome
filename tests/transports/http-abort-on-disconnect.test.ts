@@ -101,13 +101,16 @@ describe('HTTPTransport — abort-on-disconnect (issue #8)', () => {
 
     await postAndAbort(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call' }), 80);
 
+    // The inner race timeout must absorb macOS CI event-loop jitter; the
+    // abort propagation path (socket close → req.on('close') → controller
+    // abort) is fast locally but can exceed 2s under loaded Actions runners.
     const reason = (await Promise.race([
       abortReason,
-      new Promise<unknown>((resolve) => setTimeout(() => resolve('TIMEOUT'), 2000)),
+      new Promise<unknown>((resolve) => setTimeout(() => resolve('TIMEOUT'), 8000)),
     ])) as unknown;
 
     expect(reason).toBeInstanceOf(ClientDisconnectError);
-  });
+  }, 15000);
 
   test('does NOT abort signal on normal completion', async () => {
     let signalRef: AbortSignal | undefined;

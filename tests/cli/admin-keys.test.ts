@@ -24,6 +24,20 @@ interface RunResult {
   exitCode: number | null;
 }
 
+/**
+ * Extract an `oc_live_*` plaintext token from captured stdout, ignoring any
+ * surrounding noise. The in-process harness shares its `process.stdout.write`
+ * hook with Jest's own console-capture rendering, so a leaked timer firing a
+ * console.error from a prior test in the same worker can prepend a decorated
+ * block ahead of the CLI's own single-line token emission. The CLI only ever
+ * emits exactly one token, so a regex match is both sufficient and robust.
+ */
+function extractToken(stdout: string): string {
+  const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
+  if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
+  return m[0];
+}
+
 async function runCli(argv: string[]): Promise<RunResult> {
   const program = new Command();
   program.exitOverride((err) => {
@@ -153,8 +167,7 @@ describe('admin keys CLI', () => {
       '--tenant', 'acme',
       '--scope', 'read',
     ]);
-    const plaintext = created.stdout.trim();
-    expect(plaintext).toMatch(/^oc_live_/);
+    const plaintext = extractToken(created.stdout);
     const keyIdMatch = created.stderr.match(/keyId: (k_\S+)/);
     expect(keyIdMatch).not.toBeNull();
     const keyId = keyIdMatch![1];
@@ -174,7 +187,7 @@ describe('admin keys CLI', () => {
       '--tenant', 'acme',
       '--scope', 'read',
     ]);
-    const plaintext = created.stdout.trim();
+    const plaintext = extractToken(created.stdout);
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
     expect(listed.exitCode).toBeNull();
@@ -212,12 +225,12 @@ describe('admin keys CLI', () => {
       '--tenant', 'acme',
       '--scope', 'read',
     ]);
-    const firstPlaintext = created.stdout.trim();
+    const firstPlaintext = extractToken(created.stdout);
     const firstKeyId = created.stderr.match(/keyId: (k_\S+)/)![1];
 
     const rotated = await runCli(['admin', 'keys', 'rotate', firstKeyId]);
     expect(rotated.exitCode).toBeNull();
-    const secondPlaintext = rotated.stdout.trim();
+    const secondPlaintext = extractToken(rotated.stdout);
     expect(secondPlaintext).toMatch(/^oc_live_acme_/);
     expect(secondPlaintext).not.toBe(firstPlaintext);
     expect(rotated.stderr).toContain('SAVE THIS KEY NOW');
