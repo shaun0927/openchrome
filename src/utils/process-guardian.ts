@@ -34,7 +34,12 @@ export function spawnProcessGuardian(
 
     function removePidFile() {
       if (!pidFilePath) return;
-      try { fs.unlinkSync(pidFilePath); } catch {}
+      try {
+        const current = fs.readFileSync(pidFilePath, 'utf8').trim();
+        if (current === String(childPid)) {
+          fs.unlinkSync(pidFilePath);
+        }
+      } catch {}
     }
 
     function killTree(pid, signal = 'SIGTERM') {

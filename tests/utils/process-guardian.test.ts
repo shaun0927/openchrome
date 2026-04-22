@@ -1,5 +1,8 @@
 /// <reference types="jest" />
 import { spawn } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { spawnProcessGuardian } from '../../src/utils/process-guardian';
 
 function isAlive(pid: number): boolean {
@@ -33,5 +36,26 @@ describe('spawnProcessGuardian', () => {
 
     await waitForDead(child.pid);
     expect(isAlive(child.pid)).toBe(false);
+  });
+
+  test('does not delete a pid file that was rewritten for a newer process', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+    child.unref();
+
+    if (!child.pid) {
+      throw new Error('failed to spawn child process');
+    }
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-guardian-'));
+    const pidFile = path.join(dir, 'chrome.pid');
+    fs.writeFileSync(pidFile, `${child.pid}\n`, 'utf8');
+
+    spawnProcessGuardian(99999999, child.pid, { label: 'guardian-test', pollMs: 200, pidFilePath: pidFile });
+    fs.writeFileSync(pidFile, '123456\n', 'utf8');
+
+    await waitForDead(child.pid);
+    expect(fs.existsSync(pidFile)).toBe(true);
+    expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe('123456');
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

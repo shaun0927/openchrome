@@ -623,6 +623,12 @@ export class ChromeLauncher {
     // Note: On Windows, detached processes create a new process group.
     // Killing the root process may not clean up child processes (renderers, GPU).
     // The oc_stop tool handles this via session/pool cleanup before process kill.
+    if (chromeProcess.pid) {
+      spawnProcessGuardian(process.pid, chromeProcess.pid, {
+        pidFilePath: getChromePidFilePath(port),
+        label: 'managed-chrome',
+      });
+    }
 
     // Log Chrome process exit for immediate diagnostics
     chromeProcess.once('exit', (code, signal) => {
@@ -682,10 +688,6 @@ export class ChromeLauncher {
     // Persist Chrome PID to disk for orphan detection
     if (chromeProcess.pid) {
       writeChromePid(port, chromeProcess.pid);
-      spawnProcessGuardian(process.pid, chromeProcess.pid, {
-        pidFilePath: getChromePidFilePath(port),
-        label: 'managed-chrome',
-      });
     }
 
     this._intentionalStop = false;
