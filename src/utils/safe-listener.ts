@@ -16,41 +16,52 @@
 
 import { getMetricsCollector } from '../metrics/collector';
 
-interface ListenerErrorSample {
-  listener: string;
-  timestamp: number;
+interface ListenerErrorBucket {
+  minuteEpoch: number;
+  count: number;
 }
 
-const listenerErrorSamples: ListenerErrorSample[] = [];
+const LISTENER_ERROR_BUCKETS = 60;
+const listenerErrorBuckets: ListenerErrorBucket[] = Array.from({ length: LISTENER_ERROR_BUCKETS }, () => ({
+  minuteEpoch: 0,
+  count: 0,
+}));
 
-function pruneListenerErrors(now = Date.now()): void {
-  const cutoff = now - 60 * 60 * 1000;
-  while (listenerErrorSamples.length > 0 && listenerErrorSamples[0].timestamp < cutoff) {
-    listenerErrorSamples.shift();
+function bucketFor(now = Date.now()): ListenerErrorBucket {
+  const minuteEpoch = Math.floor(now / 60_000);
+  const index = minuteEpoch % LISTENER_ERROR_BUCKETS;
+  const bucket = listenerErrorBuckets[index];
+  if (bucket.minuteEpoch !== minuteEpoch) {
+    bucket.minuteEpoch = minuteEpoch;
+    bucket.count = 0;
   }
+  return bucket;
 }
 
-function recordListenerError(listener: string): void {
-  const now = Date.now();
-  pruneListenerErrors(now);
-  listenerErrorSamples.push({ listener, timestamp: now });
+function recordListenerError(_listener: string): void {
+  const bucket = bucketFor(Date.now());
+  bucket.count += 1;
 }
 
 export function getListenerErrorStats(now = Date.now()): { errorCount1m: number; errorCount1h: number } {
-  pruneListenerErrors(now);
-  const cutoff1m = now - 60 * 1000;
+  const currentMinute = Math.floor(now / 60_000);
   let errorCount1m = 0;
-  for (const sample of listenerErrorSamples) {
-    if (sample.timestamp >= cutoff1m) errorCount1m++;
+  let errorCount1h = 0;
+  for (const bucket of listenerErrorBuckets) {
+    if (currentMinute - bucket.minuteEpoch >= LISTENER_ERROR_BUCKETS) continue;
+    errorCount1h += bucket.count;
+    if (bucket.minuteEpoch === currentMinute) {
+      errorCount1m += bucket.count;
+    }
   }
-  return {
-    errorCount1m,
-    errorCount1h: listenerErrorSamples.length,
-  };
+  return { errorCount1m, errorCount1h };
 }
 
 export function resetListenerErrorStatsForTests(): void {
-  listenerErrorSamples.length = 0;
+  for (const bucket of listenerErrorBuckets) {
+    bucket.minuteEpoch = 0;
+    bucket.count = 0;
+  }
 }
 
 /**
