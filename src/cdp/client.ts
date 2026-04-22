@@ -748,6 +748,7 @@ export class CDPClient {
         const page = await target.page();
         if (page) {
           this.targetIdIndex.set(targetId, page);
+          this.touchTargetActivity(targetId);
           this.configurePageDefenses(page);
           console.error(`[CDPClient] Indexed popup target ${targetId} (URL: ${url})`);
         }
@@ -1568,6 +1569,7 @@ export class CDPClient {
     // evaluateOnNewDocument scripts persist on the CDP session and execute at
     // document_start of every new document — before any <script> tag on the page.
     this.targetIdIndex.set(targetId, page);
+    this.touchTargetActivity(targetId);
     this.configurePageDefenses(page);
 
     // Stealth-only fingerprint defenses (WebGL, Canvas, Audio, hardware, screen, webdriver)
