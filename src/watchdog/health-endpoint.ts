@@ -45,6 +45,10 @@ export interface HealthData {
   tenants?: {
     activeContexts: number;
   };
+  listeners?: {
+    errorCount1m: number;
+    errorCount1h: number;
+  };
 }
 
 export type HealthDataProvider = () => HealthData;

@@ -16,6 +16,54 @@
 
 import { getMetricsCollector } from '../metrics/collector';
 
+interface ListenerErrorBucket {
+  minuteEpoch: number;
+  count: number;
+}
+
+const LISTENER_ERROR_BUCKETS = 60;
+const listenerErrorBuckets: ListenerErrorBucket[] = Array.from({ length: LISTENER_ERROR_BUCKETS }, () => ({
+  minuteEpoch: 0,
+  count: 0,
+}));
+
+function bucketFor(now = Date.now()): ListenerErrorBucket {
+  const minuteEpoch = Math.floor(now / 60_000);
+  const index = minuteEpoch % LISTENER_ERROR_BUCKETS;
+  const bucket = listenerErrorBuckets[index];
+  if (bucket.minuteEpoch !== minuteEpoch) {
+    bucket.minuteEpoch = minuteEpoch;
+    bucket.count = 0;
+  }
+  return bucket;
+}
+
+function recordListenerError(_listener: string): void {
+  const bucket = bucketFor(Date.now());
+  bucket.count += 1;
+}
+
+export function getListenerErrorStats(now = Date.now()): { errorCount1m: number; errorCount1h: number } {
+  const currentMinute = Math.floor(now / 60_000);
+  let errorCount1m = 0;
+  let errorCount1h = 0;
+  for (const bucket of listenerErrorBuckets) {
+    if (currentMinute - bucket.minuteEpoch >= LISTENER_ERROR_BUCKETS) continue;
+    errorCount1h += bucket.count;
+    if (bucket.minuteEpoch === currentMinute) {
+      errorCount1m += bucket.count;
+    }
+  }
+  return { errorCount1m, errorCount1h };
+}
+
+export function resetListenerErrorStatsForTests(): void {
+  for (const bucket of listenerErrorBuckets) {
+    bucket.minuteEpoch = 0;
+    bucket.count = 0;
+  }
+}
+
 /**
  * Wraps an async listener so its rejections are caught, counted, and logged.
  * The returned function is synchronous (returns `void`), which matches the
@@ -34,6 +82,7 @@ export function safeAsyncListener<A extends unknown[]>(
     // Using `void` to explicitly discard the Promise — required to keep the
     // EventEmitter callback synchronous.
     void handler(...args).catch((err) => {
+      recordListenerError(name);
       try {
         getMetricsCollector().inc('openchrome_listener_errors_total', { listener: name });
       } catch {
