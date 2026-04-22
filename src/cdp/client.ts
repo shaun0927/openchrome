@@ -46,6 +46,17 @@ type CookieEntry = {
   sameSite?: string;
 };
 
+export type CookieScanStatus = 'complete' | 'partial' | 'no_candidates' | 'no_cookies';
+
+export interface CookieScanResult {
+  status: CookieScanStatus;
+  targetId: string | null;
+  scanned: number;
+  total: number;
+  elapsedMs: number;
+  warning?: string;
+}
+
 export interface CDPClientOptions {
   port?: number;
   maxReconnectAttempts?: number;
@@ -99,7 +110,9 @@ export class CDPClient {
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
   private targetIdIndex: Map<string, Page> = new Map();
-  private inFlightCookieScans: Map<string, Promise<string | null>> = new Map();
+  private targetActivityAt: Map<string, number> = new Map();
+  private inFlightCookieScans: Map<string, Promise<CookieScanResult>> = new Map();
+  private lastCookieScanResult: CookieScanResult | null = null;
   /** Coalesces concurrent connect() calls — only one connectInternal() runs at a time. */
   private pendingConnect: Promise<void> | null = null;
   /** Timestamp of last successful connection verification (heartbeat or active probe). */
@@ -206,6 +219,7 @@ export class CDPClient {
     }
     // Clean up cookie data cache for this target
     this.cookieDataCache.delete(targetId);
+    this.targetActivityAt.delete(targetId);
     // Look up page BEFORE deleting from index so listeners can use it
     const page = this.targetIdIndex.get(targetId);
     this.targetIdIndex.delete(targetId);
@@ -216,6 +230,14 @@ export class CDPClient {
         console.error('[CDPClient] Target destroyed listener error:', e);
       }
     }
+  }
+
+  private touchTargetActivity(targetId: string): void {
+    this.targetActivityAt.set(targetId, Date.now());
+  }
+
+  getLastCookieScanResult(): CookieScanResult | null {
+    return this.lastCookieScanResult;
   }
 
   /**
@@ -843,7 +865,9 @@ export class CDPClient {
       this.browser = null;
       this.sessions.clear();
       this.targetIdIndex.clear();
+      this.targetActivityAt.clear();
       this.inFlightCookieScans.clear();
+      this.lastCookieScanResult = null;
     }
 
     if (this.disconnectRequested) {
@@ -1035,13 +1059,21 @@ export class CDPClient {
    *
    * @param targetDomain Optional domain to prioritize when selecting cookie source
    */
-  async findAuthenticatedPageTargetId(targetDomain?: string): Promise<string | null> {
+  async findAuthenticatedPageTarget(targetDomain?: string): Promise<CookieScanResult> {
     // Check cache first (stale targetId is handled gracefully: copyCookiesViaCDP returns 0)
     const cacheKey = targetDomain || '*';
     const cached = this.cookieSourceCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CDPClient.COOKIE_CACHE_TTL) {
       console.error(`[CDPClient] Cache hit for cookie source (domain: ${cacheKey}): ${cached.targetId.slice(0, 8)}`);
-      return cached.targetId;
+      const result: CookieScanResult = {
+        status: 'complete',
+        targetId: cached.targetId,
+        scanned: 0,
+        total: 0,
+        elapsedMs: 0,
+      };
+      this.lastCookieScanResult = result;
+      return result;
     }
 
     // Promise coalescing: if a scan for this domain is already in-flight, reuse it
@@ -1052,7 +1084,7 @@ export class CDPClient {
     }
 
     // Start the scan and register it so concurrent callers share this promise
-    const scanPromise = this._doFindAuthenticatedPageTargetId(targetDomain, cacheKey);
+    const scanPromise = this._doFindAuthenticatedPageTarget(targetDomain, cacheKey);
     this.inFlightCookieScans.set(cacheKey, scanPromise);
     try {
       return await scanPromise;
@@ -1061,40 +1093,52 @@ export class CDPClient {
     }
   }
 
+  async findAuthenticatedPageTargetId(targetDomain?: string): Promise<string | null> {
+    const result = await this.findAuthenticatedPageTarget(targetDomain);
+    return result.targetId;
+  }
+
   /**
    * Internal implementation of the authenticated-page probe.
    * Uses Target.attachToTarget (multiplexed CDP) instead of raw WebSocket connections.
    * Uses Target.getTargets result directly instead of /json/list HTTP calls.
    */
-  private async _doFindAuthenticatedPageTargetId(targetDomain: string | undefined, cacheKey: string): Promise<string | null> {
+  private async _doFindAuthenticatedPageTarget(targetDomain: string | undefined, cacheKey: string): Promise<CookieScanResult> {
     const scanStart = Date.now();
     const browser = this.getBrowser();
     const session = await browser.target().createCDPSession();
-
-    // Outcome tracking — one of these is set before every return path so we
-    // always surface to metrics whether the scan ran to completion, timed
-    // out partway, or short-circuited because there were no candidates.
-    type ScanOutcome = 'complete' | 'partial' | 'no_candidates' | 'no_cookies';
     let targetsScanned = 0;
 
-    const recordOutcome = (
-      finalOutcome: ScanOutcome,
+    const buildResult = (
+      status: CookieScanStatus,
       totalCandidates: number,
-    ) => {
-      const durationSec = (Date.now() - scanStart) / 1000;
+      targetId: string | null,
+      warning?: string,
+    ): CookieScanResult => ({
+      status,
+      targetId,
+      scanned: targetsScanned,
+      total: totalCandidates,
+      elapsedMs: Date.now() - scanStart,
+      warning,
+    });
+
+    const recordOutcome = (result: CookieScanResult) => {
+      this.lastCookieScanResult = result;
+      const durationSec = result.elapsedMs / 1000;
       try {
         const m = getMetricsCollector();
-        m.inc('openchrome_cookie_scan_total', { status: finalOutcome });
-        m.observe('openchrome_cookie_scan_duration_seconds', { status: finalOutcome }, durationSec);
-        m.observe('openchrome_cookie_scan_targets_scanned', { status: finalOutcome }, targetsScanned);
+        m.inc('openchrome_cookie_scan_total', { status: result.status });
+        m.observe('openchrome_cookie_scan_duration_seconds', { status: result.status }, durationSec);
+        m.observe('openchrome_cookie_scan_targets_scanned', { status: result.status }, targetsScanned);
       } catch {
         // Metrics collector unavailable — scan behavior must not depend on it.
       }
-      if (finalOutcome === 'partial') {
+      if (result.status === 'partial' && !result.targetId) {
         console.error(
-          `[CDPClient] Cookie scan partial: scanned ${targetsScanned}/${totalCandidates} targets ` +
+          `[CDPClient] Cookie scan partial: scanned ${targetsScanned}/${result.total} targets ` +
           `in ${(durationSec * 1000).toFixed(0)}ms before ${DEFAULT_COOKIE_SCAN_TIMEOUT_MS}ms timeout — ` +
-          `no authenticated tab matched among scanned targets; remaining ${totalCandidates - targetsScanned} were skipped.`,
+          `no authenticated tab matched among scanned targets; remaining ${result.total - targetsScanned} were skipped.`,
         );
       }
     };
@@ -1117,8 +1161,9 @@ export class CDPClient {
 
       if (candidates.length === 0) {
         console.error('[CDPClient] No candidate pages found for cookie source');
-        recordOutcome('no_candidates', 0);
-        return null;
+        const result = buildResult('no_candidates', 0, null);
+        recordOutcome(result);
+        return result;
       }
 
       // If targeting an external domain (not localhost), exclude localhost pages
@@ -1130,14 +1175,21 @@ export class CDPClient {
         }
       }
 
-      // Sort candidates by domain match score (highest first)
+      // Sort candidates by domain match score first, then by best-known recent
+      // activity. This makes actively-used OpenChrome pages win ties while still
+      // prioritizing explicit domain affinity for cookie restoration.
+      candidates.sort((a, b) => {
+        const scoreA = targetDomain ? this.domainMatchScore(a.url, targetDomain) : 0;
+        const scoreB = targetDomain ? this.domainMatchScore(b.url, targetDomain) : 0;
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        const activityA = this.targetActivityAt.get(a.targetId) ?? 0;
+        const activityB = this.targetActivityAt.get(b.targetId) ?? 0;
+        return activityB - activityA;
+      });
       if (targetDomain) {
-        candidates.sort((a, b) => {
-          const scoreA = this.domainMatchScore(a.url, targetDomain);
-          const scoreB = this.domainMatchScore(b.url, targetDomain);
-          return scoreB - scoreA;
-        });
-        console.error(`[CDPClient] Sorted ${candidates.length} candidates by domain match to ${targetDomain}`);
+        console.error(`[CDPClient] Sorted ${candidates.length} candidates by domain match and recent activity for ${targetDomain}`);
+      } else {
+        console.error(`[CDPClient] Sorted ${candidates.length} candidates by recent activity`);
       }
 
       // Limit candidates to prevent N×30s cascading timeouts in parallel sessions.
@@ -1154,8 +1206,12 @@ export class CDPClient {
         // Check overall scan timeout to prevent cascading hangs
         if (Date.now() - scanStart > DEFAULT_COOKIE_SCAN_TIMEOUT_MS) {
           console.error(`[CDPClient] Cookie scan timed out after ${Date.now() - scanStart}ms`);
-          recordOutcome('partial', candidates.length);
-          return null;
+          const warning =
+            `Cookie scan timed out after scanning ${targetsScanned}/${candidates.length} targets; ` +
+            `a matching authenticated page may still exist in the skipped remainder.`;
+          const result = buildResult('partial', candidates.length, null, warning);
+          recordOutcome(result);
+          return result;
         }
         targetsScanned += 1;
 
@@ -1188,8 +1244,11 @@ export class CDPClient {
             const domainScore = targetDomain ? this.domainMatchScore(candidate.url, targetDomain) : 0;
             console.error(`[CDPClient] Found authenticated page ${candidate.targetId.slice(0, 8)} at ${candidate.url.slice(0, 50)} (${cookieCount} cookies, domain score: ${domainScore})`);
             this.cookieSourceCache.set(cacheKey, { targetId: candidate.targetId, timestamp: Date.now() });
-            recordOutcome('complete', candidates.length);
-            return candidate.targetId;
+            this.touchTargetActivity(candidate.targetId);
+            const status: CookieScanStatus = targetsScanned < candidates.length ? 'partial' : 'complete';
+            const resultSummary = buildResult(status, candidates.length, candidate.targetId);
+            recordOutcome(resultSummary);
+            return resultSummary;
           }
         } catch {
           // Target may be unresponsive, timed out, or already detached — skip
@@ -1201,8 +1260,9 @@ export class CDPClient {
       }
 
       console.error('[CDPClient] No pages with cookies found');
-      recordOutcome('no_cookies', candidates.length);
-      return null;
+      const result = buildResult('no_cookies', candidates.length, null);
+      recordOutcome(result);
+      return result;
     } finally {
       await session.detach().catch(() => {});
     }
@@ -1367,10 +1427,15 @@ export class CDPClient {
       // The global skipCookieBridge flag serves as a manual override escape hatch.
       // Overall timeout prevents cascading hangs from unresponsive source tabs.
       if (!skipCookieBridge && !getGlobalConfig().skipCookieBridge) {
-        const authPageTargetId = await this.findAuthenticatedPageTargetId(targetDomain);
-        if (authPageTargetId) {
+        const cookieScan = await this.findAuthenticatedPageTarget(targetDomain);
+        if (cookieScan.status === 'partial' && !cookieScan.targetId) {
+          console.error(
+            `[CDPClient] Cookie bridge proceeding without copied cookies: ${cookieScan.warning ?? 'cookie scan incomplete'}`,
+          );
+        }
+        if (cookieScan.targetId) {
           await Promise.race([
-            this.copyCookiesViaCDP(authPageTargetId, page),
+            this.copyCookiesViaCDP(cookieScan.targetId, page),
             new Promise<void>((resolve) =>
               setTimeout(() => {
                 console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
@@ -1383,7 +1448,11 @@ export class CDPClient {
     }
 
     // Index page for O(1) target-to-page lookups (replaces eager targetcreated indexing)
-    this.targetIdIndex.set(getTargetId(page.target()), page);
+    {
+      const pageTargetId = getTargetId(page.target());
+      this.targetIdIndex.set(pageTargetId, page);
+      this.touchTargetActivity(pageTargetId);
+    }
 
     this.configurePageDefenses(page);
 
@@ -1839,6 +1908,7 @@ export class CDPClient {
         if (!page.isClosed()) {
           const targetId = getTargetId(page.target());
           newIndex.set(targetId, page);
+          this.touchTargetActivity(targetId);
           indexed++;
         }
       }
@@ -1856,6 +1926,7 @@ export class CDPClient {
     // Fast path: check index first (O(1))
     const indexed = this.targetIdIndex.get(targetId);
     if (indexed && !indexed.isClosed()) {
+      this.touchTargetActivity(targetId);
       return indexed;
     }
 
@@ -1872,6 +1943,7 @@ export class CDPClient {
         if (page) {
           // Populate index for future lookups
           this.targetIdIndex.set(targetId, page);
+          this.touchTargetActivity(targetId);
           this.configurePageDefenses(page);
         }
         return page;
@@ -1890,9 +1962,11 @@ export class CDPClient {
    */
   indexExternalPage(targetId: string, page: Page): void {
     this.targetIdIndex.set(targetId, page);
+    this.touchTargetActivity(targetId);
     this.configurePageDefenses(page);
     page.once('close', () => {
       this.targetIdIndex.delete(targetId);
+      this.targetActivityAt.delete(targetId);
       // sessions and cookie cache cleanup handled by onTargetDestroyed via browser targetdestroyed event
     });
   }
