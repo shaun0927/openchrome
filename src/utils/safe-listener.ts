@@ -16,6 +16,43 @@
 
 import { getMetricsCollector } from '../metrics/collector';
 
+interface ListenerErrorSample {
+  listener: string;
+  timestamp: number;
+}
+
+const listenerErrorSamples: ListenerErrorSample[] = [];
+
+function pruneListenerErrors(now = Date.now()): void {
+  const cutoff = now - 60 * 60 * 1000;
+  while (listenerErrorSamples.length > 0 && listenerErrorSamples[0].timestamp < cutoff) {
+    listenerErrorSamples.shift();
+  }
+}
+
+function recordListenerError(listener: string): void {
+  const now = Date.now();
+  pruneListenerErrors(now);
+  listenerErrorSamples.push({ listener, timestamp: now });
+}
+
+export function getListenerErrorStats(now = Date.now()): { errorCount1m: number; errorCount1h: number } {
+  pruneListenerErrors(now);
+  const cutoff1m = now - 60 * 1000;
+  let errorCount1m = 0;
+  for (const sample of listenerErrorSamples) {
+    if (sample.timestamp >= cutoff1m) errorCount1m++;
+  }
+  return {
+    errorCount1m,
+    errorCount1h: listenerErrorSamples.length,
+  };
+}
+
+export function resetListenerErrorStatsForTests(): void {
+  listenerErrorSamples.length = 0;
+}
+
 /**
  * Wraps an async listener so its rejections are caught, counted, and logged.
  * The returned function is synchronous (returns `void`), which matches the
@@ -34,6 +71,7 @@ export function safeAsyncListener<A extends unknown[]>(
     // Using `void` to explicitly discard the Promise — required to keep the
     // EventEmitter callback synchronous.
     void handler(...args).catch((err) => {
+      recordListenerError(name);
       try {
         getMetricsCollector().inc('openchrome_listener_errors_total', { listener: name });
       } catch {

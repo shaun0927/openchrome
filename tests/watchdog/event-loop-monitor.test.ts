@@ -273,6 +273,7 @@ describe('HealthEndpoint', () => {
       uptime: 100,
       memory: process.memoryUsage(),
       eventLoop: { maxDriftMs: 5, warnCount: 0 },
+      listeners: { errorCount1m: 1, errorCount1h: 2 },
     });
 
     // Use a random high port to avoid conflicts
@@ -296,6 +297,7 @@ describe('HealthEndpoint', () => {
     const data = JSON.parse(response.body);
     expect(data.status).toBe('ok');
     expect(data.uptime).toBe(100);
+    expect(data.listeners).toEqual({ errorCount1m: 1, errorCount1h: 2 });
   });
 
   test('returns 404 for unknown paths', async () => {

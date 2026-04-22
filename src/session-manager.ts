@@ -22,6 +22,7 @@ import { StorageStateConfig } from './config';
 import { assertDomainAllowed } from './security/domain-guard';
 import { getTargetId } from './utils/puppeteer-helpers';
 import { safeTitle } from './utils/safe-title';
+import { getMetricsCollector } from './metrics/collector';
 import { getTenantManager, isStrictTenantIsolationEnabled } from './tenant/registry';
 import type { TenantManager } from './tenant/manager';
 import { DEFAULT_TENANT_ID, type TenantId } from './tenant/types';
@@ -1483,6 +1484,24 @@ export class SessionManager {
         });
       }
     }
+  }
+
+  /**
+   * Evict a tracked target after out-of-band listener or cleanup failures.
+   * Removes SessionManager ownership state and records a cleanup metric when
+   * the target was actually tracked.
+   */
+  evictTarget(targetId: string, reason = 'listener_error'): boolean {
+    const hadOwner = this.targetToWorker.has(targetId);
+    this.onTargetClosed(targetId);
+    if (hadOwner) {
+      try {
+        getMetricsCollector().inc('openchrome_zombie_targets_cleaned_total', { reason });
+      } catch {
+        // best-effort observability
+      }
+    }
+    return hadOwner;
   }
 
   /**

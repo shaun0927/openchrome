@@ -42,6 +42,10 @@ export interface HealthData {
   sessions?: {
     active: number;
   };
+  listeners?: {
+    errorCount1m: number;
+    errorCount1h: number;
+  };
 }
 
 export type HealthDataProvider = () => HealthData;

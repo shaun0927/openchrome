@@ -470,6 +470,7 @@ export class CDPClient {
     if (this.browser) {
       this.browser.removeAllListeners('disconnected');
       this.browser.removeAllListeners('targetdestroyed');
+      this.browser.removeAllListeners('targetchanged');
       this.browser.removeAllListeners('targetcreated');
       try {
         this.browser.disconnect();
@@ -632,6 +633,7 @@ export class CDPClient {
         if (this.browser) {
           this.browser.removeAllListeners('disconnected');
           this.browser.removeAllListeners('targetdestroyed');
+          this.browser.removeAllListeners('targetchanged');
           this.browser.removeAllListeners('targetcreated');
           this.browser.disconnect().catch(() => {});
           this.browser = null;
@@ -674,11 +676,19 @@ export class CDPClient {
     });
 
     // Set up target destroyed handler
-    this.browser!.on('targetdestroyed', (target) => {
+    this.browser!.on('targetdestroyed', safeAsyncListener('targetdestroyed', async (target: Target) => {
       const targetId = getTargetId(target);
       console.error(`[CDPClient] Target destroyed: ${targetId}`);
       this.onTargetDestroyed(targetId);
-    });
+    }));
+
+    this.browser!.on('targetchanged', safeAsyncListener('targetchanged', async (target: Target) => {
+      if (target.type() !== 'page') return;
+      const targetId = getTargetId(target);
+      if (this.targetIdIndex.has(targetId)) {
+        console.error(`[CDPClient] Target changed: ${targetId}`);
+      }
+    }));
 
     // Note: We intentionally do NOT call target.page() for EVERY targetcreated event.
     // Eagerly calling target.page() on every new target can materialize Chrome's internal
@@ -732,6 +742,17 @@ export class CDPClient {
       } catch {
         // Target may have already closed — expected race, not an error.
       }
+    }, (_err, args) => {
+      const target = args[0];
+      const targetId = getTargetId(target as Target);
+      if (!targetId) return;
+      import('../session-manager')
+        .then(({ getSessionManager }) => {
+          getSessionManager().evictTarget(targetId, 'listener_error');
+        })
+        .catch(() => {
+          // best-effort cleanup only
+        });
     }));
 
     this.connectionState = 'connected';
@@ -835,6 +856,7 @@ export class CDPClient {
       try {
         this.browser.removeAllListeners('disconnected');
         this.browser.removeAllListeners('targetdestroyed');
+        this.browser.removeAllListeners('targetchanged');
         this.browser.removeAllListeners('targetcreated');
         await this.browser.disconnect();
       } catch {
@@ -924,6 +946,7 @@ export class CDPClient {
       try {
         this.browser.removeAllListeners('disconnected');
         this.browser.removeAllListeners('targetdestroyed');
+        this.browser.removeAllListeners('targetchanged');
         this.browser.removeAllListeners('targetcreated');
         await this.browser.disconnect();
       } catch {

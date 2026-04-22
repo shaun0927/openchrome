@@ -8,7 +8,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { safeAsyncListener } from '../../src/utils/safe-listener';
+import { getListenerErrorStats, resetListenerErrorStatsForTests, safeAsyncListener } from '../../src/utils/safe-listener';
 import { getMetricsCollector } from '../../src/metrics/collector';
 
 function counterValueFor(listener: string): number {
@@ -24,6 +24,7 @@ describe('safeAsyncListener', () => {
   let consoleErrorSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    resetListenerErrorStatsForTests();
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -88,6 +89,20 @@ describe('safeAsyncListener', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(counterValueFor('rejects')).toBe(before + 1);
+  });
+
+
+  it('tracks recent listener-error stats for health reporting', async () => {
+    const ee = new EventEmitter();
+    ee.on('evt', safeAsyncListener('health-stats', async () => {
+      throw new Error('stats-boom');
+    }));
+
+    ee.emit('evt');
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(getListenerErrorStats().errorCount1m).toBe(1);
+    expect(getListenerErrorStats().errorCount1h).toBe(1);
   });
 
   it('invokes the optional onError hook and shields listener from onError throws', async () => {
