@@ -4,6 +4,7 @@
  */
 
 import * as http from 'node:http';
+import { currentRequestContext } from '../../src/observability/request-id';
 
 const { HTTPTransport } = require('../../src/transports/http');
 
@@ -61,12 +62,12 @@ describe('HTTP transport — tenant extraction (#7)', () => {
     await new Promise((r) => setTimeout(r, 50));
   });
 
-  async function boot() {
+  async function boot(handler?: (msg: Record<string, unknown>) => Promise<Record<string, unknown>>) {
     transport = new HTTPTransport(TEST_PORT, '127.0.0.1');
     transport.onMessage(async (msg: Record<string, unknown>) => ({
       jsonrpc: '2.0',
       id: msg.id,
-      result: { ok: true, method: msg.method },
+      result: handler ? await handler(msg) : { ok: true, method: msg.method },
     }));
     transport.start();
     await new Promise((r) => setTimeout(r, 100));
@@ -173,6 +174,26 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
       { jsonrpc: '2.0', id: 2, method: 'ping' },
     );
     expect(second.status).toBe(200);
+  });
+
+
+  it('propagates tenant and key context into the async request context for handlers', async () => {
+    await boot(async () => ({
+      requestContext: currentRequestContext(),
+    }));
+    const first = await mcpPost(
+      { 'X-Tenant-Id': 'acme' },
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    );
+    const mcpSession = first.headers['mcp-session-id'] as string;
+    const second = await mcpPost(
+      { 'X-Tenant-Id': 'acme', 'Mcp-Session-Id': mcpSession, 'X-Request-Id': 'req-tenant-ctx' },
+      { jsonrpc: '2.0', id: 2, method: 'ping' },
+    );
+    expect(second.status).toBe(200);
+    const data = JSON.parse(second.body);
+    expect(data.result.requestContext.requestId).toBe('req-tenant-ctx');
+    expect(data.result.requestContext.tenantId).toBe('acme');
   });
 
   it('DELETE /mcp clears the tenant binding', async () => {

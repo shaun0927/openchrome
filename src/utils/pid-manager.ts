@@ -102,6 +102,20 @@ export function getChromePidFilePath(port: number): string {
   return path.join(os.tmpdir(), `openchrome-chrome-${port}.pid`);
 }
 
+export function killProcessTree(pid: number, signal: NodeJS.Signals = 'SIGTERM'): void {
+  if (!Number.isFinite(pid) || pid <= 0) return;
+  if (process.platform === 'win32') {
+    try {
+      require('child_process').execSync(`taskkill /T /F /PID ${pid}`, { stdio: 'ignore' });
+    } catch {
+      try { process.kill(pid, signal); } catch { /* ignore */ }
+    }
+    return;
+  }
+  try { process.kill(-pid, signal); } catch { /* ignore */ }
+  try { process.kill(pid, signal); } catch { /* ignore */ }
+}
+
 /**
  * Write Chrome PID to file (called after successful Chrome spawn).
  * Uses atomic rename to prevent partial reads.
@@ -179,7 +193,7 @@ export function cleanOrphanedChromeProcesses(basePorts: number[]): number {
     // Orphan detected: Chrome is alive but no MCP server is managing it
     console.error(`${LOG_PREFIX} Killing orphaned Chrome process (PID ${chromePid}) on port ${port}`);
     try {
-      process.kill(chromePid, 'SIGTERM');
+      killProcessTree(chromePid, 'SIGTERM');
       killed++;
     } catch {
       // Process may have died between check and kill

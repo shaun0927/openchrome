@@ -250,9 +250,12 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerCounter('openchrome_reconnect_total', 'Total successful CDP reconnections');
     instance.registerGauge('openchrome_heap_bytes', 'Node.js heap usage in bytes');
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');
+    instance.registerGauge('openchrome_tenant_contexts_active', 'Current active tenant-scoped BrowserContexts');
     instance.registerGauge('openchrome_tabs_health', 'Tab health status count');
     instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
+    instance.registerCounter('openchrome_tool_calls_aborted_total', 'Tool calls aborted before successful completion');
     instance.registerCounter('openchrome_listener_errors_total', 'Async EventEmitter listener errors surfaced by safeAsyncListener');
+    instance.registerCounter('openchrome_zombie_targets_cleaned_total', 'Tracked targets evicted after listener or cleanup failures');
     instance.registerCounter('openchrome_unhandled_rejections_total', 'Process-level unhandled promise rejections (safety-net counter)');
     instance.registerCounter('openchrome_cookie_scan_total', 'Cookie source scans by outcome (complete/partial/no_candidates/no_cookies)');
     instance.registerHistogram('openchrome_cookie_scan_duration_seconds', 'Cookie source scan duration in seconds',

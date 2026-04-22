@@ -20,6 +20,7 @@ import { hasDisplay } from '../utils/display-detect';
 import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { safeTitle } from '../utils/safe-title';
 import { getTargetId } from '../utils/puppeteer-helpers';
+import { spawnProcessGuardian } from '../utils/process-guardian';
 
 /** Default port offset from main Chrome port for the headed fallback */
 const HEADED_PORT_OFFSET = 100;
@@ -158,6 +159,11 @@ class HeadedFallbackManager {
       stdio: 'ignore',
     });
     this.chromeProcess.unref();
+    if (this.chromeProcess.pid) {
+      spawnProcessGuardian(process.pid, this.chromeProcess.pid, {
+        label: 'headed-fallback',
+      });
+    }
 
     // Wait for Chrome to be ready
     const wsEndpoint = await this.waitForDebugPort(15000);

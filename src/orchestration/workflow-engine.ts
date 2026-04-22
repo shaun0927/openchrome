@@ -208,9 +208,14 @@ export class WorkflowEngine {
         if (step.url && !getGlobalConfig().skipCookieBridge) {
           try {
             const targetHost = new URL(step.url).hostname;
-            const authTargetId = await cdpClient.findAuthenticatedPageTargetId(targetHost);
-            if (authTargetId) {
-              await cdpClient.copyCookiesViaCDP(authTargetId, page);
+            const cookieScan = await cdpClient.findAuthenticatedPageTarget(targetHost);
+            if (cookieScan.status === 'partial' && !cookieScan.targetId) {
+              console.error(
+                `[WorkflowEngine] Cookie bridge incomplete for ${targetHost}: ${cookieScan.warning ?? 'scan incomplete'}`,
+              );
+            }
+            if (cookieScan.targetId) {
+              await cdpClient.copyCookiesViaCDP(cookieScan.targetId, page);
             }
           } catch {
             // Cookie bridging failure is non-fatal — page navigates without cookies

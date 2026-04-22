@@ -15,7 +15,7 @@ export interface DashboardToolCall {
   toolName: string;
   sessionId: string;
   args: string;
-  status: 'running' | 'success' | 'error';
+  status: 'running' | 'success' | 'error' | 'aborted';
   startTime: number;
   endTime?: number;
   duration?: number;
@@ -113,7 +113,7 @@ export class DashboardState {
   /**
    * Record the end of a tool call.
    */
-  recordToolEnd(callId: string, status: 'success' | 'error', error?: string): void {
+  recordToolEnd(callId: string, status: 'success' | 'error' | 'aborted', error?: string): void {
     const call = this.activeCalls.get(callId);
     if (!call) return;
 

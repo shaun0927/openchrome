@@ -273,6 +273,7 @@ describe('HealthEndpoint', () => {
       uptime: 100,
       memory: process.memoryUsage(),
       eventLoop: { maxDriftMs: 5, warnCount: 0 },
+      listeners: { errorCount1m: 1, errorCount1h: 2 },
     });
 
     // Use a random high port to avoid conflicts
@@ -296,6 +297,35 @@ describe('HealthEndpoint', () => {
     const data = JSON.parse(response.body);
     expect(data.status).toBe('ok');
     expect(data.uptime).toBe(100);
+    expect(data.listeners).toEqual({ errorCount1m: 1, errorCount1h: 2 });
+  });
+
+
+  test('exports tenant context gauge on /metrics when provider includes tenant data', async () => {
+    const provider = () => ({
+      status: 'ok' as const,
+      uptime: 100,
+      memory: process.memoryUsage(),
+      eventLoop: { maxDriftMs: 5, warnCount: 0 },
+      sessions: { active: 2 },
+      tenants: { activeContexts: 3 },
+    });
+
+    const port = 19200 + Math.floor(Math.random() * 800);
+    endpoint = new HealthEndpoint(provider, port);
+    await endpoint.start();
+
+    const response = await new Promise<{ statusCode: number; body: string }>((resolve) => {
+      const http = require('http');
+      http.get(`http://127.0.0.1:${port}/metrics`, (res: any) => {
+        let body = '';
+        res.on('data', (chunk: string) => { body += chunk; });
+        res.on('end', () => resolve({ statusCode: res.statusCode, body }));
+      });
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('openchrome_tenant_contexts_active 3');
   });
 
   test('returns 404 for unknown paths', async () => {

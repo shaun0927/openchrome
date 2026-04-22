@@ -166,8 +166,8 @@ describe('Chrome PID file tracking', () => {
 
       const killed = cleanOrphanedChromeProcesses([TEST_PORT]);
       expect(killed).toBe(1);
-      // Verify SIGTERM was sent
-      expect(killSpy).toHaveBeenCalledWith(orphanPid, 'SIGTERM');
+      // Verify SIGTERM was sent to the process tree/root
+      expect(killSpy.mock.calls.some(([pid, signal]) => (pid === orphanPid || pid === -orphanPid) && signal === 'SIGTERM')).toBe(true);
       // PID file should be removed
       expect(fs.existsSync(getChromePidFilePath(TEST_PORT))).toBe(false);
     });

@@ -38,6 +38,10 @@ export interface AuditLogMeta {
   durationMs?: number;
   /** Truthy when the call was externally aborted (B-2). */
   aborted?: boolean;
+  /** Timestamp when the abort was observed. */
+  abortedAt?: string;
+  /** Structured abort reason, e.g. client_disconnect. */
+  abortReason?: string;
   /** Whether the call should count toward billing. Defaults to true unless status=error. */
   billable?: boolean;
   /** Error message when status === 'error'. Should not contain sensitive data. */
@@ -81,6 +85,8 @@ interface ExtendedAuditEntry {
   status: NonNullable<AuditLogMeta['status']>;
   durationMs: number | null;
   aborted: boolean;
+  abortedAt?: string;
+  abortReason?: string;
   billable: boolean;
   argsHash: string;
   args: Record<string, unknown>;
@@ -242,12 +248,14 @@ export function logAuditEntry(
     status,
     durationMs: typeof meta.durationMs === 'number' ? Math.round(meta.durationMs) : null,
     aborted: meta.aborted ?? false,
-    billable: meta.billable ?? (status !== 'error'),
+    billable: meta.billable ?? (status === 'success'),
     argsHash,
     args: redacted,
   };
   if (meta.scopes && meta.scopes.length > 0) entry.scopes = [...meta.scopes];
   if (meta.errorMessage) entry.errorMessage = meta.errorMessage;
+  if (meta.abortedAt) entry.abortedAt = meta.abortedAt;
+  if (meta.abortReason) entry.abortReason = meta.abortReason;
 
   appendLine(logPath, JSON.stringify(entry) + '\n');
 }

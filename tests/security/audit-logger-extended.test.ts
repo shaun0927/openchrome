@@ -128,6 +128,30 @@ describe('audit-logger extended fields', () => {
     }
   });
 
+
+  test('aborted status writes abort metadata and defaults billable=false', async () => {
+    const logPath = makeTmpLogPath();
+    (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;
+
+    runWithRequestContext({ requestId: 'req-abort-1', tenantId: 't_abort' }, () => {
+      logAuditEntry('navigate', 'sess-abort', { url: 'https://example.com' }, undefined, {
+        status: 'aborted',
+        aborted: true,
+        abortedAt: '2026-04-22T06:00:00.000Z',
+        abortReason: 'client_disconnect',
+      });
+    });
+
+    await waitForFlush();
+    await new Promise((r) => setTimeout(r, 50));
+    const entry = readAll(logPath)[0];
+    expect(entry.status).toBe('aborted');
+    expect(entry.aborted).toBe(true);
+    expect(entry.abortedAt).toBe('2026-04-22T06:00:00.000Z');
+    expect(entry.abortReason).toBe('client_disconnect');
+    expect(entry.billable).toBe(false);
+  });
+
   test('error status marks billable=false and carries errorMessage', async () => {
     const logPath = makeTmpLogPath();
     (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;

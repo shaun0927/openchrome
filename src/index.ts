@@ -26,7 +26,7 @@ import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';
 import { getBrowserStateManager } from './browser-state';
-import { installUnhandledRejectionSafetyNet } from './utils/safe-listener';
+import { getListenerErrorStats, installUnhandledRejectionSafetyNet } from './utils/safe-listener';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -497,6 +497,8 @@ program
         browserState: stateManager.getStatus(),
         chromeProcess: chromeProcessData,
         sessions: { active: sessionManager?.sessionCount ?? 0 },
+        tenants: { activeContexts: sessionManager?.tenantContextCount ?? 0 },
+        listeners: getListenerErrorStats(),
       };
       return data;
     }, healthPort, healthBind);

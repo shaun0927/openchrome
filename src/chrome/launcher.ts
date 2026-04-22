@@ -8,7 +8,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
 import { getGlobalConfig } from '../config/global';
-import { writeChromePid, removeChromePid } from '../utils/pid-manager';
+import { writeChromePid, removeChromePid, getChromePidFilePath, killProcessTree } from '../utils/pid-manager';
+import { spawnProcessGuardian } from '../utils/process-guardian';
 import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAST_SESSION } from '../config/defaults';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
@@ -622,6 +623,12 @@ export class ChromeLauncher {
     // Note: On Windows, detached processes create a new process group.
     // Killing the root process may not clean up child processes (renderers, GPU).
     // The oc_stop tool handles this via session/pool cleanup before process kill.
+    if (chromeProcess.pid) {
+      spawnProcessGuardian(process.pid, chromeProcess.pid, {
+        pidFilePath: getChromePidFilePath(port),
+        label: 'managed-chrome',
+      });
+    }
 
     // Log Chrome process exit for immediate diagnostics
     chromeProcess.once('exit', (code, signal) => {
@@ -753,7 +760,7 @@ export class ChromeLauncher {
           proc.kill();
         }
       } else {
-        proc.kill();
+        killProcessTree(proc.pid ?? 0, 'SIGTERM');
       }
 
       // Wait for the process to actually exit before clearing state.
@@ -766,7 +773,7 @@ export class ChromeLauncher {
             if (process.platform === 'win32') {
               proc.kill();
             } else {
-              proc.kill('SIGKILL');
+              killProcessTree(proc.pid ?? 0, 'SIGKILL');
             }
           } catch {
             // Process may have already exited
