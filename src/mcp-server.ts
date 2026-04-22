@@ -1282,8 +1282,8 @@ export class MCPServer {
       const aborted = abortReason !== null;
 
       // End activity tracking (error)
-      this.activityTracker!.endCall(callId, aborted ? 'error' : 'error', message);
-      getDashboardState().recordToolEnd(callId, aborted ? 'error' : 'error', message);
+      this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
+      getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
 
       // Audit log failed invocation — same correlation fields as success path.
       try {
