@@ -173,11 +173,13 @@ export class MCPServer {
     // than waiting for the periodic sweep. This is the authoritative signal
     // — sessionTenants is always keyed by the same sessionId space that
     // sessionManager uses, unlike the transport's Mcp-Session-Id.
-    this.sessionManager.addEventListener((event) => {
-      if (event.type === 'session:deleted') {
-        this.sessionTenants.delete(event.sessionId);
-      }
-    });
+    if (typeof this.sessionManager.addEventListener === 'function') {
+      this.sessionManager.addEventListener((event) => {
+        if (event.type === 'session:deleted') {
+          this.sessionTenants.delete(event.sessionId);
+        }
+      });
+    }
 
     // Register built-in resources
     this.registerResource(usageGuideResource);
