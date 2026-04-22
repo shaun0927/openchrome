@@ -25,11 +25,11 @@ import { spawnProcessGuardian } from '../utils/process-guardian';
 /** Default port offset from main Chrome port for the headed fallback */
 const HEADED_PORT_OFFSET = 100;
 
-let activeCleanupTarget: HeadedFallbackManager | null = null;
+let activeCleanup: (() => void) | null = null;
 let cleanupHandlersInstalled = false;
 
 function runGlobalCleanup(): void {
-  activeCleanupTarget?.shutdown();
+  activeCleanup?.();
 }
 
 function installGlobalCleanupHandlers(): void {
@@ -85,9 +85,10 @@ class HeadedFallbackManager {
   private port: number;
   private alivePages: Map<string, Page> = new Map();
   private profileDirectory?: string;
+  private readonly cleanup = (): void => { this.shutdown(); };
   constructor(basePort: number = 9222) {
     this.port = basePort + HEADED_PORT_OFFSET;
-    activeCleanupTarget = this;
+    activeCleanup = this.cleanup;
     installGlobalCleanupHandlers();
   }
 
@@ -304,8 +305,8 @@ class HeadedFallbackManager {
 
   /** Shut down the headed Chrome instance */
   shutdown(): void {
-    if (activeCleanupTarget === this) {
-      activeCleanupTarget = null;
+    if (activeCleanup === this.cleanup) {
+      activeCleanup = null;
     }
 
     // Close any kept-alive pages
