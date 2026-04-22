@@ -25,6 +25,21 @@ import { spawnProcessGuardian } from '../utils/process-guardian';
 /** Default port offset from main Chrome port for the headed fallback */
 const HEADED_PORT_OFFSET = 100;
 
+let activeCleanupTarget: HeadedFallbackManager | null = null;
+let cleanupHandlersInstalled = false;
+
+function runGlobalCleanup(): void {
+  activeCleanupTarget?.shutdown();
+}
+
+function installGlobalCleanupHandlers(): void {
+  if (cleanupHandlersInstalled) return;
+  process.on('exit', runGlobalCleanup);
+  process.on('SIGINT', runGlobalCleanup);
+  process.on('SIGTERM', runGlobalCleanup);
+  cleanupHandlersInstalled = true;
+}
+
 /** Navigate result from headed fallback */
 export interface HeadedNavigateResult {
   url: string;
@@ -70,15 +85,10 @@ class HeadedFallbackManager {
   private port: number;
   private alivePages: Map<string, Page> = new Map();
   private profileDirectory?: string;
-
   constructor(basePort: number = 9222) {
     this.port = basePort + HEADED_PORT_OFFSET;
-
-    // Clean up on process exit
-    const cleanup = () => this.shutdown();
-    process.on('exit', cleanup);
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
+    activeCleanupTarget = this;
+    installGlobalCleanupHandlers();
   }
 
   /** Check if headed fallback is available in this environment */
@@ -93,7 +103,15 @@ class HeadedFallbackManager {
 
   /** Get or launch the headed Chrome browser */
   private async ensureBrowser(): Promise<Browser> {
-    if (this.browser?.connected) return this.browser;
+    const isConnected = this.browser && (
+      (typeof (this.browser as unknown as { connected?: boolean }).connected === 'boolean'
+        ? (this.browser as unknown as { connected?: boolean }).connected
+        : undefined)
+      ?? (typeof (this.browser as unknown as { isConnected?: () => boolean }).isConnected === 'function'
+        ? (this.browser as unknown as { isConnected: () => boolean }).isConnected()
+        : false)
+    );
+    if (isConnected) return this.browser!;
 
     // Prevent concurrent launches
     if (this.launching) return this.launching;
@@ -286,6 +304,10 @@ class HeadedFallbackManager {
 
   /** Shut down the headed Chrome instance */
   shutdown(): void {
+    if (activeCleanupTarget === this) {
+      activeCleanupTarget = null;
+    }
+
     // Close any kept-alive pages
     for (const [, page] of this.alivePages) {
       try { page.close().catch(() => {}); } catch { /* ignore */ }

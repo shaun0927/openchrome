@@ -88,6 +88,10 @@ jest.mock('../../src/utils/puppeteer-helpers', () => ({
   getTargetId: (...args: any[]) => mockGetTargetId(...args),
 }));
 
+jest.mock('../../src/utils/process-guardian', () => ({
+  spawnProcessGuardian: jest.fn(),
+}));
+
 import { getHeadedFallback, shutdownHeadedFallback } from '../../src/chrome/headed-fallback';
 
 describe('HeadedFallbackManager', () => {

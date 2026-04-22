@@ -327,7 +327,10 @@ describe('MCPServer', () => {
 
       await server.handleRequest(request);
 
-      expect(mockSessionManager.getOrCreateSession).toHaveBeenCalledWith('new-session-123');
+      expect(mockSessionManager.getOrCreateSession).toHaveBeenCalledWith(
+        'new-session-123',
+        expect.objectContaining({ label: 'session-init' }),
+      );
     });
   });
 
