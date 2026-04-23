@@ -31,9 +31,13 @@ function activeState(): IdleState {
 }
 
 function idleState(): IdleState {
-  // Fresh state is always idle — no notifyActive() means isIdle() is true
-  // for any window (documented contract).
-  return createIdleState({ now: () => 0 });
+  // Process startup now counts as the initial active edge. To model a truly
+  // idle instance, create the state at t=0 and then advance the synthetic
+  // clock past the shared idle window before returning it.
+  let clock = 0;
+  const s = createIdleState({ now: () => clock });
+  clock = IDLE_WINDOW_MS + 1;
+  return s;
 }
 
 // The BrowserStateManager tests use a tmp dir to avoid polluting
@@ -159,23 +163,28 @@ describe('ChromeProcessMonitor idle-adaptive cadence', () => {
 });
 
 describe('DiskMonitor idle-adaptive cadence', () => {
+  const safeDiskOpts = {
+    warnThresholdBytes: Number.MAX_SAFE_INTEGER,
+    cleanupThresholdBytes: Number.MAX_SAFE_INTEGER,
+  };
+
   test('active rate preserved when not idle (5min default)', () => {
-    const m = new DiskMonitor({ checkIntervalMs: 5 * 60_000, idleState: activeState() });
+    const m = new DiskMonitor({ checkIntervalMs: 5 * 60_000, idleState: activeState(), ...safeDiskOpts });
     m.start();
     expect(m.getCurrentDelayMs()).toBe(5 * 60_000);
     m.stop();
   });
 
   test('drops to idle rate (30min)', () => {
-    const m = new DiskMonitor({ checkIntervalMs: 5 * 60_000, idleState: idleState() });
+    const m = new DiskMonitor({ checkIntervalMs: 5 * 60_000, idleState: idleState(), ...safeDiskOpts });
     m.start();
     expect(m.getCurrentDelayMs()).toBe(30 * 60_000);
     m.stop();
   });
 
   test('ratio 6× — within 10× cap', () => {
-    const a = new DiskMonitor({ checkIntervalMs: 5 * 60_000, idleState: activeState() });
-    const i = new DiskMonitor({ checkIntervalMs: 5 * 60_000, idleState: idleState() });
+    const a = new DiskMonitor({ checkIntervalMs: 5 * 60_000, idleState: activeState(), ...safeDiskOpts });
+    const i = new DiskMonitor({ checkIntervalMs: 5 * 60_000, idleState: idleState(), ...safeDiskOpts });
     a.start(); i.start();
     expect(i.getCurrentDelayMs() / a.getCurrentDelayMs()).toBeLessThanOrEqual(10);
     a.stop(); i.stop();

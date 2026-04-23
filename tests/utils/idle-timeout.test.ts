@@ -63,7 +63,8 @@ describe('installIdleTimeout', () => {
   test('calls exitFn exactly once when idle and sessionCount=0', () => {
     let clock = 1_000_000;
     const idle = createIdleState({ now: () => clock });
-    // Fresh state reports isIdle(anyWindow)=true
+    // Startup counts as the initial active edge, so advance the synthetic
+    // clock past the idle window before the first timer tick runs.
     const exitFn = jest.fn();
     const logger = jest.fn();
 
@@ -76,6 +77,7 @@ describe('installIdleTimeout', () => {
     });
 
     // Tick interval is min(1000/4, 60_000) = 250ms.
+    clock += 1_000;
     jest.advanceTimersByTime(250);
     expect(exitFn).toHaveBeenCalledTimes(1);
     expect(exitFn).toHaveBeenCalledWith(0);

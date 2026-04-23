@@ -2,14 +2,17 @@
 import { createIdleState } from '../../src/utils/idle-state';
 
 describe('createIdleState', () => {
-  test('fresh instance is always idle (never-active → always idle)', () => {
+  test('fresh instance starts active, then becomes idle after the quiet window', () => {
     let clock = 1_000_000;
     const state = createIdleState({ now: () => clock });
 
+    expect(state.lastActiveAt()).toBe(1_000_000);
     expect(state.isIdle(0)).toBe(true);
-    expect(state.isIdle(1_000)).toBe(true);
-    expect(state.isIdle(Number.MAX_SAFE_INTEGER)).toBe(true);
-    expect(state.lastActiveAt()).toBe(0);
+    expect(state.isIdle(1_000)).toBe(false);
+    expect(state.isIdle(5 * 60_000)).toBe(false);
+
+    clock += 5 * 60_000;
+    expect(state.isIdle(5 * 60_000)).toBe(true);
   });
 
   test('after notifyActive(), isIdle is false inside the window and true at/past it', () => {

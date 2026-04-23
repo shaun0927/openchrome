@@ -10,8 +10,10 @@
  * Design notes:
  *  - Pure module with no timers, no side effects. All time comes from the
  *    injected `now()` function so tests are deterministic.
- *  - Semantics for a fresh instance: "never active" is treated as "always
- *    idle" → `isIdle(anyWindow) === true` until the first `notifyActive()`.
+ *  - Semantics for a fresh instance: creation counts as the initial active
+ *    edge, so monitors do not relax immediately on startup. The server must
+ *    remain quiet for a full idle window before `isIdle(windowMs)` flips to
+ *    true.
  *  - `isIdle(0)` returns `true` immediately after `notifyActive()` because
  *    `now - lastActive >= 0` is trivially true. This is the documented
  *    contract: passing `0` means "fire immediately", not "disable". Callers
@@ -28,12 +30,13 @@ export interface IdleState {
   notifyActive: () => void;
   /**
    * Returns true if at least `windowMs` have elapsed since the last
-   * `notifyActive()` call. A fresh instance (never active) is considered idle
-   * for any window.
+   * `notifyActive()` call. A fresh instance starts in the active state and
+   * only becomes idle after a full quiet window elapses from construction.
    */
   isIdle: (windowMs: number) => boolean;
   /**
-   * Timestamp of the most recent `notifyActive()` call, or `0` if none yet.
+   * Timestamp of the most recent activity edge. This is initialized to the
+   * construction time so startup gets one full active window before relaxing.
    * Exposed for observability / debugging — monitors should call `isIdle()`.
    */
   lastActiveAt: () => number;
@@ -41,22 +44,19 @@ export interface IdleState {
 
 export function createIdleState(opts: IdleStateOptions = {}): IdleState {
   const now = opts.now ?? Date.now;
-  // `null` is the "never active" sentinel — distinct from the clock value 0,
-  // which is a legitimate timestamp (fake-clock tests may pin `now()` at 0).
-  let lastActive: number | null = null;
+  // Treat construction as the initial activity edge so monitors remain at
+  // their active cadence for the first idle window after startup.
+  let lastActive = now();
 
   return {
     notifyActive(): void {
       lastActive = now();
     },
     isIdle(windowMs: number): boolean {
-      // "Never active" is always idle — a monitor tick sees this before any
-      // RPC has come in, and should relax immediately.
-      if (lastActive === null) return true;
       return now() - lastActive >= windowMs;
     },
     lastActiveAt(): number {
-      return lastActive ?? 0;
+      return lastActive;
     },
   };
 }

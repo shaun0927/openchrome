@@ -73,7 +73,7 @@ describe('ChromeProcessMonitor', () => {
       );
     });
 
-    test('start() schedules periodic sampling via setInterval', () => {
+    test('start() schedules periodic sampling via the configured timer cadence', () => {
       mockPs('1024');
       monitor.start(TEST_PID);
       expect(mockExecFile).toHaveBeenCalledTimes(1); // immediate check
@@ -87,7 +87,7 @@ describe('ChromeProcessMonitor', () => {
       expect(mockExecFile).toHaveBeenCalledTimes(3); // second interval tick
     });
 
-    test('stop() clears the interval so no further execFile calls occur', () => {
+    test('stop() clears the pending timer so no further execFile calls occur', () => {
       mockPs('1024');
       monitor.start(TEST_PID);
       monitor.stop();
@@ -390,7 +390,7 @@ describe('ChromeProcessMonitor', () => {
       monitor.start(TEST_PID);
       monitor.start(TEST_PID);
 
-      // After two starts only 2 immediate checks, not 4 when ticking
+      // After two starts only 2 immediate checks, not duplicate timer ticks
       mockPs('1024'); // single tick
       jest.advanceTimersByTime(1000);
       expect(mockExecFile).toHaveBeenCalledTimes(3); // 2 immediate + 1 tick

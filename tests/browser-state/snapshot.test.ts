@@ -3,7 +3,7 @@
  * Unit tests for BrowserStateManager — Gap 2 (#416)
  *
  * Tests cover:
- *   - start()/stop() lifecycle: mkdir, setInterval, clearInterval
+ *   - start()/stop() lifecycle: mkdir, timer scheduling and cleanup
  *   - takeSnapshot(): correct JSON structure, file write, chmod, prune
  *   - takeSnapshot() skips when no cookie provider set
  *   - getLatestCookies(): reads newest file, null on empty dir
@@ -97,21 +97,21 @@ describe('BrowserStateManager — start() / stop() lifecycle', () => {
     expect(mockMkdir).toHaveBeenCalledWith(SNAPSHOT_DIR, { recursive: true });
   });
 
-  test('2. start() starts a setInterval timer', async () => {
-    const setIntervalSpy = jest.spyOn(global, 'setInterval');
+  test('2. start() starts a timer for the configured interval', async () => {
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
 
     await manager.start();
 
-    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 1000);
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1000);
   });
 
-  test('3. stop() clears the interval timer', async () => {
-    const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
+  test('3. stop() clears the pending timer', async () => {
+    const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
 
     await manager.start();
     manager.stop();
 
-    expect(clearIntervalSpy).toHaveBeenCalled();
+    expect(clearTimeoutSpy).toHaveBeenCalled();
   });
 
   test('4. stop() before start() is a no-op — does not throw', () => {
@@ -119,13 +119,13 @@ describe('BrowserStateManager — start() / stop() lifecycle', () => {
   });
 
   test('5. calling start() twice stops the previous timer before creating a new one', async () => {
-    const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
+    const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
 
     await manager.start();
     await manager.start();
 
-    // clearInterval called once to stop the first timer inside the second start()
-    expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+    // clearTimeout called once to stop the first pending timer inside the second start()
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
   });
 
   test('6. timer does not fire synchronously — no immediate snapshot on start()', async () => {
@@ -140,9 +140,7 @@ describe('BrowserStateManager — start() / stop() lifecycle', () => {
     manager.setCookieProvider(jest.fn().mockResolvedValue(SAMPLE_COOKIES));
     await manager.start();
 
-    jest.advanceTimersByTime(1000);
-    // Drain the microtask queue so the async takeSnapshot() resolves
-    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(1000);
 
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
   });
@@ -152,8 +150,7 @@ describe('BrowserStateManager — start() / stop() lifecycle', () => {
     await manager.start();
     manager.stop();
 
-    jest.advanceTimersByTime(5000);
-    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(5000);
 
     expect(mockWriteFile).not.toHaveBeenCalled();
   });
@@ -529,13 +526,11 @@ describe('BrowserStateManager — constructor defaults', () => {
     await manager.start();
 
     // Default interval is 60000ms — advancing 59999 should NOT trigger a snapshot
-    jest.advanceTimersByTime(59999);
-    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(59999);
     expect(mockWriteFile).not.toHaveBeenCalled();
 
     // Advancing past 60000 should trigger one snapshot
-    jest.advanceTimersByTime(2);
-    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(2);
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
 
     manager.stop();
