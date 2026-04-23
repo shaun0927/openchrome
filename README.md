@@ -535,6 +535,8 @@ docker run openchrome
 | `CHROME_USER_DATA_DIR` | Custom profile directory |
 | `CI` | Detected automatically; adds `--no-sandbox` |
 | `DOCKER` | Detected automatically; adds `--no-sandbox` |
+| `OPENCHROME_PPID_WATCH` | Set to `0` to disable the parent-process watcher in stdio mode. Default: enabled. The watcher exits the server when its launching MCP-client parent dies, so abrupt parent termination (force-quit, `kill -9`, tmux teardown) does not orphan the openchrome process. HTTP and `both` transport modes ignore this flag — they remain daemon-capable. |
+| `OPENCHROME_PPID_WATCH_INTERVAL_MS` | Polling interval for the parent watcher in milliseconds. Default: `2000`. Clamped to `[500, 60000]`. |
 
 ### Individual flags
 
