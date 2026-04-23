@@ -33,6 +33,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
+import { getIdleState } from '../utils/idle-state';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -691,6 +692,8 @@ export class CDPClient {
     // Set up disconnect handler
     // Non-null assertion: the retry loop above either sets this.browser and breaks, or throws.
     this.browser!.on('disconnected', () => {
+      // Inbound CDP event — reset idle window (issue #649 Part A).
+      getIdleState().notifyActive();
       console.error('[CDPClient] Browser disconnected');
       this.handleDisconnect().catch((err) => {
         console.error('[CDPClient] handleDisconnect failed:', err);
@@ -699,12 +702,16 @@ export class CDPClient {
 
     // Set up target destroyed handler
     this.browser!.on('targetdestroyed', safeAsyncListener('targetdestroyed', async (target: Target) => {
+      // Inbound CDP event — reset idle window (issue #649 Part A).
+      getIdleState().notifyActive();
       const targetId = getTargetId(target);
       console.error(`[CDPClient] Target destroyed: ${targetId}`);
       this.onTargetDestroyed(targetId);
     }));
 
     this.browser!.on('targetchanged', safeAsyncListener('targetchanged', async (target: Target) => {
+      // Inbound CDP event — reset idle window (issue #649 Part A).
+      getIdleState().notifyActive();
       if (target.type() !== 'page') return;
       const targetId = getTargetId(target);
       if (this.targetIdIndex.has(targetId)) {
@@ -722,6 +729,8 @@ export class CDPClient {
     // (popup/window.open). This makes OAuth redirects, popups, and cross-origin navigations
     // visible without materializing unrelated Chrome-internal targets.
     this.browser!.on('targetcreated', safeAsyncListener('targetcreated', async (target: Target) => {
+      // Inbound CDP event — reset idle window (issue #649 Part A).
+      getIdleState().notifyActive();
       // Only track 'page' type targets (skip service_worker, browser, etc.)
       if (target.type() !== 'page') return;
 

@@ -11,6 +11,18 @@
 import * as path from 'path';
 import * as os from 'os';
 import { writeFileAtomicSafe, readFileSafe } from './utils/atomic-file';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from './utils/idle-state';
+
+/**
+ * Idle debounce cadence. Issue #649 §3.1 specifies 60 s as the debounce
+ * target during pure-idle (vs the 5 s active default). To also satisfy
+ * acceptance criterion 4 ("idle rate never exceeds 10× active"), we cap
+ * at exactly 10× the configured active debounce — for the default 5 s
+ * that is 50 s, close enough to the §3.1 guidance while remaining compliant
+ * with the 10× ceiling. Per-instance configuration via the constructor
+ * `debounceMs` option still applies to the active rate; idle scales off it.
+ */
+const IDLE_DEBOUNCE_MULTIPLIER = 10;
 
 export interface PersistedTarget {
   targetId: string;
@@ -39,28 +51,54 @@ export class SessionStatePersistence {
   private readonly debounceMs: number;
   private readonly maxStalenessMs: number;
   private readonly filePath: string;
+  private readonly idleState: IdleState;
   private saving = false;
   private pendingSave = false;
   private lastState: PersistedSessionState | null = null;
+  private lastDebounceMs = 0;
 
-  constructor(opts?: { dir?: string; debounceMs?: number; maxStalenessMs?: number }) {
+  constructor(opts?: { dir?: string; debounceMs?: number; maxStalenessMs?: number; idleState?: IdleState }) {
     this.debounceMs = opts?.debounceMs ?? 5000;
     this.maxStalenessMs = opts?.maxStalenessMs ?? 24 * 60 * 60 * 1000; // 24h default
     const dir = opts?.dir || path.join(os.homedir(), '.openchrome');
     this.filePath = path.join(dir, 'session-state.json');
+    this.idleState = opts?.idleState ?? getIdleState();
+  }
+
+  /**
+   * Current debounce in ms for the next scheduleSave — exposed for tests
+   * asserting the active/idle rate transition (issue #649 §3.1).
+   */
+  getCurrentDebounceMs(): number {
+    return this.lastDebounceMs;
+  }
+
+  /**
+   * Resolve the effective debounce duration given current idle state. Active
+   * uses the constructor `debounceMs`; idle scales by IDLE_DEBOUNCE_MULTIPLIER
+   * (capped at 10× so criterion 4 is satisfied).
+   */
+  private effectiveDebounceMs(): number {
+    return this.idleState.isIdle(IDLE_WINDOW_MS)
+      ? this.debounceMs * IDLE_DEBOUNCE_MULTIPLIER
+      : this.debounceMs;
   }
 
   /**
    * Schedule a debounced save. Multiple calls within debounceMs are coalesced.
+   * When the server is idle, the debounce window grows to 10× (issue #649
+   * Part A) so pure-idle instances write less often.
    */
   scheduleSave(state: PersistedSessionState): void {
     if (this.saveDebounceTimer) {
       clearTimeout(this.saveDebounceTimer);
     }
+    const debounce = this.effectiveDebounceMs();
+    this.lastDebounceMs = debounce;
     this.saveDebounceTimer = setTimeout(async () => {
       this.saveDebounceTimer = null;
       await this.save(state);
-    }, this.debounceMs);
+    }, debounce);
     // Don't prevent process exit
     if (this.saveDebounceTimer.unref) {
       this.saveDebounceTimer.unref();

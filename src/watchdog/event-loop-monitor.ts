@@ -2,10 +2,19 @@
  * Event Loop Monitor — detects Node.js event loop blocking.
  * Uses timer drift detection (lightweight, ~0.5% CPU overhead).
  * Part of #347 Layer 4: Application Watchdog.
+ *
+ * Idle-adaptive (issue #649 Part A): when the server is idle, the sampling
+ * cadence relaxes from 200 ms to 2 s (10× reduction). The tick reads
+ * `idleState.isIdle(IDLE_WINDOW_MS)` and picks the next delay locally via a
+ * `setTimeout` chain, so a truly idle instance does one-tenth the work.
  */
 
 import { EventEmitter } from 'events';
 import { DEFAULT_EVENT_LOOP_HEAVY_OP_FATAL_MS } from '../config/defaults';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+
+/** Idle rate caps at 10× active rate per issue #649 §3.1 / acceptance criterion 4. */
+const IDLE_RATE_MS = 2_000;
 
 export interface EventLoopMonitorOptions {
   /** Check interval in ms. Default: 200 */
@@ -25,6 +34,11 @@ export interface EventLoopMonitorOptions {
    * than the normal threshold without indicating a true hang.
    */
   heavyOpFatalThresholdMs?: number;
+  /**
+   * Idle-state source. Defaults to the process-global singleton. Injected
+   * for unit tests that want to assert active/idle cadence.
+   */
+  idleState?: IdleState;
 }
 
 export interface BlockEvent {
@@ -38,10 +52,13 @@ export class EventLoopMonitor extends EventEmitter {
   private readonly warnThresholdMs: number;
   private readonly fatalThresholdMs: number;
   private readonly heavyOpThresholdMs: number;
+  private readonly idleState: IdleState;
   private lastCheckAt = 0;
+  private lastDelayMs = 0;
   private maxDriftObserved = 0;
   private warnCount = 0;
   private heavyOpCount = 0;
+  private stopped = true;
 
   constructor(opts?: EventLoopMonitorOptions) {
     super();
@@ -49,6 +66,7 @@ export class EventLoopMonitor extends EventEmitter {
     this.warnThresholdMs = opts?.warnThresholdMs ?? 2000;
     this.fatalThresholdMs = opts?.fatalThresholdMs ?? 0; // disabled by default
     this.heavyOpThresholdMs = opts?.heavyOpFatalThresholdMs ?? DEFAULT_EVENT_LOOP_HEAVY_OP_FATAL_MS;
+    this.idleState = opts?.idleState ?? getIdleState();
   }
 
   /**
@@ -56,40 +74,18 @@ export class EventLoopMonitor extends EventEmitter {
    */
   start(): void {
     this.stop();
+    this.stopped = false;
     this.lastCheckAt = Date.now();
-
-    this.timer = setInterval(() => {
-      const now = Date.now();
-      const drift = now - this.lastCheckAt - this.checkIntervalMs;
-      this.lastCheckAt = now;
-
-      if (drift > this.maxDriftObserved) {
-        this.maxDriftObserved = drift;
-      }
-
-      const effectiveThreshold = (this.fatalThresholdMs === 0)
-        ? 0
-        : (this.heavyOpCount > 0 ? this.heavyOpThresholdMs : this.fatalThresholdMs);
-      if (effectiveThreshold > 0 && drift > effectiveThreshold) {
-        console.error(`[EventLoopMonitor] FATAL: Event loop blocked for ${drift}ms (threshold: ${effectiveThreshold}ms${this.heavyOpCount > 0 ? ', heavy-op mode' : ''})`);
-        // Emits 'fatal' event — callers MUST attach a listener to handle recovery (e.g., process.exit(1)).
-        // No automatic termination: intentional for testability and caller control.
-        this.emit('fatal', { driftMs: drift, timestamp: now } as BlockEvent);
-      } else if (drift > this.warnThresholdMs) {
-        this.warnCount++;
-        console.error(`[EventLoopMonitor] WARN: Event loop blocked for ${drift}ms (warn #${this.warnCount})`);
-        this.emit('warn', { driftMs: drift, timestamp: now } as BlockEvent);
-      }
-    }, this.checkIntervalMs);
-    this.timer.unref();
+    this.scheduleNext(this.nextDelayMs());
   }
 
   /**
    * Stop monitoring.
    */
   stop(): void {
+    this.stopped = true;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
   }
@@ -98,7 +94,7 @@ export class EventLoopMonitor extends EventEmitter {
    * Whether monitoring is active.
    */
   isRunning(): boolean {
-    return this.timer !== null;
+    return !this.stopped && this.timer !== null;
   }
 
   /**
@@ -139,6 +135,54 @@ export class EventLoopMonitor extends EventEmitter {
   resetStats(): void {
     this.maxDriftObserved = 0;
     this.warnCount = 0;
+  }
+
+  /**
+   * Current scheduling delay in ms — exposed for tests that assert the
+   * active/idle rate transition specified by issue #649 §3.1.
+   */
+  getCurrentDelayMs(): number {
+    return this.lastDelayMs;
+  }
+
+  /** Active vs idle selection, single source of truth for this monitor. */
+  private nextDelayMs(): number {
+    return this.idleState.isIdle(IDLE_WINDOW_MS) ? IDLE_RATE_MS : this.checkIntervalMs;
+  }
+
+  private scheduleNext(delay: number): void {
+    if (this.stopped) return;
+    this.lastDelayMs = delay;
+    this.timer = setTimeout(() => this.tick(), delay);
+    this.timer.unref();
+  }
+
+  private tick(): void {
+    if (this.stopped) return;
+    const now = Date.now();
+    const expected = this.lastDelayMs;
+    const drift = now - this.lastCheckAt - expected;
+    this.lastCheckAt = now;
+
+    if (drift > this.maxDriftObserved) {
+      this.maxDriftObserved = drift;
+    }
+
+    const effectiveThreshold = (this.fatalThresholdMs === 0)
+      ? 0
+      : (this.heavyOpCount > 0 ? this.heavyOpThresholdMs : this.fatalThresholdMs);
+    if (effectiveThreshold > 0 && drift > effectiveThreshold) {
+      console.error(`[EventLoopMonitor] FATAL: Event loop blocked for ${drift}ms (threshold: ${effectiveThreshold}ms${this.heavyOpCount > 0 ? ', heavy-op mode' : ''})`);
+      this.emit('fatal', { driftMs: drift, timestamp: now } as BlockEvent);
+      // Intentionally fall through and reschedule — emitting 'fatal' does
+      // not stop the monitor; the listener decides whether to process.exit.
+    } else if (drift > this.warnThresholdMs) {
+      this.warnCount++;
+      console.error(`[EventLoopMonitor] WARN: Event loop blocked for ${drift}ms (warn #${this.warnCount})`);
+      this.emit('warn', { driftMs: drift, timestamp: now } as BlockEvent);
+    }
+
+    this.scheduleNext(this.nextDelayMs());
   }
 }
 

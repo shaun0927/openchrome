@@ -15,6 +15,8 @@ import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
 import { installParentWatcher, ParentWatcherHandle } from './utils/parent-watcher';
+import { installIdleTimeout, IdleTimeoutHandle, parseDuration } from './utils/idle-timeout';
+import { getIdleState } from './utils/idle-state';
 import { getVersion } from './version';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
@@ -84,7 +86,8 @@ program
   .option('--http-host <host>', 'Bind address for HTTP transport (default: 127.0.0.1, use 0.0.0.0 for external access)')
   .option('--auth-token <token>', 'Bearer token for HTTP transport authentication (also: OPENCHROME_AUTH_TOKEN env var)')
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string }) => {
+  .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -324,6 +327,39 @@ program
     } else {
       server.start();
       console.error('[openchrome] STDIO transport enabled');
+    }
+
+    // Resolve the idle-timeout window (issue #649 Part B). CLI wins over env.
+    // Default: OFF. Setting OPENCHROME_IDLE_TIMEOUT_MS=0 also keeps it off
+    // (a bare 0 would otherwise mean "exit immediately on idle" which is
+    // never what an operator wants). Invalid values fail startup loudly per
+    // acceptance criterion 12.
+    let idleTimeoutMs: number | null = null;
+    if (options.idleTimeout !== undefined) {
+      try {
+        idleTimeoutMs = parseDuration(options.idleTimeout);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[openchrome] --idle-timeout: ${msg}`);
+        process.exit(1);
+      }
+    } else if (process.env.OPENCHROME_IDLE_TIMEOUT_MS) {
+      const raw = parseInt(process.env.OPENCHROME_IDLE_TIMEOUT_MS, 10);
+      if (!Number.isFinite(raw) || raw < 0) {
+        console.error(`[openchrome] OPENCHROME_IDLE_TIMEOUT_MS must be a non-negative integer, got "${process.env.OPENCHROME_IDLE_TIMEOUT_MS}"`);
+        process.exit(1);
+      }
+      if (raw > 0) {
+        idleTimeoutMs = raw;
+      }
+    }
+
+    // Eagerly initialize the IdleState singleton so every monitor built below
+    // shares the same instance. Honors OPENCHROME_IDLE_ADAPTIVE=0 (which
+    // returns an always-active state, keeping all monitors at their full rate).
+    const idleState = getIdleState();
+    if (process.env.OPENCHROME_IDLE_ADAPTIVE === '0') {
+      console.error('[openchrome] Idle-adaptive monitoring: disabled (OPENCHROME_IDLE_ADAPTIVE=0)');
     }
 
     // Parent-process death watcher (issue #644).
@@ -587,9 +623,32 @@ program
       }
     });
 
-    // Update shutdown handler to include self-healing cleanup
+    // Install the idle-timeout watcher (issue #649 Part B) only when the
+    // operator opted in via CLI or env var. Wiring it here, after
+    // `enhancedShutdown` is declared below via closure-forward-reference,
+    // would be cleaner — but we need the handle in `enhancedShutdown` itself
+    // so it can be stopped before async cleanup begins. Forward-declare.
+    let idleTimeout: IdleTimeoutHandle | null = null;
+
+    // Update shutdown handler to include self-healing cleanup.
+    //
+    // Reentrancy guard (issue #649 §2 in-scope prerequisite): this PR adds a
+    // second internal exit trigger (idle-timeout) alongside the PPID watcher
+    // from PR #645 and the existing signal handlers. Without this guard,
+    // concurrent invocation from two triggers in the same tick would double-
+    // run saveAllStorageState, double-await healthEndpoint.stop(), and risk
+    // torn state. The flag is a single bit — subsequent entrants return
+    // immediately.
+    let shuttingDown = false;
     const originalShutdown = shutdown;
     const enhancedShutdown = async (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      // Stop the idle-timeout watcher BEFORE any awaits so it cannot fire
+      // mid-shutdown (acceptance criterion 14). Same rationale as the parent
+      // watcher teardown below.
+      idleTimeout?.stop();
+      idleTimeout = null;
       // Stop the parent watcher first so it cannot fire process.exit during
       // the async shutdown work below (issue #644).
       parentWatcher?.stop();
@@ -615,6 +674,26 @@ program
       sessionPersistence.cancelPendingSave();
       await originalShutdown(signal);
     };
+
+    // Wire the idle-timeout watcher now that `enhancedShutdown` is defined.
+    // Explicit opt-in only — default OFF.
+    if (idleTimeoutMs !== null) {
+      idleTimeout = installIdleTimeout({
+        windowMs: idleTimeoutMs,
+        idleState,
+        sessionCountFn: () => sessionManager.sessionCount,
+        exitFn: () => {
+          // Route through enhancedShutdown so the reentrancy guard and the
+          // normal teardown sequence both apply. The shutdown awaits
+          // originalShutdown which calls process.exit(0).
+          enhancedShutdown('idle-timeout').catch((err) => {
+            console.error('[openchrome] idle-timeout shutdown failed:', err);
+            process.exit(1);
+          });
+        },
+      });
+      console.error(`[openchrome] Idle-timeout: enabled (window=${idleTimeoutMs}ms)`);
+    }
     // Replace signal handlers
     process.removeAllListeners('SIGTERM');
     process.removeAllListeners('SIGINT');
