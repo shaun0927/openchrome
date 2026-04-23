@@ -1,11 +1,19 @@
 /**
  * Disk Monitor — monitors ~/.openchrome/ size and auto-prunes old files.
  * Part of the Reliability Guarantee Initiative, Phase 7.
+ *
+ * Idle-adaptive (issue #649 Part A): when the server is idle, the directory
+ * walk cadence relaxes from 5 min to 30 min (6× reduction; within the 10×
+ * idle-rate cap). `setTimeout` chain so each tick picks its next delay fresh.
  */
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+
+/** Idle cadence. 30 min is 6× slower than the default 5 min active rate. */
+const IDLE_INTERVAL_MS = 30 * 60_000;
 
 export interface DiskMonitorOptions {
   /** Check interval in ms. Default: 300000 (5 minutes) */
@@ -20,6 +28,8 @@ export interface DiskMonitorOptions {
   snapshotRetentionDays?: number;
   /** Max checkpoint count. Default: 10 */
   maxCheckpoints?: number;
+  /** Idle-state source. Defaults to the process-global singleton. */
+  idleState?: IdleState;
 }
 
 export interface DiskUsageStats {
@@ -35,9 +45,12 @@ export interface DiskUsageStats {
 export class DiskMonitor {
   private timer: NodeJS.Timeout | null = null;
   private readonly baseDir: string;
-  private readonly options: Required<DiskMonitorOptions>;
+  private readonly options: Required<Omit<DiskMonitorOptions, 'idleState'>>;
+  private readonly idleState: IdleState;
   private lastStats: DiskUsageStats | null = null;
   private pruneInProgress = false;
+  private stopped = true;
+  private lastDelayMs = 0;
 
   constructor(options?: DiskMonitorOptions) {
     this.baseDir = path.join(os.homedir(), '.openchrome');
@@ -49,6 +62,7 @@ export class DiskMonitor {
       snapshotRetentionDays: options?.snapshotRetentionDays ?? 30,
       maxCheckpoints: options?.maxCheckpoints ?? 10,
     };
+    this.idleState = options?.idleState ?? getIdleState();
   }
 
   /**
@@ -56,26 +70,50 @@ export class DiskMonitor {
    */
   start(): void {
     this.stop();
-    // Run immediately, then on interval
+    this.stopped = false;
+    // Run immediately, then on interval (rate depends on idle state)
     this.check().catch(err => {
       console.error('[DiskMonitor] Initial check failed:', err);
     });
-    this.timer = setInterval(() => {
-      this.check().catch(err => {
-        console.error('[DiskMonitor] Periodic check failed:', err);
-      });
-    }, this.options.checkIntervalMs);
-    this.timer.unref(); // Don't prevent process exit
+    this.scheduleNext(this.nextDelayMs());
   }
 
   /**
    * Stop monitoring.
    */
   stop(): void {
+    this.stopped = true;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
+  }
+
+  /**
+   * Current scheduling delay in ms — exposed for tests asserting the
+   * active/idle rate transition (issue #649 §3.1).
+   */
+  getCurrentDelayMs(): number {
+    return this.lastDelayMs;
+  }
+
+  private nextDelayMs(): number {
+    return this.idleState.isIdle(IDLE_WINDOW_MS) ? IDLE_INTERVAL_MS : this.options.checkIntervalMs;
+  }
+
+  private scheduleNext(delay: number): void {
+    if (this.stopped) return;
+    this.lastDelayMs = delay;
+    this.timer = setTimeout(() => {
+      this.check()
+        .catch(err => {
+          console.error('[DiskMonitor] Periodic check failed:', err);
+        })
+        .finally(() => {
+          this.scheduleNext(this.nextDelayMs());
+        });
+    }, delay);
+    this.timer.unref();
   }
 
   /**

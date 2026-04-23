@@ -21,6 +21,13 @@ import {
   DEFAULT_SNAPSHOT_INTERVAL_MS,
   DEFAULT_SNAPSHOT_MAX_COUNT,
 } from '../config/defaults';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+
+/**
+ * Idle cadence. 300 s is 5× slower than the default 60 s active rate
+ * (issue #649 Part A §3.1 — snapshot is rebuilt on next RPC regardless).
+ */
+const IDLE_SNAPSHOT_INTERVAL_MS = 300_000;
 
 export interface BrowserSnapshot {
   timestamp: number;
@@ -42,15 +49,19 @@ export class BrowserStateManager {
   private readonly intervalMs: number;
   private readonly maxSnapshots: number;
   private readonly snapshotDir: string;
+  private readonly idleState: IdleState;
   private lastSnapshotAt = 0;
   private snapshotCount = 0;
+  private stopped = true;
+  private lastDelayMs = 0;
   private getCookiesFn: (() => Promise<any[]>) | null = null;
   private getTabUrlsFn: (() => Promise<string[]>) | null = null;
 
-  constructor(opts?: { intervalMs?: number; maxSnapshots?: number }) {
+  constructor(opts?: { intervalMs?: number; maxSnapshots?: number; idleState?: IdleState }) {
     this.intervalMs = opts?.intervalMs ?? DEFAULT_SNAPSHOT_INTERVAL_MS;
     this.maxSnapshots = opts?.maxSnapshots ?? DEFAULT_SNAPSHOT_MAX_COUNT;
     this.snapshotDir = path.join(os.homedir(), '.openchrome', 'snapshots');
+    this.idleState = opts?.idleState ?? getIdleState();
   }
 
   /**
@@ -70,22 +81,46 @@ export class BrowserStateManager {
 
   async start(): Promise<void> {
     this.stop();
+    this.stopped = false;
     await fs.mkdir(this.snapshotDir, { recursive: true });
     // Don't take immediate snapshot — wait for first interval
-    this.timer = setInterval(() => {
-      this.takeSnapshot().catch(err => {
-        console.error('[BrowserState] Snapshot failed:', err);
-      });
-    }, this.intervalMs);
-    this.timer.unref();
+    this.scheduleNext(this.nextDelayMs());
     console.error(`[BrowserState] Snapshot service started (interval: ${this.intervalMs}ms, dir: ${this.snapshotDir})`);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
+  }
+
+  /**
+   * Current scheduling delay in ms — exposed for tests asserting the
+   * active/idle rate transition (issue #649 §3.1).
+   */
+  getCurrentDelayMs(): number {
+    return this.lastDelayMs;
+  }
+
+  private nextDelayMs(): number {
+    return this.idleState.isIdle(IDLE_WINDOW_MS) ? IDLE_SNAPSHOT_INTERVAL_MS : this.intervalMs;
+  }
+
+  private scheduleNext(delay: number): void {
+    if (this.stopped) return;
+    this.lastDelayMs = delay;
+    this.timer = setTimeout(() => {
+      this.takeSnapshot()
+        .catch(err => {
+          console.error('[BrowserState] Snapshot failed:', err);
+        })
+        .finally(() => {
+          this.scheduleNext(this.nextDelayMs());
+        });
+    }, delay);
+    this.timer.unref();
   }
 
   async takeSnapshot(): Promise<void> {

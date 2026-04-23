@@ -2,14 +2,25 @@
  * Chrome Process Watchdog — monitors Chrome process health.
  * Detects Chrome crashes within intervalMs and emits events for recovery.
  * Part of #347 Layer 3: Chrome Process Supervisor.
+ *
+ * Idle-adaptive (issue #649 Part A): when the server is idle, the poll
+ * cadence relaxes from 10 s to 60 s (6× reduction; still within the 10×
+ * idle-rate cap specified in §3.1). `setTimeout` chain so each tick picks
+ * its next delay fresh.
  */
 
 import { EventEmitter } from 'events';
 import { ChromeLauncher } from './launcher';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+
+/** Idle cadence. 60 s is 6× slower than the default 10 s active rate. */
+const IDLE_INTERVAL_MS = 60_000;
 
 export interface ProcessWatchdogOptions {
   /** Check interval in milliseconds. Default: 10000 (10s) */
   intervalMs?: number;
+  /** Idle-state source. Defaults to the process-global singleton. */
+  idleState?: IdleState;
 }
 
 export interface ProcessWatchdogEvents {
@@ -23,16 +34,20 @@ export class ChromeProcessWatchdog extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   private readonly intervalMs: number;
   private readonly launcher: ChromeLauncher;
+  private readonly idleState: IdleState;
   private lastKnownPid: number | null = null;
   private relaunching = false;
   private cooldownUntil = 0;
   private relaunchCount = 0;
   private readonly maxRelaunchCycles = 10;
+  private stopped = true;
+  private lastDelayMs = 0;
 
   constructor(launcher: ChromeLauncher, opts?: ProcessWatchdogOptions) {
     super();
     this.launcher = launcher;
     this.intervalMs = opts?.intervalMs ?? 10000;
+    this.idleState = opts?.idleState ?? getIdleState();
   }
 
   /**
@@ -41,24 +56,47 @@ export class ChromeProcessWatchdog extends EventEmitter {
    */
   start(): void {
     this.stop(); // clear any existing timer
-
-    this.timer = setInterval(() => {
-      this.check().catch((err) => {
-        console.error('[ProcessWatchdog] Unexpected error in check():', err);
-      });
-    }, this.intervalMs);
-    this.timer.unref();
+    this.stopped = false;
+    this.scheduleNext(this.nextDelayMs());
   }
 
   /**
    * Stop monitoring.
    */
   stop(): void {
+    this.stopped = true;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
     // Do NOT reset relaunching — async check() may still be in-flight
+  }
+
+  /**
+   * Current scheduling delay in ms — exposed for tests asserting the
+   * active/idle rate transition (issue #649 §3.1).
+   */
+  getCurrentDelayMs(): number {
+    return this.lastDelayMs;
+  }
+
+  private nextDelayMs(): number {
+    return this.idleState.isIdle(IDLE_WINDOW_MS) ? IDLE_INTERVAL_MS : this.intervalMs;
+  }
+
+  private scheduleNext(delay: number): void {
+    if (this.stopped) return;
+    this.lastDelayMs = delay;
+    this.timer = setTimeout(() => {
+      this.check()
+        .catch((err) => {
+          console.error('[ProcessWatchdog] Unexpected error in check():', err);
+        })
+        .finally(() => {
+          this.scheduleNext(this.nextDelayMs());
+        });
+    }, delay);
+    this.timer.unref();
   }
 
   /**
@@ -133,7 +171,7 @@ export class ChromeProcessWatchdog extends EventEmitter {
    * Whether the watchdog is currently running.
    */
   isRunning(): boolean {
-    return this.timer !== null;
+    return !this.stopped && this.timer !== null;
   }
 
   /**
