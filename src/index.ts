@@ -20,6 +20,7 @@ import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
+import { resolveHealthEndpointEnabled } from './utils/health-endpoint-gating';
 import { DiskMonitor } from './watchdog/disk-monitor';
 import { ChromeProcessMonitor } from './watchdog/chrome-monitor';
 import { SessionStatePersistence } from './session-state-persistence';
@@ -467,9 +468,23 @@ program
     });
 
     // Health Endpoint (Layer 4)
+    //
+    // Gated behind `resolveHealthEndpointEnabled()` (issue #648): the HTTP
+    // health/metrics surface is only useful for daemon-mode deployments
+    // (`--transport http` / `both`) where external monitors can reach it.
+    // Stdio instances (1 per MCP client) would otherwise bind a listener
+    // port that nobody talks to, at a cost of ~200-300 KB heap + 1 FD per
+    // process. Operators who still want the endpoint in stdio mode opt in
+    // via `OPENCHROME_HEALTH_ENDPOINT=1`; daemon operators who run the
+    // health check externally can opt out with `OPENCHROME_HEALTH_ENDPOINT=0`.
     const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
     const healthBind = process.env.OPENCHROME_HEALTH_BIND || '127.0.0.1';
-    const healthEndpoint = new HealthEndpoint(() => {
+    const healthEndpointOverride = process.env.OPENCHROME_HEALTH_ENDPOINT;
+    const healthEndpointEnabled = resolveHealthEndpointEnabled(
+      transportMode,
+      healthEndpointOverride,
+    );
+    const healthEndpoint = healthEndpointEnabled ? new HealthEndpoint(() => {
       const elStats = eventLoopMonitor.getStats();
       const tabHealth = tabHealthMonitor.getAllHealth();
       let healthyTabs = 0;
@@ -529,10 +544,24 @@ program
         listeners: getListenerErrorStats(),
       };
       return data;
-    }, healthPort, healthBind);
-    healthEndpoint.start().catch((err: unknown) => {
-      console.error('[SelfHealing] HealthEndpoint start failed:', err);
-    });
+    }, healthPort, healthBind) : null;
+    if (healthEndpoint) {
+      console.error(`[SelfHealing] HealthEndpoint: enabled (port=${healthPort}, bind=${healthBind}, mode=${transportMode})`);
+      healthEndpoint.start().catch((err: unknown) => {
+        console.error('[SelfHealing] HealthEndpoint start failed:', err);
+      });
+    } else {
+      const forcedOff = healthEndpointOverride === '0' || healthEndpointOverride === 'false';
+      if (forcedOff) {
+        console.error(
+          `[SelfHealing] HealthEndpoint: disabled (forced by OPENCHROME_HEALTH_ENDPOINT=${healthEndpointOverride}, mode=${transportMode})`
+        );
+      } else {
+        console.error(
+          `[SelfHealing] HealthEndpoint: disabled (transport-mode default, mode=${transportMode}; set OPENCHROME_HEALTH_ENDPOINT=1 to enable)`
+        );
+      }
+    }
 
     // Session State Persistence (Layer 2)
     const sessionPersistence = new SessionStatePersistence();
@@ -599,7 +628,7 @@ program
       eventLoopMonitor.stop();
       diskMonitor?.stop();
       chromeProcessMonitor.stop();
-      await healthEndpoint.stop();
+      await healthEndpoint?.stop();
 
       // Force-save storage state before exit to preserve cookies across restarts
       try {
