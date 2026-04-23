@@ -31,6 +31,7 @@ import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEF
 import { createBudget, isLegacyBudgetMode } from './utils/budget';
 import { SessionInitBudgetExhausted } from './cdp/errors';
 import { getGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
+import { getIdleState } from './utils/idle-state';
 import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
@@ -362,6 +363,12 @@ export class MCPServer {
     parsed: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<MCPResponse | null> {
+    // Record activity — every inbound MCP request flows through this method
+    // (stdio and HTTP transports both route here; see start()). By wiring at
+    // the single dispatch point we guarantee acceptance criterion 8 (issue
+    // #649) without having to touch every registerTool() call site.
+    getIdleState().notifyActive();
+
     // Validate JSON-RPC 2.0 envelope
     if (
       typeof parsed !== 'object' ||

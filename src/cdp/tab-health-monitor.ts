@@ -2,10 +2,18 @@
  * Per-Tab Health Monitor — detects frozen/crashed renderer tabs.
  * Runs independently of the global CDPClient heartbeat.
  * Part of #347 Layer 1: CDP Connection Resilience.
+ *
+ * Idle-adaptive (issue #649 Part A): when the server is idle, each tab's
+ * probe cadence relaxes from 60 s to 300 s (5× reduction). Each tab runs on
+ * its own `setTimeout` chain so local scheduling stays independent.
  */
 
 import { EventEmitter } from 'events';
 import { Page } from 'puppeteer-core';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+
+/** Idle cadence. 300 s is 5× slower than the default 60 s active rate. */
+const IDLE_PROBE_INTERVAL_MS = 300_000;
 
 export type TabHealthStatus = 'healthy' | 'unhealthy' | 'unknown';
 
@@ -26,15 +34,25 @@ export interface TabHealthMonitorOptions {
   unhealthyThreshold?: number;
   /** Consecutive failures before auto-eviction. Default: 5 */
   evictionThreshold?: number;
+  /** Idle-state source. Defaults to the process-global singleton. */
+  idleState?: IdleState;
+}
+
+interface TabMonitorState {
+  page: Page;
+  timer: NodeJS.Timeout | null;
+  stopped: boolean;
+  lastDelayMs: number;
 }
 
 export class TabHealthMonitor extends EventEmitter {
-  private timers: Map<string, NodeJS.Timeout> = new Map();
+  private tabs: Map<string, TabMonitorState> = new Map();
   private health: Map<string, TabHealthInfo> = new Map();
   private readonly probeIntervalMs: number;
   private readonly probeTimeoutMs: number;
   private readonly unhealthyThreshold: number;
   private readonly evictionThreshold: number;
+  private readonly idleState: IdleState;
 
   constructor(opts?: TabHealthMonitorOptions) {
     super();
@@ -42,6 +60,7 @@ export class TabHealthMonitor extends EventEmitter {
     this.probeTimeoutMs = opts?.probeTimeoutMs ?? 5000;
     this.unhealthyThreshold = opts?.unhealthyThreshold ?? 3;
     this.evictionThreshold = opts?.evictionThreshold ?? 5;
+    this.idleState = opts?.idleState ?? getIdleState();
   }
 
   /**
@@ -60,23 +79,49 @@ export class TabHealthMonitor extends EventEmitter {
       lastHealthyAt: now,
     });
 
-    const timer = setInterval(async () => {
-      await this.probeTab(targetId, page);
-    }, this.probeIntervalMs);
-    timer.unref();
-    this.timers.set(targetId, timer);
+    const state: TabMonitorState = { page, timer: null, stopped: false, lastDelayMs: 0 };
+    this.tabs.set(targetId, state);
+    this.scheduleNext(targetId, this.nextDelayMs());
   }
 
   /**
    * Stop monitoring a tab.
    */
   unmonitorTab(targetId: string): void {
-    const timer = this.timers.get(targetId);
-    if (timer) {
-      clearInterval(timer);
-      this.timers.delete(targetId);
+    const state = this.tabs.get(targetId);
+    if (state) {
+      state.stopped = true;
+      if (state.timer) clearTimeout(state.timer);
+      this.tabs.delete(targetId);
     }
     this.health.delete(targetId);
+  }
+
+  /**
+   * Current scheduling delay for a specific tab — exposed for tests
+   * asserting the active/idle rate transition (issue #649 §3.1).
+   */
+  getCurrentDelayMs(targetId: string): number | undefined {
+    return this.tabs.get(targetId)?.lastDelayMs;
+  }
+
+  private nextDelayMs(): number {
+    return this.idleState.isIdle(IDLE_WINDOW_MS) ? IDLE_PROBE_INTERVAL_MS : this.probeIntervalMs;
+  }
+
+  private scheduleNext(targetId: string, delay: number): void {
+    const state = this.tabs.get(targetId);
+    if (!state || state.stopped) return;
+    state.lastDelayMs = delay;
+    state.timer = setTimeout(async () => {
+      if (state.stopped) return;
+      await this.probeTab(targetId, state.page);
+      // A failed probe may have evicted the tab — re-check before rescheduling.
+      if (this.tabs.has(targetId)) {
+        this.scheduleNext(targetId, this.nextDelayMs());
+      }
+    }, delay);
+    state.timer.unref();
   }
 
   /**
@@ -149,14 +194,14 @@ export class TabHealthMonitor extends EventEmitter {
    * Get count of monitored tabs.
    */
   getMonitoredTabCount(): number {
-    return this.timers.size;
+    return this.tabs.size;
   }
 
   /**
    * Stop monitoring all tabs.
    */
   stopAll(): void {
-    for (const targetId of [...this.timers.keys()]) {
+    for (const targetId of [...this.tabs.keys()]) {
       this.unmonitorTab(targetId);
     }
   }

@@ -14,11 +14,15 @@ import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
+import { installParentWatcher, ParentWatcherHandle } from './utils/parent-watcher';
+import { installIdleTimeout, IdleTimeoutHandle, parseDuration } from './utils/idle-timeout';
+import { getIdleState } from './utils/idle-state';
 import { getVersion } from './version';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
+import { resolveHealthEndpointEnabled } from './utils/health-endpoint-gating';
 import { DiskMonitor } from './watchdog/disk-monitor';
 import { ChromeProcessMonitor } from './watchdog/chrome-monitor';
 import { SessionStatePersistence } from './session-state-persistence';
@@ -83,7 +87,8 @@ program
   .option('--http-host <host>', 'Bind address for HTTP transport (default: 127.0.0.1, use 0.0.0.0 for external access)')
   .option('--auth-token <token>', 'Bearer token for HTTP transport authentication (also: OPENCHROME_AUTH_TOKEN env var)')
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string }) => {
+  .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -325,6 +330,66 @@ program
       console.error('[openchrome] STDIO transport enabled');
     }
 
+    // Resolve the idle-timeout window (issue #649 Part B). CLI wins over env.
+    // Default: OFF. Setting OPENCHROME_IDLE_TIMEOUT_MS=0 also keeps it off
+    // (a bare 0 would otherwise mean "exit immediately on idle" which is
+    // never what an operator wants). Invalid values fail startup loudly per
+    // acceptance criterion 12.
+    let idleTimeoutMs: number | null = null;
+    if (options.idleTimeout !== undefined) {
+      try {
+        idleTimeoutMs = parseDuration(options.idleTimeout);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[openchrome] --idle-timeout: ${msg}`);
+        process.exit(1);
+      }
+    } else if (process.env.OPENCHROME_IDLE_TIMEOUT_MS) {
+      const raw = parseInt(process.env.OPENCHROME_IDLE_TIMEOUT_MS, 10);
+      if (!Number.isFinite(raw) || raw < 0) {
+        console.error(`[openchrome] OPENCHROME_IDLE_TIMEOUT_MS must be a non-negative integer, got "${process.env.OPENCHROME_IDLE_TIMEOUT_MS}"`);
+        process.exit(1);
+      }
+      if (raw > 0) {
+        idleTimeoutMs = raw;
+      }
+    }
+
+    // Eagerly initialize the IdleState singleton so every monitor built below
+    // shares the same instance. Honors OPENCHROME_IDLE_ADAPTIVE=0 (which
+    // returns an always-active state, keeping all monitors at their full rate).
+    const idleState = getIdleState();
+    if (process.env.OPENCHROME_IDLE_ADAPTIVE === '0') {
+      console.error('[openchrome] Idle-adaptive monitoring: disabled (OPENCHROME_IDLE_ADAPTIVE=0)');
+    }
+
+    // Parent-process death watcher (issue #644).
+    //
+    // Symmetric to spawnProcessGuardian (which kills Chrome when openchrome
+    // dies). When the launching MCP-client chain (claude/codex/IDE host) is
+    // killed without closing the stdio pipe, stdin EOF never fires and this
+    // server orphans. The PPID watcher polls the parent and exits cleanly
+    // when it disappears, so the existing process.on('exit') hook below can
+    // take Chrome down with it.
+    //
+    // Stdio mode only — HTTP and "both" modes are intentionally daemon-
+    // capable and must survive their launching shells.
+    let parentWatcher: ParentWatcherHandle | null = null;
+    if (transportMode === 'stdio' && process.env.OPENCHROME_PPID_WATCH !== '0') {
+      const parentPid = process.ppid;
+      if (parentPid > 1) {
+        // Forward the parsed value when present; otherwise let installParentWatcher
+        // own the default. clampInterval (in parent-watcher.ts) is the single
+        // source of truth for both the default (2000ms) and the [500, 60000] bounds.
+        const rawInterval = parseInt(process.env.OPENCHROME_PPID_WATCH_INTERVAL_MS || '', 10);
+        const intervalMs = Number.isFinite(rawInterval) ? rawInterval : undefined;
+        parentWatcher = installParentWatcher({ parentPid, intervalMs });
+        console.error(`[openchrome] Parent watcher: enabled (ppid=${parentPid}, interval=${intervalMs ?? 2000}ms)`);
+      } else {
+        console.error('[openchrome] Parent watcher: skipped (already orphaned, ppid<=1)');
+      }
+    }
+
     // ─── Self-Healing Module Wiring (#354) ──────────────────────────────────
 
     const launcher = getChromeLauncher();
@@ -439,9 +504,23 @@ program
     });
 
     // Health Endpoint (Layer 4)
+    //
+    // Gated behind `resolveHealthEndpointEnabled()` (issue #648): the HTTP
+    // health/metrics surface is only useful for daemon-mode deployments
+    // (`--transport http` / `both`) where external monitors can reach it.
+    // Stdio instances (1 per MCP client) would otherwise bind a listener
+    // port that nobody talks to, at a cost of ~200-300 KB heap + 1 FD per
+    // process. Operators who still want the endpoint in stdio mode opt in
+    // via `OPENCHROME_HEALTH_ENDPOINT=1`; daemon operators who run the
+    // health check externally can opt out with `OPENCHROME_HEALTH_ENDPOINT=0`.
     const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
     const healthBind = process.env.OPENCHROME_HEALTH_BIND || '127.0.0.1';
-    const healthEndpoint = new HealthEndpoint(() => {
+    const healthEndpointOverride = process.env.OPENCHROME_HEALTH_ENDPOINT;
+    const healthEndpointEnabled = resolveHealthEndpointEnabled(
+      transportMode,
+      healthEndpointOverride,
+    );
+    const healthEndpoint = healthEndpointEnabled ? new HealthEndpoint(() => {
       const elStats = eventLoopMonitor.getStats();
       const tabHealth = tabHealthMonitor.getAllHealth();
       let healthyTabs = 0;
@@ -501,10 +580,24 @@ program
         listeners: getListenerErrorStats(),
       };
       return data;
-    }, healthPort, healthBind);
-    healthEndpoint.start().catch((err: unknown) => {
-      console.error('[SelfHealing] HealthEndpoint start failed:', err);
-    });
+    }, healthPort, healthBind) : null;
+    if (healthEndpoint) {
+      console.error(`[SelfHealing] HealthEndpoint: enabled (port=${healthPort}, bind=${healthBind}, mode=${transportMode})`);
+      healthEndpoint.start().catch((err: unknown) => {
+        console.error('[SelfHealing] HealthEndpoint start failed:', err);
+      });
+    } else {
+      const forcedOff = healthEndpointOverride === '0' || healthEndpointOverride === 'false';
+      if (forcedOff) {
+        console.error(
+          `[SelfHealing] HealthEndpoint: disabled (forced by OPENCHROME_HEALTH_ENDPOINT=${healthEndpointOverride}, mode=${transportMode})`
+        );
+      } else {
+        console.error(
+          `[SelfHealing] HealthEndpoint: disabled (transport-mode default, mode=${transportMode}; set OPENCHROME_HEALTH_ENDPOINT=1 to enable)`
+        );
+      }
+    }
 
     // Session State Persistence (Layer 2)
     const sessionPersistence = new SessionStatePersistence();
@@ -559,15 +652,42 @@ program
       }
     });
 
-    // Update shutdown handler to include self-healing cleanup
+    // Install the idle-timeout watcher (issue #649 Part B) only when the
+    // operator opted in via CLI or env var. Wiring it here, after
+    // `enhancedShutdown` is declared below via closure-forward-reference,
+    // would be cleaner — but we need the handle in `enhancedShutdown` itself
+    // so it can be stopped before async cleanup begins. Forward-declare.
+    let idleTimeout: IdleTimeoutHandle | null = null;
+
+    // Update shutdown handler to include self-healing cleanup.
+    //
+    // Reentrancy guard (issue #649 §2 in-scope prerequisite): this PR adds a
+    // second internal exit trigger (idle-timeout) alongside the PPID watcher
+    // from PR #645 and the existing signal handlers. Without this guard,
+    // concurrent invocation from two triggers in the same tick would double-
+    // run saveAllStorageState, double-await healthEndpoint.stop(), and risk
+    // torn state. The flag is a single bit — subsequent entrants return
+    // immediately.
+    let shuttingDown = false;
     const originalShutdown = shutdown;
     const enhancedShutdown = async (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      // Stop the idle-timeout watcher BEFORE any awaits so it cannot fire
+      // mid-shutdown (acceptance criterion 14). Same rationale as the parent
+      // watcher teardown below.
+      idleTimeout?.stop();
+      idleTimeout = null;
+      // Stop the parent watcher first so it cannot fire process.exit during
+      // the async shutdown work below (issue #644).
+      parentWatcher?.stop();
+      parentWatcher = null;
       processWatchdog.stop();
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
       diskMonitor?.stop();
       chromeProcessMonitor.stop();
-      await healthEndpoint.stop();
+      await healthEndpoint?.stop();
 
       // Force-save storage state before exit to preserve cookies across restarts
       try {
@@ -583,6 +703,26 @@ program
       sessionPersistence.cancelPendingSave();
       await originalShutdown(signal);
     };
+
+    // Wire the idle-timeout watcher now that `enhancedShutdown` is defined.
+    // Explicit opt-in only — default OFF.
+    if (idleTimeoutMs !== null) {
+      idleTimeout = installIdleTimeout({
+        windowMs: idleTimeoutMs,
+        idleState,
+        sessionCountFn: () => sessionManager.sessionCount,
+        exitFn: () => {
+          // Route through enhancedShutdown so the reentrancy guard and the
+          // normal teardown sequence both apply. The shutdown awaits
+          // originalShutdown which calls process.exit(0).
+          enhancedShutdown('idle-timeout').catch((err) => {
+            console.error('[openchrome] idle-timeout shutdown failed:', err);
+            process.exit(1);
+          });
+        },
+      });
+      console.error(`[openchrome] Idle-timeout: enabled (window=${idleTimeoutMs}ms)`);
+    }
     // Replace signal handlers
     process.removeAllListeners('SIGTERM');
     process.removeAllListeners('SIGINT');
