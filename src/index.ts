@@ -14,6 +14,7 @@ import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
+import { installParentWatcher, ParentWatcherHandle } from './utils/parent-watcher';
 import { getVersion } from './version';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
@@ -325,6 +326,29 @@ program
       console.error('[openchrome] STDIO transport enabled');
     }
 
+    // Parent-process death watcher (issue #644).
+    //
+    // Symmetric to spawnProcessGuardian (which kills Chrome when openchrome
+    // dies). When the launching MCP-client chain (claude/codex/IDE host) is
+    // killed without closing the stdio pipe, stdin EOF never fires and this
+    // server orphans. The PPID watcher polls the parent and exits cleanly
+    // when it disappears, so the existing process.on('exit') hook below can
+    // take Chrome down with it.
+    //
+    // Stdio mode only — HTTP and "both" modes are intentionally daemon-
+    // capable and must survive their launching shells.
+    let parentWatcher: ParentWatcherHandle | null = null;
+    if (transportMode === 'stdio' && process.env.OPENCHROME_PPID_WATCH !== '0') {
+      const parentPid = process.ppid;
+      if (parentPid > 1) {
+        const intervalMs = parseInt(process.env.OPENCHROME_PPID_WATCH_INTERVAL_MS || '', 10) || 2000;
+        parentWatcher = installParentWatcher({ parentPid, intervalMs });
+        console.error(`[openchrome] Parent watcher: enabled (ppid=${parentPid}, interval=${intervalMs}ms)`);
+      } else {
+        console.error('[openchrome] Parent watcher: skipped (already orphaned, ppid<=1)');
+      }
+    }
+
     // ─── Self-Healing Module Wiring (#354) ──────────────────────────────────
 
     const launcher = getChromeLauncher();
@@ -562,6 +586,10 @@ program
     // Update shutdown handler to include self-healing cleanup
     const originalShutdown = shutdown;
     const enhancedShutdown = async (signal: string) => {
+      // Stop the parent watcher first so it cannot fire process.exit during
+      // the async shutdown work below (issue #644).
+      parentWatcher?.stop();
+      parentWatcher = null;
       processWatchdog.stop();
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
