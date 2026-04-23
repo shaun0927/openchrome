@@ -197,3 +197,74 @@ describe('installParentWatcher', () => {
     expect(exitFn).not.toHaveBeenCalled();
   });
 });
+
+// Real-path regression guards for issue #644 §7.1: the highest-risk failure
+// mode is a false-positive early exit while the parent is still alive. The
+// mocked-isAliveFn tests above prove the control flow; these exercise the
+// actual defaultIsAlive / process.kill(pid, 0) path end-to-end so a broken
+// default implementation cannot pass the suite.
+describe('installParentWatcher (real process.kill path)', () => {
+  test('does not exit while a real live parent stays alive over multiple ticks', async () => {
+    // Use the current test process's pid — guaranteed alive for the duration.
+    // MIN clamp (500 ms) × ~5 ticks = ~2.5 s window to catch any spurious fire.
+    const exitFn = jest.fn();
+    const logger = jest.fn();
+
+    const handle = installParentWatcher({
+      parentPid: process.pid,
+      intervalMs: 500,
+      exitFn,
+      logger,
+      // isAliveFn intentionally omitted → exercises defaultIsAlive.
+    });
+
+    try {
+      await new Promise((r) => setTimeout(r, 2_500));
+      expect(exitFn).not.toHaveBeenCalled();
+      expect(
+        (logger.mock.calls as string[][]).filter(([m]) => m.includes('is gone')).length,
+      ).toBe(0);
+    } finally {
+      handle.stop();
+    }
+  }, 10_000);
+
+  test('exits when the real parent pid is already dead at install time', async () => {
+    // Spawn a child that exits immediately, wait for it to be reaped, then
+    // install the watcher against its now-dead pid. The first tick must
+    // detect death via the real process.kill(pid, 0) throwing ESRCH.
+    // Note: PID reuse race is theoretically possible but vanishingly unlikely
+    // in the ~600 ms window between the exit event and the first poll on a
+    // healthy test host; if this flakes, re-run in isolation.
+    const { spawn } = await import('child_process');
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+    const deadPid = child.pid!;
+    await new Promise<void>((resolve) => child.on('exit', () => resolve()));
+    // Give the OS a beat to reap and free the pid slot for our check.
+    await new Promise((r) => setTimeout(r, 100));
+
+    const exitFn = jest.fn();
+    const logger = jest.fn();
+
+    const handle = installParentWatcher({
+      parentPid: deadPid,
+      intervalMs: 500,
+      exitFn,
+      logger,
+    });
+
+    try {
+      // First tick arrives after ~500 ms; allow generous slack for CI.
+      await new Promise((r) => setTimeout(r, 1_500));
+      expect(exitFn).toHaveBeenCalledTimes(1);
+      expect(exitFn).toHaveBeenCalledWith(0);
+      expect(
+        (logger.mock.calls as string[][]).some(([m]) =>
+          m.includes(`parent pid ${deadPid} is gone`),
+        ),
+      ).toBe(true);
+    } finally {
+      handle.stop();
+    }
+  }, 10_000);
+});
