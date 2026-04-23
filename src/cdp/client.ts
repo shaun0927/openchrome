@@ -130,6 +130,16 @@ export class CDPClient {
 
   private static readonly COOKIE_CACHE_TTL = 300000; // 5 minutes
 
+  // Bounded cookie cache sizes (see issue #647).
+  // Entries are evicted FIFO on write once at cap, and on read-miss when stale.
+  // Rationale:
+  //   - 64 source entries ≈ 64 distinct domains per instance (edge case fan-out
+  //     degrades gracefully to the existing fresh-scan slow path).
+  //   - 16 data entries ≈ typical open-tab count; one entry holds a full cookie
+  //     array (~50–100 KB) so this is the dominant memory line.
+  private static readonly COOKIE_SOURCE_CACHE_MAX = 64;
+  private static readonly COOKIE_DATA_CACHE_MAX = 16;
+
   // Reconnection progress (exposed via getConnectionMetrics)
   private reconnecting = false;
   private reconnectingAttempt = 0;
@@ -234,6 +244,50 @@ export class CDPClient {
 
   private touchTargetActivity(targetId: string): void {
     this.targetActivityAt.set(targetId, Date.now());
+  }
+
+  /**
+   * Insert or refresh an entry in cookieSourceCache with a FIFO size cap.
+   * When the cache is at capacity AND the key is new, the oldest-inserted
+   * entry is evicted. Existing keys update in place without eviction.
+   * See issue #647.
+   */
+  private setCookieSourceCacheEntry(
+    key: string,
+    value: { targetId: string; timestamp: number },
+  ): void {
+    if (
+      this.cookieSourceCache.size >= CDPClient.COOKIE_SOURCE_CACHE_MAX &&
+      !this.cookieSourceCache.has(key)
+    ) {
+      const firstKey = this.cookieSourceCache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.cookieSourceCache.delete(firstKey);
+      }
+    }
+    this.cookieSourceCache.set(key, value);
+  }
+
+  /**
+   * Insert or refresh an entry in cookieDataCache with a FIFO size cap.
+   * When the cache is at capacity AND the key is new, the oldest-inserted
+   * entry is evicted. Existing keys update in place without eviction.
+   * See issue #647.
+   */
+  private setCookieDataCacheEntry(
+    key: string,
+    value: { cookies: CookieEntry[]; timestamp: number },
+  ): void {
+    if (
+      this.cookieDataCache.size >= CDPClient.COOKIE_DATA_CACHE_MAX &&
+      !this.cookieDataCache.has(key)
+    ) {
+      const firstKey = this.cookieDataCache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.cookieDataCache.delete(firstKey);
+      }
+    }
+    this.cookieDataCache.set(key, value);
   }
 
   getLastCookieScanResult(): CookieScanResult | null {
@@ -1099,6 +1153,11 @@ export class CDPClient {
       this.lastCookieScanResult = result;
       return result;
     }
+    if (cached) {
+      // Stale entry: drop it so the cache does not retain expired data when
+      // the fresh scan path below produces a new result (see issue #647).
+      this.cookieSourceCache.delete(cacheKey);
+    }
 
     // Promise coalescing: if a scan for this domain is already in-flight, reuse it
     const existing = this.inFlightCookieScans.get(cacheKey);
@@ -1267,7 +1326,7 @@ export class CDPClient {
           if (cookieCount > 0) {
             const domainScore = targetDomain ? this.domainMatchScore(candidate.url, targetDomain) : 0;
             console.error(`[CDPClient] Found authenticated page ${candidate.targetId.slice(0, 8)} at ${candidate.url.slice(0, 50)} (${cookieCount} cookies, domain score: ${domainScore})`);
-            this.cookieSourceCache.set(cacheKey, { targetId: candidate.targetId, timestamp: Date.now() });
+            this.setCookieSourceCacheEntry(cacheKey, { targetId: candidate.targetId, timestamp: Date.now() });
             this.touchTargetActivity(candidate.targetId);
             const status: CookieScanStatus = targetsScanned < candidates.length ? 'partial' : 'complete';
             const resultSummary = buildResult(status, candidates.length, candidate.targetId);
@@ -1324,6 +1383,11 @@ export class CDPClient {
           await destSession.detach().catch(() => {});
         }
       }
+      if (cachedData) {
+        // Stale entry: drop it so the cache does not retain expired data when
+        // the fresh scan path below produces a new result (see issue #647).
+        this.cookieDataCache.delete(sourceTargetId);
+      }
 
       // Attach to the source target via the multiplexed browser CDP session
       const browser = this.getBrowser();
@@ -1357,7 +1421,7 @@ export class CDPClient {
         const cookies: CookieEntry[] = result?.cookies || [];
 
         // Store in cookie data cache
-        this.cookieDataCache.set(sourceTargetId, { cookies, timestamp: Date.now() });
+        this.setCookieDataCacheEntry(sourceTargetId, { cookies, timestamp: Date.now() });
 
         if (cookies.length === 0) {
           console.error('[CDPClient] No cookies found in source page');
