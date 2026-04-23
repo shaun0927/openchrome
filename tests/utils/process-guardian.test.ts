@@ -14,7 +14,10 @@ function isAlive(pid: number): boolean {
   }
 }
 
-async function waitForDead(pid: number, timeoutMs = 4000): Promise<void> {
+// Windows CI can spend several seconds on Node cold-start for the detached
+// guardian process plus the `taskkill` execSync roundtrip before the child
+// exits. Bump the default well past that to prevent spurious timeouts.
+async function waitForDead(pid: number, timeoutMs = 15000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!isAlive(pid)) return;
@@ -36,7 +39,7 @@ describe('spawnProcessGuardian', () => {
 
     await waitForDead(child.pid);
     expect(isAlive(child.pid)).toBe(false);
-  });
+  }, 20000);
 
   test('does not delete a pid file that was rewritten for a newer process', async () => {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
@@ -57,5 +60,5 @@ describe('spawnProcessGuardian', () => {
     expect(fs.existsSync(pidFile)).toBe(true);
     expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe('123456');
     fs.rmSync(dir, { recursive: true, force: true });
-  });
+  }, 20000);
 });
