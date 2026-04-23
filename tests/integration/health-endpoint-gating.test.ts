@@ -117,7 +117,7 @@ describeFn('health endpoint gating (issue #648)', () => {
       args: ['--transport', 'stdio'],
       env: {},
       expectBound: false,
-      expectedLogPattern: /\[SelfHealing\] HealthEndpoint: disabled \(stdio mode;/,
+      expectedLogPattern: /\[SelfHealing\] HealthEndpoint: disabled \(transport-mode default, mode=stdio;/,
     },
     {
       name: '--transport http: health port bound, /health returns 200 JSON',
@@ -138,14 +138,14 @@ describeFn('health endpoint gating (issue #648)', () => {
       args: ['--transport', 'http'],
       env: { OPENCHROME_HEALTH_ENDPOINT: '0' },
       expectBound: false,
-      expectedLogPattern: /\[SelfHealing\] HealthEndpoint: disabled \(stdio mode;/,
+      expectedLogPattern: /\[SelfHealing\] HealthEndpoint: disabled \(forced by OPENCHROME_HEALTH_ENDPOINT=0, mode=http\)/,
     },
     {
       name: 'OPENCHROME_HEALTH_ENDPOINT=garbage + stdio: falls through to stdio default (disabled)',
       args: ['--transport', 'stdio'],
       env: { OPENCHROME_HEALTH_ENDPOINT: 'garbage' },
       expectBound: false,
-      expectedLogPattern: /\[SelfHealing\] HealthEndpoint: disabled \(stdio mode;/,
+      expectedLogPattern: /\[SelfHealing\] HealthEndpoint: disabled \(transport-mode default, mode=stdio;/,
     },
     {
       name: 'OPENCHROME_HEALTH_ENDPOINT=garbage + http: falls through to http default (enabled)',

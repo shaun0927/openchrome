@@ -479,9 +479,10 @@ program
     // health check externally can opt out with `OPENCHROME_HEALTH_ENDPOINT=0`.
     const healthPort = parseInt(process.env.OPENCHROME_HEALTH_PORT || '', 10) || DEFAULT_HEALTH_ENDPOINT_PORT;
     const healthBind = process.env.OPENCHROME_HEALTH_BIND || '127.0.0.1';
+    const healthEndpointOverride = process.env.OPENCHROME_HEALTH_ENDPOINT;
     const healthEndpointEnabled = resolveHealthEndpointEnabled(
       transportMode,
-      process.env.OPENCHROME_HEALTH_ENDPOINT,
+      healthEndpointOverride,
     );
     const healthEndpoint = healthEndpointEnabled ? new HealthEndpoint(() => {
       const elStats = eventLoopMonitor.getStats();
@@ -550,7 +551,16 @@ program
         console.error('[SelfHealing] HealthEndpoint start failed:', err);
       });
     } else {
-      console.error('[SelfHealing] HealthEndpoint: disabled (stdio mode; set OPENCHROME_HEALTH_ENDPOINT=1 to enable)');
+      const forcedOff = healthEndpointOverride === '0' || healthEndpointOverride === 'false';
+      if (forcedOff) {
+        console.error(
+          `[SelfHealing] HealthEndpoint: disabled (forced by OPENCHROME_HEALTH_ENDPOINT=${healthEndpointOverride}, mode=${transportMode})`
+        );
+      } else {
+        console.error(
+          `[SelfHealing] HealthEndpoint: disabled (transport-mode default, mode=${transportMode}; set OPENCHROME_HEALTH_ENDPOINT=1 to enable)`
+        );
+      }
     }
 
     // Session State Persistence (Layer 2)
