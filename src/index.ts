@@ -341,9 +341,13 @@ program
     if (transportMode === 'stdio' && process.env.OPENCHROME_PPID_WATCH !== '0') {
       const parentPid = process.ppid;
       if (parentPid > 1) {
-        const intervalMs = parseInt(process.env.OPENCHROME_PPID_WATCH_INTERVAL_MS || '', 10) || 2000;
+        // Forward the parsed value when present; otherwise let installParentWatcher
+        // own the default. clampInterval (in parent-watcher.ts) is the single
+        // source of truth for both the default (2000ms) and the [500, 60000] bounds.
+        const rawInterval = parseInt(process.env.OPENCHROME_PPID_WATCH_INTERVAL_MS || '', 10);
+        const intervalMs = Number.isFinite(rawInterval) ? rawInterval : undefined;
         parentWatcher = installParentWatcher({ parentPid, intervalMs });
-        console.error(`[openchrome] Parent watcher: enabled (ppid=${parentPid}, interval=${intervalMs}ms)`);
+        console.error(`[openchrome] Parent watcher: enabled (ppid=${parentPid}, interval=${intervalMs ?? 2000}ms)`);
       } else {
         console.error('[openchrome] Parent watcher: skipped (already orphaned, ppid<=1)');
       }

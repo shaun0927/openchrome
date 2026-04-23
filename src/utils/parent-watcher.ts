@@ -60,8 +60,16 @@ export function installParentWatcher(opts: ParentWatcherOptions): ParentWatcherH
   const exit = opts.exitFn ?? ((code: number) => process.exit(code));
   const log = opts.logger ?? ((msg: string) => console.error(msg));
 
+  // `stopped` closes the race where the timer callback is already queued on
+  // the macrotask queue when stop() runs. clearInterval cancels future ticks
+  // but does not dequeue an already-pending callback, so without this flag
+  // the watcher could still call exit(0) mid-shutdown after stop() returned.
+  let stopped = false;
+
   const timer = setInterval(() => {
+    if (stopped) return;
     if (isAlive(opts.parentPid)) return;
+    stopped = true;
     log(`[openchrome] parent pid ${opts.parentPid} is gone, exiting`);
     clearInterval(timer);
     exit(0);
@@ -73,6 +81,9 @@ export function installParentWatcher(opts: ParentWatcherOptions): ParentWatcherH
   }
 
   return {
-    stop: () => clearInterval(timer),
+    stop: () => {
+      stopped = true;
+      clearInterval(timer);
+    },
   };
 }

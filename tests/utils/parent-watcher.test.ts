@@ -174,4 +174,26 @@ describe('installParentWatcher', () => {
     expect(exitFn).toHaveBeenCalledTimes(1);
     expect(logs.filter((m) => m.includes('is gone')).length).toBe(1);
   });
+
+  test('stop() prevents exit even if a queued callback observes a dead parent', async () => {
+    // Race scenario: stop() runs synchronously and the watcher's `stopped`
+    // flag must short-circuit any subsequent callback firing, preventing
+    // exit(0) during enhancedShutdown's async cleanup chain.
+    let alive = true;
+    const isAliveFn = jest.fn(() => alive);
+
+    const handle = installParentWatcher({
+      parentPid: 8888,
+      intervalMs: 500,
+      isAliveFn,
+      exitFn,
+      logger,
+    });
+
+    handle.stop();
+    alive = false;
+    await tickIntervals(5, 500);
+
+    expect(exitFn).not.toHaveBeenCalled();
+  });
 });
