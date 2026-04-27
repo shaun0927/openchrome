@@ -31,6 +31,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   wait_for: 1,
   memory: 1,
   lightweight_scroll: 1,
+  console_capture: 1,         // src/tools/console-capture.ts — surfaces page errors during validation (#token-efficiency)
   oc_stop: 1,
   oc_profile_status: 1,
   oc_session_snapshot: 1,
@@ -54,7 +55,6 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   page_pdf: 2,
   page_screenshot: 2,
   page_content: 2,
-  console_capture: 2,
   performance_metrics: 2,
   file_upload: 2,
   batch_execute: 2,
