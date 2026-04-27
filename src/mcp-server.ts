@@ -1266,7 +1266,7 @@ export class MCPServer {
         }
       }
 
-      // Inject proactive hint into both _hint (backward compat) and content[] (guaranteed MCP delivery)
+      // Inject proactive hint into _hint and _hintMeta (content[] duplicate removed for token efficiency #token-efficiency)
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
         if (hintResult) {
@@ -1282,11 +1282,6 @@ export class MCPServer {
               ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
               ...(hintResult.context && { context: hintResult.context }),
             };
-            const content = (result as Record<string, unknown>).content;
-            if (Array.isArray(content)) {
-              // Hint appended after tool result (may follow image blobs for verify:true tools)
-              content.push({ type: 'text', text: `\n${hintResult.hint}` });
-            }
           }
         }
       }
