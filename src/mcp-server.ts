@@ -92,6 +92,20 @@ const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status', 'oc_ses
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
 
+// Read-only tools called at high frequency — skip session/profile decorators
+// to save ~50 tokens per call. They don't change session state, so resumability
+// metadata is not load-bearing here.
+const READONLY_HIGH_FREQ_TOOLS = new Set([
+  'read_page',
+  'query_dom',
+  'find',
+  'inspect',
+  'javascript_tool',
+  'wait_for',
+  'page_content',
+  'tabs_context',
+]);
+
 /**
  * Clients known to support notifications/tools/list_changed.
  * Progressive disclosure (tiered tools) is only enabled for these clients.
@@ -1221,7 +1235,7 @@ export class MCPServer {
       }
 
       // Inject session context for AI agent continuity (#347 Phase 4)
-      if (verbosity !== 'compact' && !['oc_checkpoint', 'oc_connection_health'].includes(toolName)) {
+      if (verbosity !== 'compact' && !['oc_checkpoint', 'oc_connection_health'].includes(toolName) && !READONLY_HIGH_FREQ_TOOLS.has(toolName)) {
         try {
           const cdpClient = getCDPClient();
           const metrics = cdpClient.getConnectionMetrics();
@@ -1239,7 +1253,7 @@ export class MCPServer {
       }
 
       // Inject profile state
-      if (verbosity !== 'compact') {
+      if (verbosity !== 'compact' && !READONLY_HIGH_FREQ_TOOLS.has(toolName)) {
         const profileInfo = this.buildProfileInfo();
         if (profileInfo) {
           (result as Record<string, unknown>)._profile = profileInfo.profile;
