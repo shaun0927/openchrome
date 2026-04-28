@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/shaun0927-openchrome-badge.png)](https://mseep.ai/app/shaun0927-openchrome)
+
 <p align="center">
   <img src="assets/mascot.png?v=4" alt="OpenChrome Raptor" width="180">
 </p>
