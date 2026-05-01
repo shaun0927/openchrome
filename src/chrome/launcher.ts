@@ -15,6 +15,7 @@ import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
 import { writeMarker, removeMarker } from './ownership-marker';
 import { registerManagedChrome, unregisterManagedChrome } from '../utils/sync-shutdown';
+import { classifyExit, ExitClassification, quiesceMs } from './exit-classifier';
 export type { ProfileType } from './profile-manager';
 
 /**
@@ -327,8 +328,24 @@ export class ChromeLauncher {
     extensionsAvailable: true,
   };
   private _intentionalStop = false;
+  /** ms timestamp of the most recent successful spawn, for #660 anti-flap. */
+  private _chromeStartedAt = 0;
+  /** Most recent exit classification (#660). 'intentional' | 'clean' | 'crash'. */
+  private _lastExitClassification: ExitClassification | null = null;
+  /** ms epoch until which the watchdog should skip relaunch (#660). 0 = no quiesce. */
+  private _quiesceUntil = 0;
+  /** Crash timestamps for the watchdog rate-limit check (#660 Phase 3). */
+  private _recentCrashesMs: number[] = [];
 
   get intentionalStop(): boolean { return this._intentionalStop; }
+  /** Last exit classification recorded by the spawn-side exit handler. */
+  get lastExitClassification(): ExitClassification | null { return this._lastExitClassification; }
+  /** Watchdog reads this; if `Date.now() < quiesceUntil` it skips relaunch. */
+  get quiesceUntil(): number { return this._quiesceUntil; }
+  /** Recent Chrome crash timestamps (last ~minute). */
+  get recentCrashesMs(): readonly number[] { return this._recentCrashesMs; }
+  /** Tools call this when they need Chrome — clears any pending quiesce. */
+  clearQuiesce(): void { this._quiesceUntil = 0; }
 
   constructor(port: number = DEFAULT_PORT) {
     this.port = port;
@@ -654,14 +671,38 @@ export class ChromeLauncher {
       registerManagedChrome({ pid: chromeProcess.pid, userDataDir });
     }
 
-    // Log Chrome process exit for immediate diagnostics
+    // Log Chrome process exit and classify it for the watchdog (#660).
+    const chromeStartedAtForExitHandler = Date.now();
     chromeProcess.once('exit', (code, signal) => {
-      console.error(`[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal})`);
+      const uptimeMs = Date.now() - chromeStartedAtForExitHandler;
+      const classification = classifyExit({
+        code,
+        signal,
+        uptimeMs,
+        intentionalStop: this._intentionalStop,
+      });
+      this._lastExitClassification = classification;
+      console.error(
+        `[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal}, uptime: ${uptimeMs}ms, class: ${classification})`,
+      );
       // Symmetric cleanup: unregister + remove marker so a failed-launch Chrome
       // (e.g. waitForDebugPort timeout) does not leave stale state behind.
       if (chromeProcess.pid) {
         unregisterManagedChrome(chromeProcess.pid);
         removeMarker({ chromePid: chromeProcess.pid, userDataDir });
+      }
+      if (classification === 'clean' && !this._intentionalStop) {
+        // User-driven close. Quiesce the watchdog so it does not silently respawn (#660).
+        const quiesce = quiesceMs();
+        this._quiesceUntil = Date.now() + quiesce;
+        console.error(`[ChromeLauncher] Quiesced relaunch for ${quiesce}ms (user-driven close)`);
+      } else if (classification === 'crash') {
+        // Track for rate-limit check.
+        this._recentCrashesMs.push(Date.now());
+        // Bound the array — only last ~10 entries needed.
+        if (this._recentCrashesMs.length > 10) {
+          this._recentCrashesMs = this._recentCrashesMs.slice(-10);
+        }
       }
       // Clear cached instance so next ensureChrome() knows Chrome is gone
       this.instance = null;
@@ -724,6 +765,9 @@ export class ChromeLauncher {
     }
 
     this._intentionalStop = false;
+    // Successful launch — clear any pending quiesce (#660).
+    this._quiesceUntil = 0;
+    this._chromeStartedAt = Date.now();
     console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
     return this.instance;
   }
