@@ -35,24 +35,25 @@ export interface ClassifyExitInput {
  * Read the anti-flap threshold (in milliseconds) from
  * OPENCHROME_ANTIFLAP_SECONDS, with a 5-second default.
  *
- * Invalid / non-positive values fall back to the default. Callers can pass
- * an override for tests.
+ * `0` means "disable anti-flap entirely" (gemini medium review on #668).
+ * Negative / non-numeric values fall back to the default. Callers can
+ * pass an override for tests.
  */
 export function antiFlapMs(envValue: string | undefined = process.env.OPENCHROME_ANTIFLAP_SECONDS): number {
   if (envValue === undefined || envValue === '') return 5_000;
   const parsed = parseInt(envValue, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 5_000;
+  if (!Number.isFinite(parsed) || parsed < 0) return 5_000;
   return parsed * 1000;
 }
 
 /**
  * Read the watchdog quiesce duration (ms) from OPENCHROME_QUIESCE_MS.
- * Default is 60 s.
+ * Default is 60 s. `0` disables quiesce entirely (gemini high review on #668).
  */
 export function quiesceMs(envValue: string | undefined = process.env.OPENCHROME_QUIESCE_MS): number {
   if (envValue === undefined || envValue === '') return 60_000;
   const parsed = parseInt(envValue, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 60_000;
+  if (!Number.isFinite(parsed) || parsed < 0) return 60_000;
   return parsed;
 }
 
@@ -62,8 +63,9 @@ export function quiesceMs(envValue: string | undefined = process.env.OPENCHROME_
  * Decision matrix (highest priority first):
  *   1. intentionalStop=true   → 'intentional'
  *   2. uptimeMs < anti-flap   → 'crash' (Chrome failed to start cleanly)
- *   3. code===0 OR signal===SIGTERM/SIGINT/null → 'clean' (user closed window)
- *   4. otherwise              → 'crash' (segfault, OOM, abort, …)
+ *   3. code===0               → 'clean' (user closed window normally)
+ *   4. SIGTERM / SIGINT       → 'clean' (red dot / Cmd+Q / WM close)
+ *   5. otherwise              → 'crash' (segfault, OOM, abort, …)
  */
 export function classifyExit(
   input: ClassifyExitInput,
@@ -72,12 +74,16 @@ export function classifyExit(
   if (input.intentionalStop) return 'intentional';
 
   const flapMs = opts.antiFlapMs ?? antiFlapMs();
-  if (input.uptimeMs >= 0 && input.uptimeMs < flapMs) return 'crash';
+  // Negative uptime can't physically happen but we still treat it as "no
+  // uptime info" rather than auto-crashing on clock-skew weirdness.
+  if (input.uptimeMs < flapMs) return 'crash';
 
   if (input.code === 0) return 'clean';
 
+  // Signal-based clean exits (POSIX user close → SIGTERM, Ctrl+C → SIGINT).
+  // Node guarantees at least one of (code, signal) is non-null on the
+  // 'exit' event, so we don't re-handle the all-null case here.
   const cleanSignals: ReadonlyArray<NodeJS.Signals> = ['SIGTERM', 'SIGINT'];
-  if (input.signal === null && (input.code === null || input.code === 0)) return 'clean';
   if (input.signal !== null && cleanSignals.includes(input.signal)) return 'clean';
 
   return 'crash';

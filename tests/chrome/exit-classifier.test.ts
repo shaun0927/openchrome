@@ -55,7 +55,10 @@ describe('antiFlapMs', () => {
   it('falls back on invalid input', () => {
     expect(antiFlapMs('abc')).toBe(5000);
     expect(antiFlapMs('-1')).toBe(5000);
-    expect(antiFlapMs('0')).toBe(5000);
+  });
+
+  it('0 disables anti-flap entirely (#668)', () => {
+    expect(antiFlapMs('0')).toBe(0);
   });
 });
 
@@ -73,6 +76,10 @@ describe('quiesceMs', () => {
   it('falls back on invalid input', () => {
     expect(quiesceMs('abc')).toBe(60_000);
     expect(quiesceMs('-1')).toBe(60_000);
+  });
+
+  it('0 disables quiesce entirely (#668)', () => {
+    expect(quiesceMs('0')).toBe(0);
   });
 });
 
