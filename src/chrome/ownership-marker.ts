@@ -37,7 +37,13 @@ export interface OwnershipMarker {
   launchMode: 'isolated';
 }
 
-function readParentCommand(pid: number): string {
+/**
+ * Read a process's command-line. Linux only reads from /proc; on macOS/Windows
+ * we have no portable cheap way, so we fall back to the current process's argv —
+ * but only when the requested pid IS the current process. For any other pid
+ * we return '' rather than misleading data (gemini medium review on #667).
+ */
+export function readParentCommand(pid: number): string {
   if (process.platform === 'linux') {
     try {
       // /proc/<pid>/cmdline is NUL-separated; never truncated.
@@ -47,8 +53,11 @@ function readParentCommand(pid: number): string {
       return '';
     }
   }
-  // Best-effort across platforms; we use this as a hint, not a security check.
-  return process.argv.join(' ');
+  // Best-effort across non-Linux platforms; only valid for the current process.
+  if (pid === process.pid) {
+    return process.argv.join(' ');
+  }
+  return '';
 }
 
 function primaryMarkerPath(userDataDir: string): string {
@@ -139,6 +148,7 @@ export function readMarker(filePath: string): OwnershipMarker | null {
     if (
       typeof parsed.pid !== 'number' ||
       typeof parsed.ppid !== 'number' ||
+      typeof parsed.ppidCommand !== 'string' ||
       typeof parsed.userDataDir !== 'string' ||
       typeof parsed.marker !== 'string' ||
       parsed.launchMode !== 'isolated'
@@ -217,10 +227,11 @@ export function verifyChromePidIdentity(pid: number, expectedUserDataDir: string
     try {
       const raw = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
       const argv = raw.split('\0').filter((s) => s.length > 0);
-      return argv.some((arg) =>
-        arg === `--user-data-dir=${expectedUserDataDir}` ||
-        arg.startsWith(`--user-data-dir=${expectedUserDataDir}`),
-      );
+      const exact = `--user-data-dir=${expectedUserDataDir}`;
+      // Path separator matters: a bare startsWith allows /tmp/chrome to match
+      // /tmp/chrome-2 (gemini medium / codex P2 review on #667).
+      const sepPrefix = `--user-data-dir=${expectedUserDataDir}${path.sep}`;
+      return argv.some((arg) => arg === exact || arg.startsWith(sepPrefix));
     } catch {
       return false;
     }
@@ -235,7 +246,15 @@ export function verifyChromePidIdentity(pid: number, expectedUserDataDir: string
       });
       // ps -ww output is a single line for one PID.
       const cmdline = out.toString().trim();
-      if (!cmdline.includes(`--user-data-dir=${expectedUserDataDir}`)) {
+      const exact = `--user-data-dir=${expectedUserDataDir}`;
+      const sepPrefix = `--user-data-dir=${expectedUserDataDir}${path.sep}`;
+      // Same separator-aware match as the Linux path; reject prefix collisions
+      // like /tmp/chrome ↔ /tmp/chrome-2 (codex P2 review on #667).
+      const matches =
+        cmdline.includes(`${exact} `) ||
+        cmdline.endsWith(exact) ||
+        cmdline.includes(sepPrefix);
+      if (!matches) {
         // No match — could be PID reuse, or could be macOS truncation despite -ww.
         return false;
       }

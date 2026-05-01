@@ -643,11 +643,26 @@ export class ChromeLauncher {
         pidFilePath: getChromePidFilePath(port),
         label: 'managed-chrome',
       });
+      // #661 Phase 1+2 (gemini high review): write the ownership marker AND
+      // register for synchronous shutdown immediately after spawn — before
+      // waitForDebugPort. Otherwise, if the parent dies during the debug-port
+      // wait window, the orphaned Chrome would not be in the registry and
+      // would leak.
+      if (userDataDir) {
+        writeMarker({ chromePid: chromeProcess.pid, userDataDir });
+      }
+      registerManagedChrome({ pid: chromeProcess.pid, userDataDir });
     }
 
     // Log Chrome process exit for immediate diagnostics
     chromeProcess.once('exit', (code, signal) => {
       console.error(`[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal})`);
+      // Symmetric cleanup: unregister + remove marker so a failed-launch Chrome
+      // (e.g. waitForDebugPort timeout) does not leave stale state behind.
+      if (chromeProcess.pid) {
+        unregisterManagedChrome(chromeProcess.pid);
+        removeMarker({ chromePid: chromeProcess.pid, userDataDir });
+      }
       // Clear cached instance so next ensureChrome() knows Chrome is gone
       this.instance = null;
       // Clear pendingProcess if this was the one we were tracking
@@ -692,13 +707,8 @@ export class ChromeLauncher {
     }
     this.pendingProcess = null; // Success — no longer pending
 
-    // Write ownership marker (#661 Phase 1). Only for spawn-based 'isolated' launches —
-    // attach-mode (above) leaves the user's Chrome alone and writes no marker.
-    let ownershipMarker: string | null = null;
-    if (chromeProcess.pid && userDataDir) {
-      ownershipMarker = writeMarker({ chromePid: chromeProcess.pid, userDataDir });
-    }
-
+    // Marker + registration already happened immediately after spawn (above).
+    // Here we just record the instance state.
     this.instance = {
       wsEndpoint,
       httpEndpoint: `http://127.0.0.1:${port}`,
@@ -706,14 +716,11 @@ export class ChromeLauncher {
       userDataDir,
       profileType,
       launchMode: 'isolated',
-      ...(ownershipMarker ? { ownershipMarker } : {}),
     };
 
     // Persist Chrome PID to disk for orphan detection
     if (chromeProcess.pid) {
       writeChromePid(port, chromeProcess.pid);
-      // #661: register for synchronous shutdown.
-      registerManagedChrome({ pid: chromeProcess.pid, userDataDir });
     }
 
     this._intentionalStop = false;
