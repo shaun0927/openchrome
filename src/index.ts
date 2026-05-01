@@ -129,19 +129,24 @@ program
 
     // Resolve headed-vs-headless intent (#657). Default flipped to headed.
     // The resolver throws HeadlessFlagConflictError if --headless and --visible both set.
-    let headless = false;
+    //
+    // We resolve unconditionally (not gated on autoLaunch) so any *implicit*
+    // relaunch path — process watchdog (#347/#649) or pool warm-up that
+    // flips autoLaunch on later — picks up the user's actual intent from
+    // global config rather than the headed default. (qodo P1 review on #665.)
+    let headless: boolean;
+    try {
+      const mode = resolveHeadlessMode(
+        { headless: options.headless, visible: options.visible },
+        { OPENCHROME_HEADLESS: process.env.OPENCHROME_HEADLESS },
+        { headless: getGlobalConfig().headless },
+      );
+      headless = mode === 'headless';
+    } catch (err) {
+      console.error(`[openchrome] ${(err as Error).message}`);
+      process.exit(2);
+    }
     if (autoLaunch) {
-      try {
-        const mode = resolveHeadlessMode(
-          { headless: options.headless, visible: options.visible },
-          { OPENCHROME_HEADLESS: process.env.OPENCHROME_HEADLESS },
-          { headless: getGlobalConfig().headless },
-        );
-        headless = mode === 'headless';
-      } catch (err) {
-        console.error(`[openchrome] ${(err as Error).message}`);
-        process.exit(2);
-      }
       console.error(`[openchrome] Headless mode: ${headless}`);
       if (options.visible === true && options.headless !== true) {
         console.error('[openchrome] Note: --visible is deprecated; headed is the default since #657.');
