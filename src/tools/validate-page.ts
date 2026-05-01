@@ -49,13 +49,16 @@ const NAV_TIMEOUT_MS = 15_000;
 
 const CAPTURED_TYPES = new Set(['error', 'warning', 'assert']);
 
-function normalizeUrl(raw: string): string {
+export function normalizeUrl(raw: string): string {
   let target = raw;
   const schemeMatch = target.match(/^([a-z][a-z0-9+.-]*):\/\//i);
-  if (schemeMatch && !['http', 'https'].includes(schemeMatch[1].toLowerCase())) {
-    throw new Error(`"${schemeMatch[1]}://" URLs are not supported. Only http:// and https:// can be navigated.`);
-  }
-  if (!target.startsWith('http://') && !target.startsWith('https://')) {
+  if (schemeMatch) {
+    const scheme = schemeMatch[1].toLowerCase();
+    if (!['http', 'https'].includes(scheme)) {
+      throw new Error(`"${schemeMatch[1]}://" URLs are not supported. Only http:// and https:// can be navigated.`);
+    }
+    target = scheme + '://' + target.slice(schemeMatch[0].length);
+  } else {
     target = 'https://' + target;
   }
   const parsed = new URL(target);
@@ -223,10 +226,16 @@ const handler: ToolHandler = async (
   }
 
   // Navigate
-  let status: 'ok' | 'navigation_failed' | 'timeout' = 'ok';
+  let status: 'ok' | 'navigation_failed' | 'timeout' | 'auth_redirect_required' = 'ok';
   let navError: string | undefined;
+  let authRedirect: { from: string; to: string; host: string } | undefined;
   try {
-    await smartGoto(page, targetUrl, { timeout: NAV_TIMEOUT_MS });
+    const gotoResult = await smartGoto(page, targetUrl, { timeout: NAV_TIMEOUT_MS });
+    if (gotoResult.authRedirect) {
+      authRedirect = gotoResult.authRedirect;
+      status = 'auth_redirect_required';
+      navError = `Authentication redirect detected — page redirected from ${authRedirect.from} to ${authRedirect.host}. Sign in via the browser, then retry.`;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     navError = msg;
@@ -309,7 +318,9 @@ const handler: ToolHandler = async (
   const summaryLine =
     status === 'ok'
       ? `validate_page ok — ${totalErrors} error(s), ${totalWarnings} warning(s), ${summary.interactiveCount} interactive elements (${durationMs}ms)`
-      : `validate_page ${status}${navError ? ': ' + navError : ''}`;
+      : status === 'auth_redirect_required'
+        ? `validate_page auth_redirect_required — redirected to ${authRedirect?.host ?? 'unknown'}`
+        : `validate_page ${status}${navError ? ': ' + navError : ''}`;
 
   return {
     content: [{ type: 'text', text: summaryLine }],
@@ -326,6 +337,11 @@ const handler: ToolHandler = async (
       totalWarnings,
     },
     summary,
+    ...(authRedirect && {
+      authRedirect: true,
+      redirectedFrom: authRedirect.from,
+      authRedirectHost: authRedirect.host,
+    }),
     ...(navError && { error: navError }),
   };
 };
