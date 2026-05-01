@@ -91,6 +91,17 @@ describe('HTTPTransport — abort-on-disconnect (issue #8)', () => {
           handlerResolve();
           return;
         }
+        // The disconnect can race ahead of handler entry on a loaded CI
+        // runner: the server registers the socket-close listener before
+        // the handler is called, so controller.abort(reason) may have
+        // already fired by the time we get here. Cover that branch by
+        // checking signal.aborted synchronously, then fall back to the
+        // event listener for the slow path.
+        if (signal.aborted) {
+          captureReason(signal.reason);
+          handlerResolve();
+          return;
+        }
         signal.addEventListener('abort', () => {
           captureReason(signal.reason);
           handlerResolve();
