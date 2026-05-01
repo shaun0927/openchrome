@@ -14,6 +14,7 @@
   <a href="https://github.com/shaun0927/openchrome/releases/latest"><img src="https://img.shields.io/github/v/release/shaun0927/openchrome" alt="Latest Release"></a>
   <a href="https://github.com/shaun0927/openchrome/releases/latest"><img src="https://img.shields.io/github/release-date/shaun0927/openchrome" alt="Release Date"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
+  <a href="https://mseep.ai/app/shaun0927-openchrome"><img src="assets/badges/mseep.png" alt="Listed on MseeP.ai" height="20"></a>
 </p>
 
 <p align="center">
