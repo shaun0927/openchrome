@@ -87,6 +87,9 @@ import { registerCrawlSitemapTool } from './crawl-sitemap';
 // Natural language action API (#578)
 import { registerActTool } from './act';
 
+// Composite page-health check (#token-efficiency)
+import { registerValidatePageTool } from './validate-page';
+
 // Structured extraction (#571)
 import { registerExtractDataTool } from './extract-data';
 
@@ -183,6 +186,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Natural language action API (#578)
   registerActTool(server);
+
+  // Composite page-health check (#token-efficiency)
+  registerValidatePageTool(server);
 
   // Structured extraction (#571)
   registerExtractDataTool(server);

@@ -31,6 +31,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   wait_for: 1,
   memory: 1,
   lightweight_scroll: 1,
+  console_capture: 1,         // src/tools/console-capture.ts — surfaces page errors during validation (#token-efficiency)
   oc_stop: 1,
   oc_profile_status: 1,
   oc_session_snapshot: 1,
@@ -40,6 +41,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_copy_to_clipboard: 1,
   oc_open_host_settings: 1,
   act: 1,                     // src/tools/act.ts — composite NL action API (#578)
+  validate_page: 1,           // src/tools/validate-page.ts — composite page-health check (#token-efficiency)
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
@@ -54,7 +56,6 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   page_pdf: 2,
   page_screenshot: 2,
   page_content: 2,
-  console_capture: 2,
   performance_metrics: 2,
   file_upload: 2,
   batch_execute: 2,

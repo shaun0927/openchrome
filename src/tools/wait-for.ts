@@ -9,7 +9,7 @@ import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'wait_for',
-  description: 'Wait for a condition before proceeding.',
+  description: "Wait for a condition. Strongly prefer 'function', 'selector', or 'url_match' — they return as soon as the condition is true (1 round-trip). Use 'timeout' only as a last resort: it blocks for a fixed duration and returns no information, forcing you to poll with another tool afterwards.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,7 +20,7 @@ const definition: MCPToolDefinition = {
       type: {
         type: 'string',
         enum: ['selector', 'selector_hidden', 'function', 'navigation', 'url_match', 'timeout'],
-        description: 'Condition type to wait for',
+        description: "Condition. PREFER: 'selector' (element appears), 'selector_hidden', 'function' (custom JS predicate, e.g. value=\"document.querySelectorAll('.error').length>0\"), 'url_match', 'navigation'. AVOID 'timeout' — it just sleeps.",
       },
       value: {
         type: 'string',
