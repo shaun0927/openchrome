@@ -16,6 +16,12 @@ import type { ProfileType } from './profile-manager';
 import { writeMarker, removeMarker } from './ownership-marker';
 import { registerManagedChrome, unregisterManagedChrome } from '../utils/sync-shutdown';
 import { classifyExit, ExitClassification, quiesceMs } from './exit-classifier';
+import {
+  resolveLaunchMode,
+  AttachConsentRequiredError,
+  LaunchMode as ResolvedLaunchMode,
+} from './launch-mode-resolver';
+import { detectRunningChromes, filterByProfile, pickPreferredChrome } from './process-detector';
 export type { ProfileType } from './profile-manager';
 
 /**
@@ -390,10 +396,53 @@ export class ChromeLauncher {
   private async launchChrome(options: LaunchOptions = {}): Promise<ChromeInstance> {
     const port = options.port || this.port;
 
-    // Check if Chrome is already running with debug port.
-    // Use a brief retry window (5s) instead of a single-shot check, because Chrome
-    // may still be binding the debug port during startup (1-5s window).
-    const existingWs = await waitForDebugPort(port, 5000).catch(() => null);
+    // #659: resolve launch mode (auto / attach / isolated).
+    // Default 'auto' = existing behavior (probe-then-spawn).
+    const launchMode: ResolvedLaunchMode = resolveLaunchMode(
+      {},
+      { OPENCHROME_LAUNCH_MODE: process.env.OPENCHROME_LAUNCH_MODE },
+      { chromeLaunchMode: (getGlobalConfig() as { chromeLaunchMode?: string }).chromeLaunchMode },
+    );
+
+    // 'isolated' mode: skip the existing-Chrome probe entirely. Always spawn
+    // our own Chrome with our isolated user-data-dir. Used for clean-room
+    // scraping where attaching to a stray developer Chrome would be wrong.
+    let existingWs: string | null = null;
+    if (launchMode === 'isolated') {
+      console.error('[ChromeLauncher] Launch mode: isolated — skipping debug-port probe.');
+    } else {
+      // Check if Chrome is already running with debug port.
+      // Use a brief retry window (5s) instead of a single-shot check, because Chrome
+      // may still be binding the debug port during startup (1-5s window).
+      existingWs = await waitForDebugPort(port, 5000).catch(() => null);
+    }
+
+    // 'attach' mode: must attach. If no debug port responded, surface a
+    // structured error (no auto-restart per #659 policy decision #2).
+    if (launchMode === 'attach' && !existingWs) {
+      // Diagnostic: enumerate any running Chromes so the agent can hint at
+      // the right CLI invocation. Read-only, never kills anything.
+      try {
+        const candidates = filterByProfile(
+          detectRunningChromes(),
+          options.profileDirectory,
+        );
+        const chosen = pickPreferredChrome(candidates);
+        if (chosen) {
+          console.error(
+            `[ChromeLauncher] attach mode: detected Chrome (PID ${chosen.pid}, variant=${chosen.variant}) ` +
+              `but it is not exposing --remote-debugging-port=${port}. ` +
+              `openchrome will NOT auto-restart your Chrome. Re-launch it with --remote-debugging-port=${port}.`,
+          );
+        } else {
+          console.error(`[ChromeLauncher] attach mode: no Chrome processes found.`);
+        }
+      } catch (err) {
+        console.error(`[ChromeLauncher] attach mode: process detection failed:`, err);
+      }
+      throw new AttachConsentRequiredError(port);
+    }
+
     if (existingWs) {
       console.error(`[ChromeLauncher] Found existing Chrome on port ${port}`);
       const pendingProc = this.pendingProcess;
