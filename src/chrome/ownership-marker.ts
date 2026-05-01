@@ -163,34 +163,76 @@ export function readMarker(filePath: string): OwnershipMarker | null {
 
 /**
  * Discover all known markers.
- * - Primary: walks `~/.openchrome/profiles/*` for `.openchrome-managed` files.
- * - Fallback: every `~/.openchrome/state/markers/*.json`.
- * Custom user-data-dirs that live elsewhere are NOT scanned (we only know
- * about ones we wrote into our own profile root).
+ *
+ * Scans (deduplicated):
+ *   - `~/.openchrome/profile/`              — singular persistent profile from
+ *     `ProfileManager.resolveProfile()` (codex P1 review on #667 — the previous
+ *     scan only walked the plural `profiles/*` and missed every real launch).
+ *   - `~/.openchrome/profile/<sub>/`        — multi-profile sub-dirs.
+ *   - `~/.openchrome/headless-shell-profile/` — headless-shell binary profile.
+ *   - `~/.openchrome/profiles/*`            — pool/multi-profile (forwards-compat).
+ *   - `~/.openchrome/state/markers/*.json`  — fallback marker store.
+ *
+ * Custom user-data-dirs that live outside `~/.openchrome` are NOT scanned —
+ * the marker still exists at the writer's userDataDir but we don't know to
+ * look for it from a future startup. Operators relying on custom paths can
+ * use the runtime sync-kill (`sync-shutdown.ts`) which targets exact PIDs.
  */
 export function listMarkers(): Array<{ filePath: string; marker: OwnershipMarker }> {
   const out: Array<{ filePath: string; marker: OwnershipMarker }> = [];
+  const seen = new Set<string>();
 
-  const profilesRoot = path.join(os.homedir(), '.openchrome', 'profiles');
+  const home = os.homedir();
+  const candidateDirs: string[] = [
+    path.join(home, '.openchrome', 'profile'),
+    path.join(home, '.openchrome', 'headless-shell-profile'),
+  ];
+
+  // `~/.openchrome/profile/<sub>` (e.g. when --profile-directory creates a
+  // Chrome multi-profile sub-folder under the persistent root).
   try {
-    const entries = fs.readdirSync(profilesRoot, { withFileTypes: true });
+    const profileRoot = path.join(home, '.openchrome', 'profile');
+    const entries = fs.readdirSync(profileRoot, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const candidate = path.join(profilesRoot, entry.name, MARKER_FILENAME);
-      const m = readMarker(candidate);
-      if (m) out.push({ filePath: candidate, marker: m });
+      candidateDirs.push(path.join(profileRoot, entry.name));
     }
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error(`${LOG_PREFIX} Failed to list profile markers:`, err);
+      console.error(`${LOG_PREFIX} Failed to enumerate ~/.openchrome/profile:`, err);
     }
   }
 
+  // `~/.openchrome/profiles/*` — pool / future multi-profile (#659).
+  try {
+    const profilesRoot = path.join(home, '.openchrome', 'profiles');
+    const entries = fs.readdirSync(profilesRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      candidateDirs.push(path.join(profilesRoot, entry.name));
+    }
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error(`${LOG_PREFIX} Failed to enumerate ~/.openchrome/profiles:`, err);
+    }
+  }
+
+  for (const dir of candidateDirs) {
+    const candidate = path.join(dir, MARKER_FILENAME);
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    const m = readMarker(candidate);
+    if (m) out.push({ filePath: candidate, marker: m });
+  }
+
+  // Fallback marker store (used when the user-data-dir is unwritable).
   try {
     const entries = fs.readdirSync(STATE_DIR, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
       const candidate = path.join(STATE_DIR, entry.name);
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
       const m = readMarker(candidate);
       if (m) out.push({ filePath: candidate, marker: m });
     }

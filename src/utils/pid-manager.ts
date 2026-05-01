@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { listMarkers, deleteMarkerFile, verifyChromePidIdentity, OwnershipMarker } from "../chrome/ownership-marker";
+import { listAllTokens } from "./session-resume-token";
 
 const LOG_PREFIX = "[openchrome:pid]";
 
@@ -223,8 +224,25 @@ export function reapOrphanMarkers(): number {
   const items = listMarkers();
   if (items.length === 0) return 0;
 
+  // Honor session-resume tokens (codex P1 review on #667). A token holding a
+  // Chrome alive across an MCP restart must not be reaped on the next
+  // startup, otherwise OPENCHROME_KILL_ON_EXIT=auto + token semantics break.
+  const protectedChromePids = new Set<number>();
+  try {
+    const now = Date.now();
+    for (const tok of listAllTokens()) {
+      if (tok.ttlEpochMs > now) protectedChromePids.add(tok.chromePid);
+    }
+  } catch {
+    // Best-effort: a missing/unreadable token store should not stop reaping.
+  }
+
   let killed = 0;
   for (const { filePath, marker } of items) {
+    if (protectedChromePids.has(marker.pid)) {
+      // Active session-resume token covers this Chrome — leave alone.
+      continue;
+    }
     const decision = classifyMarker(marker);
     switch (decision) {
       case 'kill':
