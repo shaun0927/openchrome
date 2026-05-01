@@ -7,6 +7,7 @@
 import * as readline from 'readline';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { MCPTransport } from './index';
+import { shutdownSyncBestEffort } from '../utils/sync-shutdown';
 
 export class StdioTransport implements MCPTransport {
   private rl: readline.Interface | null = null;
@@ -79,6 +80,9 @@ export class StdioTransport implements MCPTransport {
 
     this.rl.on('close', () => {
       console.error('[StdioTransport] stdin closed (readline), shutting down...');
+      // #661 Phase 2: synchronous best-effort kill before process.exit so we
+      // don't orphan Chrome when the parent agent disconnects.
+      try { shutdownSyncBestEffort(); } catch { /* never throw at exit */ }
       process.exit(0);
     });
 
@@ -88,10 +92,12 @@ export class StdioTransport implements MCPTransport {
     // catches these edge cases.
     process.stdin.on('end', () => {
       console.error('[StdioTransport] stdin ended, shutting down...');
+      try { shutdownSyncBestEffort(); } catch { /* never throw at exit */ }
       process.exit(0);
     });
     process.stdin.on('error', () => {
       console.error('[StdioTransport] stdin error, shutting down...');
+      try { shutdownSyncBestEffort(); } catch { /* never throw at exit */ }
       process.exit(0);
     });
   }

@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { listMarkers, deleteMarkerFile, verifyChromePidIdentity, OwnershipMarker } from "../chrome/ownership-marker";
 
 const LOG_PREFIX = "[openchrome:pid]";
 
@@ -200,5 +201,78 @@ export function cleanOrphanedChromeProcesses(basePorts: number[]): number {
     }
     removeChromePid(port);
   }
+
+  // Also walk ownership markers (#661 Phase 5) to catch Chromes that bound to
+  // a port we don't know about, or whose PID file was lost.
+  killed += reapOrphanMarkers();
   return killed;
+}
+
+/**
+ * Marker-driven orphan reap (#661 Phase 5).
+ * Performs a 4-way check before killing any process:
+ *   1. PID alive?
+ *   2. Identity match (cmdline contains the marker's --user-data-dir)?
+ *   3. Parent MCP still alive AND still openchrome (PID-reuse defense)?
+ *   4. Marker UUID consistent?
+ * Mismatch on any check → leave the process alone, only delete the stale marker.
+ *
+ * Attach-mode Chromes are never reaped because attach mode never writes a marker.
+ */
+export function reapOrphanMarkers(): number {
+  const items = listMarkers();
+  if (items.length === 0) return 0;
+
+  let killed = 0;
+  for (const { filePath, marker } of items) {
+    const decision = classifyMarker(marker);
+    switch (decision) {
+      case 'kill':
+        console.error(`${LOG_PREFIX} Killing orphan Chrome PID ${marker.pid} (marker ${marker.marker.slice(0, 8)})`);
+        try {
+          killProcessTree(marker.pid, 'SIGTERM');
+          killed++;
+        } catch {
+          /* ignore */
+        }
+        deleteMarkerFile(filePath);
+        break;
+      case 'stale-marker':
+        deleteMarkerFile(filePath);
+        break;
+      case 'parent-alive':
+      case 'identity-mismatch':
+      case 'unknown':
+      default:
+        // Leave the process alone.
+        break;
+    }
+  }
+  return killed;
+}
+
+export type MarkerDecision = 'kill' | 'stale-marker' | 'parent-alive' | 'identity-mismatch' | 'unknown';
+
+/** Pure decision: what should the reaper do with a given marker? */
+export function classifyMarker(marker: OwnershipMarker): MarkerDecision {
+  // 1. Is the Chrome PID alive at all?
+  if (!isPidAlive(marker.pid)) {
+    return 'stale-marker';
+  }
+
+  // 2. Identity check: do the running process's args match the marker's user-data-dir?
+  if (!verifyChromePidIdentity(marker.pid, marker.userDataDir)) {
+    // PID was reused by something unrelated, or we can't verify (e.g. macOS truncation).
+    // Conservative: do not kill.
+    return 'identity-mismatch';
+  }
+
+  // 3. Is the parent MCP still alive?
+  if (isPidAlive(marker.ppid)) {
+    // Parent alive → still managed. Could be a quiesced Chrome (#660) or in-flight startup.
+    return 'parent-alive';
+  }
+
+  // 4. Parent is dead and Chrome is alive: orphan we own.
+  return 'kill';
 }

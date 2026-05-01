@@ -13,7 +13,16 @@ import { spawnProcessGuardian } from '../utils/process-guardian';
 import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAST_SESSION } from '../config/defaults';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
+import { writeMarker, removeMarker } from './ownership-marker';
+import { registerManagedChrome, unregisterManagedChrome } from '../utils/sync-shutdown';
 export type { ProfileType } from './profile-manager';
+
+/**
+ * Lifecycle ownership of a Chrome process (#661).
+ * - 'isolated': openchrome spawned this Chrome and owns its lifecycle. Eligible for sync-kill on exit.
+ * - 'attach' (#659, future): attached to a user-running Chrome. NEVER killed by openchrome.
+ */
+export type LaunchMode = 'isolated' | 'attach';
 
 export interface ChromeInstance {
   wsEndpoint: string;
@@ -21,6 +30,10 @@ export interface ChromeInstance {
   process?: ChildProcess;
   userDataDir?: string;
   profileType?: ProfileType;
+  /** Lifecycle ownership (#661). Defaults to 'isolated' for our spawn-based path. */
+  launchMode?: LaunchMode;
+  /** Random per-launch UUID written into the ownership marker file. */
+  ownershipMarker?: string;
 }
 
 export interface LaunchOptions {
@@ -372,6 +385,8 @@ export class ChromeLauncher {
         wsEndpoint: existingWs,
         httpEndpoint: `http://127.0.0.1:${port}`,
         ...(pendingProc && pendingProc.exitCode === null && { process: pendingProc }),
+        // Connected to a Chrome we did not spawn — never kill on exit (#661 Phase 6).
+        launchMode: 'attach',
       };
       // Attached to user-started Chrome — assume real profile
       this.profileState = { type: 'real', extensionsAvailable: true };
@@ -677,17 +692,28 @@ export class ChromeLauncher {
     }
     this.pendingProcess = null; // Success — no longer pending
 
+    // Write ownership marker (#661 Phase 1). Only for spawn-based 'isolated' launches —
+    // attach-mode (above) leaves the user's Chrome alone and writes no marker.
+    let ownershipMarker: string | null = null;
+    if (chromeProcess.pid && userDataDir) {
+      ownershipMarker = writeMarker({ chromePid: chromeProcess.pid, userDataDir });
+    }
+
     this.instance = {
       wsEndpoint,
       httpEndpoint: `http://127.0.0.1:${port}`,
       process: chromeProcess,
       userDataDir,
       profileType,
+      launchMode: 'isolated',
+      ...(ownershipMarker ? { ownershipMarker } : {}),
     };
 
     // Persist Chrome PID to disk for orphan detection
     if (chromeProcess.pid) {
       writeChromePid(port, chromeProcess.pid);
+      // #661: register for synchronous shutdown.
+      registerManagedChrome({ pid: chromeProcess.pid, userDataDir });
     }
 
     this._intentionalStop = false;
@@ -744,11 +770,18 @@ export class ChromeLauncher {
       try { this.pendingProcess.kill(); } catch { /* ignore */ }
       this.pendingProcess = null;
     }
+    // Attach mode (#659, #661 Phase 6): we did not spawn this Chrome — never kill it.
+    if (this.instance?.launchMode === 'attach') {
+      console.error('[ChromeLauncher] close(): attach-mode Chrome left alive (user-owned).');
+      this.instance = null;
+      return;
+    }
     if (this.instance?.process) {
       console.error('[ChromeLauncher] Closing Chrome...');
       const proc = this.instance.process;
       const userDataDir = this.instance.userDataDir;
       const profileType = this.currentProfileType;
+      const chromePidForMarker = proc.pid;
 
       if (process.platform === 'win32' && proc.pid) {
         try {
@@ -803,6 +836,12 @@ export class ChromeLauncher {
         } catch {
           // Ignore cleanup errors
         }
+      }
+
+      // Remove ownership marker (#661 Phase 1).
+      if (chromePidForMarker) {
+        removeMarker({ chromePid: chromePidForMarker, userDataDir });
+        unregisterManagedChrome(chromePidForMarker);
       }
     }
     // Remove Chrome PID file before clearing instance
