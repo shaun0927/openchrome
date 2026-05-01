@@ -15,6 +15,7 @@ import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { normalizeQuery } from '../utils/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
+import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -49,6 +50,11 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms (50-2000). Default: 300',
       },
+      loginCheck: {
+        type: 'string',
+        enum: ['auto', 'off'],
+        description: 'After submit, run a generic login-failure detector that flips success → failure when the password form is still mounted. Default: "auto". Set "off" to restore pre-#658 behavior.',
+      },
     },
     required: ['tabId', 'fields'],
   },
@@ -67,6 +73,7 @@ const handler: ToolHandler = async (
   const clearFirst = args.clear_first !== false; // Default to true
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 300, 50), 2000);
+  const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
 
   const sessionManager = getSessionManager();
 
@@ -341,6 +348,7 @@ const handler: ToolHandler = async (
       }
 
       // Optional: Click submit button
+      let loginResult: LoginDetectResult | null = null;
       if (submit && filledFields.length > 0) {
         try {
           const submitLower = normalizeQuery(submit);
@@ -374,9 +382,32 @@ const handler: ToolHandler = async (
           }, submitLower), 10000, 'fill_form', context);
 
           if (submitButton) {
+            // #658: capture pre-submit URL/origin BEFORE the click for the login-outcome detector.
+            const preSubmitUrl = page.url();
+            let preSubmitOrigin = '';
+            try { preSubmitOrigin = new URL(preSubmitUrl).origin; } catch { preSubmitOrigin = ''; }
+
             await page.mouse.click(Math.round(submitButton.x), Math.round(submitButton.y));
             submitted = true;
             await new Promise(resolve => setTimeout(resolve, DEFAULT_FORM_SUBMIT_SETTLE_MS));
+
+            // #658: Detect generic login failure (form still mounted, error banner, no nav).
+            // Only runs when (a) the user opted in (loginCheck !== 'off'), (b) the form
+            // contained a password field. We check (b) by sniffing the page after submit;
+            // forms without a password field skip the detector entirely so non-login
+            // submissions are unaffected.
+            if (loginCheck === 'auto') {
+              try {
+                const hasPasswordField = await page.evaluate(
+                  () => document.querySelector('input[type="password"]') !== null,
+                );
+                if (hasPasswordField) {
+                  loginResult = await detectLoginOutcome(page as any, { preSubmitOrigin, preSubmitUrl });
+                }
+              } catch {
+                // Detector errors are non-fatal — leave loginResult null.
+              }
+            }
           } else {
             errors.push(`Could not find submit button matching "${submit}"`);
           }
@@ -385,7 +416,7 @@ const handler: ToolHandler = async (
           errors.push(`Failed to submit: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      return { submitted };
+      return { submitted, loginResult };
     }, { settleMs: 200 });
 
     // Build compact result message
@@ -409,6 +440,21 @@ const handler: ToolHandler = async (
       resultParts.push(`Errors: ${errors.join('; ')}`);
     }
 
+    // #658: surface login-detector outcome.
+    const loginOutcome = formResult.loginResult;
+    if (loginOutcome && loginOutcome.outcome === 'failed') {
+      resultParts.push(`Login appears to have failed: ${loginOutcome.reason}`);
+    } else if (loginOutcome && loginOutcome.outcome === 'success') {
+      resultParts.push(`Login appears successful: ${loginOutcome.reason}`);
+    }
+
+    // Failure conditions (in priority order):
+    //   1. Submit was attempted, the page still shows the login form, and the
+    //      detector classified the outcome as 'failed' (#658).
+    //   2. Errors collected during fill AND no fields were filled.
+    const detectorFailedLogin = loginOutcome?.outcome === 'failed';
+    const isError = detectorFailedLogin || (errors.length > 0 && filledFields.length === 0);
+
     return {
       content: [
         {
@@ -416,8 +462,9 @@ const handler: ToolHandler = async (
           text: resultParts.join('\n') + (delta || ''),
         },
       ],
-      isError: errors.length > 0 && filledFields.length === 0,
-    };
+      isError,
+      ...(detectorFailedLogin ? { _meta: { errorReason: 'login_failed', loginCheckReason: loginOutcome.reason } } : {}),
+    } as MCPResult;
   } catch (error) {
     return {
       content: [
