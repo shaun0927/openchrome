@@ -72,6 +72,11 @@ const definition: MCPToolDefinition = {
         enum: ['high', 'normal', 'low'],
         description: 'Screenshot quality. low: reduced resolution and quality for smaller payload.',
       },
+      screenshotFormat: {
+        type: 'string',
+        enum: ['webp', 'png', 'jpeg'],
+        description: 'Only for action "screenshot". Image format for the returned base64. Default: "webp" (smallest payload). Use "png" for clients that cannot decode webp inline (e.g. some MCP UIs), at the cost of larger payloads. "screenshotQuality" is ignored for png (PNG is lossless).',
+      },
       includeUserAgentShadowDOM: {
         type: 'boolean',
         description: 'Include user-agent shadow DOM in hit detection. Default: false',
@@ -161,6 +166,23 @@ const handler: ToolHandler = async (
             : adaptive.getQualityForMode(effectiveMode);
         const preset = QUALITY_PRESETS[effectiveQuality];
 
+        // Determine output format. Default stays webp for backward compatibility
+        // and smallest payload; agents can request png for clients that cannot
+        // decode webp inline (e.g. some MCP UIs surface webp as
+        // "Mime type image/webp does not support decoding").
+        const formatArg = args.screenshotFormat as string | undefined;
+        const SUPPORTED_FORMATS = ['webp', 'png', 'jpeg'] as const;
+        type ScreenshotFormat = (typeof SUPPORTED_FORMATS)[number];
+        const effectiveFormat: ScreenshotFormat =
+          formatArg && (SUPPORTED_FORMATS as readonly string[]).includes(formatArg)
+            ? (formatArg as ScreenshotFormat)
+            : 'webp';
+        const mimeTypeForFormat: Record<ScreenshotFormat, string> = {
+          webp: 'image/webp',
+          png: 'image/png',
+          jpeg: 'image/jpeg',
+        };
+
         // text_only mode: skip expensive screenshot, return visual summary
         if (effectiveMode === 'text_only') {
           const summary = (context && !hasBudget(context, 5_000)) ? null : await generateVisualSummary(page);
@@ -181,11 +203,18 @@ const handler: ToolHandler = async (
               (async () => {
                 const cdpSession = await (page as any).target().createCDPSession();
                 try {
-                  const { data } = await cdpSession.send('Page.captureScreenshot', {
-                    format: 'webp',
-                    quality: preset.quality,
-                    optimizeForSpeed: true,
-                  });
+                  // PNG is lossless: omit the quality field (CDP rejects
+                  // quality for png) and skip optimizeForSpeed (it only
+                  // applies to lossy encoders).
+                  const captureParams: Record<string, unknown> =
+                    effectiveFormat === 'png'
+                      ? { format: 'png' }
+                      : {
+                          format: effectiveFormat,
+                          quality: preset.quality,
+                          optimizeForSpeed: true,
+                        };
+                  const { data } = await cdpSession.send('Page.captureScreenshot', captureParams);
                   return data as string;
                 } finally {
                   await cdpSession.detach().catch(() => {});
@@ -194,7 +223,7 @@ const handler: ToolHandler = async (
               new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
             ]);
             if (screenshotData === null) return null;
-            return { data: screenshotData, mimeType: 'image/webp' };
+            return { data: screenshotData, mimeType: mimeTypeForFormat[effectiveFormat] };
           } catch {
             return null;
           }
