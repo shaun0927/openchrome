@@ -92,15 +92,17 @@ const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status', 'oc_ses
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
 
-// Read-only tools called at high frequency — skip session/profile decorators
-// to save ~50 tokens per call. They don't change session state, so resumability
-// metadata is not load-bearing here.
-const READONLY_HIGH_FREQ_TOOLS = new Set([
+// State-stable tools called at high frequency — skip session/profile decorators
+// to save ~50 tokens per call. These tools either don't mutate session/page
+// state, or any mutation is implicit in the user's next call (so resumability
+// metadata isn't load-bearing here). javascript_tool is intentionally excluded:
+// it executes arbitrary JS and can mutate state in ways the agent needs the
+// session/profile context to recover from.
+const STATE_STABLE_HIGH_FREQ_TOOLS = new Set([
   'read_page',
   'query_dom',
   'find',
   'inspect',
-  'javascript_tool',
   'wait_for',
   'page_content',
   'tabs_context',
@@ -1235,7 +1237,7 @@ export class MCPServer {
       }
 
       // Inject session context for AI agent continuity (#347 Phase 4)
-      if (verbosity !== 'compact' && !['oc_checkpoint', 'oc_connection_health'].includes(toolName) && !READONLY_HIGH_FREQ_TOOLS.has(toolName)) {
+      if (verbosity !== 'compact' && !['oc_checkpoint', 'oc_connection_health'].includes(toolName) && !STATE_STABLE_HIGH_FREQ_TOOLS.has(toolName)) {
         try {
           const cdpClient = getCDPClient();
           const metrics = cdpClient.getConnectionMetrics();
@@ -1253,7 +1255,7 @@ export class MCPServer {
       }
 
       // Inject profile state
-      if (verbosity !== 'compact' && !READONLY_HIGH_FREQ_TOOLS.has(toolName)) {
+      if (verbosity !== 'compact' && !STATE_STABLE_HIGH_FREQ_TOOLS.has(toolName)) {
         const profileInfo = this.buildProfileInfo();
         if (profileInfo) {
           (result as Record<string, unknown>)._profile = profileInfo.profile;
@@ -1266,7 +1268,10 @@ export class MCPServer {
         }
       }
 
-      // Inject proactive hint into _hint and _hintMeta (content[] duplicate removed for token efficiency #token-efficiency)
+      // Inject proactive hint into _hint, _hintMeta, and content[].
+      // _hint / _hintMeta are non-standard fields that not all MCP clients
+      // surface, so pushing into content[] guarantees the hint reaches the
+      // user. Mirrors the error-path injection below for consistency.
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
         if (hintResult) {
@@ -1282,6 +1287,10 @@ export class MCPServer {
               ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
               ...(hintResult.context && { context: hintResult.context }),
             };
+            const content = (result as Record<string, unknown>).content;
+            if (Array.isArray(content)) {
+              content.push({ type: 'text', text: `\n${hintResult.hint}` });
+            }
           }
         }
       }
