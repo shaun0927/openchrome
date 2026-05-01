@@ -27,9 +27,19 @@ export type { ProfileType } from './profile-manager';
 /**
  * Lifecycle ownership of a Chrome process (#661).
  * - 'isolated': openchrome spawned this Chrome and owns its lifecycle. Eligible for sync-kill on exit.
- * - 'attach' (#659, future): attached to a user-running Chrome. NEVER killed by openchrome.
+ * - 'attach': we connected to a Chrome the user was already running. NEVER killed by openchrome.
+ *
+ * Distinct from `LaunchMode` (#659 — auto/attach/isolated launch *strategy*),
+ * exported below from launch-mode-resolver. To avoid the name shadow noted in
+ * gemini's review of #670, the runtime ownership tag is named `LifecycleMode`.
+ *
+ * Note: the field on `ChromeInstance` is still called `launchMode` for source
+ * compatibility with consumers like the watchdog and sync-shutdown that
+ * already reference it.
  */
-export type LaunchMode = 'isolated' | 'attach';
+export type LifecycleMode = 'isolated' | 'attach';
+/** @deprecated Use `LifecycleMode`. Retained for source compatibility. */
+export type LaunchMode = LifecycleMode;
 
 export interface ChromeInstance {
   wsEndpoint: string;
@@ -38,7 +48,7 @@ export interface ChromeInstance {
   userDataDir?: string;
   profileType?: ProfileType;
   /** Lifecycle ownership (#661). Defaults to 'isolated' for our spawn-based path. */
-  launchMode?: LaunchMode;
+  launchMode?: LifecycleMode;
   /** Random per-launch UUID written into the ownership marker file. */
   ownershipMarker?: string;
 }
@@ -58,6 +68,9 @@ export interface LaunchOptions {
   /** If true, restore Chrome's previous session tabs after crash (default: false).
    *  Enable for long-running sessions where tab preservation matters. */
   restoreLastSession?: boolean;
+  /** #659 launch-mode override (per-call). One of: 'auto' | 'attach' | 'isolated'.
+   *  Highest precedence; falls back to OPENCHROME_LAUNCH_MODE then config then 'auto'. */
+  launchMode?: 'auto' | 'attach' | 'isolated';
 }
 
 const DEFAULT_PORT = 9222;
@@ -396,12 +409,12 @@ export class ChromeLauncher {
   private async launchChrome(options: LaunchOptions = {}): Promise<ChromeInstance> {
     const port = options.port || this.port;
 
-    // #659: resolve launch mode (auto / attach / isolated).
-    // Default 'auto' = existing behavior (probe-then-spawn).
+    // #659: resolve launch mode (auto / attach / isolated). Per-call options
+    // win first (gemini high review on #670), then env, then config, then default 'auto'.
     const launchMode: ResolvedLaunchMode = resolveLaunchMode(
-      {},
+      { launchMode: options.launchMode },
       { OPENCHROME_LAUNCH_MODE: process.env.OPENCHROME_LAUNCH_MODE },
-      { chromeLaunchMode: (getGlobalConfig() as { chromeLaunchMode?: string }).chromeLaunchMode },
+      { chromeLaunchMode: getGlobalConfig().chromeLaunchMode },
     );
 
     // 'isolated' mode: skip the existing-Chrome probe entirely. Always spawn
@@ -476,6 +489,9 @@ export class ChromeLauncher {
           wsEndpoint,
           httpEndpoint: `http://127.0.0.1:${port}`,
           process: pendingProc,
+          // codex P1 review on #670: this Chrome was spawned by us in a prior
+          // attempt that timed out; it is owned by openchrome (NOT attach mode).
+          launchMode: 'isolated',
         };
         console.error(`[ChromeLauncher] Reused pending Chrome process, ready at ${wsEndpoint}`);
         return this.instance;

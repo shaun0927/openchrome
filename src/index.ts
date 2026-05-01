@@ -227,19 +227,42 @@ program
     // Last-resort synchronous Chrome kill on ANY exit path
     // (including uncaughtException, SIGKILL recovery, process.exit())
     process.on('exit', () => {
+      // codex P1 review on #670: respect OPENCHROME_KILL_ON_EXIT and active
+      // session-resume tokens. Without this gate, the stdio-side
+      // shutdownSyncBestEffort() correctly skips kill but this handler
+      // unconditionally kills anyway, defeating the contract.
+      let shouldKill = true;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { shouldKillChromeOnExit } = require('./utils/session-resume-token');
+        shouldKill = shouldKillChromeOnExit();
+      } catch {
+        // session-resume-token module may not be available — fall through
+        // to the historical "always kill" behavior.
+      }
+      if (!shouldKill) {
+        return;
+      }
+
       try {
         const launcher = getChromeLauncher();
-        const chromePid = launcher.getChromePid();
-        if (chromePid) {
-          killChromeTree(chromePid);
+        // #659/#661: never kill an attached Chrome — that's the user's daily driver.
+        if (launcher.getInstance()?.launchMode === 'attach') {
+          // Skip primary launcher; pool instances handled below per-instance.
+        } else {
+          const chromePid = launcher.getChromePid();
+          if (chromePid) {
+            killChromeTree(chromePid);
+          }
         }
       } catch { /* launcher may not be initialized */ }
 
-      // Also kill any pool Chrome instances
+      // Also kill any pool Chrome instances (skipping attach-mode entries).
       try {
         const { getChromePool } = require('./chrome/pool');
         const pool = getChromePool();
         for (const [, instance] of pool.getInstances()) {
+          if (instance.launcher.getInstance?.()?.launchMode === 'attach') continue;
           const pid = instance.launcher.getChromePid();
           if (pid) {
             killChromeTree(pid);
