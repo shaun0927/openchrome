@@ -349,12 +349,23 @@ const handler: ToolHandler = async (
 
       // Optional: Click submit button
       let loginResult: LoginDetectResult | null = null;
+      // #658 (codex P1 + gemini medium): we have to decide PRE-submit whether
+      // this is a login form, scoped to the *form being submitted*. Doing the
+      // password-field check post-submit causes two failure modes:
+      //   (a) successful logins navigate away → password field gone → success
+      //       outcome is never reported.
+      //   (b) pages with a persistent password form (e.g. account settings)
+      //       plus an unrelated form being submitted → detector wrongly fires.
+      let submitTargetIsLogin = false;
+      let submitErrored = false;
       if (submit && filledFields.length > 0) {
         try {
           const submitLower = normalizeQuery(submit);
 
-          // Find submit button
-          const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number } | null => {
+          // Find submit button + report whether its enclosing <form> contains a
+          // password field. The form-scoped check rules out unrelated password
+          // inputs elsewhere on the page.
+          const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number; formHasPassword: boolean } | null => {
             const queryLower = query.toLowerCase();
             const selectors = [
               'button[type="submit"]',
@@ -373,7 +384,15 @@ const handler: ToolHandler = async (
                 if (text.includes(queryLower) || queryLower.includes(text.trim())) {
                   const rect = el.getBoundingClientRect();
                   if (rect.width > 0 && rect.height > 0) {
-                    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+                    const form = el.closest('form');
+                    const formHasPassword = form
+                      ? form.querySelector('input[type="password"]') !== null
+                      : false;
+                    return {
+                      x: rect.x + rect.width / 2,
+                      y: rect.y + rect.height / 2,
+                      formHasPassword,
+                    };
                   }
                 }
               }
@@ -382,6 +401,8 @@ const handler: ToolHandler = async (
           }, submitLower), 10000, 'fill_form', context);
 
           if (submitButton) {
+            submitTargetIsLogin = submitButton.formHasPassword === true;
+
             // #658: capture pre-submit URL/origin BEFORE the click for the login-outcome detector.
             const preSubmitUrl = page.url();
             let preSubmitOrigin = '';
@@ -391,32 +412,29 @@ const handler: ToolHandler = async (
             submitted = true;
             await new Promise(resolve => setTimeout(resolve, DEFAULT_FORM_SUBMIT_SETTLE_MS));
 
-            // #658: Detect generic login failure (form still mounted, error banner, no nav).
-            // Only runs when (a) the user opted in (loginCheck !== 'off'), (b) the form
-            // contained a password field. We check (b) by sniffing the page after submit;
-            // forms without a password field skip the detector entirely so non-login
-            // submissions are unaffected.
-            if (loginCheck === 'auto') {
+            // Run the detector iff (a) caller opted in and (b) the submitted
+            // form was a login form (decided pre-submit, so success is reachable
+            // even when the page has navigated away).
+            if (loginCheck === 'auto' && submitTargetIsLogin) {
               try {
-                const hasPasswordField = await page.evaluate(
-                  () => document.querySelector('input[type="password"]') !== null,
-                );
-                if (hasPasswordField) {
-                  loginResult = await detectLoginOutcome(page as any, { preSubmitOrigin, preSubmitUrl });
-                }
+                loginResult = await detectLoginOutcome(page as any, { preSubmitOrigin, preSubmitUrl });
               } catch {
                 // Detector errors are non-fatal — leave loginResult null.
               }
             }
           } else {
+            // No submit button = the user asked us to submit but we couldn't.
+            // Per qodo Action#1: this is a real failure even if some fields filled.
+            submitErrored = true;
             errors.push(`Could not find submit button matching "${submit}"`);
           }
         } catch (e) {
           throwIfAborted(context);
+          submitErrored = true;
           errors.push(`Failed to submit: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      return { submitted, loginResult };
+      return { submitted, loginResult, submitErrored };
     }, { settleMs: 200 });
 
     // Build compact result message
@@ -449,11 +467,25 @@ const handler: ToolHandler = async (
     }
 
     // Failure conditions (in priority order):
-    //   1. Submit was attempted, the page still shows the login form, and the
-    //      detector classified the outcome as 'failed' (#658).
-    //   2. Errors collected during fill AND no fields were filled.
+    //   1. Submit was attempted but the click target wasn't found OR threw —
+    //      a true submit failure that should never be hidden behind partial
+    //      field fills (qodo Action#1 review on #669).
+    //   2. The login-outcome detector returned 'failed' (#658).
+    //   3. Errors collected during fill AND no fields were filled.
     const detectorFailedLogin = loginOutcome?.outcome === 'failed';
-    const isError = detectorFailedLogin || (errors.length > 0 && filledFields.length === 0);
+    const submitFailed = formResult.submitErrored === true;
+    const isError =
+      submitFailed ||
+      detectorFailedLogin ||
+      (errors.length > 0 && filledFields.length === 0);
+
+    // qodo Action#2: surface a structured errorReason at the top level so
+    // callers can branch on it without parsing the result text or reaching
+    // into _meta. We keep _meta for back-compat with anything that already
+    // reads it.
+    let errorReason: string | undefined;
+    if (detectorFailedLogin) errorReason = 'login_failed';
+    else if (submitFailed) errorReason = 'submit_failed';
 
     return {
       content: [
@@ -463,7 +495,12 @@ const handler: ToolHandler = async (
         },
       ],
       isError,
-      ...(detectorFailedLogin ? { _meta: { errorReason: 'login_failed', loginCheckReason: loginOutcome.reason } } : {}),
+      ...(errorReason ? { errorReason } : {}),
+      ...(detectorFailedLogin
+        ? { _meta: { errorReason: 'login_failed', loginCheckReason: loginOutcome.reason } }
+        : submitFailed
+          ? { _meta: { errorReason: 'submit_failed' } }
+          : {}),
     } as MCPResult;
   } catch (error) {
     return {
