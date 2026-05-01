@@ -429,13 +429,13 @@ If client A opens five tabs and client B opens five tabs, all ten `tabId`s are d
 
 Two mechanisms, used together in practice:
 
-**1. Persistent-profile headless — log in once, automate forever.**
-Point OpenChrome at a persistent `userDataDir` (+ optional `profileDirectory`) and cookies / `localStorage` / IndexedDB survive across runs. After the first login, subsequent **headless** runs stay logged in until the site invalidates the session.
+**1. Persistent-profile login — log in once, automate forever.**
+Point OpenChrome at a persistent `userDataDir` (+ optional `profileDirectory`) and cookies / `localStorage` / IndexedDB survive across runs. After the first login, subsequent runs stay logged in until the site invalidates the session.
 
-**2. Headed fallback for the initial login or WAF-blocked sites.**
-When a human action is genuinely required (first-time login, 2FA, CAPTCHA, WebAuthn) or when a Tier-1/Tier-2 headless attempt is blocked by a CDN/WAF, OpenChrome lazy-launches a separate headed Chrome on a different debug port. Cookies are sync'd from the real Chrome profile before launch, and the headed page is registered back into the same logical session so the surrounding workflow continues seamlessly.
+**2. Headed-by-default — interactive logins just work.**
+Since #657 the launcher runs headed by default; first-time login, 2FA, CAPTCHA, WebAuthn all work without any flag because there's a real visible window. CI / Docker users opt into headless via `--headless` or `OPENCHROME_HEADLESS=1` once their persistent profile is bootstrapped. Cookies sync'd from the real Chrome profile remain available in headless runs.
 
-**Typical pattern:** bootstrap the login once via the headed path → the persistent profile carries the cookies → all subsequent automation runs headless without a window.
+**Typical pattern:** bootstrap the login interactively in the default headed mode → the persistent profile carries the cookies → CI runs use `--headless` and stay authenticated.
 
 ### Does OpenChrome steal focus with popup windows?
 
@@ -443,12 +443,12 @@ When a human action is genuinely required (first-time login, 2FA, CAPTCHA, WebAu
 
 The headed-browser focus-stealing pattern that users encounter with some MCP servers (cross-Space jumps on macOS, un-minimizable popups, per-tool-call window raises) comes from designs where the MCP drives a user-visible browser and creates OS windows as it works. OpenChrome is architected differently:
 
-- **Default mode is headless** — no window exists, so there is nothing to take focus.
 - **`tabs_create` opens a tab, not an OS window.** New tabs are created via CDP inside the already-running Chrome, and OpenChrome never calls `page.bringToFront()` anywhere in the codebase.
-- **The headed fallback is lazy and reused.** When it is needed, it launches **once** per server lifetime; every later navigation/tab runs inside that same instance. At worst you see one focus grab the very first time the fallback activates — not one per action, never one per tab.
-- **The headed fallback is optional.** If persistent-profile headless is sufficient for your sites, you will never see a browser window.
+- **No per-call window raises.** Each navigation/click/tool call runs against the existing window without `bringToFront()`, `focus()`, or any other stealing primitive. After the initial Chrome launch you keep working in your other apps without interruption.
+- **One Chrome per server lifetime.** Auto-launch creates Chrome **once** at startup and reuses it for every later tool call — no popup-per-action loop.
+- **Headless opt-in available.** For CI/server use, `--headless` or `OPENCHROME_HEADLESS=1` runs without any window at all. The default is headed since #657 because headless mode is materially more prone to silent hangs and login failures on real-world sites.
 
-The only scenario in which a window appears at all is the first time the Tier-3 headed fallback activates in a given session.
+The only scenario in which a focus grab can happen is the very first Chrome launch — not one per tool call, never one per tab.
 
 ---
 
@@ -539,6 +539,7 @@ docker run openchrome
 | `OPENCHROME_PPID_WATCH` | Set to `0` to disable the parent-process watcher in stdio mode. Default: enabled. The watcher exits the server when its launching MCP-client parent dies, so abrupt parent termination (force-quit, `kill -9`, tmux teardown) does not orphan the openchrome process. HTTP and `both` transport modes ignore this flag — they remain daemon-capable. |
 | `OPENCHROME_PPID_WATCH_INTERVAL_MS` | Polling interval for the parent watcher in milliseconds. Default: `2000`. Clamped to `[500, 60000]`. |
 | `OPENCHROME_HEALTH_ENDPOINT` | Force-enable (`1`/`true`) or force-disable (`0`/`false`) the `/health` and `/metrics` HTTP listener. Default: on for `--transport http` / `both`, off for `--transport stdio`. Stdio-mode instances usually talk to a single MCP client over the pipe and do not need an external monitoring port; disabling it saves ~200-300 KB heap + one file descriptor per instance. Operators who run stdio under a supervisor can opt in with `OPENCHROME_HEALTH_ENDPOINT=1`; daemon-mode operators who run the health check externally can opt out with `OPENCHROME_HEALTH_ENDPOINT=0`. Invalid values (e.g. `yes`, `2`) fall through to the transport-mode default. |
+| `OPENCHROME_HEADLESS` | Opt into headless Chrome from CI / Docker without `--headless`. Accepts `1`/`true`/`yes` (headless) or `0`/`false`/`no` (headed). Lower precedence than the CLI flag, higher than persisted config. Default since #657 is headed. |
 
 ### Individual flags
 
@@ -554,9 +555,10 @@ openchrome serve \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--auto-launch` | `false` | Auto-launch Chrome if not running |
+| `--headless` | `false` | Run Chrome headless. Also: `OPENCHROME_HEADLESS=1`. Default since #657 is headed. |
 | `--headless-shell` | `false` | Use chrome-headless-shell binary |
-| `--visible` | `false` | Show Chrome window (disables headless) |
-| `--server-mode` | `false` | Compound flag for server deployment |
+| `--visible` | (deprecated) | No-op alias for headed; the new default is headed since #657. Will be removed in a future release. |
+| `--server-mode` | `false` | Compound flag for server deployment (forces `--headless` + auto-launch) |
 
 ---
 
