@@ -365,6 +365,11 @@ const handler: ToolHandler = async (
           // Find submit button + report whether its enclosing <form> contains a
           // password field. The form-scoped check rules out unrelated password
           // inputs elsewhere on the page.
+          //
+          // codex P2 review on #669: a submit button can target a form via the
+          // `form` attribute while being OUTSIDE that form's DOM subtree. We
+          // therefore prefer `el.form` (HTMLFormElement-style API) when
+          // present and fall back to `el.closest('form')`.
           const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number; formHasPassword: boolean } | null => {
             const queryLower = query.toLowerCase();
             const selectors = [
@@ -384,7 +389,11 @@ const handler: ToolHandler = async (
                 if (text.includes(queryLower) || queryLower.includes(text.trim())) {
                   const rect = el.getBoundingClientRect();
                   if (rect.width > 0 && rect.height > 0) {
-                    const form = el.closest('form');
+                    // Prefer the HTMLButtonElement / HTMLInputElement `.form`
+                    // accessor — handles `<button form="loginForm">` cases that
+                    // `closest('form')` misses.
+                    let form: HTMLFormElement | null = (el as HTMLButtonElement | HTMLInputElement).form ?? null;
+                    if (!form) form = el.closest('form');
                     const formHasPassword = form
                       ? form.querySelector('input[type="password"]') !== null
                       : false;
@@ -415,11 +424,32 @@ const handler: ToolHandler = async (
             // Run the detector iff (a) caller opted in and (b) the submitted
             // form was a login form (decided pre-submit, so success is reachable
             // even when the page has navigated away).
+            //
+            // codex P1 review on #669: a single 100ms probe is too short for
+            // real-world latency — successful logins often stay on the form
+            // for >100ms before the redirect lands, producing false 'failed'.
+            // Poll up to ~3s, returning EARLY on the first definitive result
+            // (success → fast; unknown stays cheap; only failed waits the
+            // full window before locking in).
             if (loginCheck === 'auto' && submitTargetIsLogin) {
+              const detectorDeadline = Date.now() + 3000;
+              loginResult = null;
               try {
-                loginResult = await detectLoginOutcome(page as any, { preSubmitOrigin, preSubmitUrl });
+                while (Date.now() < detectorDeadline) {
+                  const probe = await detectLoginOutcome(page as any, { preSubmitOrigin, preSubmitUrl });
+                  if (probe.outcome === 'success') {
+                    loginResult = probe;
+                    break;
+                  }
+                  // Keep the latest snapshot as the working answer; only
+                  // commit to 'failed' after the full window to give
+                  // delayed redirects a chance to land.
+                  loginResult = probe;
+                  if (probe.outcome === 'unknown') break;
+                  await new Promise(resolve => setTimeout(resolve, 200));
+                }
               } catch {
-                // Detector errors are non-fatal — leave loginResult null.
+                // Detector errors are non-fatal — keep whatever loginResult is set.
               }
             }
           } else {
