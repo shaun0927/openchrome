@@ -18,6 +18,22 @@ function createMockPage(opts: {
   return { evaluate } as unknown as jest.Mocked<Pick<Page, 'evaluate'>>;
 }
 
+// Polls `predicate` until it returns truthy or `timeoutMs` elapses. Replaces
+// fixed `setTimeout` waits that were brittle on loaded CI runners — the
+// probe interval is 30ms but a single jest worker tick on the GitHub
+// Actions runners can stretch well past that under contention.
+async function waitFor(
+  predicate: () => boolean,
+  { timeoutMs = 2000, intervalMs = 20 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(`waitFor: predicate did not become truthy within ${timeoutMs}ms`);
+}
+
 describe('TabHealthMonitor', () => {
   let monitor: TabHealthMonitor;
 
@@ -66,8 +82,7 @@ describe('TabHealthMonitor', () => {
 
     monitor.monitorTab('tab1', page as unknown as Page);
 
-    // Wait for enough probes to exceed threshold
-    await new Promise(r => setTimeout(r, 150));
+    await waitFor(() => unhealthyHandler.mock.calls.length > 0);
 
     expect(unhealthyHandler).toHaveBeenCalledWith(
       expect.objectContaining({ targetId: 'tab1' })
@@ -89,7 +104,7 @@ describe('TabHealthMonitor', () => {
 
     monitor.monitorTab('tab1', page as unknown as Page);
 
-    await new Promise(r => setTimeout(r, 150));
+    await waitFor(() => evictHandler.mock.calls.length > 0);
 
     expect(evictHandler).toHaveBeenCalledWith(
       expect.objectContaining({ targetId: 'tab1' })
@@ -118,7 +133,13 @@ describe('TabHealthMonitor', () => {
 
     monitor.monitorTab('tab1', page);
 
-    await new Promise(r => setTimeout(r, 150));
+    // First a failure recovers to healthy: wait until probe count is high
+    // enough that we have observed at least one healthy result after the
+    // initial transient failure.
+    await waitFor(() => {
+      const h = monitor.getTabHealth('tab1');
+      return h !== undefined && h.status === 'healthy' && h.consecutiveFailures === 0 && callCount >= 2;
+    });
 
     const health = monitor.getTabHealth('tab1');
     expect(health?.status).toBe('healthy');
@@ -183,7 +204,7 @@ describe('TabHealthMonitor', () => {
 
     monitor.monitorTab('tab1', page as unknown as Page);
 
-    await new Promise(r => setTimeout(r, 200));
+    await waitFor(() => unhealthyHandler.mock.calls.length > 0);
 
     expect(unhealthyHandler).toHaveBeenCalled();
 
