@@ -2,6 +2,7 @@ import {
   formatMCPServerConfigSnippet,
   getClaudeSetupCommand,
   getCodexServerConfig,
+  getClientLabel,
   getOpenCodeServerConfig,
   getServeArgs,
   formatOpenCodeMCPServerConfigSnippet,
@@ -134,9 +135,14 @@ describe('cli/mcp-client-config', () => {
     });
   });
 
+  test('getClientLabel returns the OpenCode label', () => {
+    expect(getClientLabel('opencode')).toBe('OpenCode');
+  });
+
   test('isSupportedMCPClient validates supported names', () => {
     expect(isSupportedMCPClient('claude')).toBe(true);
     expect(isSupportedMCPClient('codex')).toBe(true);
+    expect(isSupportedMCPClient('opencode')).toBe(true);
     expect(isSupportedMCPClient('cursor')).toBe(false);
   });
 });

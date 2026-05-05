@@ -208,6 +208,11 @@ npx openchrome-mcp setup
 npx openchrome-mcp setup --client codex
 ```
 
+**OpenCode**
+```bash
+npx openchrome-mcp setup --client opencode
+```
+
 One command. Configures the MCP server for the selected client.
 Restart your MCP client after setup completes.
 
@@ -239,6 +244,20 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
     "openchrome": {
       "command": "npm",
       "args": ["exec", "--yes", "--prefer-online", "openchrome-mcp@latest", "--", "serve", "--auto-launch"]
+    }
+  }
+}
+```
+
+
+**OpenCode** (`~/.config/opencode/opencode.json`):
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "openchrome": {
+      "type": "local",
+      "command": ["npx", "--prefer-online", "-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
     }
   }
 }

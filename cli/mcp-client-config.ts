@@ -1,4 +1,4 @@
-export type SupportedMCPClient = 'claude' | 'codex';
+export type SupportedMCPClient = 'claude' | 'codex' | 'opencode';
 export type SetupScope = 'user' | 'project';
 
 export interface ServeArgOptions {
@@ -27,7 +27,7 @@ export interface OpenCodeConfigDocument {
   [key: string]: unknown;
 }
 
-const SUPPORTED_CLIENTS: SupportedMCPClient[] = ['claude', 'codex'];
+const SUPPORTED_CLIENTS: SupportedMCPClient[] = ['claude', 'codex', 'opencode'];
 
 export function getSupportedMCPClients(): SupportedMCPClient[] {
   return [...SUPPORTED_CLIENTS];
@@ -38,7 +38,14 @@ export function isSupportedMCPClient(value: string): value is SupportedMCPClient
 }
 
 export function getClientLabel(client: SupportedMCPClient): string {
-  return client === 'claude' ? 'Claude Code' : 'Codex CLI';
+  switch (client) {
+    case 'claude':
+      return 'Claude Code';
+    case 'codex':
+      return 'Codex CLI';
+    case 'opencode':
+      return 'OpenCode';
+  }
 }
 
 export function getServeArgs(options: ServeArgOptions = {}): string[] {
