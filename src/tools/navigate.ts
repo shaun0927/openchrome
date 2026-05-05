@@ -155,8 +155,19 @@ async function stealthAutoRetry(
   return { content: [{ type: 'text', text: resultText }] };
 }
 
-/** Worker ID used for all headed fallback tabs */
+/** Worker ID used for unprofiled headed fallback tabs */
 const HEADED_WORKER_ID = 'headed';
+
+/**
+ * Worker ID for headed pages that were opened with a Chrome profile.
+ * Keep this distinct from `profile:<directory>` headless workers because those
+ * may already be bound to a profile ChromePool port. Headed pages are indexed
+ * into the main CDP client by registerHeadedPage(), so mixing them with a
+ * port-bound profile worker sends later tool calls to the wrong CDP client.
+ */
+function headedWorkerId(profileDirectory?: string): string {
+  return profileDirectory ? `headed:profile:${profileDirectory}` : HEADED_WORKER_ID;
+}
 
 /**
  * Tier 3 fallback: retry navigation in headed Chrome when stealth also fails.
@@ -194,7 +205,7 @@ async function headedAutoRetry(
       try {
         const sessionManager = getSessionManager();
 
-        const resolvedWorkerId = profileDirectory ? `profile:${profileDirectory}` : HEADED_WORKER_ID;
+        const resolvedWorkerId = headedWorkerId(profileDirectory);
 
         // Create/reuse the headed worker WITH the headed Chrome port so that
         // getCDPClientForWorker() routes CDP commands to the correct instance. (#561)
@@ -266,9 +277,7 @@ async function headedNavigateDirect(
   try {
     const result = await headedFallback.navigatePersistent(targetUrl, options.profileDirectory);
     let tabId: string | undefined;
-    const resolvedWorkerId = options.profileDirectory
-      ? `profile:${options.profileDirectory}`
-      : HEADED_WORKER_ID;
+    const resolvedWorkerId = headedWorkerId(options.profileDirectory);
 
     if (sessionId) {
       try {
@@ -277,10 +286,11 @@ async function headedNavigateDirect(
 
         await sessionManager.getOrCreateWorker(sessionId, resolvedWorkerId, {
           shareCookies: true,
-          // Don't pass port or profileDirectory — the headed page is managed by
-          // HeadedFallbackManager and indexed via registerHeadedPage() into the
-          // main CDPClient. Passing port would create a duplicate puppeteer
-          // connection; passing profileDirectory would trigger ChromePool. (#562)
+          // Don't pass port or profileDirectory for profile-scoped headed pages —
+          // they are managed by HeadedFallbackManager and indexed via
+          // registerHeadedPage() into the main CDPClient. Passing profileDirectory
+          // would trigger ChromePool; reusing `profile:<dir>` would route later
+          // tool calls to a port-bound headless profile worker. (#562, #671)
           ...(!options.profileDirectory && { port: headedPort }),
         });
 
