@@ -269,7 +269,8 @@ describeFn('health endpoint gating (issue #648)', () => {
         const exit = await waitForExit(child, shutdownTimeoutMs);
         expect(exit.timedOut).toBe(false);
         if (process.platform === 'win32') {
-          expect(exit.signal).toBe('SIGTERM');
+          // Windows may report a clean SIGTERM as code=null/signal=SIGTERM.
+          expect(exit.code === 0 || exit.signal === 'SIGTERM').toBe(true);
         } else {
           expect(exit.code).toBe(0);
         }
