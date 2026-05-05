@@ -32,8 +32,11 @@ describe('HTTPTransport — abort-on-disconnect (issue #8)', () => {
     return new Promise<void>((r) => setTimeout(r, 50));
   }
 
-  function postAndAbort(bodyJSON: string, abortAfterMs: number): Promise<void> {
-    return new Promise<void>((resolve) => {
+  async function postAndAbortAfter(
+    bodyJSON: string,
+    afterRequestIsInFlight: Promise<void>,
+  ): Promise<void> {
+    await new Promise<void>((resolve) => {
       const req = http.request({
         hostname: '127.0.0.1',
         port: TEST_PORT,
@@ -46,12 +49,11 @@ describe('HTTPTransport — abort-on-disconnect (issue #8)', () => {
       });
       // Swallow the inevitable "socket hang up" — we are intentionally killing the connection.
       req.on('error', () => resolve());
+      req.on('close', () => resolve());
       req.write(bodyJSON);
       req.end();
-      setTimeout(() => {
-        req.destroy();
-        resolve();
-      }, abortAfterMs);
+
+      afterRequestIsInFlight.then(() => req.destroy()).catch(() => req.destroy());
     });
   }
 
@@ -84,10 +86,13 @@ describe('HTTPTransport — abort-on-disconnect (issue #8)', () => {
   test('aborts handler signal with ClientDisconnectError when client disconnects mid-flight', async () => {
     let captureReason!: (reason: unknown) => void;
     const abortReason = new Promise<unknown>((resolve) => { captureReason = resolve; });
+    let markHandlerReady!: () => void;
+    const handlerReady = new Promise<void>((resolve) => { markHandlerReady = resolve; });
 
     await startTransport(async (_msg, signal) => {
       await new Promise<void>((handlerResolve) => {
         if (!signal) {
+          markHandlerReady();
           handlerResolve();
           return;
         }
@@ -95,11 +100,15 @@ describe('HTTPTransport — abort-on-disconnect (issue #8)', () => {
           captureReason(signal.reason);
           handlerResolve();
         }, { once: true });
+        markHandlerReady();
       });
       return null;
     });
 
-    await postAndAbort(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call' }), 80);
+    await postAndAbortAfter(
+      JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call' }),
+      handlerReady,
+    );
 
     // The inner race timeout must absorb macOS CI event-loop jitter; the
     // abort propagation path (socket close → req.on('close') → controller
