@@ -121,8 +121,9 @@ export class HealthEndpoint {
       });
 
       this.server.listen(this.port, this.bindAddress, () => {
-        console.error(`[HealthEndpoint] Health check: http://${this.bindAddress}:${this.port}/health`);
-        console.error(`[HealthEndpoint] Prometheus metrics: http://${this.bindAddress}:${this.port}/metrics`);
+        const activePort = this.getPort();
+        console.error(`[HealthEndpoint] Health check: http://${this.bindAddress}:${activePort}/health`);
+        console.error(`[HealthEndpoint] Prometheus metrics: http://${this.bindAddress}:${activePort}/metrics`);
         resolve();
       });
 
@@ -145,6 +146,18 @@ export class HealthEndpoint {
         resolve();
       }
     });
+  }
+
+  /**
+   * Return the bound port. This may differ from the constructor port when
+   * callers pass 0 to let the OS allocate a free ephemeral port.
+   */
+  getPort(): number {
+    const address = this.server?.address();
+    if (address && typeof address === 'object') {
+      return address.port;
+    }
+    return this.port;
   }
 
   /**

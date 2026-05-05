@@ -19,7 +19,7 @@ import { Command } from 'commander';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { spawn, ChildProcess } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { checkForUpdates } from './update-check';
 import {
   formatMCPServerConfigSnippet,
@@ -44,6 +44,7 @@ import {
   validateBase32,
 } from './totp-store';
 import { registerAdminKeysCommand } from './admin-keys';
+import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell } from './claude-cli';
 
 const program = new Command();
 
@@ -104,8 +105,6 @@ program
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
   .option('-s, --scope <scope>', 'Installation scope: "user" (global, default) or "project" (current project only)', 'user')
   .action(async (options: { client?: string; dashboard?: boolean; autoLaunch?: boolean; scope?: string }) => {
-    const { execFileSync } = require('child_process');
-
     const requestedClient = options.client || 'claude';
     if (!isSupportedMCPClient(requestedClient)) {
       console.error(`❌ Invalid client. Use one of: ${getSupportedMCPClients().join(', ')}`);
@@ -125,8 +124,10 @@ program
     const serveArgOptions = { autoLaunch: options.autoLaunch, dashboard: options.dashboard };
 
     if (client === 'claude') {
+      const claudeCmd = getClaudeCliCommand();
+
       try {
-        execFileSync('claude', ['--version'], { stdio: 'pipe' });
+        execFileSync(claudeCmd, ['--version'], getClaudeExecFileOptions('pipe'));
       } catch {
         console.error('❌ Claude Code CLI not found.');
         console.error('   Please install Claude Code first: https://claude.ai/code');
@@ -138,7 +139,7 @@ program
       // leaving the other intact and causing dual-registration conflicts.
       for (const removeScope of ['user', 'project'] as const) {
         try {
-          execFileSync('claude', ['mcp', 'remove', 'openchrome', '-s', removeScope], { stdio: 'pipe' });
+          execFileSync(claudeCmd, ['mcp', 'remove', 'openchrome', '-s', removeScope], getClaudeExecFileOptions('pipe'));
         } catch {
           // Ignore if not exists in this scope
         }
@@ -152,7 +153,7 @@ program
       console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
 
       try {
-        execFileSync('claude', setupArgs, { stdio: 'inherit' });
+        execFileSync(claudeCmd, setupArgs, getClaudeExecFileOptions('inherit'));
         console.log('\n✅ MCP server configured successfully!\n');
 
         // Configure tool permissions in ~/.claude/settings.json
@@ -524,13 +525,13 @@ program
     }
 
     // Find claude command
-    const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+    const claudeCmd = getClaudeCliCommand();
 
     // Spawn claude with isolated environment
     const child = spawn(claudeCmd, args, {
       env,
       stdio: 'inherit',
-      shell: process.platform === 'win32',
+      shell: shouldUseClaudeCliShell(),
     });
 
     // Handle exit

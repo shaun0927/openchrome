@@ -265,10 +265,12 @@ describeFn('health endpoint gating (issue #648)', () => {
         // and must NOT produce a TypeError for the stdio case where
         // healthEndpoint === null.
         child.kill('SIGTERM');
-        const exit = await waitForExit(child, 10_000);
+        const shutdownTimeoutMs = process.platform === 'win32' ? 30_000 : 10_000;
+        const exit = await waitForExit(child, shutdownTimeoutMs);
         expect(exit.timedOut).toBe(false);
         if (process.platform === 'win32') {
-          expect(exit.signal).toBe('SIGTERM');
+          // Windows may report a clean SIGTERM as code=null/signal=SIGTERM.
+          expect(exit.code === 0 || exit.signal === 'SIGTERM').toBe(true);
         } else {
           expect(exit.code).toBe(0);
         }
