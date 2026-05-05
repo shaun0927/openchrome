@@ -5,15 +5,21 @@ import { EventEmitter } from 'events';
 
 // Mock launcher
 function createMockLauncher(opts: {
-  instance?: { process?: { pid?: number } } | null;
+  instance?: { process?: { pid?: number }; launchMode?: 'isolated' | 'attach' } | null;
   ensureChrome?: jest.Mock;
   intentionalStop?: boolean;
+  quiesceUntil?: number;
+  recentCrashesMs?: number[];
 } = {}) {
   return {
     getInstance: jest.fn().mockReturnValue(opts.instance ?? null),
     ensureChrome: opts.ensureChrome ?? jest.fn().mockResolvedValue(undefined),
     isLaunching: jest.fn().mockReturnValue(false),
     intentionalStop: opts.intentionalStop ?? false,
+    // #660 fields the watchdog now consults.
+    quiesceUntil: opts.quiesceUntil ?? 0,
+    recentCrashesMs: opts.recentCrashesMs ?? [],
+    clearQuiesce: jest.fn(),
   } as any;
 }
 

@@ -276,9 +276,7 @@ describe('HealthEndpoint', () => {
       listeners: { errorCount1m: 1, errorCount1h: 2 },
     });
 
-    // Use a random high port to avoid conflicts
-    const port = 19200 + Math.floor(Math.random() * 800);
-    endpoint = new HealthEndpoint(provider, port);
+    endpoint = new HealthEndpoint(provider, 0);
     await endpoint.start();
 
     expect(endpoint.isRunning()).toBe(true);
@@ -286,7 +284,7 @@ describe('HealthEndpoint', () => {
     // Make HTTP request
     const response = await new Promise<{ statusCode: number; body: string }>((resolve) => {
       const http = require('http');
-      http.get(`http://127.0.0.1:${port}/health`, (res: any) => {
+      http.get(`http://127.0.0.1:${endpoint.getPort()}/health`, (res: any) => {
         let body = '';
         res.on('data', (chunk: string) => { body += chunk; });
         res.on('end', () => resolve({ statusCode: res.statusCode, body }));
@@ -311,13 +309,12 @@ describe('HealthEndpoint', () => {
       tenants: { activeContexts: 3 },
     });
 
-    const port = 19200 + Math.floor(Math.random() * 800);
-    endpoint = new HealthEndpoint(provider, port);
+    endpoint = new HealthEndpoint(provider, 0);
     await endpoint.start();
 
     const response = await new Promise<{ statusCode: number; body: string }>((resolve) => {
       const http = require('http');
-      http.get(`http://127.0.0.1:${port}/metrics`, (res: any) => {
+      http.get(`http://127.0.0.1:${endpoint.getPort()}/metrics`, (res: any) => {
         let body = '';
         res.on('data', (chunk: string) => { body += chunk; });
         res.on('end', () => resolve({ statusCode: res.statusCode, body }));
@@ -330,13 +327,12 @@ describe('HealthEndpoint', () => {
 
   test('returns 404 for unknown paths', async () => {
     const provider = () => ({ status: 'ok' as const, uptime: 0, memory: process.memoryUsage(), eventLoop: { maxDriftMs: 0, warnCount: 0 } });
-    const port = 19200 + Math.floor(Math.random() * 800);
-    endpoint = new HealthEndpoint(provider, port);
+    endpoint = new HealthEndpoint(provider, 0);
     await endpoint.start();
 
     const response = await new Promise<{ statusCode: number }>((resolve) => {
       const http = require('http');
-      http.get(`http://127.0.0.1:${port}/unknown`, (res: any) => {
+      http.get(`http://127.0.0.1:${endpoint.getPort()}/unknown`, (res: any) => {
         res.on('data', () => {});
         res.on('end', () => resolve({ statusCode: res.statusCode }));
       });
