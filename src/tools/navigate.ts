@@ -65,7 +65,7 @@ interface AuthRedirectGuidance {
 
 function isLikelyLoginUrl(url: URL): boolean {
   const path = url.pathname.toLowerCase();
-  return /(^|\/)(login|signin|sign-in|auth|session|sessions)(\/|$)/.test(path);
+  return /(^|\/)(login|signin|sign-in|auth)(\/|$)/.test(path);
 }
 
 function sameSiteAuthRedirectGuidance(requestedUrl: string, finalUrl: string, title: string): AuthRedirectGuidance | null {
