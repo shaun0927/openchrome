@@ -53,6 +53,45 @@ async function getReadiness(page: Page, context?: ToolContext): Promise<{ readyS
   }
 }
 
+interface AuthRedirectGuidance {
+  authRedirect: true;
+  authRedirectKind: 'same-site-login';
+  redirectedFrom: string;
+  authRedirectUrl: string;
+  authRedirectHost: string;
+  recommendedNextAction: string;
+  message: string;
+}
+
+function isLikelyLoginUrl(url: URL): boolean {
+  const path = url.pathname.toLowerCase();
+  return /(^|\/)(login|signin|sign-in|auth|session|sessions)(\/|$)/.test(path);
+}
+
+function sameSiteAuthRedirectGuidance(requestedUrl: string, finalUrl: string, title: string): AuthRedirectGuidance | null {
+  try {
+    const requested = new URL(requestedUrl);
+    const final = new URL(finalUrl);
+    if (requested.origin !== final.origin) return null;
+    if (requested.pathname === final.pathname) return null;
+
+    const loginTitle = /\b(log[ -]?in|sign[ -]?in|authentication)\b/i.test(title);
+    if (!isLikelyLoginUrl(final) && !loginTitle) return null;
+
+    return {
+      authRedirect: true,
+      authRedirectKind: 'same-site-login',
+      redirectedFrom: requestedUrl,
+      authRedirectUrl: finalUrl,
+      authRedirectHost: final.hostname,
+      recommendedNextAction: 'Open the same URL with headed: true and the same profileDirectory, let the user complete login, then retry headless with that persistent profile.',
+      message: 'ACTION_REQUIRED: Same-site login redirect detected. The requested page resolved to a login/authentication page. Use headed mode with the same persistent profile for the user login step; do not keep retrying unauthenticated headless navigation.',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Auto-fallback: retry navigation with stealth mode when a CDN/WAF block is detected.
  * Closes the original blocked tab (if just created), creates a new stealth tab,
@@ -512,10 +551,13 @@ const handler: ToolHandler = async (
               return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context);
             }
 
+            const reuseUrl = page.url();
+            const reuseTitle = await safeTitle(page);
+            const reuseAuthGuidance = sameSiteAuthRedirectGuidance(targetUrl, reuseUrl, reuseTitle);
             const reuseResultText = JSON.stringify({
               action: 'navigate',
-              url: page.url(),
-              title: await safeTitle(page),
+              url: reuseUrl,
+              title: reuseTitle,
               tabId: existingTabId,
               workerId: resolvedWorkerId,
               reused: true,
@@ -524,6 +566,7 @@ const handler: ToolHandler = async (
               ...(summary && { visualSummary: summary }),
               ...buildCaptchaFields(reuseBlocking),
               ...(reuseBlocking && { blockingPage: reuseBlocking }),
+              ...(reuseAuthGuidance ?? {}),
             });
             return {
               content: [{ type: 'text', text: reuseResultText }],
@@ -576,10 +619,13 @@ const handler: ToolHandler = async (
         if (headedResult) return headedResult;
       }
 
+      const newTabUrl = page.url();
+      const newTabTitle = await safeTitle(page);
+      const newTabAuthGuidance = sameSiteAuthRedirectGuidance(targetUrl, newTabUrl, newTabTitle);
       const newTabResultText = JSON.stringify({
         action: 'navigate',
-        url: page.url(),
-        title: await safeTitle(page),
+        url: newTabUrl,
+        title: newTabTitle,
         tabId: targetId,
         workerId: assignedWorkerId,
         created: true,
@@ -589,6 +635,7 @@ const handler: ToolHandler = async (
         ...(newTabSummary && { visualSummary: newTabSummary }),
         ...buildCaptchaFields(newTabBlocking),
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
+        ...(newTabAuthGuidance ?? {}),
       });
       return {
         content: [{ type: 'text', text: newTabResultText }],

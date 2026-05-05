@@ -522,6 +522,35 @@ describe('NavigateTool', () => {
       expect(parsed.authRedirect).toBe(true);
       expect(parsed.message).toContain('accounts.google.com');
     });
+
+    test('same-site login redirect includes profile handoff guidance', async () => {
+      const handler = await getNavigateHandler();
+      const loginPage = createMockPage({
+        url: 'https://app.test/login',
+        title: 'FreeScout',
+        targetId: 'same-site-login-target',
+      });
+
+      (mockSessionManager.createTarget as jest.Mock).mockResolvedValueOnce({
+        targetId: 'same-site-login-target',
+        page: loginPage,
+        workerId: 'auth-test',
+      });
+
+      const result = await handler(testSessionId, {
+        url: 'https://app.test/protected',
+        workerId: 'auth-test',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.authRedirect).toBe(true);
+      expect(parsed.authRedirectKind).toBe('same-site-login');
+      expect(parsed.redirectedFrom).toBe('https://app.test/protected');
+      expect(parsed.authRedirectUrl).toBe('https://app.test/login');
+      expect(parsed.recommendedNextAction).toContain('headed: true');
+      expect(parsed.message).toContain('Same-site login redirect detected');
+    });
   });
 
   describe('Element Count (SPA Readiness)', () => {
