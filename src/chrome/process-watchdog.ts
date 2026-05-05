@@ -12,6 +12,7 @@
 import { EventEmitter } from 'events';
 import { ChromeLauncher } from './launcher';
 import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+import { shouldRateLimitRelaunch } from './exit-classifier';
 
 /** Idle cadence. 60 s is 6× slower than the default 10 s active rate. */
 const IDLE_INTERVAL_MS = 60_000;
@@ -111,7 +112,25 @@ export class ChromeProcessWatchdog extends EventEmitter {
     }
     if (this.launcher.intentionalStop) return; // Chrome was stopped intentionally — do not relaunch
 
-    const instance = this.launcher.getInstance();
+    // #660: respect user-driven close (quiesce window).
+    if (Date.now() < this.launcher.quiesceUntil) {
+      return;
+    }
+
+    // #660 / #659 coordination: never relaunch a Chrome we did not spawn.
+    const currentInstance = this.launcher.getInstance();
+    if (currentInstance && currentInstance.launchMode === 'attach') {
+      return;
+    }
+
+    // #660 Phase 3 rate-limit: if Chrome has crashed N times within window, pause relaunches.
+    if (shouldRateLimitRelaunch(this.launcher.recentCrashesMs)) {
+      console.error('[ProcessWatchdog] Chrome crashing repeatedly; pausing relaunches. Run oc_stop and inspect logs.');
+      this.cooldownUntil = Date.now() + 60_000;
+      return;
+    }
+
+    const instance = currentInstance;
     let pid: number | undefined;
 
     if (instance) {

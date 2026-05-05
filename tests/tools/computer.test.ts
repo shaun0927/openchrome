@@ -485,6 +485,71 @@ describe('ComputerTool', () => {
         optimizeForSpeed: true,
       }));
     });
+
+    test('returns image/png and omits quality when screenshotFormat="png"', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+        screenshotFormat: 'png',
+      }) as { content: Array<{ type: string; data?: string; mimeType?: string }> };
+
+      expect(result.content[0].type).toBe('image');
+      expect(result.content[0].mimeType).toBe('image/png');
+
+      const cdpSession = await (page as any).createCDPSession();
+      const captureCall = (cdpSession.send as jest.Mock).mock.calls.find(
+        (c) => c[0] === 'Page.captureScreenshot',
+      );
+      expect(captureCall).toBeDefined();
+      const params = captureCall![1] as Record<string, unknown>;
+      expect(params.format).toBe('png');
+      expect(params.quality).toBeUndefined();
+      expect(params.optimizeForSpeed).toBeUndefined();
+    });
+
+    test('returns image/jpeg with quality when screenshotFormat="jpeg"', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+        screenshotFormat: 'jpeg',
+      }) as { content: Array<{ type: string; mimeType?: string }> };
+
+      expect(result.content[0].mimeType).toBe('image/jpeg');
+
+      const cdpSession = await (page as any).createCDPSession();
+      const captureCall = (cdpSession.send as jest.Mock).mock.calls.find(
+        (c) => c[0] === 'Page.captureScreenshot',
+      );
+      const params = captureCall![1] as Record<string, unknown>;
+      expect(params.format).toBe('jpeg');
+      expect(typeof params.quality).toBe('number');
+      expect(params.optimizeForSpeed).toBe(true);
+    });
+
+    test('falls back to webp when screenshotFormat is unrecognized', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+        screenshotFormat: 'tiff',
+      }) as { content: Array<{ type: string; mimeType?: string }> };
+
+      expect(result.content[0].mimeType).toBe('image/webp');
+
+      const cdpSession = await (page as any).createCDPSession();
+      const captureCall = (cdpSession.send as jest.Mock).mock.calls.find(
+        (c) => c[0] === 'Page.captureScreenshot',
+      );
+      expect((captureCall![1] as Record<string, unknown>).format).toBe('webp');
+    });
   });
 
   describe('Scroll Actions', () => {

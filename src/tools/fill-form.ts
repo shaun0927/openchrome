@@ -15,6 +15,7 @@ import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { normalizeQuery } from '../utils/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
+import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -49,6 +50,11 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms (50-2000). Default: 300',
       },
+      loginCheck: {
+        type: 'string',
+        enum: ['auto', 'off'],
+        description: 'After submit, run a generic login-failure detector that flips success → failure when the password form is still mounted. Default: "auto". Set "off" to restore pre-#658 behavior.',
+      },
     },
     required: ['tabId', 'fields'],
   },
@@ -67,6 +73,7 @@ const handler: ToolHandler = async (
   const clearFirst = args.clear_first !== false; // Default to true
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 300, 50), 2000);
+  const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
 
   const sessionManager = getSessionManager();
 
@@ -341,12 +348,29 @@ const handler: ToolHandler = async (
       }
 
       // Optional: Click submit button
+      let loginResult: LoginDetectResult | null = null;
+      // #658 (codex P1 + gemini medium): we have to decide PRE-submit whether
+      // this is a login form, scoped to the *form being submitted*. Doing the
+      // password-field check post-submit causes two failure modes:
+      //   (a) successful logins navigate away → password field gone → success
+      //       outcome is never reported.
+      //   (b) pages with a persistent password form (e.g. account settings)
+      //       plus an unrelated form being submitted → detector wrongly fires.
+      let submitTargetIsLogin = false;
+      let submitErrored = false;
       if (submit && filledFields.length > 0) {
         try {
           const submitLower = normalizeQuery(submit);
 
-          // Find submit button
-          const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number } | null => {
+          // Find submit button + report whether its enclosing <form> contains a
+          // password field. The form-scoped check rules out unrelated password
+          // inputs elsewhere on the page.
+          //
+          // codex P2 review on #669: a submit button can target a form via the
+          // `form` attribute while being OUTSIDE that form's DOM subtree. We
+          // therefore prefer `el.form` (HTMLFormElement-style API) when
+          // present and fall back to `el.closest('form')`.
+          const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number; formHasPassword: boolean } | null => {
             const queryLower = query.toLowerCase();
             const selectors = [
               'button[type="submit"]',
@@ -365,7 +389,19 @@ const handler: ToolHandler = async (
                 if (text.includes(queryLower) || queryLower.includes(text.trim())) {
                   const rect = el.getBoundingClientRect();
                   if (rect.width > 0 && rect.height > 0) {
-                    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+                    // Prefer the HTMLButtonElement / HTMLInputElement `.form`
+                    // accessor — handles `<button form="loginForm">` cases that
+                    // `closest('form')` misses.
+                    let form: HTMLFormElement | null = (el as HTMLButtonElement | HTMLInputElement).form ?? null;
+                    if (!form) form = el.closest('form');
+                    const formHasPassword = form
+                      ? form.querySelector('input[type="password"]') !== null
+                      : false;
+                    return {
+                      x: rect.x + rect.width / 2,
+                      y: rect.y + rect.height / 2,
+                      formHasPassword,
+                    };
                   }
                 }
               }
@@ -374,18 +410,61 @@ const handler: ToolHandler = async (
           }, submitLower), 10000, 'fill_form', context);
 
           if (submitButton) {
+            submitTargetIsLogin = submitButton.formHasPassword === true;
+
+            // #658: capture pre-submit URL/origin BEFORE the click for the login-outcome detector.
+            const preSubmitUrl = page.url();
+            let preSubmitOrigin = '';
+            try { preSubmitOrigin = new URL(preSubmitUrl).origin; } catch { preSubmitOrigin = ''; }
+
             await page.mouse.click(Math.round(submitButton.x), Math.round(submitButton.y));
             submitted = true;
             await new Promise(resolve => setTimeout(resolve, DEFAULT_FORM_SUBMIT_SETTLE_MS));
+
+            // Run the detector iff (a) caller opted in and (b) the submitted
+            // form was a login form (decided pre-submit, so success is reachable
+            // even when the page has navigated away).
+            //
+            // codex P1 review on #669: a single 100ms probe is too short for
+            // real-world latency — successful logins often stay on the form
+            // for >100ms before the redirect lands, producing false 'failed'.
+            // Poll up to ~3s, returning EARLY on the first definitive result
+            // (success → fast; unknown stays cheap; only failed waits the
+            // full window before locking in).
+            if (loginCheck === 'auto' && submitTargetIsLogin) {
+              const detectorDeadline = Date.now() + 3000;
+              loginResult = null;
+              try {
+                while (Date.now() < detectorDeadline) {
+                  const probe = await detectLoginOutcome(page as any, { preSubmitOrigin, preSubmitUrl });
+                  if (probe.outcome === 'success') {
+                    loginResult = probe;
+                    break;
+                  }
+                  // Keep the latest snapshot as the working answer; only
+                  // commit to 'failed' after the full window to give
+                  // delayed redirects a chance to land.
+                  loginResult = probe;
+                  if (probe.outcome === 'unknown') break;
+                  await new Promise(resolve => setTimeout(resolve, 200));
+                }
+              } catch {
+                // Detector errors are non-fatal — keep whatever loginResult is set.
+              }
+            }
           } else {
+            // No submit button = the user asked us to submit but we couldn't.
+            // Per qodo Action#1: this is a real failure even if some fields filled.
+            submitErrored = true;
             errors.push(`Could not find submit button matching "${submit}"`);
           }
         } catch (e) {
           throwIfAborted(context);
+          submitErrored = true;
           errors.push(`Failed to submit: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      return { submitted };
+      return { submitted, loginResult, submitErrored };
     }, { settleMs: 200 });
 
     // Build compact result message
@@ -409,6 +488,35 @@ const handler: ToolHandler = async (
       resultParts.push(`Errors: ${errors.join('; ')}`);
     }
 
+    // #658: surface login-detector outcome.
+    const loginOutcome = formResult.loginResult;
+    if (loginOutcome && loginOutcome.outcome === 'failed') {
+      resultParts.push(`Login appears to have failed: ${loginOutcome.reason}`);
+    } else if (loginOutcome && loginOutcome.outcome === 'success') {
+      resultParts.push(`Login appears successful: ${loginOutcome.reason}`);
+    }
+
+    // Failure conditions (in priority order):
+    //   1. Submit was attempted but the click target wasn't found OR threw —
+    //      a true submit failure that should never be hidden behind partial
+    //      field fills (qodo Action#1 review on #669).
+    //   2. The login-outcome detector returned 'failed' (#658).
+    //   3. Errors collected during fill AND no fields were filled.
+    const detectorFailedLogin = loginOutcome?.outcome === 'failed';
+    const submitFailed = formResult.submitErrored === true;
+    const isError =
+      submitFailed ||
+      detectorFailedLogin ||
+      (errors.length > 0 && filledFields.length === 0);
+
+    // qodo Action#2: surface a structured errorReason at the top level so
+    // callers can branch on it without parsing the result text or reaching
+    // into _meta. We keep _meta for back-compat with anything that already
+    // reads it.
+    let errorReason: string | undefined;
+    if (detectorFailedLogin) errorReason = 'login_failed';
+    else if (submitFailed) errorReason = 'submit_failed';
+
     return {
       content: [
         {
@@ -416,8 +524,14 @@ const handler: ToolHandler = async (
           text: resultParts.join('\n') + (delta || ''),
         },
       ],
-      isError: errors.length > 0 && filledFields.length === 0,
-    };
+      isError,
+      ...(errorReason ? { errorReason } : {}),
+      ...(detectorFailedLogin
+        ? { _meta: { errorReason: 'login_failed', loginCheckReason: loginOutcome.reason } }
+        : submitFailed
+          ? { _meta: { errorReason: 'submit_failed' } }
+          : {}),
+    } as MCPResult;
   } catch (error) {
     return {
       content: [

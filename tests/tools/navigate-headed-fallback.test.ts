@@ -179,7 +179,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed.fallbackTier).toBe(3);
       expect(parsed.fallbackReason).toBe('access-denied');
       expect(parsed.title).toBe('Coupang');
-      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com', undefined);
     });
 
     test('does not escalate to Tier 3 when Tier 2 succeeds', async () => {
@@ -257,7 +257,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed.headed).toBe(true);
       expect(parsed.fallbackTier).toBe(3);
       expect(parsed.fallbackReason).toBe('access-denied');
-      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com', undefined);
     });
 
     test('escalates to Tier 3 when stealth produces broken page (readyState=unknown)', async () => {
@@ -285,7 +285,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       expect(parsed.headed).toBe(true);
       expect(parsed.fallbackTier).toBe(3);
       expect(parsed.fallbackReason).toBe('bot-check');
-      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com', undefined);
     });
 
     test('does NOT escalate to Tier 3 when autoFallback is false and stealth page is empty', async () => {
@@ -445,7 +445,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       // Should use profile-scoped workerId, not "headed"
-      expect(parsed.workerId).toBe('profile:Profile 1');
+      expect(parsed.workerId).toBe('headed:profile:Profile 1');
       expect(parsed.profileDirectory).toBe('Profile 1');
       expect(parsed.headed).toBe(true);
       expect(parsed.userRequested).toBe(true);
@@ -460,7 +460,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       // passing profileDirectory would trigger ChromePool. (#562)
       expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
         testSessionId,
-        'profile:Profile 1',
+        'headed:profile:Profile 1',
         { shareCookies: true },
       );
     });
@@ -483,6 +483,80 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         'headed-target-123',
         testSessionId,
         'headed',
+        mockPage,
+      );
+    });
+
+    test('headed=true with profileDirectory does not reuse an existing headless profile worker', async () => {
+      const handler = await getNavigateHandler();
+      const existingProfileWorker = await mockSessionManager.getOrCreateWorker(testSessionId, 'profile:Profile 1');
+      (existingProfileWorker as any).port = 9444;
+      (existingProfileWorker as any).profileDirectory = 'Profile 1';
+
+      const mockPage = createMockPage({ url: 'https://aws.amazon.com/', targetId: 'headed-profile-123' });
+      mockHeadedGetPage.mockReturnValue(mockPage);
+
+      const result = await handler(testSessionId, {
+        url: 'https://aws.amazon.com',
+        headed: true,
+        profileDirectory: 'Profile 1',
+      });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.workerId).toBe('headed:profile:Profile 1');
+      expect(parsed.profileDirectory).toBe('Profile 1');
+      expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
+        testSessionId,
+        'headed:profile:Profile 1',
+        { shareCookies: true },
+      );
+      expect(mockSessionManager.registerHeadedPage).toHaveBeenCalledWith(
+        'headed-target-123',
+        testSessionId,
+        'headed:profile:Profile 1',
+        mockPage,
+      );
+    });
+
+    test('Tier 3 auto-escalation preserves profileDirectory context', async () => {
+      const handler = await getNavigateHandler();
+      const existingProfileWorker = await mockSessionManager.getOrCreateWorker(testSessionId, 'profile:Profile 1');
+      (existingProfileWorker as any).port = 9444;
+      (existingProfileWorker as any).profileDirectory = 'Profile 1';
+      const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-profile-target-123' });
+      mockHeadedGetPage.mockReturnValue(mockPage);
+      mockHeadedNavigatePersistent.mockResolvedValueOnce({
+        url: 'https://www.coupang.com/',
+        title: 'Coupang',
+        elementCount: 500,
+        blockingPage: null,
+        targetId: 'headed-profile-target-123',
+      });
+
+      mockDetectBlockingPage
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })
+        .mockResolvedValueOnce({ type: 'access-denied', detail: 'Still Denied' });
+
+      const result = await handler(testSessionId, {
+        url: 'https://www.coupang.com',
+        profileDirectory: 'Profile 1',
+      });
+      const parsed = parseResultJSON<NavResult>(result as MCPResult);
+
+      expect(parsed.headed).toBe(true);
+      expect(parsed.fallbackTier).toBe(3);
+      expect(parsed.workerId).toBe('headed:profile:Profile 1');
+      expect(parsed.profileDirectory).toBe('Profile 1');
+      expect(mockHeadedNavigatePersistent).toHaveBeenCalledWith('https://www.coupang.com', 'Profile 1');
+      expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
+        testSessionId,
+        'headed:profile:Profile 1',
+        { shareCookies: true },
+      );
+      expect(mockSessionManager.registerHeadedPage).toHaveBeenCalledWith(
+        'headed-profile-target-123',
+        testSessionId,
+        'headed:profile:Profile 1',
         mockPage,
       );
     });

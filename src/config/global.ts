@@ -15,7 +15,9 @@ export interface GlobalConfig {
   chromeBinary?: string;
   /** Use chrome-headless-shell if available (default: false) */
   useHeadlessShell?: boolean;
-  /** Run Chrome in headless mode (default: true when auto-launch is enabled) */
+  /** Run Chrome in headless mode. Default is headed (#657); this field is the
+   *  persisted-preference layer of the headless resolver (see src/config/headless-resolver.ts).
+   *  Resolution precedence: --headless / --visible CLI flags > OPENCHROME_HEADLESS env > this field > headed default. */
   headless?: boolean;
   /** If true, quit running Chrome to reuse the real profile instead of using temp profile (default: false) */
   restartChrome?: boolean;
@@ -24,6 +26,9 @@ export interface GlobalConfig {
   restoreLastSession?: boolean;
   /** If true, skip cookie bridge on page creation (used in server/headless mode) */
   skipCookieBridge?: boolean;
+  /** #659 Chrome launch mode (persisted-preference layer of the launch-mode resolver).
+   *  Resolution precedence: per-call options.launchMode > OPENCHROME_LAUNCH_MODE env > this field > 'auto' default. */
+  chromeLaunchMode?: 'auto' | 'attach' | 'isolated';
   /** @deprecated authToken removed from GlobalConfig — token flows directly via createTransport() */
   /** Chrome Pool settings for managing multiple Chrome instances */
   pool?: {

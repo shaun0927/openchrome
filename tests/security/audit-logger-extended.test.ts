@@ -22,6 +22,22 @@ function waitForFlush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+async function waitForAuditEntries(
+  logPath: string,
+  expectedCount: number,
+  timeoutMs = 1000,
+): Promise<Array<Record<string, unknown>>> {
+  const deadline = Date.now() + timeoutMs;
+  let lines: Array<Record<string, unknown>> = [];
+  while (Date.now() <= deadline) {
+    await waitForFlush();
+    lines = readAll(logPath);
+    if (lines.length >= expectedCount) return lines;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return lines;
+}
+
 function readAll(p: string): Array<Record<string, unknown>> {
   if (!fs.existsSync(p)) return [];
   return fs
@@ -51,9 +67,7 @@ describe('audit-logger extended fields', () => {
       );
     });
 
-    await waitForFlush();
-    await new Promise((r) => setTimeout(r, 50));
-    const lines = readAll(logPath);
+    const lines = await waitForAuditEntries(logPath, 1);
     expect(lines.length).toBe(1);
     const entry = lines[0];
 
@@ -74,9 +88,7 @@ describe('audit-logger extended fields', () => {
     (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;
 
     logAuditEntry('navigate', 'sess_1', { url: 'https://example.com' });
-    await waitForFlush();
-    await new Promise((r) => setTimeout(r, 50));
-    const entry = readAll(logPath)[0];
+    const entry = (await waitForAuditEntries(logPath, 1))[0];
     expect(entry.tenantId).toBe('unknown');
     expect(entry.requestId).toBeNull();
   });
@@ -87,9 +99,7 @@ describe('audit-logger extended fields', () => {
     process.env.OPENCHROME_AUDIT_EXTENDED = 'false';
 
     logAuditEntry('navigate', 'sess_1', { url: 'https://example.com', password: 'secret' });
-    await waitForFlush();
-    await new Promise((r) => setTimeout(r, 50));
-    const entry = readAll(logPath)[0];
+    const entry = (await waitForAuditEntries(logPath, 1))[0];
     expect(entry.timestamp).toBeDefined();
     expect(entry.args_summary).toBeDefined();
     expect(entry.requestId).toBeUndefined();
@@ -115,9 +125,7 @@ describe('audit-logger extended fields', () => {
     try {
       __resetAuditLoggerCachesForTests();
       logAuditEntry('cookies.set', 'sess_1', { name: 'session', value: 'super-secret' });
-      await waitForFlush();
-      await new Promise((r) => setTimeout(r, 50));
-      const entry = readAll(logPath)[0];
+      const entry = (await waitForAuditEntries(logPath, 1))[0];
       const args = entry.args as Record<string, unknown>;
       expect(typeof args.value).toBe('string');
       expect(args.value as string).toMatch(/^sha256:/);
@@ -143,8 +151,7 @@ describe('audit-logger extended fields', () => {
     });
 
     await waitForFlush();
-    await new Promise((r) => setTimeout(r, 50));
-    const entry = readAll(logPath)[0];
+    const entry = (await waitForAuditEntries(logPath, 1))[0];
     expect(entry.status).toBe('aborted');
     expect(entry.aborted).toBe(true);
     expect(entry.abortedAt).toBe('2026-04-22T06:00:00.000Z');
@@ -162,8 +169,7 @@ describe('audit-logger extended fields', () => {
       errorMessage: 'boom',
     });
     await waitForFlush();
-    await new Promise((r) => setTimeout(r, 50));
-    const entry = readAll(logPath)[0];
+    const entry = (await waitForAuditEntries(logPath, 1))[0];
     expect(entry.status).toBe('error');
     expect(entry.billable).toBe(false);
     expect(entry.errorMessage).toBe('boom');

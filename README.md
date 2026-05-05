@@ -14,6 +14,7 @@
   <a href="https://github.com/shaun0927/openchrome/releases/latest"><img src="https://img.shields.io/github/v/release/shaun0927/openchrome" alt="Latest Release"></a>
   <a href="https://github.com/shaun0927/openchrome/releases/latest"><img src="https://img.shields.io/github/release-date/shaun0927/openchrome" alt="Release Date"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
+  <a href="https://mseep.ai/app/shaun0927-openchrome"><img src="assets/badges/mseep.png" alt="Listed on MseeP.ai" height="20"></a>
 </p>
 
 <p align="center">
@@ -416,9 +417,11 @@ When a navigation is blocked by CDN/WAF systems (Akamai, Cloudflare, etc.), Open
 Tier 3 launches a real headed Chrome window with a genuine user-agent (`Chrome/...` instead of `HeadlessChrome/...`) and a different TLS fingerprint, bypassing binary-level detection that no JavaScript injection can fix.
 
 **Parameters:**
-- `autoFallback: false` — disable all automatic retry
-- `headed: true` — skip directly to Tier 3 (headed Chrome)
-- `stealth: true` — use stealth mode (Tier 2) explicitly
+- `autoFallback: false` — disable automatic CDN/WAF retry. This does not log in for you or bypass normal authentication redirects.
+- `headed: true` — skip directly to headed Chrome for user-visible login, 2FA, CAPTCHA, or sites that require a real browser window.
+- `stealth: true` — use stealth mode (Tier 2) explicitly.
+
+**Authentication note:** Auto-fallback is for detected CDN/WAF blocking. If a protected app redirects from the requested URL to a same-site login page, treat that as an authentication handoff: retry with `headed: true` and the same persistent profile, let the user complete login, then verify whether headless can reuse that profile state.
 
 **Environment:** Tier 3 requires a display (macOS/Windows desktop, or Linux with `$DISPLAY`). In server/container environments without a display, Tier 3 is gracefully skipped.
 
@@ -445,15 +448,22 @@ If client A opens five tabs and client B opens five tabs, all ten `tabId`s are d
 
 ### How do I handle sites that require interactive login (password, 2FA, CAPTCHA)?
 
-Two mechanisms, used together in practice:
+Use two mechanisms, but keep their guarantees separate:
 
-**1. Persistent-profile headless — log in once, automate forever.**
-Point OpenChrome at a persistent `userDataDir` (+ optional `profileDirectory`) and cookies / `localStorage` / IndexedDB survive across runs. After the first login, subsequent **headless** runs stay logged in until the site invalidates the session.
+**1. Persistent-profile headless — reuse an already-authenticated profile.**
+Point OpenChrome at a persistent `userDataDir` (+ optional `profileDirectory`) so cookies / `localStorage` / IndexedDB can survive across runs. If that persistent profile already contains a valid session, subsequent **headless** runs stay logged in until the site invalidates the session.
 
-**2. Headed fallback for the initial login or WAF-blocked sites.**
-When a human action is genuinely required (first-time login, 2FA, CAPTCHA, WebAuthn) or when a Tier-1/Tier-2 headless attempt is blocked by a CDN/WAF, OpenChrome lazy-launches a separate headed Chrome on a different debug port. Cookies are sync'd from the real Chrome profile before launch, and the headed page is registered back into the same logical session so the surrounding workflow continues seamlessly.
+**2. Headed-by-default / headed fallback — let the user complete an interactive step.**
+Since #657 the launcher runs headed by default, so first-time login, 2FA, CAPTCHA, and WebAuthn can use a real visible window without extra flags. CI / Docker users opt into headless via `--headless` or `OPENCHROME_HEADLESS=1` after their persistent profile is bootstrapped. When a Tier-1/Tier-2 headless attempt is blocked by a CDN/WAF, OpenChrome can also lazy-launch a separate headed Chrome on a different debug port and register the headed page back into the same logical session.
 
-**Typical pattern:** bootstrap the login once via the headed path → the persistent profile carries the cookies → all subsequent automation runs headless without a window.
+**Important:** a headed tab being authenticated does not automatically prove that a new headless tab can reuse the session after the headed tab is closed. Sites differ in how they bind cookies, storage, browser fingerprints, and session freshness. Always verify the handoff by closing/restarting the headed path you plan to stop using and navigating headless to the protected URL with the same persistent profile.
+
+**Recommended flow:**
+1. Start with the persistent `userDataDir` / `profileDirectory` you intend to keep using.
+2. Navigate to the protected URL. If it resolves to `/login` or another auth page, do not keep retrying unauthenticated headless navigation.
+3. Use the visible headed window (default) or navigate with `headed: true` and the same profile context, then let the user complete login/2FA/CAPTCHA.
+4. Retry the protected URL with the same profile in the mode you intend to automate.
+5. If headless still lands on the login page, keep the headed tab open for that site or reconfigure persistence; do not assume the headed auth state transferred.
 
 ### Does OpenChrome steal focus with popup windows?
 
@@ -461,12 +471,12 @@ When a human action is genuinely required (first-time login, 2FA, CAPTCHA, WebAu
 
 The headed-browser focus-stealing pattern that users encounter with some MCP servers (cross-Space jumps on macOS, un-minimizable popups, per-tool-call window raises) comes from designs where the MCP drives a user-visible browser and creates OS windows as it works. OpenChrome is architected differently:
 
-- **Default mode is headless** — no window exists, so there is nothing to take focus.
 - **`tabs_create` opens a tab, not an OS window.** New tabs are created via CDP inside the already-running Chrome, and OpenChrome never calls `page.bringToFront()` anywhere in the codebase.
-- **The headed fallback is lazy and reused.** When it is needed, it launches **once** per server lifetime; every later navigation/tab runs inside that same instance. At worst you see one focus grab the very first time the fallback activates — not one per action, never one per tab.
-- **The headed fallback is optional.** If persistent-profile headless is sufficient for your sites, you will never see a browser window.
+- **No per-call window raises.** Each navigation/click/tool call runs against the existing window without `bringToFront()`, `focus()`, or any other stealing primitive. After the initial Chrome launch you keep working in your other apps without interruption.
+- **One Chrome per server lifetime.** Auto-launch creates Chrome **once** at startup and reuses it for every later tool call — no popup-per-action loop.
+- **Headless opt-in available.** For CI/server use, `--headless` or `OPENCHROME_HEADLESS=1` runs without any window at all. The default is headed since #657 because headless mode is materially more prone to silent hangs and login failures on real-world sites.
 
-The only scenario in which a window appears at all is the first time the Tier-3 headed fallback activates in a given session.
+The only scenario in which a focus grab can happen is the very first Chrome launch — not one per tool call, never one per tab.
 
 ---
 
@@ -557,6 +567,7 @@ docker run openchrome
 | `OPENCHROME_PPID_WATCH` | Set to `0` to disable the parent-process watcher in stdio mode. Default: enabled. The watcher exits the server when its launching MCP-client parent dies, so abrupt parent termination (force-quit, `kill -9`, tmux teardown) does not orphan the openchrome process. HTTP and `both` transport modes ignore this flag — they remain daemon-capable. |
 | `OPENCHROME_PPID_WATCH_INTERVAL_MS` | Polling interval for the parent watcher in milliseconds. Default: `2000`. Clamped to `[500, 60000]`. |
 | `OPENCHROME_HEALTH_ENDPOINT` | Force-enable (`1`/`true`) or force-disable (`0`/`false`) the `/health` and `/metrics` HTTP listener. Default: on for `--transport http` / `both`, off for `--transport stdio`. Stdio-mode instances usually talk to a single MCP client over the pipe and do not need an external monitoring port; disabling it saves ~200-300 KB heap + one file descriptor per instance. Operators who run stdio under a supervisor can opt in with `OPENCHROME_HEALTH_ENDPOINT=1`; daemon-mode operators who run the health check externally can opt out with `OPENCHROME_HEALTH_ENDPOINT=0`. Invalid values (e.g. `yes`, `2`) fall through to the transport-mode default. |
+| `OPENCHROME_HEADLESS` | Opt into headless Chrome from CI / Docker without `--headless`. Accepts `1`/`true`/`yes` (headless) or `0`/`false`/`no` (headed). Lower precedence than the CLI flag, higher than persisted config. Default since #657 is headed. |
 
 ### Individual flags
 
@@ -572,9 +583,10 @@ openchrome serve \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--auto-launch` | `false` | Auto-launch Chrome if not running |
+| `--headless` | `false` | Run Chrome headless. Also: `OPENCHROME_HEADLESS=1`. Default since #657 is headed. |
 | `--headless-shell` | `false` | Use chrome-headless-shell binary |
-| `--visible` | `false` | Show Chrome window (disables headless) |
-| `--server-mode` | `false` | Compound flag for server deployment |
+| `--visible` | (deprecated) | No-op alias for headed; the new default is headed since #657. Will be removed in a future release. |
+| `--server-mode` | `false` | Compound flag for server deployment (forces `--headless` + auto-launch) |
 
 ---
 

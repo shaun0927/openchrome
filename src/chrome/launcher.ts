@@ -13,7 +13,33 @@ import { spawnProcessGuardian } from '../utils/process-guardian';
 import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAST_SESSION } from '../config/defaults';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
+import { writeMarker, removeMarker } from './ownership-marker';
+import { registerManagedChrome, unregisterManagedChrome } from '../utils/sync-shutdown';
+import { classifyExit, ExitClassification, quiesceMs } from './exit-classifier';
+import {
+  resolveLaunchMode,
+  AttachConsentRequiredError,
+  LaunchMode as ResolvedLaunchMode,
+} from './launch-mode-resolver';
+import { detectRunningChromes, filterByProfile, pickPreferredChrome } from './process-detector';
 export type { ProfileType } from './profile-manager';
+
+/**
+ * Lifecycle ownership of a Chrome process (#661).
+ * - 'isolated': openchrome spawned this Chrome and owns its lifecycle. Eligible for sync-kill on exit.
+ * - 'attach': we connected to a Chrome the user was already running. NEVER killed by openchrome.
+ *
+ * Distinct from `LaunchMode` (#659 — auto/attach/isolated launch *strategy*),
+ * exported below from launch-mode-resolver. To avoid the name shadow noted in
+ * gemini's review of #670, the runtime ownership tag is named `LifecycleMode`.
+ *
+ * Note: the field on `ChromeInstance` is still called `launchMode` for source
+ * compatibility with consumers like the watchdog and sync-shutdown that
+ * already reference it.
+ */
+export type LifecycleMode = 'isolated' | 'attach';
+/** @deprecated Use `LifecycleMode`. Retained for source compatibility. */
+export type LaunchMode = LifecycleMode;
 
 export interface ChromeInstance {
   wsEndpoint: string;
@@ -21,6 +47,10 @@ export interface ChromeInstance {
   process?: ChildProcess;
   userDataDir?: string;
   profileType?: ProfileType;
+  /** Lifecycle ownership (#661). Defaults to 'isolated' for our spawn-based path. */
+  launchMode?: LifecycleMode;
+  /** Random per-launch UUID written into the ownership marker file. */
+  ownershipMarker?: string;
 }
 
 export interface LaunchOptions {
@@ -38,6 +68,9 @@ export interface LaunchOptions {
   /** If true, restore Chrome's previous session tabs after crash (default: false).
    *  Enable for long-running sessions where tab preservation matters. */
   restoreLastSession?: boolean;
+  /** #659 launch-mode override (per-call). One of: 'auto' | 'attach' | 'isolated'.
+   *  Highest precedence; falls back to OPENCHROME_LAUNCH_MODE then config then 'auto'. */
+  launchMode?: 'auto' | 'attach' | 'isolated';
 }
 
 const DEFAULT_PORT = 9222;
@@ -314,8 +347,24 @@ export class ChromeLauncher {
     extensionsAvailable: true,
   };
   private _intentionalStop = false;
+  /** ms timestamp of the most recent successful spawn, for #660 anti-flap. */
+  private _chromeStartedAt = 0;
+  /** Most recent exit classification (#660). 'intentional' | 'clean' | 'crash'. */
+  private _lastExitClassification: ExitClassification | null = null;
+  /** ms epoch until which the watchdog should skip relaunch (#660). 0 = no quiesce. */
+  private _quiesceUntil = 0;
+  /** Crash timestamps for the watchdog rate-limit check (#660 Phase 3). */
+  private _recentCrashesMs: number[] = [];
 
   get intentionalStop(): boolean { return this._intentionalStop; }
+  /** Last exit classification recorded by the spawn-side exit handler. */
+  get lastExitClassification(): ExitClassification | null { return this._lastExitClassification; }
+  /** Watchdog reads this; if `Date.now() < quiesceUntil` it skips relaunch. */
+  get quiesceUntil(): number { return this._quiesceUntil; }
+  /** Recent Chrome crash timestamps (last ~minute). */
+  get recentCrashesMs(): readonly number[] { return this._recentCrashesMs; }
+  /** Tools call this when they need Chrome — clears any pending quiesce. */
+  clearQuiesce(): void { this._quiesceUntil = 0; }
 
   constructor(port: number = DEFAULT_PORT) {
     this.port = port;
@@ -360,21 +409,105 @@ export class ChromeLauncher {
   private async launchChrome(options: LaunchOptions = {}): Promise<ChromeInstance> {
     const port = options.port || this.port;
 
-    // Check if Chrome is already running with debug port.
-    // Use a brief retry window (5s) instead of a single-shot check, because Chrome
-    // may still be binding the debug port during startup (1-5s window).
-    const existingWs = await waitForDebugPort(port, 5000).catch(() => null);
+    // #659: resolve launch mode (auto / attach / isolated). Per-call options
+    // win first (gemini high review on #670), then env, then config, then default 'auto'.
+    const launchMode: ResolvedLaunchMode = resolveLaunchMode(
+      { launchMode: options.launchMode },
+      { OPENCHROME_LAUNCH_MODE: process.env.OPENCHROME_LAUNCH_MODE },
+      { chromeLaunchMode: getGlobalConfig().chromeLaunchMode },
+    );
+
+    // 'isolated' mode: skip the existing-Chrome probe entirely. Always spawn
+    // our own Chrome with our isolated user-data-dir. Used for clean-room
+    // scraping where attaching to a stray developer Chrome would be wrong.
+    //
+    // codex P1 review on #670: a Chrome already bound to `port` would otherwise
+    // be picked up by `waitForDebugPort` after our spawn (since Chrome silently
+    // re-uses or rebinds), defeating the isolation guarantee. We do a tight
+    // single-shot probe BEFORE spawning and refuse to start if the port is
+    // taken — caller must clear the port or pick a different one.
+    let existingWs: string | null = null;
+    if (launchMode === 'isolated') {
+      const occupied = await checkDebugPort(port, 500);
+      if (occupied) {
+        throw new Error(
+          `[ChromeLauncher] launch mode 'isolated' but port ${port} is already in use ` +
+            `by another Chrome (debug endpoint: ${occupied}). ` +
+            `Stop that Chrome, choose a different --port, or set OPENCHROME_LAUNCH_MODE=auto to attach.`,
+        );
+      }
+      console.error('[ChromeLauncher] Launch mode: isolated — skipping debug-port attach.');
+    } else {
+      // Check if Chrome is already running with debug port.
+      // Use a brief retry window (5s) instead of a single-shot check, because Chrome
+      // may still be binding the debug port during startup (1-5s window).
+      existingWs = await waitForDebugPort(port, 5000).catch(() => null);
+    }
+
+    // 'attach' mode: must attach. If no debug port responded, surface a
+    // structured error (no auto-restart per #659 policy decision #2).
+    if (launchMode === 'attach' && !existingWs) {
+      // Diagnostic: enumerate any running Chromes so the agent can hint at
+      // the right CLI invocation. Read-only, never kills anything.
+      try {
+        const candidates = filterByProfile(
+          detectRunningChromes(),
+          options.profileDirectory,
+        );
+        const chosen = pickPreferredChrome(candidates);
+        if (chosen) {
+          console.error(
+            `[ChromeLauncher] attach mode: detected Chrome (PID ${chosen.pid}, variant=${chosen.variant}) ` +
+              `but it is not exposing --remote-debugging-port=${port}. ` +
+              `openchrome will NOT auto-restart your Chrome. Re-launch it with --remote-debugging-port=${port}.`,
+          );
+        } else {
+          console.error(`[ChromeLauncher] attach mode: no Chrome processes found.`);
+        }
+      } catch (err) {
+        console.error(`[ChromeLauncher] attach mode: process detection failed:`, err);
+      }
+      throw new AttachConsentRequiredError(port);
+    }
+
     if (existingWs) {
-      console.error(`[ChromeLauncher] Found existing Chrome on port ${port}`);
       const pendingProc = this.pendingProcess;
-      this.pendingProcess = null; // Clear — our pending Chrome may be the one that responded
-      this.instance = {
-        wsEndpoint: existingWs,
-        httpEndpoint: `http://127.0.0.1:${port}`,
-        ...(pendingProc && pendingProc.exitCode === null && { process: pendingProc }),
-      };
-      // Attached to user-started Chrome — assume real profile
-      this.profileState = { type: 'real', extensionsAvailable: true };
+      this.pendingProcess = null;
+      // codex P1 review on #670: when our prior spawn left a still-running
+      // pendingProcess and the debug port is now responding, the responder is
+      // almost certainly OUR Chrome — not a user-attached one. Tagging it as
+      // 'attach' would make close() skip kill and leak our spawn. Treat as
+      // isolated and register / write a marker so the lifecycle paths see it.
+      const ourChromeRespondedLate = pendingProc !== null && pendingProc.exitCode === null;
+
+      if (ourChromeRespondedLate) {
+        console.error(`[ChromeLauncher] Pending Chrome (PID ${pendingProc!.pid}) responded on port ${port}; treating as our managed instance.`);
+        // Best-effort sync-shutdown registration so #661 sync-kill can target
+        // this Chrome. The marker file write happened on the original spawn
+        // (the prior call that produced this pendingProcess), so we don't
+        // need to re-write it here. userDataDir is not in scope at this
+        // pre-resolution point of the launcher; the marker on disk already
+        // carries it.
+        if (pendingProc!.pid) {
+          registerManagedChrome({ pid: pendingProc!.pid });
+        }
+        this.instance = {
+          wsEndpoint: existingWs,
+          httpEndpoint: `http://127.0.0.1:${port}`,
+          process: pendingProc!,
+          launchMode: 'isolated',
+        };
+      } else {
+        console.error(`[ChromeLauncher] Found existing Chrome on port ${port}`);
+        this.instance = {
+          wsEndpoint: existingWs,
+          httpEndpoint: `http://127.0.0.1:${port}`,
+          // Connected to a Chrome we did not spawn — never kill on exit (#661 Phase 6).
+          launchMode: 'attach',
+        };
+        // Attached to user-started Chrome — assume real profile
+        this.profileState = { type: 'real', extensionsAvailable: true };
+      }
       return this.instance;
     }
 
@@ -391,10 +524,19 @@ export class ChromeLauncher {
       try {
         const wsEndpoint = await waitForDebugPort(port, launchTimeout, pendingProc);
         this.pendingProcess = null;
+        // codex P2 review on #670: this Chrome was spawned by us in a prior
+        // attempt that timed out — register so #661 sync-kill paths can
+        // target it. The marker file was already written by the original
+        // spawn site; userDataDir isn't resolved yet at this branch so we
+        // intentionally skip a re-write.
+        if (pendingProc.pid) {
+          registerManagedChrome({ pid: pendingProc.pid });
+        }
         this.instance = {
           wsEndpoint,
           httpEndpoint: `http://127.0.0.1:${port}`,
           process: pendingProc,
+          launchMode: 'isolated',
         };
         console.error(`[ChromeLauncher] Reused pending Chrome process, ready at ${wsEndpoint}`);
         return this.instance;
@@ -628,11 +770,50 @@ export class ChromeLauncher {
         pidFilePath: getChromePidFilePath(port),
         label: 'managed-chrome',
       });
+      // #661 Phase 1+2 (gemini high review): write the ownership marker AND
+      // register for synchronous shutdown immediately after spawn — before
+      // waitForDebugPort. Otherwise, if the parent dies during the debug-port
+      // wait window, the orphaned Chrome would not be in the registry and
+      // would leak.
+      if (userDataDir) {
+        writeMarker({ chromePid: chromeProcess.pid, userDataDir });
+      }
+      registerManagedChrome({ pid: chromeProcess.pid, userDataDir });
     }
 
-    // Log Chrome process exit for immediate diagnostics
+    // Log Chrome process exit and classify it for the watchdog (#660).
+    const chromeStartedAtForExitHandler = Date.now();
     chromeProcess.once('exit', (code, signal) => {
-      console.error(`[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal})`);
+      const uptimeMs = Date.now() - chromeStartedAtForExitHandler;
+      const classification = classifyExit({
+        code,
+        signal,
+        uptimeMs,
+        intentionalStop: this._intentionalStop,
+      });
+      this._lastExitClassification = classification;
+      console.error(
+        `[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal}, uptime: ${uptimeMs}ms, class: ${classification})`,
+      );
+      // Symmetric cleanup: unregister + remove marker so a failed-launch Chrome
+      // (e.g. waitForDebugPort timeout) does not leave stale state behind.
+      if (chromeProcess.pid) {
+        unregisterManagedChrome(chromeProcess.pid);
+        removeMarker({ chromePid: chromeProcess.pid, userDataDir });
+      }
+      if (classification === 'clean' && !this._intentionalStop) {
+        // User-driven close. Quiesce the watchdog so it does not silently respawn (#660).
+        const quiesce = quiesceMs();
+        this._quiesceUntil = Date.now() + quiesce;
+        console.error(`[ChromeLauncher] Quiesced relaunch for ${quiesce}ms (user-driven close)`);
+      } else if (classification === 'crash') {
+        // Track for rate-limit check.
+        this._recentCrashesMs.push(Date.now());
+        // Bound the array — only last ~10 entries needed.
+        if (this._recentCrashesMs.length > 10) {
+          this._recentCrashesMs = this._recentCrashesMs.slice(-10);
+        }
+      }
       // Clear cached instance so next ensureChrome() knows Chrome is gone
       this.instance = null;
       // Clear pendingProcess if this was the one we were tracking
@@ -677,12 +858,15 @@ export class ChromeLauncher {
     }
     this.pendingProcess = null; // Success — no longer pending
 
+    // Marker + registration already happened immediately after spawn (above).
+    // Here we just record the instance state.
     this.instance = {
       wsEndpoint,
       httpEndpoint: `http://127.0.0.1:${port}`,
       process: chromeProcess,
       userDataDir,
       profileType,
+      launchMode: 'isolated',
     };
 
     // Persist Chrome PID to disk for orphan detection
@@ -691,6 +875,9 @@ export class ChromeLauncher {
     }
 
     this._intentionalStop = false;
+    // Successful launch — clear any pending quiesce (#660).
+    this._quiesceUntil = 0;
+    this._chromeStartedAt = Date.now();
     console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
     return this.instance;
   }
@@ -744,11 +931,18 @@ export class ChromeLauncher {
       try { this.pendingProcess.kill(); } catch { /* ignore */ }
       this.pendingProcess = null;
     }
+    // Attach mode (#659, #661 Phase 6): we did not spawn this Chrome — never kill it.
+    if (this.instance?.launchMode === 'attach') {
+      console.error('[ChromeLauncher] close(): attach-mode Chrome left alive (user-owned).');
+      this.instance = null;
+      return;
+    }
     if (this.instance?.process) {
       console.error('[ChromeLauncher] Closing Chrome...');
       const proc = this.instance.process;
       const userDataDir = this.instance.userDataDir;
       const profileType = this.currentProfileType;
+      const chromePidForMarker = proc.pid;
 
       if (process.platform === 'win32' && proc.pid) {
         try {
@@ -803,6 +997,12 @@ export class ChromeLauncher {
         } catch {
           // Ignore cleanup errors
         }
+      }
+
+      // Remove ownership marker (#661 Phase 1).
+      if (chromePidForMarker) {
+        removeMarker({ chromePid: chromePidForMarker, userDataDir });
+        unregisterManagedChrome(chromePidForMarker);
       }
     }
     // Remove Chrome PID file before clearing instance

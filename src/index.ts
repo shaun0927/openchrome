@@ -12,6 +12,7 @@ import { getMCPServer, setMCPServerOptions } from './mcp-server';
 import { registerAllTools } from './tools';
 import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
+import { resolveHeadlessMode } from './config/headless-resolver';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
 import { installParentWatcher, ParentWatcherHandle } from './utils/parent-watcher';
@@ -74,7 +75,8 @@ program
   .option('--profile-directory <name>', 'Chrome profile directory name (e.g., "Profile 1", "Default")')
   .option('--chrome-binary <path>', 'Path to Chrome binary (e.g., chrome-headless-shell)')
   .option('--headless-shell', 'Use chrome-headless-shell if available (default: false)')
-  .option('--visible', 'Show Chrome window (default: headless when auto-launch)')
+  .option('--headless', 'Run Chrome headless (default: headed). Also: OPENCHROME_HEADLESS=1 env var.')
+  .option('--visible', '[deprecated] Show Chrome window. Headed is the default since #657; this flag is now a no-op alias and will be removed in a future release.')
   .option('--restart-chrome', 'Quit running Chrome to reuse real profile (default: uses temp profile)')
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
@@ -88,7 +90,7 @@ program
   .option('--auth-token <token>', 'Bearer token for HTTP transport authentication (also: OPENCHROME_AUTH_TOKEN env var)')
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -98,7 +100,9 @@ program
       if (options.visible) {
         console.error('[openchrome] Warning: --visible ignored in server mode (headless forced)');
       }
+      // Force headless via the resolver-visible flag, not visible=false (which now means "user did not pass --visible").
       options.visible = false;
+      options.headless = true;
       console.error('[openchrome] Server mode: enabled (headless, no cookie bridge)');
     }
     const userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
@@ -123,10 +127,30 @@ program
       console.error(`[openchrome] Using headless-shell mode`);
     }
 
-    // Headless by default when auto-launching, unless --visible is specified
-    const headless = autoLaunch && !options.visible;
+    // Resolve headed-vs-headless intent (#657). Default flipped to headed.
+    // The resolver throws HeadlessFlagConflictError if --headless and --visible both set.
+    //
+    // We resolve unconditionally (not gated on autoLaunch) so any *implicit*
+    // relaunch path — process watchdog (#347/#649) or pool warm-up that
+    // flips autoLaunch on later — picks up the user's actual intent from
+    // global config rather than the headed default. (qodo P1 review on #665.)
+    let headless: boolean;
+    try {
+      const mode = resolveHeadlessMode(
+        { headless: options.headless, visible: options.visible },
+        { OPENCHROME_HEADLESS: process.env.OPENCHROME_HEADLESS },
+        { headless: getGlobalConfig().headless },
+      );
+      headless = mode === 'headless';
+    } catch (err) {
+      console.error(`[openchrome] ${(err as Error).message}`);
+      process.exit(2);
+    }
     if (autoLaunch) {
       console.error(`[openchrome] Headless mode: ${headless}`);
+      if (options.visible === true && options.headless !== true) {
+        console.error('[openchrome] Note: --visible is deprecated; headed is the default since #657.');
+      }
     }
 
     // Set global config before initializing anything
@@ -227,19 +251,42 @@ program
     // Last-resort synchronous Chrome kill on ANY exit path
     // (including uncaughtException, SIGKILL recovery, process.exit())
     process.on('exit', () => {
+      // codex P1 review on #670: respect OPENCHROME_KILL_ON_EXIT and active
+      // session-resume tokens. Without this gate, the stdio-side
+      // shutdownSyncBestEffort() correctly skips kill but this handler
+      // unconditionally kills anyway, defeating the contract.
+      let shouldKill = true;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { shouldKillChromeOnExit } = require('./utils/session-resume-token');
+        shouldKill = shouldKillChromeOnExit();
+      } catch {
+        // session-resume-token module may not be available — fall through
+        // to the historical "always kill" behavior.
+      }
+      if (!shouldKill) {
+        return;
+      }
+
       try {
         const launcher = getChromeLauncher();
-        const chromePid = launcher.getChromePid();
-        if (chromePid) {
-          killChromeTree(chromePid);
+        // #659/#661: never kill an attached Chrome — that's the user's daily driver.
+        if (launcher.getInstance()?.launchMode === 'attach') {
+          // Skip primary launcher; pool instances handled below per-instance.
+        } else {
+          const chromePid = launcher.getChromePid();
+          if (chromePid) {
+            killChromeTree(chromePid);
+          }
         }
       } catch { /* launcher may not be initialized */ }
 
-      // Also kill any pool Chrome instances
+      // Also kill any pool Chrome instances (skipping attach-mode entries).
       try {
         const { getChromePool } = require('./chrome/pool');
         const pool = getChromePool();
         for (const [, instance] of pool.getInstances()) {
+          if (instance.launcher.getInstance?.()?.launchMode === 'attach') continue;
           const pid = instance.launcher.getChromePid();
           if (pid) {
             killChromeTree(pid);
