@@ -398,9 +398,11 @@ When a navigation is blocked by CDN/WAF systems (Akamai, Cloudflare, etc.), Open
 Tier 3 launches a real headed Chrome window with a genuine user-agent (`Chrome/...` instead of `HeadlessChrome/...`) and a different TLS fingerprint, bypassing binary-level detection that no JavaScript injection can fix.
 
 **Parameters:**
-- `autoFallback: false` — disable all automatic retry
-- `headed: true` — skip directly to Tier 3 (headed Chrome)
-- `stealth: true` — use stealth mode (Tier 2) explicitly
+- `autoFallback: false` — disable automatic CDN/WAF retry. This does not log in for you or bypass normal authentication redirects.
+- `headed: true` — skip directly to headed Chrome for user-visible login, 2FA, CAPTCHA, or sites that require a real browser window.
+- `stealth: true` — use stealth mode (Tier 2) explicitly.
+
+**Authentication note:** Auto-fallback is for detected CDN/WAF blocking. If a protected app redirects from the requested URL to a same-site login page, treat that as an authentication handoff: retry with `headed: true` and the same persistent profile, let the user complete login, then verify whether headless can reuse that profile state.
 
 **Environment:** Tier 3 requires a display (macOS/Windows desktop, or Linux with `$DISPLAY`). In server/container environments without a display, Tier 3 is gracefully skipped.
 
@@ -427,15 +429,22 @@ If client A opens five tabs and client B opens five tabs, all ten `tabId`s are d
 
 ### How do I handle sites that require interactive login (password, 2FA, CAPTCHA)?
 
-Two mechanisms, used together in practice:
+Use two mechanisms, but keep their guarantees separate:
 
-**1. Persistent-profile login — log in once, automate forever.**
-Point OpenChrome at a persistent `userDataDir` (+ optional `profileDirectory`) and cookies / `localStorage` / IndexedDB survive across runs. After the first login, subsequent runs stay logged in until the site invalidates the session.
+**1. Persistent-profile headless — reuse an already-authenticated profile.**
+Point OpenChrome at a persistent `userDataDir` (+ optional `profileDirectory`) so cookies / `localStorage` / IndexedDB can survive across runs. If that persistent profile already contains a valid session, subsequent **headless** runs stay logged in until the site invalidates the session.
 
-**2. Headed-by-default — interactive logins just work.**
-Since #657 the launcher runs headed by default; first-time login, 2FA, CAPTCHA, WebAuthn all work without any flag because there's a real visible window. CI / Docker users opt into headless via `--headless` or `OPENCHROME_HEADLESS=1` once their persistent profile is bootstrapped. Cookies sync'd from the real Chrome profile remain available in headless runs.
+**2. Headed-by-default / headed fallback — let the user complete an interactive step.**
+Since #657 the launcher runs headed by default, so first-time login, 2FA, CAPTCHA, and WebAuthn can use a real visible window without extra flags. CI / Docker users opt into headless via `--headless` or `OPENCHROME_HEADLESS=1` after their persistent profile is bootstrapped. When a Tier-1/Tier-2 headless attempt is blocked by a CDN/WAF, OpenChrome can also lazy-launch a separate headed Chrome on a different debug port and register the headed page back into the same logical session.
 
-**Typical pattern:** bootstrap the login interactively in the default headed mode → the persistent profile carries the cookies → CI runs use `--headless` and stay authenticated.
+**Important:** a headed tab being authenticated does not automatically prove that a new headless tab can reuse the session after the headed tab is closed. Sites differ in how they bind cookies, storage, browser fingerprints, and session freshness. Always verify the handoff by closing/restarting the headed path you plan to stop using and navigating headless to the protected URL with the same persistent profile.
+
+**Recommended flow:**
+1. Start with the persistent `userDataDir` / `profileDirectory` you intend to keep using.
+2. Navigate to the protected URL. If it resolves to `/login` or another auth page, do not keep retrying unauthenticated headless navigation.
+3. Use the visible headed window (default) or navigate with `headed: true` and the same profile context, then let the user complete login/2FA/CAPTCHA.
+4. Retry the protected URL with the same profile in the mode you intend to automate.
+5. If headless still lands on the login page, keep the headed tab open for that site or reconfigure persistence; do not assume the headed auth state transferred.
 
 ### Does OpenChrome steal focus with popup windows?
 

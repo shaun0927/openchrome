@@ -151,8 +151,7 @@ describe('audit-logger extended fields', () => {
     });
 
     await waitForFlush();
-    await new Promise((r) => setTimeout(r, 50));
-    const entry = readAll(logPath)[0];
+    const entry = (await waitForAuditEntries(logPath, 1))[0];
     expect(entry.status).toBe('aborted');
     expect(entry.aborted).toBe(true);
     expect(entry.abortedAt).toBe('2026-04-22T06:00:00.000Z');
@@ -170,8 +169,7 @@ describe('audit-logger extended fields', () => {
       errorMessage: 'boom',
     });
     await waitForFlush();
-    await new Promise((r) => setTimeout(r, 50));
-    const entry = readAll(logPath)[0];
+    const entry = (await waitForAuditEntries(logPath, 1))[0];
     expect(entry.status).toBe('error');
     expect(entry.billable).toBe(false);
     expect(entry.errorMessage).toBe('boom');
