@@ -12,14 +12,21 @@ export function getClaudeCliCommand(platform: NodeJS.Platform = process.platform
 }
 
 /**
- * Options required when invoking the Claude CLI with execFile/execFileSync.
+ * Return whether direct Claude CLI invocations need to run through a shell.
  *
- * On Windows, `.cmd` shims need a shell. On POSIX platforms we keep the
- * existing shell-free behavior for safety and argument fidelity.
+ * Windows `.cmd` shims require shell execution; POSIX platforms should keep
+ * shell-free process execution for safety and argument fidelity.
+ */
+export function shouldUseClaudeCliShell(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'win32';
+}
+
+/**
+ * Options required when invoking the Claude CLI with execFile/execFileSync.
  */
 export function getClaudeExecFileOptions(
   stdio: StdioOptions,
   platform: NodeJS.Platform = process.platform
 ): { stdio: StdioOptions; shell?: boolean } {
-  return platform === 'win32' ? { stdio, shell: true } : { stdio };
+  return shouldUseClaudeCliShell(platform) ? { stdio, shell: true } : { stdio };
 }

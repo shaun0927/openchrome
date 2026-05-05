@@ -44,7 +44,7 @@ import {
   validateBase32,
 } from './totp-store';
 import { registerAdminKeysCommand } from './admin-keys';
-import { getClaudeCliCommand, getClaudeExecFileOptions } from './claude-cli';
+import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell } from './claude-cli';
 
 const program = new Command();
 
@@ -531,7 +531,7 @@ program
     const child = spawn(claudeCmd, args, {
       env,
       stdio: 'inherit',
-      shell: process.platform === 'win32',
+      shell: shouldUseClaudeCliShell(),
     });
 
     // Handle exit

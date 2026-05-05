@@ -1,4 +1,8 @@
-import { getClaudeCliCommand, getClaudeExecFileOptions } from '../../cli/claude-cli';
+import {
+  getClaudeCliCommand,
+  getClaudeExecFileOptions,
+  shouldUseClaudeCliShell,
+} from '../../cli/claude-cli';
 
 describe('cli/claude-cli', () => {
   test('uses the npm .cmd shim on Windows', () => {
@@ -8,6 +12,15 @@ describe('cli/claude-cli', () => {
   test('uses the bare executable on non-Windows platforms', () => {
     expect(getClaudeCliCommand('darwin')).toBe('claude');
     expect(getClaudeCliCommand('linux')).toBe('claude');
+  });
+
+  test('uses shell execution for Windows Claude npm shims', () => {
+    expect(shouldUseClaudeCliShell('win32')).toBe(true);
+  });
+
+  test('keeps shell-free execution on non-Windows platforms', () => {
+    expect(shouldUseClaudeCliShell('darwin')).toBe(false);
+    expect(shouldUseClaudeCliShell('linux')).toBe(false);
   });
 
   test('execFile options enable shell execution for Windows .cmd shims', () => {
