@@ -24,6 +24,9 @@ export interface GlobalConfig {
   restoreLastSession?: boolean;
   /** If true, skip cookie bridge on page creation (used in server/headless mode) */
   skipCookieBridge?: boolean;
+  /** #659 Chrome launch mode (persisted-preference layer of the launch-mode resolver).
+   *  Resolution precedence: per-call options.launchMode > OPENCHROME_LAUNCH_MODE env > this field > 'auto' default. */
+  chromeLaunchMode?: 'auto' | 'attach' | 'isolated';
   /** @deprecated authToken removed from GlobalConfig — token flows directly via createTransport() */
   /** Chrome Pool settings for managing multiple Chrome instances */
   pool?: {

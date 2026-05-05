@@ -8,6 +8,7 @@
  */
 
 import * as http from 'node:http';
+import * as net from 'node:net';
 import { ClientDisconnectError } from '../../src/errors/abort';
 
 const { HTTPTransport } = require('../../src/transports/http');
@@ -37,23 +38,36 @@ describe('HTTPTransport — abort-on-disconnect (issue #8)', () => {
     afterRequestIsInFlight: Promise<void>,
   ): Promise<void> {
     await new Promise<void>((resolve) => {
+      let socket: net.Socket | undefined;
       const req = http.request({
         hostname: '127.0.0.1',
         port: TEST_PORT,
         path: '/mcp',
         method: 'POST',
+        agent: false,
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(bodyJSON),
         },
       });
       // Swallow the inevitable "socket hang up" — we are intentionally killing the connection.
+      req.on('socket', (assignedSocket) => { socket = assignedSocket; });
       req.on('error', () => resolve());
       req.on('close', () => resolve());
       req.write(bodyJSON);
       req.end();
 
-      afterRequestIsInFlight.then(() => req.destroy()).catch(() => req.destroy());
+      const destroyClientSocket = () => {
+        // The server abort path is wired to req.socket 'close'. Destroy the
+        // actual socket rather than only the ClientRequest wrapper so loaded
+        // CI runners cannot leave the TCP connection alive until timeout.
+        if (socket && !socket.destroyed) {
+          socket.destroy();
+        } else {
+          req.destroy();
+        }
+      };
+      afterRequestIsInFlight.then(destroyClientSocket).catch(destroyClientSocket);
     });
   }
 
