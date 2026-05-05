@@ -60,6 +60,7 @@ import { registerQueryDomTool } from './query-dom';
 
 // Lifecycle tools
 import { registerShutdownTool } from './shutdown';
+import { registerReapOrphansTool } from './reap-orphans';
 import { registerProfileStatusTool } from './profile-status';
 import { registerListProfilesTool } from './list-profiles';
 
@@ -160,6 +161,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Lifecycle tools
   registerShutdownTool(server);
+  registerReapOrphansTool(server);
   registerProfileStatusTool(server);
   registerListProfilesTool(server);
 

@@ -33,6 +33,49 @@ function buildCaptchaFields(blocking: BlockingInfo | null): Record<string, unkno
   };
 }
 
+type BlockingDetectionResult =
+  | { ok: true; blocking: BlockingInfo | null }
+  | { ok: false; reason: 'detector-error' | 'timeout'; error: string };
+
+const BLOCKING_DETECT_TIMEOUT_MS = 5000;
+
+function blockingDetectionErrorFields(result: BlockingDetectionResult): Record<string, unknown> {
+  if (result.ok) return {};
+  return {
+    blockingDetection: {
+      ok: false,
+      reason: result.reason,
+      error: result.error,
+    },
+  };
+}
+
+async function detectBlockingPageBounded(page: Page): Promise<BlockingDetectionResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<BlockingDetectionResult>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({
+          ok: false,
+          reason: 'timeout',
+          error: `detectBlockingPage exceeded ${BLOCKING_DETECT_TIMEOUT_MS}ms`,
+        });
+      }, BLOCKING_DETECT_TIMEOUT_MS);
+    });
+    const detection = detectBlockingPage(page).then<BlockingDetectionResult>((blocking) => ({
+      ok: true,
+      blocking,
+    }));
+    return await Promise.race([detection, timeout]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[navigate] detectBlockingPage error:', error);
+    return { ok: false, reason: 'detector-error', error: message };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Compute readiness data for navigate responses. Non-critical — returns defaults on failure. */
 async function getReadiness(page: Page, context?: ToolContext): Promise<{ readyState: string; domStable: boolean; framework: string }> {
   try {
@@ -122,13 +165,11 @@ async function stealthAutoRetry(
   await simulatePresence(page);
 
   AdaptiveScreenshot.getInstance().reset(targetId);
-  const [summary, blocking] = await Promise.all([
+  const [summary, blockingDetection] = await Promise.all([
     (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
-    Promise.race([
-      detectBlockingPage(page),
-      new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
-    ]).catch(() => null),
+    detectBlockingPageBounded(page),
   ]);
+  const blocking = blockingDetection.ok ? blockingDetection.blocking : null;
 
   let elementCount = 0;
   try {
@@ -153,6 +194,7 @@ async function stealthAutoRetry(
     ...(summary && { visualSummary: summary }),
     ...buildCaptchaFields(blocking),
     ...(blocking && { blockingPage: blocking }),
+    ...blockingDetectionErrorFields(blockingDetection),
   });
   // Tier 3: escalate to headed Chrome if stealth retry also got blocked
   // OR if stealth produced an empty/broken page (can't detect blocking in broken pages).
@@ -544,13 +586,11 @@ const handler: ToolHandler = async (
               };
             }
             AdaptiveScreenshot.getInstance().reset(existingTabId);
-            const [summary, reuseBlocking] = await Promise.all([
+            const [summary, reuseBlockingDetection] = await Promise.all([
               (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
-              Promise.race([
-                detectBlockingPage(page),
-                new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
-              ]).catch(e => { console.error('[navigate] detectBlockingPage error (tab-reuse):', e); return null; }),
+              detectBlockingPageBounded(page),
             ]);
+            const reuseBlocking = reuseBlockingDetection.ok ? reuseBlockingDetection.blocking : null;
             // Get element count for SPA readiness visibility
             let reuseElementCount = 0;
             try {
@@ -583,6 +623,7 @@ const handler: ToolHandler = async (
               ...(summary && { visualSummary: summary }),
               ...buildCaptchaFields(reuseBlocking),
               ...(reuseBlocking && { blockingPage: reuseBlocking }),
+              ...blockingDetectionErrorFields(reuseBlockingDetection),
               ...(reuseAuthGuidance ?? {}),
             });
             return {
@@ -605,13 +646,11 @@ const handler: ToolHandler = async (
       }
 
       AdaptiveScreenshot.getInstance().reset(targetId);
-      const [newTabSummary, newTabBlocking] = await Promise.all([
+      const [newTabSummary, newTabBlockingDetection] = await Promise.all([
         (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
-        Promise.race([
-          detectBlockingPage(page),
-          new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
-        ]).catch(e => { console.error('[navigate] detectBlockingPage error (new-tab):', e); return null; }),
+        detectBlockingPageBounded(page),
       ]);
+      const newTabBlocking = newTabBlockingDetection.ok ? newTabBlockingDetection.blocking : null;
       // Get element count for SPA readiness visibility
       let newTabElementCount = 0;
       try {
@@ -652,6 +691,7 @@ const handler: ToolHandler = async (
         ...(newTabSummary && { visualSummary: newTabSummary }),
         ...buildCaptchaFields(newTabBlocking),
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
+        ...blockingDetectionErrorFields(newTabBlockingDetection),
         ...(newTabAuthGuidance ?? {}),
       });
       return {
@@ -707,13 +747,11 @@ const handler: ToolHandler = async (
     if (url === 'back') {
       await page.goBack({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       AdaptiveScreenshot.getInstance().reset(tabId);
-      const [backSummary, backBlocking] = await Promise.all([
+      const [backSummary, backBlockingDetection] = await Promise.all([
         (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
-        Promise.race([
-          detectBlockingPage(page),
-          new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
-        ]).catch(e => { console.error('[navigate] detectBlockingPage error (back):', e); return null; }),
+        detectBlockingPageBounded(page),
       ]);
+      const backBlocking = backBlockingDetection.ok ? backBlockingDetection.blocking : null;
       // Get element count for SPA readiness visibility
       let backElementCount = 0;
       try {
@@ -732,6 +770,7 @@ const handler: ToolHandler = async (
         ...(backSummary && { visualSummary: backSummary }),
         ...buildCaptchaFields(backBlocking),
         ...(backBlocking && { blockingPage: backBlocking }),
+        ...blockingDetectionErrorFields(backBlockingDetection),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       });
       return {
@@ -742,13 +781,11 @@ const handler: ToolHandler = async (
     if (url === 'forward') {
       await page.goForward({ waitUntil: 'domcontentloaded', timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
       AdaptiveScreenshot.getInstance().reset(tabId);
-      const [fwdSummary, fwdBlocking] = await Promise.all([
+      const [fwdSummary, fwdBlockingDetection] = await Promise.all([
         (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
-        Promise.race([
-          detectBlockingPage(page),
-          new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
-        ]).catch(e => { console.error('[navigate] detectBlockingPage error (forward):', e); return null; }),
+        detectBlockingPageBounded(page),
       ]);
+      const fwdBlocking = fwdBlockingDetection.ok ? fwdBlockingDetection.blocking : null;
       // Get element count for SPA readiness visibility
       let fwdElementCount = 0;
       try {
@@ -767,6 +804,7 @@ const handler: ToolHandler = async (
         ...(fwdSummary && { visualSummary: fwdSummary }),
         ...buildCaptchaFields(fwdBlocking),
         ...(fwdBlocking && { blockingPage: fwdBlocking }),
+        ...blockingDetectionErrorFields(fwdBlockingDetection),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       });
       return {
@@ -866,13 +904,11 @@ const handler: ToolHandler = async (
     }
 
     AdaptiveScreenshot.getInstance().reset(tabId);
-    const [navSummary, navBlocking] = await Promise.all([
+    const [navSummary, navBlockingDetection] = await Promise.all([
       (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
-      Promise.race([
-        detectBlockingPage(page),
-        new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
-      ]).catch(e => { console.error('[navigate] detectBlockingPage error (existing-tab):', e); return null; }),
+      detectBlockingPageBounded(page),
     ]);
+    const navBlocking = navBlockingDetection.ok ? navBlockingDetection.blocking : null;
     // Get element count for SPA readiness visibility
     let navElementCount = 0;
     try {
@@ -893,6 +929,7 @@ const handler: ToolHandler = async (
       ...(navSummary && { visualSummary: navSummary }),
       ...buildCaptchaFields(navBlocking),
       ...(navBlocking && { blockingPage: navBlocking }),
+      ...blockingDetectionErrorFields(navBlockingDetection),
       ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
     });
     return {
