@@ -14,7 +14,7 @@ import * as path from 'path';
  * with `net.Socket.connect()` + short timeout — we deliberately avoid
  * matching specific errno strings because Windows reports refused
  * connections differently from POSIX. Each scenario then gets SIGTERM'd
- * and its exit code + stderr is audited to make sure the teardown path
+ * and its termination result + stderr are audited to make sure the teardown path
  * (previously `await healthEndpoint.stop()` at `src/index.ts:602`) does
  * not throw a `TypeError: Cannot read properties of null` when the
  * endpoint was never constructed.
@@ -89,13 +89,18 @@ async function waitForLog(getLog: () => string, pattern: RegExp, timeoutMs: numb
   return false;
 }
 
-async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<number | null> {
-  if (child.exitCode !== null) return child.exitCode;
+type ChildExit = { code: number | null; signal: NodeJS.Signals | null; timedOut: boolean };
+
+async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<ChildExit> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { code: child.exitCode, signal: child.signalCode, timedOut: false };
+  }
+
   return await new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), timeoutMs);
-    child.once('exit', (code) => {
+    const timer = setTimeout(() => resolve({ code: null, signal: null, timedOut: true }), timeoutMs);
+    child.once('exit', (code, signal) => {
       clearTimeout(timer);
-      resolve(code);
+      resolve({ code, signal, timedOut: false });
     });
   });
 }
@@ -256,17 +261,22 @@ describeFn('health endpoint gating (issue #648)', () => {
           expect(probe).not.toBe('connected');
         }
 
-        // Graceful shutdown audit (criterion #6): SIGTERM must exit 0
+        // Graceful shutdown audit (criterion #6): SIGTERM must terminate cleanly
         // and must NOT produce a TypeError for the stdio case where
         // healthEndpoint === null.
         child.kill('SIGTERM');
-        const exitCode = await waitForExit(child, 10_000);
-        expect(exitCode).toBe(0);
+        const exit = await waitForExit(child, 10_000);
+        expect(exit.timedOut).toBe(false);
+        if (process.platform === 'win32') {
+          expect(exit.signal).toBe('SIGTERM');
+        } else {
+          expect(exit.code).toBe(0);
+        }
         expect(stderr).not.toMatch(/TypeError/);
         expect(stderr).not.toMatch(/Cannot read properties of null/);
         expect(stderr).not.toMatch(/UnhandledPromiseRejection/);
       } finally {
-        if (child.exitCode === null) {
+        if (child.exitCode === null && child.signalCode === null) {
           try { child.kill('SIGKILL'); } catch { /* ignore */ }
           await waitForExit(child, 2000);
         }
