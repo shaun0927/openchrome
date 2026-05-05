@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
+import { getClaudeCliCommand } from './claude-cli';
 
 const BASE_DIR = path.join(os.homedir(), '.openchrome');
 const SESSIONS_DIR = path.join(BASE_DIR, 'sessions');
@@ -279,7 +280,7 @@ function startIsolatedSession(claudeArgs: string[]): void {
   };
 
   // Start Claude
-  const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+  const claudeCmd = getClaudeCliCommand();
   const child = spawn(claudeCmd, claudeArgs, {
     env,
     stdio: 'inherit',
