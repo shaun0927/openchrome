@@ -2,8 +2,11 @@ import {
   formatMCPServerConfigSnippet,
   getClaudeSetupCommand,
   getCodexServerConfig,
+  getOpenCodeServerConfig,
   getServeArgs,
+  formatOpenCodeMCPServerConfigSnippet,
   isSupportedMCPClient,
+  upsertOpenCodeMCPServerConfig,
   upsertMCPServerConfig,
 } from '../../cli/mcp-client-config';
 
@@ -24,6 +27,13 @@ describe('cli/mcp-client-config', () => {
     expect(getCodexServerConfig()).toEqual({
       command: 'npm',
       args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', 'serve', '--auto-launch'],
+    });
+  });
+
+  test('getOpenCodeServerConfig uses OpenCode local MCP format', () => {
+    expect(getOpenCodeServerConfig()).toEqual({
+      type: 'local',
+      command: ['npx', '--prefer-online', '-y', 'openchrome-mcp@latest', 'serve', '--auto-launch'],
     });
   });
 
@@ -73,12 +83,52 @@ describe('cli/mcp-client-config', () => {
     });
   });
 
+  test('upsertOpenCodeMCPServerConfig preserves sibling MCP servers', () => {
+    const updated = upsertOpenCodeMCPServerConfig(
+      {
+        mcp: {
+          existing: {
+            type: 'local',
+            command: ['node', 'example.js'],
+          },
+        },
+      },
+      'openchrome',
+      getOpenCodeServerConfig()
+    );
+
+    expect(updated).toEqual({
+      mcp: {
+        existing: {
+          type: 'local',
+          command: ['node', 'example.js'],
+        },
+        openchrome: {
+          type: 'local',
+          command: ['npx', '--prefer-online', '-y', 'openchrome-mcp@latest', 'serve', '--auto-launch'],
+        },
+      },
+    });
+  });
+
   test('formatMCPServerConfigSnippet serializes a full mcpServers document', () => {
     expect(JSON.parse(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig()))).toEqual({
       mcpServers: {
         openchrome: {
           command: 'npm',
           args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', 'serve', '--auto-launch'],
+        },
+      },
+    });
+  });
+
+  test('formatOpenCodeMCPServerConfigSnippet serializes an OpenCode config document', () => {
+    expect(JSON.parse(formatOpenCodeMCPServerConfigSnippet('openchrome', getOpenCodeServerConfig()))).toEqual({
+      $schema: 'https://opencode.ai/config.json',
+      mcp: {
+        openchrome: {
+          type: 'local',
+          command: ['npx', '--prefer-online', '-y', 'openchrome-mcp@latest', 'serve', '--auto-launch'],
         },
       },
     });

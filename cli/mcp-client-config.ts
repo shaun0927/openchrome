@@ -16,6 +16,17 @@ export interface MCPConfigDocument {
   [key: string]: unknown;
 }
 
+export interface OpenCodeLocalMCPServerConfig {
+  type: 'local';
+  command: string[];
+  enabled?: boolean;
+}
+
+export interface OpenCodeConfigDocument {
+  mcp?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 const SUPPORTED_CLIENTS: SupportedMCPClient[] = ['claude', 'codex'];
 
 export function getSupportedMCPClients(): SupportedMCPClient[] {
@@ -58,6 +69,13 @@ export function getClaudeManualServerConfig(options: ServeArgOptions = {}): MCPS
   };
 }
 
+export function getOpenCodeServerConfig(options: ServeArgOptions = {}): OpenCodeLocalMCPServerConfig {
+  return {
+    type: 'local',
+    command: ['npx', '--prefer-online', '-y', 'openchrome-mcp@latest', ...getServeArgs(options)],
+  };
+}
+
 export function getClaudeSetupCommand(scope: SetupScope, options: ServeArgOptions = {}): string[] {
   return [
     'mcp',
@@ -97,6 +115,36 @@ export function formatMCPServerConfigSnippet(
   return JSON.stringify(
     {
       mcpServers: {
+        [serverName]: serverConfig,
+      },
+    },
+    null,
+    2
+  );
+}
+
+export function upsertOpenCodeMCPServerConfig(
+  document: OpenCodeConfigDocument,
+  serverName: string,
+  serverConfig: OpenCodeLocalMCPServerConfig
+): OpenCodeConfigDocument {
+  const nextDocument: OpenCodeConfigDocument = { ...document };
+  const nextServers =
+    document.mcp && typeof document.mcp === 'object' && !Array.isArray(document.mcp) ? { ...document.mcp } : {};
+
+  nextServers[serverName] = serverConfig as unknown as Record<string, unknown>;
+  nextDocument.mcp = nextServers;
+  return nextDocument;
+}
+
+export function formatOpenCodeMCPServerConfigSnippet(
+  serverName: string,
+  serverConfig: OpenCodeLocalMCPServerConfig
+): string {
+  return JSON.stringify(
+    {
+      $schema: 'https://opencode.ai/config.json',
+      mcp: {
         [serverName]: serverConfig,
       },
     },
