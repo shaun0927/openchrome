@@ -1,3 +1,4 @@
+import { getGlobalConfig } from '../config/global';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { cleanOrphanedChromeProcesses } from '../utils/pid-manager';
@@ -11,21 +12,39 @@ const definition: MCPToolDefinition = {
       ports: {
         type: 'array',
         items: { type: 'number' },
-        description: 'Optional Chrome remote-debugging ports to check for legacy PID-file orphans. Defaults to 9222-9226; ownership markers are always scanned.',
+        description: 'Optional Chrome remote-debugging ports to check for legacy PID-file orphans. Defaults to the active CDP port window (base port through base+4); ownership markers are always scanned.',
       },
     },
     required: [],
   },
 };
 
-const DEFAULT_PORTS = [9222, 9223, 9224, 9225, 9226];
+const FALLBACK_BASE_PORT = 9222;
+const PORT_WINDOW_SIZE = 5;
+
+function parsePort(value: unknown): number | undefined {
+  const port = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
+}
+
+function defaultPorts(): number[] {
+  const configuredPort = parsePort(getGlobalConfig().port);
+  const envPort = parsePort(process.env.OPENCHROME_CDP_PORT) ?? parsePort(process.env.CHROME_PORT);
+  const basePort = configuredPort && configuredPort !== FALLBACK_BASE_PORT
+    ? configuredPort
+    : envPort ?? configuredPort ?? FALLBACK_BASE_PORT;
+
+  return Array.from({ length: PORT_WINDOW_SIZE }, (_, index) => basePort + index)
+    .filter((port) => port <= 65535);
+}
 
 function normalizePorts(value: unknown): number[] {
-  if (!Array.isArray(value)) return DEFAULT_PORTS;
+  const fallbackPorts = defaultPorts();
+  if (!Array.isArray(value)) return fallbackPorts;
   const ports = value
-    .map((item) => typeof item === 'number' ? item : Number(item))
-    .filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
-  return ports.length > 0 ? Array.from(new Set(ports)) : DEFAULT_PORTS;
+    .map((item) => parsePort(item))
+    .filter((port): port is number => port !== undefined);
+  return ports.length > 0 ? Array.from(new Set(ports)) : fallbackPorts;
 }
 
 const handler: ToolHandler = async (
