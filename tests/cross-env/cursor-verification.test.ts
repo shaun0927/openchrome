@@ -219,7 +219,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       expect(notifications.some((n: any) => n.method === 'notifications/tools/list_changed')).toBe(true);
     });
 
-    test('After full expansion: all 54 tools visible, expand_tools REMOVED', async () => {
+    test('After full expansion: all tools visible, expand_tools REMOVED', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       const toolNames = response.result.tools.map((t: any) => t.name);
 
@@ -276,7 +276,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'form_input', 'fill_form', 'read_page', 'inspect', 'query_dom',
       'javascript_tool', 'tabs_context', 'tabs_create', 'tabs_close',
       'cookies', 'storage', 'wait_for', 'memory', 'lightweight_scroll',
-      'oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal',
+      'oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal',
       'oc_get_connection_info', 'oc_copy_to_clipboard', 'oc_open_host_settings',
       'act',
     ];

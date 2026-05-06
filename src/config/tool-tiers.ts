@@ -42,6 +42,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_open_host_settings: 1,
   act: 1,                     // src/tools/act.ts — composite NL action API (#578)
   validate_page: 1,           // src/tools/validate-page.ts — composite page-health check (#token-efficiency)
+  oc_reap_orphans: 1,         // src/tools/reap-orphans.ts — manual lifecycle recovery sweep
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
