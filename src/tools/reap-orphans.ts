@@ -28,11 +28,7 @@ function parsePort(value: unknown): number | undefined {
 }
 
 function defaultPorts(): number[] {
-  const configuredPort = parsePort(getGlobalConfig().port);
-  const envPort = parsePort(process.env.OPENCHROME_CDP_PORT) ?? parsePort(process.env.CHROME_PORT);
-  const basePort = configuredPort && configuredPort !== FALLBACK_BASE_PORT
-    ? configuredPort
-    : envPort ?? configuredPort ?? FALLBACK_BASE_PORT;
+  const basePort = parsePort(getGlobalConfig().port) ?? FALLBACK_BASE_PORT;
 
   return Array.from({ length: PORT_WINDOW_SIZE }, (_, index) => basePort + index)
     .filter((port) => port <= 65535);

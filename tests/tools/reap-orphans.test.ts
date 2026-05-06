@@ -53,14 +53,15 @@ describe('oc_reap_orphans tool', () => {
     expect(data.checkedPorts).toEqual([9333, 9334, 9335, 9336, 9337]);
   });
 
-  test('falls back to OPENCHROME_CDP_PORT when global config is still default', async () => {
+  test('keeps runtime config precedence over stale CDP port environment variables', async () => {
     process.env.OPENCHROME_CDP_PORT = '9444';
+    setGlobalConfig({ port: 9222 });
 
     const result = await handler('broken-session', {});
     const data = JSON.parse(result.content[0].text);
 
-    expect(mockCleanOrphanedChromeProcesses).toHaveBeenCalledWith([9444, 9445, 9446, 9447, 9448]);
-    expect(data.checkedPorts).toEqual([9444, 9445, 9446, 9447, 9448]);
+    expect(mockCleanOrphanedChromeProcesses).toHaveBeenCalledWith([9222, 9223, 9224, 9225, 9226]);
+    expect(data.checkedPorts).toEqual([9222, 9223, 9224, 9225, 9226]);
   });
 
   test('deduplicates explicit ports and preserves explicit override semantics', async () => {
