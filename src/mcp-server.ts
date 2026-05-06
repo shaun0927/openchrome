@@ -86,8 +86,8 @@ export function isConnectionError(error: unknown): boolean {
 }
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
- *  sleep/wake). Skip session initialization so oc_stop can always reach its handler. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
+ *  sleep/wake). Skip session initialization so recovery handlers can always run. */
+const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);

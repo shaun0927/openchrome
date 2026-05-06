@@ -332,6 +332,36 @@ describe('MCPServer', () => {
         expect.objectContaining({ label: 'session-init' }),
       );
     });
+
+    test('skips session initialization for orphan reaping recovery tool', async () => {
+      const handler = jest.fn().mockResolvedValue({
+        content: [{ type: 'text', text: '{"killed":0}' }],
+      });
+
+      const definition: MCPToolDefinition = {
+        name: 'oc_reap_orphans',
+        description: 'Test recovery tool',
+        inputSchema: { type: 'object' as const, properties: {}, required: [] },
+      };
+      server.registerTool('oc_reap_orphans', handler, definition);
+
+      const request: MCPRequest = {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'oc_reap_orphans',
+          arguments: {},
+          sessionId: 'broken-session-123',
+        },
+      };
+
+      const response = (await server.handleRequest(request)) as MCPResultResponse;
+
+      expect(response.result!.content![0].text).toBe('{"killed":0}');
+      expect(mockSessionManager.getOrCreateSession).not.toHaveBeenCalled();
+      expect(handler).toHaveBeenCalledWith('broken-session-123', {}, expect.objectContaining({ startTime: expect.any(Number) }));
+    });
   });
 
   describe('Session Management APIs', () => {
