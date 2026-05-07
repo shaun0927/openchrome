@@ -81,3 +81,13 @@ export type {
 } from './curator-pass2';
 
 export { STOP_WORDS } from './stop-words';
+
+export {
+  buildMergePrompt,
+  createLlmMergeRequester,
+  createLlmMergeRequesterFromRawText,
+} from './llm-merge';
+export type {
+  CreateLlmMergeRequesterOptions,
+  RawTextProvider,
+} from './llm-merge';

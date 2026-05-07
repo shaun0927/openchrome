@@ -1,0 +1,197 @@
+import {
+  buildMergePrompt,
+  createLlmMergeRequesterFromRawText,
+  type RawTextProvider,
+} from '../../src/skill-memory/llm-merge';
+import type { MergeRequest } from '../../src/skill-memory/curator-pass2';
+import type { SkillRecord } from '../../src/skill-memory/types';
+
+function rec(name: string, intent: string, runs: number): SkillRecord {
+  return {
+    skill_id: name,
+    filePath: `/tmp/${name}.md`,
+    sidecarPath: `/tmp/${name}.json`,
+    frontmatter: {
+      schema_version: 1,
+      name,
+      domain: 'amazon.com',
+      intent,
+      status: 'promoted',
+      verified_runs: runs,
+      last_verified_at: '2026-05-08T12:00:00Z',
+      contract_ref: 'txn',
+      graph_node_anchor: 'a1b2',
+      author: 'agent',
+    },
+    sidecar: {
+      schema_version: 1,
+      skill_id: name,
+      graph_node_anchor: 'a1b2',
+      contract_id: 'cid',
+      runs: { count: runs, window_start: '2026-04-01T00:00:00Z', recent: [] },
+    },
+  };
+}
+
+const REQ: MergeRequest = {
+  domain: 'amazon.com',
+  cluster: [
+    rec('amazon.cart-add', 'Add specific item to cart and checkout', 5),
+    rec('amazon.cart-buy', 'Add item, then complete purchase', 4),
+  ],
+};
+
+function fakeText(textsOrErrors: Array<string | { error: { kind: string; raw: string } }>): RawTextProvider {
+  let i = 0;
+  return {
+    name: 'fake',
+    async ask(_prompt: string) {
+      const next = textsOrErrors[Math.min(i, textsOrErrors.length - 1)];
+      i++;
+      if (typeof next === 'string') {
+        return { ok: true, text: next, tokens: 100 };
+      }
+      return { ok: false, error: next.error };
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* buildMergePrompt                                                    */
+/* ------------------------------------------------------------------ */
+
+describe('buildMergePrompt', () => {
+  test('non-strict prompt lists every sibling with name + intent + verified_runs', () => {
+    const out = buildMergePrompt(REQ, false);
+    expect(out).toContain('amazon.cart-add');
+    expect(out).toContain('Add specific item to cart and checkout');
+    expect(out).toContain('verified_runs=5');
+    expect(out).toContain('amazon.cart-buy');
+    expect(out).toContain('verified_runs=4');
+    expect(out).toContain('"amazon.com"');
+    expect(out).toContain('Reply STRICTLY as JSON');
+  });
+
+  test('strict prompt appends the no-prose retry instruction', () => {
+    const out = buildMergePrompt(REQ, true);
+    expect(out).toContain('You replied with non-JSON');
+  });
+
+  test('expected JSON shape is documented for the LLM', () => {
+    const out = buildMergePrompt(REQ, false);
+    expect(out).toContain('"name"');
+    expect(out).toContain('"intent"');
+    expect(out).toContain('"body"');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* createLlmMergeRequesterFromRawText                                  */
+/* ------------------------------------------------------------------ */
+
+describe('createLlmMergeRequesterFromRawText — happy path', () => {
+  test('parses {name, intent, body} envelope into MergeResult', async () => {
+    const provider = fakeText([
+      '{"name":"amazon.cart-flow","intent":"Add and buy","body":"## Steps\\n1. Click add\\n2. Click buy\\n"}',
+    ]);
+    const requester = createLlmMergeRequesterFromRawText(provider);
+    const r = await requester(REQ);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.name).toBe('amazon.cart-flow');
+      expect(r.intent).toBe('Add and buy');
+      expect(r.body).toContain('Steps');
+    }
+  });
+
+  test('strips ```json fences', async () => {
+    const provider = fakeText([
+      '```json\n{"name":"u","intent":"i","body":"## b"}\n```',
+    ]);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.name).toBe('u');
+  });
+
+  test('truncates oversize intent (>512) and body (>4000)', async () => {
+    const provider = fakeText([
+      JSON.stringify({
+        name: 'u',
+        intent: 'i'.repeat(1000),
+        body: 'b'.repeat(10_000),
+      }),
+    ]);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.intent.length).toBe(512);
+      expect(r.body.length).toBe(4000);
+    }
+  });
+});
+
+describe('createLlmMergeRequesterFromRawText — strict retry', () => {
+  test('non-JSON first → strict retry → success', async () => {
+    const provider = fakeText([
+      'I cannot do that.',
+      '{"name":"u","intent":"i","body":"b"}',
+    ]);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(true);
+  });
+
+  test('two non-JSON replies → merge_parse_failure skip', async () => {
+    const provider = fakeText(['nope', 'still nope']);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain('merge_parse_failure');
+  });
+});
+
+describe('createLlmMergeRequesterFromRawText — provider failures', () => {
+  test('provider error first → ok:false skip with kind+raw in reason', async () => {
+    const provider = fakeText([{ error: { kind: 'rate_limit', raw: '429' } }]);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain('rate_limit');
+      expect(r.reason).toContain('429');
+    }
+  });
+
+  test('parse fail then provider error → strict-retry error in reason', async () => {
+    const provider = fakeText(['nope', { error: { kind: 'auth', raw: '401' } }]);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain('strict retry');
+      expect(r.reason).toContain('auth');
+    }
+  });
+});
+
+describe('createLlmMergeRequesterFromRawText — shape validation', () => {
+  test('missing fields → parse failure → skip', async () => {
+    const provider = fakeText(['{"name":"u"}', 'still incomplete']);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(false);
+  });
+
+  test('non-string name → parse failure → skip', async () => {
+    const provider = fakeText([
+      '{"name":42,"intent":"i","body":"b"}',
+      '{"name":42,"intent":"i","body":"b"}',
+    ]);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(false);
+  });
+
+  test('empty name → parse failure → skip', async () => {
+    const provider = fakeText([
+      '{"name":"","intent":"i","body":"b"}',
+      '{"name":"","intent":"i","body":"b"}',
+    ]);
+    const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(false);
+  });
+});
