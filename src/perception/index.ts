@@ -15,3 +15,20 @@ export type {
   PixelBox,
   ViewportRect,
 } from './types';
+
+export {
+  DEFAULT_COLOR_BG_TOLERANCE,
+  DEFAULT_EDGE_GRADIENT_THRESHOLD,
+  DEFAULT_PIXEL_ABSENT_EDGE_DENSITY,
+  colorDistance,
+  dominantColor,
+  sobelEdgeDensity,
+} from './image-features';
+export type { CropRect, RgbColor } from './image-features';
+
+export { runCrossCheck } from './cross-check';
+export type {
+  CrossCheckOptions,
+  CrossCheckResult,
+  CrossCheckVerdict,
+} from './cross-check';
