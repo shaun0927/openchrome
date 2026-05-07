@@ -81,6 +81,22 @@ function parseCorsOrigins(raw: string | undefined): Set<string> {
   return new Set((raw || '').split(',').map((origin) => origin.trim()).filter(Boolean));
 }
 
+/**
+ * Treat a request as same-origin when the URL's host (including port) in the
+ * `Origin` header matches the request's `Host` header. Browsers send `Origin`
+ * on same-origin non-GET requests (POST/OPTIONS), so without this gate a
+ * browser app served from the OpenChrome origin would be rejected by the CORS
+ * allowlist even though no cross-origin trust boundary is crossed.
+ */
+function isSameOriginRequest(originValue: string, hostHeader: string | undefined): boolean {
+  if (!hostHeader) return false;
+  try {
+    return new URL(originValue).host.toLowerCase() === hostHeader.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 const HTTP_REQUEST_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_REQUEST_TIMEOUT_MS',  DEFAULT_HTTP_REQUEST_TIMEOUT_MS);
 const HTTP_HEADERS_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_HEADERS_TIMEOUT_MS',  DEFAULT_HTTP_HEADERS_TIMEOUT_MS);
 const HTTP_KEEPALIVE_TIMEOUT_MS = envInt('OPENCHROME_HTTP_KEEPALIVE_TIMEOUT_MS', DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS);
@@ -221,6 +237,7 @@ export class HTTPTransport implements MCPTransport {
   private applyCors(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
     const origin = req.headers.origin;
     const originValue = typeof origin === 'string' ? origin : undefined;
+    const sameOrigin = originValue ? isSameOriginRequest(originValue, req.headers.host) : false;
     if (originValue && this.corsAllowedOrigins.has(originValue)) {
       res.setHeader('Access-Control-Allow-Origin', originValue);
       res.setHeader('Vary', 'Origin');
@@ -230,7 +247,7 @@ export class HTTPTransport implements MCPTransport {
     res.setHeader('Access-Control-Expose-Headers', `Mcp-Session-Id, ${REQUEST_ID_HEADER}`);
 
     const isMcpEndpoint = pathname === '/mcp' || pathname === '/mcp/sse';
-    if (originValue && isMcpEndpoint && !this.corsAllowedOrigins.has(originValue)) {
+    if (originValue && isMcpEndpoint && !sameOrigin && !this.corsAllowedOrigins.has(originValue)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'CORS origin not allowed' }));
       return false;

@@ -180,5 +180,18 @@ describe('HTTP Bearer Token Auth', () => {
       }, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
       expect(res.status).toBe(403);
     });
+
+    it('accepts same-origin MCP preflight even when Origin is not in allowlist', async () => {
+      const res = await request('/mcp', 'OPTIONS', { Origin: `http://127.0.0.1:${TEST_PORT}` });
+      expect(res.status).toBe(204);
+    });
+
+    it('accepts same-origin MCP POST even when Origin is not in allowlist', async () => {
+      const res = await request('/mcp', 'POST', {
+        'Content-Type': 'application/json',
+        Origin: `http://127.0.0.1:${TEST_PORT}`,
+      }, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
+      expect(res.status).toBe(200);
+    });
   });
 });
