@@ -18,6 +18,7 @@ import { MCPTransport, createTransport } from './transports/index';
 import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
+import { traceListResource, readTraceResource } from './resources/trace-resource';
 import { HintEngine } from './hints';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
@@ -138,6 +139,18 @@ export interface MCPServerOptions {
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
   private resources: Map<string, MCPResourceDefinition> = new Map();
+  /**
+   * Prefix-matched resource handlers for dynamic URIs (e.g.
+   * `openchrome://trace/<id>/meta`). Each entry handles every URI that
+   * starts with `prefix`. Listing-only resources (the static "list"
+   * URIs that surface the prefix space to clients) live in `resources`
+   * and are returned by `resources/list`. Prefix matching is checked
+   * AFTER exact-match `resources` lookup in `handleResourcesRead`.
+   */
+  private resourcePrefixHandlers: Array<{
+    prefix: string;
+    read: (uri: string) => Promise<{ mimeType: string; text: string } | null>;
+  }> = [];
   private manifestVersion: number = 1;
   private sessionManager: SessionManager;
   private transport: MCPTransport | null = null;
@@ -201,6 +214,12 @@ export class MCPServer {
     // Register built-in resources
     this.registerResource(usageGuideResource);
 
+    // Trace subsystem (#704): the `list` URI is statically discoverable;
+    // dynamic per-session URIs (`openchrome://trace/<id>/{meta|events}`)
+    // are served via the prefix handler.
+    this.registerResource(traceListResource);
+    this.registerResourcePrefix('openchrome://trace/', readTraceResource);
+
     // Initialize dashboard if enabled
     if (options.dashboard) {
       this.initDashboard();
@@ -238,6 +257,21 @@ export class MCPServer {
    */
   registerResource(resource: MCPResourceDefinition): void {
     this.resources.set(resource.uri, resource);
+  }
+
+  /**
+   * Register a prefix-matched resource handler. The handler is invoked
+   * by `handleResourcesRead` whenever the requested URI starts with
+   * `prefix` and no exact match was found in `this.resources`. The
+   * handler returns `{mimeType, text}` for a successful read or `null`
+   * for "not found at this prefix" (the server then continues looking
+   * at later prefixes / falls through to the unknown-resource error).
+   */
+  registerResourcePrefix(
+    prefix: string,
+    read: (uri: string) => Promise<{ mimeType: string; text: string } | null>,
+  ): void {
+    this.resourcePrefixHandlers.push({ prefix, read });
   }
 
   /**
@@ -699,28 +733,59 @@ export class MCPServer {
       throw new Error('Missing resource uri');
     }
 
+    // 1. Exact-match resources (static URIs like usage-guide / trace/list)
     const resource = this.resources.get(uri);
-    if (!resource) {
-      throw new Error(`Unknown resource: ${uri}`);
+    if (resource) {
+      let content: string;
+      if (uri === 'openchrome://usage-guide') {
+        content = getUsageGuideContent();
+      } else {
+        // Static resource without a hardcoded handler — try the prefix
+        // handler chain (e.g., the trace subsystem owns its own list URI).
+        const fromPrefix = await this.tryPrefixHandlers(uri);
+        if (fromPrefix) {
+          return {
+            contents: [
+              { uri, mimeType: fromPrefix.mimeType, text: fromPrefix.text },
+            ],
+          };
+        }
+        throw new Error(`No content handler for resource: ${uri}`);
+      }
+      return {
+        contents: [
+          { uri: resource.uri, mimeType: resource.mimeType, text: content },
+        ],
+      };
     }
 
-    // Get content based on resource type
-    let content: string;
-    if (uri === 'openchrome://usage-guide') {
-      content = getUsageGuideContent();
-    } else {
-      throw new Error(`No content handler for resource: ${uri}`);
+    // 2. Prefix-match resources (dynamic URIs like openchrome://trace/<id>/meta)
+    const fromPrefix = await this.tryPrefixHandlers(uri);
+    if (fromPrefix) {
+      return {
+        contents: [
+          { uri, mimeType: fromPrefix.mimeType, text: fromPrefix.text },
+        ],
+      };
     }
 
-    return {
-      contents: [
-        {
-          uri: resource.uri,
-          mimeType: resource.mimeType,
-          text: content,
-        },
-      ],
-    };
+    throw new Error(`Unknown resource: ${uri}`);
+  }
+
+  /**
+   * Walk the prefix-handler chain. Returns the first successful read
+   * result; null when no prefix matches or every matching prefix returns
+   * null (e.g., session not found).
+   */
+  private async tryPrefixHandlers(
+    uri: string,
+  ): Promise<{ mimeType: string; text: string } | null> {
+    for (const { prefix, read } of this.resourcePrefixHandlers) {
+      if (!uri.startsWith(prefix)) continue;
+      const r = await read(uri);
+      if (r) return r;
+    }
+    return null;
   }
 
   /**
