@@ -58,3 +58,24 @@ export type {
   EvidenceBundleOptions,
   EvidenceTraceEvent,
 } from './evidence';
+
+export {
+  hammingDistance,
+  hammingDistanceHex,
+  phashFromGrayscale,
+  phashFromRgba,
+} from './phash';
+export type { PhashResult } from './phash';
+
+export {
+  ScreenshotClassRegistry,
+  defaultScreenshotClassRootDir,
+  normalizeClassId,
+  recommendThreshold,
+  HASH_BITS,
+} from './screenshot-classes';
+export type {
+  ScreenshotClassRecord,
+  ScreenshotClassRegistryOptions,
+  ScreenshotClassThreshold,
+} from './screenshot-classes';

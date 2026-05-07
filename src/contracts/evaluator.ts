@@ -39,6 +39,22 @@ export interface AssertionContext {
   hasDialog: boolean;
   /** Optional pointer into the recording (#704). Surfaces in evidence. */
   traceRef?: { trace_id: string; from_ts: number; to_ts: number };
+  /**
+   * Optional 64-bit perceptual hash of the current screenshot, hex-
+   * encoded. When supplied, `screenshot_class` assertions use this
+   * directly (no image decoding inside the evaluator). Hosts compute
+   * it once per snapshot via `src/contracts/phash.ts`.
+   */
+  screenshotPhashHex?: string;
+  /**
+   * Optional screenshot-class registry resolver. When the host provides
+   * one, `screenshot_class` assertions look up the class and compare
+   * `screenshotPhashHex` to its exemplars. Tests can supply a fake.
+   */
+  screenshotClassMatch?: (
+    classId: string,
+    candidateHex: string,
+  ) => { distance: number; closestHex?: string };
 }
 
 /** Evaluate an assertion tree. Pure; no I/O. */
@@ -81,11 +97,38 @@ export function evaluate(assertion: Assertion, ctx: AssertionContext): Evidence 
         unsupported_in_pr9: true,
         message: 'network assertion is wired in PR-10 (#705 closes there)',
       }, ctx);
-    case 'screenshot_class':
-      return mkEvidence('screenshot_class', false, {
-        unsupported_in_pr9: true,
-        message: 'screenshot_class assertion is wired in PR-10 (pHash + class registry)',
+    case 'screenshot_class': {
+      if (!ctx.screenshotPhashHex) {
+        return mkEvidence('screenshot_class', false, {
+          reason: 'no_screenshot_in_context',
+          class_id: assertion.class_id,
+          distance_max: assertion.distance_max,
+          message:
+            'screenshot_class assertion requires AssertionContext.screenshotPhashHex (host did not capture a screenshot)',
+        }, ctx);
+      }
+      if (!ctx.screenshotClassMatch) {
+        return mkEvidence('screenshot_class', false, {
+          reason: 'no_class_registry',
+          class_id: assertion.class_id,
+          distance_max: assertion.distance_max,
+          message:
+            'screenshot_class assertion requires AssertionContext.screenshotClassMatch resolver',
+        }, ctx);
+      }
+      const { distance, closestHex } = ctx.screenshotClassMatch(
+        assertion.class_id,
+        ctx.screenshotPhashHex,
+      );
+      const passed = Number.isFinite(distance) && distance <= assertion.distance_max;
+      return mkEvidence('screenshot_class', passed, {
+        class_id: assertion.class_id,
+        distance_max: assertion.distance_max,
+        distance,
+        candidate: ctx.screenshotPhashHex,
+        closest_exemplar: closestHex ?? null,
       }, ctx);
+    }
     case 'and': {
       const children = assertion.children.map((c) => evaluate(c, ctx));
       const passed = children.every((c) => c.passed);

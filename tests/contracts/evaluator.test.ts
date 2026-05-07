@@ -130,7 +130,7 @@ describe('evaluate — no_dialog', () => {
   });
 });
 
-describe('evaluate — network / screenshot_class are PR-10 stubs', () => {
+describe('evaluate — network is a PR-10b stub (network event log not in ctx yet)', () => {
   test('network returns passed=false with unsupported flag', () => {
     const r = evaluate(
       { kind: 'network', url_pattern: '/x', status_in: [200], since: 'contract_enter' },
@@ -139,14 +139,19 @@ describe('evaluate — network / screenshot_class are PR-10 stubs', () => {
     expect(r.passed).toBe(false);
     expect(r.details.unsupported_in_pr9).toBe(true);
   });
+});
 
-  test('screenshot_class returns passed=false with unsupported flag', () => {
+describe('evaluate — screenshot_class is wired in PR-10', () => {
+  // Full coverage lives in tests/contracts/evaluator-screenshot.test.ts;
+  // this test asserts the smoke path that the previous stub flag was
+  // replaced with structured "missing inputs" reasons.
+  test('without screenshot in ctx → no_screenshot_in_context reason', () => {
     const r = evaluate(
       { kind: 'screenshot_class', class_id: 'x', distance_max: 12 },
       ctx(),
     );
     expect(r.passed).toBe(false);
-    expect(r.details.unsupported_in_pr9).toBe(true);
+    expect(r.details.reason).toBe('no_screenshot_in_context');
   });
 });
 
