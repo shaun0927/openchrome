@@ -19,6 +19,10 @@ import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import { traceListResource, readTraceResource } from './resources/trace-resource';
+import {
+  readTransactionResource,
+  TRANSACTION_URI_PREFIX,
+} from './contracts/evidence';
 import { HintEngine } from './hints';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
@@ -219,6 +223,12 @@ export class MCPServer {
     // are served via the prefix handler.
     this.registerResource(traceListResource);
     this.registerResourcePrefix('openchrome://trace/', readTraceResource);
+
+    // Outcome Contracts (#707): per-transaction evidence bundles.
+    //   openchrome://transaction/<txn_id>
+    // Bundles are written by the contract runtime on every settled
+    // transaction; this prefix handler returns the manifest JSON.
+    this.registerResourcePrefix(TRANSACTION_URI_PREFIX, readTransactionResource);
 
     // Initialize dashboard if enabled
     if (options.dashboard) {

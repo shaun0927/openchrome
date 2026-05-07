@@ -42,3 +42,19 @@ export {
   defaultIdempotencyRootDir,
 } from './idempotency';
 export type { IdempotencyStore, IdempotencyStoreOptions } from './idempotency';
+
+export {
+  writeEvidenceBundle,
+  readEvidenceBundle,
+  readTransactionResource,
+  parseTransactionUri,
+  defaultBundleRootDir,
+  TRANSACTION_URI_PREFIX,
+} from './evidence';
+export type {
+  BundleManifest,
+  BundleWriteResult,
+  EvidenceBundleInputs,
+  EvidenceBundleOptions,
+  EvidenceTraceEvent,
+} from './evidence';
