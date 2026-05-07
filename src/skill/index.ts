@@ -16,3 +16,12 @@ export type {
   StateHashEvidence,
   StateHashResult,
 } from './state';
+
+export { SkillGraphStorage, defaultSkillGraphRootDir } from './storage';
+export type {
+  SkillNode,
+  SkillEdge,
+  ToStateDistribution,
+  SkillGraphInspectSummary,
+  SkillGraphStorageOptions,
+} from './storage';
