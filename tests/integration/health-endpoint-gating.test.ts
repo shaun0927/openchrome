@@ -181,7 +181,7 @@ describeFn('health endpoint gating (issue #648)', () => {
     test(scenario.name, async () => {
       const healthPort = pickPort();
       const { chromePort, httpPort } = pickTransportPorts();
-      const env = {
+      const env: NodeJS.ProcessEnv = {
         ...process.env,
         OPENCHROME_HEALTH_PORT: String(healthPort),
         OPENCHROME_HEALTH_BIND: '127.0.0.1',
@@ -197,6 +197,7 @@ describeFn('health endpoint gating (issue #648)', () => {
       // default :3100; always point it at our random high port.
       if (scenario.args.includes('http') || scenario.args.includes('both')) {
         args.push('--http-host', '127.0.0.1');
+        env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = '1';
       }
 
       // IMPORTANT: stdin must be a *pipe* (not 'ignore'), because 'ignore'

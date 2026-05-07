@@ -55,6 +55,7 @@ export interface TransportOptions {
    * keys must pass this option.
    */
   apiKeyStore?: ApiKeyStore;
+  allowUnauthenticatedHttp?: boolean;
 }
 
 /**
@@ -71,7 +72,10 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
       options?.port || 3100,
       options?.host || '127.0.0.1',
       options?.authToken,
-      options?.apiKeyStore ? { apiKeyStore: options.apiKeyStore } : undefined,
+      {
+        ...(options?.apiKeyStore ? { apiKeyStore: options.apiKeyStore } : {}),
+        allowUnauthenticatedHttp: options?.allowUnauthenticatedHttp,
+      },
     );
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires

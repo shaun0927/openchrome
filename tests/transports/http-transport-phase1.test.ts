@@ -65,7 +65,7 @@ describe('HTTP Transport Phase 1', () => {
 
   describe('/mcp/sse endpoint', () => {
     beforeEach(async () => {
-      transport = new HTTPTransport(TEST_PORT, '127.0.0.1');
+      transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       transport.onMessage(async (msg: Record<string, unknown>) => {
         return { jsonrpc: '2.0', id: msg.id, result: {} };
       });
@@ -108,7 +108,7 @@ describe('HTTP Transport Phase 1', () => {
 
   describe('SSE keepalive timer', () => {
     it('cleans up keepalive timer on close', async () => {
-      transport = new HTTPTransport(TEST_PORT, '127.0.0.1');
+      transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       transport.onMessage(async () => null);
       transport.start();
       await new Promise((r) => setTimeout(r, 100));
@@ -119,7 +119,7 @@ describe('HTTP Transport Phase 1', () => {
 
   describe('404 for unknown paths', () => {
     beforeEach(async () => {
-      transport = new HTTPTransport(TEST_PORT, '127.0.0.1');
+      transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       transport.onMessage(async () => null);
       transport.start();
       await new Promise((r) => setTimeout(r, 100));
@@ -140,7 +140,7 @@ describe('Transport mode types', () => {
 
   it('createTransport with http mode returns HTTPTransport', () => {
     const { createTransport } = require('../../src/transports/index');
-    const t = createTransport('http', { port: 19999 });
+    const t = createTransport('http', { port: 19999, allowUnauthenticatedHttp: true });
     expect(t).toBeDefined();
     expect(typeof t.start).toBe('function');
     expect(typeof t.close).toBe('function');
@@ -150,7 +150,7 @@ describe('Transport mode types', () => {
     const { StdioTransport } = require('../../src/transports/stdio');
     const { HTTPTransport: HTTP } = require('../../src/transports/http');
     const stdio = new StdioTransport();
-    const httpT = new HTTP(19997, '127.0.0.1');
+    const httpT = new HTTP(19997, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     expect(stdio).toBeDefined();
     expect(httpT).toBeDefined();
     expect(typeof stdio.start).toBe('function');
