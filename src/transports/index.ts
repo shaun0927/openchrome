@@ -55,6 +55,13 @@ export interface TransportOptions {
    * keys must pass this option.
    */
   apiKeyStore?: ApiKeyStore;
+  allowUnauthenticatedHttp?: boolean;
+  /**
+   * Programmatic browser origins allowed to use MCP CORS, merged with the
+   * env var `OPENCHROME_HTTP_CORS_ORIGINS`. Without this, callers using the
+   * factory cannot configure CORS origins outside the environment.
+   */
+  corsAllowedOrigins?: string[];
 }
 
 /**
@@ -71,7 +78,11 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
       options?.port || 3100,
       options?.host || '127.0.0.1',
       options?.authToken,
-      options?.apiKeyStore ? { apiKeyStore: options.apiKeyStore } : undefined,
+      {
+        ...(options?.apiKeyStore ? { apiKeyStore: options.apiKeyStore } : {}),
+        allowUnauthenticatedHttp: options?.allowUnauthenticatedHttp,
+        ...(options?.corsAllowedOrigins ? { corsAllowedOrigins: options.corsAllowedOrigins } : {}),
+      },
     );
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires

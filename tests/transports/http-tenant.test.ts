@@ -63,7 +63,10 @@ describe('HTTP transport — tenant extraction (#7)', () => {
   });
 
   async function boot(handler?: (msg: Record<string, unknown>) => Promise<Record<string, unknown>>) {
-    transport = new HTTPTransport(TEST_PORT, '127.0.0.1');
+    transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, {
+      allowUnauthenticatedHttp: true,
+      corsAllowedOrigins: ['http://example.com'],
+    });
     transport.onMessage(async (msg: Record<string, unknown>) => ({
       jsonrpc: '2.0',
       id: msg.id,

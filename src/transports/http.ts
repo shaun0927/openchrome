@@ -71,6 +71,68 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function envFlag(name: string): boolean {
+  const raw = process.env[name];
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1');
+  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1';
+}
+
+function parseCorsOrigins(raw: string | undefined): Set<string> {
+  return new Set((raw || '').split(',').map((origin) => origin.trim()).filter(Boolean));
+}
+
+/**
+ * Format the configured server bind into a canonical origin host (URL `host`
+ * form: `hostname` or `hostname:port`, with IPv6 hostnames bracketed). This
+ * value is what `isSameOriginRequest` compares against — it is derived from
+ * operator configuration, not from the request, so it cannot be spoofed via
+ * the Host header.
+ */
+function formatServerOriginHost(host: string, port: number): string {
+  const trimmed = host.trim().toLowerCase();
+  const stripped = trimmed.replace(/^\[(.*)\]$/, '$1');
+  const isIPv6 = stripped.includes(':');
+  const hostPart = isIPv6 ? `[${stripped}]` : stripped;
+  // Default port 80 is the only http default; OpenChrome binds 3100 by
+  // default, but be explicit about what `URL.host` would produce.
+  return port === 80 ? hostPart : `${hostPart}:${port}`;
+}
+
+/**
+ * Treat a request as same-origin when the full origin tuple (scheme, host,
+ * port) in the `Origin` header matches the configured server bind. Browsers
+ * send `Origin` on same-origin non-GET requests (POST/OPTIONS), so without
+ * this bypass a browser app served from the OpenChrome origin would be
+ * rejected by the CORS allowlist even though no cross-origin trust boundary
+ * is crossed.
+ *
+ * The comparison uses the operator-configured `host:port`, NOT the client-
+ * supplied `Host` header. Trusting the Host header here would let DNS-
+ * rebinding attackers (whose page is served from a domain that was rebound
+ * to loopback) match `Origin === Host` and bypass the allowlist — defeating
+ * the very protection the allowlist provides for the unauthenticated
+ * loopback development mode.
+ *
+ * Scheme is enforced because the HTTP transport speaks plain `http` only;
+ * permitting an `https` Origin to bypass the allowlist would let cross-
+ * origin `https` callers reach `/mcp` whenever the same host is also exposed
+ * over `http`. Operators behind TLS termination must add the public origin
+ * to the allowlist explicitly.
+ */
+function isSameOriginRequest(originValue: string, serverOriginHost: string): boolean {
+  try {
+    const originUrl = new URL(originValue);
+    if (originUrl.protocol !== 'http:') return false;
+    return originUrl.host.toLowerCase() === serverOriginHost;
+  } catch {
+    return false;
+  }
+}
+
 const HTTP_REQUEST_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_REQUEST_TIMEOUT_MS',  DEFAULT_HTTP_REQUEST_TIMEOUT_MS);
 const HTTP_HEADERS_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_HEADERS_TIMEOUT_MS',  DEFAULT_HTTP_HEADERS_TIMEOUT_MS);
 const HTTP_KEEPALIVE_TIMEOUT_MS = envInt('OPENCHROME_HTTP_KEEPALIVE_TIMEOUT_MS', DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS);
@@ -108,6 +170,14 @@ interface SSEConnection {
 export interface HTTPTransportOptions {
   apiKeyStore?: ApiKeyStore;
   jwt?: JwtConfig;
+  /**
+   * Explicit opt-in for unauthenticated loopback-only HTTP development.
+   * Production/daemon HTTP mode must configure auth instead of silently
+   * receiving admin-scoped disabled auth.
+   */
+  allowUnauthenticatedHttp?: boolean;
+  /** Explicit browser origins allowed to use MCP CORS. Defaults to env. */
+  corsAllowedOrigins?: string[];
 }
 
 export class HTTPTransport implements MCPTransport {
@@ -119,6 +189,8 @@ export class HTTPTransport implements MCPTransport {
   private host: string;
   private authToken: string | undefined;
   private authMode: AuthMode;
+  private readonly corsAllowedOrigins: Set<string>;
+  private readonly serverOriginHost: string;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
@@ -140,6 +212,13 @@ export class HTTPTransport implements MCPTransport {
     this.authToken = authToken;
     const verifier = options.jwt ? createJwtVerifier(options.jwt) : undefined;
     this.authMode = HTTPTransport.resolveAuthMode(authToken, options.apiKeyStore, verifier);
+    const allowUnauthenticatedHttp = options.allowUnauthenticatedHttp ?? envFlag('OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP');
+    HTTPTransport.validateUnauthenticatedHttpPolicy(this.authMode, this.host, allowUnauthenticatedHttp);
+    this.corsAllowedOrigins = new Set([
+      ...parseCorsOrigins(process.env.OPENCHROME_HTTP_CORS_ORIGINS),
+      ...(options.corsAllowedOrigins || []),
+    ]);
+    this.serverOriginHost = formatServerOriginHost(this.host, this.port);
   }
 
   /**
@@ -185,6 +264,46 @@ export class HTTPTransport implements MCPTransport {
       return { kind: 'legacy-shared-token', token: authToken };
     }
     return { kind: 'disabled' };
+  }
+
+  private static validateUnauthenticatedHttpPolicy(
+    authMode: AuthMode,
+    host: string,
+    allowUnauthenticatedHttp: boolean,
+  ): void {
+    if (authMode.kind !== 'disabled') return;
+
+    const migration = 'Configure HTTP auth (OPENCHROME_AUTH_TOKEN, API keys, or JWT), use stdio, ' +
+      'or set OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1 for loopback-only development.';
+    if (!allowUnauthenticatedHttp) {
+      throw new Error(`Refusing to start unauthenticated HTTP transport. ${migration}`);
+    }
+    if (!isLoopbackHost(host)) {
+      throw new Error(
+        `Refusing to start unauthenticated HTTP transport on non-loopback host ${host}. ${migration}`,
+      );
+    }
+  }
+
+  private applyCors(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
+    const origin = req.headers.origin;
+    const originValue = typeof origin === 'string' ? origin : undefined;
+    const sameOrigin = originValue ? isSameOriginRequest(originValue, this.serverOriginHost) : false;
+    if (originValue && this.corsAllowedOrigins.has(originValue)) {
+      res.setHeader('Access-Control-Allow-Origin', originValue);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', `Content-Type, Mcp-Session-Id, Authorization, X-Tenant-Id, ${REQUEST_ID_HEADER}`);
+    res.setHeader('Access-Control-Expose-Headers', `Mcp-Session-Id, ${REQUEST_ID_HEADER}`);
+
+    const isMcpEndpoint = pathname === '/mcp' || pathname === '/mcp/sse';
+    if (originValue && isMcpEndpoint && !sameOrigin && !this.corsAllowedOrigins.has(originValue)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'CORS origin not allowed' }));
+      return false;
+    }
+    return true;
   }
 
   /** Returns the resolved principal for a given request, if any. */
@@ -322,12 +441,11 @@ export class HTTPTransport implements MCPTransport {
     const url = new URL(req.url || '/', `http://${this.host}:${this.port}`);
     const pathname = url.pathname;
 
-    // CORS headers for all responses — restrict origin when auth is enforced
-    const authEnforced = this.authMode.kind !== 'disabled';
-    res.setHeader('Access-Control-Allow-Origin', authEnforced ? 'null' : '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', `Content-Type, Mcp-Session-Id, Authorization, X-Tenant-Id, ${REQUEST_ID_HEADER}`);
-    res.setHeader('Access-Control-Expose-Headers', `Mcp-Session-Id, ${REQUEST_ID_HEADER}`);
+    // CORS is explicit allowlist-only for browser-origin MCP requests. Non-browser
+    // clients that do not send Origin continue through normal authentication.
+    if (!this.applyCors(req, res, pathname)) {
+      return;
+    }
 
     // Request correlation: honour client-supplied X-Request-Id, otherwise mint
     // a fresh UUID. Echo it back on every response so clients (and downstream

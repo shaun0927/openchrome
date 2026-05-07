@@ -49,7 +49,7 @@ describe('Streamable HTTP - POST with Accept: text/event-stream', () => {
   let transport: InstanceType<typeof HTTPTransport>;
 
   beforeEach(async () => {
-    transport = new HTTPTransport(TEST_PORT, '127.0.0.1');
+    transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(async (msg: Record<string, unknown>) => {
       // Notifications (no id) return null per MCP spec
       if (!msg.id) return null;

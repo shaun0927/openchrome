@@ -27,7 +27,7 @@ describe('HTTPTransport — abort-on-disconnect (issue #8)', () => {
   });
 
   function startTransport(handler: (msg: any, signal?: AbortSignal) => Promise<any>) {
-    transport = new HTTPTransport(TEST_PORT, '127.0.0.1');
+    transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(handler);
     transport.start();
     return new Promise<void>((r) => setTimeout(r, 50));

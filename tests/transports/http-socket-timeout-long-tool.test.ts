@@ -36,7 +36,7 @@ describe('HTTP transport socket timeout during long-running tool execution', () 
 
   beforeEach(async () => {
     port = await ephemeralPort();
-    transport = new HTTPTransport(port, '127.0.0.1');
+    transport = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(async (msg: Record<string, unknown>) => {
       await new Promise((resolve) => setTimeout(resolve, 250));
       return {

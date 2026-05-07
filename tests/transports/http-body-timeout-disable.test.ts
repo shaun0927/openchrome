@@ -40,7 +40,7 @@ describe('HTTP transport body timeout disable (=0)', () => {
 
   beforeEach(async () => {
     port = await ephemeralPort();
-    transport = new HTTPTransport(port, '127.0.0.1');
+    transport = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(async (msg: Record<string, unknown>) => ({
       jsonrpc: '2.0',
       id: msg.id ?? 0,
