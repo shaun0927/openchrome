@@ -2,7 +2,7 @@
  * Sessions View - Session list display
  */
 
-import { ANSI, formatTime, formatDuration, truncate, pad, horizontalLine, BOX } from '../ansi.js';
+import { ANSI, formatTime, truncate, pad, horizontalLine, BOX } from '../ansi.js';
 import type { SessionInfo, ScreenSize } from '../types.js';
 import { Renderer } from '../renderer.js';
 

@@ -173,7 +173,7 @@ export function parseRobotsTxt(
   const result: RobotsRules = { disallow: [], allow: [], sitemaps: [] };
   const lines = robotsTxt.split('\n').map((l) => l.trim());
 
-  let currentAgents: string[] = [];
+  const currentAgents: string[] = [];
   let isRelevant = false;
   let foundSpecific = false;
 

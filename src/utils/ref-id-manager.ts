@@ -225,12 +225,12 @@ export class RefIdManager {
         (tag: string, elName: string | undefined, elText: string | undefined, elRole: string | undefined): number => {
           // Deep querySelectorAll that pierces open shadow roots
           function deepQSA(root: Element | Document | ShadowRoot, sel: string): Element[] {
-            let results: Element[] = [];
-            try { let m = root.querySelectorAll(sel); for (let i = 0; i < m.length; i++) results.push(m[i]); } catch(e) {}
-            let all = root.querySelectorAll('*');
+            const results: Element[] = [];
+            try { const m = root.querySelectorAll(sel); for (let i = 0; i < m.length; i++) results.push(m[i]); } catch(e) {}
+            const all = root.querySelectorAll('*');
             for (let j = 0; j < all.length; j++) {
               if ((all[j] as any).shadowRoot) {
-                let sr = deepQSA((all[j] as any).shadowRoot, sel);
+                const sr = deepQSA((all[j] as any).shadowRoot, sel);
                 for (let k = 0; k < sr.length; k++) results.push(sr[k]);
               }
             }

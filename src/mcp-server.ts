@@ -536,7 +536,6 @@ export class MCPServer {
     principal?: Principal,
     signal?: AbortSignal,
   ): Promise<MCPResponse> {
-    const requestReceivedAt = Date.now();
     const { id, method, params } = request;
 
     try {

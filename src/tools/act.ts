@@ -227,7 +227,7 @@ async function executeSelect(
     try {
       await page.evaluate(
         (nodeId: number, val: string) => {
-          const el = document.querySelector(`[data-backend-node-id="${nodeId}"]`) as HTMLSelectElement | null;
+          void nodeId;
           // Fallback: find by evaluating all selects
           const selects = Array.from(document.querySelectorAll('select'));
           const target = selects.find(s => {

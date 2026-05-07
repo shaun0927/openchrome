@@ -3,7 +3,7 @@
  * Part of #523: Desktop App Web host connection guide.
  */
 
-import { ANSI, truncate, pad, BOX, horizontalLine, stripAnsi } from '../ansi.js';
+import { ANSI, truncate, BOX, horizontalLine } from '../ansi.js';
 import type { ScreenSize } from '../types.js';
 import { Renderer } from '../renderer.js';
 import type { WebAIHostId, ConnectionInfo } from '../../connect/types.js';

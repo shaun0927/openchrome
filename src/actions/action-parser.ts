@@ -118,7 +118,7 @@ function splitOnConjunctions(text: string): string[] {
   // Split on "WORD, VERB" — comma followed by a verb-starting word
   // or " then VERB" / " and VERB"
   const result: string[] = [];
-  let remaining = text;
+  const remaining = text;
 
   // Pattern: (", " | " then " | " and ") followed by a verb-starting token
   const re = /(?:,\s+|\s+then\s+|\s+and\s+)(?=[a-z\u3131-\uD7A3\u4E00-\u9FFF])/gi;
