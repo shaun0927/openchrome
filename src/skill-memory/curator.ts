@@ -41,6 +41,8 @@ export type CuratorActionKind =
   | 'archive_stale'
   | 'archive_untouched'
   | 'archive_double_demote'
+  | 'merge'
+  | 'merge_skipped'
   | 'skip_user_authored'
   | 'skip_unknown_schema';
 

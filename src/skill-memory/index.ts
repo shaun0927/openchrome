@@ -62,3 +62,22 @@ export type {
   SkillRunStats,
   SkillStatsResolver,
 } from './curator';
+
+export {
+  clusterSkills,
+  jaccard,
+  runPass2Merge,
+  tokenize,
+} from './curator-pass2';
+export type {
+  ClusterCandidate,
+  MergeRequest,
+  MergeRequester,
+  MergeResult,
+  MergeResultOk,
+  MergeResultSkip,
+  Pass2Outcome,
+  RunPass2Options,
+} from './curator-pass2';
+
+export { STOP_WORDS } from './stop-words';
