@@ -1571,6 +1571,27 @@ export class CDPClient {
       }
     }
 
+    // Trace recorder hook — opt-in via OPENCHROME_TRACE=1. The recorder
+    // module is imported lazily so consumers with tracing disabled pay
+    // zero startup cost (no SQLite handle, no ring buffer, no timer).
+    // Any recorder failure is logged and swallowed; tracing must never
+    // regress page creation.
+    try {
+      const cdpAttach = await import('../trace/cdp-attach');
+      if (cdpAttach.traceEnvEnabled()) {
+        await cdpAttach.attachRecorderToPage(
+          page as unknown as Parameters<typeof cdpAttach.attachRecorderToPage>[0],
+          {
+            sessionId: getTargetId(page.target()),
+            domain: targetDomain,
+            parentOp: 'cdp.createPage',
+          },
+        );
+      }
+    } catch (err) {
+      console.error('[CDPClient] trace recorder attach failed (tracing inactive for this page):', err);
+    }
+
     return page;
   }
 
