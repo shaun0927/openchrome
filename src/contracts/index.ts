@@ -79,3 +79,21 @@ export type {
   ScreenshotClassRegistryOptions,
   ScreenshotClassThreshold,
 } from './screenshot-classes';
+
+export {
+  HANDOFF_TOKEN_HEX_LENGTH,
+  HandoffManager,
+  bannerTagName,
+  buildBannerScript,
+  generateHandoffToken,
+  verifyHandoffToken,
+} from './handoff';
+export type {
+  BannerSpec,
+  CreateHandoffArgs,
+  HandoffEscalationReason,
+  HandoffManagerOptions,
+  HandoffRecord,
+  HandoffStatus,
+  ResumeResult,
+} from './handoff';
