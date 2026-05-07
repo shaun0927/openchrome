@@ -13,6 +13,7 @@
  * will land in PR-15 and slot in via the same public API.
  */
 
+import type { PersistenceAdapter } from './persistence';
 import { generateHandoffToken } from './token';
 
 export type HandoffEscalationReason =
@@ -58,6 +59,13 @@ export interface HandoffManagerOptions {
   maxPerTxn?: number;
   /** Test hook: clock. */
   now?: () => number;
+  /**
+   * Optional persistence adapter (PR-15). When supplied, the manager
+   * loads previously-stored records on construction and persists after
+   * every mutation. When omitted, behavior is identical to PR-14 —
+   * fully in-memory, lost on process restart.
+   */
+  persistence?: PersistenceAdapter;
 }
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -86,6 +94,7 @@ export class HandoffManager {
   private readonly timeoutMs: number;
   private readonly maxPerTxn: number;
   private readonly now: () => number;
+  private readonly persistence?: PersistenceAdapter;
   /** Map<txn_id, HandoffRecord>. The latest attempt wins. */
   private readonly active = new Map<string, HandoffRecord>();
   /** attempt counter per txn so we can refuse a 4th call. */
@@ -95,6 +104,25 @@ export class HandoffManager {
     this.timeoutMs = opts.timeoutMs ?? envInt('OPENCHROME_HANDOFF_TIMEOUT_MS', DEFAULT_TIMEOUT_MS);
     this.maxPerTxn = opts.maxPerTxn ?? envInt('OPENCHROME_HANDOFF_MAX_PER_TXN', DEFAULT_MAX_PER_TXN);
     this.now = opts.now ?? Date.now;
+    this.persistence = opts.persistence;
+    // Restore prior state — pending handoffs whose deadline still lies
+    // ahead are resumable; everything else stays as a record so we can
+    // honor the per-txn cap across restarts.
+    if (this.persistence) {
+      for (const r of this.persistence.loadAll()) {
+        this.active.set(r.txn_id, r);
+        this.attempts.set(r.txn_id, Math.max(this.attempts.get(r.txn_id) ?? 0, r.attempt));
+      }
+    }
+  }
+
+  private flush(): void {
+    if (!this.persistence) return;
+    try {
+      this.persistence.saveAll([...this.active.values()]);
+    } catch {
+      // best-effort; in-memory state stays consistent regardless
+    }
   }
 
   /**
@@ -124,6 +152,7 @@ export class HandoffManager {
     };
     this.active.set(args.txn_id, record);
     this.attempts.set(args.txn_id, attempt);
+    this.flush();
     return record;
   }
 
@@ -159,6 +188,7 @@ export class HandoffManager {
     }
     rec.status = 'resumed';
     rec.resumed_at = this.now();
+    this.flush();
     return { ok: true, record: rec };
   }
 
@@ -168,6 +198,7 @@ export class HandoffManager {
     if (!rec) return undefined;
     if (rec.status === 'pending') {
       rec.status = 'aborted';
+      this.flush();
     }
     return rec;
   }
@@ -191,6 +222,7 @@ export class HandoffManager {
         purged += 1;
       }
     }
+    if (purged > 0) this.flush();
     return purged;
   }
 
@@ -199,9 +231,16 @@ export class HandoffManager {
     return [...this.active.values()];
   }
 
-  /** Test hook: drop everything. */
+  /** Test hook: drop everything (in-memory + persisted). */
   reset(): void {
     this.active.clear();
     this.attempts.clear();
+    if (this.persistence) {
+      try {
+        this.persistence.clear();
+      } catch {
+        // ignore
+      }
+    }
   }
 }
