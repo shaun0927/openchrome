@@ -41,6 +41,8 @@ import {
   validateBase32,
 } from './totp-store';
 import { registerAdminKeysCommand } from './admin-keys';
+import { registerTraceCommand } from './trace';
+import { registerSkillCommand } from './skill';
 
 const program = new Command();
 
@@ -1246,5 +1248,11 @@ totp
 
 // Admin CLI — tenant API key management (issue #9 / PR3).
 registerAdminKeysCommand(program);
+
+// Trace inspection (M1 PR-3).
+registerTraceCommand(program);
+
+// Skill graph inspection (M1 PR-3).
+registerSkillCommand(program);
 
 program.parse();
