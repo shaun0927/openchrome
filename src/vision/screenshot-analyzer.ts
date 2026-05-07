@@ -26,6 +26,7 @@ import type {
   AnnotatedScreenshotResult,
   VisionElementMap,
 } from './types';
+import { bufferToBase64WithPayloadGuard, validateCaptureArea } from '../utils/screenshot-guards';
 
 /** Raw element collected from the page */
 export interface RawElement {
@@ -204,6 +205,12 @@ async function captureAnnotatedScreenshot(
   elements: RawElement[],
   options: Required<AnnotationOptions>
 ): Promise<{ screenshot: string; mimeType: string }> {
+  const viewport = page.viewport() || { width: 1920, height: 1080 };
+  const areaError = validateCaptureArea(viewport, 'Annotated screenshot');
+  if (areaError) {
+    throw new Error(areaError);
+  }
+
   try {
     // Inject overlay with annotations
     await page.evaluate(
@@ -303,10 +310,14 @@ async function captureAnnotatedScreenshot(
     ]).finally(() => { if (timer) clearTimeout(timer); });
 
     const screenshotBuffer = Buffer.from(buffer);
+    const encoded = bufferToBase64WithPayloadGuard(screenshotBuffer, 'Annotated screenshot');
+    if ('error' in encoded) {
+      throw new Error(encoded.error);
+    }
     const mimeType = options.format === 'webp' ? 'image/webp' : 'image/png';
 
     return {
-      screenshot: screenshotBuffer.toString('base64'),
+      screenshot: encoded.data,
       mimeType,
     };
   } finally {

@@ -11,6 +11,7 @@ import {
   RawElement,
 } from '../../src/vision/screenshot-analyzer';
 import type { VisionElementMap } from '../../src/vision/types';
+import { MAX_INLINE_IMAGE_PAYLOAD_BYTES } from '../../src/config/defaults';
 
 // ─── Mock Page Factory ───
 
@@ -192,5 +193,20 @@ describe('analyzeScreenshot', () => {
     page.viewport.mockReturnValue(null);
     const result = await analyzeScreenshot(page as any);
     expect(result.viewport).toEqual({ width: 1920, height: 1080 });
+  });
+
+  it('rejects annotated screenshots over the inline payload cap', async () => {
+    const page = createMockPage([]);
+    const rawBytesNeeded = Math.ceil((MAX_INLINE_IMAGE_PAYLOAD_BYTES + 1) * 3 / 4);
+    page.screenshot.mockResolvedValueOnce(Buffer.alloc(rawBytesNeeded));
+
+    await expect(analyzeScreenshot(page as any)).rejects.toThrow('exceeds the 10 MiB inline limit');
+  });
+
+  it('rejects annotated screenshots over the capture area cap before capture', async () => {
+    const page = createMockPage([], { width: 6000, height: 5000 });
+
+    await expect(analyzeScreenshot(page as any)).rejects.toThrow('Annotated screenshot area 6000x5000');
+    expect(page.screenshot).not.toHaveBeenCalled();
   });
 });

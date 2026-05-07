@@ -8,6 +8,7 @@ import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { bufferToBase64WithPayloadGuard, validateCaptureArea } from '../utils/screenshot-guards';
 
 const definition: MCPToolDefinition = {
   name: 'page_screenshot',
@@ -68,30 +69,54 @@ const handler: ToolHandler = async (
   const clip = args.clip as { x: number; y: number; width: number; height: number } | undefined;
   const omitBackground = (args.omitBackground as boolean | undefined) ?? false;
 
+  const makeError = (text: string): MCPResult => ({
+    content: [{ type: 'text', text }],
+    isError: true,
+  });
+
   const sessionManager = getSessionManager();
 
   if (!tabId) {
-    return {
-      content: [{ type: 'text', text: 'Error: tabId is required' }],
-      isError: true,
-    };
+    return makeError('Error: tabId is required');
   }
 
   // Validate quality
   if (quality < 0 || quality > 100) {
-    return {
-      content: [{ type: 'text', text: 'Error: quality must be between 0 and 100' }],
-      isError: true,
-    };
+    return makeError('Error: quality must be between 0 and 100');
+  }
+
+  if (clip && (!Number.isFinite(clip.x) || !Number.isFinite(clip.y) || !Number.isFinite(clip.width) || !Number.isFinite(clip.height) || clip.width <= 0 || clip.height <= 0)) {
+    return makeError('Error: clip x, y, width, and height must be finite numbers, and clip width/height must be greater than 0');
   }
 
   try {
     const page = await sessionManager.getPage(sessionId, tabId, undefined, 'page_screenshot');
     if (!page) {
-      return {
-        content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
-        isError: true,
-      };
+      return makeError(`Error: Tab ${tabId} not found`);
+    }
+
+    const viewport = page.viewport();
+    const captureDimensions = clip
+      ? { width: clip.width, height: clip.height }
+      : fullPage
+        ? await page.evaluate(() => ({
+            width: Math.max(
+              document.documentElement?.scrollWidth ?? 0,
+              document.body?.scrollWidth ?? 0,
+              window.innerWidth ?? 0
+            ),
+            height: Math.max(
+              document.documentElement?.scrollHeight ?? 0,
+              document.body?.scrollHeight ?? 0,
+              window.innerHeight ?? 0
+            ),
+          }))
+        : { width: viewport?.width ?? 0, height: viewport?.height ?? 0 };
+
+    const areaLabel = clip ? 'Clipped screenshot' : fullPage ? 'Full-page screenshot' : 'Screenshot';
+    const areaError = validateCaptureArea(captureDimensions, areaLabel);
+    if (areaError) {
+      return makeError(`Error: ${areaError}`);
     }
 
     // Build screenshot options
@@ -155,9 +180,8 @@ const handler: ToolHandler = async (
       await fs.writeFile(resolvedPath, screenshotBuffer);
 
       // Determine dimensions
-      const viewport = page.viewport();
-      const width = clip ? clip.width : (viewport?.width ?? 0);
-      const height = clip ? clip.height : (fullPage ? 'full' : (viewport?.height ?? 0));
+      const width = captureDimensions.width;
+      const height = captureDimensions.height;
 
       return {
         content: [
@@ -175,18 +199,9 @@ const handler: ToolHandler = async (
         ],
       };
     } else {
-      // Check size before returning base64 (5MB limit)
-      const fiveMB = 5 * 1024 * 1024;
-      if (screenshotBuffer.length > fiveMB) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error: Screenshot is ${Math.round(screenshotBuffer.length / 1024 / 1024 * 10) / 10}MB which exceeds the 5MB inline limit. Use the 'path' parameter to save to a file instead.`,
-            },
-          ],
-          isError: true,
-        };
+      const encoded = bufferToBase64WithPayloadGuard(screenshotBuffer, 'Screenshot');
+      if ('error' in encoded) {
+        return makeError(`Error: ${encoded.error}`);
       }
 
       const mimeType = format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png';
@@ -194,7 +209,7 @@ const handler: ToolHandler = async (
         content: [
           {
             type: 'image',
-            data: screenshotBuffer.toString('base64'),
+            data: encoded.data,
             mimeType,
           },
         ],
