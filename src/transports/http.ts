@@ -82,16 +82,25 @@ function parseCorsOrigins(raw: string | undefined): Set<string> {
 }
 
 /**
- * Treat a request as same-origin when the URL's host (including port) in the
- * `Origin` header matches the request's `Host` header. Browsers send `Origin`
- * on same-origin non-GET requests (POST/OPTIONS), so without this gate a
- * browser app served from the OpenChrome origin would be rejected by the CORS
- * allowlist even though no cross-origin trust boundary is crossed.
+ * Treat a request as same-origin when the full origin tuple (scheme, host,
+ * port) in the `Origin` header matches the transport scheme and the request's
+ * `Host` header. Browsers send `Origin` on same-origin non-GET requests
+ * (POST/OPTIONS), so without this bypass a browser app served from the
+ * OpenChrome origin would be rejected by the CORS allowlist even though no
+ * cross-origin trust boundary is crossed.
+ *
+ * Scheme is enforced because the HTTP transport speaks plain `http` only;
+ * permitting an `https` Origin to bypass the allowlist would let cross-origin
+ * `https` callers reach `/mcp` whenever the same host is also exposed over
+ * `http`. Operators behind TLS termination must add the public origin to the
+ * allowlist explicitly.
  */
 function isSameOriginRequest(originValue: string, hostHeader: string | undefined): boolean {
   if (!hostHeader) return false;
   try {
-    return new URL(originValue).host.toLowerCase() === hostHeader.toLowerCase();
+    const originUrl = new URL(originValue);
+    if (originUrl.protocol !== 'http:') return false;
+    return originUrl.host.toLowerCase() === hostHeader.toLowerCase();
   } catch {
     return false;
   }

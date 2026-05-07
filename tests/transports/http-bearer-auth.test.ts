@@ -193,5 +193,15 @@ describe('HTTP Bearer Token Auth', () => {
       }, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
       expect(res.status).toBe(200);
     });
+
+    it('rejects cross-origin scheme mismatch even when host:port matches Host header', async () => {
+      // The HTTP transport speaks http only; an https Origin pointing at the
+      // same host:port is cross-origin per the CORS scheme/host/port tuple.
+      const res = await request('/mcp', 'POST', {
+        'Content-Type': 'application/json',
+        Origin: `https://127.0.0.1:${TEST_PORT}`,
+      }, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
+      expect(res.status).toBe(403);
+    });
   });
 });
