@@ -59,15 +59,15 @@ export function stringifySkillMd(file: SkillFile): string {
   const fm = file.frontmatter;
   const lines: string[] = [DELIMITER];
   lines.push(`schema_version: ${fm.schema_version}`);
-  lines.push(`name: ${fm.name}`);
-  lines.push(`domain: ${fm.domain}`);
+  lines.push(`name: ${escapeStr(fm.name)}`);
+  lines.push(`domain: ${escapeStr(fm.domain)}`);
   lines.push(`intent: ${escapeStr(fm.intent)}`);
-  lines.push(`status: ${fm.status}`);
+  lines.push(`status: ${escapeStr(fm.status)}`);
   lines.push(`verified_runs: ${fm.verified_runs}`);
-  lines.push(`last_verified_at: ${fm.last_verified_at}`);
-  lines.push(`contract_ref: ${fm.contract_ref}`);
-  lines.push(`graph_node_anchor: ${fm.graph_node_anchor}`);
-  lines.push(`author: ${fm.author}`);
+  lines.push(`last_verified_at: ${escapeStr(fm.last_verified_at)}`);
+  lines.push(`contract_ref: ${escapeStr(fm.contract_ref)}`);
+  lines.push(`graph_node_anchor: ${escapeStr(fm.graph_node_anchor)}`);
+  lines.push(`author: ${escapeStr(fm.author)}`);
   if (fm.budget) {
     if (typeof fm.budget.tokens_typical === 'number') {
       lines.push(`budget.tokens_typical: ${fm.budget.tokens_typical}`);
@@ -88,10 +88,14 @@ export function stringifySkillMd(file: SkillFile): string {
 /* ------------------------------------------------------------------ */
 
 function escapeStr(value: string): string {
-  // Quote only when the value contains a leading/trailing space, a
-  // colon, a hash, or a double-quote — keeps the output tidy for
-  // typical strings.
+  // Quote when the value contains a leading/trailing space, a colon,
+  // a hash, or a double-quote (those would confuse the parser); also
+  // quote when the value LOOKS like a number / boolean — otherwise
+  // the parser's coerce() would round-trip a hex string like "41" or
+  // a contract id like "12345" as a number.
   if (/[:#"]|^\s|\s$/.test(value)) return JSON.stringify(value);
+  if (/^-?\d+(?:\.\d+)?$/.test(value)) return JSON.stringify(value);
+  if (value === 'true' || value === 'false' || value === '') return JSON.stringify(value);
   return value;
 }
 
@@ -128,8 +132,16 @@ function parseSimpleYaml(lines: string[]): Record<string, unknown> {
       throw new FrontmatterError(`malformed frontmatter line: ${line}`);
     }
     const key = line.slice(0, colon).trim();
-    const value = unescapeStr(line.slice(colon + 1).trim());
-    setNested(out, key, coerce(value));
+    const rawValue = line.slice(colon + 1).trim();
+    // Quoted values bypass coerce — the writer quoted them precisely to
+    // preserve string semantics (hex like "41" or boolean-string "true").
+    let parsed: unknown;
+    if (rawValue.startsWith('"') && rawValue.endsWith('"') && rawValue.length >= 2) {
+      parsed = unescapeStr(rawValue);
+    } else {
+      parsed = coerce(rawValue);
+    }
+    setNested(out, key, parsed);
   }
   return out;
 }

@@ -49,3 +49,16 @@ export type {
   SkillRecallOptions,
   SkillRecallPayload,
 } from './recall';
+
+export { CuratorLock, defaultCuratorRootDir } from './curator-lock';
+export type { CuratorLockOptions } from './curator-lock';
+
+export { runCurator } from './curator';
+export type {
+  CuratorAction,
+  CuratorActionKind,
+  CuratorOptions,
+  CuratorReport,
+  SkillRunStats,
+  SkillStatsResolver,
+} from './curator';
