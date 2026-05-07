@@ -586,6 +586,23 @@ describe('ComputerTool', () => {
       expect(cdpSession.send).not.toHaveBeenCalledWith('Page.captureScreenshot', expect.anything());
     });
 
+    test('falls back to default viewport when page.viewport() returns null', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.viewport as jest.Mock).mockReturnValue(null);
+      const cdpSession = await (page as any).createCDPSession();
+      (cdpSession.send as jest.Mock).mockResolvedValue({ data: 'ZmFrZQ==' });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string }>; isError?: boolean };
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].type).toBe('image');
+      expect(cdpSession.send).toHaveBeenCalledWith('Page.captureScreenshot', expect.any(Object));
+    });
+
     test('does not start a duplicate screenshot capture after race timeout', async () => {
       jest.useFakeTimers();
       try {

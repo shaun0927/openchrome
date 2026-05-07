@@ -9,6 +9,9 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { bufferToBase64WithPayloadGuard, validateCaptureArea } from '../utils/screenshot-guards';
+import { withTimeout } from '../utils/with-timeout';
+
+const FULL_PAGE_DIMENSION_TIMEOUT_MS = 5000;
 
 const definition: MCPToolDefinition = {
   name: 'page_screenshot',
@@ -99,18 +102,22 @@ const handler: ToolHandler = async (
     const captureDimensions = clip
       ? { width: clip.width, height: clip.height }
       : fullPage
-        ? await page.evaluate(() => ({
-            width: Math.max(
-              document.documentElement?.scrollWidth ?? 0,
-              document.body?.scrollWidth ?? 0,
-              window.innerWidth ?? 0
-            ),
-            height: Math.max(
-              document.documentElement?.scrollHeight ?? 0,
-              document.body?.scrollHeight ?? 0,
-              window.innerHeight ?? 0
-            ),
-          }))
+        ? await withTimeout(
+            page.evaluate(() => ({
+              width: Math.max(
+                document.documentElement?.scrollWidth ?? 0,
+                document.body?.scrollWidth ?? 0,
+                window.innerWidth ?? 0
+              ),
+              height: Math.max(
+                document.documentElement?.scrollHeight ?? 0,
+                document.body?.scrollHeight ?? 0,
+                window.innerHeight ?? 0
+              ),
+            })),
+            FULL_PAGE_DIMENSION_TIMEOUT_MS,
+            'Full-page dimension lookup'
+          )
         : { width: viewport?.width ?? 0, height: viewport?.height ?? 0 };
 
     const areaLabel = clip ? 'Clipped screenshot' : fullPage ? 'Full-page screenshot' : 'Screenshot';

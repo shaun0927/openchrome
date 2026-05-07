@@ -131,6 +131,30 @@ describe('page_screenshot payload guards', () => {
     expect(page.screenshot).not.toHaveBeenCalled();
   });
 
+  it('times out instead of blocking forever when full-page dimension lookup hangs', async () => {
+    jest.useFakeTimers();
+    try {
+      const handler = await getPageScreenshotHandler(mockSessionManager);
+      const page = (await mockSessionManager.getPage(sessionId, tabId))!;
+      (page.evaluate as jest.Mock).mockImplementation(() => new Promise(() => {}));
+      (page.screenshot as jest.Mock).mockResolvedValue(Buffer.from('never reached'));
+
+      const pending = handler(sessionId, { tabId, fullPage: true }) as Promise<{
+        content: Array<{ text?: string }>;
+        isError?: boolean;
+      }>;
+
+      await jest.advanceTimersByTimeAsync(5000);
+      const result = await pending;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/Full-page dimension lookup/i);
+      expect(page.screenshot).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('computes base64 payload size before encoding oversized buffers', () => {
     expect(getBase64EncodedByteLengthForRawBytes(0)).toBe(0);
     expect(getBase64EncodedByteLengthForRawBytes(1)).toBe(4);

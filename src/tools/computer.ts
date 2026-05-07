@@ -197,9 +197,12 @@ const handler: ToolHandler = async (
           };
         }
 
-        const viewport = page.viewport();
+        // Fall back to a sensible default (matches src/vision/screenshot-analyzer.ts)
+        // when page.viewport() returns null so the area guard cannot be silently
+        // bypassed by a 0x0 area report.
+        const viewport = page.viewport() ?? { width: 1920, height: 1080 };
         const areaError = validateCaptureArea(
-          { width: viewport?.width ?? 0, height: viewport?.height ?? 0 },
+          { width: viewport.width, height: viewport.height },
           'Screenshot'
         );
         if (areaError) {
