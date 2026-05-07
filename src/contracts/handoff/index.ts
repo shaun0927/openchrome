@@ -1,6 +1,8 @@
 /**
- * Handoff subsystem barrel — token + banner + manager. Persistence and
- * keychain integration land in PR-15.
+ * Handoff subsystem barrel — token + banner + manager + persistence.
+ * OS-keychain bridges (macOS Keychain, Windows Credential Manager) ride
+ * a separate follow-up; the PersistenceAdapter interface is the
+ * extension point.
  */
 
 export {
@@ -20,3 +22,13 @@ export {
   type HandoffManagerOptions,
   type ResumeResult,
 } from './manager';
+
+export {
+  EncryptedFilePersistence,
+  PlaintextFilePersistence,
+  autoSelectHandoffPersistence,
+  defaultHandoffRootDir,
+  type EncryptedFilePersistenceOptions,
+  type FilePersistenceOptions,
+  type PersistenceAdapter,
+} from './persistence';

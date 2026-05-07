@@ -1,0 +1,254 @@
+/**
+ * Persistence adapters for the handoff manager.
+ *
+ * Per #708 v2: handoff state at rest must survive a process restart so
+ * a long-lived 2FA challenge does not vaporize when the user
+ * accidentally Ctrl-C's the harness. The wire format is JSON; the
+ * primary at-rest concern is **token confidentiality** — a leaked
+ * token grants single-use authority to resume an in-flight transaction.
+ *
+ * Three confidentiality tiers (caller picks via constructor):
+ *
+ *   PlaintextFilePersistence      — JSON on disk at mode 0o600. Use only
+ *                                   on dev machines where you trust the
+ *                                   filesystem.
+ *
+ *   EncryptedFilePersistence(key) — AES-256-GCM with the supplied 32-
+ *                                   byte key. Used on Linux (keychain
+ *                                   not standardized) and as a portable
+ *                                   default. Key may come from
+ *                                   OPENCHROME_HANDOFF_KEY (hex/base64).
+ *
+ *   In-memory subclass            — manager spawned without persistence
+ *                                   keeps the original in-memory
+ *                                   semantics; persistence is opt-in.
+ *
+ * macOS Keychain / Windows Credential Manager bridges are intentionally
+ * scoped to a follow-up — they're external-CLI integrations with
+ * platform-specific failure modes, easier to add behind the same
+ * `PersistenceAdapter` interface once the Linux baseline lands.
+ */
+
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import type { HandoffRecord } from './manager';
+
+const FILENAME = 'handoff.json';
+
+export interface PersistenceAdapter {
+  /** Read all stored records. Returns [] for a fresh install. */
+  loadAll(): HandoffRecord[];
+  /** Persist the full record set atomically. Caller deduplicates. */
+  saveAll(records: HandoffRecord[]): void;
+  /** Erase persisted state. Best-effort. */
+  clear(): void;
+}
+
+export interface FilePersistenceOptions {
+  rootDir?: string;
+}
+
+export function defaultHandoffRootDir(): string {
+  return path.join(os.homedir(), '.openchrome', 'transactions');
+}
+
+function pathFor(rootDir: string): string {
+  return path.join(rootDir, FILENAME);
+}
+
+function writeAtomic(target: string, body: string | Buffer): void {
+  const tmp = target + '.tmp';
+  fs.writeFileSync(tmp, body, { mode: 0o600 });
+  fs.renameSync(tmp, target);
+}
+
+/* ------------------------------------------------------------------ */
+/* PlaintextFilePersistence                                            */
+/* ------------------------------------------------------------------ */
+
+export class PlaintextFilePersistence implements PersistenceAdapter {
+  private readonly target: string;
+
+  constructor(opts: FilePersistenceOptions = {}) {
+    const root = opts.rootDir ?? defaultHandoffRootDir();
+    fs.mkdirSync(root, { recursive: true });
+    this.target = pathFor(root);
+  }
+
+  loadAll(): HandoffRecord[] {
+    if (!fs.existsSync(this.target)) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.target, 'utf8')) as { records?: unknown };
+      if (!Array.isArray(parsed.records)) return [];
+      return parsed.records.filter((r): r is HandoffRecord => isRecordShape(r));
+    } catch {
+      return [];
+    }
+  }
+
+  saveAll(records: HandoffRecord[]): void {
+    writeAtomic(this.target, JSON.stringify({ records }, null, 2));
+  }
+
+  clear(): void {
+    try {
+      fs.unlinkSync(this.target);
+    } catch {
+      // already gone — ok
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* EncryptedFilePersistence (AES-256-GCM)                              */
+/* ------------------------------------------------------------------ */
+
+const AES_ALGORITHM = 'aes-256-gcm';
+const IV_BYTES = 12;
+const TAG_BYTES = 16;
+const KEY_BYTES = 32;
+
+export interface EncryptedFilePersistenceOptions extends FilePersistenceOptions {
+  /** 32-byte key. Pass Buffer of length 32, or omit and supply via env. */
+  key?: Buffer;
+  /** Env var to read the key from when `key` is omitted. */
+  keyEnvVar?: string;
+}
+
+export class EncryptedFilePersistence implements PersistenceAdapter {
+  private readonly target: string;
+  private readonly key: Buffer;
+
+  constructor(opts: EncryptedFilePersistenceOptions = {}) {
+    const root = opts.rootDir ?? defaultHandoffRootDir();
+    fs.mkdirSync(root, { recursive: true });
+    this.target = pathFor(root);
+    this.key = resolveKey(opts);
+  }
+
+  loadAll(): HandoffRecord[] {
+    if (!fs.existsSync(this.target)) return [];
+    try {
+      const blob = fs.readFileSync(this.target);
+      const plaintext = decrypt(blob, this.key);
+      const parsed = JSON.parse(plaintext.toString('utf8')) as { records?: unknown };
+      if (!Array.isArray(parsed.records)) return [];
+      return parsed.records.filter((r): r is HandoffRecord => isRecordShape(r));
+    } catch {
+      // Corrupt / wrong key / partial write — treat as fresh install.
+      return [];
+    }
+  }
+
+  saveAll(records: HandoffRecord[]): void {
+    const plaintext = Buffer.from(JSON.stringify({ records }), 'utf8');
+    const encrypted = encrypt(plaintext, this.key);
+    writeAtomic(this.target, encrypted);
+  }
+
+  clear(): void {
+    try {
+      fs.unlinkSync(this.target);
+    } catch {
+      // already gone
+    }
+  }
+}
+
+function resolveKey(opts: EncryptedFilePersistenceOptions): Buffer {
+  if (opts.key) {
+    if (opts.key.length !== KEY_BYTES) {
+      throw new Error(`encryption key must be ${KEY_BYTES} bytes; got ${opts.key.length}`);
+    }
+    return opts.key;
+  }
+  const envVar = opts.keyEnvVar ?? 'OPENCHROME_HANDOFF_KEY';
+  const raw = process.env[envVar];
+  if (!raw) {
+    throw new Error(
+      `EncryptedFilePersistence: no key supplied and ${envVar} is unset (provide 32 bytes hex or base64)`,
+    );
+  }
+  return parseKey(raw);
+}
+
+/** Accept hex (64 chars), base64 (44 chars), or base64url. */
+function parseKey(raw: string): Buffer {
+  if (/^[0-9a-fA-F]+$/.test(raw)) {
+    if (raw.length !== KEY_BYTES * 2) {
+      throw new Error(`hex key must be ${KEY_BYTES * 2} chars; got ${raw.length}`);
+    }
+    return Buffer.from(raw, 'hex');
+  }
+  // base64 / base64url
+  const padded = raw.replace(/-/g, '+').replace(/_/g, '/');
+  const buf = Buffer.from(padded, 'base64');
+  if (buf.length !== KEY_BYTES) {
+    throw new Error(`base64 key must decode to ${KEY_BYTES} bytes; got ${buf.length}`);
+  }
+  return buf;
+}
+
+/**
+ * Wire format: [iv (12) | ciphertext | tag (16)]. Nonce-misuse risk is
+ * negligible because we generate a fresh random IV on every save and
+ * keys are 32 bytes.
+ */
+function encrypt(plaintext: Buffer, key: Buffer): Buffer {
+  const iv = crypto.randomBytes(IV_BYTES);
+  const cipher = crypto.createCipheriv(AES_ALGORITHM, key, iv);
+  const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, ct, tag]);
+}
+
+function decrypt(blob: Buffer, key: Buffer): Buffer {
+  if (blob.length < IV_BYTES + TAG_BYTES + 1) {
+    throw new Error('blob too short to be valid AES-GCM ciphertext');
+  }
+  const iv = blob.subarray(0, IV_BYTES);
+  const tag = blob.subarray(blob.length - TAG_BYTES);
+  const ct = blob.subarray(IV_BYTES, blob.length - TAG_BYTES);
+  const decipher = crypto.createDecipheriv(AES_ALGORITHM, key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]);
+}
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+function isRecordShape(r: unknown): r is HandoffRecord {
+  if (!r || typeof r !== 'object') return false;
+  const obj = r as Record<string, unknown>;
+  return (
+    typeof obj.txn_id === 'string' &&
+    typeof obj.token === 'string' &&
+    typeof obj.attempt === 'number' &&
+    typeof obj.status === 'string' &&
+    typeof obj.created_at === 'number' &&
+    typeof obj.expires_at === 'number'
+  );
+}
+
+/**
+ * Convenience: pick a default adapter based on environment.
+ *
+ *   OPENCHROME_HANDOFF_KEY set        → EncryptedFilePersistence
+ *   otherwise                          → PlaintextFilePersistence
+ *
+ * Hosts that want OS keychain or anything else should construct the
+ * adapter directly. The factory exists for "give me a sane default"
+ * callers (e.g., the main MCP server boot path).
+ */
+export function autoSelectHandoffPersistence(
+  opts: FilePersistenceOptions = {},
+): PersistenceAdapter {
+  if (process.env.OPENCHROME_HANDOFF_KEY) {
+    return new EncryptedFilePersistence(opts);
+  }
+  return new PlaintextFilePersistence(opts);
+}
