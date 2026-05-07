@@ -645,6 +645,12 @@ cd openchrome
 npm install && npm run build && npm test
 ```
 
+### Lint guardrails
+
+Use `npm run lint -- --max-warnings=0` before submitting source changes. For
+smaller PR checks, `npm run lint:changed -- --base origin/develop` lints only
+changed `src/**/*.ts` files and also fails on warnings.
+
 ## License
 
 MIT

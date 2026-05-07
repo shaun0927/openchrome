@@ -2,7 +2,7 @@
  * Request Intercept Tool - Intercept and modify network requests
  */
 
-import { HTTPRequest, Page } from 'puppeteer-core';
+import { HTTPRequest } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';

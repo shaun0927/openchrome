@@ -52,8 +52,6 @@ const handler: ToolHandler = async (
       };
     }
 
-    const urlBefore = page.url();
-
     // Reload the page
     if (ignoreCache) {
       // Use CDP to reload with cache bypass

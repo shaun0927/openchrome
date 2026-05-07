@@ -2,7 +2,7 @@
  * Renderer - Screen rendering to stderr
  */
 
-import { ANSI, moveTo, horizontalLine, BOX, stripAnsi, pad } from './ansi.js';
+import { ANSI, horizontalLine, BOX, stripAnsi } from './ansi.js';
 import type { ScreenSize } from './types.js';
 
 export class Renderer {

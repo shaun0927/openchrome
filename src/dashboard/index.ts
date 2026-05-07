@@ -6,7 +6,6 @@
 
 import { EventEmitter } from 'events';
 import { getVersion } from '../version.js';
-import { ANSI } from './ansi.js';
 import { Renderer, getRenderer } from './renderer.js';
 import { KeyboardHandler, getKeyboardHandler, KeyEvent } from './keyboard-handler.js';
 import { ActivityTracker, getActivityTracker } from './activity-tracker.js';
@@ -15,7 +14,7 @@ import { MainView, MainViewData } from './views/main-view.js';
 import { SessionsView, SessionsViewData } from './views/sessions-view.js';
 import { TabsView, TabsViewData } from './views/tabs-view.js';
 import { ConnectView, ConnectViewData } from './views/connect-view.js';
-import type { ViewMode, DashboardConfig, DashboardStats, SessionInfo, TabInfo, ToolCallEvent, DEFAULT_CONFIG } from './types.js';
+import type { ViewMode, DashboardStats, SessionInfo, TabInfo } from './types.js';
 import type { SessionManager } from '../session-manager.js';
 
 export interface DashboardOptions {
@@ -227,7 +226,7 @@ export class Dashboard extends EventEmitter {
     }
   }
 
-  private handleSessionsViewKey(key: string, event: KeyEvent): void {
+  private handleSessionsViewKey(key: string, _event: KeyEvent): void {
     const sessions = this.getSessions();
 
     switch (key) {
@@ -249,7 +248,7 @@ export class Dashboard extends EventEmitter {
     }
   }
 
-  private handleTabsViewKey(key: string, event: KeyEvent): void {
+  private handleTabsViewKey(key: string, _event: KeyEvent): void {
     const tabs = this.getTabs();
 
     switch (key) {

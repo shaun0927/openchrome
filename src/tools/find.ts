@@ -9,7 +9,7 @@ import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
-import { resolveElementsByAXTree, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
+import { resolveElementsByAXTree } from '../utils/ax-element-resolver';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
 import { getVisionMode, trackVisionUsage } from '../vision/config';

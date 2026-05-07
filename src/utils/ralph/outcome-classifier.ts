@@ -101,8 +101,6 @@ export function classifyOutcome(
     return 'SILENT_CLICK';
   }
 
-  const deltaLower = delta.toLowerCase();
-
   // Check for tooltip/popover-only changes when targeting non-tooltip elements
   if (targetRole && targetRole !== 'button') {
     const hasTooltipOnly = TOOLTIP_PATTERNS.some(p => p.test(delta));

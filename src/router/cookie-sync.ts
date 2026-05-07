@@ -1,4 +1,4 @@
-import type { Page, Cookie, CookieParam } from 'puppeteer-core';
+import type { Page, CookieParam } from 'puppeteer-core';
 
 export interface CookieSyncConfig {
   /** Interval between periodic syncs in milliseconds. Default: 5000 */

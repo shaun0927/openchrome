@@ -530,7 +530,7 @@ const handler: ToolHandler = async (
       if (!scopedNode && refEntrySnapshot) {
         // Refs were cleared — use snapshot to search by element attributes
         // tryRelocateRef won't work here because clearTargetRefs already deleted the entry
-        const { tagName, name, role } = refEntrySnapshot;
+        const { name, role } = refEntrySnapshot;
         scopedNode = nodes.find((n) => {
           if (!n.backendDOMNodeId) return false;
           const nodeRole = n.role?.value;

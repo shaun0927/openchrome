@@ -7,7 +7,7 @@
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import { ChromeLauncher, ChromeInstance, LaunchOptions } from './launcher';
+import { ChromeLauncher, LaunchOptions } from './launcher';
 import { ProfileManager } from './profile-manager';
 
 export interface ChromePoolConfig {

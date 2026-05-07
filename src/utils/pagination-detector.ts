@@ -22,7 +22,7 @@ export interface PaginationInfo {
   suggestedStrategy: string;
 }
 
-export async function detectPagination(page: Page, tabId: string): Promise<PaginationInfo> {
+export async function detectPagination(page: Page, _tabId: string): Promise<PaginationInfo> {
   try {
     const result = await withTimeout(page.evaluate(() => {
       interface DetectResult {

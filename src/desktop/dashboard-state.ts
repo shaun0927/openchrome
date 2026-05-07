@@ -5,8 +5,6 @@
  * consumed by the REST API endpoints in the HTTP transport.
  */
 
-import { ToolCallEvent, ToolCallResult } from '../dashboard/types';
-
 /** Maximum tool calls retained per session */
 const MAX_CALLS_PER_SESSION = 50;
 

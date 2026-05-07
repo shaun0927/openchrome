@@ -32,7 +32,7 @@ export async function writeFileAtomicSafe(
   data: string | object,
   options: WriteOptions = {}
 ): Promise<void> {
-  const { backup = false, lockTimeout = 10000 } = options;
+  const { backup = false } = options;
   const content = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
 
   // Ensure directory exists
