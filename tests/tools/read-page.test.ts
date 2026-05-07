@@ -399,7 +399,7 @@ describe('ReadPageTool', () => {
       return { nodes };
     }
 
-    test('auto-fallback to DOM mode when AX tree exceeds output limit', async () => {
+    test('does not fall back to DOM when explicit AX output exceeds limit', async () => {
       const mockSerializeDOM = jest.fn().mockResolvedValue({
         content: '[page_stats] url: https://example.com\n\n<body>\n  <button />\n</body>',
       });
@@ -418,16 +418,13 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
-      // Should contain DOM output (from serializeDOM mock)
-      expect(text).toContain('<body>');
-      // Should contain the auto-fallback notice
-      expect(text).toContain('[AX tree exceeded output limit');
-      expect(text).toContain('Auto-switched to DOM mode');
-      // Should NOT contain the old truncation message
-      expect(text).not.toContain('[Output truncated');
+      expect(mockSerializeDOM).not.toHaveBeenCalled();
+      expect(text).not.toContain('<body>');
+      expect(text).toContain('[Output truncated');
+      expect(text).toContain('fallback: "dom"');
     });
 
-    test('auto-fallback passes correct options to serializeDOM', async () => {
+    test('explicit fallback=dom switches to DOM when AX tree exceeds output limit', async () => {
       const mockSerializeDOM = jest.fn().mockResolvedValue({
         content: '[page_stats] url: https://example.com\n\n<body></body>',
       });
@@ -441,6 +438,8 @@ describe('ReadPageTool', () => {
 
       await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
+        fallback: 'dom',
         filter: 'all',
       });
 
@@ -448,7 +447,7 @@ describe('ReadPageTool', () => {
         expect.anything(),
         expect.anything(),
         expect.objectContaining({
-          maxDepth: -1,
+          maxDepth: 8,
           filter: 'all',
           interactiveOnly: false,
         })
@@ -467,15 +466,63 @@ describe('ReadPageTool', () => {
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
+        fallback: 'dom',
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
       // Should fall back to original truncation message
       expect(text).toContain('[Output truncated');
       expect(text).toContain('mode: "dom"');
-      expect(text).toContain('~5-10x fewer tokens');
+      expect(text).toContain('smaller depth / ref_id');
       // Should NOT contain the auto-fallback notice
       expect(text).not.toContain('[AX tree exceeded output limit');
+    });
+
+    test('detects roots with linear child-id construction on a 5000-node AX tree', async () => {
+      const handler = await getReadPageHandler();
+      const nodes: any[] = [];
+      let childIdsAccesses = 0;
+      const rootChildren = Array.from({ length: 4999 }, (_, i) => i + 2);
+      nodes.push({
+        nodeId: 1,
+        role: { value: 'WebArea' },
+        name: { value: 'Root' },
+        get childIds() {
+          childIdsAccesses++;
+          return rootChildren;
+        },
+      });
+      for (let i = 2; i <= 5000; i++) {
+        nodes.push({
+          nodeId: i,
+          backendDOMNodeId: i * 10,
+          role: { value: 'button' },
+          name: { value: `Button ${i}` },
+          get childIds() {
+            childIdsAccesses++;
+            return [];
+          },
+        });
+      }
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 1 },
+        { nodes }
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        depth: 1,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].type).toBe('text');
+      // O(n) root detection/formatting reads childIds a small number of times;
+      // the previous nodes.filter(...nodes.some(...includes)) path reads it
+      // roughly n*n times for this tree.
+      expect(childIdsAccesses).toBeLessThan(15000);
     });
 
     test('invalid mode returns clear error', async () => {

@@ -523,11 +523,16 @@ export async function serializeDOM(
     'serializeDOM:pageStats',
   ) as PageStats;
 
-  // Get full DOM tree via CDP
+  // Get DOM tree via CDP. When callers request bounded output depth, avoid
+  // fetching the full document and all pierced subtree content up front. CDP's
+  // depth starts at the document root, while this serializer starts element
+  // indentation at the document element, so add one level to preserve existing
+  // maxDepth output semantics.
+  const documentDepth = maxDepth >= 0 ? maxDepth + 1 : -1;
   const { root } = await cdpClient.send<{ root: DOMNode }>(
     page,
     'DOM.getDocument',
-    { depth: -1, pierce: true },
+    { depth: documentDepth, pierce: pierceIframes },
   );
 
   const lines: string[] = [];

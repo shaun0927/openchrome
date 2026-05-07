@@ -113,6 +113,11 @@ describe('ReadPageTool - DOM Mode', () => {
       { depth: -1, pierce: true },
       { root: sampleDOMTree }
     );
+    mockSessionManager.mockCDPClient.setCDPResponse(
+      'DOM.getDocument',
+      { depth: 3, pierce: true },
+      { root: sampleDOMTree }
+    );
 
     // Set up page.evaluate for page stats (DOM mode)
     const page = mockSessionManager.pages.get(testTargetId);
@@ -192,6 +197,11 @@ describe('ReadPageTool - DOM Mode', () => {
       const result = await handler(testSessionId, { tabId: testTargetId, mode: 'dom', depth: 2 }) as any;
 
       expect(result.isError).toBeUndefined();
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'DOM.getDocument',
+        { depth: 3, pierce: true }
+      );
       // Output should still be valid
       expect(result.content[0].text).toContain('[page_stats]');
     });

@@ -612,4 +612,30 @@ describe('DOM Serializer', () => {
       { depth: -1, pierce: true },
     );
   });
+
+  test('passes bounded depth to CDP DOM.getDocument when maxDepth is requested', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+
+    await serializeDOM(page as never, cdpClient as never, { maxDepth: 2 });
+
+    expect(cdpClient.send).toHaveBeenCalledWith(
+      page,
+      'DOM.getDocument',
+      { depth: 3, pierce: true },
+    );
+  });
+
+  test('honors pierceIframes=false for unbounded document fetches', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+
+    await serializeDOM(page as never, cdpClient as never, { pierceIframes: false });
+
+    expect(cdpClient.send).toHaveBeenCalledWith(
+      page,
+      'DOM.getDocument',
+      { depth: -1, pierce: false },
+    );
+  });
 });
