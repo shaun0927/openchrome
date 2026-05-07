@@ -37,6 +37,10 @@ export interface UploadRootPolicyOptions {
 
 export interface ValidateUploadPathOptions extends UploadRootPolicyOptions {
   ensureDefaultTempRoot?: boolean;
+  /** Pre-resolved real paths of allowed upload roots. When provided, validateUploadPath
+   *  skips its own root resolution (no fs.mkdir / fs.realpath per call), so callers
+   *  validating many files in one request only pay that cost once. */
+  resolvedAllowedRoots?: string[];
 }
 
 export interface ValidatedUploadFile {
@@ -148,12 +152,18 @@ export function hasSensitivePathSegment(filePath: string, pathModule: PathLike =
   return SENSITIVE_PATH_SEGMENTS.some((segment) => pathSegments.includes(segment));
 }
 
-async function resolveExistingUploadRoots(options: ValidateUploadPathOptions = {}): Promise<string[]> {
+export async function resolveAllowedUploadRoots(options: ValidateUploadPathOptions = {}): Promise<string[]> {
   if (options.ensureDefaultTempRoot !== false) {
     const pathModule = options.pathModule ?? path;
     const env = options.env ?? process.env;
     const tempUploadDir = options.tempUploadDir ?? getDefaultUploadTempDir(env, pathModule);
-    await fs.mkdir(tempUploadDir, { recursive: true });
+    try {
+      await fs.mkdir(tempUploadDir, { recursive: true });
+    } catch {
+      // If we cannot create the temp upload directory (e.g. read-only filesystem,
+      // permission denied), fall through. The directory simply will not become a
+      // valid root via realpath() below; uploads from other configured roots still work.
+    }
   }
 
   const roots = getUploadRootPolicy(options);
@@ -194,7 +204,7 @@ export async function validateUploadPath(
     return { ok: false, error: 'Error: Upload file is not accessible' };
   }
 
-  const allowedRoots = await resolveExistingUploadRoots(options);
+  const allowedRoots = options.resolvedAllowedRoots ?? await resolveAllowedUploadRoots(options);
   const isAllowed = allowedRoots.some((root) => isPathInsideRoot(realPath, root, pathModule));
   if (!isAllowed) {
     return { ok: false, error: 'Error: Upload path is outside allowed upload roots' };
@@ -268,11 +278,14 @@ const handler: ToolHandler = async (
     }
 
     // Resolve and validate file paths against explicit upload roots before browser upload.
+    // Resolve allowed roots once per request to avoid redundant fs.mkdir/fs.realpath
+    // calls when validating multiple files.
+    const resolvedAllowedRoots = await resolveAllowedUploadRoots();
     const resolvedPaths: string[] = [];
     const fileInfo: Array<{ name: string; size: number }> = [];
 
     for (const filePath of filePaths) {
-      const validation = await validateUploadPath(filePath);
+      const validation = await validateUploadPath(filePath, { resolvedAllowedRoots });
       if (!validation.ok || !validation.file) {
         return {
           content: [{ type: 'text', text: validation.error ?? 'Error: Upload path is not allowed' }],
