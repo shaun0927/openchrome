@@ -32,3 +32,25 @@ export type {
   CrossCheckResult,
   CrossCheckVerdict,
 } from './cross-check';
+
+export {
+  COORDINATE_TOLERANCE_PX,
+  SCROLL_TOLERANCE_PX,
+  VotingOrchestrator,
+  VotingSessionBudget,
+  actionsEquivalent,
+  extractFirstJsonObject,
+} from './voting';
+export type {
+  ActionInvocation,
+  EquivalenceContext,
+  ProviderError,
+  ProviderErrorKind,
+  ProviderReply,
+  VoteRequest,
+  VoteVerdict,
+  VotingDisagreement,
+  VotingOrchestratorOptions,
+  VotingPolicy,
+  VotingProvider,
+} from './voting';
