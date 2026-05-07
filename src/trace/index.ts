@@ -9,6 +9,18 @@
 export { TraceStorage, defaultTraceRootDir } from './storage';
 export type { AppendResult, TraceStorageOptions } from './storage';
 
+export {
+  TraceRecorder,
+  getTraceRecorder,
+  DEFAULT_TRACE_KINDS,
+  _resetTraceRecorderForTests,
+} from './recorder';
+export type {
+  EventEmitterLike,
+  PageLike,
+  TraceRecorderOptions,
+} from './recorder';
+
 export { redactTraceEvent, redactValue, scrubString, REDACTED } from './redactor';
 
 export type {
