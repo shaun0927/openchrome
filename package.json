@@ -47,6 +47,7 @@
   },
   "homepage": "https://github.com/shaun0927/openchrome#readme",
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.10",
     "@types/chrome": "^0.1.36",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
@@ -64,6 +65,7 @@
   },
   "dependencies": {
     "argon2": "^0.43.0",
+    "better-sqlite3": "^11.5.0",
     "commander": "^12.0.0",
     "jose": "^5.10.0",
     "proper-lockfile": "^4.1.2",
