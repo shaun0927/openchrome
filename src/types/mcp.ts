@@ -17,7 +17,10 @@ export interface MCPNotification {
 
 export interface MCPResponse {
   jsonrpc: '2.0';
-  id: number | string;
+  // Per JSON-RPC 2.0 §5.1, `id` MUST be `null` for errors detected before any
+  // per-request id can be parsed (e.g. malformed batch envelope, batch-level
+  // rejection). Active responses always echo the client-provided id.
+  id: number | string | null;
   result?: MCPResult;
   error?: MCPError;
 }

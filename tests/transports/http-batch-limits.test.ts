@@ -82,17 +82,45 @@ describe('HTTPTransport JSON-RPC batch limits', () => {
     expect(res.status).toBe(200);
     expect(handler).not.toHaveBeenCalled();
 
-    const responses = JSON.parse(res.body);
-    expect(responses).toHaveLength(DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE + 1);
-    expect(responses.map((response: JsonRpcMessage) => response.id)).toEqual(
-      batch.map((msg) => msg.id),
-    );
-    for (const response of responses) {
-      expect(response.error).toMatchObject({
-        code: -32600,
-        message: expect.stringContaining(`${HTTP_TIMEOUTS.jsonRpcBatchMaxSize}`),
-      });
-    }
+    // The whole batch is rejected with one protocol-level error rather than
+    // a per-element response. Per JSON-RPC 2.0 §4.1 the server must not
+    // respond to notifications, so fabricating one response per batch entry
+    // (with `id: 0` for entries that lack an id) would correlate spuriously
+    // with an unrelated in-flight request id. Using `id: null` is the spec
+    // sentinel for errors detected before per-request id parsing.
+    const response = JSON.parse(res.body) as JsonRpcMessage;
+    expect(Array.isArray(response)).toBe(false);
+    expect(response.id).toBeNull();
+    expect(response.error).toMatchObject({
+      code: -32600,
+      message: expect.stringContaining(`${HTTP_TIMEOUTS.jsonRpcBatchMaxSize}`),
+    });
+  });
+
+  it('rejects an oversized notification-only batch with a single id:null error', async () => {
+    const port = await ephemeralPort();
+    const handler = jest.fn(async () => null);
+    transport = new HTTPTransport(port, '127.0.0.1');
+    transport.onMessage(handler);
+    transport.start();
+
+    // All entries are notifications (no id). The previous implementation
+    // would have responded with `id: 0` for every entry, polluting the
+    // client's request-id correlation table. The fixed implementation must
+    // return exactly one batch-level error with id: null.
+    const batch = Array.from({ length: DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE + 1 }, () => ({
+      jsonrpc: '2.0',
+      method: 'notifications/cancelled',
+    }));
+
+    const res = await request(port, batch);
+    expect(res.status).toBe(200);
+    expect(handler).not.toHaveBeenCalled();
+
+    const response = JSON.parse(res.body) as JsonRpcMessage;
+    expect(Array.isArray(response)).toBe(false);
+    expect(response.id).toBeNull();
+    expect(response.error).toMatchObject({ code: -32600 });
   });
 
   it('bounds accepted batch concurrency and preserves response order', async () => {

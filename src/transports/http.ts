@@ -1028,7 +1028,13 @@ export class HTTPTransport implements MCPTransport {
     const handler = this.messageHandler!;
 
     if (messages.length > HTTP_JSON_RPC_BATCH_MAX_SIZE) {
-      return messages.map((msg) => this.createBatchTooLargeError(msg));
+      // Reject the whole batch with a single protocol-level error rather than
+      // fabricating one response per element. Per JSON-RPC 2.0 §4.1, a server
+      // must not respond to notifications — the previous per-item map invented
+      // `id: 0` responses for notification entries, which a spec-conformant
+      // client would correlate to an unrelated in-flight request. handlePost
+      // unwraps a single-element array into one response object on the wire.
+      return [this.createBatchTooLargeError()];
     }
 
     // Assign sessionId once before concurrent processing to avoid data race
@@ -1045,31 +1051,40 @@ export class HTTPTransport implements MCPTransport {
     }
 
     return this.mapBatchWithConcurrency(messages, HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY, async (msg) => {
-      if (typeof msg !== 'object' || msg === null) {
-        return {
-          jsonrpc: '2.0' as const,
-          id: 0,
-          error: {
-            code: MCPErrorCodes.INVALID_REQUEST,
-            message: 'Invalid batch element: not an object',
-          },
-        } as MCPResponse;
-      }
-
-      const record = msg as Record<string, unknown>;
-      // Same defense-in-depth as the single-message path: scrub any
-      // client-provided `__principal` and attach the trusted one via Symbol.
-      if ('__principal' in record) {
-        delete record.__principal;
-      }
-      if (principal) {
-        (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
-      }
-
+      // Wrap the entire per-element body in try/catch. mapBatchWithConcurrency
+      // shares one results array across workers, so a synchronous throw from
+      // any branch (e.g., a frozen `record` rejecting __principal scrubbing)
+      // would unwind that worker mid-loop and leave the unfilled slots as
+      // `undefined`, corrupting later responses' index → request mapping.
+      const record = (typeof msg === 'object' && msg !== null)
+        ? (msg as Record<string, unknown>)
+        : null;
       try {
+        if (record === null) {
+          return {
+            jsonrpc: '2.0' as const,
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: 'Invalid batch element: not an object',
+            },
+          } as MCPResponse;
+        }
+
+        // Same defense-in-depth as the single-message path: scrub any
+        // client-provided `__principal` and attach the trusted one via Symbol.
+        if ('__principal' in record) {
+          delete record.__principal;
+        }
+        if (principal) {
+          (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
+        }
+
         return await handler(record, signal);
       } catch (error) {
-        const id = (record.id as string | number) ?? 0;
+        const id = record !== null
+          ? ((record.id as string | number | undefined) ?? 0)
+          : 0;
         return {
           jsonrpc: '2.0' as const,
           id,
@@ -1082,14 +1097,13 @@ export class HTTPTransport implements MCPTransport {
     });
   }
 
-  private createBatchTooLargeError(msg: unknown): MCPResponse {
-    const id = typeof msg === 'object' && msg !== null
-      ? ((msg as Record<string, unknown>).id as string | number | undefined) ?? 0
-      : 0;
-
+  private createBatchTooLargeError(): MCPResponse {
+    // id: null is the JSON-RPC 2.0 §5.1 sentinel for errors detected before a
+    // request id can be parsed (or, here, any meaningful per-element id can be
+    // chosen). It also avoids colliding with an active client-request id.
     return {
       jsonrpc: '2.0',
-      id,
+      id: null,
       error: {
         code: MCPErrorCodes.INVALID_REQUEST,
         message: `JSON-RPC batch size exceeds maximum of ${HTTP_JSON_RPC_BATCH_MAX_SIZE}`,
