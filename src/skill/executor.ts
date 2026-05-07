@@ -89,6 +89,17 @@ export interface RunSkillArgs {
   router: ToolRouter;
   ctx: ExecutionContext;
   intent: SkillIntent;
+  /**
+   * Optional audit emitter — when supplied, the executor emits one
+   * `GraphAuditEvent` per call (graph_hit / graph_miss /
+   * graph_fallback_promoted). Hosts wire this to the audit-logger
+   * pipeline; tests can substitute a fake to assert on emissions.
+   */
+  audit?: { emit(event: import('./audit').GraphAuditEvent): void };
+  /**
+   * Domain label for audit events. Defaults to `storage.domain`.
+   */
+  domain?: string;
 }
 
 /** Threshold per #703 v2: 10% of total invocations. */
@@ -99,8 +110,27 @@ const SMALL_SAMPLE_TOTAL = 10;
 /**
  * One pass of skill execution. Hosts call this in a loop (or once per
  * intent step, depending on skill granularity).
+ *
+ * When `args.audit` is supplied, exactly one event is emitted before
+ * return — even on the early "no_action_available" path — so audit
+ * consumers see a 1:1 correspondence between calls and events.
  */
 export async function runSkill(args: RunSkillArgs): Promise<RunSkillResult> {
+  const { storage, router, ctx, intent } = args;
+  const result = await runSkillInner({ storage, router, ctx, intent });
+  if (args.audit) {
+    const { buildEventFromResult } = await import('./audit');
+    args.audit.emit(buildEventFromResult(args.domain ?? storage.domain, result));
+  }
+  return result;
+}
+
+async function runSkillInner(args: {
+  storage: SkillGraphStorage;
+  router: ToolRouter;
+  ctx: ExecutionContext;
+  intent: SkillIntent;
+}): Promise<RunSkillResult> {
   const { storage, router, ctx, intent } = args;
 
   const before = await ctx.snapshotPageState();

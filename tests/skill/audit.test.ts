@@ -1,0 +1,246 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import {
+  AuditLogGraphEmitter,
+  buildEventFromResult,
+  emitGraphEvent,
+  type GraphAuditEvent,
+} from '../../src/skill/audit';
+import { runSkill, type ExecutionContext, type ToolRouter } from '../../src/skill/executor';
+import { SkillGraphStorage } from '../../src/skill/storage';
+import type { PageSnapshot } from '../../src/skill/state';
+import { __resetAuditLoggerCachesForTests } from '../../src/security/audit-logger';
+
+function tempRoot(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'oc-skill-audit-'));
+}
+
+function snap(over: Partial<PageSnapshot> = {}): PageSnapshot {
+  return {
+    url: 'https://example.com/',
+    interactives: [{ tagName: 'button', tagPath: 'body>button', role: 'button' }],
+    headings: [],
+    landmarks: {},
+    ...over,
+  };
+}
+
+function ctxWithStates(seq: PageSnapshot[]): ExecutionContext {
+  let i = 0;
+  return {
+    async snapshotPageState() {
+      const next = seq[Math.min(i, seq.length - 1)];
+      i += 1;
+      return next;
+    },
+  };
+}
+
+describe('buildEventFromResult — wire shape', () => {
+  test('graph_hit success carries action kind, fromState, toState, ok=true', () => {
+    const event = buildEventFromResult('amazon.com', {
+      outcome: 'graph_hit',
+      fromState: 'a',
+      toState: 'b',
+      action: { kind: 'click', argsNorm: 'ref:1', args: {} },
+      ok: true,
+      matchedExpected: true,
+    });
+    expect(event).toEqual({
+      event: 'graph_hit',
+      domain: 'amazon.com',
+      fromState: 'a',
+      toState: 'b',
+      actionKind: 'click',
+      actionArgsNorm: 'ref:1',
+      ok: true,
+      reason: undefined,
+      matchedExpected: true,
+    });
+  });
+
+  test('graph_miss without action sets actionKind=undefined and ok=false', () => {
+    const event = buildEventFromResult('x.com', {
+      outcome: 'graph_miss',
+      fromState: 'a',
+      ok: false,
+      reason: 'no_action_available',
+    });
+    expect(event.event).toBe('graph_miss');
+    expect(event.ok).toBe(false);
+    expect(event.actionKind).toBeUndefined();
+    expect(event.reason).toBe('no_action_available');
+  });
+
+  test('graph_fallback_promoted with action carries argsNorm', () => {
+    const event = buildEventFromResult('x.com', {
+      outcome: 'graph_fallback_promoted',
+      fromState: 'a',
+      toState: 'b',
+      action: { kind: 'navigate', argsNorm: '"https://x"', args: 'https://x' },
+      ok: true,
+    });
+    expect(event.event).toBe('graph_fallback_promoted');
+    expect(event.actionArgsNorm).toBe('"https://x"');
+  });
+});
+
+describe('emitGraphEvent — passthrough', () => {
+  test('no-op when emitter is undefined', () => {
+    expect(() =>
+      emitGraphEvent(undefined, 'x.com', {
+        outcome: 'graph_miss',
+        fromState: 'a',
+        ok: false,
+      }),
+    ).not.toThrow();
+  });
+
+  test('forwards built event to emitter.emit', () => {
+    const captured: GraphAuditEvent[] = [];
+    emitGraphEvent({ emit: (e) => captured.push(e) }, 'x.com', {
+      outcome: 'graph_hit',
+      fromState: 'a',
+      toState: 'b',
+      action: { kind: 'click', argsNorm: 'ref:1', args: {} },
+      ok: true,
+      matchedExpected: true,
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].event).toBe('graph_hit');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* runSkill emits exactly one event per call                          */
+/* ------------------------------------------------------------------ */
+
+function mockRouter(behaviour: {
+  fallback?: { kind: string; argsNorm: string; args: unknown } | null;
+  result?: { ok: boolean; reason?: string };
+} = {}): ToolRouter {
+  return {
+    async pickFallbackAction() {
+      return behaviour.fallback ?? null;
+    },
+    async runAction() {
+      return { ok: behaviour.result?.ok ?? true, reason: behaviour.result?.reason };
+    },
+  };
+}
+
+describe('runSkill — audit emission', () => {
+  let root: string;
+  let storage: SkillGraphStorage;
+
+  beforeEach(() => {
+    root = tempRoot();
+    storage = new SkillGraphStorage('amazon.com', { rootDir: root });
+  });
+
+  afterEach(() => {
+    storage.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('emits exactly one event on graph_miss + no_action path', async () => {
+    const events: GraphAuditEvent[] = [];
+    const result = await runSkill({
+      storage,
+      router: mockRouter({ fallback: null }),
+      ctx: ctxWithStates([snap()]),
+      intent: {},
+      audit: { emit: (e) => events.push(e) },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe('graph_miss');
+    expect(events[0].domain).toBe('amazon.com');
+    expect(events[0].ok).toBe(false);
+    expect(result.outcome).toBe('graph_miss');
+  });
+
+  test('emits exactly one event on graph_fallback_promoted (success)', async () => {
+    const events: GraphAuditEvent[] = [];
+    await runSkill({
+      storage,
+      router: mockRouter({
+        fallback: { kind: 'click', argsNorm: 'ref:x', args: {} },
+        result: { ok: true },
+      }),
+      ctx: ctxWithStates([snap({ url: 'https://a' }), snap({ url: 'https://b' })]),
+      intent: {},
+      audit: { emit: (e) => events.push(e) },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe('graph_fallback_promoted');
+    expect(events[0].actionKind).toBe('click');
+    expect(events[0].ok).toBe(true);
+  });
+
+  test('domain field overrides storage.domain when supplied', async () => {
+    const events: GraphAuditEvent[] = [];
+    await runSkill({
+      storage,
+      router: mockRouter({ fallback: null }),
+      ctx: ctxWithStates([snap()]),
+      intent: {},
+      audit: { emit: (e) => events.push(e) },
+      domain: 'custom.example',
+    });
+    expect(events[0].domain).toBe('custom.example');
+  });
+
+  test('no audit emitter → no observable side effect (existing behaviour preserved)', async () => {
+    const result = await runSkill({
+      storage,
+      router: mockRouter({ fallback: null }),
+      ctx: ctxWithStates([snap()]),
+      intent: {},
+    });
+    // The result is the same shape as without audit; no assertion failures.
+    expect(result.outcome).toBe('graph_miss');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* AuditLogGraphEmitter integration with audit-logger                 */
+/* ------------------------------------------------------------------ */
+
+describe('AuditLogGraphEmitter — writes through audit-logger', () => {
+  const origConfig = process.env.OPENCHROME_AUDIT_LOG_PATH;
+  const origEnabled = process.env.OPENCHROME_AUDIT_LOG;
+  let logPath: string;
+
+  beforeEach(() => {
+    __resetAuditLoggerCachesForTests();
+    const dir = tempRoot();
+    logPath = path.join(dir, 'audit.jsonl');
+    process.env.OPENCHROME_AUDIT_LOG = '1';
+    process.env.OPENCHROME_AUDIT_LOG_PATH = logPath;
+  });
+
+  afterEach(() => {
+    if (origConfig === undefined) delete process.env.OPENCHROME_AUDIT_LOG_PATH;
+    else process.env.OPENCHROME_AUDIT_LOG_PATH = origConfig;
+    if (origEnabled === undefined) delete process.env.OPENCHROME_AUDIT_LOG;
+    else process.env.OPENCHROME_AUDIT_LOG = origEnabled;
+    __resetAuditLoggerCachesForTests();
+  });
+
+  test('emit() does not throw when audit logging is disabled (config gated)', () => {
+    delete process.env.OPENCHROME_AUDIT_LOG;
+    __resetAuditLoggerCachesForTests();
+    const emitter = new AuditLogGraphEmitter('sess1', 'amazon.com');
+    expect(() =>
+      emitter.emit({
+        event: 'graph_hit',
+        domain: 'amazon.com',
+        fromState: 'a',
+        toState: 'b',
+        ok: true,
+      }),
+    ).not.toThrow();
+  });
+});

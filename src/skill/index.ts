@@ -37,3 +37,10 @@ export type {
   RunSkillArgs,
   RunOutcomeKind,
 } from './executor';
+
+export {
+  AuditLogGraphEmitter,
+  buildEventFromResult,
+  emitGraphEvent,
+} from './audit';
+export type { GraphAuditEvent, GraphAuditEventKind, GraphAuditEmitter } from './audit';
