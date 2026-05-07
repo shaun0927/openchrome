@@ -51,6 +51,13 @@ export interface Contract {
   idempotency_key?: string;
   /** Domain label for audit log routing. */
   domain?: string;
+  /**
+   * High-stakes flag (#711 v2). When true AND a voting hook is supplied
+   * via ContractRuntimeArgs.beforeIrreversibleAction, the runtime calls
+   * the hook between pre-check and skill execution. Disagreement →
+   * verdict='escalated' with a `voting_disagreement` evidence record.
+   */
+  critical?: boolean;
 }
 
 export type Verdict =
@@ -89,6 +96,12 @@ export interface TransactionRecord {
   from_cache?: boolean;
   /** True when the preemptive timer fired and force-aborted the skill. */
   hard_kill?: boolean;
+  /**
+   * Set when the voting hook on a `critical` contract returned
+   * `proceed=false`. Contains the disagreement structure so audit /
+   * evidence can replay the dispute without re-querying the providers.
+   */
+  voting_disagreement?: unknown;
 }
 
 /**
@@ -121,7 +134,34 @@ export interface ContractRuntimeArgs {
   setTimer?: (handler: () => void, ms: number) => unknown;
   /** Test hook: cancellation paired with `setTimer`. */
   clearTimer?: (handle: unknown) => void;
+  /**
+   * Voting hook fired between pre-check and skill execution when the
+   * contract is `critical: true`. The orchestrator (#711) is the
+   * canonical implementation; tests pass simpler fakes. When omitted,
+   * critical contracts behave like ordinary ones (no voting).
+   *
+   * Returning `{ proceed: false }` → verdict='escalated' with the
+   * disagreement payload threaded into the TransactionRecord. The skill
+   * does not run.
+   */
+  beforeIrreversibleAction?: BeforeIrreversibleActionHook;
 }
+
+/** Result envelope the voting hook returns. */
+export type IrreversibleActionDecision =
+  | { proceed: true }
+  | { proceed: false; reason?: string; disagreement?: unknown };
+
+/**
+ * Hook signature consumed by `runWithContract` for `critical` contracts.
+ * Concrete implementations live in `src/perception/voting/orchestrator.ts`
+ * (multi-model dispatcher) but the runtime only depends on this minimal
+ * surface so tests can stub it cheaply.
+ */
+export type BeforeIrreversibleActionHook = (ctx: {
+  contract: Contract;
+  txn_id: string;
+}) => Promise<IrreversibleActionDecision>;
 
 export interface AuditEmitter {
   emit(record: TransactionRecord): void;
@@ -253,6 +293,50 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
         wall_ms: now() - startedAt,
         retries: 0,
         pre_evidence,
+      });
+    }
+  }
+
+  // 2.5. Voting hook for critical contracts (#711 integration).
+  //      Pre-check has passed; budget timer hasn't started; skill is
+  //      not yet running. If two providers disagree we escalate
+  //      without consuming the budget.
+  if (args.contract.critical && args.beforeIrreversibleAction) {
+    let decision: IrreversibleActionDecision;
+    try {
+      decision = await args.beforeIrreversibleAction({
+        contract: args.contract,
+        txn_id,
+      });
+    } catch (e) {
+      // Hook failure is treated as a runtime execution error rather
+      // than a silent proceed — same blast-radius philosophy as
+      // pre-check snapshot failures above.
+      return settle(audit, {
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'execution_error',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: 0,
+        pre_evidence,
+        error_message: `beforeIrreversibleAction hook threw: ${errMsg(e)}`,
+      });
+    }
+    if (!decision.proceed) {
+      return settle(audit, {
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'escalated',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: 0,
+        pre_evidence,
+        escalation: { target: 'human-review' },
+        voting_disagreement: decision.disagreement,
+        error_message: decision.reason ?? 'voting hook returned proceed=false',
       });
     }
   }

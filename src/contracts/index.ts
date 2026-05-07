@@ -27,9 +27,11 @@ export {
   LogAuditEntryEmitter,
 } from './runtime';
 export type {
+  BeforeIrreversibleActionHook,
   Contract,
   ContractRuntimeArgs,
   AuditEmitter,
+  IrreversibleActionDecision,
   SkillFn,
   TransactionRecord,
   Verdict,
