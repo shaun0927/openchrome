@@ -20,3 +20,17 @@ export {
 
 export { validateAssertion, type ValidationError } from './validator';
 export { evaluate, type AssertionContext } from './evaluator';
+
+export {
+  runWithContract,
+  defaultAuditEmitter,
+  LogAuditEntryEmitter,
+} from './runtime';
+export type {
+  Contract,
+  ContractRuntimeArgs,
+  AuditEmitter,
+  SkillFn,
+  TransactionRecord,
+  Verdict,
+} from './runtime';
