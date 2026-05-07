@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OpenChrome trace replay</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+      background: Canvas;
+      color: CanvasText;
+    }
+    header {
+      padding: 14px 18px;
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+      display: flex; align-items: baseline; gap: 12px;
+    }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header .sub { font-size: 12px; opacity: 0.6; }
+    main { display: grid; grid-template-columns: 320px 1fr; min-height: calc(100vh - 56px); }
+    aside {
+      border-right: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+      overflow: auto;
+      padding: 6px;
+    }
+    aside ul { list-style: none; margin: 0; padding: 0; }
+    aside li {
+      padding: 6px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    aside li:hover { background: color-mix(in srgb, CanvasText 6%, transparent); }
+    aside li.active { background: color-mix(in srgb, AccentColor 22%, transparent); }
+    aside li .id { font-family: ui-monospace, monospace; font-size: 11px; opacity: 0.7; }
+    aside li .meta { display: flex; justify-content: space-between; font-size: 11px; opacity: 0.65; }
+    section.events { padding: 14px 18px; overflow: auto; }
+    .meta-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; margin-bottom: 16px; font-size: 12px; }
+    .meta-grid dt { opacity: 0.6; }
+    .meta-grid dd { margin: 0; font-family: ui-monospace, monospace; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid color-mix(in srgb, CanvasText 8%, transparent); vertical-align: top; }
+    th { font-weight: 600; opacity: 0.7; }
+    td.kind { font-family: ui-monospace, monospace; }
+    td.body { font-family: ui-monospace, monospace; white-space: pre; max-width: 600px; overflow: hidden; text-overflow: ellipsis; }
+    .empty { opacity: 0.5; padding: 28px; text-align: center; }
+    .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+    .badge.completed { background: #d1fae5; color: #065f46; }
+    .badge.failed { background: #fee2e2; color: #991b1b; }
+    .badge.running { background: #fef3c7; color: #92400e; }
+    .badge.aborted { background: #e5e7eb; color: #374151; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OpenChrome trace replay</h1>
+    <span class="sub">click a session on the left to load its events</span>
+  </header>
+  <main>
+    <aside id="sessions"><div class="empty">loading…</div></aside>
+    <section class="events">
+      <div id="meta"></div>
+      <div id="events"><div class="empty">no session selected</div></div>
+    </section>
+  </main>
+  <script>
+    function fmtTime(ms) {
+      if (ms == null) return '—';
+      return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+    }
+    function fmtBytes(n) {
+      if (!Number.isFinite(n) || n < 1024) return (n ?? 0) + ' B';
+      const k = 1024;
+      const sizes = ['B','KB','MB','GB'];
+      const i = Math.floor(Math.log(n)/Math.log(k));
+      return (n/Math.pow(k,i)).toFixed(1) + ' ' + sizes[i];
+    }
+    function escape(s) {
+      return String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    }
+
+    let activeId = null;
+
+    async function loadList() {
+      const res = await fetch('/api/trace/list');
+      const rows = await res.json();
+      const aside = document.getElementById('sessions');
+      if (!Array.isArray(rows) || rows.length === 0) {
+        aside.innerHTML = '<div class="empty">no traces</div>';
+        return;
+      }
+      aside.innerHTML = '<ul>' + rows.map((r) => `
+        <li data-id="${escape(r.session_id)}">
+          <div class="id">${escape(r.session_id.slice(0,18))}</div>
+          <div class="meta"><span>${escape(r.domain ?? '—')}</span><span class="badge ${escape(r.status)}">${escape(r.status)}</span></div>
+          <div class="meta"><span>${fmtTime(r.started_at)}</span><span>${fmtBytes(r.byte_size)}</span></div>
+        </li>`).join('') + '</ul>';
+      aside.querySelectorAll('li').forEach((li) => {
+        li.addEventListener('click', () => loadSession(li.getAttribute('data-id')));
+      });
+    }
+
+    async function loadSession(id) {
+      activeId = id;
+      document.querySelectorAll('aside li').forEach((li) => {
+        li.classList.toggle('active', li.getAttribute('data-id') === id);
+      });
+      const [metaRes, eventsRes] = await Promise.all([
+        fetch(`/api/trace/${encodeURIComponent(id)}/meta`),
+        fetch(`/api/trace/${encodeURIComponent(id)}/events?limit=2000`),
+      ]);
+      if (!metaRes.ok) {
+        document.getElementById('events').innerHTML = '<div class="empty">trace not found</div>';
+        return;
+      }
+      const meta = await metaRes.json();
+      const data = await eventsRes.json();
+      const metaEl = document.getElementById('meta');
+      metaEl.innerHTML = `
+        <dl class="meta-grid">
+          <dt>session</dt><dd>${escape(meta.session_id)}</dd>
+          <dt>started</dt><dd>${fmtTime(meta.started_at)}</dd>
+          <dt>ended</dt><dd>${fmtTime(meta.ended_at)}</dd>
+          <dt>status</dt><dd><span class="badge ${escape(meta.status)}">${escape(meta.status)}</span></dd>
+          <dt>domain</dt><dd>${escape(meta.domain ?? '—')}</dd>
+          <dt>parent</dt><dd>${escape(meta.parent_op ?? '—')}</dd>
+          <dt>size</dt><dd>${fmtBytes(meta.byte_size)}</dd>
+          <dt>events</dt><dd>${data.total} (showing first ${data.returned})</dd>
+        </dl>
+      `;
+      const evs = data.events || [];
+      const evEl = document.getElementById('events');
+      if (evs.length === 0) {
+        evEl.innerHTML = '<div class="empty">no events recorded</div>';
+        return;
+      }
+      evEl.innerHTML = '<table><thead><tr><th>#</th><th>time</th><th>kind</th><th>body</th></tr></thead><tbody>' +
+        evs.map((e) => `
+          <tr>
+            <td>${e.seq}</td>
+            <td>${fmtTime(e.ts)}</td>
+            <td class="kind">${escape(e.kind)}</td>
+            <td class="body">${escape(JSON.stringify(e.body)).slice(0, 240)}</td>
+          </tr>`).join('') + '</tbody></table>';
+    }
+
+    loadList().catch((e) => {
+      document.getElementById('sessions').innerHTML = '<div class="empty">failed to load: ' + escape(String(e)) + '</div>';
+    });
+  </script>
+</body>
+</html>

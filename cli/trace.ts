@@ -242,4 +242,40 @@ export function registerTraceCommand(program: Command): void {
     .action((sessionId: string, options: { limit?: string; json?: boolean }) =>
       showTrace(sessionId, options),
     );
+
+  cmd
+    .command('play')
+    .description('Open the local replay UI in a browser (127.0.0.1 only)')
+    .option('--port <port>', 'Bind to a specific port (default: ephemeral, OPENCHROME_REPLAY_PORT honored)')
+    .option('--no-open', 'Print the URL but do not auto-open the browser')
+    .action(async (options: { port?: string; open?: boolean }) => {
+      const { startReplayServer } = await import('./replay-server');
+      const portNum = options.port ? Number.parseInt(options.port, 10) : undefined;
+      const handle = await startReplayServer({ port: portNum });
+      console.log(`Replay UI: ${handle.url}`);
+      console.log('Press Ctrl-C to stop.');
+      if (options.open !== false) {
+        // Best-effort browser open. macOS / Linux / Windows.
+        const cmd =
+          process.platform === 'darwin'
+            ? 'open'
+            : process.platform === 'win32'
+              ? 'start'
+              : 'xdg-open';
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const cp = require('child_process');
+          cp.spawn(cmd, [handle.url], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref();
+        } catch {
+          // Open is best-effort — user can copy the URL from stdout.
+        }
+      }
+      // Keep the process alive on stdin close (Ctrl-C / parent exit).
+      process.on('SIGINT', () => {
+        void handle.close().then(() => process.exit(0));
+      });
+      process.on('SIGTERM', () => {
+        void handle.close().then(() => process.exit(0));
+      });
+    });
 }
