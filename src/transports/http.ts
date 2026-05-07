@@ -33,6 +33,7 @@ import {
   type Principal,
 } from '../middleware/auth';
 import { logAuditEntry } from '../security/audit-logger';
+import { authorizeDashboardEndpoint, canSeeTenant } from '../middleware/dashboard-authz';
 import { extractTenantId, TenantIdError } from '../middleware/tenant-extractor';
 import { isStrictTenantIsolationEnabled } from '../tenant/registry';
 import type { TenantId } from '../tenant/types';
@@ -381,19 +382,19 @@ export class HTTPTransport implements MCPTransport {
 
     // ─── Dashboard REST API ────────────────────────────────────────────
     if (pathname === '/api/screenshot' && req.method === 'GET') {
-      this.handleScreenshot(url, res);
+      this.handleScreenshot(req, url, res);
       return;
     }
     if (pathname === '/api/sessions' && req.method === 'GET') {
-      this.handleSessions(res);
+      this.handleSessions(req, res);
       return;
     }
     if (pathname === '/api/tool-calls' && req.method === 'GET') {
-      this.handleToolCalls(url, res);
+      this.handleToolCalls(req, url, res);
       return;
     }
     if (pathname === '/api/metrics' && req.method === 'GET') {
-      this.handleMetrics(res);
+      this.handleMetrics(req, res);
       return;
     }
 
@@ -516,12 +517,30 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /api/screenshot - capture active tab screenshot as base64 WebP
    */
-  private handleScreenshot(url: URL, res: http.ServerResponse): void {
-    const sessionId = url.searchParams.get('session_id') || 'default';
+  private handleScreenshot(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
+    const requestedSessionId = url.searchParams.get('session_id') || url.searchParams.get('sessionId');
+    const sessionId = requestedSessionId || 'default';
 
     if (!this.sessionManager) {
+      const authz = authorizeDashboardEndpoint(req, 'screenshot');
+      if (!authz.ok) {
+        this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+        return;
+      }
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Session manager not available' }));
+      return;
+    }
+
+    const sessionInfo = requestedSessionId
+      ? this.sessionManager.getAllSessionInfos().find((s) => s.id === requestedSessionId)
+      : undefined;
+    const authz = authorizeDashboardEndpoint(req, 'screenshot', {
+      requireSessionOwnership: requestedSessionId !== null,
+      requestedSessionTenantId: sessionInfo?.tenantId,
+    });
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, authz.status, authz.error);
       return;
     }
 
@@ -533,8 +552,17 @@ export class HTTPTransport implements MCPTransport {
       .catch((err) => {
         console.error('[HTTPTransport] Screenshot error:', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Screenshot failed' }));
+        res.end(JSON.stringify({ error: 'Screenshot failed' }));
       });
+  }
+
+  private writeDashboardAuthzFailure(
+    res: http.ServerResponse,
+    status: 401 | 403,
+    error: string,
+  ): void {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error }));
   }
 
   private async captureScreenshot(sessionId: string): Promise<{ base64: string; format: string; sessionId: string }> {
@@ -585,14 +613,21 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /api/sessions - return connected sessions with tab counts
    */
-  private handleSessions(res: http.ServerResponse): void {
+  private handleSessions(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const authz = authorizeDashboardEndpoint(req, 'sessions');
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+      return;
+    }
+
     if (!this.sessionManager) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessions: [] }));
       return;
     }
 
-    const infos = this.sessionManager.getAllSessionInfos();
+    const infos = this.sessionManager.getAllSessionInfos()
+      .filter((info) => canSeeTenant(authz.principal, info.tenantId));
     const sessions = infos.map((info) => ({
       id: info.id,
       name: info.name,
@@ -609,7 +644,13 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /api/tool-calls - return recent tool calls from dashboard state
    */
-  private handleToolCalls(url: URL, res: http.ServerResponse): void {
+  private handleToolCalls(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
+    const authz = authorizeDashboardEndpoint(req, 'tool-calls');
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+      return;
+    }
+
     const sessionId = url.searchParams.get('session_id') || undefined;
     const limit = parseInt(url.searchParams.get('limit') || '20', 10);
     const clampedLimit = Math.min(Math.max(1, limit), 100);
@@ -624,7 +665,13 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /api/metrics - return server metrics
    */
-  private handleMetrics(res: http.ServerResponse): void {
+  private handleMetrics(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const authz = authorizeDashboardEndpoint(req, 'metrics');
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+      return;
+    }
+
     const mem = process.memoryUsage();
     const dashboardState = getDashboardState();
 

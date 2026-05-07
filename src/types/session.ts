@@ -63,6 +63,7 @@ export interface SessionInfo {
   createdAt: number;
   lastActivityAt: number;
   name: string;
+  tenantId?: TenantId;
 }
 
 export interface SessionCreateOptions {
