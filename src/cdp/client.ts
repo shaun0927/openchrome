@@ -1820,6 +1820,32 @@ export class CDPClient {
     }).catch(() => {});
 
     console.error(`[CDPClient] Stealth tab ${targetId} ready (defenses pre-injected, page loaded)`);
+
+    // Trace recorder hook — same env-gated pattern as createPage(). Stealth
+    // sessions are exactly where tracing is most valuable for debugging
+    // anti-bot misbehavior. Failure must never regress page creation.
+    try {
+      const cdpAttach = await import('../trace/cdp-attach');
+      if (cdpAttach.traceEnvEnabled()) {
+        let stealthDomain: string | undefined;
+        try {
+          stealthDomain = new URL(url).hostname;
+        } catch {
+          // url may be about:blank or invalid; fall through with undefined
+        }
+        await cdpAttach.attachRecorderToPage(
+          page as unknown as Parameters<typeof cdpAttach.attachRecorderToPage>[0],
+          {
+            sessionId: targetId,
+            domain: stealthDomain,
+            parentOp: 'cdp.createTargetStealth',
+          },
+        );
+      }
+    } catch (err) {
+      console.error('[CDPClient] trace recorder attach failed (tracing inactive for this stealth page):', err);
+    }
+
     return { page, targetId };
   }
 
