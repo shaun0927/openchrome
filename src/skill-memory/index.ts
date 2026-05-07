@@ -37,3 +37,15 @@ export type {
   SkillSidecar,
   SkillStatus,
 } from './types';
+
+export {
+  SkillRecallStore,
+  buildRecallPayload,
+  isRecallEnabled,
+  recallFromDisk,
+} from './recall';
+export type {
+  SkillRecallEntry,
+  SkillRecallOptions,
+  SkillRecallPayload,
+} from './recall';
