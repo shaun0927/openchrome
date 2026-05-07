@@ -13,7 +13,12 @@ import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
-import { getBase64EncodedByteLength, validateCaptureArea, validateInlineImagePayload } from '../utils/screenshot-guards';
+import {
+  getBase64EncodedByteLength,
+  resolveViewportDimensions,
+  validateCaptureArea,
+  validateInlineImagePayload,
+} from '../utils/screenshot-guards';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -197,14 +202,12 @@ const handler: ToolHandler = async (
           };
         }
 
-        // Fall back to a sensible default (matches src/vision/screenshot-analyzer.ts)
-        // when page.viewport() returns null so the area guard cannot be silently
-        // bypassed by a 0x0 area report.
-        const viewport = page.viewport() ?? { width: 1920, height: 1080 };
-        const areaError = validateCaptureArea(
-          { width: viewport.width, height: viewport.height },
-          'Screenshot'
-        );
+        // page.viewport() can return null when Chrome is launched with
+        // defaultViewport: null. Read live window dimensions in that case so
+        // the area guard reflects the real capture size, not a hardcoded
+        // fallback that could underestimate when --window-size is large.
+        const captureDimensions = await resolveViewportDimensions(page);
+        const areaError = validateCaptureArea(captureDimensions, 'Screenshot');
         if (areaError) {
           return {
             content: [{ type: 'text', text: `Error: ${areaError}` }],

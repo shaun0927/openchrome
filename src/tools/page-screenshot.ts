@@ -8,7 +8,11 @@ import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { bufferToBase64WithPayloadGuard, validateCaptureArea } from '../utils/screenshot-guards';
+import {
+  bufferToBase64WithPayloadGuard,
+  resolveViewportDimensions,
+  validateCaptureArea,
+} from '../utils/screenshot-guards';
 import { withTimeout } from '../utils/with-timeout';
 
 const FULL_PAGE_DIMENSION_TIMEOUT_MS = 5000;
@@ -98,11 +102,6 @@ const handler: ToolHandler = async (
       return makeError(`Error: Tab ${tabId} not found`);
     }
 
-    // page.viewport() can legitimately return null when Chrome is launched with
-    // defaultViewport: null (see src/cdp/client.ts). Fall back to a sensible
-    // default (matches src/vision/screenshot-analyzer.ts) so the area guard is
-    // not silently bypassed by a 0x0 area report on the viewport-only path.
-    const viewport = page.viewport() ?? { width: 1920, height: 1080 };
     const captureDimensions = clip
       ? { width: clip.width, height: clip.height }
       : fullPage
@@ -122,7 +121,7 @@ const handler: ToolHandler = async (
             FULL_PAGE_DIMENSION_TIMEOUT_MS,
             'Full-page dimension lookup'
           )
-        : { width: viewport.width, height: viewport.height };
+        : await resolveViewportDimensions(page);
 
     const areaLabel = clip ? 'Clipped screenshot' : fullPage ? 'Full-page screenshot' : 'Screenshot';
     const areaError = validateCaptureArea(captureDimensions, areaLabel);

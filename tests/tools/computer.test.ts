@@ -586,10 +586,11 @@ describe('ComputerTool', () => {
       expect(cdpSession.send).not.toHaveBeenCalledWith('Page.captureScreenshot', expect.anything());
     });
 
-    test('falls back to default viewport when page.viewport() returns null', async () => {
+    test('reads live window dimensions when page.viewport() returns null', async () => {
       const handler = await getComputerHandler();
       const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
       (page.viewport as jest.Mock).mockReturnValue(null);
+      (page.evaluate as jest.Mock).mockResolvedValue({ width: 1024, height: 768 });
       const cdpSession = await (page as any).createCDPSession();
       (cdpSession.send as jest.Mock).mockResolvedValue({ data: 'ZmFrZQ==' });
 
@@ -600,7 +601,25 @@ describe('ComputerTool', () => {
 
       expect(result.isError).toBeFalsy();
       expect(result.content[0].type).toBe('image');
+      expect(page.evaluate).toHaveBeenCalled();
       expect(cdpSession.send).toHaveBeenCalledWith('Page.captureScreenshot', expect.any(Object));
+    });
+
+    test('rejects oversized live window dimensions when page.viewport() is null', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.viewport as jest.Mock).mockReturnValue(null);
+      (page.evaluate as jest.Mock).mockResolvedValue({ width: 6000, height: 5000 });
+      const cdpSession = await (page as any).createCDPSession();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Screenshot area 6000x5000');
+      expect(cdpSession.send).not.toHaveBeenCalledWith('Page.captureScreenshot', expect.anything());
     });
 
     test('does not start a duplicate screenshot capture after race timeout', async () => {

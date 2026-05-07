@@ -41,10 +41,11 @@ describe('page_screenshot payload guards', () => {
     tabId = target.targetId;
   });
 
-  it('falls back to default viewport when page.viewport() returns null on the viewport-only path', async () => {
+  it('reads live window dimensions when page.viewport() returns null on the viewport-only path', async () => {
     const handler = await getPageScreenshotHandler(mockSessionManager);
     const page = (await mockSessionManager.getPage(sessionId, tabId))!;
     (page.viewport as jest.Mock).mockReturnValue(null);
+    (page.evaluate as jest.Mock).mockResolvedValue({ width: 1024, height: 768 });
     (page.screenshot as jest.Mock).mockResolvedValue(Buffer.from('small image'));
 
     const result = await handler(sessionId, { tabId }) as {
@@ -54,7 +55,24 @@ describe('page_screenshot payload guards', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.content[0].type).toBe('image');
+    expect(page.evaluate).toHaveBeenCalled();
     expect(page.screenshot).toHaveBeenCalled();
+  });
+
+  it('rejects oversized live window dimensions when page.viewport() is null', async () => {
+    const handler = await getPageScreenshotHandler(mockSessionManager);
+    const page = (await mockSessionManager.getPage(sessionId, tabId))!;
+    (page.viewport as jest.Mock).mockReturnValue(null);
+    (page.evaluate as jest.Mock).mockResolvedValue({ width: 6000, height: 5000 });
+
+    const result = await handler(sessionId, { tabId }) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Screenshot area 6000x5000');
+    expect(page.screenshot).not.toHaveBeenCalled();
   });
 
   it('returns existing viewport screenshots when inline payload is under the cap', async () => {

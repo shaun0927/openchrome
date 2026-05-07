@@ -2,8 +2,60 @@ import {
   MAX_CAPTURE_AREA_PIXELS,
   MAX_INLINE_IMAGE_PAYLOAD_BYTES,
 } from '../config/defaults';
+import { withTimeout } from './with-timeout';
 
 export { MAX_CAPTURE_AREA_PIXELS, MAX_INLINE_IMAGE_PAYLOAD_BYTES };
+
+/** Default fallback when viewport cannot be determined live (matches existing call sites). */
+export const FALLBACK_VIEWPORT_DIMENSIONS: CaptureDimensions = { width: 1920, height: 1080 };
+
+/** Maximum time to wait for live viewport dimension lookup via page.evaluate. */
+export const VIEWPORT_DIMENSION_LOOKUP_TIMEOUT_MS = 5000;
+
+/**
+ * Subset of the puppeteer Page API needed to resolve viewport dimensions.
+ * Duck-typed to keep this util free of a direct puppeteer-core dependency.
+ */
+export interface ViewportLookupPage {
+  viewport(): { width: number; height: number } | null;
+  evaluate<T>(pageFunction: () => T | Promise<T>): Promise<T>;
+}
+
+/**
+ * Resolve the live viewport dimensions for the area guard.
+ *
+ * page.viewport() returns null when Chrome is launched with
+ * `defaultViewport: null` (see src/cdp/client.ts), so a hardcoded fallback
+ * cannot reflect the real window size when --window-size is large. Read the
+ * live `window.innerWidth/innerHeight` via page.evaluate (with a short
+ * timeout so a hung renderer cannot block the screenshot pipeline) and only
+ * fall back to a hardcoded default if both sources fail.
+ */
+export async function resolveViewportDimensions(
+  page: ViewportLookupPage,
+  timeoutMs: number = VIEWPORT_DIMENSION_LOOKUP_TIMEOUT_MS
+): Promise<CaptureDimensions> {
+  const v = page.viewport();
+  if (v && v.width > 0 && v.height > 0) {
+    return { width: v.width, height: v.height };
+  }
+  try {
+    const live = await withTimeout(
+      page.evaluate(() => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      })),
+      timeoutMs,
+      'Viewport dimension lookup'
+    );
+    if (live && Number.isFinite(live.width) && Number.isFinite(live.height) && live.width > 0 && live.height > 0) {
+      return { width: live.width, height: live.height };
+    }
+  } catch {
+    // Renderer hung or unresponsive — fall through to the hardcoded fallback.
+  }
+  return { ...FALLBACK_VIEWPORT_DIMENSIONS };
+}
 
 export interface CaptureDimensions {
   width: number;
