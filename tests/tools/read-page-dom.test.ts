@@ -113,11 +113,6 @@ describe('ReadPageTool - DOM Mode', () => {
       { depth: -1, pierce: true },
       { root: sampleDOMTree }
     );
-    mockSessionManager.mockCDPClient.setCDPResponse(
-      'DOM.getDocument',
-      { depth: 3, pierce: true },
-      { root: sampleDOMTree }
-    );
 
     // Set up page.evaluate for page stats (DOM mode)
     const page = mockSessionManager.pages.get(testTargetId);
@@ -197,10 +192,15 @@ describe('ReadPageTool - DOM Mode', () => {
       const result = await handler(testSessionId, { tabId: testTargetId, mode: 'dom', depth: 2 }) as any;
 
       expect(result.isError).toBeUndefined();
+      // CDP is fetched with unbounded depth even when a maxDepth is set:
+      // pierceIframes defaults to true in DOM mode, and the contentDocument
+      // descent gap means a bounded fetch can silently drop iframe body
+      // content within maxDepth. The serializer enforces maxDepth on the
+      // output side instead.
       expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
         expect.anything(),
         'DOM.getDocument',
-        { depth: 3, pierce: true }
+        { depth: -1, pierce: true }
       );
       // Output should still be valid
       expect(result.content[0].text).toContain('[page_stats]');

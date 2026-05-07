@@ -613,7 +613,25 @@ describe('DOM Serializer', () => {
     );
   });
 
-  test('passes bounded depth to CDP DOM.getDocument when maxDepth is requested', async () => {
+  test('passes bounded depth to CDP DOM.getDocument when maxDepth is requested without pierce', async () => {
+    // When pierceIframes is false, the serializer-depth-to-CDP-depth mapping
+    // is exact (offset by 1 for the #document root), so the bounded fetch is
+    // safe. With pierceIframes=true (the default) iframe contentDocument
+    // descents create an open-ended gap, so the serializer falls back to
+    // an unbounded fetch — exercised by a separate test below.
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+
+    await serializeDOM(page as never, cdpClient as never, { maxDepth: 2, pierceIframes: false });
+
+    expect(cdpClient.send).toHaveBeenCalledWith(
+      page,
+      'DOM.getDocument',
+      { depth: 3, pierce: false },
+    );
+  });
+
+  test('falls back to unbounded fetch when maxDepth is set with pierceIframes=true', async () => {
     const page = createMockPageForDOM();
     const cdpClient = createMockCDPClientForDOM(simpleDoc);
 
@@ -622,7 +640,7 @@ describe('DOM Serializer', () => {
     expect(cdpClient.send).toHaveBeenCalledWith(
       page,
       'DOM.getDocument',
-      { depth: 3, pierce: true },
+      { depth: -1, pierce: true },
     );
   });
 
@@ -637,5 +655,82 @@ describe('DOM Serializer', () => {
       'DOM.getDocument',
       { depth: -1, pierce: false },
     );
+  });
+
+  // 13. Bounded depth + iframe pierce regression
+  // Document handler iterates contentDocument children at the same
+  // serializer-depth, but each pierce hop costs a CDP depth level. With
+  // pierceIframes=true the serializer must request unbounded depth so
+  // iframe body content within maxDepth is not silently dropped.
+  test('bounded maxDepth + pierceIframes renders iframe body content', async () => {
+    // Layout (serializer / CDP depths):
+    //   #document (s—, c0)
+    //     html      (s0, c1)
+    //       body    (s1, c2)
+    //         iframe(s2, c3)
+    //           contentDocument (handler same-depth s3, c4)
+    //             html  (s3, c5)
+    //               body(s4, c6)            ← within maxDepth=4 budget
+    //                 p (s5, c7)            ← outside maxDepth
+    //
+    // A naive bounded fetch (depth = maxDepth + 1 = 5) would stop at
+    // inner-html, dropping inner-body silently. The serializer guards
+    // against this by requesting unbounded depth when pierceIframes is
+    // true, so the simulated CDP response below contains the full tree.
+    const fullDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'HTML', localName: 'html',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 3, nodeType: 1, nodeName: 'BODY', localName: 'body',
+          attributes: [],
+          children: [{
+            nodeId: 4, backendNodeId: 4000, nodeType: 1, nodeName: 'IFRAME', localName: 'iframe',
+            attributes: ['src', 'https://inner.example.com'],
+            contentDocument: {
+              nodeId: 10, backendNodeId: 10, nodeType: 9, nodeName: '#document', localName: '',
+              children: [{
+                nodeId: 11, backendNodeId: 11, nodeType: 1, nodeName: 'HTML', localName: 'html',
+                attributes: [],
+                children: [{
+                  nodeId: 12, backendNodeId: 12, nodeType: 1, nodeName: 'BODY', localName: 'body',
+                  attributes: [],
+                  children: [{
+                    nodeId: 13, backendNodeId: 4001, nodeType: 1, nodeName: 'P', localName: 'p',
+                    attributes: ['id', 'iframe-content'],
+                    children: [],
+                  }],
+                }],
+              }],
+            },
+          }],
+        }],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(fullDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, {
+      includePageStats: false,
+      maxDepth: 4,
+      pierceIframes: true,
+    });
+
+    // CDP must be asked for an unbounded fetch so iframe content is
+    // not silently truncated.
+    expect(cdpClient.send).toHaveBeenCalledWith(
+      page,
+      'DOM.getDocument',
+      { depth: -1, pierce: true },
+    );
+
+    // Inner body shows up after the iframe page separator, and inner
+    // body's children at serializer-depth 5 are correctly cut by the
+    // maxDepth check (not by missing CDP data).
+    expect(result.content).toContain('--page-separator-- iframe: https://inner.example.com');
+    expect(result.content).toMatch(/--page-separator--[\s\S]*\[12\]<body/);
+    expect(result.content).not.toContain('id="iframe-content"');
   });
 });
