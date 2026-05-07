@@ -1,3 +1,6 @@
+import * as os from 'os';
+import * as path from 'path';
+
 /**
  * Shared default constants used across the codebase.
  *
@@ -171,6 +174,10 @@ export const DEFAULT_FILL_FORM_POLL_MS = 1500;
 
 /** fill_form: Interval between polls when waiting for form fields (ms). */
 export const DEFAULT_FILL_FORM_POLL_INTERVAL_MS = 300;
+
+/** Default directory whose files may be uploaded by file_upload in addition to the process cwd.
+ *  Override with OPENCHROME_FILE_UPLOAD_TEMP_DIR. */
+export const DEFAULT_FILE_UPLOAD_TEMP_DIR = path.join(os.tmpdir(), 'openchrome-uploads');
 
 /** Default compression level for response compression. */
 export const DEFAULT_COMPRESSION_LEVEL = 'light';
