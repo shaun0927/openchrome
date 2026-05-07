@@ -41,6 +41,22 @@ describe('page_screenshot payload guards', () => {
     tabId = target.targetId;
   });
 
+  it('falls back to default viewport when page.viewport() returns null on the viewport-only path', async () => {
+    const handler = await getPageScreenshotHandler(mockSessionManager);
+    const page = (await mockSessionManager.getPage(sessionId, tabId))!;
+    (page.viewport as jest.Mock).mockReturnValue(null);
+    (page.screenshot as jest.Mock).mockResolvedValue(Buffer.from('small image'));
+
+    const result = await handler(sessionId, { tabId }) as {
+      content: Array<{ type: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].type).toBe('image');
+    expect(page.screenshot).toHaveBeenCalled();
+  });
+
   it('returns existing viewport screenshots when inline payload is under the cap', async () => {
     const handler = await getPageScreenshotHandler(mockSessionManager);
     const page = (await mockSessionManager.getPage(sessionId, tabId))!;

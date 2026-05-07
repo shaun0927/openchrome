@@ -98,7 +98,11 @@ const handler: ToolHandler = async (
       return makeError(`Error: Tab ${tabId} not found`);
     }
 
-    const viewport = page.viewport();
+    // page.viewport() can legitimately return null when Chrome is launched with
+    // defaultViewport: null (see src/cdp/client.ts). Fall back to a sensible
+    // default (matches src/vision/screenshot-analyzer.ts) so the area guard is
+    // not silently bypassed by a 0x0 area report on the viewport-only path.
+    const viewport = page.viewport() ?? { width: 1920, height: 1080 };
     const captureDimensions = clip
       ? { width: clip.width, height: clip.height }
       : fullPage
@@ -118,7 +122,7 @@ const handler: ToolHandler = async (
             FULL_PAGE_DIMENSION_TIMEOUT_MS,
             'Full-page dimension lookup'
           )
-        : { width: viewport?.width ?? 0, height: viewport?.height ?? 0 };
+        : { width: viewport.width, height: viewport.height };
 
     const areaLabel = clip ? 'Clipped screenshot' : fullPage ? 'Full-page screenshot' : 'Screenshot';
     const areaError = validateCaptureArea(captureDimensions, areaLabel);
