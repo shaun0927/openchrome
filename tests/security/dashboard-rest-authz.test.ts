@@ -60,7 +60,14 @@ function fakeStore(records: Record<string, { tenantId: string; scopes: Scope[] }
   };
 }
 
-function sessionManager() {
+function sessionManager(extras: { defaultTenantId?: string } = {}) {
+  const sessions = new Map<string, { id: string; tenantId: string }>([
+    ['alpha-session', { id: 'alpha-session', tenantId: 'alpha' }],
+    ['beta-session', { id: 'beta-session', tenantId: 'beta' }],
+  ]);
+  if (extras.defaultTenantId) {
+    sessions.set('default', { id: 'default', tenantId: extras.defaultTenantId });
+  }
   return {
     getAllSessionInfos: jest.fn(() => [
       {
@@ -84,14 +91,19 @@ function sessionManager() {
         tenantId: 'beta',
       },
     ]),
+    getSession: jest.fn((id: string) => sessions.get(id)),
     getStats: jest.fn(() => ({ totalTargets: 0, activeSessions: 2 })),
   };
 }
 
-async function boot(authToken?: string, store?: ReturnType<typeof fakeStore>) {
+async function boot(
+  authToken?: string,
+  store?: ReturnType<typeof fakeStore>,
+  smOverrides: { defaultTenantId?: string } = {},
+) {
   const port = await freePort();
   const transport = new HTTPTransport(port, '127.0.0.1', authToken, store ? { apiKeyStore: store as never } : {});
-  transport.setSessionManager(sessionManager() as never);
+  transport.setSessionManager(sessionManager(smOverrides) as never);
   transport.onMessage(async (msg: Record<string, unknown>) => ({
     jsonrpc: '2.0',
     id: (typeof msg.id === 'string' || typeof msg.id === 'number') ? msg.id : 0,
@@ -174,6 +186,65 @@ describe('dashboard REST authorization', () => {
     expect(res.status).toBe(403);
     expect(JSON.parse(res.body)).toEqual({ error: 'Forbidden' });
     expect(res.body).not.toContain('beta-session');
+  });
+
+  it('blocks default-session screenshots when the default belongs to another tenant', async () => {
+    const booted = await boot(
+      undefined,
+      fakeStore({ [readAlpha]: { tenantId: 'alpha', scopes: ['read'] } }),
+      { defaultTenantId: 'beta' },
+    );
+    transport = booted.transport;
+
+    const res = await request(booted.port, '/api/screenshot', {
+      Authorization: `Bearer ${readAlpha}`,
+    });
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body)).toEqual({ error: 'Forbidden' });
+  });
+
+  it('hides cross-tenant tool calls from tenant-scoped admins listing without session_id', async () => {
+    const booted = await boot(
+      undefined,
+      fakeStore({ [adminAlpha]: { tenantId: 'alpha', scopes: ['admin'] } }),
+    );
+    transport = booted.transport;
+
+    const { getDashboardState } = await import('../../src/desktop/dashboard-state');
+    const state = getDashboardState();
+    state.recordToolStart('alpha-session', 'navigate', { url: 'https://alpha.example' }, 'call-alpha');
+    state.recordToolStart('beta-session', 'navigate', { url: 'https://beta.example' }, 'call-beta');
+
+    try {
+      const res = await request(booted.port, '/api/tool-calls', {
+        Authorization: `Bearer ${adminAlpha}`,
+      });
+
+      expect(res.status).toBe(200);
+      const data = JSON.parse(res.body) as { calls: Array<{ id: string; sessionId: string }> };
+      const ids = data.calls.map((c) => c.id);
+      expect(ids).toContain('call-alpha');
+      expect(ids).not.toContain('call-beta');
+    } finally {
+      state.recordToolEnd('call-alpha', 'success');
+      state.recordToolEnd('call-beta', 'success');
+    }
+  });
+
+  it('rejects tool-call requests targeting another tenant\'s session', async () => {
+    const booted = await boot(
+      undefined,
+      fakeStore({ [adminAlpha]: { tenantId: 'alpha', scopes: ['admin'] } }),
+    );
+    transport = booted.transport;
+
+    const res = await request(booted.port, '/api/tool-calls?session_id=beta-session', {
+      Authorization: `Bearer ${adminAlpha}`,
+    });
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body)).toEqual({ error: 'Forbidden' });
   });
 });
 

@@ -532,12 +532,13 @@ export class HTTPTransport implements MCPTransport {
       return;
     }
 
-    const sessionInfo = requestedSessionId
-      ? this.sessionManager.getAllSessionInfos().find((s) => s.id === requestedSessionId)
-      : undefined;
+    // Always look up the resolved session — including the implicit "default" —
+    // so that a tenant-scoped caller cannot read another tenant's default
+    // session screenshot just by omitting `session_id`.
+    const session = this.sessionManager.getSession(sessionId);
     const authz = authorizeDashboardEndpoint(req, 'screenshot', {
-      requireSessionOwnership: requestedSessionId !== null,
-      requestedSessionTenantId: sessionInfo?.tenantId,
+      requireSessionOwnership: true,
+      requestedSessionTenantId: session?.tenantId,
     });
     if (!authz.ok) {
       this.writeDashboardAuthzFailure(res, authz.status, authz.error);
@@ -645,18 +646,34 @@ export class HTTPTransport implements MCPTransport {
    * GET /api/tool-calls - return recent tool calls from dashboard state
    */
   private handleToolCalls(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
-    const authz = authorizeDashboardEndpoint(req, 'tool-calls');
+    const sessionId = url.searchParams.get('session_id') || undefined;
+    const requestedSession = sessionId && this.sessionManager
+      ? this.sessionManager.getSession(sessionId)
+      : undefined;
+
+    const authz = authorizeDashboardEndpoint(req, 'tool-calls', {
+      requireSessionOwnership: sessionId !== undefined,
+      requestedSessionTenantId: requestedSession?.tenantId,
+    });
     if (!authz.ok) {
       this.writeDashboardAuthzFailure(res, authz.status, authz.error);
       return;
     }
 
-    const sessionId = url.searchParams.get('session_id') || undefined;
     const limit = parseInt(url.searchParams.get('limit') || '20', 10);
     const clampedLimit = Math.min(Math.max(1, limit), 100);
 
     const dashboardState = getDashboardState();
-    const calls = dashboardState.getToolCalls(sessionId, clampedLimit);
+    let calls = dashboardState.getToolCalls(sessionId, clampedLimit);
+
+    // Tenant-scoped admins must not see tool calls from other tenants. When the
+    // session has been deleted we cannot prove ownership, so the call is hidden.
+    const sm = this.sessionManager;
+    if (sm) {
+      calls = calls.filter((c) => canSeeTenant(authz.principal, sm.getSession(c.sessionId)?.tenantId));
+    } else if (!canSeeTenant(authz.principal, undefined)) {
+      calls = [];
+    }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ calls }));
