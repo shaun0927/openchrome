@@ -5,6 +5,7 @@
  */
 
 import * as http from 'node:http';
+import * as net from 'node:net';
 
 // Inline require to avoid TS module resolution issues with dynamic transport loading
 const { HTTPTransport } = require('../../src/transports/http');
@@ -38,6 +39,48 @@ function request(
     req.on('error', reject);
     if (body) req.write(body);
     req.end();
+  });
+}
+
+function rawRequest(
+  raw: string,
+): Promise<{ status: number; body: string; headers: Record<string, string> }> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: '127.0.0.1', port: TEST_PORT });
+    let response = '';
+
+    socket.setTimeout(3000);
+    socket.on('connect', () => socket.end(raw));
+    socket.on('data', (chunk: Buffer) => {
+      response += chunk.toString('utf8');
+    });
+    socket.on('timeout', () => socket.destroy(new Error('raw request timeout')));
+    socket.on('error', (err) => {
+      if (response) return;
+      reject(err);
+    });
+    socket.on('close', () => {
+      const [head = '', body = ''] = response.split('\r\n\r\n');
+      const statusMatch = head.match(/^HTTP\/1\.[01] (\d{3})/);
+      const headers = Object.fromEntries(
+        head
+          .split('\r\n')
+          .slice(1)
+          .map((line) => {
+            const separator = line.indexOf(':');
+            return separator === -1
+              ? undefined
+              : [line.slice(0, separator).toLowerCase(), line.slice(separator + 1).trim()];
+          })
+          .filter((entry): entry is [string, string] => Boolean(entry)),
+      );
+
+      resolve({
+        status: statusMatch ? parseInt(statusMatch[1], 10) : 0,
+        body,
+        headers,
+      });
+    });
   });
 }
 
@@ -210,12 +253,19 @@ describe('HTTP Bearer Token Auth', () => {
       // attacker.example. The same-origin bypass must compare against the
       // configured server bind, not the request Host header, or the allowlist
       // is defeated whenever unauthenticated HTTP mode is enabled.
-      const res = await request('/mcp', 'POST', {
-        'Content-Type': 'application/json',
-        Origin: 'http://attacker.example',
-        Host: 'attacker.example',
-      }, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
+      const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} });
+      const res = await rawRequest(
+        `POST /mcp HTTP/1.1\r\n` +
+        `Host: attacker.example\r\n` +
+        `Origin: http://attacker.example\r\n` +
+        `Content-Type: application/json\r\n` +
+        `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+        `Connection: close\r\n` +
+        `\r\n` +
+        body,
+      );
       expect(res.status).toBe(403);
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
     });
   });
 });
