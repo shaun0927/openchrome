@@ -13,6 +13,10 @@
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
+import {
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
+} from '../config/defaults';
 import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport } from './index';
 import { getDashboardState } from '../desktop/dashboard-state';
@@ -72,6 +76,17 @@ const HTTP_HEADERS_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_HEADERS_TIMEOUT_MS',  D
 const HTTP_KEEPALIVE_TIMEOUT_MS = envInt('OPENCHROME_HTTP_KEEPALIVE_TIMEOUT_MS', DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS);
 const HTTP_SOCKET_TIMEOUT_MS   = envInt('OPENCHROME_HTTP_SOCKET_TIMEOUT_MS',   DEFAULT_HTTP_SOCKET_TIMEOUT_MS);
 const HTTP_BODY_TIMEOUT_MS     = envInt('OPENCHROME_HTTP_BODY_TIMEOUT_MS',     DEFAULT_HTTP_BODY_TIMEOUT_MS);
+const HTTP_JSON_RPC_BATCH_MAX_SIZE = envInt(
+  'OPENCHROME_HTTP_JSON_RPC_BATCH_MAX_SIZE',
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
+);
+const HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY = Math.max(
+  1,
+  envInt(
+    'OPENCHROME_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY',
+    DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
+  ),
+);
 
 /** Exported for tests to assert current effective values. */
 export const HTTP_TIMEOUTS = Object.freeze({
@@ -80,6 +95,8 @@ export const HTTP_TIMEOUTS = Object.freeze({
   keepAliveTimeoutMs: HTTP_KEEPALIVE_TIMEOUT_MS,
   socketTimeoutMs:    HTTP_SOCKET_TIMEOUT_MS,
   bodyTimeoutMs:      HTTP_BODY_TIMEOUT_MS,
+  jsonRpcBatchMaxSize: HTTP_JSON_RPC_BATCH_MAX_SIZE,
+  jsonRpcBatchMaxConcurrency: HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
 });
 
 /** Active SSE connections for server-initiated notifications */
@@ -1010,6 +1027,16 @@ export class HTTPTransport implements MCPTransport {
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
 
+    if (messages.length > HTTP_JSON_RPC_BATCH_MAX_SIZE) {
+      // Reject the whole batch with a single protocol-level error rather than
+      // fabricating one response per element. Per JSON-RPC 2.0 §4.1, a server
+      // must not respond to notifications — the previous per-item map invented
+      // `id: 0` responses for notification entries, which a spec-conformant
+      // client would correlate to an unrelated in-flight request. handlePost
+      // unwraps a single-element array into one response object on the wire.
+      return [this.createBatchTooLargeError()];
+    }
+
     // Assign sessionId once before concurrent processing to avoid data race
     // when multiple initialize requests appear in the same batch.
     if (!sessionId) {
@@ -1023,32 +1050,41 @@ export class HTTPTransport implements MCPTransport {
       }
     }
 
-    const promises = messages.map(async (msg) => {
-      if (typeof msg !== 'object' || msg === null) {
-        return {
-          jsonrpc: '2.0' as const,
-          id: 0,
-          error: {
-            code: MCPErrorCodes.INVALID_REQUEST,
-            message: 'Invalid batch element: not an object',
-          },
-        } as MCPResponse;
-      }
-
-      const record = msg as Record<string, unknown>;
-      // Same defense-in-depth as the single-message path: scrub any
-      // client-provided `__principal` and attach the trusted one via Symbol.
-      if ('__principal' in record) {
-        delete record.__principal;
-      }
-      if (principal) {
-        (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
-      }
-
+    return this.mapBatchWithConcurrency(messages, HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY, async (msg) => {
+      // Wrap the entire per-element body in try/catch. mapBatchWithConcurrency
+      // shares one results array across workers, so a synchronous throw from
+      // any branch (e.g., a frozen `record` rejecting __principal scrubbing)
+      // would unwind that worker mid-loop and leave the unfilled slots as
+      // `undefined`, corrupting later responses' index → request mapping.
+      const record = (typeof msg === 'object' && msg !== null)
+        ? (msg as Record<string, unknown>)
+        : null;
       try {
+        if (record === null) {
+          return {
+            jsonrpc: '2.0' as const,
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: 'Invalid batch element: not an object',
+            },
+          } as MCPResponse;
+        }
+
+        // Same defense-in-depth as the single-message path: scrub any
+        // client-provided `__principal` and attach the trusted one via Symbol.
+        if ('__principal' in record) {
+          delete record.__principal;
+        }
+        if (principal) {
+          (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
+        }
+
         return await handler(record, signal);
       } catch (error) {
-        const id = (record.id as string | number) ?? 0;
+        const id = record !== null
+          ? ((record.id as string | number | undefined) ?? 0)
+          : 0;
         return {
           jsonrpc: '2.0' as const,
           id,
@@ -1059,7 +1095,39 @@ export class HTTPTransport implements MCPTransport {
         } as MCPResponse;
       }
     });
+  }
 
-    return Promise.all(promises);
+  private createBatchTooLargeError(): MCPResponse {
+    // id: null is the JSON-RPC 2.0 §5.1 sentinel for errors detected before a
+    // request id can be parsed (or, here, any meaningful per-element id can be
+    // chosen). It also avoids colliding with an active client-request id.
+    return {
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: MCPErrorCodes.INVALID_REQUEST,
+        message: `JSON-RPC batch size exceeds maximum of ${HTTP_JSON_RPC_BATCH_MAX_SIZE}`,
+      },
+    };
+  }
+
+  private async mapBatchWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    fn: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+
+    const workerCount = Math.min(concurrency, items.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await fn(items[currentIndex]);
+      }
+    });
+
+    await Promise.all(workers);
+    return results;
   }
 }

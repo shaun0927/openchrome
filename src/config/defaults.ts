@@ -51,6 +51,12 @@ export const DEFAULT_SAFE_TITLE_TIMEOUT_MS = 3000;
 /** Per-item timeout in request queue (ms). Safety net against indefinitely hung CDP commands. */
 export const DEFAULT_QUEUE_ITEM_TIMEOUT_MS = 120000;
 
+/** Maximum accepted JSON-RPC messages in one HTTP batch request. */
+export const DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE = 32;
+
+/** Maximum JSON-RPC HTTP batch elements executed concurrently. */
+export const DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY = 4;
+
 /** Global tool execution timeout in milliseconds. Absolute safety net against indefinitely hung handlers. */
 export const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 120000;
 
