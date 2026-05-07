@@ -53,15 +53,7 @@ export class RequestQueue {
         const item = this.queue.shift()!;
 
         try {
-          const result = await Promise.race([
-            item.fn(),
-            new Promise<never>((_, reject) =>
-              setTimeout(
-                () => reject(new Error(`Queue item timed out after ${DEFAULT_QUEUE_ITEM_TIMEOUT_MS}ms`)),
-                DEFAULT_QUEUE_ITEM_TIMEOUT_MS,
-              ),
-            ),
-          ]);
+          const result = await this.runWithTimeout(item.fn);
           item.resolve(result);
         } catch (error) {
           item.reject(error instanceof Error ? error : new Error(String(error)));
@@ -72,6 +64,27 @@ export class RequestQueue {
 
       if (this.queue.length > 0) {
         this.triggerProcessing();
+      }
+    }
+  }
+
+  private async runWithTimeout<T>(fn: () => Promise<T>): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error(`Queue item timed out after ${DEFAULT_QUEUE_ITEM_TIMEOUT_MS}ms`)),
+            DEFAULT_QUEUE_ITEM_TIMEOUT_MS,
+          );
+          timeout.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
       }
     }
   }

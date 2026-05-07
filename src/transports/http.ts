@@ -13,6 +13,10 @@
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
+import {
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
+} from '../config/defaults';
 import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport } from './index';
 import { getDashboardState } from '../desktop/dashboard-state';
@@ -72,6 +76,17 @@ const HTTP_HEADERS_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_HEADERS_TIMEOUT_MS',  D
 const HTTP_KEEPALIVE_TIMEOUT_MS = envInt('OPENCHROME_HTTP_KEEPALIVE_TIMEOUT_MS', DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS);
 const HTTP_SOCKET_TIMEOUT_MS   = envInt('OPENCHROME_HTTP_SOCKET_TIMEOUT_MS',   DEFAULT_HTTP_SOCKET_TIMEOUT_MS);
 const HTTP_BODY_TIMEOUT_MS     = envInt('OPENCHROME_HTTP_BODY_TIMEOUT_MS',     DEFAULT_HTTP_BODY_TIMEOUT_MS);
+const HTTP_JSON_RPC_BATCH_MAX_SIZE = envInt(
+  'OPENCHROME_HTTP_JSON_RPC_BATCH_MAX_SIZE',
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
+);
+const HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY = Math.max(
+  1,
+  envInt(
+    'OPENCHROME_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY',
+    DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
+  ),
+);
 
 /** Exported for tests to assert current effective values. */
 export const HTTP_TIMEOUTS = Object.freeze({
@@ -80,6 +95,8 @@ export const HTTP_TIMEOUTS = Object.freeze({
   keepAliveTimeoutMs: HTTP_KEEPALIVE_TIMEOUT_MS,
   socketTimeoutMs:    HTTP_SOCKET_TIMEOUT_MS,
   bodyTimeoutMs:      HTTP_BODY_TIMEOUT_MS,
+  jsonRpcBatchMaxSize: HTTP_JSON_RPC_BATCH_MAX_SIZE,
+  jsonRpcBatchMaxConcurrency: HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
 });
 
 /** Active SSE connections for server-initiated notifications */
@@ -1010,6 +1027,10 @@ export class HTTPTransport implements MCPTransport {
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
 
+    if (messages.length > HTTP_JSON_RPC_BATCH_MAX_SIZE) {
+      return messages.map((msg) => this.createBatchTooLargeError(msg));
+    }
+
     // Assign sessionId once before concurrent processing to avoid data race
     // when multiple initialize requests appear in the same batch.
     if (!sessionId) {
@@ -1023,7 +1044,7 @@ export class HTTPTransport implements MCPTransport {
       }
     }
 
-    const promises = messages.map(async (msg) => {
+    return this.mapBatchWithConcurrency(messages, HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY, async (msg) => {
       if (typeof msg !== 'object' || msg === null) {
         return {
           jsonrpc: '2.0' as const,
@@ -1059,7 +1080,40 @@ export class HTTPTransport implements MCPTransport {
         } as MCPResponse;
       }
     });
+  }
 
-    return Promise.all(promises);
+  private createBatchTooLargeError(msg: unknown): MCPResponse {
+    const id = typeof msg === 'object' && msg !== null
+      ? ((msg as Record<string, unknown>).id as string | number | undefined) ?? 0
+      : 0;
+
+    return {
+      jsonrpc: '2.0',
+      id,
+      error: {
+        code: MCPErrorCodes.INVALID_REQUEST,
+        message: `JSON-RPC batch size exceeds maximum of ${HTTP_JSON_RPC_BATCH_MAX_SIZE}`,
+      },
+    };
+  }
+
+  private async mapBatchWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    fn: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+
+    const workerCount = Math.min(concurrency, items.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await fn(items[currentIndex]);
+      }
+    });
+
+    await Promise.all(workers);
+    return results;
   }
 }
