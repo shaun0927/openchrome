@@ -25,3 +25,15 @@ export type {
   SkillGraphInspectSummary,
   SkillGraphStorageOptions,
 } from './storage';
+
+export { runSkill, pickBestEdge, matchesExpected } from './executor';
+export type {
+  ActionInvocation,
+  ActionResult,
+  ExecutionContext,
+  ToolRouter,
+  SkillIntent,
+  RunSkillResult,
+  RunSkillArgs,
+  RunOutcomeKind,
+} from './executor';
