@@ -34,3 +34,11 @@ export type {
   TransactionRecord,
   Verdict,
 } from './runtime';
+
+export {
+  SqliteIdempotencyStore,
+  canonicalJson,
+  computeIdempotencyKey,
+  defaultIdempotencyRootDir,
+} from './idempotency';
+export type { IdempotencyStore, IdempotencyStoreOptions } from './idempotency';

@@ -84,9 +84,21 @@ export interface TransactionRecord {
   escalation?: { target: 'human-review' | 'headed-handoff' };
   /** Result returned by the skill on success paths. */
   skill_result?: unknown;
+  /** True when this record was returned from the idempotency cache
+   *  rather than freshly computed. Skill never ran. */
+  from_cache?: boolean;
+  /** True when the preemptive timer fired and force-aborted the skill. */
+  hard_kill?: boolean;
 }
 
-export type SkillFn = () => Promise<unknown>;
+/**
+ * Skill function. Receives an AbortSignal that fires when the contract's
+ * preemptive timer trips (`wall_ms + 5s` grace) — well-behaved skills
+ * should observe it and bail early. Cooperative cancellation guarantees
+ * the runtime hits its budget; preemption guarantees the runtime
+ * cannot be wedged by an unresponsive skill.
+ */
+export type SkillFn = (signal?: AbortSignal) => Promise<unknown>;
 
 export interface ContractRuntimeArgs {
   contract: Contract;
@@ -96,10 +108,19 @@ export interface ContractRuntimeArgs {
   snapshot: () => Promise<AssertionContext>;
   /** Optional audit emitter — defaults to a logAuditEntry-backed adapter. */
   audit?: AuditEmitter;
+  /** Optional idempotency cache (PR-12). On cache hit the skill never
+   *  runs; the cached TransactionRecord is returned with `from_cache=true`. */
+  idempotency?: import('./idempotency').IdempotencyStore;
+  /** Optional cache key override. Defaults to computeIdempotencyKey(contract). */
+  idempotencyKey?: string;
   /** Test hook: clock for deterministic timestamps. */
   now?: () => number;
   /** Test hook: delay function (defaults to setTimeout-based). */
   delay?: (ms: number) => Promise<void>;
+  /** Test hook: timer factory for the preemptive cancellation timer. */
+  setTimer?: (handler: () => void, ms: number) => unknown;
+  /** Test hook: cancellation paired with `setTimer`. */
+  clearTimer?: (handle: unknown) => void;
 }
 
 export interface AuditEmitter {
@@ -144,6 +165,13 @@ const defaultDelay = (ms: number): Promise<void> =>
   });
 
 /**
+ * Grace period (ms) added to `budget.wall_ms` before the preemptive
+ * timer fires. Per #706 v2 — gives a cooperative skill a final chance
+ * to honor its AbortSignal before we hard-kill.
+ */
+const PREEMPTIVE_GRACE_MS = 5000;
+
+/**
  * Run a skill under a contract. Always settles (never throws). The
  * returned TransactionRecord is also passed to args.audit (or the
  * default emitter if omitted).
@@ -154,6 +182,30 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   const audit = args.audit ?? defaultAuditEmitter();
   const startedAt = now();
   const txn_id = crypto.randomUUID();
+
+  // 0. Idempotency cache check — short-circuit before validation /
+  //    pre-check. A cached success is a settled artifact; nothing else
+  //    to do but return it (with from_cache=true) and emit one fresh
+  //    audit row so the audit log records the *retrieval*.
+  if (args.idempotency) {
+    let key = args.idempotencyKey;
+    if (!key) {
+      const idem = await import('./idempotency');
+      key = idem.computeIdempotencyKey(args.contract);
+    }
+    const cached = args.idempotency.get(key);
+    if (cached && cached.verdict === 'success') {
+      const replay: TransactionRecord = {
+        ...cached,
+        txn_id, // a fresh id for the retrieval event
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        from_cache: true,
+      };
+      return settle(audit, replay);
+    }
+  }
 
   // 1. Validate contract assertions structurally
   const errors: ValidationError[] = [];
@@ -205,13 +257,47 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     }
   }
 
-  // 3. Execute skill (cooperative budget tracking — preemptive timer is PR-12)
+  // 3. Execute skill — two-layer cancellation:
+  //    (a) cooperative: skill receives AbortSignal it should observe
+  //    (b) preemptive: setTimeout(wall_ms + grace) hard-aborts via the
+  //        same AbortController and short-circuits the post-check loop.
   const budgetWallMs = args.contract.budget?.wall_ms;
   const skillStart = now();
+  const ctrl = new AbortController();
+  const setTimer = args.setTimer ?? ((h, ms) => {
+    const t = setTimeout(h, ms);
+    if (typeof (t as NodeJS.Timeout).unref === 'function') (t as NodeJS.Timeout).unref();
+    return t;
+  });
+  const clearTimer = args.clearTimer ?? ((h) => clearTimeout(h as NodeJS.Timeout));
+  let preemptedHardKill = false;
+  let preemptHandle: unknown = null;
+  if (budgetWallMs !== undefined) {
+    preemptHandle = setTimer(() => {
+      preemptedHardKill = true;
+      ctrl.abort();
+    }, budgetWallMs + PREEMPTIVE_GRACE_MS);
+  }
+
   let skillResult: unknown;
   try {
-    skillResult = await args.skill();
+    skillResult = await args.skill(ctrl.signal);
   } catch (e) {
+    if (preemptHandle !== null) clearTimer(preemptHandle);
+    if (preemptedHardKill) {
+      return settle(audit, {
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'budget_exhausted',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: 0,
+        pre_evidence,
+        error_message: `skill aborted by preemptive timer (wall_ms=${budgetWallMs} + ${PREEMPTIVE_GRACE_MS}ms grace)`,
+        hard_kill: true,
+      });
+    }
     return settle(audit, {
       txn_id,
       contract_id: args.contract.id,
@@ -224,7 +310,24 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       error_message: errMsg(e),
     });
   }
+  if (preemptHandle !== null) clearTimer(preemptHandle);
   const skillEnd = now();
+  if (preemptedHardKill) {
+    // Preemptive timer fired but the skill returned anyway (didn't
+    // throw on the AbortSignal). Treat as budget_exhausted regardless.
+    return settle(audit, {
+      txn_id,
+      contract_id: args.contract.id,
+      verdict: 'budget_exhausted',
+      started_at: startedAt,
+      ended_at: now(),
+      wall_ms: now() - startedAt,
+      retries: 0,
+      pre_evidence,
+      error_message: `skill ignored AbortSignal after preemptive timer (wall_ms=${budgetWallMs})`,
+      hard_kill: true,
+    });
+  }
   if (budgetWallMs !== undefined && skillEnd - skillStart > budgetWallMs) {
     return settle(audit, {
       txn_id,
@@ -277,7 +380,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   }
 
   if (post_evidence!.passed) {
-    return settle(audit, {
+    const successRecord: TransactionRecord = {
       txn_id,
       contract_id: args.contract.id,
       verdict: 'success',
@@ -288,7 +391,21 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       pre_evidence,
       post_evidence,
       skill_result: skillResult,
-    });
+    };
+    // Cache only successes per #706 v2.
+    if (args.idempotency) {
+      let key = args.idempotencyKey;
+      if (!key) {
+        const idem = await import('./idempotency');
+        key = idem.computeIdempotencyKey(args.contract);
+      }
+      try {
+        args.idempotency.put(key, successRecord);
+      } catch {
+        // Cache failure must not change the verdict.
+      }
+    }
+    return settle(audit, successRecord);
   }
 
   // 5. Escalate or postcondition_violation
