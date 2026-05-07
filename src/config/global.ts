@@ -51,6 +51,10 @@ export interface GlobalConfig {
      *  Removes invisible characters, HTML comments, and flags suspicious
      *  instruction-like patterns in read_page output. */
     sanitize_content?: boolean;
+    /** Additional host directories whose files may be uploaded by file_upload.
+     *  Defaults also include process.cwd() and OPENCHROME_FILE_UPLOAD_TEMP_DIR
+     *  or the default temp upload directory. */
+    file_upload_roots?: string[];
   };
   /** Hybrid mode settings (Lightpanda + Chrome routing) */
   hybrid?: {
