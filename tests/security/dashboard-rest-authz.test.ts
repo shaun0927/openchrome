@@ -144,6 +144,19 @@ describe('dashboard REST authorization', () => {
     expect(JSON.parse(res.body).session_count).toBe(2);
   });
 
+  it('reports per-tenant metrics counts to tenant-scoped admins', async () => {
+    const booted = await boot(undefined, fakeStore({ [adminAlpha]: { tenantId: 'alpha', scopes: ['admin'] } }));
+    transport = booted.transport;
+
+    const res = await request(booted.port, '/api/metrics', { Authorization: `Bearer ${adminAlpha}` });
+
+    expect(res.status).toBe(200);
+    const data = JSON.parse(res.body);
+    // Two sessions exist globally (alpha, beta); the alpha admin must only see one.
+    expect(data.session_count).toBe(1);
+    expect(data.tab_count).toBe(0);
+  });
+
   it('allows read-scoped session listing but omits other-tenant sessions', async () => {
     const booted = await boot(undefined, fakeStore({ [readAlpha]: { tenantId: 'alpha', scopes: ['read'] } }));
     transport = booted.transport;

@@ -524,7 +524,7 @@ export class HTTPTransport implements MCPTransport {
     if (!this.sessionManager) {
       const authz = authorizeDashboardEndpoint(req, 'screenshot');
       if (!authz.ok) {
-        this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+        this.writeDashboardAuthzFailure(res, 'screenshot', sessionId, authz.status, authz.error);
         return;
       }
       res.writeHead(503, { 'Content-Type': 'application/json' });
@@ -541,7 +541,7 @@ export class HTTPTransport implements MCPTransport {
       requestedSessionTenantId: session?.tenantId,
     });
     if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+      this.writeDashboardAuthzFailure(res, 'screenshot', sessionId, authz.status, authz.error);
       return;
     }
 
@@ -559,9 +559,18 @@ export class HTTPTransport implements MCPTransport {
 
   private writeDashboardAuthzFailure(
     res: http.ServerResponse,
+    endpoint: 'screenshot' | 'sessions' | 'tool-calls' | 'metrics',
+    sessionId: string,
     status: 401 | 403,
     error: string,
   ): void {
+    // Audit denial so that probing of cross-tenant resources is observable in
+    // the same place that auth_failure entries already live.
+    try {
+      logAuditEntry('dashboard_authz_failure', sessionId, { endpoint, status }, undefined, { status: 'error' });
+    } catch {
+      // best-effort
+    }
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error }));
   }
@@ -617,7 +626,7 @@ export class HTTPTransport implements MCPTransport {
   private handleSessions(req: http.IncomingMessage, res: http.ServerResponse): void {
     const authz = authorizeDashboardEndpoint(req, 'sessions');
     if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+      this.writeDashboardAuthzFailure(res, 'sessions', 'anonymous', authz.status, authz.error);
       return;
     }
 
@@ -656,7 +665,7 @@ export class HTTPTransport implements MCPTransport {
       requestedSessionTenantId: requestedSession?.tenantId,
     });
     if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+      this.writeDashboardAuthzFailure(res, 'tool-calls', sessionId ?? 'anonymous', authz.status, authz.error);
       return;
     }
 
@@ -685,7 +694,7 @@ export class HTTPTransport implements MCPTransport {
   private handleMetrics(req: http.IncomingMessage, res: http.ServerResponse): void {
     const authz = authorizeDashboardEndpoint(req, 'metrics');
     if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, authz.status, authz.error);
+      this.writeDashboardAuthzFailure(res, 'metrics', 'anonymous', authz.status, authz.error);
       return;
     }
 
@@ -695,9 +704,14 @@ export class HTTPTransport implements MCPTransport {
     let tabCount = 0;
     let sessionCount = 0;
     if (this.sessionManager) {
-      const stats = this.sessionManager.getStats();
-      tabCount = stats.totalTargets;
-      sessionCount = stats.activeSessions;
+      // Tenant-scoped principals must only see counts for their own tenant —
+      // the global getStats() exposes activity from every tenant.
+      const visible = this.sessionManager.getAllSessionInfos()
+        .filter((info) => canSeeTenant(authz.principal, info.tenantId));
+      sessionCount = visible.length;
+      for (const info of visible) {
+        tabCount += info.targetCount;
+      }
     }
 
     const metrics = {
