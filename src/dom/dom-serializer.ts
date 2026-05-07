@@ -523,20 +523,22 @@ export async function serializeDOM(
     'serializeDOM:pageStats',
   ) as PageStats;
 
-  // Get DOM tree via CDP. When callers request bounded output depth, avoid
-  // fetching the full document and all pierced subtree content up front. CDP's
-  // depth starts at the document root, while this serializer starts element
-  // indentation at the document element, so add one level to preserve existing
-  // maxDepth output semantics. When piercing iframes the serializer's document
-  // handler iterates contentDocument children at the same depth, so each
-  // iframe nesting level introduces an unbounded gap between serializer-depth
-  // and CDP-depth — fall back to an unbounded CDP fetch in that case so iframe
-  // body content within maxDepth is not silently dropped.
+  // Get DOM tree via CDP. Always pierce at the CDP layer so shadowRoots are
+  // present; ctx.pierceIframes below controls whether iframe contentDocument
+  // subtrees are emitted. When callers request bounded output depth, avoid
+  // fetching the full document up front where possible. CDP's depth starts at
+  // the document root, while this serializer starts element indentation at the
+  // document element, so add one level to preserve existing maxDepth output
+  // semantics. When emitting iframes, the serializer's document handler
+  // iterates contentDocument children at the same depth, so each iframe nesting
+  // level introduces an unbounded gap between serializer-depth and CDP-depth —
+  // fall back to an unbounded CDP fetch in that case so iframe body content
+  // within maxDepth is not silently dropped.
   const documentDepth = maxDepth >= 0 && !pierceIframes ? maxDepth + 1 : -1;
   const { root } = await cdpClient.send<{ root: DOMNode }>(
     page,
     'DOM.getDocument',
-    { depth: documentDepth, pierce: pierceIframes },
+    { depth: documentDepth, pierce: true },
   );
 
   const lines: string[] = [];

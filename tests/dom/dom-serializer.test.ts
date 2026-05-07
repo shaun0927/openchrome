@@ -550,6 +550,64 @@ describe('DOM Serializer', () => {
     expect(result.content).toContain('[1200]<iframe');
   });
 
+  test('keeps open shadow roots while omitting iframe content when pierceIframes is false', async () => {
+    const shadowAndIframeDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [
+          {
+            nodeId: 3, backendNodeId: 1300, nodeType: 1, nodeName: 'DIV', localName: 'div',
+            attributes: ['id', 'shadow-host'],
+            shadowRoots: [{
+              nodeId: 4, backendNodeId: 4, nodeType: 11, nodeName: '#document-fragment', localName: '',
+              shadowRootType: 'open',
+              children: [{
+                nodeId: 5, backendNodeId: 1301, nodeType: 1, nodeName: 'BUTTON', localName: 'button',
+                attributes: ['id', 'shadow-button'],
+                children: [{
+                  nodeId: 6, backendNodeId: 6, nodeType: 3, nodeName: '#text', localName: '',
+                  nodeValue: 'Shadow button',
+                }],
+              }],
+            }],
+          },
+          {
+            nodeId: 7, backendNodeId: 1302, nodeType: 1, nodeName: 'IFRAME', localName: 'iframe',
+            attributes: ['src', 'https://inner.example.com'],
+            contentDocument: {
+              nodeId: 8, backendNodeId: 8, nodeType: 9, nodeName: '#document', localName: '',
+              children: [{
+                nodeId: 9, backendNodeId: 1303, nodeType: 1, nodeName: 'P', localName: 'p',
+                attributes: ['id', 'iframe-content'],
+                children: [],
+              }],
+            },
+          },
+        ],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(shadowAndIframeDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, pierceIframes: false });
+
+    expect(result.content).toContain('--shadow-root-- (open)');
+    expect(result.content).toContain('[1301]<button');
+    expect(result.content).toContain('Shadow button');
+    expect(result.content).toContain('[1302]<iframe');
+    expect(result.content).not.toContain('--page-separator--');
+    expect(result.content).not.toContain('[1303]<p');
+    expect(result.content).not.toContain('id="iframe-content"');
+    expect(cdpClient.send).toHaveBeenCalledWith(
+      page,
+      'DOM.getDocument',
+      { depth: -1, pierce: true },
+    );
+  });
+
   // 11. Return value structure
   test('returns pageStats object with correct properties', async () => {
     const page = createMockPageForDOM({
@@ -613,12 +671,11 @@ describe('DOM Serializer', () => {
     );
   });
 
-  test('passes bounded depth to CDP DOM.getDocument when maxDepth is requested without pierce', async () => {
-    // When pierceIframes is false, the serializer-depth-to-CDP-depth mapping
-    // is exact (offset by 1 for the #document root), so the bounded fetch is
-    // safe. With pierceIframes=true (the default) iframe contentDocument
-    // descents create an open-ended gap, so the serializer falls back to
-    // an unbounded fetch — exercised by a separate test below.
+  test('passes bounded depth to CDP DOM.getDocument when maxDepth is requested without iframe output', async () => {
+    // Iframe output is disabled here, so the serializer-depth-to-CDP-depth
+    // mapping is exact for emitted nodes (offset by 1 for the #document root)
+    // and the bounded fetch is safe. CDP still pierces so shadowRoots are
+    // available to the serializer.
     const page = createMockPageForDOM();
     const cdpClient = createMockCDPClientForDOM(simpleDoc);
 
@@ -627,7 +684,7 @@ describe('DOM Serializer', () => {
     expect(cdpClient.send).toHaveBeenCalledWith(
       page,
       'DOM.getDocument',
-      { depth: 3, pierce: false },
+      { depth: 3, pierce: true },
     );
   });
 
@@ -644,7 +701,7 @@ describe('DOM Serializer', () => {
     );
   });
 
-  test('honors pierceIframes=false for unbounded document fetches', async () => {
+  test('still pierces CDP DOM when pierceIframes=false for unbounded document fetches', async () => {
     const page = createMockPageForDOM();
     const cdpClient = createMockCDPClientForDOM(simpleDoc);
 
@@ -653,7 +710,7 @@ describe('DOM Serializer', () => {
     expect(cdpClient.send).toHaveBeenCalledWith(
       page,
       'DOM.getDocument',
-      { depth: -1, pierce: false },
+      { depth: -1, pierce: true },
     );
   });
 
