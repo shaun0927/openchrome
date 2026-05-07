@@ -91,3 +91,10 @@ export type {
   CreateLlmMergeRequesterOptions,
   RawTextProvider,
 } from './llm-merge';
+
+export {
+  createAuditLogStatsResolver,
+  createInMemoryStatsResolver,
+  defaultAuditLogPath,
+} from './audit-stats';
+export type { AuditStatsResolverOptions } from './audit-stats';
