@@ -82,25 +82,48 @@ function parseCorsOrigins(raw: string | undefined): Set<string> {
 }
 
 /**
+ * Format the configured server bind into a canonical origin host (URL `host`
+ * form: `hostname` or `hostname:port`, with IPv6 hostnames bracketed). This
+ * value is what `isSameOriginRequest` compares against — it is derived from
+ * operator configuration, not from the request, so it cannot be spoofed via
+ * the Host header.
+ */
+function formatServerOriginHost(host: string, port: number): string {
+  const trimmed = host.trim().toLowerCase();
+  const stripped = trimmed.replace(/^\[(.*)\]$/, '$1');
+  const isIPv6 = stripped.includes(':');
+  const hostPart = isIPv6 ? `[${stripped}]` : stripped;
+  // Default port 80 is the only http default; OpenChrome binds 3100 by
+  // default, but be explicit about what `URL.host` would produce.
+  return port === 80 ? hostPart : `${hostPart}:${port}`;
+}
+
+/**
  * Treat a request as same-origin when the full origin tuple (scheme, host,
- * port) in the `Origin` header matches the transport scheme and the request's
- * `Host` header. Browsers send `Origin` on same-origin non-GET requests
- * (POST/OPTIONS), so without this bypass a browser app served from the
- * OpenChrome origin would be rejected by the CORS allowlist even though no
- * cross-origin trust boundary is crossed.
+ * port) in the `Origin` header matches the configured server bind. Browsers
+ * send `Origin` on same-origin non-GET requests (POST/OPTIONS), so without
+ * this bypass a browser app served from the OpenChrome origin would be
+ * rejected by the CORS allowlist even though no cross-origin trust boundary
+ * is crossed.
+ *
+ * The comparison uses the operator-configured `host:port`, NOT the client-
+ * supplied `Host` header. Trusting the Host header here would let DNS-
+ * rebinding attackers (whose page is served from a domain that was rebound
+ * to loopback) match `Origin === Host` and bypass the allowlist — defeating
+ * the very protection the allowlist provides for the unauthenticated
+ * loopback development mode.
  *
  * Scheme is enforced because the HTTP transport speaks plain `http` only;
- * permitting an `https` Origin to bypass the allowlist would let cross-origin
- * `https` callers reach `/mcp` whenever the same host is also exposed over
- * `http`. Operators behind TLS termination must add the public origin to the
- * allowlist explicitly.
+ * permitting an `https` Origin to bypass the allowlist would let cross-
+ * origin `https` callers reach `/mcp` whenever the same host is also exposed
+ * over `http`. Operators behind TLS termination must add the public origin
+ * to the allowlist explicitly.
  */
-function isSameOriginRequest(originValue: string, hostHeader: string | undefined): boolean {
-  if (!hostHeader) return false;
+function isSameOriginRequest(originValue: string, serverOriginHost: string): boolean {
   try {
     const originUrl = new URL(originValue);
     if (originUrl.protocol !== 'http:') return false;
-    return originUrl.host.toLowerCase() === hostHeader.toLowerCase();
+    return originUrl.host.toLowerCase() === serverOriginHost;
   } catch {
     return false;
   }
@@ -150,6 +173,7 @@ export class HTTPTransport implements MCPTransport {
   private authToken: string | undefined;
   private authMode: AuthMode;
   private readonly corsAllowedOrigins: Set<string>;
+  private readonly serverOriginHost: string;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
@@ -177,6 +201,7 @@ export class HTTPTransport implements MCPTransport {
       ...parseCorsOrigins(process.env.OPENCHROME_HTTP_CORS_ORIGINS),
       ...(options.corsAllowedOrigins || []),
     ]);
+    this.serverOriginHost = formatServerOriginHost(this.host, this.port);
   }
 
   /**
@@ -246,7 +271,7 @@ export class HTTPTransport implements MCPTransport {
   private applyCors(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
     const origin = req.headers.origin;
     const originValue = typeof origin === 'string' ? origin : undefined;
-    const sameOrigin = originValue ? isSameOriginRequest(originValue, req.headers.host) : false;
+    const sameOrigin = originValue ? isSameOriginRequest(originValue, this.serverOriginHost) : false;
     if (originValue && this.corsAllowedOrigins.has(originValue)) {
       res.setHeader('Access-Control-Allow-Origin', originValue);
       res.setHeader('Vary', 'Origin');

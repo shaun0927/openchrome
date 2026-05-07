@@ -56,6 +56,12 @@ export interface TransportOptions {
    */
   apiKeyStore?: ApiKeyStore;
   allowUnauthenticatedHttp?: boolean;
+  /**
+   * Programmatic browser origins allowed to use MCP CORS, merged with the
+   * env var `OPENCHROME_HTTP_CORS_ORIGINS`. Without this, callers using the
+   * factory cannot configure CORS origins outside the environment.
+   */
+  corsAllowedOrigins?: string[];
 }
 
 /**
@@ -75,6 +81,7 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
       {
         ...(options?.apiKeyStore ? { apiKeyStore: options.apiKeyStore } : {}),
         allowUnauthenticatedHttp: options?.allowUnauthenticatedHttp,
+        ...(options?.corsAllowedOrigins ? { corsAllowedOrigins: options.corsAllowedOrigins } : {}),
       },
     );
   }
