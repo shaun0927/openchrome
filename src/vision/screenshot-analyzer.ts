@@ -26,7 +26,7 @@ import type {
   AnnotatedScreenshotResult,
   VisionElementMap,
 } from './types';
-import { bufferToBase64WithPayloadGuard, validateCaptureArea } from '../utils/screenshot-guards';
+import { bufferToBase64WithPayloadGuard, resolveViewportDimensions, validateCaptureArea } from '../utils/screenshot-guards';
 
 /** Raw element collected from the page */
 export interface RawElement {
@@ -205,7 +205,7 @@ async function captureAnnotatedScreenshot(
   elements: RawElement[],
   options: Required<AnnotationOptions>
 ): Promise<{ screenshot: string; mimeType: string }> {
-  const viewport = page.viewport() || { width: 1920, height: 1080 };
+  const viewport = await resolveViewportDimensions(page);
   const areaError = validateCaptureArea(viewport, 'Annotated screenshot');
   if (areaError) {
     throw new Error(areaError);
