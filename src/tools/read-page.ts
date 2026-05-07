@@ -68,6 +68,11 @@ const definition: MCPToolDefinition = {
         enum: ['none', 'delta'],
         description: 'Compression mode. "delta" returns only changes since last read.',
       },
+      fallback: {
+        type: 'string',
+        enum: ['none', 'dom'],
+        description: 'AX mode only: use "dom" to explicitly fall back to DOM output if AX output exceeds the output budget. Default: none.',
+      },
     },
     required: ['tabId'],
   },
@@ -125,6 +130,13 @@ const handler: ToolHandler = async (
     if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
       return {
         content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
+        isError: true,
+      };
+    }
+    const axOverflowFallback = (args.fallback as string | undefined) || 'none';
+    if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
+      return {
+        content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],
         isError: true,
       };
     }
@@ -403,10 +415,18 @@ const handler: ToolHandler = async (
     // Clear previous refs for this target
     refIdManager.clearTargetRefs(sessionId, tabId);
 
-    // Build the tree structure
+    // Build the tree structure and child-id set in one pass. Root detection used
+    // to scan every node's children for every candidate root (O(n^2)); keeping a
+    // child set by construction makes the root pass O(n).
     const nodeMap = new Map<number, AXNode>();
+    const childNodeIds = new Set<number>();
     for (const node of nodes) {
       nodeMap.set(node.nodeId, node);
+      if (node.childIds) {
+        for (const childId of node.childIds) {
+          childNodeIds.add(childId);
+        }
+      }
     }
 
     // Interactive roles
@@ -530,7 +550,7 @@ const handler: ToolHandler = async (
       if (!scopedNode && refEntrySnapshot) {
         // Refs were cleared — use snapshot to search by element attributes
         // tryRelocateRef won't work here because clearTargetRefs already deleted the entry
-        const { tagName, name, role } = refEntrySnapshot;
+        const { name, role } = refEntrySnapshot;
         scopedNode = nodes.find((n) => {
           if (!n.backendDOMNodeId) return false;
           const nodeRole = n.role?.value;
@@ -550,9 +570,7 @@ const handler: ToolHandler = async (
       }
       startNodes = [scopedNode];
     } else {
-      startNodes = nodes.filter(
-        (n) => !nodes.some((other) => other.childIds?.includes(n.nodeId))
-      );
+      startNodes = nodes.filter((n) => !childNodeIds.has(n.nodeId));
     }
     for (const root of startNodes) {
       formatNode(root, 0);
@@ -563,18 +581,37 @@ const handler: ToolHandler = async (
     const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
 
     if (charCount > MAX_OUTPUT) {
-      // Auto-fallback: DOM mode produces complete output at ~5-10x fewer tokens
+      // Large AX output should not trigger a second full DOM traversal unless
+      // the caller explicitly opts into that fallback. Otherwise preserve AX
+      // intent and return the bounded/truncated AX representation.
+      if (axOverflowFallback !== 'dom') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                pageStatsLine +
+                output +
+                '\n\n[Output truncated. AX output exceeded the output budget. Use mode: "dom" or fallback: "dom" for DOM output, or use smaller depth / ref_id to focus on specific element.]' +
+                axPaginationSection,
+            },
+          ],
+        };
+      }
+
+      // Explicit fallback: DOM mode often produces equivalent page structure at
+      // fewer tokens, but it can require another CDP DOM traversal.
       try {
         const domResult = await serializeDOM(page, cdpClient, {
-          maxDepth: -1,
+          maxDepth,
           filter: filter,
           interactiveOnly: filter === 'interactive',
         });
 
         const fallbackNote =
           '\n\n[AX tree exceeded output limit (' + charCount + ' chars). ' +
-          'Auto-switched to DOM mode for complete output. ' +
-          'Use mode: "ax" with ref_id to scope specific subtrees for AX format.]';
+          'Switched to DOM mode because fallback: "dom" was requested. ' +
+          'Use mode: "ax" with smaller depth / ref_id to scope specific subtrees for AX format.]';
 
         return {
           content: [
