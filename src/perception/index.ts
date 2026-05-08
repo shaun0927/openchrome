@@ -6,7 +6,7 @@
  */
 
 export { computePerceptualMetadata, effectiveOpacity, intersects } from './metadata';
-export { PerceptualCache } from './cache';
+export { PerceptualCache, computeStyleHash } from './cache';
 export type {
   EffectiveDisplay,
   InteractionFeasibility,

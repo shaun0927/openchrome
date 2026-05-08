@@ -1,11 +1,14 @@
 /**
  * Per-frame perceptual-metadata cache (#709 v2).
  *
- * Keyed on `(frameId, docCounter, viewportRect)` — invalidated on
- * `DOM.documentUpdated` and `Page.frameResized`. Hosts call
- * `bumpDoc(frameId)` from the CDP event handlers; the cache itself
- * does not subscribe — that decoupling keeps the module pure-JS and
- * easy to unit-test.
+ * Keyed on `(frameId, docCounter, viewportRect, backendNodeId, styleHash)` —
+ * invalidated on `DOM.documentUpdated`, `Page.frameResized`, and computed-style
+ * changes. `docCounter` handles full document replacement; `styleHash` handles
+ * in-document SPA mutations (class/attribute/style changes that flip display,
+ * visibility, pointer-events, or geometry) without a documentUpdated event.
+ * Hosts call `bumpDoc(frameId)` from the CDP event handlers; the cache itself
+ * does not subscribe — that decoupling keeps the module pure-JS and easy to
+ * unit-test.
  *
  * The cache is keyed by a string built from the components above, so
  * the implementation is just a Map under the hood. We give it a
@@ -13,17 +16,40 @@
  * are a non-breaking swap.
  */
 
-import type { PerceptualMetadata, ViewportRect } from './types';
+import type { NodeProbe, PerceptualMetadata, ViewportRect } from './types';
 
 interface CacheKey {
   frameId: string;
   docCounter: number;
   viewport: ViewportRect;
   backendNodeId: number;
+  styleHash: string;
 }
 
 function keyString(k: CacheKey): string {
-  return `${k.frameId}|${k.docCounter}|${k.viewport.x},${k.viewport.y},${k.viewport.w},${k.viewport.h}|${k.backendNodeId}`;
+  return `${k.frameId}|${k.docCounter}|${k.viewport.x},${k.viewport.y},${k.viewport.w},${k.viewport.h}|${k.backendNodeId}|${k.styleHash}`;
+}
+
+/**
+ * Compute a stable hash of the perceptually-relevant fields from a NodeProbe.
+ * Include this in the `styleHash` key part so that in-document SPA mutations
+ * (which do not fire DOM.documentUpdated) still produce a cache miss.
+ */
+export function computeStyleHash(probe: Pick<NodeProbe,
+  'display' | 'visibility' | 'pointerEvents' | 'pixelBox' |
+  'opacityChain' | 'ancestorDisplayNone' | 'ancestorVisibilityHidden'
+>): string {
+  const box = probe.pixelBox;
+  const boxStr = box ? `${box.x},${box.y},${box.w},${box.h}` : 'null';
+  return [
+    probe.display,
+    probe.visibility,
+    probe.pointerEvents ?? 'auto',
+    probe.ancestorDisplayNone ? '1' : '0',
+    probe.ancestorVisibilityHidden ? '1' : '0',
+    probe.opacityChain.join(','),
+    boxStr,
+  ].join('|');
 }
 
 export class PerceptualCache {
@@ -40,11 +66,13 @@ export class PerceptualCache {
 
   /**
    * Read or compute. The host supplies the `compute` function which is
-   * only invoked on a miss. The closure captures any node-probe state
-   * — the cache only deals with the cached value.
+   * only invoked on a miss. The `styleHash` must be derived from the
+   * current NodeProbe via `computeStyleHash` before calling — a changed
+   * hash produces a new key string and thus a cache miss, defeating
+   * in-document SPA staleness.
    */
   getOrCompute(
-    keyParts: { frameId: string; viewport: ViewportRect; backendNodeId: number },
+    keyParts: { frameId: string; viewport: ViewportRect; backendNodeId: number; styleHash: string },
     compute: () => PerceptualMetadata,
   ): PerceptualMetadata {
     const docCounter = this.getDocCounter(keyParts.frameId);
@@ -59,7 +87,7 @@ export class PerceptualCache {
 
   /** Read without computing. Returns undefined on miss. */
   get(
-    keyParts: { frameId: string; viewport: ViewportRect; backendNodeId: number },
+    keyParts: { frameId: string; viewport: ViewportRect; backendNodeId: number; styleHash: string },
   ): PerceptualMetadata | undefined {
     const docCounter = this.getDocCounter(keyParts.frameId);
     return this.entries.get(keyString({ ...keyParts, docCounter }));
