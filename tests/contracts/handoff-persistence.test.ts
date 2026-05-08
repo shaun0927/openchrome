@@ -6,7 +6,9 @@ import * as path from 'node:path';
 import {
   EncryptedFilePersistence,
   HandoffManager,
+  NoopPersistence,
   PlaintextFilePersistence,
+  _resetAutoSelectWarning,
   autoSelectHandoffPersistence,
 } from '../../src/contracts/handoff';
 
@@ -125,22 +127,28 @@ describe('EncryptedFilePersistence', () => {
     expect(blob.toString('binary').includes(tok)).toBe(false);
   });
 
-  test('wrong key produces empty load (auth-tag mismatch swallowed)', () => {
-    const original = new EncryptedFilePersistence({ rootDir: root, key: key32() });
-    original.saveAll([
-      {
-        txn_id: 't',
-        attempt: 1,
-        token: 'a'.repeat(64),
-        status: 'pending',
-        reason: 'unknown',
-        summary: 's',
-        created_at: 1,
-        expires_at: 2,
-      },
-    ]);
-    const wrongKey = new EncryptedFilePersistence({ rootDir: root, key: key32() });
-    expect(wrongKey.loadAll()).toEqual([]);
+  test('wrong key throws and quarantines the file (auth-tag mismatch fails closed)', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const original = new EncryptedFilePersistence({ rootDir: root, key: key32() });
+      original.saveAll([
+        {
+          txn_id: 't',
+          attempt: 1,
+          token: 'a'.repeat(64),
+          status: 'pending',
+          reason: 'unknown',
+          summary: 's',
+          created_at: 1,
+          expires_at: 2,
+        },
+      ]);
+      const wrongKey = new EncryptedFilePersistence({ rootDir: root, key: key32() });
+      expect(() => wrongKey.loadAll()).toThrow(/decryption\/auth-tag failure/);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('decryption/auth-tag failure'));
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   test('rejects non-32-byte key', () => {
@@ -204,6 +212,7 @@ describe('autoSelectHandoffPersistence', () => {
   beforeEach(() => {
     root = tempRoot();
     prev = process.env.OPENCHROME_HANDOFF_KEY;
+    _resetAutoSelectWarning();
   });
   afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
@@ -217,10 +226,21 @@ describe('autoSelectHandoffPersistence', () => {
     expect(p).toBeInstanceOf(EncryptedFilePersistence);
   });
 
-  test('returns Plaintext when env var is unset', () => {
+  test('returns NoopPersistence when env var is unset (no plaintext fallback)', () => {
     delete process.env.OPENCHROME_HANDOFF_KEY;
-    const p = autoSelectHandoffPersistence({ rootDir: root });
-    expect(p).toBeInstanceOf(PlaintextFilePersistence);
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const p = autoSelectHandoffPersistence({ rootDir: root });
+      expect(p).toBeInstanceOf(NoopPersistence);
+      // Confirm no plaintext handoff file was created in the data directory.
+      expect(fs.existsSync(path.join(root, 'handoff.json'))).toBe(false);
+      // Operator must be warned.
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('OPENCHROME_HANDOFF_KEY is unset'),
+      );
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
 
@@ -293,5 +313,136 @@ describe('HandoffManager — persistence integration', () => {
     expect(fs.existsSync(path.join(root, 'handoff.json'))).toBe(true);
     m.reset();
     expect(fs.existsSync(path.join(root, 'handoff.json'))).toBe(false);
+  });
+});
+
+describe('P1 regression — tampered ciphertext fails closed', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('flipping a byte in the ciphertext throws on loadAll and emits console.error', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const k = key32();
+      const p = new EncryptedFilePersistence({ rootDir: root, key: k });
+      p.saveAll([
+        {
+          txn_id: 'txn-tamper',
+          attempt: 2,
+          token: 'd'.repeat(64),
+          status: 'pending',
+          reason: 'two_factor',
+          summary: 'tamper test',
+          created_at: 1000,
+          expires_at: 9999999,
+        },
+      ]);
+
+      // Flip a byte in the ciphertext region (past the 12-byte IV).
+      const blobPath = path.join(root, 'handoff.json');
+      const blob = fs.readFileSync(blobPath);
+      blob[20] ^= 0xff; // corrupt a byte inside the ciphertext
+      fs.writeFileSync(blobPath, blob);
+
+      // loadAll must throw — not return [].
+      const reader = new EncryptedFilePersistence({ rootDir: root, key: k });
+      expect(() => reader.loadAll()).toThrow(/decryption\/auth-tag failure/);
+
+      // Operator must be notified.
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('decryption/auth-tag failure'),
+      );
+
+      // The corrupt file must be quarantined (renamed), not left as-is.
+      expect(fs.existsSync(blobPath)).toBe(false);
+      const files = fs.readdirSync(root);
+      expect(files.some((f) => f.includes('.corrupt-'))).toBe(true);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  test('HandoffManager constructor throws (fails closed) when encrypted file is tampered', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const k = key32();
+      // Write three attempts so maxPerTxn cap is exhausted.
+      const p = new EncryptedFilePersistence({ rootDir: root, key: k });
+      const mgr = new HandoffManager({ persistence: p, maxPerTxn: 3 });
+      mgr.create({ txn_id: 'txn-t', reason: 'unknown', summary: 's' });
+      mgr.create({ txn_id: 'txn-t', reason: 'unknown', summary: 's' });
+      mgr.create({ txn_id: 'txn-t', reason: 'unknown', summary: 's' });
+
+      // Tamper the blob.
+      const blobPath = path.join(root, 'handoff.json');
+      const blob = fs.readFileSync(blobPath);
+      blob[20] ^= 0xff;
+      fs.writeFileSync(blobPath, blob);
+
+      // Constructing a new manager must throw — NOT silently reset attempt counters.
+      expect(
+        () => new HandoffManager({ persistence: new EncryptedFilePersistence({ rootDir: root, key: k }), maxPerTxn: 3 }),
+      ).toThrow(/decryption\/auth-tag failure/);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+});
+
+describe('P2 regression — no plaintext fallback when key is absent', () => {
+  let root: string;
+  let prev: string | undefined;
+  beforeEach(() => {
+    root = tempRoot();
+    prev = process.env.OPENCHROME_HANDOFF_KEY;
+    delete process.env.OPENCHROME_HANDOFF_KEY;
+    _resetAutoSelectWarning();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    if (prev === undefined) delete process.env.OPENCHROME_HANDOFF_KEY;
+    else process.env.OPENCHROME_HANDOFF_KEY = prev;
+  });
+
+  test('autoSelectHandoffPersistence returns NoopPersistence and creates no disk file', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const adapter = autoSelectHandoffPersistence({ rootDir: root });
+      expect(adapter).toBeInstanceOf(NoopPersistence);
+
+      // Saving records must not create any file.
+      adapter.saveAll([
+        {
+          txn_id: 'txn-noop',
+          attempt: 1,
+          token: 'e'.repeat(64),
+          status: 'pending',
+          reason: 'captcha_challenge',
+          summary: 'noop test',
+          created_at: 1,
+          expires_at: 9999,
+        },
+      ]);
+      expect(fs.existsSync(path.join(root, 'handoff.json'))).toBe(false);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  test('HandoffManager using NoopPersistence does not write handoff.json to disk', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const adapter = autoSelectHandoffPersistence({ rootDir: root });
+      const mgr = new HandoffManager({ persistence: adapter });
+      mgr.create({ txn_id: 'txn-disk', reason: 'unknown', summary: 's' });
+      expect(fs.existsSync(path.join(root, 'handoff.json'))).toBe(false);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });

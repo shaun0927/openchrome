@@ -131,15 +131,40 @@ export class EncryptedFilePersistence implements PersistenceAdapter {
 
   loadAll(): HandoffRecord[] {
     if (!fs.existsSync(this.target)) return [];
+    let blob: Buffer;
     try {
-      const blob = fs.readFileSync(this.target);
-      const plaintext = decrypt(blob, this.key);
+      blob = fs.readFileSync(this.target);
+    } catch (err) {
+      // I/O error reading the file — not a tamper signal, re-raise.
+      throw new Error(`EncryptedFilePersistence: failed to read ${this.target}: ${String(err)}`);
+    }
+    let plaintext: Buffer;
+    try {
+      plaintext = decrypt(blob, this.key);
+    } catch (err) {
+      // Auth-tag / decryption failure: tampered ciphertext or wrong key.
+      // Quarantine the bad file so operators can inspect it, then fail
+      // closed so the manager does NOT silently rehydrate with zero
+      // records (which would reset per-txn attempt counters).
+      const corrupt = `${this.target}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(this.target, corrupt);
+      } catch {
+        // rename best-effort; original file stays if rename fails
+      }
+      const msg =
+        `EncryptedFilePersistence: decryption/auth-tag failure — ` +
+        `persisted handoff file may be tampered or was written with a different key. ` +
+        `File quarantined as ${corrupt}. Startup fails closed to protect maxPerTxn guarantees.`;
+      console.error(msg);
+      throw new Error(msg);
+    }
+    try {
       const parsed = JSON.parse(plaintext.toString('utf8')) as { records?: unknown };
       if (!Array.isArray(parsed.records)) return [];
       return parsed.records.filter((r): r is HandoffRecord => isRecordShape(r));
-    } catch {
-      // Corrupt / wrong key / partial write — treat as fresh install.
-      return [];
+    } catch (err) {
+      throw new Error(`EncryptedFilePersistence: failed to parse decrypted handoff JSON: ${String(err)}`);
     }
   }
 
@@ -218,6 +243,28 @@ function decrypt(blob: Buffer, key: Buffer): Buffer {
 }
 
 /* ------------------------------------------------------------------ */
+/* NoopPersistence (in-memory only, no disk I/O)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * No-op adapter: satisfies the PersistenceAdapter interface but never
+ * touches the filesystem. Used as the safe default when no encryption
+ * key is available so that resume tokens are never written to disk in
+ * plaintext.
+ */
+export class NoopPersistence implements PersistenceAdapter {
+  loadAll(): HandoffRecord[] {
+    return [];
+  }
+  saveAll(_records: HandoffRecord[]): void {
+    // intentionally no-op
+  }
+  clear(): void {
+    // intentionally no-op
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -238,17 +285,37 @@ function isRecordShape(r: unknown): r is HandoffRecord {
  * Convenience: pick a default adapter based on environment.
  *
  *   OPENCHROME_HANDOFF_KEY set        → EncryptedFilePersistence
- *   otherwise                          → PlaintextFilePersistence
+ *   otherwise                          → NoopPersistence (in-memory only)
+ *
+ * When no encryption key is present the factory intentionally returns
+ * NoopPersistence rather than PlaintextFilePersistence. Resume tokens
+ * authorize in-flight transactions and must never be written to disk
+ * unencrypted in a misconfigured environment. Handoffs still work
+ * in-memory for the duration of the process; they just will not survive
+ * a restart. A one-time warning is emitted so operators know.
  *
  * Hosts that want OS keychain or anything else should construct the
  * adapter directly. The factory exists for "give me a sane default"
  * callers (e.g., the main MCP server boot path).
  */
+let _warnedNoKey = false;
+/** @internal Test hook: reset the one-shot warning flag. */
+export function _resetAutoSelectWarning(): void {
+  _warnedNoKey = false;
+}
 export function autoSelectHandoffPersistence(
   opts: FilePersistenceOptions = {},
 ): PersistenceAdapter {
   if (process.env.OPENCHROME_HANDOFF_KEY) {
     return new EncryptedFilePersistence(opts);
   }
-  return new PlaintextFilePersistence(opts);
+  if (!_warnedNoKey) {
+    _warnedNoKey = true;
+    console.error(
+      'autoSelectHandoffPersistence: OPENCHROME_HANDOFF_KEY is unset — ' +
+        'handoff state will NOT be persisted to disk. ' +
+        'Set OPENCHROME_HANDOFF_KEY (32-byte hex or base64) to enable encrypted persistence.',
+    );
+  }
+  return new NoopPersistence();
 }

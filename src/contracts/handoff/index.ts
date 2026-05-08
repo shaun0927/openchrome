@@ -25,7 +25,9 @@ export {
 
 export {
   EncryptedFilePersistence,
+  NoopPersistence,
   PlaintextFilePersistence,
+  _resetAutoSelectWarning,
   autoSelectHandoffPersistence,
   defaultHandoffRootDir,
   type EncryptedFilePersistenceOptions,
