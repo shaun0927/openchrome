@@ -116,10 +116,25 @@ export function evaluate(assertion: Assertion, ctx: AssertionContext): Evidence 
             'screenshot_class assertion requires AssertionContext.screenshotClassMatch resolver',
         }, ctx);
       }
-      const { distance, closestHex } = ctx.screenshotClassMatch(
-        assertion.class_id,
-        ctx.screenshotPhashHex,
-      );
+      // Resolver can throw when the registry is missing/corrupt or the
+      // host's filesystem is in a bad state. Surface that as a failed
+      // evidence rather than letting the exception abort the entire
+      // contract evaluation.
+      let distance: number;
+      let closestHex: string | undefined;
+      try {
+        ({ distance, closestHex } = ctx.screenshotClassMatch(
+          assertion.class_id,
+          ctx.screenshotPhashHex,
+        ));
+      } catch (err) {
+        return mkEvidence('screenshot_class', false, {
+          reason: 'class_registry_error',
+          class_id: assertion.class_id,
+          distance_max: assertion.distance_max,
+          message: err instanceof Error ? err.message : String(err),
+        }, ctx);
+      }
       const passed = Number.isFinite(distance) && distance <= assertion.distance_max;
       return mkEvidence('screenshot_class', passed, {
         class_id: assertion.class_id,

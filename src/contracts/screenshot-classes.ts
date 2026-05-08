@@ -202,14 +202,19 @@ const HEX64_PATTERN = /^[0-9a-f]{16}$/;
  * are unrelated).
  */
 export function recommendThreshold(exemplarHexes: string[]): number {
-  if (exemplarHexes.length < 2) {
-    // Single exemplar — pick a conservative default.
+  // exemplars.json is human-editable; one corrupt entry must not break
+  // threshold derivation. Drop non-64-bit-hex strings up front so a
+  // typo or stray character degrades to "fewer exemplars considered"
+  // rather than throwing inside hammingDistanceHex / BigInt.
+  const valid = exemplarHexes.filter((h) => HEX64_PATTERN.test(h));
+  if (valid.length < 2) {
+    // Single (or no) usable exemplar — pick a conservative default.
     return 8;
   }
   const distances: number[] = [];
-  for (let i = 0; i < exemplarHexes.length; i++) {
-    for (let j = i + 1; j < exemplarHexes.length; j++) {
-      distances.push(hammingDistanceHex(exemplarHexes[i], exemplarHexes[j]));
+  for (let i = 0; i < valid.length; i++) {
+    for (let j = i + 1; j < valid.length; j++) {
+      distances.push(hammingDistanceHex(valid[i], valid[j]));
     }
   }
   const mean = distances.reduce((s, d) => s + d, 0) / distances.length;

@@ -74,4 +74,22 @@ describe('evaluate — screenshot_class assertion', () => {
     expect(r.passed).toBe(false);
     expect(r.details.distance).toBe(Number.POSITIVE_INFINITY);
   });
+
+  test('throwing resolver yields class_registry_error rather than aborting evaluation', () => {
+    // Real registries can throw on EACCES, corrupt JSON, FS unavailable, etc.
+    // Without a try/catch around screenshotClassMatch, the entire contract
+    // evaluation would abort; we want a single failed evidence node instead.
+    const r = evaluate(
+      { kind: 'screenshot_class', class_id: 'broken', distance_max: 10 },
+      ctx({
+        screenshotPhashHex: 'aaaa',
+        screenshotClassMatch: () => {
+          throw new Error('SQLITE_CORRUPT');
+        },
+      }),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.details.reason).toBe('class_registry_error');
+    expect(r.details.message).toContain('SQLITE_CORRUPT');
+  });
 });
