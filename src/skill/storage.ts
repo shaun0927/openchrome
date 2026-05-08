@@ -134,18 +134,25 @@ export class SkillGraphStorage {
     this.db = new Sqlite(path.join(this.rootDir, `${domain}.db`));
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
+    // SQLite ships with foreign-key checks OFF by default, on every
+    // connection. The schema declares `edges.from_state` as a foreign
+    // key into `nodes(state_hash)`, so without this PRAGMA recordOutcome
+    // could persist orphan edges and silently violate graph integrity.
+    this.db.pragma('foreign_keys = ON');
     this.applyMigrations();
   }
 
   private applyMigrations(): void {
     this.db.exec(SCHEMA_V1);
-    const applied = (this.db.prepare('SELECT version FROM applied_migrations').all() as { version: number }[])
-      .map((r) => r.version);
-    if (!applied.includes(1)) {
-      this.db
-        .prepare('INSERT INTO applied_migrations (version, applied_at) VALUES (?, ?)')
-        .run(1, Date.now());
-    }
+    // INSERT OR IGNORE makes the v1 marker idempotent across concurrent
+    // same-domain initializers. The previous read-then-insert pattern
+    // had a race: two constructors could both observe an empty
+    // `applied_migrations` table and one would crash with a PK
+    // constraint violation, breaking the documented "multiple
+    // instances are safe" guarantee.
+    this.db
+      .prepare('INSERT OR IGNORE INTO applied_migrations (version, applied_at) VALUES (?, ?)')
+      .run(1, Date.now());
   }
 
   getSchemaVersion(): number {

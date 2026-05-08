@@ -43,6 +43,35 @@ describe('SkillGraphStorage — schema and lifecycle', () => {
     expect(() => new SkillGraphStorage('a/b', { rootDir: root })).toThrow();
     expect(() => new SkillGraphStorage('a\\b', { rootDir: root })).toThrow();
   });
+
+  test('migrations table is INSERT-OR-IGNORE idempotent (concurrent-safe)', () => {
+    // Second open against a domain that already has v1 applied must not
+    // crash with a PK constraint violation. The previous read-then-insert
+    // pattern raced under concurrent same-domain initialisers.
+    store.close();
+    expect(() => {
+      const a = new SkillGraphStorage('amazon.com', { rootDir: root });
+      const b = new SkillGraphStorage('amazon.com', { rootDir: root });
+      a.close();
+      b.close();
+    }).not.toThrow();
+    store = new SkillGraphStorage('amazon.com', { rootDir: root });
+  });
+
+  test('foreign-key enforcement: edges to unknown from_state are rejected', () => {
+    // PRAGMA foreign_keys = ON must be set on the connection so the
+    // declared edges.from_state -> nodes.state_hash FK is enforced and
+    // recordOutcome cannot persist orphan edges.
+    expect(() =>
+      store.recordOutcome({
+        fromState: 'no_such_node_hash',
+        actionKind: 'click',
+        actionArgsNorm: 'btn',
+        observedToState: 'whatever',
+        success: true,
+      }),
+    ).toThrow(/FOREIGN KEY constraint/i);
+  });
 });
 
 describe('SkillGraphStorage — nodes', () => {
