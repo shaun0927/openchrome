@@ -214,6 +214,33 @@ const BACKOFF_CAP_MS = 5000;
  * does not settle within this window is treated as escalate (fail-safe).
  */
 const BEFORE_IRREVERSIBLE_ACTION_DEFAULT_TIMEOUT_MS = 5000;
+/** Maximum sane upper bound for the hook timeout (60 s). */
+const BEFORE_IRREVERSIBLE_ACTION_MAX_TIMEOUT_MS = 60_000;
+
+/**
+ * Validate and return a safe hook timeout value.
+ * If `provided` is undefined, NaN, non-finite, ≤ 0, or > the upper bound,
+ * falls back to BEFORE_IRREVERSIBLE_ACTION_DEFAULT_TIMEOUT_MS and emits a
+ * one-shot console.error so operators can identify misconfigured deployments.
+ */
+function resolveHookTimeoutMs(provided: number | undefined): number {
+  if (
+    provided === undefined ||
+    !Number.isFinite(provided) ||
+    provided <= 0 ||
+    provided > BEFORE_IRREVERSIBLE_ACTION_MAX_TIMEOUT_MS
+  ) {
+    if (provided !== undefined) {
+      console.error(
+        `[contracts/runtime] Invalid beforeIrreversibleActionTimeoutMs value: ${provided}. ` +
+        `Must be a finite positive number ≤ ${BEFORE_IRREVERSIBLE_ACTION_MAX_TIMEOUT_MS}. ` +
+        `Falling back to default ${BEFORE_IRREVERSIBLE_ACTION_DEFAULT_TIMEOUT_MS}ms.`
+      );
+    }
+    return BEFORE_IRREVERSIBLE_ACTION_DEFAULT_TIMEOUT_MS;
+  }
+  return provided;
+}
 
 function backoffMs(attempt: number): number {
   return Math.min(BACKOFF_BASE_MS * Math.pow(BACKOFF_FACTOR, attempt), BACKOFF_CAP_MS);
@@ -338,9 +365,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   //      settles" guarantee is preserved even when the voting provider
   //      is unresponsive.
   if (args.contract.critical && args.beforeIrreversibleAction) {
-    const hookTimeoutMs =
-      args.beforeIrreversibleActionTimeoutMs ??
-      BEFORE_IRREVERSIBLE_ACTION_DEFAULT_TIMEOUT_MS;
+    const hookTimeoutMs = resolveHookTimeoutMs(args.beforeIrreversibleActionTimeoutMs);
 
     // Build a sentinel promise that resolves to the unforgeable HOOK_TIMEOUT_SENTINEL
     // symbol after the timeout.  Using a Symbol (not null) means a hook that

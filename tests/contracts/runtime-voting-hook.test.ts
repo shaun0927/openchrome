@@ -248,4 +248,86 @@ describe('runWithContract — beforeIrreversibleAction hook', () => {
     expect(r.verdict).toBe('escalated');
     expect(r.pre_evidence?.passed).toBe(true);
   });
+
+  // --- resolveHookTimeoutMs sanitization regression tests ---
+  // These verify that invalid timeout values fall back to the default and do NOT
+  // cause an immediate-fire timer that escalates a fast-returning hook.
+
+  function makeInstantHook(): BeforeIrreversibleActionHook {
+    return async () => ({ proceed: true });
+  }
+
+  // Fake timer that fires ONLY after at least one microtask cycle, simulating
+  // a real delay (the hook should win the race when timeout is sane).
+  // For invalid-timeout cases the runtime uses the default (5000 ms) so the
+  // hook resolves first — we just need the timer NOT to fire immediately.
+  function makeFakeTimer() {
+    let cancelled = false;
+    const fakeSetTimer = (handler: () => void, _ms: number) => {
+      // Schedule with a real delay via setTimeout so the hook always wins.
+      const h = setTimeout(() => { if (!cancelled) handler(); }, 2000);
+      return h;
+    };
+    const fakeClearTimer = (h: unknown) => {
+      cancelled = true;
+      clearTimeout(h as ReturnType<typeof setTimeout>);
+    };
+    return { fakeSetTimer, fakeClearTimer };
+  }
+
+  test('beforeIrreversibleActionTimeoutMs: 0 → falls back to default, hook proceeds (not escalated)', async () => {
+    const { fakeSetTimer, fakeClearTimer } = makeFakeTimer();
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_OK, critical: true },
+      skill: async () => 'ok',
+      snapshot: async () => snap(),
+      beforeIrreversibleAction: makeInstantHook(),
+      beforeIrreversibleActionTimeoutMs: 0,
+      setTimer: fakeSetTimer,
+      clearTimer: fakeClearTimer,
+    });
+    expect(r.verdict).toBe('success');
+  });
+
+  test('beforeIrreversibleActionTimeoutMs: -5 → falls back to default, hook proceeds (not escalated)', async () => {
+    const { fakeSetTimer, fakeClearTimer } = makeFakeTimer();
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_OK, critical: true },
+      skill: async () => 'ok',
+      snapshot: async () => snap(),
+      beforeIrreversibleAction: makeInstantHook(),
+      beforeIrreversibleActionTimeoutMs: -5,
+      setTimer: fakeSetTimer,
+      clearTimer: fakeClearTimer,
+    });
+    expect(r.verdict).toBe('success');
+  });
+
+  test('beforeIrreversibleActionTimeoutMs: NaN → falls back to default, hook proceeds (not escalated)', async () => {
+    const { fakeSetTimer, fakeClearTimer } = makeFakeTimer();
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_OK, critical: true },
+      skill: async () => 'ok',
+      snapshot: async () => snap(),
+      beforeIrreversibleAction: makeInstantHook(),
+      beforeIrreversibleActionTimeoutMs: NaN,
+      setTimer: fakeSetTimer,
+      clearTimer: fakeClearTimer,
+    });
+    expect(r.verdict).toBe('success');
+  });
+
+  test('beforeIrreversibleActionTimeoutMs: 1000 → valid override applied, hook proceeds', async () => {
+    const { fakeSetTimer, fakeClearTimer } = makeFakeTimer();
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_OK, critical: true },
+      skill: async () => 'ok',
+      snapshot: async () => snap(),
+      beforeIrreversibleAction: makeInstantHook(),
+      beforeIrreversibleActionTimeoutMs: 1000,
+      setTimer: fakeSetTimer,
+      clearTimer: fakeClearTimer,
+    });
+    expect(r.verdict).toBe('success');
+  });
 });
