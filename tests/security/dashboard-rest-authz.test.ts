@@ -102,7 +102,9 @@ async function boot(
   smOverrides: { defaultTenantId?: string } = {},
 ) {
   const port = await freePort();
-  const transport = new HTTPTransport(port, '127.0.0.1', authToken, store ? { apiKeyStore: store as never } : {});
+  const baseOptions = store ? { apiKeyStore: store as never } : {};
+  const options = authToken ? baseOptions : { ...baseOptions, allowUnauthenticatedHttp: true };
+  const transport = new HTTPTransport(port, '127.0.0.1', authToken, options);
   transport.setSessionManager(sessionManager(smOverrides) as never);
   transport.onMessage(async (msg: Record<string, unknown>) => ({
     jsonrpc: '2.0',
