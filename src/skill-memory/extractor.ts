@@ -132,10 +132,49 @@ function readJson<T>(file: string): T | undefined {
   }
 }
 
+/**
+ * Structural guard for `SkillSidecar` — `readJson` only proves the
+ * file is parseable JSON, not that it matches the expected shape.
+ * Without this, a sidecar containing `{}` or an older schema missing
+ * `runs.recent` would silently pass the existence check and then
+ * crash inside the merge path at `sidecar.runs.recent`.
+ */
+function isValidSidecar(v: unknown): v is SkillSidecar {
+  if (!v || typeof v !== 'object') return false;
+  const s = v as Partial<SkillSidecar>;
+  if (s.schema_version !== SKILL_SCHEMA_VERSION) return false;
+  if (typeof s.skill_id !== 'string') return false;
+  if (typeof s.graph_node_anchor !== 'string') return false;
+  if (typeof s.contract_id !== 'string') return false;
+  if (!s.runs || typeof s.runs !== 'object') return false;
+  if (!Array.isArray(s.runs.recent)) return false;
+  if (typeof s.runs.count !== 'number') return false;
+  if (typeof s.runs.window_start !== 'string') return false;
+  return true;
+}
+
+/**
+ * Atomic file write using a per-call unique temp path so concurrent
+ * writers for the same target never race on a shared `.tmp` file.
+ * Without uniqueness, two parallel `recordSuccessfulRun` calls on the
+ * same `(graph_node_anchor, contract_id)` could clobber each other's
+ * temp file and one of the renames would either fail or destroy the
+ * other writer's data.
+ */
 function writeAtomic(target: string, body: string): void {
-  const tmp = target + '.tmp';
-  fs.writeFileSync(tmp, body, { mode: 0o644 });
-  fs.renameSync(tmp, target);
+  const tmp = `${target}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(tmp, body, { mode: 0o644 });
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    // Best-effort cleanup on failure — never let a stray .tmp leak.
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* file already gone or never created */
+    }
+    throw err;
+  }
 }
 
 /**
@@ -160,7 +199,13 @@ export function recordSuccessfulRun(
   const windowStartMs = t - ROLLING_WINDOW_MS;
 
   const existing = fs.existsSync(filePath) ? parseSkillMd(fs.readFileSync(filePath, 'utf8')) : null;
-  let existingSidecar = readJson<SkillSidecar>(sidecarPath);
+  const rawSidecar = readJson<unknown>(sidecarPath);
+  // Validate sidecar shape — `readJson` only proves the file is JSON.
+  // A structurally malformed but parseable sidecar (`{}`, an older
+  // schema missing `runs.recent`, etc.) would otherwise pass the
+  // existence check and crash inside the merge path. Treating it as
+  // "missing" routes the call into the rebuild branch below.
+  let existingSidecar: SkillSidecar | undefined = isValidSidecar(rawSidecar) ? rawSidecar : undefined;
   // Markdown exists but sidecar is missing or unreadable. Falling
   // through to the "create new" path would silently reset
   // verified_runs to 1 and discard the promotion state recorded in
@@ -312,8 +357,8 @@ export function listSkillsForDomain(domain: string, opts: ExtractorOptions = {})
     } catch {
       continue;
     }
-    const sidecar = readJson<SkillSidecar>(sidecarPath);
-    if (!sidecar) continue;
+    const sidecar = readJson<unknown>(sidecarPath);
+    if (!isValidSidecar(sidecar)) continue;
     out.push({
       skill_id,
       filePath,

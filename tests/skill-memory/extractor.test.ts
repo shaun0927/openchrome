@@ -197,6 +197,21 @@ describe('recordSuccessfulRun — sidecar recovery', () => {
     expect(fs.existsSync(third.record.sidecarPath)).toBe(true);
   });
 
+  test('structurally malformed sidecar is treated as missing (no crash)', () => {
+    let t = FIXED_NOW;
+    const first = recordSuccessfulRun(record({ txn_id: 't1' }), { rootDir: root, now: () => t });
+    expect(first.record.frontmatter.verified_runs).toBe(1);
+
+    // Sidecar exists but is structurally invalid (older schema, partial write, etc.).
+    fs.writeFileSync(first.record.sidecarPath, '{}');
+
+    t += 60_000;
+    expect(() => recordSuccessfulRun(record({ txn_id: 't2' }), { rootDir: root, now: () => t })).not.toThrow();
+    const list = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(list).toHaveLength(1);
+    expect(list[0].frontmatter.verified_runs).toBeGreaterThanOrEqual(1);
+  });
+
   test('preserves promoted status when sidecar is missing', () => {
     let t = FIXED_NOW;
     // 3 runs → promoted at default threshold.
@@ -210,6 +225,45 @@ describe('recordSuccessfulRun — sidecar recovery', () => {
 
     const next = recordSuccessfulRun(record({ txn_id: 't4' }), { rootDir: root, now: () => t });
     expect(next.record.frontmatter.status).toBe('promoted');
+  });
+});
+
+describe('recordSuccessfulRun — concurrent writes', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('parallel calls for the same skill do not collide on a shared .tmp file', async () => {
+    // Drive several concurrent record calls. With a fixed `.tmp`
+    // path, two writers could clobber each other and at least one
+    // rename would either fail or destroy the other writer's data.
+    // With per-call unique temp paths, all calls succeed and the
+    // final state is consistent with N completed runs.
+    const N = 12;
+    const t = FIXED_NOW;
+    const promises: Promise<unknown>[] = [];
+    for (let i = 0; i < N; i++) {
+      promises.push(
+        Promise.resolve().then(() =>
+          recordSuccessfulRun(record({ txn_id: `t${i}` }), {
+            rootDir: root,
+            now: () => t + i,
+          }),
+        ),
+      );
+    }
+    const results = await Promise.all(promises);
+    expect(results).toHaveLength(N);
+    const list = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(list).toHaveLength(1);
+    // No stray `.tmp` files left in the domain dir.
+    const dir = path.dirname(list[0].filePath);
+    const stragglers = fs.readdirSync(dir).filter((f) => f.endsWith('.tmp'));
+    expect(stragglers).toEqual([]);
   });
 });
 
