@@ -336,30 +336,42 @@ function writeJsonSnapshot(
   // 2-3x larger.
   const jsonBytes = Buffer.byteLength(json, 'utf8');
   if (jsonBytes > truncateBytes) {
-    // Reserve room for the wrapper (`{"_truncated":true,"_original_bytes":N,"preview":""}`).
-    // Without this the on-disk file is `truncateBytes + ~50 wrapper bytes`,
-    // which compounds with per-file caps to push the bundle past the
-    // configured ceiling.
-    const wrapperOverhead = Buffer.byteLength(
-      JSON.stringify({
+    // The on-disk file is the rendered wrapper, so size that output
+    // — not the raw preview — against `truncateBytes`. Two effects to
+    // account for:
+    //   (a) wrapper overhead (~50 bytes for `{"_truncated":..."preview":""}`)
+    //   (b) JSON re-escaping inside `preview`: a payload byte like `"`
+    //       or `\` doubles in size when re-stringified, control chars
+    //       grow to 6 bytes (`\u00xx`). A naive `truncateBytes -
+    //       wrapperOverhead` budget overshoots whenever the preview
+    //       contains such characters.
+    // Rather than reason about worst-case escaping, render the wrapper
+    // and shrink the preview byte by byte until the output fits. The
+    // tail is sliced on a UTF-8 byte boundary so multibyte sequences
+    // are not split mid-character.
+    const previewBuffer = Buffer.from(json, 'utf8');
+    const buildOut = (sliceLen: number): string => {
+      const previewBytes = previewBuffer.slice(0, sliceLen);
+      return JSON.stringify({
         _truncated: true,
         _original_bytes: jsonBytes,
-        preview: '',
-      }),
-      'utf8',
-    );
-    const previewBudget = Math.max(0, truncateBytes - wrapperOverhead);
-    // Slice on a UTF-8 byte boundary: `json.slice(0, previewBudget)`
-    // would index in UTF-16 code units. Build a Buffer view and slice
-    // bytes, then decode — losing any partial multibyte sequence at
-    // the tail to preserve well-formed UTF-8 output.
-    const previewBytes = Buffer.from(json, 'utf8').slice(0, previewBudget);
-    const truncated = {
-      _truncated: true,
-      _original_bytes: jsonBytes,
-      preview: previewBytes.toString('utf8'),
+        preview: previewBytes.toString('utf8'),
+      });
     };
-    const out = JSON.stringify(truncated);
+    let lo = 0;
+    let hi = previewBuffer.length;
+    // Binary-search the largest preview slice whose rendered wrapper
+    // is ≤ truncateBytes. Bounded by log2(buffer_length) iterations.
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      const rendered = Buffer.byteLength(buildOut(mid), 'utf8');
+      if (rendered <= truncateBytes) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const out = buildOut(lo);
     fs.writeFileSync(path.join(bundleDir, filename), out, 'utf8');
     return { bytes: Buffer.byteLength(out, 'utf8'), truncatedFlag: true };
   }

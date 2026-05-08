@@ -213,6 +213,25 @@ describe('writeEvidenceBundle — truncation', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  test('truncated DOM honors the cap even when JSON re-escaping inflates the preview', async () => {
+    // Payload built mostly of `"` and `\` — every preview byte doubles
+    // when JSON.stringify wraps it into the manifest's `preview` field.
+    // A naive `previewBudget = cap - wrapperOverhead` would overshoot;
+    // the binary-searched preview keeps the rendered file ≤ cap.
+    const heavy = '"\\'.repeat(50_000); // 100 KB of escape-prone chars
+    const r = await writeEvidenceBundle(
+      {
+        transaction: record(),
+        fail_dom: { huge: heavy },
+      },
+      { rootDir: root, maxBytes: 5 * 1024 * 1024 },
+    );
+    const onDisk = fs.statSync(path.join(r.bundleDir, 'fail_dom.json')).size;
+    // Per-DOM cap is min(DOM_TRUNCATE_BYTES=500K, maxBytes - byteSize).
+    // Whichever wins, the rendered file must not exceed that cap.
+    expect(onDisk).toBeLessThanOrEqual(500 * 1024);
+  });
+
   test('oversize fail_dom is truncated and flagged', async () => {
     const r = await writeEvidenceBundle(
       {
