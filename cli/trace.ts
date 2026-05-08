@@ -254,27 +254,39 @@ export function registerTraceCommand(program: Command): void {
       // `startReplayServer` also reads) before handing off — passing NaN
       // or a negative integer to `server.listen()` throws a RangeError
       // deep in net internals. A clear CLI error is friendlier.
+      // `parsePort` accepts a string and returns an integer in 0..65535
+      // or `null` for invalid input. Fractional values (e.g. "1234.5"),
+      // negatives, NaN, and out-of-range values are all rejected so the
+      // value forwarded to `server.listen()` is always a valid port —
+      // the prior `Number()` check accepted "1234.5" and let listen()
+      // throw a low-level RangeError downstream.
+      const parsePort = (raw: string): number | null => {
+        if (!/^-?\d+$/.test(raw.trim())) return null;
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n < 0 || n > 65535) return null;
+        return n;
+      };
       let portNum: number | undefined;
       if (options.port !== undefined) {
-        const parsed = Number.parseInt(options.port, 10);
-        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 65535) {
+        const n = parsePort(options.port);
+        if (n === null) {
           console.error(
             `Invalid --port: ${options.port} (expected an integer in 0..65535; 0 = ephemeral)`,
           );
           process.exitCode = 1;
           return;
         }
-        portNum = parsed;
+        portNum = n;
       } else if (process.env.OPENCHROME_REPLAY_PORT) {
-        const parsed = Number(process.env.OPENCHROME_REPLAY_PORT);
-        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 65535) {
+        const n = parsePort(process.env.OPENCHROME_REPLAY_PORT);
+        if (n === null) {
           console.error(
-            `Invalid OPENCHROME_REPLAY_PORT: ${process.env.OPENCHROME_REPLAY_PORT} (expected 0..65535)`,
+            `Invalid OPENCHROME_REPLAY_PORT: ${process.env.OPENCHROME_REPLAY_PORT} (expected an integer in 0..65535)`,
           );
           process.exitCode = 1;
           return;
         }
-        portNum = parsed;
+        portNum = n;
       }
       const handle = await startReplayServer({ port: portNum });
       console.log(`Replay UI: ${handle.url}`);
