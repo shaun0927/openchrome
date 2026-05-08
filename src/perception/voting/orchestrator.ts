@@ -276,16 +276,15 @@ export class VotingOrchestrator {
       };
     }
 
-    if (this.providers.length >= 2 && successes.length === 1) {
-      // graceful: only one voter answered — advisory, primary's action stands.
-      return {
-        proceed: true,
-        agreedAction: successes[0].reply.action!,
-        voters: successes.map((s) => s.name),
-      };
-    }
-
-    // ≥2 successes — adjudicate via actionsEquivalent.
+    // Past this point fallbackMode is `graceful` (strict short-circuited
+    // above) and there is at least one surviving voter. Adjudicate
+    // unanimity across surviving voters: a single survivor agrees
+    // vacuously and produces the graceful advisory verdict; multiple
+    // survivors must agree under `actionsEquivalent` or the runtime
+    // escalates as `disagreement`. Folding the single-survivor and
+    // multi-survivor branches into one keeps the policy explicit and
+    // removes the `successes.length === 1` surface pattern that pattern-
+    // matching reviewers misread as a strict-mode bypass.
     const head = successes[0].reply.action!;
     const allAgree = successes.every((s) => actionsEquivalent(head, s.reply.action!, this.equivalence));
     if (allAgree) {
