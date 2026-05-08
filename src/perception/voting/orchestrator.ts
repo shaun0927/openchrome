@@ -181,6 +181,13 @@ export function extractFirstJsonObject(text: string): unknown | null {
       if (depth === 0) start = i;
       depth++;
     } else if (c === '}') {
+      // Ignore stray closing braces when there is no open one — a `}`
+      // before any `{` (markdown templating, prose like `closing }`)
+      // would otherwise drive `depth` below zero and prevent every
+      // subsequent `{ ... }` segment from ever closing back to depth 0,
+      // making `extractFirstJsonObject` miss valid JSON later in the
+      // string.
+      if (depth === 0) continue;
       depth--;
       if (depth === 0 && start >= 0) {
         const slice = candidate.slice(start, i + 1);

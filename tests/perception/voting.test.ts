@@ -248,6 +248,12 @@ describe('extractFirstJsonObject', () => {
     });
   });
 
+  test('ignores stray closing braces preceding the JSON object', () => {
+    // A `}` before any `{` (markdown templating, prose) would
+    // otherwise drive `depth` below zero and skip the actual JSON.
+    expect(extractFirstJsonObject('closing } stray. {"action":"click"}')).toEqual({ action: 'click' });
+  });
+
   test('continues past a non-JSON brace segment to find a later JSON object', () => {
     // Provider replies sometimes contain brace-wrapped prose ahead
     // of the structured payload. The scanner must not stop at the
