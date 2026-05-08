@@ -115,7 +115,11 @@ export class TraceStorage {
     return CURRENT_SCHEMA_VERSION;
   }
 
-  /** Insert a row marking the start of a new trace session. */
+  /**
+   * Insert a row marking the start of a new trace session. When the same
+   * `session_id` is reused (restart/retry flow), terminal fields are reset so
+   * the row reflects the new session, not stale state from the previous run.
+   */
   recordSessionStart(meta: Omit<TraceSessionMeta, 'byteSize'> & { byteSize?: number }): void {
     this.db
       .prepare(
@@ -123,8 +127,10 @@ export class TraceStorage {
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            started_at = excluded.started_at,
+           ended_at   = excluded.ended_at,
            domain     = excluded.domain,
            status     = excluded.status,
+           byte_size  = excluded.byte_size,
            parent_op  = excluded.parent_op`,
       )
       .run(
@@ -136,6 +142,9 @@ export class TraceStorage {
         meta.byteSize ?? 0,
         meta.parentOp ?? null,
       );
+    // Reset the in-process per-session sequence counter so a reused session
+    // ID starts JSONL filenames at 1 again.
+    this.seqCounters.delete(meta.sessionId);
   }
 
   /** Update terminal fields when a session ends. */
@@ -236,6 +245,17 @@ export class TraceStorage {
   appendEvents(sessionId: string, events: TraceEvent[]): AppendResult {
     if (events.length === 0) {
       return { bytes: 0, filePath: '' };
+    }
+    // Verify the session is registered before touching disk. Without this
+    // check the JSONL file would be written and orphaned: invisible to
+    // get/list and never reclaimed by purgeOlderThan, leaking trace data.
+    const exists = this.db
+      .prepare('SELECT 1 FROM traces WHERE session_id = ?')
+      .get(sessionId);
+    if (!exists) {
+      throw new Error(
+        `TraceStorage.appendEvents: unknown session_id=${sessionId} (call recordSessionStart first)`,
+      );
     }
     const sessionDir = path.join(this.rootDir, sessionId);
     fs.mkdirSync(sessionDir, { recursive: true });

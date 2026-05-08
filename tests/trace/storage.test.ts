@@ -88,6 +88,24 @@ describe('TraceStorage — recordSessionStart / End / get', () => {
   test('get returns undefined for unknown session', () => {
     expect(store.get('nope')).toBeUndefined();
   });
+
+  test('recordSessionStart on reused session_id resets terminal fields', () => {
+    store.recordSessionStart({ sessionId: 'reuse', startedAt: 100, status: 'running' });
+    store.appendEvents('reuse', [event(1, 100)]);
+    store.recordSessionEnd('reuse', { endedAt: 200, status: 'completed', byteSize: 999 });
+
+    const before = store.get('reuse')!;
+    expect(before.endedAt).toBe(200);
+    expect(before.byteSize).toBe(999);
+
+    // Restart the session: terminal fields must clear, not carry over.
+    store.recordSessionStart({ sessionId: 'reuse', startedAt: 300, status: 'running' });
+    const after = store.get('reuse')!;
+    expect(after.startedAt).toBe(300);
+    expect(after.status).toBe('running');
+    expect(after.endedAt).toBeUndefined();
+    expect(after.byteSize).toBe(0);
+  });
 });
 
 describe('TraceStorage — list filtering', () => {
@@ -184,6 +202,11 @@ describe('TraceStorage — appendEvents', () => {
     const r = store.appendEvents('s', []);
     expect(r.bytes).toBe(0);
     expect(r.filePath).toBe('');
+  });
+
+  test('rejects appends for unknown session_id (no orphan files)', () => {
+    expect(() => store.appendEvents('ghost', [event(1, 100)])).toThrow(/unknown session_id=ghost/);
+    expect(fs.existsSync(path.join(root, 'ghost'))).toBe(false);
   });
 });
 
