@@ -54,19 +54,28 @@ export interface GraphAuditEmitter {
  * Default emitter that writes to `~/.openchrome/audit.jsonl` via the
  * existing audit pipeline. Bound to a sessionId at construction time so
  * each call site doesn't have to thread it through.
+ *
+ * The constructor takes a `defaultDomain` used only when the event's
+ * `domain` field is empty — `event.domain` is authoritative because the
+ * caller can override it per call via `RunSkillArgs.domain`.
  */
 export class AuditLogGraphEmitter implements GraphAuditEmitter {
-  constructor(private readonly sessionId: string, private readonly domain: string) {}
+  constructor(
+    private readonly sessionId: string,
+    private readonly defaultDomain: string,
+  ) {}
 
   emit(event: GraphAuditEvent): void {
     // Tool name is fixed; the event kind lives in args so existing audit
     // tooling can filter via a single field path (`args.event`).
     //
-    // `logAuditEntry` derives the top-level `entry.domain` from either the
-    // `pageUrl` argument or `args.url`. Skill graph events have neither, so
-    // we synthesise a stand-in URL from the bound `domain` so existing
-    // per-domain audit queries can still filter `skill_graph` rows.
-    const domainUrl = synthesiseDomainUrl(this.domain);
+    // `logAuditEntry` derives the top-level `entry.domain` from either
+    // the `pageUrl` argument or `args.url`. Skill graph events have
+    // neither, so we synthesise a stand-in URL from the *event's* domain
+    // (falling back to the bound default) so per-call domain overrides
+    // are reflected in `entry.domain`, not just in `args.domain`.
+    const domain = event.domain || this.defaultDomain;
+    const domainUrl = synthesiseDomainUrl(domain);
     logAuditEntry(
       'skill_graph',
       this.sessionId,

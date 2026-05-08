@@ -11,7 +11,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { AuditLogGraphEmitter } from '../../src/skill/audit';
+import { AuditLogGraphEmitter, type GraphAuditEvent } from '../../src/skill/audit';
+import { runSkill, type ExecutionContext, type ToolRouter } from '../../src/skill/executor';
+import { SkillGraphStorage } from '../../src/skill/storage';
+import type { PageSnapshot } from '../../src/skill/state';
 import { __resetAuditLoggerCachesForTests } from '../../src/security/audit-logger';
 
 jest.mock('../../src/config/global', () => ({
@@ -91,5 +94,85 @@ describe('AuditLogGraphEmitter — preserves entry.domain', () => {
     expect(entry).toBeDefined();
     expect(entry.tool).toBe('skill_graph');
     expect(entry.domain).toBe('shop.example.co.uk');
+  });
+
+  test('event.domain takes precedence over the emitter default', async () => {
+    // The emitter is bound to "amazon.com" but the event came from a
+    // call that overrode `RunSkillArgs.domain` to "alt.example". The
+    // top-level entry.domain MUST follow the event, otherwise per-domain
+    // filtering returns the wrong rows for sessions that span domains.
+    const logPath = tmpLogPath();
+    (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;
+
+    const emitter = new AuditLogGraphEmitter('sess_xyz', 'amazon.com');
+    emitter.emit({
+      event: 'graph_hit',
+      domain: 'alt.example',
+      fromState: 'A',
+      toState: 'B',
+      ok: true,
+    });
+
+    const [entry] = await flushAndRead(logPath, 1);
+    expect(entry).toBeDefined();
+    expect(entry.domain).toBe('alt.example');
+    expect((entry.args as Record<string, unknown>).domain).toBe('alt.example');
+  });
+
+  test('runSkill domain override propagates end-to-end into entry.domain', async () => {
+    const logPath = tmpLogPath();
+    (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-skill-domain-e2e-'));
+    const storage = new SkillGraphStorage('amazon.com', { rootDir: root });
+    try {
+      const snap = (url: string): PageSnapshot => ({
+        url,
+        interactives: [{ tagName: 'button', tagPath: 'body>button', role: 'button' }],
+        headings: [],
+        landmarks: {},
+      });
+      let i = 0;
+      const seq = [snap('https://amazon.com/'), snap('https://amazon.com/cart')];
+      const ctx: ExecutionContext = {
+        async snapshotPageState() {
+          const next = seq[Math.min(i, seq.length - 1)];
+          i += 1;
+          return next;
+        },
+      };
+      const router: ToolRouter = {
+        async pickFallbackAction() {
+          return { kind: 'click', argsNorm: 'ref:x', args: { ref: 'x' } };
+        },
+        async runAction() {
+          return { ok: true };
+        },
+      };
+
+      const emitter = new AuditLogGraphEmitter('sess_xyz', 'amazon.com');
+      const events: GraphAuditEvent[] = [];
+      await runSkill({
+        storage,
+        router,
+        ctx,
+        intent: {},
+        domain: 'partner.example',
+        audit: {
+          emit(e) {
+            events.push(e);
+            emitter.emit(e);
+          },
+        },
+      });
+
+      expect(events).toHaveLength(1);
+      expect(events[0].domain).toBe('partner.example');
+      const [entry] = await flushAndRead(logPath, 1);
+      expect(entry.domain).toBe('partner.example');
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

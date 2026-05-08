@@ -119,26 +119,39 @@ const SMALL_SAMPLE_TOTAL = 10;
  * executor still emits a `graph_error` event with whatever progress was
  * captured before the throw, then re-raises so the caller's error
  * handling stays responsible for retry/abort.
+ *
+ * Audit emission is isolated from the run outcome: if the emitter itself
+ * throws, the failure is swallowed and surfaced through `console.error`
+ * so a logging or evidence-writer fault never reclassifies a successful
+ * skill step as `graph_error`, and never masks a genuine inner exception.
  */
 export async function runSkill(args: RunSkillArgs): Promise<RunSkillResult> {
   const { storage, router, ctx, intent } = args;
   const trace: ProgressTrace = {};
+  let result: RunSkillResult | undefined;
+  let innerError: unknown;
   try {
-    const result = await runSkillInner({ storage, router, ctx, intent, trace });
-    if (args.audit) {
-      const { buildEventFromResult } = await import('./audit');
-      args.audit.emit(buildEventFromResult(args.domain ?? storage.domain, result));
-    }
-    return result;
+    result = await runSkillInner({ storage, router, ctx, intent, trace });
   } catch (err) {
-    if (args.audit) {
-      const { buildEventFromError } = await import('./audit');
-      args.audit.emit(
-        buildEventFromError(args.domain ?? storage.domain, err, trace),
-      );
-    }
-    throw err;
+    innerError = err;
   }
+
+  if (args.audit) {
+    try {
+      const domain = args.domain ?? storage.domain;
+      const { buildEventFromResult, buildEventFromError } = await import('./audit');
+      const event = result
+        ? buildEventFromResult(domain, result)
+        : buildEventFromError(domain, innerError, trace);
+      args.audit.emit(event);
+    } catch (emitErr) {
+      // Telemetry failure is observability-only; don't poison the run.
+      console.error('[skill] graph audit emit failed:', emitErr);
+    }
+  }
+
+  if (innerError !== undefined) throw innerError;
+  return result as RunSkillResult;
 }
 
 /** Captures partial progress so a thrown call can still produce an audit row. */

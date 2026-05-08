@@ -230,6 +230,65 @@ describe('runSkill — audit emission', () => {
     expect(events[0].actionKind).toBeUndefined();
   });
 
+  test('audit emitter throw does NOT poison a successful run', async () => {
+    // Successful run + emitter that throws → caller still receives the
+    // RunSkillResult (no reclassification to graph_error, no rethrow).
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = await runSkill({
+        storage,
+        router: mockRouter({
+          fallback: { kind: 'click', argsNorm: 'ref:x', args: {} },
+          result: { ok: true },
+        }),
+        ctx: ctxWithStates([snap({ url: 'https://a' }), snap({ url: 'https://b' })]),
+        intent: {},
+        audit: {
+          emit: () => {
+            throw new Error('disk_full');
+          },
+        },
+      });
+      expect(result.outcome).toBe('graph_fallback_promoted');
+      expect(result.ok).toBe(true);
+      // Emitter failure surfaced through console.error — observability-only.
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[skill] graph audit emit failed:',
+        expect.any(Error),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test('audit emitter throw on the error path does NOT mask the inner exception', async () => {
+    // Inner failure + emitter that also throws → caller sees the *original*
+    // error, not the emit error.
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const failingCtx: ExecutionContext = {
+      async snapshotPageState() {
+        throw new Error('cdp_disconnected');
+      },
+    };
+    try {
+      await expect(
+        runSkill({
+          storage,
+          router: mockRouter({ fallback: null }),
+          ctx: failingCtx,
+          intent: {},
+          audit: {
+            emit: () => {
+              throw new Error('disk_full');
+            },
+          },
+        }),
+      ).rejects.toThrow('cdp_disconnected');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   test('runAction() rejects after graph hit → graph_error carries fromState/action', async () => {
     // Seed a graph_hit candidate so runSkill takes the graph-hit path.
     const before = snap({ url: 'https://hit.example/a' });
