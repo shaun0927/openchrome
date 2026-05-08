@@ -253,10 +253,15 @@ export async function runPass2Merge(opts: RunPass2Options): Promise<Pass2Outcome
     // recordSuccessfulRun (which recomputes verified_runs/status solely from
     // existingSidecar.runs.recent) does not reset the umbrella back to
     // candidate on the very next successful run.
+    // Sort oldest-first (append order) to match recordSuccessfulRun semantics:
+    // it appends a new run then does slice(-SKILL_RUN_LOG_MAX), which drops the
+    // front of the array. With oldest-first that drops the oldest entries on
+    // overflow — the correct behaviour. Newest-first would instead drop the
+    // newest pre-merge entries, silently regressing verified_runs/status.
     const mergedRecent: SkillSidecar['runs']['recent'] = cluster.records
       .flatMap((r) => r.sidecar.runs.recent)
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, SKILL_RUN_LOG_MAX);
+      .sort((a, b) => a.ts - b.ts)
+      .slice(-SKILL_RUN_LOG_MAX);
 
     const sidecarBody = JSON.stringify(
       {

@@ -363,9 +363,9 @@ describe('runPass2Merge', () => {
 
   test('merged umbrella runs.recent carries sibling histories and a follow-up recordSuccessfulRun does not regress verified_runs', async () => {
     // Two siblings, each with 5 run events in runs.recent (distinct timestamps).
-    // After merge the umbrella's runs.recent must be sorted newest-first, capped
-    // at SKILL_RUN_LOG_MAX, and a subsequent recordSuccessfulRun must NOT reduce
-    // verified_runs below the merged aggregate.
+    // After merge the umbrella's runs.recent must be sorted oldest-first (append
+    // order) so that recordSuccessfulRun's [...recent, newRun].slice(-N) drops the
+    // OLDEST entry on overflow rather than the newest.
     const SIBLING_RUNS = 5;
     const anchors = ['aaaaffff0001', 'aaaaffff0002'] as const;
     let tick = FIXED_NOW;
@@ -408,9 +408,10 @@ describe('runPass2Merge', () => {
     const totalSiblingRuns = anchors.length * SIBLING_RUNS; // 10, well under cap of 50
     expect(recent.length).toBe(Math.min(totalSiblingRuns, SKILL_RUN_LOG_MAX));
 
-    // entries must be sorted newest-first
+    // entries must be sorted oldest-first (append order) so slice(-N) on overflow
+    // drops the oldest entries, not the newest
     for (let i = 1; i < recent.length; i++) {
-      expect(recent[i - 1].ts).toBeGreaterThanOrEqual(recent[i].ts);
+      expect(recent[i - 1].ts).toBeLessThanOrEqual(recent[i].ts);
     }
 
     // A follow-up successful run must NOT reduce verified_runs below the merged aggregate
@@ -426,6 +427,90 @@ describe('runPass2Merge', () => {
       { rootDir: root, now: () => tick + 1000 },
     );
     expect(followUpResult.record.frontmatter.verified_runs).toBeGreaterThanOrEqual(mergedVerifiedRuns);
+  });
+
+  test('overflow after merge drops oldest entry, not newest', async () => {
+    // Fill both siblings' runs.recent to capacity (SKILL_RUN_LOG_MAX = 50 entries
+    // each, with old timestamps) so the merged array exceeds the cap. After merge
+    // runs.recent must still be capped at SKILL_RUN_LOG_MAX and contain the NEWEST
+    // entries (oldest dropped). Then simulate a recordSuccessfulRun overflow: the
+    // new run's ts must survive and the oldest pre-merge ts must be gone.
+    const anchors = ['bbbbffff0001', 'bbbbffff0002'] as const;
+    // Use timestamps well in the past so they are clearly "older" than follow-up
+    let tick = FIXED_NOW - 100_000;
+
+    for (const anchor of anchors) {
+      for (let i = 0; i < SKILL_RUN_LOG_MAX; i++) {
+        recordSuccessfulRun(
+          {
+            txn_id: `overflow-${anchor}-${i}`,
+            contract_id: SHARED_CONTRACT_ID,
+            intent: 'Add cart item and pay',
+            domain: 'amazon.com',
+            graph_node_anchor: anchor,
+          },
+          { rootDir: root, now: () => tick++ },
+        );
+      }
+    }
+
+    // Record the very first (oldest) timestamp across all sibling entries
+    const oldestTs = FIXED_NOW - 100_000;
+
+    await runPass2Merge({
+      rootDir: root,
+      domain: 'amazon.com',
+      requester: async () => ({
+        ok: true,
+        name: 'amazon.cart-add-overflow',
+        intent: 'Add cart item and pay (umbrella)',
+        body: '## Steps\n1. Add\n2. Pay\n',
+      }),
+      jaccardThreshold: 0.5,
+      prefixChars: 4,
+      now: () => tick,
+    });
+
+    const postList = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(postList).toHaveLength(1);
+    const umbrella = postList[0];
+    const recentAfterMerge = umbrella.sidecar.runs.recent;
+
+    // Capped at SKILL_RUN_LOG_MAX
+    expect(recentAfterMerge.length).toBe(SKILL_RUN_LOG_MAX);
+
+    // Oldest-first order preserved after merge cap
+    for (let i = 1; i < recentAfterMerge.length; i++) {
+      expect(recentAfterMerge[i - 1].ts).toBeLessThanOrEqual(recentAfterMerge[i].ts);
+    }
+
+    // The oldest pre-merge entry must have been dropped (not present)
+    expect(recentAfterMerge.some((r) => r.ts === oldestTs)).toBe(false);
+
+    // Now simulate a follow-up recordSuccessfulRun that causes another overflow.
+    // recordSuccessfulRun recomputes verified_runs from runs.recent (not from the
+    // aggregate frontmatter), so after the overflow it will reflect the capped
+    // window count — but crucially the newest entry must survive and the oldest
+    // must be evicted (not the newest).
+    const newRunTs = tick + 9_999_999; // far in the future — definitely the newest
+    const followUpResult = recordSuccessfulRun(
+      {
+        txn_id: 'overflow-follow-up',
+        contract_id: SHARED_CONTRACT_ID,
+        intent: 'Add cart item and pay',
+        domain: 'amazon.com',
+        graph_node_anchor: umbrella.frontmatter.graph_node_anchor,
+      },
+      { rootDir: root, now: () => newRunTs },
+    );
+
+    const recentAfterFollowUp = followUpResult.record.sidecar.runs.recent;
+    // Still capped
+    expect(recentAfterFollowUp.length).toBe(SKILL_RUN_LOG_MAX);
+    // The NEW run must be present — oldest-first sort ensures slice(-N) kept it
+    expect(recentAfterFollowUp.some((r) => r.ts === newRunTs)).toBe(true);
+    // verified_runs reflects the capped window (all entries are ok=true successes)
+    expect(followUpResult.record.frontmatter.verified_runs).toBe(SKILL_RUN_LOG_MAX);
   });
 
   test('umbrella filename equals computeSkillId(seed.graph_node_anchor, seed.contract_id) so recordSuccessfulRun finds it', async () => {
