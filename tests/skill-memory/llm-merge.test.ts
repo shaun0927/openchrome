@@ -300,4 +300,26 @@ describe('createLlmMergeRequester — VotingProvider adapter', () => {
     const r = await requester(REQ);
     expect(r.ok).toBe(false);
   });
+
+  test('malformed raw > 500 chars with valid merge envelope parses successfully (regression: raw cap)', async () => {
+    // Skill body templates are 1-3 KB. Before the fix raw was capped at 500 chars,
+    // so a valid envelope with a body > ~400 chars would always fail to parse.
+    const longBody = '## Steps\n' + '1. Click the add-to-cart button\n'.repeat(50); // ~1650 chars
+    const envelope = { name: 'amazon.cart-flow', intent: 'Add and buy', body: longBody };
+    const raw = JSON.stringify(envelope);
+    // Confirm the raw envelope actually exceeds the old 500-char cap.
+    expect(raw.length).toBeGreaterThan(500);
+    // The provider returns it as a malformed reply (shape was {name,intent,body} not {action,args}).
+    const provider = fakeVotingProvider([
+      { ok: false, error: { kind: 'malformed', raw } },
+    ]);
+    const requester = createLlmMergeRequester({ provider });
+    const r = await requester(REQ);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.name).toBe('amazon.cart-flow');
+      expect(r.intent).toBe('Add and buy');
+      expect(r.body).toContain('Click the add-to-cart button');
+    }
+  });
 });

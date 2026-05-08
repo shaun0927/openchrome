@@ -128,7 +128,9 @@ export async function runWithReplyParse(
 
   return {
     ok: false,
-    error: { kind: 'malformed', raw: second.text.slice(0, 500) },
+    // 4096-char cap: large enough to hold a full merge envelope (body
+    // templates are 1-3 KB) while still bounding log spam.
+    error: { kind: 'malformed', raw: second.text.slice(0, 4096) },
     tokens: (first.tokens ?? 0) + (second.tokens ?? 0),
   };
 }
