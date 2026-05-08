@@ -88,6 +88,11 @@ export function clusterSkills(
     seen.add(seed.skill_id);
     for (const cand of ranked) {
       if (seen.has(cand.skill_id)) continue;
+      // Fix #1: enforce contract_id homogeneity — skills from different
+      // contracts must not be merged even if intent/anchor prefix aligns.
+      if (cand.sidecar.contract_id !== seed.sidecar.contract_id) continue;
+      // Anchor-prefix gate is a coarse pre-filter; actual structural
+      // similarity is decided by the Jaccard threshold below.
       if (cand.frontmatter.graph_node_anchor.slice(0, prefix) !== seedPrefix) continue;
       if (jaccard(seedTokens, tokenize(cand.frontmatter.intent)) < jacc) continue;
       cluster.push(cand);
@@ -245,24 +250,26 @@ export async function runPass2Merge(opts: RunPass2Options): Promise<Pass2Outcome
       continue;
     }
 
-    // Atomic write of the umbrella file + sidecar.
-    fs.writeFileSync(writePath, serialized, { mode: 0o644 });
-    fs.writeFileSync(
-      sidecarPath,
-      JSON.stringify(
-        {
-          schema_version: SKILL_SCHEMA_VERSION,
-          skill_id: newSkillId,
-          graph_node_anchor: seed.frontmatter.graph_node_anchor,
-          contract_id: seed.frontmatter.contract_ref,
-          runs: { count: aggregateRuns, window_start: isoUtc(ts), recent: [] },
-          merged_from: cluster.records.map((r) => r.skill_id),
-        },
-        null,
-        2,
-      ),
-      { mode: 0o644 },
+    // Write umbrella .md and sidecar .json atomically (tmp + rename) so
+    // a crash mid-write cannot leave a half-merged record on disk.
+    const tmpMd = writePath + '.tmp';
+    fs.writeFileSync(tmpMd, serialized, { mode: 0o644 });
+    fs.renameSync(tmpMd, writePath);
+    const sidecarBody = JSON.stringify(
+      {
+        schema_version: SKILL_SCHEMA_VERSION,
+        skill_id: newSkillId,
+        graph_node_anchor: seed.frontmatter.graph_node_anchor,
+        contract_id: seed.sidecar.contract_id,
+        runs: { count: aggregateRuns, window_start: isoUtc(ts), recent: [] },
+        merged_from: cluster.records.map((r) => r.skill_id),
+      },
+      null,
+      2,
     );
+    const tmpSidecar = sidecarPath + '.tmp';
+    fs.writeFileSync(tmpSidecar, sidecarBody, { mode: 0o644 });
+    fs.renameSync(tmpSidecar, sidecarPath);
 
     for (const sibling of cluster.records) {
       try {

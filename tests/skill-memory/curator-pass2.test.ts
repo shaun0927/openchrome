@@ -64,7 +64,10 @@ describe('jaccard', () => {
 /* clusterSkills                                                       */
 /* ------------------------------------------------------------------ */
 
-function rec(over: Partial<SkillRecord['frontmatter']> = {}): SkillRecord {
+function rec(
+  over: Partial<SkillRecord['frontmatter']> = {},
+  sidecarOver: Partial<SkillRecord['sidecar']> = {},
+): SkillRecord {
   const skill_id = (over.name ?? 'sk') + '-' + Math.random().toString(36).slice(2, 6);
   return {
     skill_id,
@@ -89,6 +92,7 @@ function rec(over: Partial<SkillRecord['frontmatter']> = {}): SkillRecord {
       graph_node_anchor: over.graph_node_anchor ?? 'aaaa1234',
       contract_id: 'cid',
       runs: { count: 5, window_start: '2026-04-01T00:00:00Z', recent: [] },
+      ...sidecarOver,
     },
   };
 }
@@ -143,16 +147,36 @@ describe('clusterSkills — clustering', () => {
     const records = [rec({ graph_node_anchor: 'aaaa1234', intent: 'unique' })];
     expect(clusterSkills(records)).toHaveLength(0);
   });
+
+  test('skills with same intent/anchor prefix but different contract_id do NOT cluster', () => {
+    // Regression test for fix #1: contract_id boundary must be enforced
+    // before anchor-prefix and Jaccard checks.
+    const records = [
+      rec(
+        { graph_node_anchor: 'aaaa1234', intent: 'Add cart item and pay' },
+        { contract_id: 'contract-A' },
+      ),
+      rec(
+        { graph_node_anchor: 'aaaa9999', intent: 'Add cart item, then pay' },
+        { contract_id: 'contract-B' },
+      ),
+    ];
+    expect(clusterSkills(records, { jaccardThreshold: 0.7, prefixChars: 4 })).toHaveLength(0);
+  });
 });
 
 /* ------------------------------------------------------------------ */
 /* runPass2Merge                                                       */
 /* ------------------------------------------------------------------ */
 
+// Shared contract_id so the two siblings cluster together under fix #1.
+const SHARED_CONTRACT_ID = 'contract-cart-checkout-v1';
+
 function seedTwoSiblingsOnDisk(rootDir: string): void {
   let now = FIXED_NOW;
   // Same graph_node_anchor (so identity collides) would dedup at the
   // extractor; use distinct anchors with the same prefix instead.
+  // Both siblings share SHARED_CONTRACT_ID — required for clustering.
   for (const [anchor, intent] of [
     ['aaaaffff0001', 'Add cart item and pay'],
     ['aaaaffff0002', 'Add cart item, then pay'],
@@ -162,7 +186,7 @@ function seedTwoSiblingsOnDisk(rootDir: string): void {
       recordSuccessfulRun(
         {
           txn_id: `t-${anchor}-${i}`,
-          contract_id: anchor,
+          contract_id: SHARED_CONTRACT_ID,
           intent,
           domain: 'amazon.com',
           graph_node_anchor: anchor,
