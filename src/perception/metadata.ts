@@ -49,7 +49,11 @@ function isZeroSize(box: PixelBox | null): boolean {
 
 function classifyEffectiveDisplay(probe: NodeProbe): EffectiveDisplay {
   if (probe.ancestorDisplayNone || probe.display === 'none') return 'hidden_display_none';
-  if (probe.ancestorVisibilityHidden || probe.visibility === 'hidden' || probe.visibility === 'collapse') {
+  if (
+    probe.visibility === 'hidden' ||
+    probe.visibility === 'collapse' ||
+    (probe.ancestorVisibilityHidden && probe.visibility !== 'visible')
+  ) {
     return 'hidden_visibility';
   }
   // display: contents — node has no box; bucket depends on whether any

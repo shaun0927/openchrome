@@ -155,8 +155,34 @@ describe('computePerceptualMetadata — interactionFeasibility', () => {
     expect(r.interactionFeasibility).toBe('outside_viewport');
   });
 
-  test('hidden by ancestor → outside_viewport (cannot interact)', () => {
-    const r = computePerceptualMetadata(probe({ ancestorVisibilityHidden: true }), VIEWPORT);
+  test('hidden by ancestor, child explicitly visibility:visible → ok (CSS override wins)', () => {
+    // CSS allows a descendant to set visibility:visible to escape an ancestor's
+    // visibility:hidden. The child must NOT be classified as hidden_visibility.
+    const r = computePerceptualMetadata(
+      probe({ ancestorVisibilityHidden: true, visibility: 'visible' }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('rendered');
+    expect(r.interactionFeasibility).toBe('ok');
+  });
+
+  test('hidden by ancestor, child has no override (inherit) → outside_viewport', () => {
+    // When the child does not explicitly set visibility:visible it inherits the
+    // ancestor's hidden state and must remain hidden_visibility → outside_viewport.
+    const r = computePerceptualMetadata(
+      probe({ ancestorVisibilityHidden: true, visibility: 'inherit' }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('hidden_visibility');
+    expect(r.interactionFeasibility).toBe('outside_viewport');
+  });
+
+  test('ancestor and self both hidden → outside_viewport (unchanged)', () => {
+    const r = computePerceptualMetadata(
+      probe({ ancestorVisibilityHidden: true, visibility: 'hidden' }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('hidden_visibility');
     expect(r.interactionFeasibility).toBe('outside_viewport');
   });
 });
