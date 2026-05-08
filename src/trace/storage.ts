@@ -101,13 +101,15 @@ export class TraceStorage {
 
   private applyMigrations(): void {
     this.db.exec(SCHEMA_V1);
-    const applied = (this.db.prepare('SELECT version FROM applied_migrations').all() as { version: number }[])
-      .map((r) => r.version);
-    if (!applied.includes(1)) {
-      this.db
-        .prepare('INSERT INTO applied_migrations (version, applied_at) VALUES (?, ?)')
-        .run(1, Date.now());
-    }
+    // INSERT OR IGNORE makes the v1 marker idempotent across concurrent
+    // initialisers. The previous read-then-insert pattern had a race:
+    // two constructors against a fresh DB could both observe an empty
+    // `applied_migrations` table and one would crash with a PK
+    // constraint violation. The OR IGNORE form converts that into a
+    // silent no-op when version=1 already exists.
+    this.db
+      .prepare('INSERT OR IGNORE INTO applied_migrations (version, applied_at) VALUES (?, ?)')
+      .run(1, Date.now());
   }
 
   /** For tests / consumers that need to inspect schema state. */

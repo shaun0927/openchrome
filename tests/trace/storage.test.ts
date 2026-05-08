@@ -44,6 +44,21 @@ describe('TraceStorage — schema and lifecycle', () => {
     // Re-open the original variable so afterEach can close cleanly.
     store = new TraceStorage({ rootDir: root });
   });
+
+  test('migrations table is INSERT-OR-IGNORE idempotent (concurrent-safe)', () => {
+    // Two initialisers against the same root must not race on the
+    // `applied_migrations` v1 marker. The previous read-then-insert
+    // pattern could throw a PK constraint violation when both saw the
+    // marker missing; INSERT OR IGNORE makes it a silent no-op.
+    store.close();
+    expect(() => {
+      const a = new TraceStorage({ rootDir: root });
+      const b = new TraceStorage({ rootDir: root });
+      a.close();
+      b.close();
+    }).not.toThrow();
+    store = new TraceStorage({ rootDir: root });
+  });
 });
 
 describe('TraceStorage — recordSessionStart / End / get', () => {
