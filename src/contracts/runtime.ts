@@ -155,9 +155,12 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   const startedAt = now();
   const txn_id = crypto.randomUUID();
 
-  // 1. Validate contract assertions structurally
+  // 1. Validate contract assertions structurally. Use `!== undefined`
+  //    rather than a truthy check so an explicit `pre: null` from a
+  //    JSON / API producer does not silently slip past validation and
+  //    skip the pre-check; the validator rejects null with wrong_type.
   const errors: ValidationError[] = [];
-  if (args.contract.pre) errors.push(...validateAssertion(args.contract.pre, '$.pre'));
+  if (args.contract.pre !== undefined) errors.push(...validateAssertion(args.contract.pre, '$.pre'));
   errors.push(...validateAssertion(args.contract.post, '$.post'));
   if (errors.length > 0) {
     return settle(audit, {
@@ -172,9 +175,11 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     });
   }
 
-  // 2. Pre-check (skill must not run on pre-fail)
+  // 2. Pre-check (skill must not run on pre-fail). After step 1 the
+  //    only way `pre` reaches here is as a validated Assertion — null
+  //    has already been rejected via validation_error.
   let pre_evidence: Evidence | undefined;
-  if (args.contract.pre) {
+  if (args.contract.pre !== undefined) {
     let preCtx: AssertionContext;
     try {
       preCtx = await args.snapshot();
