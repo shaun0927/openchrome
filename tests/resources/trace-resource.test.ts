@@ -231,6 +231,21 @@ describe('buildTraceContent — events', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  test('returns null for tenant-bound callers (api-key + jwt)', async () => {
+    for (const mode of ['api-key', 'jwt'] as const) {
+      expect(
+        await buildTraceContent(
+          {
+            sessionId: 'e',
+            kind: 'events',
+            query: new URLSearchParams(),
+          },
+          { mode },
+        ),
+      ).toBeNull();
+    }
+  });
+
   test('returns total + returned + ordered events', async () => {
     const r = await buildTraceContent({
       sessionId: 'e',
