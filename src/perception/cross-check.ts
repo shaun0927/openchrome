@@ -25,8 +25,10 @@ import {
   colorDistance,
   decodePngToRgba,
   dominantColor,
+  isPngBuffer,
   sobelEdgeDensity,
   type CropRect,
+  type DecodedRgbaImage,
   type RgbColor,
 } from './image-features';
 
@@ -127,7 +129,7 @@ export function runCrossCheck(
   let image = rgba;
   let imageWidth = width;
   let imageHeight = height;
-  if (rgba.length >= 8 && rgba[0] === 0x89 && rgba[1] === 0x50 && rgba[2] === 0x4e && rgba[3] === 0x47) {
+  if (isPngBuffer(rgba)) {
     const decoded = decodePngToRgba(rgba);
     image = decoded.rgba;
     imageWidth = decoded.width;
@@ -208,4 +210,48 @@ export function runCrossCheck(
     color_distance: dist,
     reasons,
   };
+}
+
+/**
+ * Decode a PNG screenshot once, then run cross-check on every annotation.
+ *
+ * Use this instead of calling `runCrossCheck` per element when the same
+ * screenshot is checked against multiple crops. `runCrossCheck` decodes the
+ * PNG on every call (`O(elements × pixels)` of zlib work); this function
+ * decodes once and reuses the resulting RGBA buffer for all crops.
+ *
+ * @param image       The full screenshot — either a raw RGBA `Buffer` or an
+ *                    encoded PNG `Buffer`. PNGs are decoded exactly once.
+ * @param width       Screenshot width (ignored when `image` is a PNG; derived
+ *                    from the PNG IHDR instead).
+ * @param height      Screenshot height (same caveat).
+ * @param crops       Array of element pixelBoxes to cross-check.
+ * @param opts        Threshold overrides + page background color (applied to
+ *                    every element uniformly).
+ * @returns           One `CrossCheckResult` per element, in the same order as
+ *                    `crops`.
+ */
+export function runCrossCheckBatch(
+  image: Uint8Array | Buffer,
+  width: number,
+  height: number,
+  crops: CropRect[],
+  opts: CrossCheckOptions,
+): CrossCheckResult[] {
+  let rgba: Uint8Array | Buffer;
+  let w: number;
+  let h: number;
+
+  if (isPngBuffer(image)) {
+    const decoded: DecodedRgbaImage = decodePngToRgba(image);
+    rgba = decoded.rgba;
+    w = decoded.width;
+    h = decoded.height;
+  } else {
+    rgba = image;
+    w = width;
+    h = height;
+  }
+
+  return crops.map((crop) => runCrossCheck(rgba, w, h, crop, opts));
 }

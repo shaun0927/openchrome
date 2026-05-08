@@ -22,11 +22,12 @@ export {
   DEFAULT_PIXEL_ABSENT_EDGE_DENSITY,
   colorDistance,
   dominantColor,
+  isPngBuffer,
   sobelEdgeDensity,
 } from './image-features';
-export type { CropRect, RgbColor } from './image-features';
+export type { CropRect, DecodedRgbaImage, RgbColor } from './image-features';
 
-export { runCrossCheck } from './cross-check';
+export { runCrossCheck, runCrossCheckBatch } from './cross-check';
 export type {
   CrossCheckOptions,
   CrossCheckResult,

@@ -1,4 +1,5 @@
-import { runCrossCheck } from '../../src/perception/cross-check';
+import { runCrossCheck, runCrossCheckBatch } from '../../src/perception/cross-check';
+import * as imageFeatures from '../../src/perception/image-features';
 import * as zlib from 'zlib';
 
 function solid(w: number, h: number, r: number, g: number, b: number): Buffer {
@@ -334,6 +335,64 @@ describe('runCrossCheck — invalid backgroundColor is fail-closed (round-8 regr
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('runCrossCheck — P2 regression: raw RGBA whose first 4 bytes match PNG header must NOT throw', () => {
+  test('raw RGBA with first pixel [0x89, 0x50, 0x4e, 0x47] is processed as raw, not decoded as PNG', () => {
+    // Construct a 2x1 RGBA buffer whose first pixel is (0x89, 0x50, 0x4e, 0x47).
+    // The old 4-byte sniff would have entered decodePngToRgba and thrown
+    // "input is not an encoded PNG buffer" (the full 8-byte signature fails).
+    // The new 8-byte sniff correctly identifies this as raw RGBA.
+    const w = 2;
+    const h = 1;
+    const buf = Buffer.alloc(w * h * 4);
+    // First pixel: bytes that match 4-byte PNG prefix but NOT the full 8-byte signature
+    buf[0] = 0x89; buf[1] = 0x50; buf[2] = 0x4e; buf[3] = 0x47;
+    // Second pixel: plain white
+    buf[4] = 255; buf[5] = 255; buf[6] = 255; buf[7] = 255;
+
+    const bg = { r: 0x80, g: 0x50, b: 0x40 };
+    expect(() =>
+      runCrossCheck(buf, w, h, { x: 0, y: 0, w, h }, { backgroundColor: bg }),
+    ).not.toThrow();
+  });
+});
+
+describe('runCrossCheckBatch — P1 regression: PNG decoded exactly once for multiple crops', () => {
+  test('decodePngToRgba is called once regardless of annotation count', () => {
+    const bg = { r: 240, g: 240, b: 240 };
+    const png = pngFromRgb(32, 32, solidRgb(32, 32, bg.r, bg.g, bg.b));
+    const spy = jest.spyOn(imageFeatures, 'decodePngToRgba');
+
+    const crops = [
+      { x: 0, y: 0, w: 8, h: 8 },
+      { x: 8, y: 0, w: 8, h: 8 },
+      { x: 16, y: 0, w: 8, h: 8 },
+      { x: 0, y: 8, w: 8, h: 8 },
+      { x: 8, y: 8, w: 8, h: 8 },
+    ];
+    const results = runCrossCheckBatch(png, 32, 32, crops, { backgroundColor: bg });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(results).toHaveLength(crops.length);
+    results.forEach((r) => expect(r.verdict).toBe('pixel_absent'));
+
+    spy.mockRestore();
+  });
+
+  test('runCrossCheckBatch with raw RGBA does not call decodePngToRgba', () => {
+    const bg = { r: 240, g: 240, b: 240 };
+    const buf = solid(16, 16, bg.r, bg.g, bg.b);
+    const spy = jest.spyOn(imageFeatures, 'decodePngToRgba');
+
+    const results = runCrossCheckBatch(buf, 16, 16, [{ x: 0, y: 0, w: 16, h: 16 }], { backgroundColor: bg });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(results).toHaveLength(1);
+    expect(results[0].verdict).toBe('pixel_absent');
+
+    spy.mockRestore();
   });
 });
 

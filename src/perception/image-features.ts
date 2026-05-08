@@ -31,7 +31,7 @@ export interface DecodedRgbaImage {
   height: number;
 }
 
-function isPngBuffer(input: Uint8Array | Buffer): boolean {
+export function isPngBuffer(input: Uint8Array | Buffer): boolean {
   return input.length >= PNG_MAGIC.length && PNG_MAGIC.every((b, i) => input[i] === b);
 }
 
