@@ -171,6 +171,10 @@ describe('SkillGraphStorage — nodes', () => {
 describe('SkillGraphStorage — edges and recordOutcome', () => {
   let root: string;
   let store: SkillGraphStorage;
+  type RecordOutcomeArgs = Parameters<SkillGraphStorage['recordOutcome']>[0];
+  type TransactionHandle = ((args: RecordOutcomeArgs) => void) & {
+    immediate: (args: RecordOutcomeArgs) => void;
+  };
 
   beforeEach(() => {
     root = tempRoot();
@@ -181,6 +185,35 @@ describe('SkillGraphStorage — edges and recordOutcome', () => {
   afterEach(() => {
     store.close();
     fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('recordOutcome starts the read-then-write transaction in IMMEDIATE mode', () => {
+    const dbHandle = (store as unknown as {
+      db: {
+        transaction: (fn: (args: RecordOutcomeArgs) => void) => TransactionHandle;
+      };
+    }).db;
+    const deferred = jest.fn<void, [RecordOutcomeArgs]>();
+    const immediate = jest.fn<void, [RecordOutcomeArgs]>();
+    const tx = Object.assign(deferred, { immediate });
+    const transactionSpy = jest.spyOn(dbHandle, 'transaction').mockReturnValue(tx);
+    const args = {
+      fromState: 'from1',
+      actionKind: 'click',
+      actionArgsNorm: 'ref:add',
+      observedToState: 'to1',
+      success: true,
+    };
+
+    store.recordOutcome(args);
+
+    try {
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+      expect(deferred).not.toHaveBeenCalled();
+      expect(immediate).toHaveBeenCalledWith(args);
+    } finally {
+      transactionSpy.mockRestore();
+    }
   });
 
   test('first success creates an edge with success_count=1, distribution=[{to,1}]', () => {
