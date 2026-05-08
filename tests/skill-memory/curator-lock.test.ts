@@ -99,4 +99,42 @@ describe('CuratorLock — stale reclamation', () => {
     expect(lock.acquire()).toBe(true);
     lock.release();
   });
+
+  test('stale-lock race: second acquire loses when a different PID wins the rename', () => {
+    // Simulate two processes that both passed shouldReclaim() and are about
+    // to forceWrite(). We do this by monkey-patching: after the first
+    // process writes its PID via forceWrite(), a "rival" synchronously
+    // overwrites the lock file with a different PID before the ownership
+    // verification re-read occurs.
+    //
+    // We achieve this by subclassing CuratorLock to intercept forceWrite
+    // via a spy that overwrites the lock with a foreign PID immediately
+    // after the rename. The verify re-read then sees the foreign PID and
+    // returns false — proving the post-write ownership check works.
+    const lockPath = path.join(root, 'lock');
+    const foreignPid = process.pid + 9999;
+
+    // Plant a dead stale lock so shouldReclaim() returns true.
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 0xfffffe, start_ts: 0 }));
+
+    // Build a lock instance and intercept forceWrite by replacing the
+    // file after it runs (simulating the rival winning the rename race).
+    const lock = new CuratorLock({ rootDir: root, isAlive: () => false });
+
+    // Spy: after forceWrite renames our temp file into place, another
+    // process immediately renames its own content over the lock.
+    const origForceWrite = (lock as unknown as { forceWrite: () => void }).forceWrite.bind(lock);
+    (lock as unknown as { forceWrite: () => void }).forceWrite = () => {
+      origForceWrite();
+      // Rival overwrites synchronously — simulates losing the rename race.
+      fs.writeFileSync(lockPath, JSON.stringify({ pid: foreignPid, start_ts: Date.now() }));
+    };
+
+    const result = lock.acquire();
+    // Our PID is not in the file — must return false.
+    expect(result).toBe(false);
+    // Confirm the lock really does contain the foreign PID (sanity check).
+    const onDisk = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as { pid: number };
+    expect(onDisk.pid).toBe(foreignPid);
+  });
 });

@@ -79,7 +79,7 @@ export interface SkillRunStats {
   hadInterveningPromotion?: boolean;
 }
 
-export type SkillStatsResolver = (record: SkillRecord) => SkillRunStats;
+export type SkillStatsResolver = (record: SkillRecord, windowMs?: number) => SkillRunStats;
 
 export interface CuratorOptions {
   rootDir?: string;
@@ -241,7 +241,7 @@ export function runCurator(
       }
       let stats: SkillRunStats;
       try {
-        stats = statsResolver(rec);
+        stats = statsResolver(rec, failWindowMs);
       } catch (e) {
         report.errors.push(`statsResolver threw for ${domain}/${rec.skill_id}: ${(e as Error).message}`);
         continue;

@@ -87,6 +87,11 @@ export class CuratorLock {
     // Lock exists — decide whether to reclaim.
     if (this.shouldReclaim()) {
       this.forceWrite();
+      // Verify ownership after the rename to guard against two processes
+      // racing on the same stale lock. Only the process whose PID is now
+      // in the file actually won the race.
+      const verify = this.read();
+      if (!verify || verify.pid !== process.pid) return false;
       this.acquired = true;
       return true;
     }
