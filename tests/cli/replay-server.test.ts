@@ -145,6 +145,17 @@ describe('replay server — endpoints', () => {
     expect(r.status).toBe(404);
   });
 
+  test('startReplayServer rejects negative port and non-finite numbers cleanly', async () => {
+    // Sanity check that the validation done in `oc trace play` matches
+    // what `server.listen()` would refuse — anything outside 0..65535
+    // throws a low-level RangeError, which is what the CLI is supposed
+    // to head off with its own validation. NaN / negative / >65535 must
+    // not reach `server.listen()`.
+    const { startReplayServer } = await import('../../cli/replay-server');
+    await expect(startReplayServer({ port: -1 })).rejects.toThrow();
+    await expect(startReplayServer({ port: 70000 })).rejects.toThrow();
+  });
+
   test('malformed percent-encoded session id is rejected with 400 (no crash)', async () => {
     // Regression: an unguarded `decodeURIComponent` on the session id let
     // a single bad local request kill the request handler with URIError,

@@ -250,7 +250,32 @@ export function registerTraceCommand(program: Command): void {
     .option('--no-open', 'Print the URL but do not auto-open the browser')
     .action(async (options: { port?: string; open?: boolean }) => {
       const { startReplayServer } = await import('./replay-server');
-      const portNum = options.port ? Number.parseInt(options.port, 10) : undefined;
+      // Validate `--port` (and the `OPENCHROME_REPLAY_PORT` env, which
+      // `startReplayServer` also reads) before handing off — passing NaN
+      // or a negative integer to `server.listen()` throws a RangeError
+      // deep in net internals. A clear CLI error is friendlier.
+      let portNum: number | undefined;
+      if (options.port !== undefined) {
+        const parsed = Number.parseInt(options.port, 10);
+        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 65535) {
+          console.error(
+            `Invalid --port: ${options.port} (expected an integer in 0..65535; 0 = ephemeral)`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        portNum = parsed;
+      } else if (process.env.OPENCHROME_REPLAY_PORT) {
+        const parsed = Number(process.env.OPENCHROME_REPLAY_PORT);
+        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 65535) {
+          console.error(
+            `Invalid OPENCHROME_REPLAY_PORT: ${process.env.OPENCHROME_REPLAY_PORT} (expected 0..65535)`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        portNum = parsed;
+      }
       const handle = await startReplayServer({ port: portNum });
       console.log(`Replay UI: ${handle.url}`);
       console.log('Press Ctrl-C to stop.');
