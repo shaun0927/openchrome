@@ -305,20 +305,16 @@ export class TraceRecorder {
       // The buffered tail is intact (flush() preserves it on failure).
       throw flushError;
     }
-    // Happy path: terminal write and remove the entry.
-    try {
-      this.getStorage().recordSessionEnd(sessionId, {
-        endedAt: this.now(),
-        status,
-        byteSize: state.meta.byteSize,
-      });
-    } catch (err) {
-      // Storage couldn't write the terminal row even though the data
-      // was already persisted. Surface the error but keep the session
-      // entry so the operator can decide; another end() call will
-      // retry the terminal write.
-      throw err;
-    }
+    // Happy path: write the terminal row, then remove the entry. If
+    // recordSessionEnd throws (storage error after data was already
+    // persisted), control never reaches `sessions.delete`, so the
+    // session entry stays in `this.sessions` and the caller can retry
+    // end() to complete the terminal write.
+    this.getStorage().recordSessionEnd(sessionId, {
+      endedAt: this.now(),
+      status,
+      byteSize: state.meta.byteSize,
+    });
     this.sessions.delete(sessionId);
   }
 
