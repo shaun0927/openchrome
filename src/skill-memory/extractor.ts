@@ -217,6 +217,26 @@ function writeAtomic(target: string, body: string): void {
   }
 }
 
+function resolveMergedSkillId(domainDir: string, requestedSkillId: string): string {
+  const activePath = path.join(domainDir, `${requestedSkillId}.md`);
+  if (fs.existsSync(activePath)) return requestedSkillId;
+
+  const reason = readJson<unknown>(
+    path.join(domainDir, '.archive', requestedSkillId, 'reason.json'),
+  );
+  if (!reason || typeof reason !== 'object') return requestedSkillId;
+
+  const mergedInto = (reason as { merged_into_skill_id?: unknown }).merged_into_skill_id;
+  if (typeof mergedInto !== 'string' || !/^[a-f0-9]{12}$/.test(mergedInto)) {
+    return requestedSkillId;
+  }
+
+  const mergedMd = path.join(domainDir, `${mergedInto}.md`);
+  const mergedSidecar = path.join(domainDir, `${mergedInto}.json`);
+  if (!fs.existsSync(mergedMd) || !fs.existsSync(mergedSidecar)) return requestedSkillId;
+  return mergedInto;
+}
+
 /**
  * Resolve the sidecar to merge against for an update.
  *
@@ -299,9 +319,10 @@ export function recordSuccessfulRun(
     );
   }
   assertSafeDomain(inputs.domain);
-  const skillId = computeSkillId(inputs.graph_node_anchor, inputs.contract_id);
+  const requestedSkillId = computeSkillId(inputs.graph_node_anchor, inputs.contract_id);
   const domainDir = path.join(rootDir, inputs.domain);
   fs.mkdirSync(domainDir, { recursive: true });
+  const skillId = resolveMergedSkillId(domainDir, requestedSkillId);
   const filePath = path.join(domainDir, `${skillId}.md`);
   const sidecarPath = path.join(domainDir, `${skillId}.json`);
   const t = now();
@@ -361,7 +382,7 @@ export function recordSuccessfulRun(
     sidecar = {
       schema_version: SKILL_SCHEMA_VERSION,
       skill_id: skillId,
-      graph_node_anchor: inputs.graph_node_anchor,
+      graph_node_anchor: existing.frontmatter.graph_node_anchor,
       contract_id: inputs.contract_id,
       runs: {
         count: successes,

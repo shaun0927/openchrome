@@ -632,4 +632,50 @@ describe('runPass2Merge', () => {
     const sidecar = postList[0].sidecar;
     expect(computeSkillId(sidecar.graph_node_anchor, sidecar.contract_id)).toBe(umbrellaSkillId);
   });
+
+  test('follow-up runs for archived sibling identities update the merged umbrella', async () => {
+    seedTwoSiblingsOnDisk(root);
+    const preList = listSkillsForDomain('amazon.com', { rootDir: root });
+    const siblingAnchors = preList.map((r) => r.frontmatter.graph_node_anchor);
+
+    await runPass2Merge({
+      rootDir: root,
+      domain: 'amazon.com',
+      requester: async () => ({
+        ok: true,
+        name: 'amazon.cart-add-umbrella',
+        intent: 'Add cart item and complete checkout (umbrella)',
+        body: '## Steps\n1. Click add\n2. Click pay\n',
+      }),
+      jaccardThreshold: 0.5,
+      prefixChars: 4,
+      now: () => FIXED_NOW,
+    });
+
+    const umbrellaBefore = listSkillsForDomain('amazon.com', { rootDir: root })[0];
+    const archivedAnchor = siblingAnchors.find(
+      (anchor) => anchor !== umbrellaBefore.frontmatter.graph_node_anchor,
+    );
+    expect(archivedAnchor).toBeDefined();
+
+    const followUp = recordSuccessfulRun(
+      {
+        txn_id: 'post-merge-archived-anchor',
+        contract_id: SHARED_CONTRACT_ID,
+        intent: 'Add cart item, then pay',
+        domain: 'amazon.com',
+        graph_node_anchor: archivedAnchor!,
+      },
+      { rootDir: root, now: () => FIXED_NOW + 123_000 },
+    );
+
+    const active = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(active).toHaveLength(1);
+    expect(followUp.created).toBe(false);
+    expect(followUp.record.skill_id).toBe(umbrellaBefore.skill_id);
+    expect(active[0].skill_id).toBe(umbrellaBefore.skill_id);
+    expect(active[0].frontmatter.verified_runs).toBe(
+      umbrellaBefore.frontmatter.verified_runs + 1,
+    );
+  });
 });
