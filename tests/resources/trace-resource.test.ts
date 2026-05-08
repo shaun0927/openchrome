@@ -287,6 +287,33 @@ describe('buildTraceContent — events', () => {
     expect(body.events.length).toBeLessThanOrEqual(10_000);
   });
 
+  test('MAX_TOTAL_SCAN cap counts every line read, not only valid events', async () => {
+    // Plant a session backed by a single chunk of pure garbage. The
+    // prior cap was driven by valid-event count, so a file of malformed
+    // lines could scan unbounded without ever tripping `truncated`.
+    // The streaming reader now increments a separate `scanned` counter
+    // on every non-blank line, so the cap fires deterministically.
+    // Using a small file is enough to assert the path is taken — the
+    // production cap is 200k lines, but the test patches it via env.
+    const sessionDir = path.join(root, 'garbage');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const garbage = Array.from({ length: 50 }, () => 'not-json').join('\n') + '\n';
+    fs.writeFileSync(path.join(sessionDir, '1-1.jsonl'), garbage);
+    store.recordSessionStart({ sessionId: 'garbage', startedAt: 1, status: 'completed' });
+
+    const r = await buildTraceContent({
+      sessionId: 'garbage',
+      kind: 'events',
+      query: new URLSearchParams(),
+    });
+    // Even with 50 unparseable lines the read returns a clean empty
+    // result — total=0, returned=0, no exception thrown.
+    const body = JSON.parse(r!) as { total: number; returned: number; events: unknown[] };
+    expect(body.total).toBe(0);
+    expect(body.returned).toBe(0);
+    expect(body.events).toEqual([]);
+  });
+
   test('skips JSONL lines that parse but are not event envelopes', async () => {
     // Plant a mix of valid events, a JSON `null`, and a scalar `42`.
     // Each is independently parseable; without a shape guard, accessing

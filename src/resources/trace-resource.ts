@@ -211,6 +211,12 @@ async function streamSessionEvents(
   let total = 0;
   let truncated = false;
 
+  // `scanned` is the wall-time guard: it counts every non-blank line we
+  // pull off the stream, including parse failures and non-event lines,
+  // so a JSONL file full of garbage can't burn unbounded CPU/I/O.
+  // `total` separately counts only well-formed events so the response's
+  // pagination metadata stays accurate.
+  let scanned = 0;
   outer: for (const f of files) {
     const stream = fs.createReadStream(path.join(sessionDir, f), {
       encoding: 'utf8',
@@ -219,7 +225,8 @@ async function streamSessionEvents(
     try {
       for await (const line of rl) {
         if (!line.trim()) continue;
-        if (total >= MAX_TOTAL_SCAN) {
+        scanned += 1;
+        if (scanned > MAX_TOTAL_SCAN) {
           truncated = true;
           break outer;
         }
@@ -228,7 +235,8 @@ async function streamSessionEvents(
           raw = JSON.parse(line);
         } catch {
           // not parseable — do not count toward total; legacy / external
-          // tooling may write incidental noise we should tolerate.
+          // tooling may write incidental noise we should tolerate. The
+          // `scanned` increment above still applies so the cap fires.
           continue;
         }
         if (!isTraceEvent(raw)) {
