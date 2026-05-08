@@ -152,6 +152,34 @@ describe('oc trace — list / show', () => {
     expect(r.stdout).toContain(fullId);
   });
 
+  test('show orders chunk files numerically by (ts, seq), not lexically', () => {
+    // Recorder names chunk files `<ts>-<seq>.jsonl`. A plain lexical
+    // `.sort()` placed `...-10.jsonl` before `...-2.jsonl`, so when two
+    // flushes shared a millisecond the second flush's events appeared
+    // before the first. Plant chunks out of lexical order and verify
+    // `--limit` returns the latest events as defined by (ts, seq).
+    store.recordSessionStart({ sessionId: 's-chunks', startedAt: 1, status: 'completed' });
+    const sessionDir = path.join(traceRoot, 's-chunks');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    // Two chunks at the same timestamp, seq=2 then seq=10.
+    fs.writeFileSync(
+      path.join(sessionDir, '1730000000000-2.jsonl'),
+      JSON.stringify({ ts: 100, seq: 2, kind: 'EARLIER', body: {} }) + '\n',
+    );
+    fs.writeFileSync(
+      path.join(sessionDir, '1730000000000-10.jsonl'),
+      JSON.stringify({ ts: 200, seq: 10, kind: 'LATER', body: {} }) + '\n',
+    );
+
+    const r = runCli(['trace', 'show', 's-chunks', '--limit', '1', '--json'], {
+      OPENCHROME_TRACE_ROOT: traceRoot,
+    });
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout) as { events: Array<{ kind: string }> };
+    expect(out.events).toHaveLength(1);
+    expect(out.events[0].kind).toBe('LATER');
+  });
+
   test('show --limit returns the most recent events, not the oldest', () => {
     // Regression: the prior `slice(0, limit)` returned the *oldest*
     // events while help advertised "recent events"; for a long session

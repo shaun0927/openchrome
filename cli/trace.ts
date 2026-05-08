@@ -183,13 +183,23 @@ function showTrace(sessionId: string, opts: { limit?: string; json?: boolean }):
   }
 
   // Read JSONL files for this session.
+  // Recorder names chunks `<ts>-<seq>.jsonl`. A plain lexical sort would
+  // place `1730000000000-10.jsonl` before `1730000000000-2.jsonl`, and
+  // because recorder timestamps come from `Date.now()` two flushes can
+  // share a millisecond. Sort by parsed (ts, seq) numerically so
+  // `--limit` always operates on the true tail of the timeline.
   const sessionDir = path.join(rootDir, sessionId);
   const events: JsonlEvent[] = [];
   if (fs.existsSync(sessionDir)) {
     const files = fs
       .readdirSync(sessionDir)
       .filter((f) => f.endsWith('.jsonl'))
-      .sort();
+      .map((f) => {
+        const m = /^(\d+)-(\d+)\.jsonl$/.exec(f);
+        return { f, ts: m ? Number(m[1]) : 0, seq: m ? Number(m[2]) : 0 };
+      })
+      .sort((a, b) => (a.ts - b.ts) || (a.seq - b.seq))
+      .map((e) => e.f);
     for (const f of files) {
       const content = fs.readFileSync(path.join(sessionDir, f), 'utf8');
       for (const line of content.split('\n')) {

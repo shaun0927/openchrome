@@ -49,6 +49,9 @@ function assertSafeDomain(domain: string): void {
 }
 
 function openDomainDb(rootDir: string, domain: string): Database | null {
+  // The first call validates the user-provided domain — a separator or
+  // `..` segment throws before the join below, so this `path.join` can
+  // never escape `OPENCHROME_SKILL_ROOT`.
   assertSafeDomain(domain);
   const dbPath = path.join(rootDir, `${domain}.db`);
   if (!fs.existsSync(dbPath)) return null;
