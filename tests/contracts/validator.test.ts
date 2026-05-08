@@ -111,6 +111,18 @@ describe('validateAssertion', () => {
     ).toBe(true);
   });
 
+  test('screenshot_class rejects dot-only class IDs at the DSL boundary', () => {
+    // The character class allows dots, so the validator must reject the
+    // dot-only forms explicitly to keep DSL-supplied class_ids from
+    // resolving to the screenshot-class root or its parent.
+    expect(
+      validateAssertion({ kind: 'screenshot_class', class_id: '.', distance_max: 5 }).ok,
+    ).toBe(false);
+    expect(
+      validateAssertion({ kind: 'screenshot_class', class_id: '..', distance_max: 5 }).ok,
+    ).toBe(false);
+  });
+
   test('no_dialog has no fields to validate', () => {
     expect(validateAssertion({ kind: 'no_dialog' }).ok).toBe(true);
   });

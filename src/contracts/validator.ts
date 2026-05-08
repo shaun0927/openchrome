@@ -251,10 +251,14 @@ function validateScreenshotClass(
     return null;
   }
   if (classId === null) return null;
-  if (!/^[A-Za-z0-9._-]+$/.test(classId)) {
+  // Mirror screenshot-class.ts: the regex accepts dot-only segments, so
+  // reject `.` and `..` explicitly to keep DSL-supplied class_ids from
+  // resolving to the registry root or its parent at use time.
+  if (!/^[A-Za-z0-9._-]+$/.test(classId) || classId === '.' || classId === '..') {
     errors.push({
       path: `${path}.class_id`,
-      message: 'class_id may only contain alphanumerics, dot, underscore, hyphen',
+      message:
+        "class_id may only contain alphanumerics, dot, underscore, hyphen and must not be '.' or '..'",
     });
     return null;
   }
