@@ -42,8 +42,6 @@ import {
   DEFAULT_EVENT_LOOP_WARN_THRESHOLD_MS,
   DEFAULT_EVENT_LOOP_FATAL_MS,
   DEFAULT_HEALTH_ENDPOINT_PORT,
-  DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS,
-  DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP,
   DEFAULT_CHROME_MONITOR_INTERVAL_MS,
   DEFAULT_CHROME_MEMORY_WARN_BYTES,
   DEFAULT_CHROME_MEMORY_CRITICAL_BYTES,
@@ -88,9 +86,10 @@ program
   .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
   .option('--http-host <host>', 'Bind address for HTTP transport (default: 127.0.0.1, use 0.0.0.0 for external access)')
   .option('--auth-token <token>', 'Bearer token for HTTP transport authentication (also: OPENCHROME_AUTH_TOKEN env var)')
+  .option('--allow-unauthenticated-http', 'Explicitly allow unauthenticated loopback-only HTTP development mode (also: OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1)')
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -313,6 +312,7 @@ program
     if (authToken) {
       console.error('[openchrome] Bearer token authentication: enabled');
     }
+    const allowUnauthenticatedHttp = options.allowUnauthenticatedHttp;
 
     // Multi-tenant API key store: when OPENCHROME_API_KEYS_PATH points at a
     // JSONL store file, load it and pass it to the HTTP transport so
@@ -347,7 +347,7 @@ program
         httpPort,
         httpHost,
         authToken,
-        apiKeyStore ? { apiKeyStore } : undefined,
+        { ...(apiKeyStore ? { apiKeyStore } : {}), allowUnauthenticatedHttp },
       ) as import('./transports/http').HTTPTransport;
       httpTransport = httpTrans;
 
@@ -367,7 +367,7 @@ program
     } else if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
       const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
-      const transport = createTransport('http', { port: httpPort, host: httpHost, authToken, apiKeyStore });
+      const transport = createTransport('http', { port: httpPort, host: httpHost, authToken, apiKeyStore, allowUnauthenticatedHttp });
       httpTransport = transport as import('./transports/http').HTTPTransport;
       server.start(transport);
       console.error(`[openchrome] HTTP transport enabled on ${httpHost}:${httpPort}`);

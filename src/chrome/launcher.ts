@@ -179,7 +179,6 @@ export class DebugPortTimeoutError extends Error {
   }
 }
 
-const DEBUG_PORT_MIN_HTTP_TIMEOUT_MS = 100;
 const DEBUG_PORT_MAX_HTTP_TIMEOUT_MS = 2000;
 const DEBUG_PORT_INITIAL_BACKOFF_MS = 200;
 const DEBUG_PORT_MAX_BACKOFF_MS = 2000;

@@ -7,7 +7,6 @@ import { promisify } from 'util';
 import { MCPServer, getMCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getWorkflowEngine, WorkflowDefinition } from '../orchestration/workflow-engine';
-import { getOrchestrationStateManager } from '../orchestration/state-manager';
 import { filterToolsForWorker, WorkerToolConfig } from '../types/tool-manifest';
 import { getPlanRegistry } from '../orchestration/plan-registry';
 import { PlanExecutor } from '../orchestration/plan-executor';
@@ -119,7 +118,7 @@ const workflowInitHandler: ToolHandler = async (
     const workflow: WorkflowDefinition = {
       id: `wf-${Date.now()}`,
       name,
-      steps: workerDefs.map((w, i) => {
+      steps: workerDefs.map((w) => {
         if (w.shareCookies === undefined) {
           console.error(`[Orchestration] Worker "${w.name}": shareCookies not specified, defaulting to true (shared context for faster init)`);
         }

@@ -13,6 +13,10 @@
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
+import {
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
+} from '../config/defaults';
 import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport } from './index';
 import { getDashboardState } from '../desktop/dashboard-state';
@@ -33,6 +37,7 @@ import {
   type Principal,
 } from '../middleware/auth';
 import { logAuditEntry } from '../security/audit-logger';
+import { authorizeDashboardEndpoint, canSeeTenant } from '../middleware/dashboard-authz';
 import { extractTenantId, TenantIdError } from '../middleware/tenant-extractor';
 import { isStrictTenantIsolationEnabled } from '../tenant/registry';
 import type { TenantId } from '../tenant/types';
@@ -67,11 +72,84 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function envFlag(name: string): boolean {
+  const raw = process.env[name];
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1');
+  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1';
+}
+
+function parseCorsOrigins(raw: string | undefined): Set<string> {
+  return new Set((raw || '').split(',').map((origin) => origin.trim()).filter(Boolean));
+}
+
+/**
+ * Format the configured server bind into a canonical origin host (URL `host`
+ * form: `hostname` or `hostname:port`, with IPv6 hostnames bracketed). This
+ * value is what `isSameOriginRequest` compares against — it is derived from
+ * operator configuration, not from the request, so it cannot be spoofed via
+ * the Host header.
+ */
+function formatServerOriginHost(host: string, port: number): string {
+  const trimmed = host.trim().toLowerCase();
+  const stripped = trimmed.replace(/^\[(.*)\]$/, '$1');
+  const isIPv6 = stripped.includes(':');
+  const hostPart = isIPv6 ? `[${stripped}]` : stripped;
+  // Default port 80 is the only http default; OpenChrome binds 3100 by
+  // default, but be explicit about what `URL.host` would produce.
+  return port === 80 ? hostPart : `${hostPart}:${port}`;
+}
+
+/**
+ * Treat a request as same-origin when the full origin tuple (scheme, host,
+ * port) in the `Origin` header matches the configured server bind. Browsers
+ * send `Origin` on same-origin non-GET requests (POST/OPTIONS), so without
+ * this bypass a browser app served from the OpenChrome origin would be
+ * rejected by the CORS allowlist even though no cross-origin trust boundary
+ * is crossed.
+ *
+ * The comparison uses the operator-configured `host:port`, NOT the client-
+ * supplied `Host` header. Trusting the Host header here would let DNS-
+ * rebinding attackers (whose page is served from a domain that was rebound
+ * to loopback) match `Origin === Host` and bypass the allowlist — defeating
+ * the very protection the allowlist provides for the unauthenticated
+ * loopback development mode.
+ *
+ * Scheme is enforced because the HTTP transport speaks plain `http` only;
+ * permitting an `https` Origin to bypass the allowlist would let cross-
+ * origin `https` callers reach `/mcp` whenever the same host is also exposed
+ * over `http`. Operators behind TLS termination must add the public origin
+ * to the allowlist explicitly.
+ */
+function isSameOriginRequest(originValue: string, serverOriginHost: string): boolean {
+  try {
+    const originUrl = new URL(originValue);
+    if (originUrl.protocol !== 'http:') return false;
+    return originUrl.host.toLowerCase() === serverOriginHost;
+  } catch {
+    return false;
+  }
+}
+
 const HTTP_REQUEST_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_REQUEST_TIMEOUT_MS',  DEFAULT_HTTP_REQUEST_TIMEOUT_MS);
 const HTTP_HEADERS_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_HEADERS_TIMEOUT_MS',  DEFAULT_HTTP_HEADERS_TIMEOUT_MS);
 const HTTP_KEEPALIVE_TIMEOUT_MS = envInt('OPENCHROME_HTTP_KEEPALIVE_TIMEOUT_MS', DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS);
 const HTTP_SOCKET_TIMEOUT_MS   = envInt('OPENCHROME_HTTP_SOCKET_TIMEOUT_MS',   DEFAULT_HTTP_SOCKET_TIMEOUT_MS);
 const HTTP_BODY_TIMEOUT_MS     = envInt('OPENCHROME_HTTP_BODY_TIMEOUT_MS',     DEFAULT_HTTP_BODY_TIMEOUT_MS);
+const HTTP_JSON_RPC_BATCH_MAX_SIZE = envInt(
+  'OPENCHROME_HTTP_JSON_RPC_BATCH_MAX_SIZE',
+  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
+);
+const HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY = Math.max(
+  1,
+  envInt(
+    'OPENCHROME_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY',
+    DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
+  ),
+);
 
 /** Exported for tests to assert current effective values. */
 export const HTTP_TIMEOUTS = Object.freeze({
@@ -80,6 +158,8 @@ export const HTTP_TIMEOUTS = Object.freeze({
   keepAliveTimeoutMs: HTTP_KEEPALIVE_TIMEOUT_MS,
   socketTimeoutMs:    HTTP_SOCKET_TIMEOUT_MS,
   bodyTimeoutMs:      HTTP_BODY_TIMEOUT_MS,
+  jsonRpcBatchMaxSize: HTTP_JSON_RPC_BATCH_MAX_SIZE,
+  jsonRpcBatchMaxConcurrency: HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
 });
 
 /** Active SSE connections for server-initiated notifications */
@@ -91,6 +171,14 @@ interface SSEConnection {
 export interface HTTPTransportOptions {
   apiKeyStore?: ApiKeyStore;
   jwt?: JwtConfig;
+  /**
+   * Explicit opt-in for unauthenticated loopback-only HTTP development.
+   * Production/daemon HTTP mode must configure auth instead of silently
+   * receiving admin-scoped disabled auth.
+   */
+  allowUnauthenticatedHttp?: boolean;
+  /** Explicit browser origins allowed to use MCP CORS. Defaults to env. */
+  corsAllowedOrigins?: string[];
 }
 
 export class HTTPTransport implements MCPTransport {
@@ -102,6 +190,8 @@ export class HTTPTransport implements MCPTransport {
   private host: string;
   private authToken: string | undefined;
   private authMode: AuthMode;
+  private readonly corsAllowedOrigins: Set<string>;
+  private readonly serverOriginHost: string;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
@@ -123,6 +213,13 @@ export class HTTPTransport implements MCPTransport {
     this.authToken = authToken;
     const verifier = options.jwt ? createJwtVerifier(options.jwt) : undefined;
     this.authMode = HTTPTransport.resolveAuthMode(authToken, options.apiKeyStore, verifier);
+    const allowUnauthenticatedHttp = options.allowUnauthenticatedHttp ?? envFlag('OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP');
+    HTTPTransport.validateUnauthenticatedHttpPolicy(this.authMode, this.host, allowUnauthenticatedHttp);
+    this.corsAllowedOrigins = new Set([
+      ...parseCorsOrigins(process.env.OPENCHROME_HTTP_CORS_ORIGINS),
+      ...(options.corsAllowedOrigins || []),
+    ]);
+    this.serverOriginHost = formatServerOriginHost(this.host, this.port);
   }
 
   /**
@@ -168,6 +265,46 @@ export class HTTPTransport implements MCPTransport {
       return { kind: 'legacy-shared-token', token: authToken };
     }
     return { kind: 'disabled' };
+  }
+
+  private static validateUnauthenticatedHttpPolicy(
+    authMode: AuthMode,
+    host: string,
+    allowUnauthenticatedHttp: boolean,
+  ): void {
+    if (authMode.kind !== 'disabled') return;
+
+    const migration = 'Configure HTTP auth (OPENCHROME_AUTH_TOKEN, API keys, or JWT), use stdio, ' +
+      'or set OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1 for loopback-only development.';
+    if (!allowUnauthenticatedHttp) {
+      throw new Error(`Refusing to start unauthenticated HTTP transport. ${migration}`);
+    }
+    if (!isLoopbackHost(host)) {
+      throw new Error(
+        `Refusing to start unauthenticated HTTP transport on non-loopback host ${host}. ${migration}`,
+      );
+    }
+  }
+
+  private applyCors(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
+    const origin = req.headers.origin;
+    const originValue = typeof origin === 'string' ? origin : undefined;
+    const sameOrigin = originValue ? isSameOriginRequest(originValue, this.serverOriginHost) : false;
+    if (originValue && this.corsAllowedOrigins.has(originValue)) {
+      res.setHeader('Access-Control-Allow-Origin', originValue);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', `Content-Type, Mcp-Session-Id, Authorization, X-Tenant-Id, ${REQUEST_ID_HEADER}`);
+    res.setHeader('Access-Control-Expose-Headers', `Mcp-Session-Id, ${REQUEST_ID_HEADER}`);
+
+    const isMcpEndpoint = pathname === '/mcp' || pathname === '/mcp/sse';
+    if (originValue && isMcpEndpoint && !sameOrigin && !this.corsAllowedOrigins.has(originValue)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'CORS origin not allowed' }));
+      return false;
+    }
+    return true;
   }
 
   /** Returns the resolved principal for a given request, if any. */
@@ -305,12 +442,11 @@ export class HTTPTransport implements MCPTransport {
     const url = new URL(req.url || '/', `http://${this.host}:${this.port}`);
     const pathname = url.pathname;
 
-    // CORS headers for all responses — restrict origin when auth is enforced
-    const authEnforced = this.authMode.kind !== 'disabled';
-    res.setHeader('Access-Control-Allow-Origin', authEnforced ? 'null' : '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', `Content-Type, Mcp-Session-Id, Authorization, X-Tenant-Id, ${REQUEST_ID_HEADER}`);
-    res.setHeader('Access-Control-Expose-Headers', `Mcp-Session-Id, ${REQUEST_ID_HEADER}`);
+    // CORS is explicit allowlist-only for browser-origin MCP requests. Non-browser
+    // clients that do not send Origin continue through normal authentication.
+    if (!this.applyCors(req, res, pathname)) {
+      return;
+    }
 
     // Request correlation: honour client-supplied X-Request-Id, otherwise mint
     // a fresh UUID. Echo it back on every response so clients (and downstream
@@ -381,19 +517,19 @@ export class HTTPTransport implements MCPTransport {
 
     // ─── Dashboard REST API ────────────────────────────────────────────
     if (pathname === '/api/screenshot' && req.method === 'GET') {
-      this.handleScreenshot(url, res);
+      this.handleScreenshot(req, url, res);
       return;
     }
     if (pathname === '/api/sessions' && req.method === 'GET') {
-      this.handleSessions(res);
+      this.handleSessions(req, res);
       return;
     }
     if (pathname === '/api/tool-calls' && req.method === 'GET') {
-      this.handleToolCalls(url, res);
+      this.handleToolCalls(req, url, res);
       return;
     }
     if (pathname === '/api/metrics' && req.method === 'GET') {
-      this.handleMetrics(res);
+      this.handleMetrics(req, res);
       return;
     }
 
@@ -516,12 +652,31 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /api/screenshot - capture active tab screenshot as base64 WebP
    */
-  private handleScreenshot(url: URL, res: http.ServerResponse): void {
-    const sessionId = url.searchParams.get('session_id') || 'default';
+  private handleScreenshot(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
+    const requestedSessionId = url.searchParams.get('session_id') || url.searchParams.get('sessionId');
+    const sessionId = requestedSessionId || 'default';
 
     if (!this.sessionManager) {
+      const authz = authorizeDashboardEndpoint(req, 'screenshot');
+      if (!authz.ok) {
+        this.writeDashboardAuthzFailure(res, 'screenshot', sessionId, authz.status, authz.error);
+        return;
+      }
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Session manager not available' }));
+      return;
+    }
+
+    // Always look up the resolved session — including the implicit "default" —
+    // so that a tenant-scoped caller cannot read another tenant's default
+    // session screenshot just by omitting `session_id`.
+    const session = this.sessionManager.getSession(sessionId);
+    const authz = authorizeDashboardEndpoint(req, 'screenshot', {
+      requireSessionOwnership: true,
+      requestedSessionTenantId: session?.tenantId,
+    });
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, 'screenshot', sessionId, authz.status, authz.error);
       return;
     }
 
@@ -533,8 +688,26 @@ export class HTTPTransport implements MCPTransport {
       .catch((err) => {
         console.error('[HTTPTransport] Screenshot error:', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Screenshot failed' }));
+        res.end(JSON.stringify({ error: 'Screenshot failed' }));
       });
+  }
+
+  private writeDashboardAuthzFailure(
+    res: http.ServerResponse,
+    endpoint: 'screenshot' | 'sessions' | 'tool-calls' | 'metrics',
+    sessionId: string,
+    status: 401 | 403,
+    error: string,
+  ): void {
+    // Audit denial so that probing of cross-tenant resources is observable in
+    // the same place that auth_failure entries already live.
+    try {
+      logAuditEntry('dashboard_authz_failure', sessionId, { endpoint, status }, undefined, { status: 'error' });
+    } catch {
+      // best-effort
+    }
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error }));
   }
 
   private async captureScreenshot(sessionId: string): Promise<{ base64: string; format: string; sessionId: string }> {
@@ -585,14 +758,21 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /api/sessions - return connected sessions with tab counts
    */
-  private handleSessions(res: http.ServerResponse): void {
+  private handleSessions(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const authz = authorizeDashboardEndpoint(req, 'sessions');
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, 'sessions', 'anonymous', authz.status, authz.error);
+      return;
+    }
+
     if (!this.sessionManager) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessions: [] }));
       return;
     }
 
-    const infos = this.sessionManager.getAllSessionInfos();
+    const infos = this.sessionManager.getAllSessionInfos()
+      .filter((info) => canSeeTenant(authz.principal, info.tenantId));
     const sessions = infos.map((info) => ({
       id: info.id,
       name: info.name,
@@ -609,13 +789,35 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /api/tool-calls - return recent tool calls from dashboard state
    */
-  private handleToolCalls(url: URL, res: http.ServerResponse): void {
+  private handleToolCalls(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
     const sessionId = url.searchParams.get('session_id') || undefined;
+    const requestedSession = sessionId && this.sessionManager
+      ? this.sessionManager.getSession(sessionId)
+      : undefined;
+
+    const authz = authorizeDashboardEndpoint(req, 'tool-calls', {
+      requireSessionOwnership: sessionId !== undefined,
+      requestedSessionTenantId: requestedSession?.tenantId,
+    });
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, 'tool-calls', sessionId ?? 'anonymous', authz.status, authz.error);
+      return;
+    }
+
     const limit = parseInt(url.searchParams.get('limit') || '20', 10);
     const clampedLimit = Math.min(Math.max(1, limit), 100);
 
     const dashboardState = getDashboardState();
-    const calls = dashboardState.getToolCalls(sessionId, clampedLimit);
+    let calls = dashboardState.getToolCalls(sessionId, clampedLimit);
+
+    // Tenant-scoped admins must not see tool calls from other tenants. When the
+    // session has been deleted we cannot prove ownership, so the call is hidden.
+    const sm = this.sessionManager;
+    if (sm) {
+      calls = calls.filter((c) => canSeeTenant(authz.principal, sm.getSession(c.sessionId)?.tenantId));
+    } else if (!canSeeTenant(authz.principal, undefined)) {
+      calls = [];
+    }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ calls }));
@@ -624,16 +826,27 @@ export class HTTPTransport implements MCPTransport {
   /**
    * GET /api/metrics - return server metrics
    */
-  private handleMetrics(res: http.ServerResponse): void {
+  private handleMetrics(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const authz = authorizeDashboardEndpoint(req, 'metrics');
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, 'metrics', 'anonymous', authz.status, authz.error);
+      return;
+    }
+
     const mem = process.memoryUsage();
     const dashboardState = getDashboardState();
 
     let tabCount = 0;
     let sessionCount = 0;
     if (this.sessionManager) {
-      const stats = this.sessionManager.getStats();
-      tabCount = stats.totalTargets;
-      sessionCount = stats.activeSessions;
+      // Tenant-scoped principals must only see counts for their own tenant —
+      // the global getStats() exposes activity from every tenant.
+      const visible = this.sessionManager.getAllSessionInfos()
+        .filter((info) => canSeeTenant(authz.principal, info.tenantId));
+      sessionCount = visible.length;
+      for (const info of visible) {
+        tabCount += info.targetCount;
+      }
     }
 
     const metrics = {
@@ -1010,6 +1223,16 @@ export class HTTPTransport implements MCPTransport {
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
 
+    if (messages.length > HTTP_JSON_RPC_BATCH_MAX_SIZE) {
+      // Reject the whole batch with a single protocol-level error rather than
+      // fabricating one response per element. Per JSON-RPC 2.0 §4.1, a server
+      // must not respond to notifications — the previous per-item map invented
+      // `id: 0` responses for notification entries, which a spec-conformant
+      // client would correlate to an unrelated in-flight request. handlePost
+      // unwraps a single-element array into one response object on the wire.
+      return [this.createBatchTooLargeError()];
+    }
+
     // Assign sessionId once before concurrent processing to avoid data race
     // when multiple initialize requests appear in the same batch.
     if (!sessionId) {
@@ -1023,32 +1246,41 @@ export class HTTPTransport implements MCPTransport {
       }
     }
 
-    const promises = messages.map(async (msg) => {
-      if (typeof msg !== 'object' || msg === null) {
-        return {
-          jsonrpc: '2.0' as const,
-          id: 0,
-          error: {
-            code: MCPErrorCodes.INVALID_REQUEST,
-            message: 'Invalid batch element: not an object',
-          },
-        } as MCPResponse;
-      }
-
-      const record = msg as Record<string, unknown>;
-      // Same defense-in-depth as the single-message path: scrub any
-      // client-provided `__principal` and attach the trusted one via Symbol.
-      if ('__principal' in record) {
-        delete record.__principal;
-      }
-      if (principal) {
-        (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
-      }
-
+    return this.mapBatchWithConcurrency(messages, HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY, async (msg) => {
+      // Wrap the entire per-element body in try/catch. mapBatchWithConcurrency
+      // shares one results array across workers, so a synchronous throw from
+      // any branch (e.g., a frozen `record` rejecting __principal scrubbing)
+      // would unwind that worker mid-loop and leave the unfilled slots as
+      // `undefined`, corrupting later responses' index → request mapping.
+      const record = (typeof msg === 'object' && msg !== null)
+        ? (msg as Record<string, unknown>)
+        : null;
       try {
+        if (record === null) {
+          return {
+            jsonrpc: '2.0' as const,
+            id: 0,
+            error: {
+              code: MCPErrorCodes.INVALID_REQUEST,
+              message: 'Invalid batch element: not an object',
+            },
+          } as MCPResponse;
+        }
+
+        // Same defense-in-depth as the single-message path: scrub any
+        // client-provided `__principal` and attach the trusted one via Symbol.
+        if ('__principal' in record) {
+          delete record.__principal;
+        }
+        if (principal) {
+          (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
+        }
+
         return await handler(record, signal);
       } catch (error) {
-        const id = (record.id as string | number) ?? 0;
+        const id = record !== null
+          ? ((record.id as string | number | undefined) ?? 0)
+          : 0;
         return {
           jsonrpc: '2.0' as const,
           id,
@@ -1059,7 +1291,39 @@ export class HTTPTransport implements MCPTransport {
         } as MCPResponse;
       }
     });
+  }
 
-    return Promise.all(promises);
+  private createBatchTooLargeError(): MCPResponse {
+    // id: null is the JSON-RPC 2.0 §5.1 sentinel for errors detected before a
+    // request id can be parsed (or, here, any meaningful per-element id can be
+    // chosen). It also avoids colliding with an active client-request id.
+    return {
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: MCPErrorCodes.INVALID_REQUEST,
+        message: `JSON-RPC batch size exceeds maximum of ${HTTP_JSON_RPC_BATCH_MAX_SIZE}`,
+      },
+    };
+  }
+
+  private async mapBatchWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    fn: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+
+    const workerCount = Math.min(concurrency, items.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await fn(items[currentIndex]);
+      }
+    });
+
+    await Promise.all(workers);
+    return results;
   }
 }

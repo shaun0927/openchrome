@@ -73,6 +73,18 @@ Each key is issued with one or more scopes. Scopes are additive; `write` implies
 
 Scope implication chain: `admin` > `write` > `read`. `headless-only` is orthogonal and enforced separately by the caller.
 
+### Dashboard REST endpoints
+
+Dashboard REST endpoints use the same trusted HTTP principal as `/mcp`; clients cannot supply scope or tenant identity in JSON bodies or query parameters. Missing or invalid bearer auth returns `401`; authenticated callers without the required endpoint scope, or callers requesting another tenant's session, receive `403`.
+
+| Endpoint | Required scope | Tenant/session rule |
+|---|---|---|
+| `GET /api/screenshot` | `read` | When `session_id` or `sessionId` is supplied, the session must belong to the caller's tenant. |
+| `GET /api/sessions` | `read` | API-key/JWT callers receive only sessions owned by their tenant. |
+| `GET /api/tool-calls` | `admin` | Admin-only because tool-call records can include sensitive arguments. |
+| `GET /api/metrics` | `admin` | Admin-only while the endpoint exposes global process/server counters. |
+
+
 ---
 
 ## Key rotation

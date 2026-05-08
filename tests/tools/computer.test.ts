@@ -5,6 +5,7 @@
 
 import { createMockSessionManager, createMockRefIdManager } from '../utils/mock-session';
 import { keyNormalizationMap } from '../utils/test-helpers';
+import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, MAX_INLINE_IMAGE_PAYLOAD_BYTES } from '../../src/config/defaults';
 
 // Mock the session manager and ref-id-manager modules
 jest.mock('../../src/session-manager', () => ({
@@ -549,6 +550,101 @@ describe('ComputerTool', () => {
         (c) => c[0] === 'Page.captureScreenshot',
       );
       expect((captureCall![1] as Record<string, unknown>).format).toBe('webp');
+    });
+
+    test('rejects inline screenshot payloads over 10 MiB after encoding', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      const cdpSession = await (page as any).createCDPSession();
+      (cdpSession.send as jest.Mock).mockResolvedValue({
+        data: 'a'.repeat(MAX_INLINE_IMAGE_PAYLOAD_BYTES + 1),
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('exceeds the 10 MiB inline limit');
+    });
+
+    test('rejects oversized viewport area before CDP capture', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.viewport as jest.Mock).mockReturnValue({ width: 6000, height: 5000 });
+      const cdpSession = await (page as any).createCDPSession();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Screenshot area 6000x5000');
+      expect(result.content[0].text).toContain('Request viewport-only capture');
+      expect(cdpSession.send).not.toHaveBeenCalledWith('Page.captureScreenshot', expect.anything());
+    });
+
+    test('reads live window dimensions when page.viewport() returns null', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.viewport as jest.Mock).mockReturnValue(null);
+      (page.evaluate as jest.Mock).mockResolvedValue({ width: 1024, height: 768 });
+      const cdpSession = await (page as any).createCDPSession();
+      (cdpSession.send as jest.Mock).mockResolvedValue({ data: 'ZmFrZQ==' });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string }>; isError?: boolean };
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].type).toBe('image');
+      expect(page.evaluate).toHaveBeenCalled();
+      expect(cdpSession.send).toHaveBeenCalledWith('Page.captureScreenshot', expect.any(Object));
+    });
+
+    test('rejects oversized live window dimensions when page.viewport() is null', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      (page.viewport as jest.Mock).mockReturnValue(null);
+      (page.evaluate as jest.Mock).mockResolvedValue({ width: 6000, height: 5000 });
+      const cdpSession = await (page as any).createCDPSession();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Screenshot area 6000x5000');
+      expect(cdpSession.send).not.toHaveBeenCalledWith('Page.captureScreenshot', expect.anything());
+    });
+
+    test('does not start a duplicate screenshot capture after race timeout', async () => {
+      jest.useFakeTimers();
+      try {
+        const handler = await getComputerHandler();
+        const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+        const cdpSession = await (page as any).createCDPSession();
+        (cdpSession.send as jest.Mock).mockImplementation(() => new Promise(() => {}));
+
+        const pending = handler(testSessionId, {
+          tabId: testTargetId,
+          action: 'screenshot',
+        }) as Promise<{ content: Array<{ text?: string }>; isError?: boolean }>;
+
+        await jest.advanceTimersByTimeAsync(DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS);
+        await pending;
+
+        const captureCalls = (cdpSession.send as jest.Mock).mock.calls.filter(
+          (c) => c[0] === 'Page.captureScreenshot'
+        );
+        expect(captureCalls).toHaveLength(1);
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 

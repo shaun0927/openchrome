@@ -7,7 +7,7 @@
  * CDPSession so console events are reliably captured.
  */
 
-import { CDPSession, Page } from 'puppeteer-core';
+import { CDPSession } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';

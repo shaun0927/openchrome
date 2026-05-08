@@ -3,7 +3,6 @@
  * Provides file-based scratchpad management for workers
  */
 
-import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 

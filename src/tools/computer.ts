@@ -13,6 +13,12 @@ import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
+import {
+  getBase64EncodedByteLength,
+  resolveViewportDimensions,
+  validateCaptureArea,
+  validateInlineImagePayload,
+} from '../utils/screenshot-guards';
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -196,8 +202,26 @@ const handler: ToolHandler = async (
           };
         }
 
+        // page.viewport() can return null when Chrome is launched with
+        // defaultViewport: null. Read live window dimensions in that case so
+        // the area guard reflects the real capture size, not a hardcoded
+        // fallback that could underestimate when --window-size is large.
+        const captureDimensions = await resolveViewportDimensions(page);
+        const areaError = validateCaptureArea(captureDimensions, 'Screenshot');
+        if (areaError) {
+          return {
+            content: [{ type: 'text', text: `Error: ${areaError}` }],
+            isError: true,
+          };
+        }
+
         // Phase 2: Screenshot with retry
-        const attemptScreenshot = async (): Promise<{ data: string; mimeType: string } | null> => {
+        type ScreenshotAttempt =
+          | { status: 'success'; data: string; mimeType: string }
+          | { status: 'timeout' }
+          | { status: 'error' };
+
+        const attemptScreenshot = async (): Promise<ScreenshotAttempt> => {
           try {
             const screenshotData = await Promise.race([
               (async () => {
@@ -222,23 +246,36 @@ const handler: ToolHandler = async (
               })(),
               new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
             ]);
-            if (screenshotData === null) return null;
-            return { data: screenshotData, mimeType: mimeTypeForFormat[effectiveFormat] };
+            if (screenshotData === null) return { status: 'timeout' };
+            return { status: 'success', data: screenshotData, mimeType: mimeTypeForFormat[effectiveFormat] };
           } catch {
-            return null;
+            return { status: 'error' };
           }
         };
 
         // First attempt
         let screenshot = await attemptScreenshot();
 
-        // Retry once after 500ms if failed
-        if (!screenshot) {
+        // Retry once after 500ms on synchronous CDP failure. Do not start a
+        // duplicate expensive capture after timeout because Chrome may still be
+        // working on the first Page.captureScreenshot request.
+        if (screenshot.status === 'error') {
           await new Promise(r => setTimeout(r, 500));
           screenshot = await attemptScreenshot();
         }
 
-        if (screenshot) {
+        if (screenshot.status === 'success') {
+          const payloadError = validateInlineImagePayload(
+            getBase64EncodedByteLength(screenshot.data),
+            'Screenshot'
+          );
+          if (payloadError) {
+            return {
+              content: [{ type: 'text', text: `Error: ${payloadError}` }],
+              isError: true,
+            };
+          }
+
           const content: MCPContent[] = [
             { type: 'image', data: screenshot.data, mimeType: screenshot.mimeType },
           ];

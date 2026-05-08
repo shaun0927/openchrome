@@ -1,3 +1,6 @@
+import * as os from 'os';
+import * as path from 'path';
+
 /**
  * Shared default constants used across the codebase.
  *
@@ -27,6 +30,12 @@ export const DEFAULT_PROTOCOL_TIMEOUT_MS = 30000;
 /** Screenshot-specific timeout. Shorter than protocol timeout for fast fallback. */
 export const DEFAULT_SCREENSHOT_TIMEOUT_MS = 15000;
 
+/** Maximum base64-encoded image bytes returned inline in MCP responses (10 MiB). */
+export const MAX_INLINE_IMAGE_PAYLOAD_BYTES = 10 * 1024 * 1024;
+
+/** Maximum screenshot capture area in CSS pixels (25 megapixels). */
+export const MAX_CAPTURE_AREA_PIXELS = 25 * 1000 * 1000;
+
 /** Maximum number of tabs (targets) per worker. Oldest tab is closed when limit is reached. */
 export const DEFAULT_MAX_TARGETS_PER_WORKER = 5;
 
@@ -50,6 +59,12 @@ export const DEFAULT_SAFE_TITLE_TIMEOUT_MS = 3000;
 
 /** Per-item timeout in request queue (ms). Safety net against indefinitely hung CDP commands. */
 export const DEFAULT_QUEUE_ITEM_TIMEOUT_MS = 120000;
+
+/** Maximum accepted JSON-RPC messages in one HTTP batch request. */
+export const DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE = 32;
+
+/** Maximum JSON-RPC HTTP batch elements executed concurrently. */
+export const DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY = 4;
 
 /** Global tool execution timeout in milliseconds. Absolute safety net against indefinitely hung handlers. */
 export const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 120000;
@@ -165,6 +180,10 @@ export const DEFAULT_FILL_FORM_POLL_MS = 1500;
 
 /** fill_form: Interval between polls when waiting for form fields (ms). */
 export const DEFAULT_FILL_FORM_POLL_INTERVAL_MS = 300;
+
+/** Default directory whose files may be uploaded by file_upload in addition to the process cwd.
+ *  Override with OPENCHROME_FILE_UPLOAD_TEMP_DIR. */
+export const DEFAULT_FILE_UPLOAD_TEMP_DIR = path.join(os.tmpdir(), 'openchrome-uploads');
 
 /** Default compression level for response compression. */
 export const DEFAULT_COMPRESSION_LEVEL = 'light';

@@ -1738,6 +1738,7 @@ export class SessionManager {
       createdAt: session.createdAt,
       lastActivityAt: session.lastActivityAt,
       name: session.name,
+      tenantId: session.tenantId,
     };
   }
 

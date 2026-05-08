@@ -21,7 +21,8 @@
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
     "clean": "rimraf dist",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "lint:changed": "node scripts/lint-changed-src.js"
   },
   "keywords": [
     "openchrome",

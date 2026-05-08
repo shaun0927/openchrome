@@ -7,8 +7,55 @@ import * as os from 'os';
 import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { getGlobalConfig } from '../config/global';
+import { DEFAULT_FILE_UPLOAD_TEMP_DIR } from '../config/defaults';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
+
+const OPENCHROME_FILE_UPLOAD_ROOTS_ENV = 'OPENCHROME_FILE_UPLOAD_ROOTS';
+const OPENCHROME_FILE_UPLOAD_TEMP_DIR_ENV = 'OPENCHROME_FILE_UPLOAD_TEMP_DIR';
+
+const SENSITIVE_PATH_SEGMENTS = ['.ssh', '.gnupg', '.aws', '.env', 'id_rsa', 'id_ed25519', '.npmrc'];
+
+interface PathLike {
+  sep: string;
+  delimiter: string;
+  basename(path: string): string;
+  isAbsolute(path: string): boolean;
+  join(...paths: string[]): string;
+  relative(from: string, to: string): string;
+  resolve(...paths: string[]): string;
+}
+
+export interface UploadRootPolicyOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  configuredRoots?: string[];
+  pathModule?: PathLike;
+  tempUploadDir?: string;
+}
+
+export interface ValidateUploadPathOptions extends UploadRootPolicyOptions {
+  ensureDefaultTempRoot?: boolean;
+  /** Pre-resolved real paths of allowed upload roots. When provided, validateUploadPath
+   *  skips its own root resolution (no fs.mkdir / fs.realpath per call), so callers
+   *  validating many files in one request only pay that cost once. */
+  resolvedAllowedRoots?: string[];
+}
+
+export interface ValidatedUploadFile {
+  originalPath: string;
+  resolvedPath: string;
+  realPath: string;
+  name: string;
+  size: number;
+}
+
+export interface UploadPathValidationResult {
+  ok: boolean;
+  file?: ValidatedUploadFile;
+  error?: string;
+}
 
 const definition: MCPToolDefinition = {
   name: 'file_upload',
@@ -27,12 +74,168 @@ const definition: MCPToolDefinition = {
       filePaths: {
         type: 'array',
         items: { type: 'string' },
-        description: 'File paths to upload (absolute or ~/relative)',
+        description: 'File paths to upload. Paths must resolve under configured file_upload roots.',
       },
     },
     required: ['tabId', 'selector', 'filePaths'],
   },
 };
+
+export function parseUploadRootsEnv(raw: string | undefined, delimiter: string = path.delimiter): string[] {
+  if (!raw) return [];
+  return raw
+    .split(delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+export function getDefaultUploadTempDir(
+  env: NodeJS.ProcessEnv = process.env,
+  pathModule: PathLike = path
+): string {
+  return pathModule.resolve(expandHomePath(env[OPENCHROME_FILE_UPLOAD_TEMP_DIR_ENV] || DEFAULT_FILE_UPLOAD_TEMP_DIR, pathModule));
+}
+
+export function getConfiguredUploadRoots(configuredRoots?: string[]): string[] {
+  const securityConfig = getGlobalConfig().security;
+  return configuredRoots ?? securityConfig?.file_upload_roots ?? [];
+}
+
+export function getUploadRootPolicy(options: UploadRootPolicyOptions = {}): string[] {
+  const pathModule = options.pathModule ?? path;
+  const env = options.env ?? process.env;
+  const cwd = options.cwd ?? process.cwd();
+  const tempUploadDir = options.tempUploadDir ?? getDefaultUploadTempDir(env, pathModule);
+  const configuredRoots = options.configuredRoots ?? getConfiguredUploadRoots();
+  const envRoots = parseUploadRootsEnv(env[OPENCHROME_FILE_UPLOAD_ROOTS_ENV], pathModule.delimiter);
+
+  return [cwd, tempUploadDir, ...configuredRoots, ...envRoots]
+    .map((root) => root.trim())
+    .filter((root) => root.length > 0)
+    .map((root) => expandHomePath(root, pathModule))
+    .map((root) => pathModule.resolve(root));
+}
+
+export function expandHomePath(filePath: string, pathModule: PathLike = path): string {
+  if (filePath === '~') {
+    return os.homedir();
+  }
+  if (filePath.startsWith(`~${pathModule.sep}`) || filePath.startsWith('~/') || filePath.startsWith('~\\')) {
+    return pathModule.join(os.homedir(), filePath.slice(2));
+  }
+  if (process.platform === 'win32' && filePath.toLowerCase().startsWith('%userprofile%')) {
+    const rest = filePath.slice('%USERPROFILE%'.length).replace(/^[/\\]+/, '');
+    return pathModule.join(os.homedir(), rest);
+  }
+  return filePath;
+}
+
+export function resolveCandidateUploadPath(filePath: string, pathModule: PathLike = path): string {
+  return pathModule.resolve(expandHomePath(filePath, pathModule));
+}
+
+export function isPathInsideRoot(
+  candidateRealPath: string,
+  rootRealPath: string,
+  pathModule: PathLike = path,
+  caseSensitive = process.platform !== 'win32'
+): boolean {
+  const candidate = caseSensitive ? candidateRealPath : candidateRealPath.toLowerCase();
+  const root = caseSensitive ? rootRealPath : rootRealPath.toLowerCase();
+  const relative = pathModule.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !pathModule.isAbsolute(relative));
+}
+
+export function hasSensitivePathSegment(filePath: string, pathModule: PathLike = path): boolean {
+  const normalizedPath = pathModule.resolve(filePath);
+  const pathSegments = normalizedPath.toLowerCase().split(/[\\/]+/);
+  return SENSITIVE_PATH_SEGMENTS.some((segment) => pathSegments.includes(segment));
+}
+
+export async function resolveAllowedUploadRoots(options: ValidateUploadPathOptions = {}): Promise<string[]> {
+  if (options.ensureDefaultTempRoot !== false) {
+    const pathModule = options.pathModule ?? path;
+    const env = options.env ?? process.env;
+    const tempUploadDir = options.tempUploadDir ?? getDefaultUploadTempDir(env, pathModule);
+    try {
+      await fs.mkdir(tempUploadDir, { recursive: true });
+    } catch {
+      // If we cannot create the temp upload directory (e.g. read-only filesystem,
+      // permission denied), fall through. The directory simply will not become a
+      // valid root via realpath() below; uploads from other configured roots still work.
+    }
+  }
+
+  const roots = getUploadRootPolicy(options);
+  const realRoots: string[] = [];
+  const seen = new Set<string>();
+
+  for (const root of roots) {
+    try {
+      const realRoot = await fs.realpath(root);
+      const key = process.platform === 'win32' ? realRoot.toLowerCase() : realRoot;
+      if (!seen.has(key)) {
+        realRoots.push(realRoot);
+        seen.add(key);
+      }
+    } catch {
+      // Non-existent configured roots are not used for allowlist decisions.
+    }
+  }
+
+  return realRoots;
+}
+
+export async function validateUploadPath(
+  filePath: string,
+  options: ValidateUploadPathOptions = {}
+): Promise<UploadPathValidationResult> {
+  if (typeof filePath !== 'string' || filePath.length === 0) {
+    return { ok: false, error: 'Error: Upload path must be a non-empty string' };
+  }
+
+  const pathModule = options.pathModule ?? path;
+  const resolvedPath = resolveCandidateUploadPath(filePath, pathModule);
+
+  let realPath: string;
+  try {
+    realPath = await fs.realpath(resolvedPath);
+  } catch {
+    return { ok: false, error: 'Error: Upload file is not accessible' };
+  }
+
+  const allowedRoots = options.resolvedAllowedRoots ?? await resolveAllowedUploadRoots(options);
+  const isAllowed = allowedRoots.some((root) => isPathInsideRoot(realPath, root, pathModule));
+  if (!isAllowed) {
+    return { ok: false, error: 'Error: Upload path is outside allowed upload roots' };
+  }
+
+  if (hasSensitivePathSegment(realPath, pathModule)) {
+    return { ok: false, error: 'Error: Upload blocked by sensitive file policy' };
+  }
+
+  let stats;
+  try {
+    stats = await fs.stat(realPath);
+  } catch {
+    return { ok: false, error: 'Error: Upload file is not accessible' };
+  }
+
+  if (!stats.isFile()) {
+    return { ok: false, error: 'Error: Upload path is not a file' };
+  }
+
+  return {
+    ok: true,
+    file: {
+      originalPath: filePath,
+      resolvedPath,
+      realPath,
+      name: pathModule.basename(realPath),
+      size: stats.size,
+    },
+  };
+}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -74,55 +277,27 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Resolve and validate file paths
+    // Resolve and validate file paths against explicit upload roots before browser upload.
+    // Resolve allowed roots once per request to avoid redundant fs.mkdir/fs.realpath
+    // calls when validating multiple files.
+    const resolvedAllowedRoots = await resolveAllowedUploadRoots();
     const resolvedPaths: string[] = [];
     const fileInfo: Array<{ name: string; size: number }> = [];
 
     for (const filePath of filePaths) {
-      let resolvedPath = filePath;
-
-      // Resolve ~ to home directory
-      if (filePath.startsWith('~')) {
-        resolvedPath = path.join(os.homedir(), filePath.slice(1));
-      } else if (process.platform === 'win32' && filePath.startsWith('%USERPROFILE%')) {
-        const rest = filePath.slice('%USERPROFILE%'.length).replace(/^[/\\]+/, '');
-        resolvedPath = path.join(os.homedir(), rest);
-      } else if (!path.isAbsolute(filePath)) {
-        resolvedPath = path.resolve(filePath);
-      }
-
-      // Block uploads of sensitive files (exact path segment matching)
-      const normalizedPath = path.resolve(resolvedPath);
-      const sensitivePatterns = ['.ssh', '.gnupg', '.aws', '.env', 'id_rsa', 'id_ed25519', '.npmrc'];
-      const pathSegments = normalizedPath.toLowerCase().split(path.sep);
-      const isSensitive = sensitivePatterns.some(p => pathSegments.includes(p));
-      if (isSensitive) {
+      const validation = await validateUploadPath(filePath, { resolvedAllowedRoots });
+      if (!validation.ok || !validation.file) {
         return {
-          content: [{ type: 'text', text: `Error: Upload blocked — "${filePath}" matches a sensitive file pattern` }],
+          content: [{ type: 'text', text: validation.error ?? 'Error: Upload path is not allowed' }],
           isError: true,
         };
       }
 
-      // Check if file exists
-      try {
-        const stats = await fs.stat(resolvedPath);
-        if (!stats.isFile()) {
-          return {
-            content: [{ type: 'text', text: `Error: ${resolvedPath} is not a file` }],
-            isError: true,
-          };
-        }
-        resolvedPaths.push(resolvedPath);
-        fileInfo.push({
-          name: path.basename(resolvedPath),
-          size: stats.size,
-        });
-      } catch (e) {
-        return {
-          content: [{ type: 'text', text: `Error: File not found: ${resolvedPath}` }],
-          isError: true,
-        };
-      }
+      resolvedPaths.push(validation.file.realPath);
+      fileInfo.push({
+        name: validation.file.name,
+        size: validation.file.size,
+      });
     }
 
     // Find the file input element

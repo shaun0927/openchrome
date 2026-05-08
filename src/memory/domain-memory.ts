@@ -6,7 +6,6 @@
  * Storage: ~/.openchrome/memory/domain-knowledge.json
  */
 
-import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';

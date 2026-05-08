@@ -25,16 +25,6 @@ interface CSSElementInfo {
   boundingBox: { x: number; y: number; width: number; height: number } | null;
 }
 
-interface XPathElementInfo {
-  tagName: string;
-  id?: string;
-  className?: string;
-  text?: string;
-  attributes: Record<string, string>;
-  rect?: { x: number; y: number; width: number; height: number };
-  xpath: string;
-}
-
 // ---------------------------------------------------------------------------
 // Definition
 // ---------------------------------------------------------------------------
