@@ -102,6 +102,24 @@ describe('actionsEquivalent — type / fill_input', () => {
     ).toBe(false);
   });
 
+  test('missing selector/ref targets are not equivalent (no resolver)', () => {
+    expect(
+      actionsEquivalent(
+        { kind: 'type', args: { text: 't' } },
+        { kind: 'type', args: { text: 't' } },
+      ),
+    ).toBe(false);
+  });
+
+  test('missing text is not equivalent even with matching target', () => {
+    expect(
+      actionsEquivalent(
+        { kind: 'type', args: { selector: '#email' } },
+        { kind: 'type', args: { selector: '#email' } },
+      ),
+    ).toBe(false);
+  });
+
   test('fill_input behaves identically to type', () => {
     expect(
       actionsEquivalent(
@@ -462,6 +480,20 @@ describe('VotingOrchestrator — single-provider fallback', () => {
       providers: [
         fakeProvider('a', async () => ({ ok: true, action, tokens: 10 })),
         fakeProvider('b', async () => ({ ok: true, tokens: 10 })),
+      ],
+    });
+    const v = await orch.runVote(REQ);
+    expect(v.proceed).toBe(false);
+    if (!v.proceed) expect(v.reason).toBe('disagreement');
+  });
+
+  test('non-object provider reply is classified as failure (no crash)', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { x: 50, y: 50 } };
+    const orch = new VotingOrchestrator({
+      fallbackMode: 'strict',
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 10 })),
+        fakeProvider('b', async () => null as unknown as ProviderReply),
       ],
     });
     const v = await orch.runVote(REQ);

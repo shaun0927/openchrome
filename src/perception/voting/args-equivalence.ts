@@ -121,13 +121,33 @@ function typeEquivalent(
     const rb = ctx.resolveTarget(b);
     if (ra === null || rb === null || ra !== rb) return false;
   } else {
-    // No host resolver — fall back to selector-string equality.
-    if (asString(a.args.selector) !== asString(b.args.selector)) return false;
-    if (asString(a.args.ref) !== asString(b.args.ref)) return false;
+    // No host resolver — require an explicit selector/ref target match.
+    if (!sameExplicitTarget(a.args, b.args)) return false;
   }
-  const ta = asString(a.args.text) ?? '';
-  const tb = asString(b.args.text) ?? '';
+  const ta = asString(a.args.text);
+  const tb = asString(b.args.text);
+  if (ta === undefined || tb === undefined) return false;
   return ta.trim() === tb.trim();
+}
+
+function sameExplicitTarget(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): boolean {
+  let matched = false;
+  const aSelector = asString(a.selector);
+  const bSelector = asString(b.selector);
+  if (aSelector !== undefined || bSelector !== undefined) {
+    if (aSelector === undefined || bSelector === undefined || aSelector !== bSelector) return false;
+    matched = true;
+  }
+  const aRef = asString(a.ref);
+  const bRef = asString(b.ref);
+  if (aRef !== undefined || bRef !== undefined) {
+    if (aRef === undefined || bRef === undefined || aRef !== bRef) return false;
+    matched = true;
+  }
+  return matched;
 }
 
 function navigateEquivalent(a: ActionInvocation, b: ActionInvocation): boolean {

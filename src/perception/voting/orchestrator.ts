@@ -270,7 +270,7 @@ export class VotingOrchestrator {
       this.providers.map((p) => this.safeAsk(p, req)),
     );
     const replies: ProviderReply[] = settled.map((r) => {
-      if (r.status === 'fulfilled') return r.value;
+      if (r.status === 'fulfilled') return normalizeProviderReply(r.value);
       const raw = r.reason instanceof Error ? r.reason.message : String(r.reason);
       return { ok: false, error: { kind: 'unknown', raw } };
     });
@@ -371,6 +371,21 @@ function isValidAction(a: ActionInvocation | undefined): a is ActionInvocation {
   if (typeof a.kind !== 'string' || a.kind.length === 0) return false;
   if (a.args !== undefined && (typeof a.args !== 'object' || a.args === null)) return false;
   return true;
+}
+
+function normalizeProviderReply(reply: unknown): ProviderReply {
+  if (!isProviderReply(reply)) {
+    return {
+      ok: false,
+      error: { kind: 'malformed', raw: 'voter returned a non-object reply' },
+    };
+  }
+  return reply;
+}
+
+function isProviderReply(reply: unknown): reply is ProviderReply {
+  return typeof reply === 'object' && reply !== null &&
+    typeof (reply as { ok?: unknown }).ok === 'boolean';
 }
 
 /**
