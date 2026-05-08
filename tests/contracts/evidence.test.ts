@@ -227,6 +227,25 @@ describe('writeEvidenceBundle — truncation', () => {
     expect(domStr).toContain('"_truncated":true');
   });
 
+  test('manifest under tight maxBytes drops suggested_next_steps and flags truncated.manifest', async () => {
+    const r = await writeEvidenceBundle(
+      {
+        transaction: record(),
+        // Build a chunky next-steps array that, together with the
+        // transaction record, pushes the manifest past the cap.
+        suggested_next_steps: Array.from({ length: 50 }, (_, i) => ({
+          id: `s${i}`,
+          title: 'long step title repeated to use bytes ' + 'x'.repeat(200),
+          body: 'detailed body for the step ' + 'y'.repeat(400),
+        })),
+      },
+      { rootDir: root, maxBytes: 4 * 1024 },
+    );
+    const m = JSON.parse(fs.readFileSync(r.manifestPath, 'utf8')) as BundleManifest;
+    expect(m.truncated?.manifest).toBe(true);
+    expect(m.suggested_next_steps).toBeUndefined();
+  });
+
   test('a single screenshot larger than maxBytes is dropped, not silently kept', async () => {
     const big = Buffer.alloc(200 * 1024); // 200 KB
     const r = await writeEvidenceBundle(

@@ -103,7 +103,8 @@ export interface BundleManifest {
       | 'trace_slice'
       | 'pre_screenshot'
       | 'fail_screenshot'
-      | 'lastgood_screenshot',
+      | 'lastgood_screenshot'
+      | 'manifest',
       true
     >
   >;
@@ -190,18 +191,24 @@ export async function writeEvidenceBundle(
     let slice = inputs.trace_slice;
     let traceTruncated = false;
     let raw = '';
+    let rawBytes = 0;
     for (const ev of slice) {
       const redacted = { ...ev, body: redactValue(ev.body) };
       const line = JSON.stringify(redacted) + '\n';
-      if (byteSize + raw.length + line.length > maxBytes) {
+      const lineBytes = Buffer.byteLength(line, 'utf8');
+      // Use UTF-8 byte length: `raw.length` is UTF-16 code units, so a
+      // payload full of CJK / emoji could pass this check while the
+      // on-disk file blows past the cap by 50%+.
+      if (byteSize + rawBytes + lineBytes > maxBytes) {
         traceTruncated = true;
         break;
       }
       raw += line;
+      rawBytes += lineBytes;
     }
     fs.writeFileSync(slicePath, raw, 'utf8');
     files.trace_slice = 'trace_slice.jsonl';
-    byteSize += Buffer.byteLength(raw, 'utf8');
+    byteSize += rawBytes;
     if (traceTruncated || raw.split('\n').length - 1 < slice.length) {
       truncated.trace_slice = true;
     }
@@ -215,10 +222,10 @@ export async function writeEvidenceBundle(
   // can't leak via the manifest itself even though every other path is
   // scrubbed.
   const redactedTransaction = redactValue(inputs.transaction) as TransactionRecord;
-  const redactedNextSteps = inputs.suggested_next_steps
+  let redactedNextSteps = inputs.suggested_next_steps
     ? (redactValue(inputs.suggested_next_steps) as EvidenceBundleInputs['suggested_next_steps'])
     : undefined;
-  const manifest: BundleManifest = {
+  const buildManifest = (): BundleManifest => ({
     schema_version: 1,
     txn_id: redactedTransaction.txn_id,
     contract_id: redactedTransaction.contract_id,
@@ -229,9 +236,21 @@ export async function writeEvidenceBundle(
     suggested_next_steps: redactedNextSteps,
     byte_size: byteSize,
     ...(Object.keys(truncated).length > 0 ? { truncated } : {}),
-  };
-  const manifestText = JSON.stringify(manifest, null, 2);
-  byteSize += Buffer.byteLength(manifestText, 'utf8');
+  });
+  let manifest = buildManifest();
+  let manifestBytes = Buffer.byteLength(JSON.stringify(manifest, null, 2), 'utf8');
+  // Manifest is mandatory (it's the index), but on a tight `maxBytes`
+  // even a redacted TransactionRecord can shove the total past the
+  // ceiling. Drop the largest optional field — `suggested_next_steps`
+  // — first, then surface a `manifest` truncation flag so readers see
+  // the bundle was abridged.
+  if (byteSize + manifestBytes > maxBytes && redactedNextSteps !== undefined) {
+    redactedNextSteps = undefined;
+    (truncated as Record<string, true>).manifest = true;
+    manifest = buildManifest();
+    manifestBytes = Buffer.byteLength(JSON.stringify(manifest, null, 2), 'utf8');
+  }
+  byteSize += manifestBytes;
   manifest.byte_size = byteSize;
 
   const tmpPath = path.join(bundleDir, TMP_MANIFEST_FILENAME);
@@ -312,10 +331,20 @@ function writeJsonSnapshot(
   const redacted = redactValue(value);
   const json = JSON.stringify(redacted);
   if (json.length > truncateBytes) {
+    // Reserve room for the wrapper (`{"_truncated":true,"_original_bytes":N,"preview":""}`).
+    // Without this the on-disk file is `truncateBytes + ~50 wrapper bytes`,
+    // which compounds with per-file caps to push the bundle past the
+    // configured ceiling.
+    const wrapperOverhead = JSON.stringify({
+      _truncated: true,
+      _original_bytes: json.length,
+      preview: '',
+    }).length;
+    const previewBudget = Math.max(0, truncateBytes - wrapperOverhead);
     const truncated = {
       _truncated: true,
       _original_bytes: json.length,
-      preview: json.slice(0, truncateBytes),
+      preview: json.slice(0, previewBudget),
     };
     const out = JSON.stringify(truncated);
     fs.writeFileSync(path.join(bundleDir, filename), out, 'utf8');
