@@ -41,7 +41,8 @@ export type InteractionFeasibility =
   | 'ok'
   | 'blocked_by_overlay'
   | 'outside_viewport'
-  | 'zero_size';
+  | 'zero_size'
+  | 'pointer_events_none';
 
 export interface PerceptualMetadata {
   /** Element bounding box in viewport coordinates. Null when no layout. */
@@ -77,6 +78,18 @@ export interface NodeProbe {
    * null when nothing was found / the call wasn't made.
    */
   topElementBackendNodeId: number | null;
+  /**
+   * Computed `pointer-events` CSS value (e.g. `'none'`, `'auto'`, `'all'`).
+   * When undefined the field is treated as `'auto'` (pointer events enabled).
+   */
+  pointerEvents?: string;
+  /**
+   * Set of backendNodeIds of all descendants of this node. Used to
+   * distinguish "hit a child of myself" (not an overlay) from "hit a
+   * truly foreign element" (real overlay). When undefined or empty the
+   * descendant check is skipped and any foreign hit is treated as an overlay.
+   */
+  descendantBackendNodeIds?: ReadonlySet<number>;
   /**
    * True iff at least one descendant has a layout box. Only used for
    * `display: contents` classification — set to false for ordinary

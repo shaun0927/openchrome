@@ -161,6 +161,72 @@ describe('computePerceptualMetadata — interactionFeasibility', () => {
   });
 });
 
+describe('computePerceptualMetadata — pointer-events regression (P1)', () => {
+  test('pointer-events:none → pointer_events_none, not ok', () => {
+    const r = computePerceptualMetadata(probe({ pointerEvents: 'none' }), VIEWPORT);
+    expect(r.interactionFeasibility).toBe('pointer_events_none');
+    expect(r.effectiveDisplay).toBe('rendered');
+  });
+
+  test('pointer-events:auto (default) → ok', () => {
+    const r = computePerceptualMetadata(probe({ pointerEvents: 'auto' }), VIEWPORT);
+    expect(r.interactionFeasibility).toBe('ok');
+  });
+
+  test('pointer-events field absent → ok (backward compat)', () => {
+    const r = computePerceptualMetadata(probe(), VIEWPORT);
+    expect(r.interactionFeasibility).toBe('ok');
+  });
+
+  test('pointer-events:none off-screen → outside_viewport (off-screen takes priority)', () => {
+    const r = computePerceptualMetadata(
+      probe({ pixelBox: { x: -500, y: -500, w: 100, h: 100 }, pointerEvents: 'none' }),
+      VIEWPORT,
+    );
+    expect(r.interactionFeasibility).toBe('outside_viewport');
+  });
+});
+
+describe('computePerceptualMetadata — descendant hit regression (P2)', () => {
+  test('button containing span — hit on span → NOT covered_by', () => {
+    const spanId = 99;
+    const r = computePerceptualMetadata(
+      probe({
+        backendNodeId: 42,
+        topElementBackendNodeId: spanId,
+        descendantBackendNodeIds: new Set([spanId]),
+      }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('rendered');
+    expect(r.coveredByNodeId).toBeUndefined();
+    expect(r.interactionFeasibility).toBe('ok');
+  });
+
+  test('truly foreign overlay → still covered_by', () => {
+    const r = computePerceptualMetadata(
+      probe({
+        backendNodeId: 42,
+        topElementBackendNodeId: 999,
+        descendantBackendNodeIds: new Set([10, 11]),
+      }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('covered_by');
+    expect(r.coveredByNodeId).toBe(999);
+    expect(r.interactionFeasibility).toBe('blocked_by_overlay');
+  });
+
+  test('no descendantBackendNodeIds provided — foreign hit still flagged as overlay', () => {
+    const r = computePerceptualMetadata(
+      probe({ backendNodeId: 42, topElementBackendNodeId: 999 }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('covered_by');
+    expect(r.coveredByNodeId).toBe(999);
+  });
+});
+
 describe('computePerceptualMetadata — opacity propagation', () => {
   test('opacity surfaces to effectiveOpacity', () => {
     const r = computePerceptualMetadata(probe({ opacityChain: [1, 0.4] }), VIEWPORT);

@@ -65,6 +65,7 @@ function classifyInteractionFeasibility(
   box: PixelBox | null,
   viewport: ViewportRect,
   topElementMatches: boolean,
+  pointerEventsNone: boolean,
 ): InteractionFeasibility {
   if (effective !== 'rendered' && effective !== 'covered_by' && effective !== 'off_screen') {
     return 'outside_viewport'; // hidden/collapsed/contents-no-box → all flat-out unreachable
@@ -72,6 +73,7 @@ function classifyInteractionFeasibility(
   if (isZeroSize(box)) return 'zero_size';
   if (!box) return 'zero_size';
   if (effective === 'off_screen' || !intersects(box, viewport)) return 'outside_viewport';
+  if (pointerEventsNone) return 'pointer_events_none';
   if (!topElementMatches) return 'blocked_by_overlay';
   return 'ok';
 }
@@ -101,19 +103,32 @@ export function computePerceptualMetadata(
 
   // covered_by is computed AFTER off-screen so we never falsely report
   // "covered" for a node that's simply outside the viewport.
+  // A hit on a descendant of the target is NOT an overlay — the target
+  // itself is the interactable surface (e.g. <button> containing <span>).
   let coveredByNodeId: number | undefined;
   if (effective === 'rendered' && probe.topElementBackendNodeId !== null) {
-    if (probe.topElementBackendNodeId !== probe.backendNodeId) {
+    const hitId = probe.topElementBackendNodeId;
+    const isSelf = hitId === probe.backendNodeId;
+    const isDescendant =
+      !isSelf &&
+      probe.descendantBackendNodeIds !== undefined &&
+      probe.descendantBackendNodeIds.has(hitId);
+    if (!isSelf && !isDescendant) {
       effective = 'covered_by';
-      coveredByNodeId = probe.topElementBackendNodeId;
+      coveredByNodeId = hitId;
     }
   }
 
   const topElementMatches =
     probe.topElementBackendNodeId === null ||
-    probe.topElementBackendNodeId === probe.backendNodeId;
+    probe.topElementBackendNodeId === probe.backendNodeId ||
+    (probe.descendantBackendNodeIds !== undefined &&
+      probe.topElementBackendNodeId !== null &&
+      probe.descendantBackendNodeIds.has(probe.topElementBackendNodeId));
 
-  const feasibility = classifyInteractionFeasibility(effective, box, viewport, topElementMatches);
+  const pointerEventsNone = probe.pointerEvents === 'none';
+
+  const feasibility = classifyInteractionFeasibility(effective, box, viewport, topElementMatches, pointerEventsNone);
 
   const md: PerceptualMetadata = {
     pixelBox: box,
