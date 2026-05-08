@@ -58,8 +58,13 @@ const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
   { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g },
   // AWS Access Key ID
   { name: 'aws_access_key', re: /\bAKIA[0-9A-Z]{16}\b/g },
-  // Authorization Bearer / Basic / Token (only the credential portion)
-  { name: 'auth_scheme', re: /\b(Bearer|Basic|Token)\s+[A-Za-z0-9+/=._-]{8,}/g },
+  // Authorization Bearer / Basic / Token (only the credential portion).
+  // HTTP scheme tokens are case-insensitive (`bearer` is just as valid as
+  // `Bearer`), so match without case sensitivity to catch lowercase forms
+  // that show up in raw network/body captures. The match's first capture
+  // group preserves the original-case scheme name so the replacement
+  // (`<scheme> [REDACTED]`) reads naturally for the operator.
+  { name: 'auth_scheme', re: /\b(Bearer|Basic|Token)\s+[A-Za-z0-9+/=._-]{8,}/gi },
   // Generic high-entropy token: 32+ hex chars
   { name: 'hex_token', re: /\b[a-fA-F0-9]{32,}\b/g },
   // SSN (US): 3-2-4 digits

@@ -22,6 +22,13 @@ describe('trace redactor — scrubString patterns', () => {
     expect(out).toBe(`Authorization: Bearer ${REDACTED}`);
   });
 
+  test('matches auth schemes case-insensitively (HTTP tokens are case-insensitive)', () => {
+    expect(scrubString('authorization: bearer abc123def456')).toBe(`authorization: bearer ${REDACTED}`);
+    expect(scrubString('Authorization: BEARER abc123def456')).toBe(`Authorization: BEARER ${REDACTED}`);
+    expect(scrubString('Authorization: Basic dXNlcjpwYXNzd29yZA==')).toBe(`Authorization: Basic ${REDACTED}`);
+    expect(scrubString('authorization: token abc123def456')).toBe(`authorization: token ${REDACTED}`);
+  });
+
   test('redacts SSN-like 9-digit pattern', () => {
     expect(scrubString('SSN 123-45-6789 here')).toContain(REDACTED);
   });
