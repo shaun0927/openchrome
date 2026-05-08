@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import {
   computeSkillId,
@@ -167,6 +168,25 @@ describe('recordSuccessfulRun — re-runs (dedup)', () => {
     expect(second.record.frontmatter.status).toBe('archived');
     expect(archived.status).toBe('candidate'); // sanity — original was candidate
   });
+
+  test('preserves an existing distilled body when a re-run omits body', () => {
+    const distilledBody = '## Steps\n\n1. Open cart.\n2. Confirm the saved item.\n';
+    const first = recordSuccessfulRun(record({ txn_id: 't1', body: distilledBody }), {
+      rootDir: root,
+      now: () => FIXED_NOW,
+    });
+
+    const second = recordSuccessfulRun(record({ txn_id: 't2' }), {
+      rootDir: root,
+      now: () => FIXED_NOW + 60_000,
+    });
+
+    expect(second.created).toBe(false);
+    expect(fs.readFileSync(first.record.filePath, 'utf8')).toContain(distilledBody.trim());
+    expect(fs.readFileSync(first.record.filePath, 'utf8')).not.toContain(
+      'LLM distillation lands in PR-20b',
+    );
+  });
 });
 
 describe('recordSuccessfulRun — sidecar recovery', () => {
@@ -260,10 +280,59 @@ describe('recordSuccessfulRun — concurrent writes', () => {
     expect(results).toHaveLength(N);
     const list = listSkillsForDomain('amazon.com', { rootDir: root });
     expect(list).toHaveLength(1);
+    expect(list[0].frontmatter.verified_runs).toBe(N);
     // No stray `.tmp` files left in the domain dir.
     const dir = path.dirname(list[0].filePath);
     const stragglers = fs.readdirSync(dir).filter((f) => f.endsWith('.tmp'));
     expect(stragglers).toEqual([]);
+  });
+
+  test('separate writer processes serialize read/merge/write updates', async () => {
+    const N = 8;
+    const script = `
+      const { recordSuccessfulRun } = require('./src/skill-memory/extractor');
+      const [root, txn, now] = process.argv.slice(1);
+      recordSuccessfulRun({
+        txn_id: txn,
+        contract_id: 'amazon.cart-add',
+        intent: 'Add specific item to cart',
+        domain: 'amazon.com',
+        graph_node_anchor: 'a1b2c3d4',
+      }, { rootDir: root, now: () => Number(now) });
+    `;
+
+    await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        new Promise<void>((resolve, reject) => {
+          const child = spawn(
+            process.execPath,
+            [
+              '-r',
+              'ts-node/register/transpile-only',
+              '-e',
+              script,
+              root,
+              `process-${i}`,
+              String(FIXED_NOW + i),
+            ],
+            { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] },
+          );
+          let stderr = '';
+          child.stderr.on('data', (chunk) => {
+            stderr += chunk.toString();
+          });
+          child.on('error', reject);
+          child.on('close', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(stderr || `child exited ${code}`));
+          });
+        }),
+      ),
+    );
+
+    const list = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(list).toHaveLength(1);
+    expect(list[0].frontmatter.verified_runs).toBe(N);
   });
 });
 

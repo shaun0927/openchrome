@@ -42,6 +42,9 @@ import {
 const PROMOTION_RUN_THRESHOLD = 3;
 const ROLLING_WINDOW_DAYS = 30;
 const ROLLING_WINDOW_MS = ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+const SKILL_LOCK_WAIT_MS = 5_000;
+const SKILL_LOCK_STALE_MS = 30_000;
+const SKILL_LOCK_POLL_MS = 10;
 
 export interface ExtractionInputs {
   /** Settled transaction id used as `contract_ref`. */
@@ -217,6 +220,52 @@ function writeAtomic(target: string, body: string): void {
   }
 }
 
+function sleepSync(ms: number): void {
+  const shared = new SharedArrayBuffer(4);
+  const view = new Int32Array(shared);
+  Atomics.wait(view, 0, 0, ms);
+}
+
+function withSkillLock<T>(lockDir: string, fn: () => T): T {
+  const started = Date.now();
+
+  for (;;) {
+    try {
+      fs.mkdirSync(lockDir);
+      break;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') throw err;
+
+      let stale = false;
+      try {
+        const stat = fs.statSync(lockDir);
+        stale = Date.now() - stat.mtimeMs > SKILL_LOCK_STALE_MS;
+      } catch (statErr) {
+        const statCode = (statErr as NodeJS.ErrnoException).code;
+        if (statCode === 'ENOENT') continue;
+        throw statErr;
+      }
+
+      if (stale) {
+        fs.rmSync(lockDir, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() - started >= SKILL_LOCK_WAIT_MS) {
+        throw new Error(`skill-memory: timed out waiting for lock ${lockDir}`);
+      }
+      sleepSync(SKILL_LOCK_POLL_MS);
+    }
+  }
+
+  try {
+    fs.writeFileSync(path.join(lockDir, 'owner'), `${process.pid}\n`, { mode: 0o644 });
+    return fn();
+  } finally {
+    fs.rmSync(lockDir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Resolve the sidecar to merge against for an update.
  *
@@ -302,6 +351,8 @@ export function recordSuccessfulRun(
   const skillId = computeSkillId(inputs.graph_node_anchor, inputs.contract_id);
   const domainDir = path.join(rootDir, inputs.domain);
   fs.mkdirSync(domainDir, { recursive: true });
+  const lockPath = path.join(domainDir, `${skillId}.lock`);
+  return withSkillLock(lockPath, () => {
   const filePath = path.join(domainDir, `${skillId}.md`);
   const sidecarPath = path.join(domainDir, `${skillId}.json`);
   const t = now();
@@ -400,6 +451,7 @@ export function recordSuccessfulRun(
 
   const body =
     inputs.body ??
+    existing?.body ??
     `## Steps (LLM distillation lands in PR-20b)
 
 This SKILL.md was extracted from a contract-verified successful
@@ -423,6 +475,7 @@ intent string.
       sidecar,
     },
   };
+  });
 }
 
 /** Read every SKILL.md under a domain (recall + curator consume this). */
