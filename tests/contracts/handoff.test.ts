@@ -252,4 +252,26 @@ describe('HandoffManager — abort + sweep + list', () => {
     expect(mgr.sweep()).toBe(1);
     expect(mgr.list()).toEqual([]);
   });
+
+  test('sweep() retention is anchored on termination time, not configured TTL', () => {
+    // Configure a long handoff TTL (e.g. 8 hours) and abort the handoff
+    // very quickly. 24h after termination, the record should be purged
+    // even though `expires_at` is far in the future. Without anchoring
+    // GC on `terminated_at`, the record would linger for `TTL - elapsed`
+    // extra time beyond the documented 24h window.
+    now = 0;
+    const longTtlMgr = new HandoffManager({
+      timeoutMs: 8 * 60 * 60 * 1000, // 8 hours
+      maxPerTxn: 3,
+      now: () => now,
+    });
+    longTtlMgr.create({ txn_id: 't', reason: 'unknown', summary: 's' });
+    now = 1000;
+    longTtlMgr.abort('t');
+    // 24h + 1s after the abort, well before the original expires_at
+    // (which is 8h after creation).
+    now = 1000 + 24 * 60 * 60 * 1000 + 1000;
+    expect(longTtlMgr.sweep()).toBe(1);
+    expect(longTtlMgr.list()).toEqual([]);
+  });
 });

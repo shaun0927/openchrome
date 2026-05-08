@@ -39,6 +39,13 @@ export interface HandoffRecord {
   created_at: number;
   expires_at: number;
   resumed_at?: number;
+  /**
+   * Wall-clock at which `status` last moved out of `pending`. Used as
+   * the GC reference so retention is "24h after the handoff actually
+   * ended", independent of how long `OPENCHROME_HANDOFF_TIMEOUT_MS` was
+   * configured.
+   */
+  terminated_at?: number;
   /** Last URL the runtime asked the user to look at. */
   last_known_url?: string;
 }
@@ -133,6 +140,7 @@ export class HandoffManager {
     if (!r) return undefined;
     if (r.status === 'pending' && this.now() >= r.expires_at) {
       r.status = 'expired';
+      r.terminated_at = this.now();
     }
     return r;
   }
@@ -147,6 +155,7 @@ export class HandoffManager {
     if (!rec) return { ok: false, reason: 'unknown_txn' };
     if (rec.status === 'pending' && this.now() >= rec.expires_at) {
       rec.status = 'expired';
+      rec.terminated_at = this.now();
     }
     if (rec.status !== 'pending') {
       return { ok: false, reason: rec.status === 'expired' ? 'expired' : 'wrong_status', record: rec };
@@ -159,6 +168,7 @@ export class HandoffManager {
     }
     rec.status = 'resumed';
     rec.resumed_at = this.now();
+    rec.terminated_at = this.now();
     return { ok: true, record: rec };
   }
 
@@ -168,6 +178,7 @@ export class HandoffManager {
     if (!rec) return undefined;
     if (rec.status === 'pending') {
       rec.status = 'aborted';
+      rec.terminated_at = this.now();
     }
     return rec;
   }
@@ -183,12 +194,20 @@ export class HandoffManager {
     for (const [txn, rec] of this.active.entries()) {
       if (rec.status === 'pending' && t >= rec.expires_at) {
         rec.status = 'expired';
+        rec.terminated_at = t;
       }
-      // 24h GC for terminal records
-      if (rec.status !== 'pending' && t - rec.expires_at > 24 * 60 * 60 * 1000) {
-        this.active.delete(txn);
-        this.attempts.delete(txn);
-        purged += 1;
+      // 24h GC anchored on the actual termination time, not on the
+      // configured timeout: a handoff aborted 30 seconds in shouldn't
+      // sit in memory for hours just because the configured TTL was
+      // long. Records older than this codebase (no terminated_at set)
+      // fall back to expires_at to stay backward-compatible.
+      if (rec.status !== 'pending') {
+        const ref = rec.terminated_at ?? rec.expires_at;
+        if (t - ref > 24 * 60 * 60 * 1000) {
+          this.active.delete(txn);
+          this.attempts.delete(txn);
+          purged += 1;
+        }
       }
     }
     return purged;
