@@ -267,14 +267,23 @@ describe('buildTraceContent — events', () => {
     expect(body.returned).toBe(2);
   });
 
-  test('honors from / to filters', async () => {
+  test('honors from / to filters and reports filtered total', async () => {
     const r = await buildTraceContent({
       sessionId: 'e',
       kind: 'events',
       query: new URLSearchParams('from=150&to=250'),
     });
-    const body = JSON.parse(r!) as { events: Array<{ kind: string }> };
+    const body = JSON.parse(r!) as {
+      events: Array<{ kind: string }>;
+      total: number;
+      returned: number;
+    };
     expect(body.events.map((e) => e.kind)).toEqual(['B']);
+    // `total` is the count of events matching the filter window — not
+    // the whole session — so pagination clients don't chase pages that
+    // don't exist for filtered queries.
+    expect(body.total).toBe(1);
+    expect(body.returned).toBe(1);
   });
 
   test('caps limit at 10000 to prevent OOM', async () => {

@@ -246,9 +246,14 @@ async function streamSessionEvents(
           continue;
         }
         const parsed = raw;
-        total += 1;
+        // Apply the time window first so `total` reflects events that
+        // match the filtered query, not the whole session. Pagination
+        // clients use `total` to decide whether more matching pages
+        // exist; counting unfiltered events here makes them spin
+        // looking for pages that aren't there.
         if (filters.from !== undefined && parsed.ts < filters.from) continue;
         if (filters.to !== undefined && parsed.ts > filters.to) continue;
+        total += 1;
         if (matched.length < filters.limit) matched.push(parsed);
         // Important: do NOT break here — `total` must reflect every
         // matching event so the caller knows how much paging remains.
