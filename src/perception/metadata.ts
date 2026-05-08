@@ -140,7 +140,9 @@ export function computePerceptualMetadata(
 
   const md: PerceptualMetadata = {
     pixelBox: box,
-    viewportVisible: !!box && intersects(box, viewport),
+    viewportVisible:
+      (!!box && intersects(box, viewport)) ||
+      (!box && probe.display === 'contents' && (probe.hasChildBoxes ?? false)),
     effectiveOpacity: opacity,
     effectiveDisplay: effective,
     interactionFeasibility: feasibility,

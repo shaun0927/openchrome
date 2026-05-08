@@ -270,6 +270,20 @@ describe('computePerceptualMetadata — display:contents feasibility (P2 fix)', 
     const r = computePerceptualMetadata(probe({ pixelBox: null }), VIEWPORT);
     expect(r.interactionFeasibility).toBe('zero_size');
   });
+
+  test('display:contents + hasChildBoxes=true + null pixelBox → viewportVisible true AND feasibility ok (round-8 P2)', () => {
+    const r = computePerceptualMetadata(
+      probe({ display: 'contents', hasChildBoxes: true, pixelBox: null, topElementBackendNodeId: 42 }),
+      VIEWPORT,
+    );
+    expect(r.viewportVisible).toBe(true);
+    expect(r.interactionFeasibility).toBe('ok');
+  });
+
+  test('non-contents null pixelBox → viewportVisible remains false (guard does not apply)', () => {
+    const r = computePerceptualMetadata(probe({ pixelBox: null }), VIEWPORT);
+    expect(r.viewportVisible).toBe(false);
+  });
 });
 
 describe('computePerceptualMetadata — opacity propagation', () => {
