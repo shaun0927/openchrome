@@ -29,6 +29,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { logAuditEntry } from '../security/audit-logger';
 import { parseSkillMd, stringifySkillMd } from './skill-md';
 import {
   SKILL_RUN_LOG_MAX,
@@ -66,12 +67,29 @@ export interface ExtractionInputs {
   name?: string;
 }
 
+/** Minimal interface for emitting a `skill_run` audit event. */
+export interface SkillRunAuditEmitter {
+  emit(tool: string, sessionId: string, args: Record<string, unknown>): void;
+}
+
 export interface ExtractorOptions {
   rootDir?: string;
   /** Promotion threshold (count of successful re-runs). */
   promotionThreshold?: number;
   /** Test hook: clock. */
   now?: () => number;
+  /**
+   * Session ID threaded through to the audit event. Required when
+   * `auditEmitter` is provided; no-op when omitted.
+   */
+  sessionId?: string;
+  /**
+   * Optional audit emitter. When provided, `recordSuccessfulRun` emits a
+   * `skill_run` event with `{ skill_id, verdict: 'success' }` so the
+   * audit-stats resolver can tally verdicts per skill_id rather than the
+   * shared contract_id.
+   */
+  auditEmitter?: SkillRunAuditEmitter;
 }
 
 export interface ExtractionResult {
@@ -411,6 +429,17 @@ intent string.
 
   writeAtomic(filePath, stringifySkillMd({ frontmatter, body }));
   writeAtomic(sidecarPath, JSON.stringify(sidecar, null, 2));
+
+  if (opts.auditEmitter) {
+    opts.auditEmitter.emit('skill_run', opts.sessionId ?? '', {
+      skill_id: skillId,
+      verdict: 'success',
+      contract_id: inputs.contract_id,
+      graph_node_anchor: inputs.graph_node_anchor,
+      domain: inputs.domain,
+      ts: t,
+    });
+  }
 
   return {
     created,

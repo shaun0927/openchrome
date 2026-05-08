@@ -125,6 +125,9 @@ interface SkillRunAuditRow {
   tool?: string;
   args?: {
     skill_id?: string;
+    verdict?: string;
+    contract_id?: string;
+    graph_node_anchor?: string;
     contract_ref?: string;
     domain?: string;
     ts?: number;
@@ -141,7 +144,7 @@ function parseTs(value: unknown): number | null {
 }
 
 interface AuditIndex {
-  /** Win/loss tallies within failWindowMs, keyed by contractId. */
+  /** Win/loss tallies within failWindowMs, keyed by skillId. */
   verdicts: Map<string, { successesInWindow: number; failuresInWindow: number }>;
   /** Most-recent-run timestamp within statsWindowMs, keyed by contractId. */
   lastRunByContract: Map<string, number>;
@@ -181,25 +184,29 @@ function buildIndex(
         // Update lastRunAt for all entries within the stats window.
         const prev = lastRunByContract.get(cid);
         if (prev === undefined || ts > prev) lastRunByContract.set(cid, ts);
-
-        // Win/loss tallies only within the (potentially shorter) fail window.
-        if (ts >= failCutoff) {
-          let tally = verdicts.get(cid);
-          if (!tally) {
-            tally = { successesInWindow: 0, failuresInWindow: 0 };
-            verdicts.set(cid, tally);
-          }
-          if (entry.args.verdict === 'success') tally.successesInWindow++;
-          else if (entry.args.verdict === 'postcondition_violation') tally.failuresInWindow++;
-        }
       }
     }
 
     if (entry.tool === 'skill_run' && entry.args) {
       const sid = entry.args.skill_id;
       if (typeof sid === 'string') {
+        // Update lastRunAt keyed by skill_id within the stats window.
         const prev = lastRunBySkill.get(sid);
         if (prev === undefined || ts > prev) lastRunBySkill.set(sid, ts);
+
+        // Win/loss tallies keyed by skill_id, only within the fail window.
+        // This scopes verdicts to the exact skill identity (graph_node_anchor,
+        // contract_id) rather than the shared contract_id, preventing sibling
+        // skills from polluting each other's success/failure stats.
+        if (ts >= failCutoff) {
+          let tally = verdicts.get(sid);
+          if (!tally) {
+            tally = { successesInWindow: 0, failuresInWindow: 0 };
+            verdicts.set(sid, tally);
+          }
+          if (entry.args.verdict === 'success') tally.successesInWindow++;
+          else if (entry.args.verdict === 'postcondition_violation') tally.failuresInWindow++;
+        }
       }
     }
   }
@@ -240,7 +247,7 @@ export function createAuditLogStatsResolver(
     const matchContract = record.sidecar.contract_id;
     const matchSkillId = record.skill_id;
 
-    const tally = verdicts_for(index, matchContract);
+    const tally = verdicts_for(index, matchSkillId);
     const lastRunAt = bestLastRunAt(index, matchContract, matchSkillId);
 
     return {
