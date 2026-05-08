@@ -43,6 +43,15 @@ export interface NormalizeUrlResult {
 }
 
 /**
+ * Recognise the SPA hash-router shapes (`#/<path>`, `#!/<path>`).
+ * Anything else (`#section`, `#`, empty) is treated as a scroll
+ * anchor and stripped during normalisation.
+ */
+function isHashRoute(hash: string): boolean {
+  return hash.startsWith('#/') || hash.startsWith('#!/');
+}
+
+/**
  * Stable sentinel returned for inputs that do not parse as a URL. We use
  * the bare `about:invalid` (RFC 6694) so re-normalising the sentinel is
  * idempotent: `normalizeUrl()` always clears `u.hash`, so a sentinel that
@@ -76,7 +85,15 @@ export function normalizeUrl(input: string): NormalizeUrlResult {
   }
   // Lowercase host only (preserve path case)
   u.hostname = u.hostname.toLowerCase();
-  u.hash = '';
+  // SPA hash routers encode state in the fragment (`/#/cart` vs
+  // `/#/checkout`). Stripping every fragment would merge those
+  // distinct states into the same normalised URL and corrupt
+  // skill-graph node identity on hash-routed sites. We keep hashes
+  // that look like routes (`#/...`, `#!/...`) and drop pure scroll
+  // anchors (`#section`) that don't change page state.
+  if (!isHashRoute(u.hash)) {
+    u.hash = '';
+  }
 
   const dropped: string[] = [];
   const kept: [string, string][] = [];

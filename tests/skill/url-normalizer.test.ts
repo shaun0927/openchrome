@@ -5,8 +5,24 @@ describe('normalizeUrl — host and fragment', () => {
     expect(normalizeUrl('https://EXAMPLE.com/path').url).toBe('https://example.com/path');
   });
 
-  test('drops hash fragment', () => {
+  test('drops scroll-anchor fragments', () => {
+    // `#section` is a pure scroll anchor — same DOM, same state.
     expect(normalizeUrl('https://x.com/p#section').url).toBe('https://x.com/p');
+    expect(normalizeUrl('https://x.com/p#').url).toBe('https://x.com/p');
+  });
+
+  test('preserves hash-router routes (SPA state lives in the fragment)', () => {
+    // `/#/cart` and `/#/checkout` represent distinct application
+    // states; stripping the fragment would merge them in the state
+    // hash and corrupt skill-graph node identity.
+    expect(normalizeUrl('https://x.com/#/cart').url).toBe('https://x.com/#/cart');
+    expect(normalizeUrl('https://x.com/#/checkout').url).toBe('https://x.com/#/checkout');
+    // Angular legacy `#!/...` shape too.
+    expect(normalizeUrl('https://x.com/#!/orders').url).toBe('https://x.com/#!/orders');
+    // Two routes hash to different normalised URLs.
+    const a = normalizeUrl('https://x.com/#/cart').url;
+    const b = normalizeUrl('https://x.com/#/checkout').url;
+    expect(a).not.toBe(b);
   });
 
   test('preserves path case (paths are case-sensitive)', () => {
