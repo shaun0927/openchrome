@@ -234,10 +234,38 @@ export class EncryptedFilePersistence implements PersistenceAdapter {
   }
 
   clear(): void {
+    // Remove the main data file.
     try {
       fs.unlinkSync(this.target);
     } catch {
-      // already gone
+      // already gone — ok
+    }
+    // Remove the quarantine sentinel so the next boot is not blocked.
+    const sentinel = `${this.target}${QUARANTINE_SUFFIX}`;
+    try {
+      fs.unlinkSync(sentinel);
+    } catch {
+      // not present — ok
+    }
+    // Remove any corrupt-blob siblings left by a previous failed boot.
+    const dir = path.dirname(this.target);
+    const base = path.basename(this.target);
+    let siblings: string[] = [];
+    try {
+      siblings = fs.readdirSync(dir);
+    } catch {
+      // directory gone or unreadable — nothing to clean up
+    }
+    for (const name of siblings) {
+      if (name.startsWith(`${base}.corrupt-`)) {
+        try {
+          fs.unlinkSync(path.join(dir, name));
+        } catch {
+          console.error(
+            `EncryptedFilePersistence.clear(): could not remove corrupt blob ${path.join(dir, name)}`,
+          );
+        }
+      }
     }
   }
 }

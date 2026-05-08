@@ -518,6 +518,100 @@ describe('P1-r3 regression — quarantine sentinel blocks restart loops', () => 
   });
 });
 
+describe('P2A regression — clear() removes quarantine sentinel and corrupt blobs', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('corrupt + boot fails → clear() → next boot succeeds with empty state and no sentinel', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const k = key32();
+      const p = new EncryptedFilePersistence({ rootDir: root, key: k });
+      p.saveAll([
+        {
+          txn_id: 'txn-p2a',
+          attempt: 1,
+          token: 'z'.repeat(64),
+          status: 'pending',
+          reason: 'two_factor',
+          summary: 'p2a test',
+          created_at: 1000,
+          expires_at: 9999999,
+        },
+      ]);
+
+      // Corrupt the blob to trigger quarantine.
+      const blobPath = path.join(root, 'handoff.json');
+      const blob = fs.readFileSync(blobPath);
+      blob[20] ^= 0xff;
+      fs.writeFileSync(blobPath, blob);
+
+      // First boot: fails closed and writes sentinel.
+      const reader1 = new EncryptedFilePersistence({ rootDir: root, key: k });
+      expect(() => reader1.loadAll()).toThrow(/decryption\/auth-tag failure/);
+
+      const sentinelPath = blobPath + '.quarantine';
+      expect(fs.existsSync(sentinelPath)).toBe(true);
+      // At least one .corrupt-* blob must be present.
+      expect(fs.readdirSync(root).some((f) => f.includes('.corrupt-'))).toBe(true);
+
+      // Operator calls clear() instead of manually removing files.
+      reader1.clear();
+
+      // Sentinel and corrupt blobs must be gone.
+      expect(fs.existsSync(sentinelPath)).toBe(false);
+      expect(fs.readdirSync(root).some((f) => f.includes('.corrupt-'))).toBe(false);
+
+      // Next boot must succeed with empty state.
+      const reader2 = new EncryptedFilePersistence({ rootDir: root, key: k });
+      expect(reader2.loadAll()).toEqual([]);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+});
+
+describe('P2B regression — hydrate-time expiry transitions are flushed to disk', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('pending record past expires_at is written back as expired during construction', () => {
+    const p = new PlaintextFilePersistence({ rootDir: root });
+
+    // Write a persistence file with a pending record whose expires_at is in the past.
+    p.saveAll([
+      {
+        txn_id: 'txn-p2b',
+        attempt: 1,
+        token: 'y'.repeat(64),
+        status: 'pending',
+        reason: 'two_factor',
+        summary: 'p2b test',
+        created_at: 500,
+        expires_at: 1000,
+      },
+    ]);
+
+    // Construct manager at time 2000 — past expires_at 1000.
+    new HandoffManager({ persistence: p, now: () => 2000 });
+
+    // On-disk state must now show 'expired', not 'pending'.
+    const onDisk = p.loadAll();
+    expect(onDisk).toHaveLength(1);
+    expect(onDisk[0].status).toBe('expired');
+  });
+});
+
 describe('P2 regression — no plaintext fallback when key is absent', () => {
   let root: string;
   let prev: string | undefined;

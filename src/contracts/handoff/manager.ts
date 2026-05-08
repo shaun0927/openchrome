@@ -119,12 +119,20 @@ export class HandoffManager {
     // matching the lazy-expiry logic in get() and sweep().
     if (this.persistence) {
       const t = this.now();
+      let anyExpired = false;
       for (const r of this.persistence.loadAll()) {
         if (r.status === 'pending' && t >= r.expires_at) {
           r.status = 'expired';
+          anyExpired = true;
         }
         this.active.set(r.txn_id, r);
         this.attempts.set(r.txn_id, Math.max(this.attempts.get(r.txn_id) ?? 0, r.attempt));
+      }
+      // Flush the promoted-expired records back to disk so that a
+      // subsequent restart does not repeat the same pending→expired
+      // transition (P2B: hydrate-time expiry transitions must be durable).
+      if (anyExpired) {
+        this.flush();
       }
     }
   }
