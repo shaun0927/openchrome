@@ -79,6 +79,37 @@ export function defaultTraceRootDir(): string {
 }
 
 /**
+ * Reject session IDs that would let a caller escape the trace root via
+ * `path.join(rootDir, sessionId)`. We constrain to a conservative
+ * basename: no path separators, no `..` segments, no NUL, no leading
+ * dot, must be ASCII-printable, length-bounded. Tightening this is
+ * strictly easier than loosening it later; if a real legitimate ID
+ * needs more, plumb a sanitiser at the call site.
+ */
+function assertSafeSessionId(sessionId: string): void {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) {
+    throw new Error('TraceStorage: session_id must be a non-empty string');
+  }
+  if (sessionId.length > 200) {
+    throw new Error(`TraceStorage: session_id too long (${sessionId.length} chars; max 200)`);
+  }
+  if (sessionId === '.' || sessionId === '..' || sessionId.startsWith('.')) {
+    throw new Error(`TraceStorage: session_id "${sessionId}" begins with a dot (reserved)`);
+  }
+  // Disallow path separators (POSIX + Windows) and NUL.
+  if (/[\\/\0]/.test(sessionId)) {
+    throw new Error(`TraceStorage: session_id "${sessionId}" contains a path separator or NUL`);
+  }
+  // Disallow control chars and the segment forms that fs would treat as
+  // navigation (`..` anywhere is already covered by the separator
+  // check, but block standalone `..` defensively too).
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(sessionId)) {
+    throw new Error(`TraceStorage: session_id "${sessionId}" contains a control character`);
+  }
+}
+
+/**
  * Opaque handle to the trace store. Multiple instances against the same
  * `rootDir` are safe — SQLite WAL mode handles concurrent readers, and
  * filesystem appends are O_APPEND atomic for sub-PIPE_BUF writes.
@@ -123,6 +154,7 @@ export class TraceStorage {
    * the row reflects the new session, not stale state from the previous run.
    */
   recordSessionStart(meta: Omit<TraceSessionMeta, 'byteSize'> & { byteSize?: number }): void {
+    assertSafeSessionId(meta.sessionId);
     this.db
       .prepare(
         `INSERT INTO traces (session_id, started_at, ended_at, domain, status, byte_size, parent_op)
@@ -154,6 +186,7 @@ export class TraceStorage {
     sessionId: string,
     args: { endedAt: number; status: TraceStatus; byteSize?: number },
   ): void {
+    assertSafeSessionId(sessionId);
     if (args.byteSize !== undefined) {
       this.db
         .prepare('UPDATE traces SET ended_at = ?, status = ?, byte_size = ? WHERE session_id = ?')
@@ -245,6 +278,7 @@ export class TraceStorage {
    * the bytes written and the file path. Each event is serialised one-per-line.
    */
   appendEvents(sessionId: string, events: TraceEvent[]): AppendResult {
+    assertSafeSessionId(sessionId);
     if (events.length === 0) {
       return { bytes: 0, filePath: '' };
     }
@@ -284,6 +318,15 @@ export class TraceStorage {
       .all(beforeMs) as { session_id: string }[];
     let purged = 0;
     for (const { session_id } of rows) {
+      // Defence-in-depth: even though `assertSafeSessionId` runs at all
+      // ingest entry points, a sessionId could have been written by an
+      // older build before that check existed. Skip any row that fails
+      // the safety check rather than rmSync-ing an unintended path.
+      try {
+        assertSafeSessionId(session_id);
+      } catch {
+        continue;
+      }
       const dir = path.join(this.rootDir, session_id);
       try {
         fs.rmSync(dir, { recursive: true, force: true });

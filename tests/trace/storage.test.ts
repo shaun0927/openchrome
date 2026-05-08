@@ -223,6 +223,27 @@ describe('TraceStorage — appendEvents', () => {
     expect(() => store.appendEvents('ghost', [event(1, 100)])).toThrow(/unknown session_id=ghost/);
     expect(fs.existsSync(path.join(root, 'ghost'))).toBe(false);
   });
+
+  test('rejects path-traversal session ids at all entry points', () => {
+    // The recorder treats sessionId as a directory basename; without
+    // validation `../foo` lets writes escape the trace root and a
+    // future purgeOlderThan would rmSync the wrong directory.
+    const evil = ['../escape', '/abs/path', 'a/b', 'a\\b', '..', '.', '\x00nul', '\x01ctrl'];
+    for (const id of evil) {
+      expect(() => store.recordSessionStart({ sessionId: id, startedAt: 1, status: 'running' }))
+        .toThrow(/TraceStorage:/);
+      expect(() => store.appendEvents(id, [event(1, 100)])).toThrow(/TraceStorage:/);
+      expect(() => store.recordSessionEnd(id, { endedAt: 1, status: 'completed' }))
+        .toThrow(/TraceStorage:/);
+    }
+  });
+
+  test('accepts UUID-style session ids (hyphens permitted)', () => {
+    const uuid = '550e8400-e29b-41d4-a716-446655440000';
+    expect(() => store.recordSessionStart({ sessionId: uuid, startedAt: 1, status: 'running' }))
+      .not.toThrow();
+    expect(() => store.appendEvents(uuid, [event(1, 100)])).not.toThrow();
+  });
 });
 
 describe('TraceStorage — purgeOlderThan', () => {
