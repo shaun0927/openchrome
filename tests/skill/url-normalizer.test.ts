@@ -56,6 +56,17 @@ describe('normalizeUrl — query stability', () => {
     const r = normalizeUrl('https://x/?utm_term=a&utm_medium=b&utm_source=c');
     expect(r.droppedParams).toEqual(['utm_medium', 'utm_source', 'utm_term']);
   });
+
+  test('bare `source` is NOT a tracking param (load-bearing for app state)', () => {
+    // `/feed?source=following` vs `/feed?source=notifications` represent
+    // different application state; collapsing them would corrupt
+    // skill-graph node identity. This test guards against re-adding the
+    // pattern as a global denylist entry.
+    const a = normalizeUrl('https://x.com/feed?source=following');
+    const b = normalizeUrl('https://x.com/feed?source=notifications');
+    expect(a.url).not.toBe(b.url);
+    expect(a.droppedParams).toEqual([]);
+  });
 });
 
 describe('normalizeUrl — invalid input (total function, no throw)', () => {

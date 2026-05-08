@@ -27,7 +27,12 @@ export const TRACKING_PARAM_PATTERNS: RegExp[] = [
   /^mc_cid$/i,
   /^_ke$/i,
   /^trk$/i,
-  /^source$/i,
+  // Note: `source` was previously here but it is too commonly load-bearing
+  // for application state (e.g. `/feed?source=following` vs
+  // `?source=notifications`) to be safe as a global denylist entry.
+  // Folding those distinct states into one normalised URL would corrupt
+  // skill-graph node identity. Re-add only behind a per-domain rule
+  // (deferred to #702 follow-up if/when needed).
 ];
 
 export interface NormalizeUrlResult {

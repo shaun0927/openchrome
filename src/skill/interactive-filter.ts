@@ -68,11 +68,24 @@ export function isInteractiveNode(probe: InteractiveProbe): boolean {
     return true;
   }
 
-  if (probe.role && INTERACTIVE_ROLES.has(probe.role.toLowerCase())) return true;
+  if (probe.role && hasInteractiveRoleToken(probe.role)) return true;
 
   if (probe.contentEditable) return true;
 
   if (typeof probe.tabIndex === 'number' && probe.tabIndex >= 0) return true;
 
+  return false;
+}
+
+/**
+ * ARIA permits the `role` attribute to be a space-separated fallback
+ * chain (`role="switch checkbox"`); the user agent picks the first
+ * supported token. We follow the same rule: any interactive token
+ * anywhere in the chain promotes the element.
+ */
+function hasInteractiveRoleToken(role: string): boolean {
+  for (const token of role.toLowerCase().split(/\s+/)) {
+    if (token && INTERACTIVE_ROLES.has(token)) return true;
+  }
   return false;
 }

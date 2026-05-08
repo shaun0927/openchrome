@@ -59,6 +59,20 @@ describe('isInteractiveNode — ARIA roles on non-native tags', () => {
   test('uppercased role is matched (case-insensitive)', () => {
     expect(isInteractiveNode({ tagName: 'div', role: 'BUTTON' })).toBe(true);
   });
+
+  test('multi-token role: any interactive token in the fallback chain promotes the node', () => {
+    // ARIA permits a space-separated fallback chain; the user agent
+    // honours the first valid token. Earlier code compared the whole
+    // string against the role set and missed `<div role="switch checkbox">`,
+    // dropping these nodes from the histogram.
+    expect(isInteractiveNode({ tagName: 'div', role: 'switch checkbox' })).toBe(true);
+    expect(isInteractiveNode({ tagName: 'div', role: 'unknown button' })).toBe(true);
+    expect(isInteractiveNode({ tagName: 'div', role: 'heading button' })).toBe(true);
+  });
+
+  test('multi-token role with no interactive tokens stays non-interactive', () => {
+    expect(isInteractiveNode({ tagName: 'div', role: 'heading note' })).toBe(false);
+  });
 });
 
 describe('isInteractiveNode — focus/edit affordances', () => {
