@@ -394,6 +394,130 @@ describe('P1 regression — tampered ciphertext fails closed', () => {
   });
 });
 
+describe('P1-r3 regression — quarantine sentinel blocks restart loops', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('corrupt file: first loadAll throws (fail-closed)', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const k = key32();
+      const p = new EncryptedFilePersistence({ rootDir: root, key: k });
+      p.saveAll([
+        {
+          txn_id: 'txn-q',
+          attempt: 3,
+          token: 'f'.repeat(64),
+          status: 'pending',
+          reason: 'two_factor',
+          summary: 'quarantine test',
+          created_at: 1000,
+          expires_at: 9999999,
+        },
+      ]);
+
+      // Corrupt the blob.
+      const blobPath = path.join(root, 'handoff.json');
+      const blob = fs.readFileSync(blobPath);
+      blob[20] ^= 0xff;
+      fs.writeFileSync(blobPath, blob);
+
+      const reader = new EncryptedFilePersistence({ rootDir: root, key: k });
+      expect(() => reader.loadAll()).toThrow(/decryption\/auth-tag failure/);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  test('second boot (file renamed, sentinel present) also throws with quarantine message', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const k = key32();
+      const p = new EncryptedFilePersistence({ rootDir: root, key: k });
+      p.saveAll([
+        {
+          txn_id: 'txn-q2',
+          attempt: 3,
+          token: 'g'.repeat(64),
+          status: 'pending',
+          reason: 'two_factor',
+          summary: 'quarantine test r2',
+          created_at: 1000,
+          expires_at: 9999999,
+        },
+      ]);
+
+      // Corrupt the blob.
+      const blobPath = path.join(root, 'handoff.json');
+      const blob = fs.readFileSync(blobPath);
+      blob[20] ^= 0xff;
+      fs.writeFileSync(blobPath, blob);
+
+      // First boot: throws and writes sentinel.
+      const reader1 = new EncryptedFilePersistence({ rootDir: root, key: k });
+      expect(() => reader1.loadAll()).toThrow(/decryption\/auth-tag failure/);
+
+      // Main file should now be gone (renamed to .corrupt-*).
+      expect(fs.existsSync(blobPath)).toBe(false);
+      // Sentinel must exist.
+      const sentinelPath = blobPath + '.quarantine';
+      expect(fs.existsSync(sentinelPath)).toBe(true);
+
+      // Second boot (simulate restart-on-failure): must also throw, NOT return [].
+      const reader2 = new EncryptedFilePersistence({ rootDir: root, key: k });
+      expect(() => reader2.loadAll()).toThrow(/quarantine/);
+      // Error message must point at the sentinel path.
+      expect(() => reader2.loadAll()).toThrow(sentinelPath);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  test('removing the sentinel allows the next boot to return empty state (recovery path)', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const k = key32();
+      const p = new EncryptedFilePersistence({ rootDir: root, key: k });
+      p.saveAll([
+        {
+          txn_id: 'txn-q3',
+          attempt: 3,
+          token: 'h'.repeat(64),
+          status: 'pending',
+          reason: 'two_factor',
+          summary: 'quarantine recovery test',
+          created_at: 1000,
+          expires_at: 9999999,
+        },
+      ]);
+
+      // Corrupt and trigger quarantine.
+      const blobPath = path.join(root, 'handoff.json');
+      const blob = fs.readFileSync(blobPath);
+      blob[20] ^= 0xff;
+      fs.writeFileSync(blobPath, blob);
+
+      const reader1 = new EncryptedFilePersistence({ rootDir: root, key: k });
+      expect(() => reader1.loadAll()).toThrow(/decryption\/auth-tag failure/);
+
+      // Operator removes the sentinel (and optionally the corrupt file).
+      const sentinelPath = blobPath + '.quarantine';
+      fs.unlinkSync(sentinelPath);
+
+      // Third boot: no main file, no sentinel → fresh empty state.
+      const reader3 = new EncryptedFilePersistence({ rootDir: root, key: k });
+      expect(reader3.loadAll()).toEqual([]);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+});
+
 describe('P2 regression — no plaintext fallback when key is absent', () => {
   let root: string;
   let prev: string | undefined;

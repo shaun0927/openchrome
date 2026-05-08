@@ -37,6 +37,7 @@ import * as path from 'node:path';
 import type { HandoffRecord } from './manager';
 
 const FILENAME = 'handoff.json';
+const QUARANTINE_SUFFIX = '.quarantine';
 
 export interface PersistenceAdapter {
   /** Read all stored records. Returns [] for a fresh install. */
@@ -129,7 +130,49 @@ export class EncryptedFilePersistence implements PersistenceAdapter {
     this.key = resolveKey(opts);
   }
 
+  /**
+   * Load all persisted handoff records.
+   *
+   * Fail-closed behaviour on corruption:
+   *   1. Auth-tag / decryption failure renames the bad blob to
+   *      `<file>.corrupt-<timestamp>` for operator inspection, writes a
+   *      `<file>.quarantine` sentinel file, then throws so the current
+   *      boot is rejected.
+   *   2. On subsequent boots the sentinel is detected before the
+   *      "no file → []" path and throws again.  The quarantine is
+   *      intentionally NOT self-healing — restart-on-failure loops
+   *      cannot silently recover with cleared attempt counters.
+   *
+   * Recovery (operator steps):
+   *   1. Inspect `<file>.corrupt-<timestamp>` to determine root cause.
+   *   2. If safe to discard, remove BOTH the `.corrupt-*` and `.quarantine`
+   *      files.  The next boot will start fresh with empty state.
+   *   3. If the key was rotated, restore a clean encrypted file or let the
+   *      manager re-initialize after removing the sentinel.
+   */
   loadAll(): HandoffRecord[] {
+    // Check for a quarantine sentinel left by a previous corrupt-boot.
+    // This must be evaluated before the existsSync check so that
+    // restart-on-failure environments cannot silently recover after one
+    // failed boot (the rename removed the main file, but the sentinel
+    // remains as the "block" marker).
+    const sentinel = `${this.target}${QUARANTINE_SUFFIX}`;
+    if (fs.existsSync(sentinel)) {
+      let details = '';
+      try {
+        details = fs.readFileSync(sentinel, 'utf8').trim();
+      } catch {
+        // ignore read error — the file's existence is sufficient
+      }
+      throw new Error(
+        `EncryptedFilePersistence: handoff persistence quarantined — ` +
+          `a previous boot detected a decryption/auth-tag failure. ` +
+          `Details: ${details || '(none)'}. ` +
+          `Remove ${sentinel} after investigating the accompanying ` +
+          `*.corrupt-* file to allow the next boot to start with empty state.`,
+      );
+    }
+
     if (!fs.existsSync(this.target)) return [];
     let blob: Buffer;
     try {
@@ -143,19 +186,35 @@ export class EncryptedFilePersistence implements PersistenceAdapter {
       plaintext = decrypt(blob, this.key);
     } catch (err) {
       // Auth-tag / decryption failure: tampered ciphertext or wrong key.
-      // Quarantine the bad file so operators can inspect it, then fail
-      // closed so the manager does NOT silently rehydrate with zero
-      // records (which would reset per-txn attempt counters).
+      // 1. Rename the bad blob so operators can inspect it.
+      // 2. Write a sentinel file so subsequent boots also fail closed
+      //    (the rename removed the main file, otherwise restart loops
+      //    would silently recover with empty state and reset attempt
+      //    counters, defeating maxPerTxn protection).
       const corrupt = `${this.target}.corrupt-${Date.now()}`;
       try {
         fs.renameSync(this.target, corrupt);
       } catch {
         // rename best-effort; original file stays if rename fails
       }
+      // Write the quarantine sentinel unconditionally (mode 0o600).
+      const sentinelBody =
+        `quarantined=${new Date().toISOString()} ` +
+        `corrupt=${corrupt} ` +
+        `reason=decryption/auth-tag failure`;
+      try {
+        fs.writeFileSync(sentinel, sentinelBody, { mode: 0o600 });
+      } catch {
+        // sentinel write is best-effort; the throw below still protects
+        // the current boot regardless
+      }
       const msg =
         `EncryptedFilePersistence: decryption/auth-tag failure — ` +
         `persisted handoff file may be tampered or was written with a different key. ` +
-        `File quarantined as ${corrupt}. Startup fails closed to protect maxPerTxn guarantees.`;
+        `File quarantined as ${corrupt}. ` +
+        `A sentinel has been written to ${sentinel}; remove it after investigation ` +
+        `to allow the next boot to start with empty state. ` +
+        `Startup fails closed to protect maxPerTxn guarantees.`;
       console.error(msg);
       throw new Error(msg);
     }
