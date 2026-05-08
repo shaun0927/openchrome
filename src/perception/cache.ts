@@ -113,6 +113,19 @@ export class PerceptualCache {
     keyParts: { frameId: string; viewport: ViewportRect; backendNodeId: number; styleHash: string },
   ): PerceptualMetadata | undefined {
     const docCounter = this.getDocCounter(keyParts.frameId);
+    const vpStr = `${keyParts.viewport.x},${keyParts.viewport.y},${keyParts.viewport.w},${keyParts.viewport.h}`;
+    const trackKey = `${keyParts.frameId}|${docCounter}`;
+    const lastVp = this.lastViewport.get(trackKey);
+    // If a viewport was previously recorded and it differs from the caller's
+    // viewport, the cached entries belong to a different viewport era.  Return
+    // undefined immediately so the caller is forced to recompute via
+    // getOrCompute, which will evict the stale entries and advance lastViewport.
+    // We do not mutate lastViewport here — only getOrCompute owns that
+    // transition, preventing accidental regression to a stale viewport on
+    // read-only call paths.
+    if (lastVp !== undefined && lastVp !== vpStr) {
+      return undefined;
+    }
     return this.entries.get(keyString({ ...keyParts, docCounter }));
   }
 

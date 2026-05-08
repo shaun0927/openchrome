@@ -119,6 +119,31 @@ describe('PerceptualCache — invalidation', () => {
     expect(cache.get({ frameId: 'f', viewport: VIEWPORT, backendNodeId: 1, styleHash: HASH_A })).toBeUndefined();
   });
 
+  test('get() returns undefined for stale-viewport entries (viewport-changed path)', () => {
+    const cache = new PerceptualCache();
+    const vpA: ViewportRect = { x: 0, y: 0, w: 1280, h: 800 };
+    const vpB: ViewportRect = { x: 0, y: 0, w: 375, h: 812 };
+
+    // Populate two nodes under viewport A via getOrCompute (establishes lastViewport=A).
+    cache.getOrCompute({ frameId: 'f1', viewport: vpA, backendNodeId: 1, styleHash: HASH_A }, () => md());
+    cache.getOrCompute({ frameId: 'f1', viewport: vpA, backendNodeId: 2, styleHash: HASH_A }, () => md());
+    expect(cache.size()).toBe(2);
+
+    // Simulate a frame resize: call get() with the new viewport B before any
+    // getOrCompute with B has been called.  get() must return undefined — it
+    // must not serve the stale vpA entry for the new viewport.
+    expect(cache.get({ frameId: 'f1', viewport: vpB, backendNodeId: 1, styleHash: HASH_A })).toBeUndefined();
+    expect(cache.get({ frameId: 'f1', viewport: vpB, backendNodeId: 2, styleHash: HASH_A })).toBeUndefined();
+
+    // vpA entries are still physically in the map (eviction happens on next
+    // getOrCompute), but get() with vpA now also returns undefined because
+    // the lastViewport is still A (unchanged by the read-only get() calls above).
+    // The vpA hits are still accessible from vpA — confirming lastViewport was
+    // not corrupted by the vpB reads.
+    expect(cache.get({ frameId: 'f1', viewport: vpA, backendNodeId: 1, styleHash: HASH_A })).toBeDefined();
+    expect(cache.get({ frameId: 'f1', viewport: vpA, backendNodeId: 2, styleHash: HASH_A })).toBeDefined();
+  });
+
   test('viewport change evicts old-viewport entries for the same doc', () => {
     const cache = new PerceptualCache();
     const vpA: ViewportRect = { x: 0, y: 0, w: 1280, h: 800 };
