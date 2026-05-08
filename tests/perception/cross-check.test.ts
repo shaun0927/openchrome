@@ -168,17 +168,22 @@ describe('runCrossCheck — overrides', () => {
 
   test('raising edgeDensityThreshold makes a bordered region register as pixel_absent', () => {
     const bg = { r: 240, g: 240, b: 240 };
-    // Inner crop has a faint edge (low density). With default density
-    // cutoff 0.02 the result is consistent; raising the cutoff makes
-    // the crop appear absent.
-    const buf = fieldWithInnerRect(64, 64, [bg.r, bg.g, bg.b], [bg.r - 1, bg.g - 1, bg.b - 1], {
-      x: 30,
-      y: 30,
-      w: 4,
-      h: 4,
+    // An 8x8 inner rect with a strongly contrasting color (channel diff > 30)
+    // sits inside the 32x32 crop. Its Sobel perimeter produces ~28 edge pixels
+    // out of 1024 crop pixels, giving edge_density ~0.027.
+    //
+    // Default threshold (0.02): 0.027 >= 0.02 → verdict is `consistent`.
+    // Raised threshold (0.5):   0.027 <  0.50 → low-edge branch fires; the
+    // dominant crop color is still the bg (960/1024 pixels) so color_distance
+    // is near zero → verdict flips to `pixel_absent`.
+    const buf = fieldWithInnerRect(64, 64, [bg.r, bg.g, bg.b], [bg.r - 50, bg.g - 50, bg.b - 50], {
+      x: 20,
+      y: 20,
+      w: 8,
+      h: 8,
     });
     const def = runCrossCheck(buf, 64, 64, { x: 16, y: 16, w: 32, h: 32 }, { backgroundColor: bg });
-    expect(def.verdict).toBe('pixel_absent');
+    expect(def.verdict).toBe('consistent');
 
     const tight = runCrossCheck(buf, 64, 64, { x: 16, y: 16, w: 32, h: 32 }, {
       backgroundColor: bg,
