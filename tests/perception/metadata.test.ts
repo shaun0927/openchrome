@@ -239,6 +239,39 @@ describe('computePerceptualMetadata — descendant hit regression (P2)', () => {
   });
 });
 
+describe('computePerceptualMetadata — display:contents feasibility (P2 fix)', () => {
+  test('display:contents + hasChildBoxes=true + null pixelBox → interactionFeasibility is NOT zero_size', () => {
+    const r = computePerceptualMetadata(
+      probe({ display: 'contents', hasChildBoxes: true, pixelBox: null, topElementBackendNodeId: 42 }),
+      VIEWPORT,
+    );
+    expect(r.interactionFeasibility).not.toBe('zero_size');
+  });
+
+  test('display:contents + hasChildBoxes=true + null pixelBox → feasibility is ok (node is on top)', () => {
+    const r = computePerceptualMetadata(
+      probe({ display: 'contents', hasChildBoxes: true, pixelBox: null, topElementBackendNodeId: 42 }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('rendered');
+    expect(r.interactionFeasibility).toBe('ok');
+  });
+
+  test('display:contents + hasChildBoxes=false + null pixelBox → outside_viewport (no child boxes)', () => {
+    const r = computePerceptualMetadata(
+      probe({ display: 'contents', hasChildBoxes: false, pixelBox: null }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('display_contents_no_box');
+    expect(r.interactionFeasibility).toBe('outside_viewport');
+  });
+
+  test('non-contents node + null pixelBox → still zero_size (guard is scoped to display:contents)', () => {
+    const r = computePerceptualMetadata(probe({ pixelBox: null }), VIEWPORT);
+    expect(r.interactionFeasibility).toBe('zero_size');
+  });
+});
+
 describe('computePerceptualMetadata — opacity propagation', () => {
   test('opacity surfaces to effectiveOpacity', () => {
     const r = computePerceptualMetadata(probe({ opacityChain: [1, 0.4] }), VIEWPORT);

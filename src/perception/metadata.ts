@@ -66,13 +66,19 @@ function classifyInteractionFeasibility(
   viewport: ViewportRect,
   topElementMatches: boolean,
   pointerEventsNone: boolean,
+  display: string,
+  hasChildBoxes: boolean,
 ): InteractionFeasibility {
   if (effective !== 'rendered' && effective !== 'covered_by' && effective !== 'off_screen') {
     return 'outside_viewport'; // hidden/collapsed/contents-no-box → all flat-out unreachable
   }
-  if (isZeroSize(box)) return 'zero_size';
-  if (!box) return 'zero_size';
-  if (effective === 'off_screen' || !intersects(box, viewport)) return 'outside_viewport';
+  // display:contents nodes have no own box — their rendered geometry comes
+  // from descendants.  When child boxes exist the node IS interactable via
+  // its children; skip zero_size so feasibility falls through to the normal
+  // path (mirroring how classifyEffectiveDisplay returns 'rendered' here).
+  if (isZeroSize(box) && !(display === 'contents' && hasChildBoxes)) return 'zero_size';
+  if (!box && !(display === 'contents' && hasChildBoxes)) return 'zero_size';
+  if (effective === 'off_screen' || (box && !intersects(box, viewport))) return 'outside_viewport';
   if (pointerEventsNone) return 'pointer_events_none';
   if (!topElementMatches) return 'blocked_by_overlay';
   return 'ok';
@@ -130,7 +136,7 @@ export function computePerceptualMetadata(
       probe.topElementBackendNodeId !== null &&
       probe.descendantBackendNodeIds.has(probe.topElementBackendNodeId));
 
-  const feasibility = classifyInteractionFeasibility(effective, box, viewport, topElementMatches, pointerEventsNone);
+  const feasibility = classifyInteractionFeasibility(effective, box, viewport, topElementMatches, pointerEventsNone, probe.display, probe.hasChildBoxes ?? false);
 
   const md: PerceptualMetadata = {
     pixelBox: box,

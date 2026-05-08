@@ -103,6 +103,18 @@ export class PerceptualCache {
     const k = keyString({ ...keyParts, docCounter });
     const hit = this.entries.get(k);
     if (hit) return hit;
+    // Evict any prior-version entry for the same node identity (same
+    // frameId+docCounter+viewport+backendNodeId) that carries a different
+    // styleHash.  Each node has exactly one current version; older hashes
+    // accumulate on long-lived pages with frequent SPA mutations and are
+    // now unreachable (their key changed) but were never removed.
+    const vpStr = `${keyParts.viewport.x},${keyParts.viewport.y},${keyParts.viewport.w},${keyParts.viewport.h}`;
+    const nodePrefix = `${keyParts.frameId}|${docCounter}|${vpStr}|${keyParts.backendNodeId}|`;
+    for (const existing of this.entries.keys()) {
+      if (existing.startsWith(nodePrefix) && existing !== k) {
+        this.entries.delete(existing);
+      }
+    }
     const fresh = compute();
     this.entries.set(k, fresh);
     return fresh;

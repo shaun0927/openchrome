@@ -239,6 +239,53 @@ describe('PerceptualCache — style-hash invalidation (SPA in-document mutations
   });
 });
 
+describe('PerceptualCache — style-hash eviction (same node identity, new hash)', () => {
+  test('inserting hash-B for a node evicts the prior hash-A entry; only hash-B remains', () => {
+    const cache = new PerceptualCache();
+
+    const hashA = computeStyleHash(probe({ display: 'block' }));
+    cache.getOrCompute(
+      { frameId: 'f1', viewport: VIEWPORT, backendNodeId: 5, styleHash: hashA },
+      () => md({ effectiveDisplay: 'rendered' }),
+    );
+    expect(cache.size()).toBe(1);
+
+    // SPA mutation — display flips, producing a new hash.
+    const hashB = computeStyleHash(probe({ display: 'none' }));
+    expect(hashB).not.toBe(hashA);
+
+    cache.getOrCompute(
+      { frameId: 'f1', viewport: VIEWPORT, backendNodeId: 5, styleHash: hashB },
+      () => md({ effectiveDisplay: 'hidden_display_none' }),
+    );
+    // Only the hash-B entry must remain; the superseded hash-A entry is gone.
+    expect(cache.size()).toBe(1);
+    expect(cache.get({ frameId: 'f1', viewport: VIEWPORT, backendNodeId: 5, styleHash: hashA })).toBeUndefined();
+    expect(cache.get({ frameId: 'f1', viewport: VIEWPORT, backendNodeId: 5, styleHash: hashB })).toBeDefined();
+  });
+
+  test('eviction is scoped to the mutated node; sibling node entries survive', () => {
+    const cache = new PerceptualCache();
+
+    const hashA = computeStyleHash(probe({ display: 'block' }));
+    cache.getOrCompute({ frameId: 'f1', viewport: VIEWPORT, backendNodeId: 5, styleHash: hashA }, () => md());
+    cache.getOrCompute({ frameId: 'f1', viewport: VIEWPORT, backendNodeId: 6, styleHash: hashA }, () => md());
+    expect(cache.size()).toBe(2);
+
+    // Only node 5 mutates.
+    const hashB = computeStyleHash(probe({ display: 'none' }));
+    cache.getOrCompute({ frameId: 'f1', viewport: VIEWPORT, backendNodeId: 5, styleHash: hashB }, () => md());
+
+    // Node 6's hash-A entry must still be present.
+    expect(cache.get({ frameId: 'f1', viewport: VIEWPORT, backendNodeId: 6, styleHash: hashA })).toBeDefined();
+    // Node 5's old hash-A entry is gone; new hash-B is present.
+    expect(cache.get({ frameId: 'f1', viewport: VIEWPORT, backendNodeId: 5, styleHash: hashA })).toBeUndefined();
+    expect(cache.get({ frameId: 'f1', viewport: VIEWPORT, backendNodeId: 5, styleHash: hashB })).toBeDefined();
+    // Total: 2 entries (node-6 hashA + node-5 hashB).
+    expect(cache.size()).toBe(2);
+  });
+});
+
 describe('PerceptualCache — probe-field invalidation (overlay / descendant / child-box)', () => {
   test('topElementBackendNodeId flip → recompute (overlay appearance simulated)', () => {
     const cache = new PerceptualCache();
