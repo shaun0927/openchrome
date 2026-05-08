@@ -438,6 +438,89 @@ describe('VotingOrchestrator — single-provider fallback', () => {
     if (!v.proceed) expect(v.reason).toBe('disagreement');
   });
 
+  test('synchronous throw from a provider is treated as failure (no crash)', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { x: 10, y: 10 } };
+    const orch = new VotingOrchestrator({
+      fallbackMode: 'graceful',
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 5 })),
+        // Provider B throws synchronously during the request build.
+        {
+          name: 'b',
+          ask: () => {
+            throw new Error('synchronous boom');
+          },
+        },
+      ],
+    });
+    const v = await orch.runVote(REQ);
+    expect(v.proceed).toBe(true); // graceful single-survivor
+  });
+
+  test('hung provider is bounded by orchestrator wall-clock timeout', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { x: 1, y: 1 } };
+    const orch = new VotingOrchestrator({
+      fallbackMode: 'strict',
+      timeoutMs: 50,
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 5 })),
+        // Provider B never resolves — orchestrator must time it out.
+        {
+          name: 'b',
+          ask: () => new Promise<ProviderReply>(() => undefined),
+        },
+      ],
+    });
+    const start = Date.now();
+    const v = await orch.runVote(REQ);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(2000); // does not hang forever
+    expect(v.proceed).toBe(false);
+    if (!v.proceed) expect(v.reason).toBe('disagreement');
+  });
+
+  test('throwing equivalence resolver is treated as disagreement (no crash)', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { selector: '#a' } };
+    const orch = new VotingOrchestrator({
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 5 })),
+        fakeProvider('b', async () => ({
+          ok: true,
+          action: { kind: 'click', args: { selector: '#b' } },
+          tokens: 5,
+        })),
+      ],
+      equivalence: {
+        resolveTarget: () => {
+          throw new Error('resolver crashed');
+        },
+      },
+    });
+    const v = await orch.runVote(REQ);
+    expect(v.proceed).toBe(false);
+    if (!v.proceed) expect(v.reason).toBe('disagreement');
+  });
+
+  test('action without a non-empty kind is rejected as failure', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { x: 1, y: 1 } };
+    const orch = new VotingOrchestrator({
+      fallbackMode: 'graceful',
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 5 })),
+        // Provider B reports ok with an empty action object.
+        fakeProvider('b', async () => ({
+          ok: true,
+          action: {} as ActionInvocation,
+          tokens: 5,
+        })),
+      ],
+    });
+    const v = await orch.runVote(REQ);
+    // Graceful: A's action stands as the surviving voter.
+    expect(v.proceed).toBe(true);
+    if (v.proceed) expect(v.voters).toEqual(['a']);
+  });
+
   test('rejected provider promise is treated as failure (no throw)', async () => {
     const action: ActionInvocation = { kind: 'click', args: { x: 100, y: 100 } };
     const orch = new VotingOrchestrator({

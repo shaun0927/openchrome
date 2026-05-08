@@ -208,6 +208,32 @@ export class VotingOrchestrator {
     return this.budget;
   }
 
+  /**
+   * Single-provider invocation that absorbs both synchronous throws
+   * from the call site (so `Promise.allSettled`'s array-build phase
+   * cannot itself throw) and unbounded provider hangs (so the
+   * orchestrator enforces its own wall-clock cap regardless of
+   * whether the provider honors `timeoutMs`).
+   */
+  private safeAsk(p: VotingProvider, req: VoteRequest): Promise<ProviderReply> {
+    const askPromise: Promise<ProviderReply> = (async () =>
+      p.ask(req, { timeoutMs: this.timeoutMs }))();
+    const timeoutMs = this.timeoutMs;
+    const guard = new Promise<ProviderReply>((resolve) => {
+      const t = setTimeout(() => {
+        resolve({
+          ok: false,
+          error: { kind: 'timeout', raw: `provider exceeded orchestrator timeout (${timeoutMs}ms)` },
+        });
+      }, timeoutMs + 100);
+      // Allow the process to exit if this is the only thing pending.
+      if (typeof (t as { unref?: () => void }).unref === 'function') {
+        (t as { unref: () => void }).unref();
+      }
+    });
+    return Promise.race([askPromise, guard]);
+  }
+
   async runVote(req: VoteRequest): Promise<VoteVerdict> {
     if (this.budget.isDisabled()) {
       return { proceed: false, reason: 'kill_switch' };
@@ -215,9 +241,14 @@ export class VotingOrchestrator {
     // Use allSettled so a thrown provider error never aborts the vote
     // — rejections are converted to ProviderReply { ok:false } so the
     // normal disagreement / all_failed / strict-fallback paths remain
-    // in charge of the verdict.
+    // in charge of the verdict. `safeAsk` wraps each provider call so
+    // (a) synchronous throws during request construction are caught
+    // before they escape `Promise.allSettled`'s array-build phase,
+    // and (b) the orchestrator enforces its own hard wall-clock
+    // timeout — a hung provider that ignores `timeoutMs` cannot block
+    // critical-action gating indefinitely.
     const settled = await Promise.allSettled(
-      this.providers.map((p) => p.ask(req, { timeoutMs: this.timeoutMs })),
+      this.providers.map((p) => this.safeAsk(p, req)),
     );
     const replies: ProviderReply[] = settled.map((r) => {
       if (r.status === 'fulfilled') return r.value;
@@ -239,14 +270,17 @@ export class VotingOrchestrator {
     // configuration land in the single-success advisory path with
     // only one *real* vote.
     const classified = replies.map((r, i) => {
-      const isSuccess = r.ok === true && r.action != null;
+      const isSuccess = r.ok === true && isValidAction(r.action);
       const reply: ProviderReply = isSuccess
         ? r
         : r.ok === true
           ? {
               ...r,
               ok: false,
-              error: r.error ?? { kind: 'malformed', raw: 'voter returned ok without an action' },
+              error: r.error ?? {
+                kind: 'malformed',
+                raw: 'voter returned ok without a structurally valid action',
+              },
             }
           : r;
       return { name: this.providers[i].name, reply, isSuccess };
@@ -286,7 +320,12 @@ export class VotingOrchestrator {
     // removes the `successes.length === 1` surface pattern that pattern-
     // matching reviewers misread as a strict-mode bypass.
     const head = successes[0].reply.action!;
-    const allAgree = successes.every((s) => actionsEquivalent(head, s.reply.action!, this.equivalence));
+    // Wrap `actionsEquivalent` so a throwing custom resolver (e.g. an
+    // operator-supplied `equivalence.resolveTarget` that crashes on
+    // unexpected input) cannot reject `runVote`. A thrown comparator
+    // is treated as "not equal" — the conservative outcome that
+    // routes the runtime into the disagreement / escalation path.
+    const allAgree = successes.every((s) => safeEquivalent(head, s.reply.action!, this.equivalence));
     if (allAgree) {
       return {
         proceed: true,
@@ -299,5 +338,35 @@ export class VotingOrchestrator {
       reason: 'disagreement',
       disagreement: { providers: successes },
     };
+  }
+}
+
+/**
+ * Structural validity check for a `ProviderReply.action`. Codex P2
+ * (#759 round 4): rejecting `{}` or `{ kind: undefined }` here keeps
+ * malformed actions from reaching the agreement path with a
+ * `proceed: true` verdict.
+ */
+function isValidAction(a: ActionInvocation | undefined): a is ActionInvocation {
+  if (!a || typeof a !== 'object') return false;
+  if (typeof a.kind !== 'string' || a.kind.length === 0) return false;
+  if (a.args !== undefined && (typeof a.args !== 'object' || a.args === null)) return false;
+  return true;
+}
+
+/**
+ * Crash-proof wrapper around `actionsEquivalent`. A throwing
+ * comparator (custom resolver crashes on unexpected input, etc.) is
+ * treated as "not equal" — escalation, never `proceed: true`.
+ */
+function safeEquivalent(
+  a: ActionInvocation,
+  b: ActionInvocation,
+  ctx: EquivalenceContext,
+): boolean {
+  try {
+    return actionsEquivalent(a, b, ctx);
+  } catch {
+    return false;
   }
 }
