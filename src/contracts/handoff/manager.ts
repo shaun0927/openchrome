@@ -114,9 +114,15 @@ export class HandoffManager {
     this.persistence = opts.persistence;
     // Restore prior state — pending handoffs whose deadline still lies
     // ahead are resumable; everything else stays as a record so we can
-    // honor the per-txn cap across restarts.
+    // honor the per-txn cap across restarts. Pending records whose
+    // expires_at has already passed are transitioned to 'expired' here,
+    // matching the lazy-expiry logic in get() and sweep().
     if (this.persistence) {
+      const t = this.now();
       for (const r of this.persistence.loadAll()) {
+        if (r.status === 'pending' && t >= r.expires_at) {
+          r.status = 'expired';
+        }
         this.active.set(r.txn_id, r);
         this.attempts.set(r.txn_id, Math.max(this.attempts.get(r.txn_id) ?? 0, r.attempt));
       }

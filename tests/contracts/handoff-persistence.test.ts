@@ -270,6 +270,22 @@ describe('HandoffManager — persistence integration', () => {
     expect(r.record?.status).toBe('resumed');
   });
 
+  test('hydrate skips (expires) pending records whose expires_at is in the past', () => {
+    const p = new PlaintextFilePersistence({ rootDir: root });
+    // First manager creates a handoff with a 100 ms TTL.
+    const a = new HandoffManager({ persistence: p, timeoutMs: 100, now: () => 1000 });
+    a.create({ txn_id: 't', reason: 'two_factor', summary: '2FA' });
+
+    // Second manager is constructed well past the deadline (now = 2000 > expires_at 1100).
+    const b = new HandoffManager({ persistence: p, now: () => 2000 });
+    // list() must NOT report it as pending.
+    const listed = b.list();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].status).toBe('expired');
+    // The per-txn cap must still be honoured (attempt count is restored).
+    expect(listed[0].attempt).toBe(1);
+  });
+
   test('reset() clears persisted file', () => {
     const p = new PlaintextFilePersistence({ rootDir: root });
     const m = new HandoffManager({ persistence: p });
