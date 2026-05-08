@@ -26,8 +26,21 @@ describe('SkillGraphStorage — schema and lifecycle', () => {
     expect(fs.existsSync(path.join(root, 'amazon.com.db'))).toBe(true);
   });
 
-  test('schema version is 1', () => {
-    expect(store.getSchemaVersion()).toBe(1);
+  test('schema version reports the current migration head', () => {
+    // Bumped from 1 → 2 when `action_args_replay` was added (see #703 P1).
+    // Pin to the exact value so a missed migration shows up here, not as
+    // a runtime SQLITE_ERROR.
+    expect(store.getSchemaVersion()).toBe(2);
+  });
+
+  test('action_args_replay column exists on the edges table', () => {
+    // Probe pragma_table_info via raw SQLite — guards against the
+    // ALTER TABLE migration regressing on fresh DBs.
+    const Sqlite = require('better-sqlite3');
+    const probe = new Sqlite(path.join(root, 'amazon.com.db'), { readonly: true });
+    const cols = probe.prepare("SELECT name FROM pragma_table_info('edges')").all() as Array<{ name: string }>;
+    probe.close();
+    expect(cols.map((c) => c.name)).toContain('action_args_replay');
   });
 
   test('reopening on the same domain is a no-op (idempotent migrations)', () => {

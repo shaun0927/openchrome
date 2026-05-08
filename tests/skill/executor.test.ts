@@ -6,6 +6,8 @@ import {
   pickBestEdge,
   matchesExpected,
   runSkill,
+  replayArgs,
+  encodeReplayArgs,
   _matchesExpectedRaw,
   type ActionInvocation,
   type ExecutionContext,
@@ -82,6 +84,43 @@ describe('matchesExpected — distribution math (#703 v2 rules)', () => {
       toStateDistribution: [{ to_state: 'A', count: 1 }],
     });
     expect(matchesExpected('A', edge)).toBe(true);
+  });
+});
+
+describe('replayArgs / encodeReplayArgs — lossless action payload', () => {
+  test('JSON round-trip preserves structured args', () => {
+    const args = { ref: 'submit', count: 2, nested: { ok: true } };
+    const encoded = encodeReplayArgs(args);
+    expect(encoded).toBe(JSON.stringify(args));
+    expect(replayArgs(emptyEdge({ actionArgsReplay: encoded }))).toEqual(args);
+  });
+
+  test('replayArgs prefers actionArgsReplay over the canonical identity', () => {
+    const args = { ref: 'a', clickCount: 3 };
+    const edge = emptyEdge({
+      actionArgsNorm: 'ref:a',
+      actionArgsReplay: JSON.stringify(args),
+    });
+    // If we leaned on actionArgsNorm we'd get the raw string "ref:a".
+    expect(replayArgs(edge)).toEqual(args);
+  });
+
+  test('replayArgs falls back to actionArgsNorm for legacy edges (no replay payload)', () => {
+    // Pre-v2 edges may carry JSON in actionArgsNorm; honour it when no
+    // separate replay payload was stored.
+    const edge = emptyEdge({ actionArgsNorm: '{"ref":"legacy"}' });
+    expect(replayArgs(edge)).toEqual({ ref: 'legacy' });
+  });
+
+  test('replayArgs falls back to the raw norm string for non-JSON legacy identities', () => {
+    const edge = emptyEdge({ actionArgsNorm: 'ref:plain' });
+    expect(replayArgs(edge)).toBe('ref:plain');
+  });
+
+  test('encodeReplayArgs returns undefined for un-stringifiable input', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(encodeReplayArgs(circular)).toBeUndefined();
   });
 });
 
@@ -274,6 +313,73 @@ describe('runSkill — fallback / graph miss path', () => {
     expect(result.outcome).toBe('graph_miss');
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('no_action_available');
+  });
+
+  test('promoted edge stores lossless action_args_replay → graph_hit replays structured args', async () => {
+    const before = snap({ url: 'https://x.com/a' });
+    const after = snap({ url: 'https://x.com/b' });
+
+    const { computeStateHash } = await import('../../src/skill/state');
+    const fromHash = computeStateHash(before).hash;
+
+    const structuredArgs = { ref: 'submit-button', clickCount: 1 };
+    // Promote the edge by running fallback once with structured args. The
+    // canonical identity uses the non-JSON `ref:*` form (so parseArgs would
+    // hand back a raw string), but the structured payload is what the
+    // router needs on replay.
+    const promotedAction: ActionInvocation = {
+      kind: 'click',
+      argsNorm: 'ref:submit-button',
+      args: structuredArgs,
+    };
+    let runActionSawArgs: unknown = null;
+    const promoteRouter: ToolRouter = {
+      async pickFallbackAction() {
+        return promotedAction;
+      },
+      async runAction(action) {
+        runActionSawArgs = action.args;
+        return { ok: true };
+      },
+    };
+    await runSkill({
+      storage,
+      router: promoteRouter,
+      ctx: ctxWithStates([before, after]),
+      intent: {},
+    });
+    expect(runActionSawArgs).toEqual(structuredArgs);
+
+    // Now revisit `before` — the executor must hit the graph and replay the
+    // structured args, NOT the canonical `ref:submit-button` string.
+    runActionSawArgs = null;
+    const replayRouter: ToolRouter = {
+      async pickFallbackAction() {
+        // Fail loudly if the executor falls back instead of hitting the graph.
+        return null;
+      },
+      async runAction(action) {
+        runActionSawArgs = action.args;
+        return { ok: true };
+      },
+    };
+    const result = await runSkill({
+      storage,
+      router: replayRouter,
+      ctx: ctxWithStates([before, after]),
+      intent: {},
+    });
+
+    expect(result.outcome).toBe('graph_hit');
+    expect(result.ok).toBe(true);
+    expect(runActionSawArgs).toEqual(structuredArgs);
+
+    const stored = storage.getEdge({
+      fromState: fromHash,
+      actionKind: 'click',
+      actionArgsNorm: 'ref:submit-button',
+    });
+    expect(stored?.actionArgsReplay).toBe(JSON.stringify(structuredArgs));
   });
 
   test('graph miss → fallback runs but fails → records negative edge, no promotion', async () => {

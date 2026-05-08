@@ -69,7 +69,8 @@ export interface SkillIntent {
 export type RunOutcomeKind =
   | 'graph_hit'
   | 'graph_miss'
-  | 'graph_fallback_promoted';
+  | 'graph_fallback_promoted'
+  | 'graph_error';
 
 export interface RunSkillResult {
   outcome: RunOutcomeKind;
@@ -113,16 +114,38 @@ const SMALL_SAMPLE_TOTAL = 10;
  *
  * When `args.audit` is supplied, exactly one event is emitted before
  * return — even on the early "no_action_available" path — so audit
- * consumers see a 1:1 correspondence between calls and events.
+ * consumers see a 1:1 correspondence between calls and events. If
+ * `runSkillInner` rejects (snapshot, router, or storage failure), the
+ * executor still emits a `graph_error` event with whatever progress was
+ * captured before the throw, then re-raises so the caller's error
+ * handling stays responsible for retry/abort.
  */
 export async function runSkill(args: RunSkillArgs): Promise<RunSkillResult> {
   const { storage, router, ctx, intent } = args;
-  const result = await runSkillInner({ storage, router, ctx, intent });
-  if (args.audit) {
-    const { buildEventFromResult } = await import('./audit');
-    args.audit.emit(buildEventFromResult(args.domain ?? storage.domain, result));
+  const trace: ProgressTrace = {};
+  try {
+    const result = await runSkillInner({ storage, router, ctx, intent, trace });
+    if (args.audit) {
+      const { buildEventFromResult } = await import('./audit');
+      args.audit.emit(buildEventFromResult(args.domain ?? storage.domain, result));
+    }
+    return result;
+  } catch (err) {
+    if (args.audit) {
+      const { buildEventFromError } = await import('./audit');
+      args.audit.emit(
+        buildEventFromError(args.domain ?? storage.domain, err, trace),
+      );
+    }
+    throw err;
   }
-  return result;
+}
+
+/** Captures partial progress so a thrown call can still produce an audit row. */
+interface ProgressTrace {
+  fromState?: string;
+  toState?: string;
+  action?: ActionInvocation;
 }
 
 async function runSkillInner(args: {
@@ -130,11 +153,13 @@ async function runSkillInner(args: {
   router: ToolRouter;
   ctx: ExecutionContext;
   intent: SkillIntent;
+  trace: ProgressTrace;
 }): Promise<RunSkillResult> {
-  const { storage, router, ctx, intent } = args;
+  const { storage, router, ctx, intent, trace } = args;
 
   const before = await ctx.snapshotPageState();
   const fromHash = computeStateHash(before).hash;
+  trace.fromState = fromHash;
   storage.upsertNode({
     stateHash: fromHash,
     evidence: computeStateHash(before).evidence,
@@ -147,11 +172,13 @@ async function runSkillInner(args: {
     const action: ActionInvocation = {
       kind: candidate.actionKind,
       argsNorm: candidate.actionArgsNorm,
-      args: parseArgs(candidate.actionArgsNorm),
+      args: replayArgs(candidate),
     };
+    trace.action = action;
     const result = await router.runAction(action);
     const after = await ctx.snapshotPageState();
     const toHash = computeStateHash(after).hash;
+    trace.toState = toHash;
     storage.upsertNode({
       stateHash: toHash,
       evidence: computeStateHash(after).evidence,
@@ -185,9 +212,11 @@ async function runSkillInner(args: {
       reason: 'no_action_available',
     };
   }
+  trace.action = fallback;
   const fallbackResult = await router.runAction(fallback);
   const after = await ctx.snapshotPageState();
   const toHash = computeStateHash(after).hash;
+  trace.toState = toHash;
   storage.upsertNode({
     stateHash: toHash,
     evidence: computeStateHash(after).evidence,
@@ -200,6 +229,7 @@ async function runSkillInner(args: {
       fromState: fromHash,
       actionKind: fallback.kind,
       actionArgsNorm: fallback.argsNorm,
+      actionArgsReplay: encodeReplayArgs(fallback.args),
       observedToState: toHash,
       success: true,
     });
@@ -272,12 +302,47 @@ export function matchesExpected(newHash: string, edge: SkillEdge): boolean {
   return entry.count / total >= DISTRIBUTION_MATCH_THRESHOLD;
 }
 
-/** Best-effort decode of canonical args. Falls back to the raw string. */
-function parseArgs(argsNorm: string): unknown {
+/**
+ * Restore the structured args for a graph_hit replay.
+ *
+ * Prefers the lossless `actionArgsReplay` payload (recorded when the edge
+ * was promoted from the fallback path). Falls back to parsing
+ * `actionArgsNorm` for legacy edges captured before the v2 schema bump —
+ * those edges may have non-JSON identities (e.g. `ref:*`), in which case
+ * we surface the raw string to keep behaviour bug-compatible with v1.
+ *
+ * Exported for unit tests; the executor itself is the only production
+ * caller.
+ */
+export function replayArgs(edge: SkillEdge): unknown {
+  if (edge.actionArgsReplay !== undefined) {
+    try {
+      return JSON.parse(edge.actionArgsReplay);
+    } catch {
+      // Replay payload was corrupted — fall through to argsNorm so the
+      // edge isn't unusable, but the caller will surface the action via
+      // audit telemetry either way.
+    }
+  }
   try {
-    return JSON.parse(argsNorm);
+    return JSON.parse(edge.actionArgsNorm);
   } catch {
-    return argsNorm;
+    return edge.actionArgsNorm;
+  }
+}
+
+/**
+ * Serialise the original action args into the lossless replay payload.
+ * Returns undefined when the args don't survive a JSON round-trip (for
+ * example, args containing functions or circular references). In that
+ * case the edge is still promoted, but graph_hit replay falls back to
+ * parsing `actionArgsNorm` — same behaviour as before this change.
+ */
+export function encodeReplayArgs(args: unknown): string | undefined {
+  try {
+    return JSON.stringify(args);
+  } catch {
+    return undefined;
   }
 }
 

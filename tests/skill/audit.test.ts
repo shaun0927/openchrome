@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import {
   AuditLogGraphEmitter,
   buildEventFromResult,
+  buildEventFromError,
   emitGraphEvent,
   type GraphAuditEvent,
 } from '../../src/skill/audit';
@@ -201,6 +202,103 @@ describe('runSkill — audit emission', () => {
     });
     // The result is the same shape as without audit; no assertion failures.
     expect(result.outcome).toBe('graph_miss');
+  });
+
+  test('snapshotPageState() rejects → emits graph_error then re-throws', async () => {
+    const events: GraphAuditEvent[] = [];
+    const failingCtx: ExecutionContext = {
+      async snapshotPageState() {
+        throw new Error('cdp_disconnected');
+      },
+    };
+    await expect(
+      runSkill({
+        storage,
+        router: mockRouter({ fallback: null }),
+        ctx: failingCtx,
+        intent: {},
+        audit: { emit: (e) => events.push(e) },
+      }),
+    ).rejects.toThrow('cdp_disconnected');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe('graph_error');
+    expect(events[0].ok).toBe(false);
+    expect(events[0].reason).toBe('cdp_disconnected');
+    // Snapshot failed before fromState was computed.
+    expect(events[0].fromState).toBe('');
+    expect(events[0].actionKind).toBeUndefined();
+  });
+
+  test('runAction() rejects after graph hit → graph_error carries fromState/action', async () => {
+    // Seed a graph_hit candidate so runSkill takes the graph-hit path.
+    const before = snap({ url: 'https://hit.example/a' });
+    const after = snap({ url: 'https://hit.example/b' });
+    const { computeStateHash } = await import('../../src/skill/state');
+    const fromHash = computeStateHash(before).hash;
+    const toHash = computeStateHash(after).hash;
+    storage.upsertNode({ stateHash: fromHash });
+    storage.upsertNode({ stateHash: toHash });
+    storage.recordOutcome({
+      fromState: fromHash,
+      actionKind: 'click',
+      actionArgsNorm: 'ref:hit',
+      observedToState: toHash,
+      success: true,
+    });
+
+    const events: GraphAuditEvent[] = [];
+    const failingRouter: ToolRouter = {
+      async pickFallbackAction() {
+        return null;
+      },
+      async runAction() {
+        throw new Error('tool_router_offline');
+      },
+    };
+    await expect(
+      runSkill({
+        storage,
+        router: failingRouter,
+        ctx: ctxWithStates([before, after]),
+        intent: {},
+        audit: { emit: (e) => events.push(e) },
+      }),
+    ).rejects.toThrow('tool_router_offline');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe('graph_error');
+    expect(events[0].ok).toBe(false);
+    expect(events[0].fromState).toBe(fromHash);
+    expect(events[0].actionKind).toBe('click');
+    expect(events[0].reason).toBe('tool_router_offline');
+  });
+});
+
+describe('buildEventFromError — wire shape', () => {
+  test('error message becomes reason; ok=false; fromState defaults to empty', () => {
+    const event = buildEventFromError('amazon.com', new Error('snapshot_failed'), {});
+    expect(event.event).toBe('graph_error');
+    expect(event.ok).toBe(false);
+    expect(event.reason).toBe('snapshot_failed');
+    expect(event.fromState).toBe('');
+    expect(event.actionKind).toBeUndefined();
+  });
+
+  test('captures partial trace (fromState + action) when present', () => {
+    const event = buildEventFromError('x.com', new Error('boom'), {
+      fromState: 'A',
+      action: { kind: 'click', argsNorm: 'ref:1', args: { ref: 'a' } },
+    });
+    expect(event.fromState).toBe('A');
+    expect(event.actionKind).toBe('click');
+    expect(event.actionArgsNorm).toBe('ref:1');
+  });
+
+  test('non-Error rejection: string maps to reason; unknown type → "unknown_error"', () => {
+    expect(buildEventFromError('x', 'literal_string', {}).reason).toBe('literal_string');
+    expect(buildEventFromError('x', { not: 'an error' }, {}).reason).toBe('unknown_error');
+    expect(buildEventFromError('x', null, {}).reason).toBe('unknown_error');
   });
 });
 

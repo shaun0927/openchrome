@@ -32,7 +32,7 @@ function loadSqlite(): BetterSqlite3 {
   return _Sqlite;
 }
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS applied_migrations (
@@ -63,6 +63,20 @@ CREATE TABLE IF NOT EXISTS edges (
 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_state);
 `;
 
+/**
+ * v2 — replayable action payload.
+ *
+ * `action_args_norm` is a canonical *identity* string (used as part of the
+ * edge primary key) and must round-trip through `JSON.parse` to be safely
+ * replayed. Real-world actions use non-JSON normalizations (e.g. `ref:*`),
+ * so we store the original structured args separately as JSON. The graph
+ * executor (#703) reads this column on graph_hit replay; legacy edges
+ * (NULL) fall back to parsing `action_args_norm`.
+ */
+const SCHEMA_V2 = `
+ALTER TABLE edges ADD COLUMN action_args_replay TEXT;
+`;
+
 /** A row from `nodes`. */
 export interface SkillNode {
   stateHash: string;
@@ -77,6 +91,12 @@ export interface SkillEdge {
   fromState: string;
   actionKind: string;
   actionArgsNorm: string;
+  /**
+   * Lossless JSON-encoded original action args. Restored on graph_hit so
+   * the executor can replay the exact structured payload (not the canonical
+   * identity string). Undefined for legacy edges captured before v2.
+   */
+  actionArgsReplay?: string;
   /** Sorted (by count DESC) distribution of observed `to_state` outcomes. */
   toStateDistribution: ToStateDistribution;
   successCount: number;
@@ -139,12 +159,28 @@ export class SkillGraphStorage {
 
   private applyMigrations(): void {
     this.db.exec(SCHEMA_V1);
-    const applied = (this.db.prepare('SELECT version FROM applied_migrations').all() as { version: number }[])
-      .map((r) => r.version);
-    if (!applied.includes(1)) {
+    const applied = new Set(
+      (this.db.prepare('SELECT version FROM applied_migrations').all() as { version: number }[])
+        .map((r) => r.version),
+    );
+    const recordApplied = (version: number): void => {
       this.db
         .prepare('INSERT INTO applied_migrations (version, applied_at) VALUES (?, ?)')
-        .run(1, Date.now());
+        .run(version, Date.now());
+    };
+    if (!applied.has(1)) recordApplied(1);
+    if (!applied.has(2)) {
+      // ALTER TABLE … ADD COLUMN throws when the column already exists; on
+      // a fresh DB the column is absent (SCHEMA_V1 has no replay column),
+      // but a hand-recovered DB may have re-applied SCHEMA_V1 then partially
+      // applied v2. Probe pragma_table_info to stay idempotent either way.
+      const cols = this.db
+        .prepare("SELECT name FROM pragma_table_info('edges')")
+        .all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'action_args_replay')) {
+        this.db.exec(SCHEMA_V2);
+      }
+      recordApplied(2);
     }
   }
 
@@ -238,6 +274,14 @@ export class SkillGraphStorage {
     fromState: string;
     actionKind: string;
     actionArgsNorm: string;
+    /**
+     * Lossless JSON-encoded original action args. Stored on the edge so a
+     * graph_hit later can rebuild the exact structured payload — necessary
+     * when `actionArgsNorm` is a non-JSON identity (e.g. `ref:*`). On UPDATE
+     * an explicit value overwrites; if omitted we leave the previously
+     * recorded payload alone.
+     */
+    actionArgsReplay?: string;
     observedToState?: string;
     success: boolean;
     at?: number;
@@ -271,13 +315,17 @@ export class SkillGraphStorage {
       }
 
       if (existing) {
+        // COALESCE keeps a previously recorded replay payload when the
+        // caller doesn't pass one (e.g. failure paths where the identity
+        // already exists).
         this.db
           .prepare(
             `UPDATE edges
                SET to_state_distribution = ?,
                    success_count = success_count + ?,
                    fail_count    = fail_count + ?,
-                   last_failed_at = CASE WHEN ? = 0 THEN ? ELSE last_failed_at END
+                   last_failed_at = CASE WHEN ? = 0 THEN ? ELSE last_failed_at END,
+                   action_args_replay = COALESCE(?, action_args_replay)
              WHERE from_state = ? AND action_kind = ? AND action_args_norm = ?`,
           )
           .run(
@@ -286,6 +334,7 @@ export class SkillGraphStorage {
             a.success ? 0 : 1,
             a.success ? 1 : 0,
             at,
+            a.actionArgsReplay ?? null,
             a.fromState,
             a.actionKind,
             a.actionArgsNorm,
@@ -294,14 +343,15 @@ export class SkillGraphStorage {
         this.db
           .prepare(
             `INSERT INTO edges
-               (from_state, action_kind, action_args_norm, to_state_distribution,
-                success_count, fail_count, last_failed_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+               (from_state, action_kind, action_args_norm, action_args_replay,
+                to_state_distribution, success_count, fail_count, last_failed_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             a.fromState,
             a.actionKind,
             a.actionArgsNorm,
+            a.actionArgsReplay ?? null,
             JSON.stringify(dist),
             a.success ? 1 : 0,
             a.success ? 0 : 1,
@@ -320,13 +370,14 @@ export class SkillGraphStorage {
   }): SkillEdge | undefined {
     const row = this.db
       .prepare(
-        'SELECT from_state, action_kind, action_args_norm, to_state_distribution, success_count, fail_count, last_failed_at FROM edges WHERE from_state = ? AND action_kind = ? AND action_args_norm = ?',
+        'SELECT from_state, action_kind, action_args_norm, action_args_replay, to_state_distribution, success_count, fail_count, last_failed_at FROM edges WHERE from_state = ? AND action_kind = ? AND action_args_norm = ?',
       )
       .get(args.fromState, args.actionKind, args.actionArgsNorm) as
       | {
           from_state: string;
           action_kind: string;
           action_args_norm: string;
+          action_args_replay: string | null;
           to_state_distribution: string;
           success_count: number;
           fail_count: number;
@@ -338,6 +389,7 @@ export class SkillGraphStorage {
       fromState: row.from_state,
       actionKind: row.action_kind,
       actionArgsNorm: row.action_args_norm,
+      actionArgsReplay: row.action_args_replay ?? undefined,
       toStateDistribution: JSON.parse(row.to_state_distribution) as ToStateDistribution,
       successCount: row.success_count,
       failCount: row.fail_count,
@@ -353,12 +405,13 @@ export class SkillGraphStorage {
   edgesFrom(stateHash: string): SkillEdge[] {
     const rows = this.db
       .prepare(
-        'SELECT from_state, action_kind, action_args_norm, to_state_distribution, success_count, fail_count, last_failed_at FROM edges WHERE from_state = ?',
+        'SELECT from_state, action_kind, action_args_norm, action_args_replay, to_state_distribution, success_count, fail_count, last_failed_at FROM edges WHERE from_state = ?',
       )
       .all(stateHash) as Array<{
       from_state: string;
       action_kind: string;
       action_args_norm: string;
+      action_args_replay: string | null;
       to_state_distribution: string;
       success_count: number;
       fail_count: number;
@@ -368,6 +421,7 @@ export class SkillGraphStorage {
       fromState: row.from_state,
       actionKind: row.action_kind,
       actionArgsNorm: row.action_args_norm,
+      actionArgsReplay: row.action_args_replay ?? undefined,
       toStateDistribution: JSON.parse(row.to_state_distribution) as ToStateDistribution,
       successCount: row.success_count,
       failCount: row.fail_count,

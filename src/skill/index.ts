@@ -41,6 +41,7 @@ export type {
 export {
   AuditLogGraphEmitter,
   buildEventFromResult,
+  buildEventFromError,
   emitGraphEvent,
 } from './audit';
 export type { GraphAuditEvent, GraphAuditEventKind, GraphAuditEmitter } from './audit';

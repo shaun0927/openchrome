@@ -8,7 +8,8 @@
  * `skill_graph` and the kind is encoded in `args.event`.
  *
  * Schema (rendered as ExtendedAuditEntry.args):
- *   { event: "graph_hit"  | "graph_miss" | "graph_fallback_promoted",
+ *   { event: "graph_hit" | "graph_miss" | "graph_fallback_promoted"
+ *           | "graph_error",
  *     domain: string,
  *     fromState: string,
  *     toState?: string,
@@ -16,11 +17,19 @@
  *     ok: boolean,
  *     reason?: string,
  *     matchedExpected?: boolean }
+ *
+ * `graph_error` is emitted when `runSkill` itself rejects (snapshot,
+ * router, or storage failure). The 1:1 call-to-event guarantee covers
+ * exception paths so operational dashboards never undercount failures.
  */
 
 import { logAuditEntry } from '../security/audit-logger';
 
-import type { RunOutcomeKind, RunSkillResult } from './executor';
+import type {
+  ActionInvocation,
+  RunOutcomeKind,
+  RunSkillResult,
+} from './executor';
 
 export type GraphAuditEventKind = RunOutcomeKind;
 
@@ -78,6 +87,35 @@ export function buildEventFromResult(
     ok: result.ok,
     reason: result.reason,
     matchedExpected: result.matchedExpected,
+  };
+}
+
+/**
+ * Build a `graph_error` event from whatever progress the executor managed
+ * to capture before throwing. `fromState`/`toState`/`action` may be
+ * undefined when the snapshot itself failed; callers must tolerate that
+ * — the `event` and `ok=false` fields are sufficient to count failures.
+ */
+export function buildEventFromError(
+  domain: string,
+  err: unknown,
+  trace: { fromState?: string; toState?: string; action?: ActionInvocation },
+): GraphAuditEvent {
+  const reason =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : 'unknown_error';
+  return {
+    event: 'graph_error',
+    domain,
+    fromState: trace.fromState ?? '',
+    toState: trace.toState,
+    actionKind: trace.action?.kind,
+    actionArgsNorm: trace.action?.argsNorm,
+    ok: false,
+    reason,
   };
 }
 
