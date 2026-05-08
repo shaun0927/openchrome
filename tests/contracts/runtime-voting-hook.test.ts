@@ -134,6 +134,39 @@ describe('runWithContract — beforeIrreversibleAction hook', () => {
     expect(skillCalls).toBe(0);
   });
 
+  test('hung hook times out → verdict=escalated with hook_timeout message (fail-safe)', async () => {
+    // A hook that never resolves simulates a hung voting provider.
+    const hook: BeforeIrreversibleActionHook = () => new Promise(() => {/* never resolves */});
+    const { emitter, records } = captureEmitter();
+
+    // Use fake timer machinery so the test completes in ms, not seconds.
+    // setTimer resolves the sentinel immediately on next tick.
+    let timerCallback: (() => void) | null = null;
+    const fakeSetTimer = (handler: () => void, _ms: number) => {
+      timerCallback = handler;
+      // Schedule callback to fire asynchronously so Promise.race can set up.
+      Promise.resolve().then(() => timerCallback?.());
+      return 1; // opaque handle
+    };
+    const fakeClearTimer = (_h: unknown) => { timerCallback = null; };
+
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_OK, critical: true },
+      skill: async () => 'should not run',
+      snapshot: async () => snap(),
+      beforeIrreversibleAction: hook,
+      beforeIrreversibleActionTimeoutMs: 50,
+      setTimer: fakeSetTimer,
+      clearTimer: fakeClearTimer,
+      audit: emitter,
+    });
+
+    expect(r.verdict).toBe('escalated');
+    expect(r.error_message).toContain('hook_timeout');
+    expect(r.escalation?.target).toBe('human-review');
+    expect(records).toHaveLength(1);
+  });
+
   test('escalated record contains pre_evidence (when pre present and passed)', async () => {
     const hook: BeforeIrreversibleActionHook = async () => ({ proceed: false });
     const r = await runWithContract({

@@ -145,6 +145,13 @@ export interface ContractRuntimeArgs {
    * does not run.
    */
   beforeIrreversibleAction?: BeforeIrreversibleActionHook;
+  /**
+   * Maximum ms the `beforeIrreversibleAction` hook may take before the
+   * runtime treats it as a timed-out escalation (fail-safe, not
+   * fail-open). Defaults to 5000 ms. A timed-out hook yields
+   * verdict='escalated' with error_message containing 'hook_timeout'.
+   */
+  beforeIrreversibleActionTimeoutMs?: number;
 }
 
 /** Result envelope the voting hook returns. */
@@ -193,6 +200,12 @@ export function defaultAuditEmitter(): AuditEmitter {
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_FACTOR = 2;
 const BACKOFF_CAP_MS = 5000;
+
+/**
+ * Default timeout for `beforeIrreversibleAction` hooks. A hook that
+ * does not settle within this window is treated as escalate (fail-safe).
+ */
+const BEFORE_IRREVERSIBLE_ACTION_DEFAULT_TIMEOUT_MS = 5000;
 
 function backoffMs(attempt: number): number {
   return Math.min(BACKOFF_BASE_MS * Math.pow(BACKOFF_FACTOR, attempt), BACKOFF_CAP_MS);
@@ -297,18 +310,62 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     }
   }
 
+  // Timer helpers — hoisted here so block 2.5 (hook timeout) and block 3
+  // (preemptive skill timer) can both use them.
+  const setTimer = args.setTimer ?? ((h: () => void, ms: number) => {
+    const t = setTimeout(h, ms);
+    if (typeof (t as NodeJS.Timeout).unref === 'function') (t as NodeJS.Timeout).unref();
+    return t;
+  });
+  const clearTimer = args.clearTimer ?? ((h: unknown) => clearTimeout(h as NodeJS.Timeout));
+
   // 2.5. Voting hook for critical contracts (#711 integration).
   //      Pre-check has passed; budget timer hasn't started; skill is
   //      not yet running. If two providers disagree we escalate
   //      without consuming the budget.
+  //
+  //      The hook invocation is raced against a timeout (default 5s,
+  //      configurable via beforeIrreversibleActionTimeoutMs). A hung
+  //      hook is treated as escalate (fail-safe) so the "always
+  //      settles" guarantee is preserved even when the voting provider
+  //      is unresponsive.
   if (args.contract.critical && args.beforeIrreversibleAction) {
+    const hookTimeoutMs =
+      args.beforeIrreversibleActionTimeoutMs ??
+      BEFORE_IRREVERSIBLE_ACTION_DEFAULT_TIMEOUT_MS;
+
+    // Build a sentinel promise that resolves to null after the timeout.
+    // We use the same setTimer hook (if supplied) so tests can control time.
+    let hookTimeoutHandle: unknown = null;
+    const timeoutPromise = new Promise<null>((resolve) => {
+      hookTimeoutHandle = setTimer(() => resolve(null), hookTimeoutMs);
+    });
+
     let decision: IrreversibleActionDecision;
     try {
-      decision = await args.beforeIrreversibleAction({
-        contract: args.contract,
-        txn_id,
-      });
+      const result = await Promise.race([
+        args.beforeIrreversibleAction({ contract: args.contract, txn_id }),
+        timeoutPromise,
+      ]);
+      if (hookTimeoutHandle !== null) clearTimer(hookTimeoutHandle);
+      if (result === null) {
+        // Timeout fired before the hook resolved — escalate (fail-safe).
+        return settle(audit, {
+          txn_id,
+          contract_id: args.contract.id,
+          verdict: 'escalated',
+          started_at: startedAt,
+          ended_at: now(),
+          wall_ms: now() - startedAt,
+          retries: 0,
+          pre_evidence,
+          escalation: { target: 'human-review' },
+          error_message: `beforeIrreversibleAction hook timed out after ${hookTimeoutMs}ms (hook_timeout)`,
+        });
+      }
+      decision = result;
     } catch (e) {
+      if (hookTimeoutHandle !== null) clearTimer(hookTimeoutHandle);
       // Hook failure is treated as a runtime execution error rather
       // than a silent proceed — same blast-radius philosophy as
       // pre-check snapshot failures above.
@@ -348,12 +405,6 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   const budgetWallMs = args.contract.budget?.wall_ms;
   const skillStart = now();
   const ctrl = new AbortController();
-  const setTimer = args.setTimer ?? ((h, ms) => {
-    const t = setTimeout(h, ms);
-    if (typeof (t as NodeJS.Timeout).unref === 'function') (t as NodeJS.Timeout).unref();
-    return t;
-  });
-  const clearTimer = args.clearTimer ?? ((h) => clearTimeout(h as NodeJS.Timeout));
   let preemptedHardKill = false;
   let preemptHandle: unknown = null;
   if (budgetWallMs !== undefined) {
