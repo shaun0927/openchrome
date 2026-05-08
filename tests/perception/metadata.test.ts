@@ -297,12 +297,12 @@ describe('computePerceptualMetadata — display:contents feasibility (P2 fix)', 
     expect(r.interactionFeasibility).toBe('zero_size');
   });
 
-  test('display:contents + hasChildBoxes=true + null pixelBox → viewportVisible true AND feasibility ok (round-8 P2)', () => {
+  test('display:contents + hasChildBoxes=true + null pixelBox → viewportVisible false without child geometry', () => {
     const r = computePerceptualMetadata(
       probe({ display: 'contents', hasChildBoxes: true, pixelBox: null, topElementBackendNodeId: 42 }),
       VIEWPORT,
     );
-    expect(r.viewportVisible).toBe(true);
+    expect(r.viewportVisible).toBe(false);
     expect(r.interactionFeasibility).toBe('ok');
   });
 
