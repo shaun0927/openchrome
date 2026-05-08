@@ -36,7 +36,8 @@ export interface ValidationError {
     | 'out_of_range'
     | 'invalid_regex'
     | 'empty_children'
-    | 'unknown_enum';
+    | 'unknown_enum'
+    | 'unexpected_field';
 }
 
 const VALID_DOM_COUNT_OPS: ReadonlySet<DomCountOp> = new Set(['eq', 'gte', 'lte']);
@@ -114,8 +115,14 @@ function validateOne(
     case 'screenshot_class':
       requireString(obj, 'class_id', path, errors);
       requireFiniteNumber(obj, 'distance_max', path, errors);
-      if (typeof obj.distance_max === 'number') {
-        if (obj.distance_max < 0 || obj.distance_max > 64) {
+      if (typeof obj.distance_max === 'number' && Number.isFinite(obj.distance_max)) {
+        if (!Number.isInteger(obj.distance_max)) {
+          errors.push({
+            path: `${path}.distance_max`,
+            code: 'wrong_type',
+            message: 'distance_max must be an integer (Hamming distance is integer-valued)',
+          });
+        } else if (obj.distance_max < 0 || obj.distance_max > 64) {
           errors.push({
             path: `${path}.distance_max`,
             code: 'out_of_range',
@@ -153,6 +160,16 @@ function validateOne(
           message: 'not requires a single `child` (not `children`)',
         });
         return;
+      }
+      // Reject mixed payloads where the author also supplied `children`.
+      // Silently ignoring the extra field hides authoring mistakes whose
+      // intent (multi-child negation) cannot be represented by `not`.
+      if ('children' in obj) {
+        errors.push({
+          path: `${path}.children`,
+          code: 'unexpected_field',
+          message: 'not takes a single `child`; remove `children` (use `and`/`or` for multi-child composition)',
+        });
       }
       validateOne(obj.child, `${path}.child`, errors);
       return;

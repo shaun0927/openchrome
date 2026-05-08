@@ -124,6 +124,37 @@ describe('validateAssertion — per-kind field rules', () => {
     expect(errors.some((e) => e.code === 'out_of_range' && e.path === '$.distance_max')).toBe(true);
   });
 
+  test('screenshot_class distance_max non-integer → wrong_type', () => {
+    // Hamming distance over a 64-bit hash is integer by definition;
+    // 12.5 cannot represent a real distance and must be rejected at
+    // registration time so contracts cannot silently mis-evaluate.
+    const errors = validateAssertion({
+      kind: 'screenshot_class',
+      class_id: 'x',
+      distance_max: 12.5,
+    });
+    expect(
+      errors.some((e) => e.code === 'wrong_type' && e.path === '$.distance_max'),
+    ).toBe(true);
+  });
+
+  test('screenshot_class distance_max integer at bound → no errors', () => {
+    expect(
+      validateAssertion({
+        kind: 'screenshot_class',
+        class_id: 'x',
+        distance_max: 64,
+      }),
+    ).toEqual([]);
+    expect(
+      validateAssertion({
+        kind: 'screenshot_class',
+        class_id: 'x',
+        distance_max: 0,
+      }),
+    ).toEqual([]);
+  });
+
   test('network with bogus since → unknown_enum', () => {
     const errors = validateAssertion({
       kind: 'network',
@@ -168,6 +199,19 @@ describe('validateAssertion — composite rules', () => {
 
   test('not with single child → no errors', () => {
     expect(validateAssertion({ kind: 'not', child: { kind: 'no_dialog' } })).toEqual([]);
+  });
+
+  test('not with both `child` and `children` → unexpected_field', () => {
+    // Silently ignoring `children` would hide authoring mistakes where
+    // the user expected multi-child negation; flag it explicitly.
+    const errors = validateAssertion({
+      kind: 'not',
+      child: { kind: 'no_dialog' },
+      children: [{ kind: 'url', pattern: 'x' }],
+    });
+    expect(
+      errors.some((e) => e.code === 'unexpected_field' && e.path === '$.children'),
+    ).toBe(true);
   });
 
   test('errors aggregate across the tree (batch reporting)', () => {
