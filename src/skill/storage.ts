@@ -115,6 +115,41 @@ export function defaultSkillGraphRootDir(): string {
 }
 
 /**
+ * Windows reserved device names that are illegal as basenames even
+ * with an extension (`CON.db` is rejected by the OS). Match must be
+ * case-insensitive.
+ *
+ * Source: Microsoft Win32 file naming conventions.
+ */
+const WINDOWS_RESERVED_BASENAMES = new Set([
+  'con', 'prn', 'aux', 'nul',
+  'com0', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+  'lpt0', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+]);
+
+/**
+ * Encode a domain into a basename safe on every supported OS:
+ *
+ *   • `encodeURIComponent` handles characters Windows rejects in
+ *     filenames (`:`, `[`, `]`, `*`, `?`, `<`, `>`, `|`, `"`, `/`,
+ *     `\\`, whitespace, control chars).
+ *   • A leading underscore is added when the encoded basename matches
+ *     a Windows reserved device name (`CON.db` is invalid even with an
+ *     extension; `_CON.db` is fine). The underscore is stable so the
+ *     keying remains deterministic.
+ *
+ * Ordinary URL-hostname characters (`a-z`, `0-9`, `.`, `-`) round-trip
+ * unchanged, so `amazon.com` still maps to `amazon.com.db`.
+ */
+function encodeDomainForFilename(domain: string): string {
+  const encoded = encodeURIComponent(domain);
+  if (WINDOWS_RESERVED_BASENAMES.has(encoded.toLowerCase())) {
+    return `_${encoded}`;
+  }
+  return encoded;
+}
+
+/**
  * Single-domain handle. Multiple instances against the same `domain` are
  * safe; writes serialise on the WAL.
  */
@@ -131,16 +166,7 @@ export class SkillGraphStorage {
     this.rootDir = opts.rootDir ?? defaultSkillGraphRootDir();
     fs.mkdirSync(this.rootDir, { recursive: true });
     const Sqlite = loadSqlite();
-    // Encode the domain into a filesystem-safe filename. URL hostnames
-    // can legitimately contain characters Windows rejects in filenames
-    // — most notably `:` in IPv6 literals like `[2001:db8::1]`, plus
-    // `[`/`]` themselves. encodeURIComponent covers `:`, `/`, `\`, `[`,
-    // `]`, `*`, `?`, `<`, `>`, `|`, `"` and most other unsafe ASCII,
-    // round-trips deterministically for the same input, and leaves
-    // ordinary domain characters (`a-z`, `0-9`, `.`, `-`) untouched so
-    // `amazon.com` still maps to `amazon.com.db`.
-    const fileSafeDomain = encodeURIComponent(domain);
-    this.db = new Sqlite(path.join(this.rootDir, `${fileSafeDomain}.db`));
+    this.db = new Sqlite(path.join(this.rootDir, encodeDomainForFilename(domain) + '.db'));
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
     // SQLite ships with foreign-key checks OFF by default, on every

@@ -58,6 +58,19 @@ describe('SkillGraphStorage — schema and lifecycle', () => {
     expect(fs.existsSync(path.join(root, `${ipv6}.db`))).toBe(false);
   });
 
+  test('Windows reserved device names get prefixed (CON.db is illegal on Windows)', () => {
+    // `CON.db` would be rejected by the Win32 file API even though
+    // ext exists. Underscore prefix sidesteps the reserved name
+    // namespace; the keying stays deterministic for the same domain.
+    const reserved = ['con', 'CON', 'aux', 'NUL', 'com1', 'lpt5'];
+    for (const r of reserved) {
+      const sg = new SkillGraphStorage(r, { rootDir: root });
+      sg.close();
+      expect(fs.existsSync(path.join(root, `_${encodeURIComponent(r)}.db`))).toBe(true);
+      expect(fs.existsSync(path.join(root, `${r}.db`))).toBe(false);
+    }
+  });
+
   test('domain with `/` or `\\\\` is encoded, not rejected', () => {
     // Path separators in a domain were previously a hard error. They
     // cannot legitimately appear in a URL hostname, but if a caller
