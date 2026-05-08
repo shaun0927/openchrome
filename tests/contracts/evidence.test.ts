@@ -164,6 +164,25 @@ describe('writeEvidenceBundle — redaction', () => {
     expect(dom).not.toContain('topsecret');
   });
 
+  test('credentials in transaction record are scrubbed in manifest', async () => {
+    const r = await writeEvidenceBundle(
+      {
+        transaction: {
+          ...record(),
+          // Stash a credential-bearing field; the manifest must scrub
+          // it the same way DOM/trace payloads are scrubbed at write
+          // boundary.
+          last_url: 'https://x/?password=topsecret&api_key=AKIAEXAMPLE',
+        } as TransactionRecord & { last_url: string },
+      },
+      { rootDir: root },
+    );
+    const m = JSON.parse(fs.readFileSync(r.manifestPath, 'utf8')) as BundleManifest;
+    const dump = JSON.stringify(m);
+    expect(dump).not.toContain('topsecret');
+    expect(dump).not.toContain('AKIAEXAMPLE');
+  });
+
   test('Authorization headers in trace slice are scrubbed', async () => {
     const r = await writeEvidenceBundle(
       {

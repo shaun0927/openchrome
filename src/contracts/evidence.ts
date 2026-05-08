@@ -166,14 +166,19 @@ export async function writeEvidenceBundle(
   }
 
   // --- DOM snapshots (redacted, truncated when oversize) ---
+  // Effective per-DOM cap is min(DOM_TRUNCATE_BYTES, remaining bundle
+  // budget). Without this, a 50 KB-configured bundle could still hold
+  // two 500 KB DOM payloads because the per-DOM cap was the only check.
   if (inputs.fail_dom !== undefined) {
-    const r = writeJsonSnapshot(bundleDir, 'fail_dom.json', inputs.fail_dom, DOM_TRUNCATE_BYTES);
+    const cap = Math.min(DOM_TRUNCATE_BYTES, Math.max(0, maxBytes - byteSize));
+    const r = writeJsonSnapshot(bundleDir, 'fail_dom.json', inputs.fail_dom, cap);
     files.fail_dom = 'fail_dom.json';
     byteSize += r.bytes;
     if (r.truncatedFlag) truncated.fail_dom = true;
   }
   if (inputs.lastgood_dom !== undefined) {
-    const r = writeJsonSnapshot(bundleDir, 'lastgood_dom.json', inputs.lastgood_dom, DOM_TRUNCATE_BYTES);
+    const cap = Math.min(DOM_TRUNCATE_BYTES, Math.max(0, maxBytes - byteSize));
+    const r = writeJsonSnapshot(bundleDir, 'lastgood_dom.json', inputs.lastgood_dom, cap);
     files.lastgood_dom = 'lastgood_dom.json';
     byteSize += r.bytes;
     if (r.truncatedFlag) truncated.lastgood_dom = true;
@@ -203,15 +208,25 @@ export async function writeEvidenceBundle(
   }
 
   // --- Manifest written last (atomic via temp + rename) ---
+  // The TransactionRecord may carry URLs / args / response snippets that
+  // contain credentials (Authorization tokens, password params, API
+  // keys). DOM and trace payloads already flow through redactValue at
+  // their write boundary; the manifest must do the same so the bundle
+  // can't leak via the manifest itself even though every other path is
+  // scrubbed.
+  const redactedTransaction = redactValue(inputs.transaction) as TransactionRecord;
+  const redactedNextSteps = inputs.suggested_next_steps
+    ? (redactValue(inputs.suggested_next_steps) as EvidenceBundleInputs['suggested_next_steps'])
+    : undefined;
   const manifest: BundleManifest = {
     schema_version: 1,
-    txn_id: inputs.transaction.txn_id,
-    contract_id: inputs.transaction.contract_id,
-    verdict: inputs.transaction.verdict,
+    txn_id: redactedTransaction.txn_id,
+    contract_id: redactedTransaction.contract_id,
+    verdict: redactedTransaction.verdict,
     generated_at: Date.now(),
     files,
-    transaction: inputs.transaction,
-    suggested_next_steps: inputs.suggested_next_steps,
+    transaction: redactedTransaction,
+    suggested_next_steps: redactedNextSteps,
     byte_size: byteSize,
     ...(Object.keys(truncated).length > 0 ? { truncated } : {}),
   };
