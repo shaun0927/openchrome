@@ -276,3 +276,118 @@ describe('runWithContract — audit emission', () => {
     expect(r.verdict).toBe('success');
   });
 });
+
+describe('runWithContract — evaluator throws (always-settles guarantee)', () => {
+  // dom_text default selector is "body" → exercised via bodyText (no probe).
+  // Force an exception by using a non-default selector that the snapshot's
+  // domText() callback rejects, mirroring real-world bad-selector failures.
+  const POST_BAD_SELECTOR: Assertion = {
+    kind: 'dom_text',
+    selector: 'button.primary',
+    contains: 'Submit',
+  };
+  const PRE_BAD_SELECTOR: Assertion = {
+    kind: 'dom_text',
+    selector: 'button.primary',
+    contains: 'Submit',
+  };
+  const throwingDomText = (): string => {
+    throw new Error('Invalid selector');
+  };
+
+  test('evaluator throws during pre-check → execution_error (never propagates)', async () => {
+    const r = await runWithContract({
+      contract: { id: 'c', pre: PRE_BAD_SELECTOR, post: POST_OK },
+      skill: async () => 'ok',
+      snapshot: async () => snap({ domText: throwingDomText }),
+    });
+    expect(r.verdict).toBe('execution_error');
+    expect(r.error_message).toContain('pre-check');
+  });
+
+  test('evaluator throws during post-check → execution_error (never propagates)', async () => {
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_BAD_SELECTOR },
+      skill: async () => 'ok',
+      snapshot: async () => snap({ domText: throwingDomText }),
+    });
+    expect(r.verdict).toBe('execution_error');
+    expect(r.error_message).toContain('post-check');
+  });
+});
+
+describe('runWithContract — retry count normalization', () => {
+  test('NaN retry → 0 retries (no infinite loop)', async () => {
+    let postCalls = 0;
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: POST_OK,
+        on_fail: { retry: NaN as unknown as number },
+      },
+      skill: async () => undefined,
+      snapshot: async () => {
+        postCalls++;
+        return snap({ bodyText: 'still pending' });
+      },
+      delay: async () => undefined,
+    });
+    expect(r.verdict).toBe('postcondition_violation');
+    expect(r.retries).toBe(0);
+    expect(postCalls).toBe(1);
+  });
+
+  test('fractional retry (1.7) is floored to 1', async () => {
+    let postCalls = 0;
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: POST_OK,
+        on_fail: { retry: 1.7 as unknown as number },
+      },
+      skill: async () => undefined,
+      snapshot: async () => {
+        postCalls++;
+        return snap({ bodyText: 'still pending' });
+      },
+      delay: async () => undefined,
+    });
+    expect(r.verdict).toBe('postcondition_violation');
+    expect(r.retries).toBe(1);
+    expect(postCalls).toBe(2); // initial check + 1 retry
+  });
+
+  test('Infinity retry → coerced to 0 (no infinite loop)', async () => {
+    let postCalls = 0;
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: POST_OK,
+        on_fail: { retry: Number.POSITIVE_INFINITY as unknown as number },
+      },
+      skill: async () => undefined,
+      snapshot: async () => {
+        postCalls++;
+        return snap({ bodyText: 'still pending' });
+      },
+      delay: async () => undefined,
+    });
+    expect(r.verdict).toBe('postcondition_violation');
+    expect(r.retries).toBe(0);
+    expect(postCalls).toBe(1);
+  });
+
+  test('negative retry → coerced to 0', async () => {
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: POST_OK,
+        on_fail: { retry: -3 },
+      },
+      skill: async () => undefined,
+      snapshot: async () => snap({ bodyText: 'pending' }),
+      delay: async () => undefined,
+    });
+    expect(r.retries).toBe(0);
+  });
+});

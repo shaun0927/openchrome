@@ -190,7 +190,25 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
         error_message: `snapshot failed during pre-check: ${errMsg(e)}`,
       });
     }
-    pre_evidence = evaluate(args.contract.pre, preCtx);
+    try {
+      pre_evidence = evaluate(args.contract.pre, preCtx);
+    } catch (e) {
+      // The evaluator is pure, but it calls user-provided probes
+      // (`domText`, `domCount`) on the snapshot context — those can
+      // throw on bad selectors / probe failures. The runtime contract is
+      // "always settles", so convert the throw into a verdict instead of
+      // letting it propagate.
+      return settle(audit, {
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'execution_error',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: 0,
+        error_message: `evaluator threw during pre-check: ${errMsg(e)}`,
+      });
+    }
     if (!pre_evidence.passed) {
       return settle(audit, {
         txn_id,
@@ -239,8 +257,11 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     });
   }
 
-  // 4. Post-check with retry + backoff
-  const maxRetries = Math.max(0, args.contract.on_fail?.retry ?? 0);
+  // 4. Post-check with retry + backoff. Normalize the retry count so a
+  //    runtime-supplied non-integer / NaN cannot drive an infinite loop
+  //    (`attempt >= NaN` is always false) or expand the retry budget
+  //    (`1.5` → silently floors to 2 retries below the comparison).
+  const maxRetries = normalizeRetryCount(args.contract.on_fail?.retry);
   let post_evidence: Evidence | undefined;
   let attempt = 0;
   while (true) {
@@ -261,7 +282,22 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
         error_message: `snapshot failed during post-check: ${errMsg(e)}`,
       });
     }
-    post_evidence = evaluate(args.contract.post, postCtx);
+    try {
+      post_evidence = evaluate(args.contract.post, postCtx);
+    } catch (e) {
+      return settle(audit, {
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'execution_error',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: attempt,
+        pre_evidence,
+        post_evidence,
+        error_message: `evaluator threw during post-check: ${errMsg(e)}`,
+      });
+    }
     if (post_evidence.passed) break;
     if (attempt >= maxRetries) break;
     // Bail if the next backoff would exceed the remaining wall budget.
@@ -332,4 +368,14 @@ function settle(audit: AuditEmitter, record: TransactionRecord): TransactionReco
 function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
+}
+
+/** Coerce a caller-supplied retry count to a finite non-negative integer.
+ *  Returns 0 for `undefined`, `NaN`, `Infinity`, negative, or fractional
+ *  inputs. Floors fractional values defensively so `1.7` does not behave
+ *  like 2 retries silently.
+ */
+function normalizeRetryCount(retry: unknown): number {
+  if (typeof retry !== 'number' || !Number.isFinite(retry)) return 0;
+  return Math.max(0, Math.floor(retry));
 }
