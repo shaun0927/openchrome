@@ -224,7 +224,10 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   }
 
   // 3. Execute skill (cooperative budget tracking — preemptive timer is PR-12)
-  const budgetWallMs = args.contract.budget?.wall_ms;
+  //    Normalize wall_ms so non-finite or negative values cannot
+  //    silently disable the budget guard (`x > NaN` is always false) or
+  //    force every call to fail (`-1` immediately exhausts).
+  const budgetWallMs = normalizeBudgetMs(args.contract.budget?.wall_ms);
   const skillStart = now();
   let skillResult: unknown;
   try {
@@ -308,7 +311,26 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     ) {
       break;
     }
-    await delay(next);
+    try {
+      await delay(next);
+    } catch (e) {
+      // Caller-supplied `delay` (e.g., an abortable sleep hook) is
+      // allowed to reject. The runtime contract is "always settles", so
+      // convert the rejection into an execution_error verdict instead
+      // of letting it escape and skip the audit emission.
+      return settle(audit, {
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'execution_error',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: attempt,
+        pre_evidence,
+        post_evidence,
+        error_message: `delay() threw between retries: ${errMsg(e)}`,
+      });
+    }
     attempt++;
   }
 
@@ -378,4 +400,15 @@ function errMsg(e: unknown): string {
 function normalizeRetryCount(retry: unknown): number {
   if (typeof retry !== 'number' || !Number.isFinite(retry)) return 0;
   return Math.max(0, Math.floor(retry));
+}
+
+/** Coerce a caller-supplied wall_ms budget to a finite positive integer
+ *  or `undefined` (no budget). Non-finite or negative inputs disable the
+ *  budget rather than silently mis-evaluating: `x > NaN` is always
+ *  false, which would let every call slip past the guard, and a
+ *  negative budget would exhaust immediately for any execution time. */
+function normalizeBudgetMs(ms: number | undefined): number | undefined {
+  if (ms === undefined) return undefined;
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return undefined;
+  return Math.floor(ms);
 }

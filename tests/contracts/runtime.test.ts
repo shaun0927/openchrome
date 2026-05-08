@@ -391,3 +391,52 @@ describe('runWithContract — retry count normalization', () => {
     expect(r.retries).toBe(0);
   });
 });
+
+describe('runWithContract — delay()/budget normalization', () => {
+  test('delay() rejection between retries → execution_error', async () => {
+    // A custom delay that simulates an abortable sleep being aborted
+    // mid-retry; runtime must not let the rejection escape.
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_OK, on_fail: { retry: 3 } },
+      skill: async () => undefined,
+      snapshot: async () => snap({ bodyText: 'still pending' }),
+      delay: async () => {
+        throw new Error('AbortError: sleep aborted');
+      },
+    });
+    expect(r.verdict).toBe('execution_error');
+    expect(r.error_message).toContain('delay()');
+    // Settled exactly once — audit emission is preserved.
+  });
+
+  test('NaN wall_ms budget is treated as no budget (not always-violated)', async () => {
+    // With un-normalized comparison `x > NaN` is always false, so a NaN
+    // budget would silently disable enforcement. Normalization drops it
+    // entirely so the caller's intent (no budget) is honored explicitly.
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: POST_OK,
+        budget: { wall_ms: NaN as unknown as number },
+      },
+      skill: async () => 'ok',
+      snapshot: async () => snap({ bodyText: 'Order Placed' }),
+    });
+    expect(r.verdict).toBe('success');
+  });
+
+  test('negative wall_ms budget is treated as no budget', async () => {
+    // A negative budget would otherwise force every call to exhaust the
+    // budget the moment any execution time elapses.
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: POST_OK,
+        budget: { wall_ms: -100 },
+      },
+      skill: async () => 'ok',
+      snapshot: async () => snap({ bodyText: 'Order Placed' }),
+    });
+    expect(r.verdict).toBe('success');
+  });
+});
