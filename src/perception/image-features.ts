@@ -149,6 +149,14 @@ export function sobelEdgeDensity(
   if (rgba.length !== width * height * 4) {
     throw new Error(`sobelEdgeDensity: buffer length ${rgba.length} != ${width * height * 4}`);
   }
+  if (
+    !Number.isFinite(crop.x) ||
+    !Number.isFinite(crop.y) ||
+    !Number.isFinite(crop.w) ||
+    !Number.isFinite(crop.h)
+  ) {
+    return 0;
+  }
   const x0 = clampStart(crop.x, 0, width);
   const y0 = clampStart(crop.y, 0, height);
   const x1 = clampEnd(crop.x + crop.w, 0, width);
@@ -243,6 +251,15 @@ export function dominantColor(
   assertNotEncodedImage(rgba, width, height, 'dominantColor');
   if (rgba.length !== width * height * 4) {
     throw new Error(`dominantColor: buffer length ${rgba.length} != ${width * height * 4}`);
+  }
+  if (
+    region !== undefined &&
+    (!Number.isFinite(region.x) ||
+      !Number.isFinite(region.y) ||
+      !Number.isFinite(region.w) ||
+      !Number.isFinite(region.h))
+  ) {
+    return null;
   }
   const x0 = region ? clampStart(region.x, 0, width) : 0;
   const y0 = region ? clampStart(region.y, 0, height) : 0;

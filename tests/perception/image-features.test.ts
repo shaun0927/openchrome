@@ -212,6 +212,24 @@ describe('sobelEdgeDensity', () => {
     expect(huge).toBe(0);
     expect(def).toBeGreaterThan(huge);
   });
+
+  test('NaN crop.x → returns 0 (non-finite coord treated as empty region)', () => {
+    const buf = solid(16, 16, 200, 200, 200);
+    const d = sobelEdgeDensity(buf, 16, 16, { x: NaN, y: 0, w: 16, h: 16 });
+    expect(d).toBe(0);
+  });
+
+  test('NaN crop.h → returns 0 (non-finite coord treated as empty region)', () => {
+    const buf = verticalStripe(16, 16);
+    const d = sobelEdgeDensity(buf, 16, 16, { x: 0, y: 0, w: 16, h: NaN });
+    expect(d).toBe(0);
+  });
+
+  test('Infinity crop.w → returns 0 (non-finite coord treated as empty region)', () => {
+    const buf = solid(16, 16, 100, 100, 100);
+    const d = sobelEdgeDensity(buf, 16, 16, { x: 0, y: 0, w: Infinity, h: 16 });
+    expect(d).toBe(0);
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -296,5 +314,20 @@ describe('dominantColor', () => {
   test('rejects encoded JPEG buffer with descriptive error', () => {
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
     expect(() => dominantColor(jpeg, 1, 1)).toThrow(/encoded JPEG/i);
+  });
+
+  test('NaN crop.x → null sentinel (non-finite coord treated as empty region)', () => {
+    const buf = solid(16, 16, 200, 100, 50);
+    expect(dominantColor(buf, 16, 16, { x: NaN, y: 0, w: 16, h: 16 })).toBeNull();
+  });
+
+  test('NaN crop.y → null sentinel (non-finite coord treated as empty region)', () => {
+    const buf = solid(16, 16, 200, 100, 50);
+    expect(dominantColor(buf, 16, 16, { x: 0, y: NaN, w: 16, h: 16 })).toBeNull();
+  });
+
+  test('Infinity crop.w → null sentinel (non-finite coord treated as empty region)', () => {
+    const buf = solid(16, 16, 200, 100, 50);
+    expect(dominantColor(buf, 16, 16, { x: 0, y: 0, w: Infinity, h: 16 })).toBeNull();
   });
 });

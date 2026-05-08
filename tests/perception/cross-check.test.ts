@@ -209,6 +209,32 @@ describe('runCrossCheck — invalid override thresholds fall back to defaults', 
   });
 });
 
+describe('runCrossCheck — NaN crop coordinates treated as empty_region (round-7 regression)', () => {
+  test('NaN crop.x → empty_region, not consistent', () => {
+    const bg = { r: 240, g: 240, b: 240 };
+    const buf = solid(32, 32, bg.r, bg.g, bg.b);
+    const r = runCrossCheck(buf, 32, 32, { x: NaN, y: 0, w: 32, h: 32 }, { backgroundColor: bg });
+    expect(r.verdict).toBe('empty_region');
+    expect(r.dominant_color).toBeNull();
+  });
+
+  test('NaN crop.h → empty_region, not consistent', () => {
+    const bg = { r: 0, g: 0, b: 0 };
+    const buf = solid(32, 32, bg.r, bg.g, bg.b);
+    const r = runCrossCheck(buf, 32, 32, { x: 0, y: 0, w: 32, h: NaN }, { backgroundColor: bg });
+    expect(r.verdict).toBe('empty_region');
+    expect(r.dominant_color).toBeNull();
+  });
+
+  test('Infinity crop.w → empty_region, not consistent', () => {
+    const bg = { r: 255, g: 255, b: 255 };
+    const buf = solid(32, 32, bg.r, bg.g, bg.b);
+    const r = runCrossCheck(buf, 32, 32, { x: 0, y: 0, w: Infinity, h: 32 }, { backgroundColor: bg });
+    expect(r.verdict).toBe('empty_region');
+    expect(r.dominant_color).toBeNull();
+  });
+});
+
 describe('runCrossCheck — reasons surface for hint engine evidence', () => {
   test('pixel_absent path includes both edge_density and color_distance reasons', () => {
     const bg = { r: 240, g: 240, b: 240 };
