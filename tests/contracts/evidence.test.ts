@@ -292,6 +292,37 @@ describe('writeEvidenceBundle — truncation', () => {
     expect(m.suggested_next_steps).toBeUndefined();
   });
 
+  test('large transaction payload is compacted so manifest honors maxBytes', async () => {
+    const hugePayload = 'x'.repeat(128 * 1024);
+    const r = await writeEvidenceBundle(
+      {
+        transaction: {
+          ...record(),
+          post_evidence: {
+            assertion_kind: 'dom_text',
+            passed: false,
+            details: { haystack: hugePayload },
+          },
+          skill_result: { transcript: hugePayload },
+        } as TransactionRecord & { skill_result: { transcript: string } },
+        suggested_next_steps: [
+          { id: 's1', title: 'inspect', body: 'large suggestion ' + hugePayload },
+        ],
+      },
+      { rootDir: root, maxBytes: 4 * 1024 },
+    );
+    const manifestSize = fs.statSync(r.manifestPath).size;
+    const m = JSON.parse(fs.readFileSync(r.manifestPath, 'utf8')) as BundleManifest;
+    expect(manifestSize).toBeLessThanOrEqual(4 * 1024);
+    expect(r.byteSize).toBeLessThanOrEqual(4 * 1024);
+    expect(m.byte_size).toBe(r.byteSize);
+    expect(m.truncated?.manifest).toBe(true);
+    expect(m.suggested_next_steps).toBeUndefined();
+    expect(m.transaction.txn_id).toBe('txn-001');
+    expect((m.transaction as TransactionRecord & { skill_result?: unknown }).skill_result).toBeUndefined();
+    expect(JSON.stringify(m)).not.toContain(hugePayload.slice(0, 100));
+  });
+
   test('a single screenshot larger than maxBytes is dropped, not silently kept', async () => {
     const big = Buffer.alloc(200 * 1024); // 200 KB
     const r = await writeEvidenceBundle(

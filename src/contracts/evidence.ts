@@ -221,7 +221,7 @@ export async function writeEvidenceBundle(
   // their write boundary; the manifest must do the same so the bundle
   // can't leak via the manifest itself even though every other path is
   // scrubbed.
-  const redactedTransaction = redactValue(inputs.transaction) as TransactionRecord;
+  let redactedTransaction = redactValue(inputs.transaction) as TransactionRecord;
   let redactedNextSteps = inputs.suggested_next_steps
     ? (redactValue(inputs.suggested_next_steps) as EvidenceBundleInputs['suggested_next_steps'])
     : undefined;
@@ -246,6 +246,12 @@ export async function writeEvidenceBundle(
   // the bundle was abridged.
   if (byteSize + manifestBytes > maxBytes && redactedNextSteps !== undefined) {
     redactedNextSteps = undefined;
+    (truncated as Record<string, true>).manifest = true;
+    manifest = buildManifest();
+    manifestBytes = Buffer.byteLength(JSON.stringify(manifest, null, 2), 'utf8');
+  }
+  if (byteSize + manifestBytes > maxBytes) {
+    redactedTransaction = compactTransactionForManifest(redactedTransaction);
     (truncated as Record<string, true>).manifest = true;
     manifest = buildManifest();
     manifestBytes = Buffer.byteLength(JSON.stringify(manifest, null, 2), 'utf8');
@@ -404,6 +410,18 @@ function writeJsonSnapshot(
   }
   fs.writeFileSync(path.join(bundleDir, filename), json, 'utf8');
   return { bytes: Buffer.byteLength(json, 'utf8'), truncatedFlag: false };
+}
+
+function compactTransactionForManifest(record: TransactionRecord): TransactionRecord {
+  return {
+    txn_id: record.txn_id,
+    contract_id: record.contract_id,
+    verdict: record.verdict,
+    started_at: record.started_at,
+    ended_at: record.ended_at,
+    wall_ms: record.wall_ms,
+    retries: record.retries,
+  };
 }
 
 /* ------------------------------------------------------------------ */
