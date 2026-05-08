@@ -152,6 +152,24 @@ describe('sobelEdgeDensity', () => {
     expect(full).toBeLessThan(0.2);
   });
 
+  test('rejects JPEG with DHT marker (FF D8 FF C4) — round-8 regression', () => {
+    // FF D8 FF C4 is a valid JPEG SOI + DHT segment. The old guard only
+    // checked E0-EF/DB/DA and would miss this, letting encoded bytes corrupt
+    // Sobel/color output when the compressed length matched w*h*4.
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc4, 0x00, 0x1f]);
+    expect(() => sobelEdgeDensity(jpeg, 1, 1, { x: 0, y: 0, w: 1, h: 1 })).toThrow(
+      /encoded JPEG/i,
+    );
+  });
+
+  test('rejects JPEG with COM marker (FF D8 FF FE) — round-8 regression', () => {
+    // FF D8 FF FE is a valid JPEG SOI + COM (comment) segment.
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xfe, 0x00, 0x10]);
+    expect(() => sobelEdgeDensity(jpeg, 1, 1, { x: 0, y: 0, w: 1, h: 1 })).toThrow(
+      /encoded JPEG/i,
+    );
+  });
+
   test('raw RGBA buffer with first pixel (255,216,255,255) does NOT throw (JPEG SOI false-positive regression)', () => {
     // First pixel RGB=(255,216,255) matches JPEG SOI bytes [FF D8 FF].
     // The 4th byte (alpha) is 0xFF, which is NOT in the valid JFIF/EXIF/APP

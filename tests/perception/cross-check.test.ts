@@ -235,6 +235,50 @@ describe('runCrossCheck — NaN crop coordinates treated as empty_region (round-
   });
 });
 
+describe('runCrossCheck — invalid backgroundColor is fail-closed (round-8 regression)', () => {
+  // A non-finite backgroundColor channel makes colorDistance return NaN,
+  // and NaN <= colorTolerance is always false, so the old code silently
+  // kept verdict='consistent' for any crop. The fix validates the color
+  // and returns a non-consistent verdict with a warning.
+
+  test('backgroundColor with NaN channel → verdict is NOT consistent; warning emitted', () => {
+    const bg = { r: NaN, g: 0, b: 0 };
+    const buf = (() => {
+      const b = Buffer.alloc(16 * 16 * 4);
+      for (let i = 0; i < 16 * 16; i++) {
+        b[i * 4] = 240; b[i * 4 + 1] = 240; b[i * 4 + 2] = 240; b[i * 4 + 3] = 255;
+      }
+      return b;
+    })();
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const r = runCrossCheck(buf, 16, 16, { x: 0, y: 0, w: 16, h: 16 }, { backgroundColor: bg });
+      expect(r.verdict).not.toBe('consistent');
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining('backgroundColor'));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('backgroundColor with Infinity channel → verdict is NOT consistent', () => {
+    const bg = { r: 0, g: Infinity, b: 0 };
+    const buf = (() => {
+      const b = Buffer.alloc(16 * 16 * 4);
+      for (let i = 0; i < 16 * 16; i++) {
+        b[i * 4] = 240; b[i * 4 + 1] = 240; b[i * 4 + 2] = 240; b[i * 4 + 3] = 255;
+      }
+      return b;
+    })();
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const r = runCrossCheck(buf, 16, 16, { x: 0, y: 0, w: 16, h: 16 }, { backgroundColor: bg });
+      expect(r.verdict).not.toBe('consistent');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('runCrossCheck — reasons surface for hint engine evidence', () => {
   test('pixel_absent path includes both edge_density and color_distance reasons', () => {
     const bg = { r: 240, g: 240, b: 240 };

@@ -140,7 +140,39 @@ export function runCrossCheck(
     };
   }
 
-  const dist = colorDistance(dom, opts.backgroundColor);
+  // Validate backgroundColor channels are finite numbers in [0, 255].
+  // A non-finite channel (NaN / Infinity) makes colorDistance return a
+  // non-finite value whose comparison with colorTolerance is always false,
+  // silently keeping verdict='consistent' even for low-edge, background-
+  // matching crops (fail-open). Treat invalid backgroundColor as a
+  // non-consistent result (fail-closed).
+  const bg = opts.backgroundColor;
+  if (
+    !Number.isFinite(bg.r) ||
+    !Number.isFinite(bg.g) ||
+    !Number.isFinite(bg.b) ||
+    bg.r < 0 ||
+    bg.r > 255 ||
+    bg.g < 0 ||
+    bg.g > 255 ||
+    bg.b < 0 ||
+    bg.b > 255
+  ) {
+    console.error(
+      `[cross-check] runCrossCheck: backgroundColor has non-finite or out-of-range channel ` +
+        `(r=${bg.r}, g=${bg.g}, b=${bg.b}); cannot compute color distance — returning mismatch verdict.`,
+    );
+    return {
+      verdict: 'pixel_absent',
+      edge_density: edgeDensity,
+      dominant_color: dom,
+      background_color: bg,
+      color_distance: NaN,
+      reasons: ['backgroundColor has non-finite or out-of-range channel — fail-closed mismatch'],
+    };
+  }
+
+  const dist = colorDistance(dom, bg);
 
   const reasons: string[] = [];
   let verdict: CrossCheckVerdict = 'consistent';

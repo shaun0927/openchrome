@@ -36,9 +36,10 @@ const JPEG_SOI = [0xff, 0xd8, 0xff] as const;
  * False-positive risk with the unconditional sniff is negligible:
  *  - PNG: requires all 8 bytes `89 50 4E 47 0D 0A 1A 0A` to match, which
  *    raw RGBA pixels cannot replicate in practice.
- *  - JPEG: requires 4 bytes `FF D8 FF [E0-EF|DB|DA]`, meaning the first
- *    pixel must be RGB (255,216,255) AND the alpha byte must be a valid
- *    JFIF/EXIF/APP marker byte — an astronomically unlikely raw image.
+ *  - JPEG: requires 4 bytes `FF D8 FF [C0-FE]` where the marker byte covers
+ *    the full valid JPEG marker range (SOF, DHT, DAC, DQT, COM, APP*, etc.).
+ *    The 4th byte 0xFF is excluded (it is the JPEG stuff byte / padding, not
+ *    a real marker), so a raw RGBA pixel with alpha=0xFF does not fire.
  */
 function assertNotEncodedImage(
   rgba: Uint8Array | Buffer,
@@ -54,12 +55,16 @@ function assertNotEncodedImage(
         `sharp(buffer).raw().toBuffer({ resolveWithObject: true })`,
     );
   }
-  // JPEG SOI (FF D8 FF) + the 4th byte must be a valid JFIF/EXIF/APP marker
-  // (0xE0-0xEF, 0xDB, or 0xDA) to avoid false positives on other binary data.
+  // JPEG SOI (FF D8 FF) + the 4th byte must be a valid JPEG marker byte in
+  // the range [C0-FE]. This covers all real JPEG segment markers (SOF0-SOF15,
+  // DHT, DAC, RST0-RST7, SOI, APP0-APP15, COM, DQT, DNL, DRI, DHP, EXP,
+  // SOS, EOI). The value 0xFF is the JPEG stuff/padding byte, NOT a marker,
+  // so alpha=0xFF in a raw RGBA pixel does not trigger a false positive.
   if (
     rgba.length >= 4 &&
     JPEG_SOI.every((b, i) => rgba[i] === b) &&
-    ((rgba[3] >= 0xe0 && rgba[3] <= 0xef) || rgba[3] === 0xdb || rgba[3] === 0xda)
+    rgba[3] >= 0xc0 &&
+    rgba[3] <= 0xfe
   ) {
     throw new Error(
       `${fnName}: received encoded JPEG buffer instead of raw RGBA bytes ` +
