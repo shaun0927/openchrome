@@ -61,15 +61,33 @@ export class AuditLogGraphEmitter implements GraphAuditEmitter {
   emit(event: GraphAuditEvent): void {
     // Tool name is fixed; the event kind lives in args so existing audit
     // tooling can filter via a single field path (`args.event`).
+    //
+    // `logAuditEntry` derives the top-level `entry.domain` from either the
+    // `pageUrl` argument or `args.url`. Skill graph events have neither, so
+    // we synthesise a stand-in URL from the bound `domain` so existing
+    // per-domain audit queries can still filter `skill_graph` rows.
+    const domainUrl = synthesiseDomainUrl(this.domain);
     logAuditEntry(
       'skill_graph',
       this.sessionId,
       // logAuditEntry expects Record<string, unknown> — coerce via spread.
       { ...event } as unknown as Record<string, unknown>,
-      undefined,
+      domainUrl,
       { status: event.ok ? 'success' : 'error' },
     );
   }
+}
+
+/**
+ * Build a URL that `extractHostname()` can parse back into the original
+ * domain. Skill-graph domains arrive without a scheme (e.g. `amazon.com`,
+ * `localhost:3000`) — wrap them in `https://…/` for the URL parser. If the
+ * input is already a URL we leave it alone.
+ */
+function synthesiseDomainUrl(domain: string): string {
+  if (!domain) return '';
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(domain)) return domain;
+  return `https://${domain}/`;
 }
 
 /** Build a `GraphAuditEvent` from a `RunSkillResult`. Pure; safe to test. */
