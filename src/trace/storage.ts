@@ -295,16 +295,33 @@ export class TraceStorage {
     }
     const sessionDir = path.join(this.rootDir, sessionId);
     fs.mkdirSync(sessionDir, { recursive: true });
+    // Compute seq locally and ONLY commit it to seqCounters after both
+    // sides (file + index row) succeed. Otherwise a partial failure
+    // would either skip a seq number (file leaks) or be retried with
+    // the same id (file duplicates).
     const seq = (this.seqCounters.get(sessionId) ?? 0) + 1;
-    this.seqCounters.set(sessionId, seq);
     const ts = events[0].ts;
     const filePath = path.join(sessionDir, `${ts}-${seq}.jsonl`);
     const lines = events.map((e) => JSON.stringify(e)).join('\n') + '\n';
-    fs.appendFileSync(filePath, lines, 'utf8');
     const bytes = Buffer.byteLength(lines, 'utf8');
-    this.db
-      .prepare('UPDATE traces SET byte_size = byte_size + ? WHERE session_id = ?')
-      .run(bytes, sessionId);
+    fs.appendFileSync(filePath, lines, 'utf8');
+    try {
+      this.db
+        .prepare('UPDATE traces SET byte_size = byte_size + ? WHERE session_id = ?')
+        .run(bytes, sessionId);
+    } catch (err) {
+      // SQLite write failed AFTER the JSONL was committed to disk.
+      // Roll back the file so the recorder's flush() can retry the
+      // same batch without producing duplicate trace records on disk.
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        // Best-effort: if we can't delete, the SQLite error still
+        // propagates and the operator sees both failures.
+      }
+      throw err;
+    }
+    this.seqCounters.set(sessionId, seq);
     return { bytes, filePath };
   }
 
