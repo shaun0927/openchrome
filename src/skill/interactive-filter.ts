@@ -40,26 +40,36 @@ const INTERACTIVE_ROLES = new Set([
 ]);
 
 /**
- * Common ARIA roles that explicitly DO NOT carry interactive semantics.
- * Used as a fallback-chain terminator: when a `role="X Y"` chain has X
- * recognised as one of these, we honour the user-agent rule that the
- * first valid token wins and stop without checking later tokens. This
- * keeps `role="heading button"` non-interactive (consistent with
- * browsers) instead of a false positive that would skew the state hash.
+ * ARIA roles that are recognised but do NOT carry interactive
+ * semantics. Together with `INTERACTIVE_ROLES`, this set forms the
+ * "known role" universe. ARIA 1.2 fallback semantics resolve a
+ * `role="X Y"` chain to the first **recognised** token; an unknown
+ * token is skipped to the next one. Without a complete known-role
+ * universe, valid roles outside this set leak through the unknown
+ * fallback path and a later interactive token wrongly wins.
  *
- * The set is intentionally narrow — only roles common enough to appear
- * in real-world fallback chains. Truly unknown tokens fall through to
- * the next one (matches ARIA 1.2 token-resolution semantics).
+ * This list mirrors the WAI-ARIA 1.2 role taxonomy (document
+ * structure, landmark, live region, window, and abstract container
+ * roles) excluding the widget roles already in `INTERACTIVE_ROLES`.
  */
 const NON_INTERACTIVE_ROLES = new Set([
   // Document structure
-  'heading', 'list', 'listitem', 'article', 'document', 'figure', 'group',
-  'separator', 'table', 'row', 'rowgroup', 'cell', 'columnheader', 'rowheader',
-  'definition', 'term', 'note', 'paragraph', 'presentation', 'none',
-  // Landmarks
-  'banner', 'complementary', 'contentinfo', 'main', 'navigation', 'region', 'search', 'form',
-  // Live regions / status
-  'alert', 'log', 'marquee', 'status', 'timer', 'tooltip',
+  'article', 'blockquote', 'caption', 'cell', 'code', 'columnheader',
+  'definition', 'deletion', 'directory', 'document', 'emphasis', 'feed',
+  'figure', 'generic', 'group', 'heading', 'image', 'img', 'insertion',
+  'list', 'listitem', 'mark', 'math', 'meter', 'none', 'note', 'paragraph',
+  'presentation', 'row', 'rowgroup', 'rowheader', 'separator', 'strong',
+  'subscript', 'superscript', 'table', 'term', 'time', 'toolbar', 'tooltip',
+  // Landmark
+  'banner', 'complementary', 'contentinfo', 'form', 'main', 'navigation',
+  'region', 'search',
+  // Live region / status
+  'alert', 'alertdialog', 'dialog', 'log', 'marquee', 'status', 'timer',
+  // Composite container (the focusable child carries interactivity, not
+  // the container itself, so it does not promote when it appears as
+  // the first token of a fallback chain).
+  'grid', 'listbox', 'menu', 'menubar', 'radiogroup', 'tablist',
+  'tabpanel', 'tree', 'treegrid', 'treeitem',
 ]);
 
 /** Subset of an element/node descriptor sufficient for the predicate. */

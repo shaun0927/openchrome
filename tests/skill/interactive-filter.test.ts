@@ -79,6 +79,16 @@ describe('isInteractiveNode — ARIA roles on non-native tags', () => {
   test('all tokens unknown → role chain is treated as non-interactive', () => {
     expect(isInteractiveNode({ tagName: 'div', role: 'totallymade up' })).toBe(false);
   });
+
+  test('first-token precedence respects the full ARIA role universe', () => {
+    // `img` is a valid ARIA non-interactive role. The fallback chain
+    // `"img button"` must resolve to `img` (non-interactive) — earlier
+    // code with a narrow non-interactive set treated `img` as unknown
+    // and let the trailing `button` token wrongly win.
+    expect(isInteractiveNode({ tagName: 'div', role: 'img button' })).toBe(false);
+    expect(isInteractiveNode({ tagName: 'span', role: 'figure link' })).toBe(false);
+    expect(isInteractiveNode({ tagName: 'span', role: 'paragraph button' })).toBe(false);
+  });
 });
 
 describe('isInteractiveNode — focus/edit affordances', () => {
