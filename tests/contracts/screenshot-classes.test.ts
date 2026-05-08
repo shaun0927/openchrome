@@ -28,6 +28,12 @@ describe('normalizeClassId', () => {
     expect(() => normalizeClassId('a\\b')).toThrow();
   });
 
+  test('rejects dot-only segments (resolve to registry root or parent)', () => {
+    expect(() => normalizeClassId('.')).toThrow();
+    expect(() => normalizeClassId('./escape')).toThrow();
+    expect(() => normalizeClassId('a/./b')).toThrow();
+  });
+
   test('rejects empty / non-string', () => {
     expect(() => normalizeClassId('')).toThrow();
     expect(() => normalizeClassId(undefined as unknown as string)).toThrow();

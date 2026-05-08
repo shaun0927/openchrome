@@ -67,6 +67,16 @@ export function normalizeClassId(raw: string): string {
   if (!/^[A-Za-z0-9._\-/]+$/.test(normalized)) {
     throw new Error(`class_id "${raw}" must match [A-Za-z0-9._\\-/]+`);
   }
+  // Reject `.` segments as well. The character class accepts dots, so
+  // an input like `'.'`, `'./escape'`, or `'a/./b'` would otherwise pass
+  // and resolve to the registry root or strip-collapse to its parent
+  // entries. The `..` substring check above already handles double-dot;
+  // this closes the dot-only segment hole.
+  for (const seg of normalized.split('/')) {
+    if (seg === '.' || seg === '..') {
+      throw new Error(`class_id "${raw}" contains illegal '${seg}' segment`);
+    }
+  }
   return normalized;
 }
 
