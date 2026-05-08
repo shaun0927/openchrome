@@ -160,7 +160,46 @@ export function recordSuccessfulRun(
   const windowStartMs = t - ROLLING_WINDOW_MS;
 
   const existing = fs.existsSync(filePath) ? parseSkillMd(fs.readFileSync(filePath, 'utf8')) : null;
-  const existingSidecar = readJson<SkillSidecar>(sidecarPath);
+  let existingSidecar = readJson<SkillSidecar>(sidecarPath);
+  // Markdown exists but sidecar is missing or unreadable. Falling
+  // through to the "create new" path would silently reset
+  // verified_runs to 1 and discard the promotion state recorded in
+  // the markdown, so reconstruct a minimal sidecar from the
+  // frontmatter instead. This preserves the count across transient
+  // sidecar IO issues; the rolling window collapses to a single
+  // synthetic entry timestamped at the previous `last_verified_at`.
+  if (existing && !existingSidecar) {
+    const priorTs = Date.parse(existing.frontmatter.last_verified_at);
+    const priorMs = Number.isFinite(priorTs) ? priorTs : t;
+    const priorRuns = Math.max(0, existing.frontmatter.verified_runs);
+    // Seed one synthetic recent entry per prior verified run so the
+    // success-count recomputation in the merge path lands on the same
+    // verified_runs total, which preserves promoted status across a
+    // missing sidecar. Capped at SKILL_RUN_LOG_MAX-1 to leave room for
+    // the new entry the merge path appends. The exact timestamps are
+    // unknown — we anchor at last_verified_at so the rolling-window
+    // eventually drops them naturally.
+    const seedCount = Math.min(priorRuns, SKILL_RUN_LOG_MAX - 1);
+    const recent: SkillSidecar['runs']['recent'] = [];
+    for (let i = 0; i < seedCount; i++) {
+      recent.push({
+        txn_id: existing.frontmatter.contract_ref,
+        ok: true,
+        ts: priorMs,
+      });
+    }
+    existingSidecar = {
+      schema_version: SKILL_SCHEMA_VERSION,
+      skill_id: skillId,
+      graph_node_anchor: existing.frontmatter.graph_node_anchor,
+      contract_id: inputs.contract_id,
+      runs: {
+        count: priorRuns,
+        window_start: isoUtc(windowStartMs),
+        recent,
+      },
+    };
+  }
 
   let frontmatter: SkillFrontmatter;
   let sidecar: SkillSidecar;

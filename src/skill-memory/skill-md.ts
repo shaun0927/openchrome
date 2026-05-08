@@ -136,12 +136,26 @@ function setNested(target: Record<string, unknown>, dottedKey: string, value: un
 }
 
 function coerce(raw: string): unknown {
+  // Strings stay strings — numeric coercion happens at validation time
+  // for the small set of number-typed fields (schema_version,
+  // verified_runs, budget.*). Eager Number.parseInt() destroys
+  // string-typed fields like contract_ref or graph_node_anchor when
+  // they happen to be all digits or hex-with-no-letters (issue: a
+  // round-trip turns "12345" into a number, validateFrontmatter then
+  // rejects the file because mustString sees a number).
   if (raw === '') return '';
   if (raw === 'true') return true;
   if (raw === 'false') return false;
-  if (/^-?\d+$/.test(raw)) return Number.parseInt(raw, 10);
-  if (/^-?\d+\.\d+$/.test(raw)) return Number.parseFloat(raw);
   return raw;
+}
+
+/** Best-effort coerce-to-number used inside validateFrontmatter. */
+function asNumber(v: unknown): number | undefined {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (typeof v !== 'string') return undefined;
+  if (!/^-?\d+(?:\.\d+)?$/.test(v)) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -152,7 +166,8 @@ function isObj(v: unknown): v is Record<string, unknown> {
 export function validateFrontmatter(raw: unknown): SkillFrontmatter {
   if (!isObj(raw)) throw new FrontmatterError('frontmatter must be an object');
   const fm = raw as Record<string, unknown>;
-  must(fm.schema_version === SKILL_SCHEMA_VERSION, `schema_version must be ${SKILL_SCHEMA_VERSION}`);
+  const schemaVersion = asNumber(fm.schema_version);
+  must(schemaVersion === SKILL_SCHEMA_VERSION, `schema_version must be ${SKILL_SCHEMA_VERSION}`);
   const name = mustString(fm, 'name');
   must(NAME_PATTERN.test(name), `name "${name}" must match ${NAME_PATTERN.source}`);
   const domain = mustString(fm, 'domain');
@@ -163,7 +178,10 @@ export function validateFrontmatter(raw: unknown): SkillFrontmatter {
     status === 'candidate' || status === 'promoted' || status === 'archived',
     `status must be one of candidate|promoted|archived (got "${status}")`,
   );
-  const verifiedRuns = mustNumber(fm, 'verified_runs');
+  const verifiedRuns = asNumber(fm.verified_runs);
+  if (verifiedRuns === undefined) {
+    throw new FrontmatterError('field "verified_runs" must be a finite number');
+  }
   must(verifiedRuns >= 0, 'verified_runs must be ≥0');
   const lastVerifiedAt = mustString(fm, 'last_verified_at');
   must(ISO_PATTERN.test(lastVerifiedAt), `last_verified_at must be ISO-8601 with Z suffix`);
@@ -187,8 +205,10 @@ export function validateFrontmatter(raw: unknown): SkillFrontmatter {
   if (isObj(fm.budget)) {
     const b = fm.budget;
     out.budget = {};
-    if (typeof b.tokens_typical === 'number') out.budget.tokens_typical = b.tokens_typical;
-    if (typeof b.wall_ms_typical === 'number') out.budget.wall_ms_typical = b.wall_ms_typical;
+    const tokens = asNumber(b.tokens_typical);
+    if (tokens !== undefined) out.budget.tokens_typical = tokens;
+    const wall = asNumber(b.wall_ms_typical);
+    if (wall !== undefined) out.budget.wall_ms_typical = wall;
   }
   return out;
 }
@@ -197,14 +217,6 @@ function mustString(obj: Record<string, unknown>, field: string): string {
   const v = obj[field];
   if (typeof v !== 'string' || v.length === 0) {
     throw new FrontmatterError(`field "${field}" must be a non-empty string`);
-  }
-  return v;
-}
-
-function mustNumber(obj: Record<string, unknown>, field: string): number {
-  const v = obj[field];
-  if (typeof v !== 'number' || !Number.isFinite(v)) {
-    throw new FrontmatterError(`field "${field}" must be a finite number`);
   }
   return v;
 }

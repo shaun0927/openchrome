@@ -169,6 +169,50 @@ describe('recordSuccessfulRun — re-runs (dedup)', () => {
   });
 });
 
+describe('recordSuccessfulRun — sidecar recovery', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('preserves verified_runs when sidecar disappears between runs', () => {
+    // First two runs to build up verified_runs=2.
+    let t = FIXED_NOW;
+    recordSuccessfulRun(record({ txn_id: 't1' }), { rootDir: root, now: () => t });
+    t += 60_000;
+    const second = recordSuccessfulRun(record({ txn_id: 't2' }), { rootDir: root, now: () => t });
+    expect(second.record.frontmatter.verified_runs).toBe(2);
+
+    // Sidecar is lost (e.g., partial fs sync, accidental delete).
+    fs.rmSync(second.record.sidecarPath);
+
+    // Next run must NOT reset to 1 — it should rebuild from frontmatter.
+    t += 60_000;
+    const third = recordSuccessfulRun(record({ txn_id: 't3' }), { rootDir: root, now: () => t });
+    expect(third.created).toBe(false);
+    expect(third.record.frontmatter.verified_runs).toBeGreaterThanOrEqual(2);
+    expect(fs.existsSync(third.record.sidecarPath)).toBe(true);
+  });
+
+  test('preserves promoted status when sidecar is missing', () => {
+    let t = FIXED_NOW;
+    // 3 runs → promoted at default threshold.
+    for (let i = 1; i <= 3; i++) {
+      recordSuccessfulRun(record({ txn_id: `t${i}` }), { rootDir: root, now: () => t });
+      t += 60_000;
+    }
+    const list = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(list[0].frontmatter.status).toBe('promoted');
+    fs.rmSync(list[0].sidecarPath);
+
+    const next = recordSuccessfulRun(record({ txn_id: 't4' }), { rootDir: root, now: () => t });
+    expect(next.record.frontmatter.status).toBe('promoted');
+  });
+});
+
 describe('listSkillsForDomain', () => {
   let root: string;
   beforeEach(() => {

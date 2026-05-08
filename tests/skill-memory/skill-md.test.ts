@@ -125,3 +125,25 @@ describe('validateFrontmatter — schema rules', () => {
     expect(() => validateFrontmatter({ ...fm(), status: 'archived' })).not.toThrow();
   });
 });
+
+describe('parseSkillMd — preserves digit-only string fields', () => {
+  test('contract_ref written as digits round-trips as a string', () => {
+    const text = stringifySkillMd({
+      frontmatter: fm({ contract_ref: '12345' }),
+      body: '',
+    });
+    const parsed = parseSkillMd(text);
+    expect(parsed.frontmatter.contract_ref).toBe('12345');
+    expect(typeof parsed.frontmatter.contract_ref).toBe('string');
+  });
+
+  test('graph_node_anchor with only digits round-trips as a string', () => {
+    const text = stringifySkillMd({
+      frontmatter: fm({ graph_node_anchor: '0123456789' }),
+      body: '',
+    });
+    const parsed = parseSkillMd(text);
+    expect(parsed.frontmatter.graph_node_anchor).toBe('0123456789');
+    expect(typeof parsed.frontmatter.graph_node_anchor).toBe('string');
+  });
+});
