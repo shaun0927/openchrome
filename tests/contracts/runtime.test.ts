@@ -277,10 +277,10 @@ describe('runWithContract — audit emission', () => {
   });
 });
 
-describe('runWithContract — evaluator throws (always-settles guarantee)', () => {
-  // dom_text default selector is "body" → exercised via bodyText (no probe).
-  // Force an exception by using a non-default selector that the snapshot's
-  // domText() callback rejects, mirroring real-world bad-selector failures.
+describe('runWithContract — probe failure handling (always-settles guarantee)', () => {
+  // The evaluator now wraps host probes in try/catch and returns
+  // passed=false with `probe_error` rather than re-throwing, so a
+  // throwing `domText` settles as a normal pre/postcondition failure.
   const POST_BAD_SELECTOR: Assertion = {
     kind: 'dom_text',
     selector: 'button.primary',
@@ -295,24 +295,26 @@ describe('runWithContract — evaluator throws (always-settles guarantee)', () =
     throw new Error('Invalid selector');
   };
 
-  test('evaluator throws during pre-check → execution_error (never propagates)', async () => {
+  test('throwing pre probe → precondition_violation with probe_error in evidence', async () => {
     const r = await runWithContract({
       contract: { id: 'c', pre: PRE_BAD_SELECTOR, post: POST_OK },
       skill: async () => 'ok',
       snapshot: async () => snap({ domText: throwingDomText }),
     });
-    expect(r.verdict).toBe('execution_error');
-    expect(r.error_message).toContain('pre-check');
+    expect(r.verdict).toBe('precondition_violation');
+    expect(r.pre_evidence?.passed).toBe(false);
+    expect(r.pre_evidence?.details.probe_error).toContain('Invalid selector');
   });
 
-  test('evaluator throws during post-check → execution_error (never propagates)', async () => {
+  test('throwing post probe → postcondition_violation with probe_error in evidence', async () => {
     const r = await runWithContract({
       contract: { id: 'c', post: POST_BAD_SELECTOR },
       skill: async () => 'ok',
       snapshot: async () => snap({ domText: throwingDomText }),
     });
-    expect(r.verdict).toBe('execution_error');
-    expect(r.error_message).toContain('post-check');
+    expect(r.verdict).toBe('postcondition_violation');
+    expect(r.post_evidence?.passed).toBe(false);
+    expect(r.post_evidence?.details.probe_error).toContain('Invalid selector');
   });
 });
 

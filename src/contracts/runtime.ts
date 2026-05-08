@@ -65,6 +65,11 @@ export type Verdict =
 export interface TransactionRecord {
   txn_id: string;
   contract_id: string;
+  /** Mirror of `contract.domain` for audit routing — preserved on every
+   *  emitted record so downstream filters (per-tenant dashboards,
+   *  per-feature alerting) can group transactions by domain without
+   *  having to re-correlate against the originating contract. */
+  contract_domain?: string;
   verdict: Verdict;
   started_at: number;
   ended_at: number;
@@ -338,6 +343,11 @@ async function runInner(
   const delay = args.delay ?? defaultDelay;
   const startedAt = now();
   const txn_id = crypto.randomUUID();
+  // Local settle wrapper that auto-injects `contract_domain` so every
+  // record this run emits carries the routing label without each call
+  // site having to remember to set it.
+  const emit = (record: TransactionRecord): TransactionRecord =>
+    settle(audit, record, args.contract.domain);
 
   // 1. Validate contract assertions structurally. Use `!== undefined`
   //    rather than a truthy check so an explicit `pre: null` from a
@@ -347,7 +357,7 @@ async function runInner(
   if (args.contract.pre !== undefined) errors.push(...validateAssertion(args.contract.pre, '$.pre'));
   errors.push(...validateAssertion(args.contract.post, '$.post'));
   if (errors.length > 0) {
-    return settle(audit, {
+    return emit({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'validation_error',
@@ -368,7 +378,7 @@ async function runInner(
     try {
       preCtx = await args.snapshot();
     } catch (e) {
-      return settle(audit, {
+      return emit({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -387,7 +397,7 @@ async function runInner(
       // throw on bad selectors / probe failures. The runtime contract is
       // "always settles", so convert the throw into a verdict instead of
       // letting it propagate.
-      return settle(audit, {
+      return emit({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -399,7 +409,7 @@ async function runInner(
       });
     }
     if (!pre_evidence.passed) {
-      return settle(audit, {
+      return emit({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'precondition_violation',
@@ -447,7 +457,7 @@ async function runInner(
   } catch (e) {
     if (preemptHandle !== null) clearTimer(preemptHandle);
     if (preemptedHardKill) {
-      return settle(audit, {
+      return emit({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'budget_exhausted',
@@ -460,7 +470,7 @@ async function runInner(
         hard_kill: true,
       });
     }
-    return settle(audit, {
+    return emit({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'execution_error',
@@ -477,7 +487,7 @@ async function runInner(
   if (preemptedHardKill) {
     // Preemptive timer fired but the skill returned anyway (didn't
     // throw on the AbortSignal). Treat as budget_exhausted regardless.
-    return settle(audit, {
+    return emit({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'budget_exhausted',
@@ -491,7 +501,7 @@ async function runInner(
     });
   }
   if (budgetWallMs !== undefined && skillEnd - skillStart > budgetWallMs) {
-    return settle(audit, {
+    return emit({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'budget_exhausted',
@@ -516,7 +526,7 @@ async function runInner(
     try {
       postCtx = await args.snapshot();
     } catch (e) {
-      return settle(audit, {
+      return emit({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -532,7 +542,7 @@ async function runInner(
     try {
       post_evidence = evaluate(args.contract.post, postCtx);
     } catch (e) {
-      return settle(audit, {
+      return emit({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -562,7 +572,7 @@ async function runInner(
       // allowed to reject. The runtime contract is "always settles", so
       // convert the rejection into an execution_error verdict instead
       // of letting it escape and skip the audit emission.
-      return settle(audit, {
+      return emit({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -579,9 +589,13 @@ async function runInner(
   }
 
   if (post_evidence!.passed) {
+    // Eagerly include contract_domain in the literal so the cached
+    // copy carries it too — replays read straight from the store and
+    // bypass the emit() injection point.
     const successRecord: TransactionRecord = {
       txn_id,
       contract_id: args.contract.id,
+      ...(args.contract.domain !== undefined ? { contract_domain: args.contract.domain } : {}),
       verdict: 'success',
       started_at: startedAt,
       ended_at: now(),
@@ -597,13 +611,17 @@ async function runInner(
     if (args.idempotency && idemKey) {
       safeStoreCall(() => args.idempotency!.put(idemKey, successRecord));
     }
-    return settle(audit, successRecord);
+    return emit(successRecord);
   }
 
-  // 5. Escalate or postcondition_violation
+  // 5. Escalate or postcondition_violation. The three escalate values
+  //    are handled distinctly: 'human-review' / 'headed-handoff' route
+  //    to the 'escalated' verdict; 'abort' is an explicit "settle as
+  //    failed, do not escalate" so the audit trail records that the
+  //    operator opted out of human review on this contract.
   const escalateTarget = args.contract.on_fail?.escalate;
   if (escalateTarget === 'human-review' || escalateTarget === 'headed-handoff') {
-    return settle(audit, {
+    return emit({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'escalated',
@@ -616,7 +634,7 @@ async function runInner(
       escalation: { target: escalateTarget },
     });
   }
-  return settle(audit, {
+  return emit({
     txn_id,
     contract_id: args.contract.id,
     verdict: 'postcondition_violation',
@@ -626,10 +644,24 @@ async function runInner(
     retries: attempt,
     pre_evidence,
     post_evidence,
+    error_message:
+      escalateTarget === 'abort'
+        ? 'on_fail.escalate=abort: settled as postcondition_violation without escalation'
+        : undefined,
   });
 }
 
-function settle(audit: AuditEmitter, record: TransactionRecord): TransactionRecord {
+/** Emit a record through the audit pipeline. The contract's optional
+ *  `domain` is back-filled here so every TransactionRecord carries
+ *  routing metadata even when call sites omit it from the literal. */
+function settle(
+  audit: AuditEmitter,
+  record: TransactionRecord,
+  contractDomain?: string,
+): TransactionRecord {
+  if (contractDomain !== undefined && record.contract_domain === undefined) {
+    record.contract_domain = contractDomain;
+  }
   try {
     audit.emit(record);
   } catch {
