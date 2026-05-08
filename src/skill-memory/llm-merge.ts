@@ -34,7 +34,7 @@ function asMergeOk(parsed: unknown): MergeResult | null {
   const name = obj.name;
   const intent = obj.intent;
   const body = obj.body;
-  if (typeof name !== 'string' || name.length === 0) return null;
+  if (typeof name !== 'string' || !/^[a-z0-9._-]{1,64}$/.test(name)) return null;
   if (typeof intent !== 'string' || intent.length === 0) return null;
   if (typeof body !== 'string') return null;
   return {
@@ -145,32 +145,30 @@ async function callOnce(
     },
     { timeoutMs },
   );
+  // ok=true: provider parsed JSON and wrapped it in {action, args}.
+  // Try to read a merge envelope from action.args directly.
+  if (reply.ok && reply.action) {
+    const ok = asMergeOk(reply.action.args);
+    if (ok) return { kind: 'ok', result: ok };
+  }
+  // ok=false with kind='malformed': the provider parsed raw JSON but
+  // asActionInvocation rejected it because the shape was {name,intent,body}
+  // instead of {action,args}. Recover by parsing the raw text directly.
+  if (!reply.ok && reply.error?.kind === 'malformed') {
+    const parsed = extractFirstJsonObject(reply.error.raw);
+    const ok = asMergeOk(parsed);
+    if (ok) return { kind: 'ok', result: ok };
+    return { kind: 'parse_failure' };
+  }
+  // Any other provider failure (timeout, rate_limit, auth, network, unknown)
+  // is terminal — do not retry these as parse failures.
   if (!reply.ok) {
     return {
       kind: 'provider_error',
       error: { kind: reply.error?.kind ?? 'unknown', raw: reply.error?.raw ?? '' },
     };
   }
-  // The voting provider already ran extractFirstJsonObject + asActionInvocation
-  // — but its asActionInvocation rejects our `{name, intent, body}` shape
-  // because there's no `action` field. Instead, run the merge-shape parse
-  // on the same source: dig the original text from the action's args (it
-  // doesn't matter — we never get an action because asActionInvocation
-  // returned null and the provider returned malformed). So we re-prompt:
-  // attempt to read the merge envelope from the reply's action.args, OR
-  // fall through to parse_failure.
-  // Simpler path: the voting provider returns ok=true with a synthesized
-  // action when JSON parsed successfully. If the JSON shape was actually
-  // {name,intent,body}, asActionInvocation rejected it and the provider
-  // returned ok=false (malformed). So in practice we land in the
-  // provider_error branch above with kind='malformed'. The merge prompt
-  // therefore re-uses the voting parse layer's malformed fallback.
-  // For full fidelity, re-extract from the reply's action.args:
-  if (reply.action) {
-    const parsed = extractFirstJsonObject(JSON.stringify(reply.action.args));
-    const ok = asMergeOk(parsed);
-    if (ok) return { kind: 'ok', result: ok };
-  }
+  // ok=true but no action — treat as parse failure (strict retry).
   return { kind: 'parse_failure' };
 }
 

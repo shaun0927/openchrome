@@ -1,10 +1,12 @@
 import {
   buildMergePrompt,
+  createLlmMergeRequester,
   createLlmMergeRequesterFromRawText,
   type RawTextProvider,
 } from '../../src/skill-memory/llm-merge';
 import type { MergeRequest } from '../../src/skill-memory/curator-pass2';
 import type { SkillRecord } from '../../src/skill-memory/types';
+import type { VotingProvider, ProviderReply } from '../../src/perception/voting/orchestrator';
 
 function rec(name: string, intent: string, runs: number): SkillRecord {
   return {
@@ -192,6 +194,110 @@ describe('createLlmMergeRequesterFromRawText — shape validation', () => {
       '{"name":"","intent":"i","body":"b"}',
     ]);
     const r = await createLlmMergeRequesterFromRawText(provider)(REQ);
+    expect(r.ok).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* createLlmMergeRequester (VotingProvider adapter)                    */
+/* ------------------------------------------------------------------ */
+
+/** Build a stubbed VotingProvider that returns replies in sequence. */
+function fakeVotingProvider(replies: ProviderReply[]): VotingProvider {
+  let i = 0;
+  return {
+    name: 'fake-voting',
+    async ask(_req, _opts): Promise<ProviderReply> {
+      const next = replies[Math.min(i, replies.length - 1)];
+      i++;
+      return next;
+    },
+  };
+}
+
+/** Merge-shaped JSON that satisfies asMergeOk. */
+const VALID_MERGE_JSON = JSON.stringify({
+  name: 'amazon.cart-flow',
+  intent: 'Add and buy',
+  body: '## Steps\n1. Add\n2. Buy\n',
+});
+
+describe('createLlmMergeRequester — VotingProvider adapter', () => {
+  test('ok=true reply with action.args containing valid merge envelope → returns ok MergeDecision', async () => {
+    const actionArgs = { name: 'amazon.cart-flow', intent: 'Add and buy', body: '## Steps\n1. Add\n2. Buy\n' };
+    const provider = fakeVotingProvider([
+      { ok: true, action: { kind: 'merge', args: actionArgs }, tokens: 50 },
+    ]);
+    const requester = createLlmMergeRequester({ provider });
+    const r = await requester(REQ);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.name).toBe('amazon.cart-flow');
+      expect(r.intent).toBe('Add and buy');
+    }
+  });
+
+  test('reply with kind=malformed whose raw is valid merge JSON → recovered as ok after first attempt', async () => {
+    const provider = fakeVotingProvider([
+      { ok: false, error: { kind: 'malformed', raw: VALID_MERGE_JSON } },
+    ]);
+    const requester = createLlmMergeRequester({ provider });
+    const r = await requester(REQ);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.name).toBe('amazon.cart-flow');
+    }
+  });
+
+  test('reply with kind=malformed whose raw is unparseable → falls into strict retry, eventually abstains', async () => {
+    // First attempt: malformed with garbage raw → parse_failure → strict retry
+    // Second attempt: malformed with garbage raw again → parse_failure → abstain
+    const provider = fakeVotingProvider([
+      { ok: false, error: { kind: 'malformed', raw: 'not json at all' } },
+      { ok: false, error: { kind: 'malformed', raw: 'still not json' } },
+    ]);
+    const requester = createLlmMergeRequester({ provider });
+    const r = await requester(REQ);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain('merge_parse_failure');
+    }
+  });
+
+  test('non-malformed provider_error → abstains without retry', async () => {
+    // rate_limit should be terminal — no retry into a second call
+    const provider = fakeVotingProvider([
+      { ok: false, error: { kind: 'rate_limit', raw: '429 Too Many Requests' } },
+    ]);
+    const requester = createLlmMergeRequester({ provider });
+    const r = await requester(REQ);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain('provider error');
+      expect(r.reason).toContain('rate_limit');
+    }
+  });
+
+  test('name violating the regex (uppercase letter) → rejected by asMergeOk → abstains', async () => {
+    // The provider returns ok=false malformed with an uppercase name — asMergeOk should reject it
+    const badNameJson = JSON.stringify({ name: 'Amazon.Cart', intent: 'some intent', body: '## body' });
+    const provider = fakeVotingProvider([
+      { ok: false, error: { kind: 'malformed', raw: badNameJson } },
+      { ok: false, error: { kind: 'malformed', raw: badNameJson } },
+    ]);
+    const requester = createLlmMergeRequester({ provider });
+    const r = await requester(REQ);
+    expect(r.ok).toBe(false);
+  });
+
+  test('name with spaces → rejected by asMergeOk → abstains', async () => {
+    const badNameJson = JSON.stringify({ name: 'amazon cart flow', intent: 'some intent', body: '## body' });
+    const provider = fakeVotingProvider([
+      { ok: false, error: { kind: 'malformed', raw: badNameJson } },
+      { ok: false, error: { kind: 'malformed', raw: badNameJson } },
+    ]);
+    const requester = createLlmMergeRequester({ provider });
+    const r = await requester(REQ);
     expect(r.ok).toBe(false);
   });
 });
