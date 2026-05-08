@@ -305,10 +305,11 @@ export class TraceStorage {
     const lines = events.map((e) => JSON.stringify(e)).join('\n') + '\n';
     const bytes = Buffer.byteLength(lines, 'utf8');
     fs.appendFileSync(filePath, lines, 'utf8');
+    let updateResult: { changes: number } | undefined;
     try {
-      this.db
+      updateResult = this.db
         .prepare('UPDATE traces SET byte_size = byte_size + ? WHERE session_id = ?')
-        .run(bytes, sessionId);
+        .run(bytes, sessionId) as { changes: number };
     } catch (err) {
       // SQLite write failed AFTER the JSONL was committed to disk.
       // Roll back the file so the recorder's flush() can retry the
@@ -321,6 +322,20 @@ export class TraceStorage {
       }
       throw err;
     }
+    if (!updateResult || updateResult.changes !== 1) {
+      // TOCTOU: the existence-check `SELECT 1` succeeded, but the row
+      // was deleted (e.g., a concurrent purge or close path) before
+      // this UPDATE landed. Rollback the file so we don't leave an
+      // orphan that the index doesn't know about.
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        // best-effort
+      }
+      throw new Error(
+        `TraceStorage.appendEvents: session_id=${sessionId} disappeared between existence check and UPDATE (concurrent purge?)`,
+      );
+    }
     this.seqCounters.set(sessionId, seq);
     return { bytes, filePath };
   }
@@ -328,10 +343,19 @@ export class TraceStorage {
   /**
    * Delete trace sessions started before `beforeMs`. Removes both the index
    * row and the JSONL files. Returns the number of sessions purged.
+   *
+   * Only sessions in a terminal state (`completed`, `failed`, `aborted`)
+   * are eligible. A long-lived `running` session that crosses the TTL
+   * cutoff is intentionally NOT purged — deleting its JSONL directory
+   * mid-recording would lose data and break the next `appendEvents`
+   * call. Operators who really want to evict an active session should
+   * call `recordSessionEnd` first.
    */
   purgeOlderThan(beforeMs: number): number {
     const rows = this.db
-      .prepare('SELECT session_id FROM traces WHERE started_at < ?')
+      .prepare(
+        "SELECT session_id FROM traces WHERE started_at < ? AND status IN ('completed', 'failed', 'aborted')",
+      )
       .all(beforeMs) as { session_id: string }[];
     let purged = 0;
     for (const { session_id } of rows) {

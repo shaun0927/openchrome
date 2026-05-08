@@ -278,4 +278,21 @@ describe('TraceStorage — purgeOlderThan', () => {
     store.recordSessionStart({ sessionId: 's', startedAt: 9000, status: 'completed' });
     expect(store.purgeOlderThan(5000)).toBe(0);
   });
+
+  test('does NOT purge sessions still in `running` state even when older than cutoff', () => {
+    // A long-lived running session that crosses the TTL must survive
+    // the purge — deleting its directory mid-recording loses data and
+    // breaks the next appendEvents call.
+    store.recordSessionStart({ sessionId: 'live', startedAt: 1000, status: 'running' });
+    store.recordSessionStart({ sessionId: 'old-completed', startedAt: 1000, status: 'completed' });
+    store.appendEvents('live', [event(1, 1000)]);
+    store.appendEvents('old-completed', [event(1, 1000)]);
+
+    const purged = store.purgeOlderThan(5000);
+    expect(purged).toBe(1);
+    expect(store.get('live')).toBeDefined();
+    expect(store.get('old-completed')).toBeUndefined();
+    expect(fs.existsSync(path.join(root, 'live'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'old-completed'))).toBe(false);
+  });
 });
