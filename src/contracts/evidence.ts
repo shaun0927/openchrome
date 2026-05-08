@@ -293,6 +293,20 @@ export function readEvidenceBundle(
   } catch {
     return null;
   }
+  // Guard malformed manifests (manual tamper, partial write that
+  // somehow survived, version skew). Treat unexpected shapes as
+  // "not readable" — same outcome as a missing referenced file —
+  // rather than crashing inside `Object.values`.
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return null;
+  }
+  if (
+    !manifest.files ||
+    typeof manifest.files !== 'object' ||
+    Array.isArray(manifest.files)
+  ) {
+    return null;
+  }
   for (const rel of Object.values(manifest.files)) {
     if (typeof rel !== 'string') continue;
     const p = path.join(bundleDir, rel);

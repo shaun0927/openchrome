@@ -126,6 +126,33 @@ describe('writeEvidenceBundle — atomic write', () => {
     expect(m).toBeNull();
   });
 
+  test('readEvidenceBundle returns null for malformed manifest shapes (not a crash)', () => {
+    const txn = record({ txn_id: 'malformed' });
+    const bundleDir = path.join(root, txn.txn_id);
+    fs.mkdirSync(bundleDir, { recursive: true });
+    // manifest is a top-level array — `Object.values(arr)` would
+    // succeed, but the original `Object.values(manifest.files)`
+    // assumed the document shape was the contract.
+    fs.writeFileSync(path.join(bundleDir, 'bundle.json'), JSON.stringify(['oops']));
+    expect(readEvidenceBundle(txn.txn_id, { rootDir: root })).toBeNull();
+    // manifest is a JSON null
+    fs.writeFileSync(path.join(bundleDir, 'bundle.json'), 'null');
+    expect(readEvidenceBundle(txn.txn_id, { rootDir: root })).toBeNull();
+    // manifest.files is null
+    fs.writeFileSync(
+      path.join(bundleDir, 'bundle.json'),
+      JSON.stringify({ schema_version: 1, txn_id: 'malformed', files: null }),
+    );
+    expect(readEvidenceBundle(txn.txn_id, { rootDir: root })).toBeNull();
+    // manifest.files is an array (Object.values would silently work
+    // but the values would be primitives, not file paths)
+    fs.writeFileSync(
+      path.join(bundleDir, 'bundle.json'),
+      JSON.stringify({ schema_version: 1, txn_id: 'malformed', files: [] }),
+    );
+    expect(readEvidenceBundle(txn.txn_id, { rootDir: root })).toBeNull();
+  });
+
   test('crash-safety: temp manifest does not survive when manifest missing', async () => {
     // The temp file should not exist after a successful rename; if a
     // crash happens DURING write, .bundle.json.tmp may exist while
