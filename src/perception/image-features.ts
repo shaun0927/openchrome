@@ -23,14 +23,22 @@ const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
 const JPEG_SOI = [0xff, 0xd8, 0xff] as const;
 
 /**
- * Detect whether a buffer that has ALREADY FAILED the `length === w*h*4`
- * check looks like an encoded PNG or JPEG, and throw a descriptive error
- * pointing callers at the decode step they must add.
+ * Sniff the first bytes of a buffer and throw a descriptive error if it
+ * looks like an encoded PNG or JPEG rather than raw RGBA bytes.
  *
- * The sniff runs ONLY when the length does not match `w*h*4` — i.e., it
- * cannot be raw RGBA. This prevents false positives on valid raw buffers
- * whose first pixel happens to begin with the JPEG SOI byte sequence
- * (e.g. a pixel with RGB 255/216/255).
+ * The sniff ALWAYS runs — it is NOT gated on whether the buffer length
+ * happens to match `w*h*4`. Gating on length was tried in round-4 to
+ * avoid false positives on raw RGBA whose first pixel begins with JPEG SOI
+ * bytes (e.g. RGB 255/216/255), but it created a silent-misclassification
+ * path: an encoded PNG or JPEG whose compressed size coincidentally equals
+ * `w*h*4` would bypass the guard entirely and corrupt Sobel/color output.
+ *
+ * False-positive risk with the unconditional sniff is negligible:
+ *  - PNG: requires all 8 bytes `89 50 4E 47 0D 0A 1A 0A` to match, which
+ *    raw RGBA pixels cannot replicate in practice.
+ *  - JPEG: requires 4 bytes `FF D8 FF [E0-EF|DB|DA]`, meaning the first
+ *    pixel must be RGB (255,216,255) AND the alpha byte must be a valid
+ *    JFIF/EXIF/APP marker byte — an astronomically unlikely raw image.
  */
 function assertNotEncodedImage(
   rgba: Uint8Array | Buffer,
@@ -38,10 +46,7 @@ function assertNotEncodedImage(
   height: number,
   fnName: string,
 ): void {
-  // Only sniff when the buffer is provably not raw RGBA.
-  if (rgba.length === width * height * 4) return;
-
-  // Full 8-byte PNG signature.
+  // Full 8-byte PNG signature — always check, regardless of buffer length.
   if (rgba.length >= PNG_MAGIC.length && PNG_MAGIC.every((b, i) => rgba[i] === b)) {
     throw new Error(
       `${fnName}: received encoded PNG buffer instead of raw RGBA bytes ` +

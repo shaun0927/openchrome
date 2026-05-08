@@ -154,13 +154,13 @@ describe('sobelEdgeDensity', () => {
 
   test('raw RGBA buffer with first pixel (255,216,255,255) does NOT throw (JPEG SOI false-positive regression)', () => {
     // First pixel RGB=(255,216,255) matches JPEG SOI bytes [FF D8 FF].
-    // With the old unconditional sniff this buffer was incorrectly rejected.
-    // The new guard only sniffs when length != w*h*4, so a valid raw buffer
-    // must pass through and produce a numeric result.
+    // The 4th byte (alpha) is 0xFF, which is NOT in the valid JFIF/EXIF/APP
+    // marker range [E0-EF, DB, DA], so the JPEG check does not fire.
+    // This buffer must pass through and produce a valid numeric result.
     const w = 4;
     const h = 4;
     const buf = new Uint8ClampedArray(w * h * 4);
-    // First pixel: R=255, G=216, B=255, A=255
+    // First pixel: R=255, G=216, B=255, A=255 (alpha=0xFF is not a JPEG marker)
     buf[0] = 0xff;
     buf[1] = 0xd8;
     buf[2] = 0xff;
@@ -174,6 +174,29 @@ describe('sobelEdgeDensity', () => {
     expect(typeof d).toBe('number');
     expect(d).toBeGreaterThanOrEqual(0);
     expect(d).toBeLessThanOrEqual(1);
+  });
+
+  test('encoded PNG whose compressed length coincidentally equals w*h*4 is still rejected (round-5 regression)', () => {
+    // Round-4 early-returned when length === w*h*4, so an encoded PNG of
+    // exactly that size would silently pass through. This test verifies the
+    // guard always sniffs regardless of length.
+    const w = 1;
+    const h = 1;
+    const rawLen = w * h * 4; // 4 bytes
+    // Build a fake PNG: full 8-byte signature + padding to match rawLen.
+    // rawLen=4 is shorter than 8, so use w=2,h=2 → rawLen=16.
+    const w2 = 2;
+    const h2 = 2;
+    const rawLen2 = w2 * h2 * 4; // 16 bytes
+    const png = Buffer.alloc(rawLen2);
+    // Write PNG 8-byte magic at the start; pad remaining bytes with zeros.
+    png[0] = 0x89; png[1] = 0x50; png[2] = 0x4e; png[3] = 0x47;
+    png[4] = 0x0d; png[5] = 0x0a; png[6] = 0x1a; png[7] = 0x0a;
+    // Length exactly equals w2*h2*4; must still throw.
+    expect(png.length).toBe(rawLen2);
+    expect(() => sobelEdgeDensity(png, w2, h2, { x: 0, y: 0, w: w2, h: h2 })).toThrow(
+      /encoded PNG/i,
+    );
   });
 
   test('threshold tunable: a very high threshold zeros out density on a striped image', () => {
