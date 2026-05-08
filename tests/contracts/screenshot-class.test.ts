@@ -34,6 +34,11 @@ describe('teachClass / loadClass round-trip', () => {
   test('rejects path-traversal class IDs at the boundary', () => {
     expect(() => classDir('../escape', tmpDir)).toThrow(/invalid class_id/);
     expect(() => classDir('foo/bar', tmpDir)).toThrow(/invalid class_id/);
+    // The character class allows literal `.`, so the validator must
+    // explicitly reject the dot-only segments that path.join() would
+    // resolve to the registry root or its parent.
+    expect(() => classDir('.', tmpDir)).toThrow(/invalid class_id/);
+    expect(() => classDir('..', tmpDir)).toThrow(/invalid class_id/);
   });
 
   test('first teach creates dir, hash, and threshold.json with mode 0o600', async () => {

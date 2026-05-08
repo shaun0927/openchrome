@@ -30,8 +30,13 @@ const REGISTRY_FILE_MODE = 0o600;
 const DEFAULT_THRESHOLD_FALLBACK = 8;
 const THRESHOLD_FLOOR = 4;
 const THRESHOLD_CEIL = 16;
-/** Class IDs must be safe path components — block traversal up front. */
+/**
+ * Class IDs must be safe path components — block traversal up front.
+ * The character class allows dots, so reject `.` / `..` explicitly so a
+ * caller can't `path.join(rootDir, '..')` themselves out of the registry.
+ */
 const VALID_CLASS_ID = /^[A-Za-z0-9._-]+$/;
+const RESERVED_CLASS_IDS = new Set(['.', '..']);
 
 export interface ScreenshotClassMetadata {
   classId: string;
@@ -63,9 +68,9 @@ export function defaultClassesDir(): string {
 }
 
 export function classDir(classId: string, rootDir: string = defaultClassesDir()): string {
-  if (!VALID_CLASS_ID.test(classId)) {
+  if (!VALID_CLASS_ID.test(classId) || RESERVED_CLASS_IDS.has(classId)) {
     throw new Error(
-      `invalid class_id '${classId}' — must match ${VALID_CLASS_ID} (no path separators)`,
+      `invalid class_id '${classId}' — must match ${VALID_CLASS_ID} and not be '.' or '..'`,
     );
   }
   return path.join(rootDir, classId);
@@ -97,13 +102,37 @@ export async function teachClass(
   const exemplarsDir = path.join(dir, 'exemplars');
   await fsp.mkdir(exemplarsDir, { recursive: true });
 
-  const existing = await listExemplarBaseNames(exemplarsDir);
-  const nextIndex = nextExemplarIndex(existing);
-  const baseName = String(nextIndex).padStart(4, '0');
-  const pngTarget = path.join(exemplarsDir, `${baseName}.png`);
+  // Reserve an exemplar slot atomically so concurrent teaches to the same
+  // class don't pick the same index and clobber each other. We claim the
+  // slot by O_EXCL-creating the .png first; on EEXIST we bump and retry.
+  // Retries are bounded but generously sized (matches our hand-tuned cap
+  // for "obviously broken filesystem"); each iteration only re-reads the
+  // directory, no expensive work.
+  const MAX_TEACH_RETRIES = 64;
+  let baseName = '';
+  for (let attempt = 0; attempt < MAX_TEACH_RETRIES; attempt++) {
+    const existing = await listExemplarBaseNames(exemplarsDir);
+    const idx = nextExemplarIndex(existing) + attempt;
+    const candidateName = String(idx).padStart(4, '0');
+    const candidatePath = path.join(exemplarsDir, `${candidateName}.png`);
+    let fh: fsp.FileHandle | undefined;
+    try {
+      fh = await fsp.open(candidatePath, 'wx', REGISTRY_FILE_MODE);
+      await fh.writeFile(png);
+      baseName = candidateName;
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    } finally {
+      await fh?.close();
+    }
+  }
+  if (!baseName) {
+    throw new Error(
+      `could not allocate exemplar slot for class '${classId}' after ${MAX_TEACH_RETRIES} attempts`,
+    );
+  }
   const hashTarget = path.join(exemplarsDir, `${baseName}.hash`);
-
-  await writeFileAtomic(pngTarget, png, { mode: REGISTRY_FILE_MODE });
   await writeFileAtomic(hashTarget, phashToHex(hash), { mode: REGISTRY_FILE_MODE });
 
   const loaded = await loadClass(classId, rootDir);
