@@ -119,6 +119,24 @@ describe('actionsEquivalent — navigate', () => {
     ).toBe(false);
   });
 
+  test('path trailing slash with query string is normalized', () => {
+    expect(
+      actionsEquivalent(
+        { kind: 'navigate', args: { url: 'https://x.com/page/?id=1' } },
+        { kind: 'navigate', args: { url: 'https://x.com/page?id=1' } },
+      ),
+    ).toBe(true);
+  });
+
+  test('path trailing slash with fragment is normalized', () => {
+    expect(
+      actionsEquivalent(
+        { kind: 'navigate', args: { url: 'https://x.com/page/#section' } },
+        { kind: 'navigate', args: { url: 'https://x.com/page#section' } },
+      ),
+    ).toBe(true);
+  });
+
   test('invalid URL → not equivalent', () => {
     expect(
       actionsEquivalent(
@@ -386,6 +404,38 @@ describe('VotingOrchestrator — single-provider fallback', () => {
       expect(v.reason).toBe('disagreement');
       expect(v.disagreement?.providers.map((p) => p.name).sort()).toEqual(['a', 'b', 'c']);
     }
+  });
+
+  test('ok:true reply without an action is classified as failure (graceful)', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { x: 50, y: 50 } };
+    const orch = new VotingOrchestrator({
+      fallbackMode: 'graceful',
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 10 })),
+        // Provider B reports success but without a parsed action.
+        fakeProvider('b', async () => ({ ok: true, tokens: 10 })),
+      ],
+    });
+    const v = await orch.runVote(REQ);
+    // Graceful single-success path: A's action stands; only A is the voter.
+    expect(v.proceed).toBe(true);
+    if (v.proceed) {
+      expect(v.voters).toEqual(['a']);
+    }
+  });
+
+  test('ok:true reply without an action is classified as failure (strict → disagreement)', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { x: 50, y: 50 } };
+    const orch = new VotingOrchestrator({
+      fallbackMode: 'strict',
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 10 })),
+        fakeProvider('b', async () => ({ ok: true, tokens: 10 })),
+      ],
+    });
+    const v = await orch.runVote(REQ);
+    expect(v.proceed).toBe(false);
+    if (!v.proceed) expect(v.reason).toBe('disagreement');
   });
 
   test('rejected provider promise is treated as failure (no throw)', async () => {

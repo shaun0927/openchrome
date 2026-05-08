@@ -231,12 +231,28 @@ export class VotingOrchestrator {
     }
     this.budget.charge(totalTokens);
 
-    const successes = replies
-      .map((r, i) => ({ name: this.providers[i].name, reply: r }))
-      .filter((p) => p.reply.ok && p.reply.action);
-    const failures = replies
-      .map((r, i) => ({ name: this.providers[i].name, reply: r }))
-      .filter((p) => !p.reply.ok);
+    // Classify replies. A "success" requires both ok=true AND a
+    // parsed action — anything short of that (ok=false, OR ok=true
+    // without an action object) is a failure. Without this guard,
+    // `{ ok: true, action: undefined }` would slip past both
+    // partitions and get silently dropped, letting a 2-voter
+    // configuration land in the single-success advisory path with
+    // only one *real* vote.
+    const classified = replies.map((r, i) => {
+      const isSuccess = r.ok === true && r.action != null;
+      const reply: ProviderReply = isSuccess
+        ? r
+        : r.ok === true
+          ? {
+              ...r,
+              ok: false,
+              error: r.error ?? { kind: 'malformed', raw: 'voter returned ok without an action' },
+            }
+          : r;
+      return { name: this.providers[i].name, reply, isSuccess };
+    });
+    const successes = classified.filter((p) => p.isSuccess);
+    const failures = classified.filter((p) => !p.isSuccess);
 
     if (successes.length === 0) {
       return {

@@ -130,11 +130,29 @@ function navigateEquivalent(a: ActionInvocation, b: ActionInvocation): boolean {
   const ub = asString(b.args.url);
   if (!ua || !ub) return false;
   try {
-    const na = normalizeUrl(ua).url.replace(/\/$/, '');
-    const nb = normalizeUrl(ub).url.replace(/\/$/, '');
-    return na === nb;
+    return stripPathTrailingSlash(normalizeUrl(ua).url) ===
+      stripPathTrailingSlash(normalizeUrl(ub).url);
   } catch {
     return false;
+  }
+}
+
+/**
+ * Strip a single trailing slash from the URL's pathname while
+ * preserving the query string and fragment. Naive `replace(/\/$/, '')`
+ * only removes a slash from the very end of the URL, which means
+ * `/page/?id=1` and `/page?id=1` would otherwise be treated as
+ * different and trigger avoidable disagreement/escalation.
+ */
+function stripPathTrailingSlash(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.pathname.length > 1 && u.pathname.endsWith('/')) {
+      u.pathname = u.pathname.slice(0, -1);
+    }
+    return u.toString();
+  } catch {
+    return url.replace(/\/$/, '');
   }
 }
 
