@@ -84,8 +84,14 @@ export interface CreateLlmMergeRequesterOptions {
  * Build a `MergeRequester` that calls the provider with a merge
  * prompt and parses the JSON envelope. Returns ok:false (skip) on:
  *   - provider error
- *   - parsed JSON missing required fields
- *   - second strict-retry parse failure
+ *   - parsed JSON missing required fields after the one provider-level
+ *     strict retry that VotingProvider.ask() already performs internally
+ *     via runWithReplyParse
+ *
+ * NOTE: VotingProvider.ask() (via runWithReplyParse in http-helpers.ts)
+ * already retries once on parse failure before returning kind='malformed'.
+ * Adding a second callOnce here would stack retries and drive up to 4
+ * model calls per merge decision. A single callOnce is sufficient.
  *
  * Either failure path emits a structured `reason` the curator records
  * in actions.jsonl.
@@ -97,25 +103,17 @@ export function createLlmMergeRequester(
   const allowed = opts.allowedActionKinds ?? ['merge'];
 
   return async (req) => {
-    // First attempt
-    const first = await callOnce(opts.provider, req, timeoutMs, allowed, false);
-    if (first.kind === 'ok') return first.result;
-    if (first.kind === 'provider_error') {
+    const result = await callOnce(opts.provider, req, timeoutMs, allowed, false);
+    if (result.kind === 'ok') return result.result;
+    if (result.kind === 'provider_error') {
       return {
         ok: false,
-        reason: `merge provider error: kind=${first.error.kind} raw=${first.error.raw.slice(0, 120)}`,
+        reason: `merge provider error: kind=${result.error.kind} raw=${result.error.raw.slice(0, 120)}`,
       };
     }
-    // Parse failure → strict retry once
-    const second = await callOnce(opts.provider, req, timeoutMs, allowed, true);
-    if (second.kind === 'ok') return second.result;
-    if (second.kind === 'provider_error') {
-      return {
-        ok: false,
-        reason: `merge provider error (strict retry): kind=${second.error.kind} raw=${second.error.raw.slice(0, 120)}`,
-      };
-    }
-    return { ok: false, reason: 'merge_parse_failure: provider returned non-JSON twice' };
+    // parse_failure: VotingProvider already retried once internally via
+    // runWithReplyParse — no second callOnce needed here.
+    return { ok: false, reason: 'merge_parse_failure: provider returned non-JSON' };
   };
 }
 

@@ -249,12 +249,11 @@ describe('createLlmMergeRequester — VotingProvider adapter', () => {
     }
   });
 
-  test('reply with kind=malformed whose raw is unparseable → falls into strict retry, eventually abstains', async () => {
-    // First attempt: malformed with garbage raw → parse_failure → strict retry
-    // Second attempt: malformed with garbage raw again → parse_failure → abstain
+  test('reply with kind=malformed whose raw is unparseable → abstains immediately (no second call)', async () => {
+    // VotingProvider already retried once internally via runWithReplyParse before
+    // returning kind='malformed'. Our adapter must NOT make a second callOnce.
     const provider = fakeVotingProvider([
       { ok: false, error: { kind: 'malformed', raw: 'not json at all' } },
-      { ok: false, error: { kind: 'malformed', raw: 'still not json' } },
     ]);
     const requester = createLlmMergeRequester({ provider });
     const r = await requester(REQ);
@@ -262,6 +261,21 @@ describe('createLlmMergeRequester — VotingProvider adapter', () => {
     if (!r.ok) {
       expect(r.reason).toContain('merge_parse_failure');
     }
+  });
+
+  test('provider.ask is called exactly ONCE on parse_failure (no double-call)', async () => {
+    let callCount = 0;
+    const provider: VotingProvider = {
+      name: 'counting-provider',
+      async ask(_req, _opts): Promise<ProviderReply> {
+        callCount++;
+        return { ok: false, error: { kind: 'malformed', raw: 'garbage' } };
+      },
+    };
+    const requester = createLlmMergeRequester({ provider });
+    const r = await requester(REQ);
+    expect(r.ok).toBe(false);
+    expect(callCount).toBe(1);
   });
 
   test('non-malformed provider_error → abstains without retry', async () => {
@@ -279,10 +293,10 @@ describe('createLlmMergeRequester — VotingProvider adapter', () => {
   });
 
   test('name violating the regex (uppercase letter) → rejected by asMergeOk → abstains', async () => {
-    // The provider returns ok=false malformed with an uppercase name — asMergeOk should reject it
+    // The provider returns ok=false malformed with an uppercase name — asMergeOk should reject it.
+    // No second call expected: VotingProvider already retried once internally.
     const badNameJson = JSON.stringify({ name: 'Amazon.Cart', intent: 'some intent', body: '## body' });
     const provider = fakeVotingProvider([
-      { ok: false, error: { kind: 'malformed', raw: badNameJson } },
       { ok: false, error: { kind: 'malformed', raw: badNameJson } },
     ]);
     const requester = createLlmMergeRequester({ provider });
@@ -291,9 +305,9 @@ describe('createLlmMergeRequester — VotingProvider adapter', () => {
   });
 
   test('name with spaces → rejected by asMergeOk → abstains', async () => {
+    // No second call expected: VotingProvider already retried once internally.
     const badNameJson = JSON.stringify({ name: 'amazon cart flow', intent: 'some intent', body: '## body' });
     const provider = fakeVotingProvider([
-      { ok: false, error: { kind: 'malformed', raw: badNameJson } },
       { ok: false, error: { kind: 'malformed', raw: badNameJson } },
     ]);
     const requester = createLlmMergeRequester({ provider });
