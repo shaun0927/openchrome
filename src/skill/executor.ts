@@ -130,19 +130,24 @@ export async function runSkill(args: RunSkillArgs): Promise<RunSkillResult> {
   const trace: ProgressTrace = {};
   let result: RunSkillResult | undefined;
   let innerError: unknown;
+  // Separate boolean — `innerError` alone is ambiguous because callers can
+  // legitimately throw `undefined` or do `Promise.reject()`. We must
+  // re-raise any rejection, even one that carries no value.
+  let didThrow = false;
   try {
     result = await runSkillInner({ storage, router, ctx, intent, trace });
   } catch (err) {
     innerError = err;
+    didThrow = true;
   }
 
   if (args.audit) {
     try {
       const domain = args.domain ?? storage.domain;
       const { buildEventFromResult, buildEventFromError } = await import('./audit');
-      const event = result
-        ? buildEventFromResult(domain, result)
-        : buildEventFromError(domain, innerError, trace);
+      const event = didThrow
+        ? buildEventFromError(domain, innerError, trace)
+        : buildEventFromResult(domain, result as RunSkillResult);
       args.audit.emit(event);
     } catch (emitErr) {
       // Telemetry failure is observability-only; don't poison the run.
@@ -150,7 +155,7 @@ export async function runSkill(args: RunSkillArgs): Promise<RunSkillResult> {
     }
   }
 
-  if (innerError !== undefined) throw innerError;
+  if (didThrow) throw innerError;
   return result as RunSkillResult;
 }
 

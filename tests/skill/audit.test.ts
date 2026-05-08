@@ -261,6 +261,37 @@ describe('runSkill — audit emission', () => {
     }
   });
 
+  test('rejection with undefined value still re-throws (no silent success)', async () => {
+    // `Promise.reject()` / `throw undefined` / `throw null` are legitimate
+    // rejection patterns. The executor must propagate them rather than
+    // swallow the failure into a `result === undefined` "success" return.
+    const events: GraphAuditEvent[] = [];
+    const undefinedThrowingCtx: ExecutionContext = {
+      async snapshotPageState() {
+        // eslint-disable-next-line no-throw-literal
+        throw undefined;
+      },
+    };
+    let caught: unknown = 'no_catch';
+    try {
+      await runSkill({
+        storage,
+        router: mockRouter({ fallback: null }),
+        ctx: undefinedThrowingCtx,
+        intent: {},
+        audit: { emit: (e) => events.push(e) },
+      });
+    } catch (err) {
+      caught = err;
+    }
+    // Truly undefined rejection — but the executor still re-raised it.
+    expect(caught).toBeUndefined();
+    // Audit telemetry must still record the failure event (1:1 guarantee).
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe('graph_error');
+    expect(events[0].reason).toBe('unknown_error');
+  });
+
   test('audit emitter throw on the error path does NOT mask the inner exception', async () => {
     // Inner failure + emitter that also throws → caller sees the *original*
     // error, not the emit error.
