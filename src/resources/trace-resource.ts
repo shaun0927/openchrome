@@ -180,6 +180,27 @@ function isTraceEvent(value: unknown): value is TraceEventEnvelope {
   return typeof v.ts === 'number' && Number.isFinite(v.ts);
 }
 
+function resolveSessionDir(sessionId: string): string | null {
+  if (
+    sessionId.length === 0 ||
+    sessionId === '.' ||
+    sessionId === '..' ||
+    sessionId.includes('/') ||
+    sessionId.includes('\\') ||
+    sessionId.includes('\0')
+  ) {
+    return null;
+  }
+
+  const root = path.resolve(traceRoot());
+  const sessionDir = path.resolve(root, sessionId);
+  const relative = path.relative(root, sessionDir);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return null;
+  }
+  return sessionDir;
+}
+
 interface StreamReadResult {
   total: number;
   matched: TraceEventEnvelope[];
@@ -198,7 +219,10 @@ async function streamSessionEvents(
   sessionId: string,
   filters: { from?: number; to?: number; limit: number },
 ): Promise<StreamReadResult> {
-  const sessionDir = path.join(traceRoot(), sessionId);
+  const sessionDir = resolveSessionDir(sessionId);
+  if (!sessionDir) {
+    return { total: 0, matched: [], truncated: false };
+  }
   if (!fs.existsSync(sessionDir)) {
     return { total: 0, matched: [], truncated: false };
   }

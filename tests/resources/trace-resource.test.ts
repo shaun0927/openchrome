@@ -418,6 +418,29 @@ describe('buildTraceContent — events', () => {
     expect(text).not.toContain('hunter2hunter2');
   });
 
+  test('does not read event files outside the trace root for legacy unsafe session ids', async () => {
+    const escapeId = `escape-${process.pid}`;
+    const outsideDir = path.join(root, '..', escapeId);
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(outsideDir, '1-1.jsonl'),
+      JSON.stringify({ ts: 123, seq: 1, kind: 'ESCAPED', body: {} }) + '\n',
+    );
+    store.recordSessionStart({
+      sessionId: `../${escapeId}`,
+      startedAt: 1,
+      status: 'completed',
+    });
+
+    const parsed = parseTraceUri(`openchrome://trace/..%2F${escapeId}/events`)!;
+    const r = await buildTraceContent(parsed);
+    const body = JSON.parse(r!) as { total: number; returned: number; events: unknown[] };
+    expect(body.total).toBe(0);
+    expect(body.returned).toBe(0);
+    expect(body.events).toEqual([]);
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
   test('streams: limit=1 keeps matched array small even with many events', async () => {
     // Append a large batch and confirm the response cap is respected.
     // Regression target: the prior implementation read every event into
