@@ -188,16 +188,19 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   const audit = args.audit ?? defaultAuditEmitter();
 
   // 0. Idempotency: settled-cache short-circuit, then in-flight short-circuit.
-  if (args.idempotency) {
-    let key = args.idempotencyKey;
-    if (!key) {
-      const idem = await import('./idempotency');
-      key = idem.computeIdempotencyKey(args.contract);
-    }
-
-    // 0a. Settled cache hit — replay (with from_cache=true) and emit a
-    //     fresh audit row so the audit log records the retrieval.
-    const cached = args.idempotency.get(key);
+  //    Caching only engages when a disambiguator is available (caller
+  //    `idempotencyKey` or `contract.idempotency_key`). Without one, two
+  //    logically-distinct invocations of the same contract definition
+  //    would collide on the same hash and the second would silently
+  //    skip its required side effects — exactly the over-broad caching
+  //    case codex flagged. A defined disambiguator is now a precondition
+  //    for caching; otherwise the runtime falls through to a fresh run.
+  const idemKey = resolveIdemKey(args);
+  if (args.idempotency && idemKey) {
+    // 0a. Settled cache hit. Cache reads are wrapped because a faulty
+    //     store (closed SQLite handle, schema drift) must not break the
+    //     "always settles" guarantee — degrade to a fresh run instead.
+    const cached = safeStoreCall(() => args.idempotency!.get(idemKey));
     if (cached && cached.verdict === 'success') {
       return emitReplay(audit, cached, now);
     }
@@ -209,7 +212,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     //     stampede-protection guarantee. The pending promise never
     //     rejects (runWithContract always settles); the original
     //     execution's TransactionRecord is replayed for this caller.
-    const inflight = args.idempotency.getPending(key);
+    const inflight = safeStoreCall(() => args.idempotency!.getPending(idemKey));
     if (inflight) {
       const orig = await inflight;
       return emitReplay(audit, orig, now);
@@ -217,22 +220,58 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
 
     // 0c. Reserve our slot before any further await so a concurrent
     //     caller that arrives while the skill is running observes our
-    //     in-flight promise (path 0b) and does not race-execute.
+    //     in-flight promise (path 0b) and does not race-execute. If the
+    //     reservation itself throws (broken store), drop to an uncached
+    //     run — better than a hard failure of the contract.
     let resolveOurs!: (record: TransactionRecord) => void;
     const ours = new Promise<TransactionRecord>((res) => {
       resolveOurs = res;
     });
-    args.idempotency.reservePending(key, ours);
+    const reserved = safeStoreCall(() => {
+      args.idempotency!.reservePending(idemKey, ours);
+      return true;
+    });
+    if (!reserved) return runInner(args, undefined, now, audit);
+
     try {
-      const record = await runInner(args, key, now, audit);
+      const record = await runInner(args, idemKey, now, audit);
       resolveOurs(record);
       return record;
     } finally {
-      args.idempotency.releasePending(key);
+      safeStoreCall(() => args.idempotency!.releasePending(idemKey));
     }
   }
 
   return runInner(args, undefined, now, audit);
+}
+
+/** Resolve the cache key for this invocation. Returns undefined when no
+ *  disambiguator is available — in that case the runtime skips the
+ *  cache entirely so two logically-distinct calls of the same contract
+ *  definition cannot collide on a hash that would replay the wrong
+ *  result. */
+function resolveIdemKey(args: ContractRuntimeArgs): string | undefined {
+  if (args.idempotencyKey) return args.idempotencyKey;
+  if (args.contract.idempotency_key) {
+    // Hash matches the SQLite cache key the caller can correlate
+    // against the audit log — same canonicalization either way.
+    // Lazy require keeps the (synchronous) common path browser-safe.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const idem = require('./idempotency') as typeof import('./idempotency');
+    return idem.computeIdempotencyKey(args.contract);
+  }
+  return undefined;
+}
+
+/** Run a store call defensively. If the store throws (closed handle,
+ *  malformed row, file system error) the runtime falls back to its
+ *  uncached path rather than rejecting — preserving "always settles". */
+function safeStoreCall<T>(fn: () => T): T | undefined {
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
 }
 
 function emitReplay(
@@ -493,11 +532,7 @@ async function runInner(
     // the outer reservation path; reuse it instead of recomputing so the
     // pending-registry slot and the cache write line up exactly.
     if (args.idempotency && idemKey) {
-      try {
-        args.idempotency.put(idemKey, successRecord);
-      } catch {
-        // Cache failure must not change the verdict.
-      }
+      safeStoreCall(() => args.idempotency!.put(idemKey, successRecord));
     }
     return settle(audit, successRecord);
   }

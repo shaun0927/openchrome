@@ -251,6 +251,71 @@ describe('runWithContract — idempotency cache', () => {
     expect(skillCalls).toBe(2);
   });
 
+  test('cache disengages when no idempotency_key is supplied (no over-broad collisions)', async () => {
+    // The fix here: a contract without an explicit idempotency_key (or
+    // caller idempotencyKey) must NOT cache, because the default key
+    // would collapse all logically-distinct calls of the same contract
+    // definition onto a single hash and the second call would replay
+    // the prior side effect. The skill must run on every invocation.
+    let skillCalls = 0;
+    const c: Contract = {
+      id: 'no-key-contract',
+      // intentionally no idempotency_key
+      post: { kind: 'no_dialog' },
+    };
+    const args = {
+      contract: c,
+      skill: async () => {
+        skillCalls++;
+        return 'ran';
+      },
+      snapshot: async () => snap(),
+      idempotency: store,
+    };
+    const r1 = await runWithContract(args);
+    const r2 = await runWithContract(args);
+    expect(r1.verdict).toBe('success');
+    expect(r2.verdict).toBe('success');
+    expect(skillCalls).toBe(2);
+    // And neither call should have been served from cache.
+    expect(r1.from_cache).toBeUndefined();
+    expect(r2.from_cache).toBeUndefined();
+  });
+
+  test('store throws on get → degrades to uncached run (always-settles holds)', async () => {
+    // A store whose get() throws (corrupted SQLite handle, etc.) must
+    // not bubble up as a rejection from runWithContract. The runtime
+    // falls back to the uncached path so callers still receive a
+    // TransactionRecord and the audit pipeline still records the run.
+    let skillCalls = 0;
+    const brokenStore = {
+      get: () => {
+        throw new Error('store handle closed');
+      },
+      put: () => undefined,
+      getPending: () => undefined,
+      reservePending: () => undefined,
+      releasePending: () => undefined,
+      purgeOlderThan: () => 0,
+      close: () => undefined,
+    };
+    const r = await runWithContract({
+      contract: {
+        id: 'c-broken',
+        idempotency_key: 'broken-1',
+        post: { kind: 'no_dialog' },
+      },
+      skill: async () => {
+        skillCalls++;
+        return 'still ran';
+      },
+      snapshot: async () => snap(),
+      idempotency: brokenStore,
+    });
+    expect(r.verdict).toBe('success');
+    expect(skillCalls).toBe(1);
+  });
+
   test('different idempotency_key bypasses the cache', async () => {
     let skillCalls = 0;
     const make = (key: string) => ({
