@@ -17,6 +17,7 @@ import type { Command } from 'commander';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as readline from 'readline';
 
 type BetterSqlite3 = typeof import('better-sqlite3');
 type Database = import('better-sqlite3').Database;
@@ -158,7 +159,63 @@ function listTraces(opts: {
   }
 }
 
-function showTrace(sessionId: string, opts: { limit?: string; json?: boolean }): void {
+/**
+ * Stream every JSONL chunk for the session line-by-line and keep only
+ * the last `limit` parseable events in memory. Counting `total` is
+ * decoupled from the kept array, so memory stays bounded by `limit`
+ * regardless of how large the trace directory has grown.
+ *
+ * Recorder names chunks `<ts>-<seq>.jsonl`. A plain lexical sort would
+ * place `...-10.jsonl` before `...-2.jsonl`, and because recorder
+ * timestamps come from `Date.now()` two flushes can share a millisecond,
+ * so sort numerically by parsed `(ts, seq)`.
+ */
+async function streamSessionTail(
+  sessionDir: string,
+  limit: number,
+): Promise<{ tail: JsonlEvent[]; total: number }> {
+  const tail: JsonlEvent[] = [];
+  let total = 0;
+  if (!fs.existsSync(sessionDir)) return { tail, total };
+
+  const files = fs
+    .readdirSync(sessionDir)
+    .filter((f) => f.endsWith('.jsonl'))
+    .map((f) => {
+      const m = /^(\d+)-(\d+)\.jsonl$/.exec(f);
+      return { f, ts: m ? Number(m[1]) : 0, seq: m ? Number(m[2]) : 0 };
+    })
+    .sort((a, b) => (a.ts - b.ts) || (a.seq - b.seq))
+    .map((e) => e.f);
+
+  for (const f of files) {
+    const stream = fs.createReadStream(path.join(sessionDir, f), { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+      for await (const line of rl) {
+        if (!line.trim()) continue;
+        let parsed: JsonlEvent;
+        try {
+          parsed = JSON.parse(line) as JsonlEvent;
+        } catch {
+          continue;
+        }
+        total += 1;
+        tail.push(parsed);
+        // Bound the kept array to `limit` events. Shift drops the oldest
+        // — the array is therefore always the most recent `limit` rows.
+        if (tail.length > limit) tail.shift();
+      }
+    } finally {
+      rl.close();
+      stream.destroy();
+    }
+  }
+
+  return { tail, total };
+}
+
+async function showTrace(sessionId: string, opts: { limit?: string; json?: boolean }): Promise<void> {
   const rootDir = traceRoot();
   const db = openIndex(rootDir);
   if (!db) {
@@ -182,49 +239,21 @@ function showTrace(sessionId: string, opts: { limit?: string; json?: boolean }):
     return;
   }
 
-  // Read JSONL files for this session.
-  // Recorder names chunks `<ts>-<seq>.jsonl`. A plain lexical sort would
-  // place `1730000000000-10.jsonl` before `1730000000000-2.jsonl`, and
-  // because recorder timestamps come from `Date.now()` two flushes can
-  // share a millisecond. Sort by parsed (ts, seq) numerically so
-  // `--limit` always operates on the true tail of the timeline.
-  const sessionDir = path.join(rootDir, sessionId);
-  const events: JsonlEvent[] = [];
-  if (fs.existsSync(sessionDir)) {
-    const files = fs
-      .readdirSync(sessionDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => {
-        const m = /^(\d+)-(\d+)\.jsonl$/.exec(f);
-        return { f, ts: m ? Number(m[1]) : 0, seq: m ? Number(m[2]) : 0 };
-      })
-      .sort((a, b) => (a.ts - b.ts) || (a.seq - b.seq))
-      .map((e) => e.f);
-    for (const f of files) {
-      const content = fs.readFileSync(path.join(sessionDir, f), 'utf8');
-      for (const line of content.split('\n')) {
-        if (!line.trim()) continue;
-        try {
-          events.push(JSON.parse(line));
-        } catch {
-          // skip malformed
-        }
-      }
-    }
-  }
-
   const limit = Math.max(1, Math.min(10000, parseInt(opts.limit ?? '50', 10) || 50));
-  // The CLI help advertises "recent events", so when `events.length`
-  // exceeds the limit we keep the *tail* of the timeline. The previous
-  // `slice(0, limit)` returned the oldest events and hid the failure
-  // trigger that operators almost always need first.
-  const omitted = Math.max(0, events.length - limit);
-  const slice = events.slice(omitted);
+  // The CLI help advertises "recent events". Stream chunks and keep
+  // only the trailing `limit` rows so memory stays O(limit) instead of
+  // O(total trace size) — the prior implementation read every chunk in
+  // full and only sliced at the end, which OOM'd on long sessions.
+  const { tail: slice, total: totalEvents } = await streamSessionTail(
+    path.join(rootDir, sessionId),
+    limit,
+  );
+  const omitted = Math.max(0, totalEvents - slice.length);
 
   if (opts.json) {
     console.log(
       JSON.stringify(
-        { meta: row, events: slice, totalEvents: events.length, omitted },
+        { meta: row, events: slice, totalEvents, omitted },
         null,
         2,
       ),
@@ -239,7 +268,7 @@ function showTrace(sessionId: string, opts: { limit?: string; json?: boolean }):
   console.log(`Domain   : ${row.domain ?? '—'}`);
   console.log(`Parent op: ${row.parent_op ?? '—'}`);
   console.log(`Size     : ${fmtBytes(row.byte_size)}`);
-  console.log(`Events   : ${events.length} (showing last ${slice.length})`);
+  console.log(`Events   : ${totalEvents} (showing last ${slice.length})`);
   console.log('');
   if (omitted > 0) {
     console.log(`... (${omitted} earlier events; pass --limit to see more)`);
@@ -272,7 +301,7 @@ export function registerTraceCommand(program: Command): void {
     .argument('<session-id>', 'The trace session id (from `oc trace list`)')
     .option('--limit <n>', 'Max events to print (default 50, cap 10000)', '50')
     .option('--json', 'Emit raw JSON instead of pretty text')
-    .action((sessionId: string, options: { limit?: string; json?: boolean }) =>
-      showTrace(sessionId, options),
-    );
+    .action(async (sessionId: string, options: { limit?: string; json?: boolean }) => {
+      await showTrace(sessionId, options);
+    });
 }

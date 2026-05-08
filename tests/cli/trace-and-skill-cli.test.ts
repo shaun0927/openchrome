@@ -180,6 +180,34 @@ describe('oc trace — list / show', () => {
     expect(out.events[0].kind).toBe('LATER');
   });
 
+  test('show streams chunks and keeps O(limit) events in memory (not O(total))', () => {
+    // Plant a session with 5,000 events across multiple chunks. The
+    // prior implementation read every chunk into memory before slicing
+    // — so `--limit 3` still allocated 5k JsonlEvent rows. The
+    // streaming version keeps only `limit` events at a time.
+    store.recordSessionStart({ sessionId: 's-bulk', startedAt: 1, status: 'completed' });
+    const big = Array.from({ length: 5000 }, (_, i) => ({
+      ts: 1000 + i,
+      seq: i + 1,
+      kind: i === 4999 ? 'TAIL' : `K${i}`,
+      body: { i },
+    }));
+    store.appendEvents('s-bulk', big);
+
+    const r = runCli(['trace', 'show', 's-bulk', '--limit', '3', '--json'], {
+      OPENCHROME_TRACE_ROOT: traceRoot,
+    });
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout) as {
+      events: Array<{ kind: string }>;
+      totalEvents: number;
+      omitted: number;
+    };
+    expect(out.totalEvents).toBe(5000);
+    expect(out.omitted).toBe(4997);
+    expect(out.events.map((e) => e.kind)).toEqual(['K4997', 'K4998', 'TAIL']);
+  });
+
   test('show --limit returns the most recent events, not the oldest', () => {
     // Regression: the prior `slice(0, limit)` returned the *oldest*
     // events while help advertised "recent events"; for a long session
