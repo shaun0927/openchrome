@@ -95,6 +95,22 @@ describe('sobelEdgeDensity', () => {
     expect(() => sobelEdgeDensity(Buffer.alloc(10), 8, 8, { x: 0, y: 0, w: 1, h: 1 })).toThrow();
   });
 
+  test('rejects encoded PNG buffer with descriptive error', () => {
+    // PNG magic: 89 50 4E 47 0D 0A 1A 0A + arbitrary tail
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
+    expect(() => sobelEdgeDensity(png, 1, 1, { x: 0, y: 0, w: 1, h: 1 })).toThrow(
+      /encoded PNG/i,
+    );
+  });
+
+  test('rejects encoded JPEG buffer with descriptive error', () => {
+    // JPEG magic: FF D8 FF + arbitrary tail
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    expect(() => sobelEdgeDensity(jpeg, 1, 1, { x: 0, y: 0, w: 1, h: 1 })).toThrow(
+      /encoded JPEG/i,
+    );
+  });
+
   test('fractional box touching one pixel is not collapsed to empty', () => {
     // Box {x:0.4, y:0.4, w:0.4, h:0.4}: x0=floor(0.4)=0, x1=ceil(0.8)=1
     // so the 1×1 region at (0,0) is sampled. With a solid image,
@@ -211,5 +227,15 @@ describe('dominantColor', () => {
 
   test('rejects buffer length / dimension mismatch', () => {
     expect(() => dominantColor(Buffer.alloc(10), 8, 8)).toThrow();
+  });
+
+  test('rejects encoded PNG buffer with descriptive error', () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
+    expect(() => dominantColor(png, 1, 1)).toThrow(/encoded PNG/i);
+  });
+
+  test('rejects encoded JPEG buffer with descriptive error', () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    expect(() => dominantColor(jpeg, 1, 1)).toThrow(/encoded JPEG/i);
   });
 });

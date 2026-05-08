@@ -17,6 +17,33 @@
  * `OPENCHROME_CROSS_CHECK_COLOR_TOLERANCE`).
  */
 
+/** PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A */
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+/** JPEG magic bytes: FF D8 FF */
+const JPEG_MAGIC = [0xff, 0xd8, 0xff] as const;
+
+/**
+ * Detect whether a buffer contains an encoded PNG or JPEG image and throw
+ * a descriptive error pointing callers at the decode step they must add.
+ * Returns `undefined` when the buffer does not match any known image header.
+ */
+function assertNotEncodedImage(rgba: Uint8Array | Buffer, fnName: string): void {
+  if (rgba.length >= PNG_MAGIC.length && PNG_MAGIC.every((b, i) => rgba[i] === b)) {
+    throw new Error(
+      `${fnName}: received encoded PNG buffer instead of raw RGBA bytes ` +
+        `(length must equal width*height*4). Decode first, e.g.: ` +
+        `sharp(buffer).raw().toBuffer({ resolveWithObject: true })`,
+    );
+  }
+  if (rgba.length >= JPEG_MAGIC.length && JPEG_MAGIC.every((b, i) => rgba[i] === b)) {
+    throw new Error(
+      `${fnName}: received encoded JPEG buffer instead of raw RGBA bytes ` +
+        `(length must equal width*height*4). Decode first, e.g.: ` +
+        `sharp(buffer).raw().toBuffer({ resolveWithObject: true })`,
+    );
+  }
+}
+
 export interface RgbColor {
   r: number;
   g: number;
@@ -80,6 +107,11 @@ function pixelRgb(rgba: Uint8Array | Buffer, w: number, h: number, x: number, y:
  * sufficient and cheaper than the L2 magnitude — same threshold range).
  *
  * Boundary policy: clamp-to-edge (standard for Sobel).
+ *
+ * **Contract:** `rgba` must be raw RGBA bytes — 4 bytes per pixel,
+ * `length === width * height * 4`. Passing an encoded PNG or JPEG buffer
+ * (e.g., from `Page.screenshot()` default output) throws a descriptive
+ * error. Decode first with e.g. `sharp(buffer).raw().toBuffer(...)`.
  */
 export function sobelEdgeDensity(
   rgba: Uint8Array | Buffer,
@@ -88,6 +120,7 @@ export function sobelEdgeDensity(
   crop: CropRect,
   threshold: number = DEFAULT_EDGE_GRADIENT_THRESHOLD,
 ): number {
+  assertNotEncodedImage(rgba, 'sobelEdgeDensity');
   if (rgba.length !== width * height * 4) {
     throw new Error(`sobelEdgeDensity: buffer length ${rgba.length} != ${width * height * 4}`);
   }
@@ -157,6 +190,11 @@ export function colorDistance(a: RgbColor, b: RgbColor): number {
  * width or height after clamping to the image bounds). Callers must
  * treat `null` as a sentinel meaning "no pixels were sampled" and
  * propagate it as a flagged mismatch, not as a real color.
+ *
+ * **Contract:** `rgba` must be raw RGBA bytes — 4 bytes per pixel,
+ * `length === width * height * 4`. Passing an encoded PNG or JPEG buffer
+ * (e.g., from `Page.screenshot()` default output) throws a descriptive
+ * error. Decode first with e.g. `sharp(buffer).raw().toBuffer(...)`.
  */
 export function dominantColor(
   rgba: Uint8Array | Buffer,
@@ -164,6 +202,7 @@ export function dominantColor(
   height: number,
   region?: CropRect,
 ): RgbColor | null {
+  assertNotEncodedImage(rgba, 'dominantColor');
   if (rgba.length !== width * height * 4) {
     throw new Error(`dominantColor: buffer length ${rgba.length} != ${width * height * 4}`);
   }
