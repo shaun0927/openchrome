@@ -1,4 +1,4 @@
-import { normalizeUrl, TRACKING_PARAM_PATTERNS } from '../../src/skill/url-normalizer';
+import { INVALID_URL_SENTINEL, normalizeUrl, TRACKING_PARAM_PATTERNS } from '../../src/skill/url-normalizer';
 
 describe('normalizeUrl — host and fragment', () => {
   test('lowercases hostname', () => {
@@ -58,8 +58,21 @@ describe('normalizeUrl — query stability', () => {
   });
 });
 
-describe('normalizeUrl — invalid input', () => {
-  test('throws on non-URL input', () => {
-    expect(() => normalizeUrl('not a url')).toThrow();
+describe('normalizeUrl — invalid input (total function, no throw)', () => {
+  test('non-URL string returns the stable sentinel', () => {
+    const r = normalizeUrl('not a url');
+    expect(r.url).toBe(INVALID_URL_SENTINEL);
+    expect(r.droppedParams).toEqual([]);
+  });
+
+  test('empty string returns the stable sentinel', () => {
+    const r = normalizeUrl('');
+    expect(r.url).toBe(INVALID_URL_SENTINEL);
+  });
+
+  test('two malformed URLs hash identically (deterministic fallback)', () => {
+    const a = normalizeUrl('not a url');
+    const b = normalizeUrl('also not a url');
+    expect(a.url).toBe(b.url);
   });
 });

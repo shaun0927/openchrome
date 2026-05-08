@@ -38,16 +38,37 @@ export interface NormalizeUrlResult {
 }
 
 /**
+ * Stable sentinel returned for inputs that do not parse as a URL. Chosen
+ * because:
+ *   • `about:invalid` is a real RFC-defined "always-invalid" address, so
+ *     downstream code that treats the value as a URL won't be surprised by
+ *     a host or query string.
+ *   • The fragment marks it as the recorder's sentinel so operators can
+ *     filter it out of skill-graph snapshots.
+ * Callers must not depend on the exact string except for equality checks.
+ */
+export const INVALID_URL_SENTINEL = 'about:invalid#openchrome-normalize';
+
+/**
  * Normalize a URL string for hashing/equality:
  * - lowercase the host (paths are case-sensitive on most servers; we leave them alone)
  * - drop hash fragment
  * - drop tracking params matching `TRACKING_PARAM_PATTERNS`
  * - stable-sort remaining query keys
  *
- * Throws if the input does not parse as a URL — callers should pre-validate.
+ * Total function: when the input does not parse as a URL (empty string,
+ * relative path, junk text), returns `{ url: INVALID_URL_SENTINEL,
+ * droppedParams: [] }` instead of throwing. This keeps `computeStateHash`
+ * deterministic even when instrumentation emits incomplete URLs, e.g.
+ * after a failed navigation.
  */
 export function normalizeUrl(input: string): NormalizeUrlResult {
-  const u = new URL(input);
+  let u: URL;
+  try {
+    u = new URL(input);
+  } catch {
+    return { url: INVALID_URL_SENTINEL, droppedParams: [] };
+  }
   // Lowercase host only (preserve path case)
   u.hostname = u.hostname.toLowerCase();
   u.hash = '';

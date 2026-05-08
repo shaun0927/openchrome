@@ -56,10 +56,17 @@ export interface InteractiveProbe {
 export function isInteractiveNode(probe: InteractiveProbe): boolean {
   const tag = probe.tagName.toLowerCase();
 
-  // Anchors require href to be interactive (a name-anchor isn't).
-  if (tag === 'a') return Boolean(probe.hasHref);
-
-  if (INTERACTIVE_TAG_NAMES.has(tag)) return true;
+  // Anchors with `href` are interactive on the strength of the tag alone.
+  // Anchors without `href` (name-anchors) are NOT interactive on tag alone,
+  // but may still be promoted by an ARIA role / contentEditable / tabindex
+  // — common SPA pattern: `<a role="button" tabindex="0">…</a>`. We
+  // therefore fall through to the role/focus checks below instead of
+  // short-circuiting.
+  if (tag === 'a') {
+    if (probe.hasHref) return true;
+  } else if (INTERACTIVE_TAG_NAMES.has(tag)) {
+    return true;
+  }
 
   if (probe.role && INTERACTIVE_ROLES.has(probe.role.toLowerCase())) return true;
 
