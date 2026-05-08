@@ -279,7 +279,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     let key = args.idempotencyKey;
     if (!key) {
       const idem = await import('./idempotency');
-      key = idem.computeIdempotencyKey(args.contract);
+      key = idem.computeIdempotencyKey(args.contract, undefined, !!args.beforeIrreversibleAction);
     }
     const cached = args.idempotency.get(key);
     if (cached && cached.verdict === 'success') {
@@ -602,7 +602,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       let key = args.idempotencyKey;
       if (!key) {
         const idem = await import('./idempotency');
-        key = idem.computeIdempotencyKey(args.contract);
+        key = idem.computeIdempotencyKey(args.contract, undefined, !!args.beforeIrreversibleAction);
       }
       try {
         args.idempotency.put(key, successRecord);

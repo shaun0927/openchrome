@@ -83,10 +83,17 @@ function sortKeys(value: unknown): unknown {
  * `contract.idempotency_key` is the primary uniqueness scope; the
  * canonical-JSON hash makes equivalent contract+args pairs collide
  * regardless of property authoring order.
+ *
+ * `hookActive` must be `!!args.beforeIrreversibleAction` at the call
+ * site. A critical contract cached when no hook was configured MUST NOT
+ * be replayed after a hook is enabled — the new safety gate would be
+ * silently skipped. Including hook participation in the key ensures that
+ * enabling a hook invalidates prior cached results for those contracts.
  */
 export function computeIdempotencyKey(
   contract: Contract,
   args?: unknown,
+  hookActive?: boolean,
 ): string {
   const subject = canonicalJson({
     idempotency_key: contract.idempotency_key ?? null,
@@ -99,6 +106,10 @@ export function computeIdempotencyKey(
     // would invoke the voting hook. Include it in the key so they are
     // stored and retrieved independently.
     critical: contract.critical ?? false,
+    // hook_active distinguishes "hook configured at call time" from
+    // "no hook". A cached result from a hookless run must not be replayed
+    // after a hook is introduced during gradual rollout.
+    hook_active: hookActive ?? false,
     args: args ?? null,
   });
   return crypto.createHash('sha256').update(subject).digest('hex');

@@ -290,6 +290,62 @@ describe('runWithContract — idempotency cache', () => {
     expect(skillCalls).toBe(1); // skill ran fresh
   });
 
+  test('hook-inactive cached success does NOT short-circuit a hook-active run (round-6 regression)', async () => {
+    // Scenario: a critical contract runs WITHOUT a hook and succeeds → cached.
+    // A subsequent run with the same contract + hook MUST NOT hit that cache;
+    // the hook must fire and the skill must run fresh.
+    let hookCalls = 0;
+    const hook = async () => {
+      hookCalls++;
+      return { proceed: true };
+    };
+    const baseContract: Contract = {
+      id: 'c-hook-rollout',
+      idempotency_key: 'hook-rollout-key',
+      post: { kind: 'no_dialog' as const },
+      critical: true,
+    };
+
+    // First run: critical=true, NO hook. Caches the success under hook_active=false.
+    let skillCalls = 0;
+    const r1 = await runWithContract({
+      contract: baseContract,
+      skill: async () => { skillCalls++; return 'no-hook run'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+    });
+    expect(r1.verdict).toBe('success');
+    expect(r1.from_cache).toBeUndefined();
+    expect(skillCalls).toBe(1);
+
+    // Second run: same contract, same idempotency_key, but hook NOW enabled.
+    // Must NOT replay from cache — hook must fire and skill must run fresh.
+    const r2 = await runWithContract({
+      contract: baseContract,
+      skill: async () => { skillCalls++; return 'hook run'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+      beforeIrreversibleAction: hook,
+    });
+    expect(r2.verdict).toBe('success');
+    expect(r2.from_cache).toBeUndefined(); // must not replay from cache
+    expect(hookCalls).toBe(1);             // hook was invoked
+    expect(skillCalls).toBe(2);            // skill ran fresh
+
+    // Third run: hook still enabled. Now caches under hook_active=true → hits.
+    const r3 = await runWithContract({
+      contract: baseContract,
+      skill: async () => { skillCalls++; return 'hook run 2'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+      beforeIrreversibleAction: hook,
+    });
+    expect(r3.verdict).toBe('success');
+    expect(r3.from_cache).toBe(true); // now hits the hook-active cache entry
+    expect(skillCalls).toBe(2);       // skill did NOT run again
+    expect(hookCalls).toBe(1);        // hook was NOT called on cache hit
+  });
+
   test('different idempotency_key bypasses the cache', async () => {
     let skillCalls = 0;
     const make = (key: string) => ({
