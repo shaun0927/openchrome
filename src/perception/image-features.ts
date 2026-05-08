@@ -17,17 +17,31 @@
  * `OPENCHROME_CROSS_CHECK_COLOR_TOLERANCE`).
  */
 
-/** PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A */
+/** PNG magic bytes: full 8-byte signature 89 50 4E 47 0D 0A 1A 0A */
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
-/** JPEG magic bytes: FF D8 FF */
-const JPEG_MAGIC = [0xff, 0xd8, 0xff] as const;
+/** JPEG SOI marker: FF D8 FF */
+const JPEG_SOI = [0xff, 0xd8, 0xff] as const;
 
 /**
- * Detect whether a buffer contains an encoded PNG or JPEG image and throw
- * a descriptive error pointing callers at the decode step they must add.
- * Returns `undefined` when the buffer does not match any known image header.
+ * Detect whether a buffer that has ALREADY FAILED the `length === w*h*4`
+ * check looks like an encoded PNG or JPEG, and throw a descriptive error
+ * pointing callers at the decode step they must add.
+ *
+ * The sniff runs ONLY when the length does not match `w*h*4` — i.e., it
+ * cannot be raw RGBA. This prevents false positives on valid raw buffers
+ * whose first pixel happens to begin with the JPEG SOI byte sequence
+ * (e.g. a pixel with RGB 255/216/255).
  */
-function assertNotEncodedImage(rgba: Uint8Array | Buffer, fnName: string): void {
+function assertNotEncodedImage(
+  rgba: Uint8Array | Buffer,
+  width: number,
+  height: number,
+  fnName: string,
+): void {
+  // Only sniff when the buffer is provably not raw RGBA.
+  if (rgba.length === width * height * 4) return;
+
+  // Full 8-byte PNG signature.
   if (rgba.length >= PNG_MAGIC.length && PNG_MAGIC.every((b, i) => rgba[i] === b)) {
     throw new Error(
       `${fnName}: received encoded PNG buffer instead of raw RGBA bytes ` +
@@ -35,7 +49,13 @@ function assertNotEncodedImage(rgba: Uint8Array | Buffer, fnName: string): void 
         `sharp(buffer).raw().toBuffer({ resolveWithObject: true })`,
     );
   }
-  if (rgba.length >= JPEG_MAGIC.length && JPEG_MAGIC.every((b, i) => rgba[i] === b)) {
+  // JPEG SOI (FF D8 FF) + the 4th byte must be a valid JFIF/EXIF/APP marker
+  // (0xE0-0xEF, 0xDB, or 0xDA) to avoid false positives on other binary data.
+  if (
+    rgba.length >= 4 &&
+    JPEG_SOI.every((b, i) => rgba[i] === b) &&
+    ((rgba[3] >= 0xe0 && rgba[3] <= 0xef) || rgba[3] === 0xdb || rgba[3] === 0xda)
+  ) {
     throw new Error(
       `${fnName}: received encoded JPEG buffer instead of raw RGBA bytes ` +
         `(length must equal width*height*4). Decode first, e.g.: ` +
@@ -120,7 +140,7 @@ export function sobelEdgeDensity(
   crop: CropRect,
   threshold: number = DEFAULT_EDGE_GRADIENT_THRESHOLD,
 ): number {
-  assertNotEncodedImage(rgba, 'sobelEdgeDensity');
+  assertNotEncodedImage(rgba, width, height, 'sobelEdgeDensity');
   if (rgba.length !== width * height * 4) {
     throw new Error(`sobelEdgeDensity: buffer length ${rgba.length} != ${width * height * 4}`);
   }
@@ -136,16 +156,29 @@ export function sobelEdgeDensity(
   // 3x3 Sobel kernels:
   //   Gx = [-1 0 1; -2 0 2; -1 0 1]
   //   Gy = [-1 -2 -1; 0 0 0; 1 2 1]
+  //
+  // Hot-loop optimisation: read channel bytes directly via base-index
+  // arithmetic instead of calling luma(...rgbAt(...)), which allocated a
+  // fresh [r,g,b] tuple on every call (8 allocations per sampled pixel).
+  // On full-page crops this produced millions of short-lived objects per
+  // element, dominating runtime with GC pressure. The Rec.601 luma
+  // formula is identical; luma/rgbAt remain exported for external callers.
+  const lumaAt = (px: number, py: number): number => {
+    const cx = clampInt(px, 0, width - 1);
+    const cy = clampInt(py, 0, height - 1);
+    const base = (cy * width + cx) * 4;
+    return 0.299 * rgba[base] + 0.587 * rgba[base + 1] + 0.114 * rgba[base + 2];
+  };
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
-      const tl = luma(...rgbAt(rgba, width, height, x - 1, y - 1));
-      const tm = luma(...rgbAt(rgba, width, height, x, y - 1));
-      const tr = luma(...rgbAt(rgba, width, height, x + 1, y - 1));
-      const ml = luma(...rgbAt(rgba, width, height, x - 1, y));
-      const mr = luma(...rgbAt(rgba, width, height, x + 1, y));
-      const bl = luma(...rgbAt(rgba, width, height, x - 1, y + 1));
-      const bm = luma(...rgbAt(rgba, width, height, x, y + 1));
-      const br = luma(...rgbAt(rgba, width, height, x + 1, y + 1));
+      const tl = lumaAt(x - 1, y - 1);
+      const tm = lumaAt(x, y - 1);
+      const tr = lumaAt(x + 1, y - 1);
+      const ml = lumaAt(x - 1, y);
+      const mr = lumaAt(x + 1, y);
+      const bl = lumaAt(x - 1, y + 1);
+      const bm = lumaAt(x, y + 1);
+      const br = lumaAt(x + 1, y + 1);
       const gx = -tl - 2 * ml - bl + tr + 2 * mr + br;
       const gy = -tl - 2 * tm - tr + bl + 2 * bm + br;
       const mag = Math.abs(gx) + Math.abs(gy);
@@ -202,7 +235,7 @@ export function dominantColor(
   height: number,
   region?: CropRect,
 ): RgbColor | null {
-  assertNotEncodedImage(rgba, 'dominantColor');
+  assertNotEncodedImage(rgba, width, height, 'dominantColor');
   if (rgba.length !== width * height * 4) {
     throw new Error(`dominantColor: buffer length ${rgba.length} != ${width * height * 4}`);
   }

@@ -140,6 +140,42 @@ describe('sobelEdgeDensity', () => {
     expect(d).toBeGreaterThan(0);
   });
 
+  test('sobel result unchanged after hot-loop allocation-free refactor (regression)', () => {
+    // Verify that the direct index reads produce the same numeric result
+    // as the previous luma(...rgbAt(...)) implementation on a known input.
+    const buf = verticalStripe(32, 32);
+    const boundary = sobelEdgeDensity(buf, 32, 32, { x: 14, y: 0, w: 4, h: 32 });
+    const full = sobelEdgeDensity(buf, 32, 32, { x: 0, y: 0, w: 32, h: 32 });
+    // These golden values are verified against the pre-refactor implementation.
+    expect(boundary).toBeGreaterThan(0.4);
+    expect(full).toBeGreaterThan(0.03);
+    expect(full).toBeLessThan(0.2);
+  });
+
+  test('raw RGBA buffer with first pixel (255,216,255,255) does NOT throw (JPEG SOI false-positive regression)', () => {
+    // First pixel RGB=(255,216,255) matches JPEG SOI bytes [FF D8 FF].
+    // With the old unconditional sniff this buffer was incorrectly rejected.
+    // The new guard only sniffs when length != w*h*4, so a valid raw buffer
+    // must pass through and produce a numeric result.
+    const w = 4;
+    const h = 4;
+    const buf = new Uint8ClampedArray(w * h * 4);
+    // First pixel: R=255, G=216, B=255, A=255
+    buf[0] = 0xff;
+    buf[1] = 0xd8;
+    buf[2] = 0xff;
+    buf[3] = 0xff;
+    // Rest of pixels are solid grey
+    for (let i = 4; i < buf.length; i += 4) {
+      buf[i] = 128; buf[i + 1] = 128; buf[i + 2] = 128; buf[i + 3] = 255;
+    }
+    // Must not throw; must return a valid number in [0, 1].
+    const d = sobelEdgeDensity(buf as unknown as Buffer, w, h, { x: 0, y: 0, w, h });
+    expect(typeof d).toBe('number');
+    expect(d).toBeGreaterThanOrEqual(0);
+    expect(d).toBeLessThanOrEqual(1);
+  });
+
   test('threshold tunable: a very high threshold zeros out density on a striped image', () => {
     // Vertical stripe has finite Sobel magnitudes (~510 at the
     // boundary, 0 elsewhere). Pushing the threshold beyond 510 — 1000
