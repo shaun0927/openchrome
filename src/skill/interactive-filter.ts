@@ -39,6 +39,29 @@ const INTERACTIVE_ROLES = new Set([
   'menuitemradio',
 ]);
 
+/**
+ * Common ARIA roles that explicitly DO NOT carry interactive semantics.
+ * Used as a fallback-chain terminator: when a `role="X Y"` chain has X
+ * recognised as one of these, we honour the user-agent rule that the
+ * first valid token wins and stop without checking later tokens. This
+ * keeps `role="heading button"` non-interactive (consistent with
+ * browsers) instead of a false positive that would skew the state hash.
+ *
+ * The set is intentionally narrow — only roles common enough to appear
+ * in real-world fallback chains. Truly unknown tokens fall through to
+ * the next one (matches ARIA 1.2 token-resolution semantics).
+ */
+const NON_INTERACTIVE_ROLES = new Set([
+  // Document structure
+  'heading', 'list', 'listitem', 'article', 'document', 'figure', 'group',
+  'separator', 'table', 'row', 'rowgroup', 'cell', 'columnheader', 'rowheader',
+  'definition', 'term', 'note', 'paragraph', 'presentation', 'none',
+  // Landmarks
+  'banner', 'complementary', 'contentinfo', 'main', 'navigation', 'region', 'search', 'form',
+  // Live regions / status
+  'alert', 'log', 'marquee', 'status', 'timer', 'tooltip',
+]);
+
 /** Subset of an element/node descriptor sufficient for the predicate. */
 export interface InteractiveProbe {
   /** Lowercased tag name (e.g. "button", "a"). */
@@ -79,13 +102,28 @@ export function isInteractiveNode(probe: InteractiveProbe): boolean {
 
 /**
  * ARIA permits the `role` attribute to be a space-separated fallback
- * chain (`role="switch checkbox"`); the user agent picks the first
- * supported token. We follow the same rule: any interactive token
- * anywhere in the chain promotes the element.
+ * chain (`role="switch checkbox"`); per ARIA 1.2, the user agent
+ * resolves the element as the FIRST recognised token, not the first
+ * interactive one. We follow the same precedence:
+ *
+ *   • Walk tokens left-to-right.
+ *   • A token in `INTERACTIVE_ROLES` → interactive (return true).
+ *   • A token in `NON_INTERACTIVE_ROLES` → not interactive (return
+ *     false), even if a later token is interactive — this keeps
+ *     `role="heading button"` consistent with the browser, which
+ *     resolves it as `heading`.
+ *   • An unrecognised token is skipped, mirroring the user-agent
+ *     fallback (`role="weirdname button"` → `button`).
+ *
+ * If no recognised token is found, the role chain is treated as
+ * non-interactive (the caller may still promote via tabIndex /
+ * contentEditable / native tag).
  */
 function hasInteractiveRoleToken(role: string): boolean {
   for (const token of role.toLowerCase().split(/\s+/)) {
-    if (token && INTERACTIVE_ROLES.has(token)) return true;
+    if (!token) continue;
+    if (INTERACTIVE_ROLES.has(token)) return true;
+    if (NON_INTERACTIVE_ROLES.has(token)) return false;
   }
   return false;
 }

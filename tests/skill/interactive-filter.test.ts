@@ -60,18 +60,24 @@ describe('isInteractiveNode — ARIA roles on non-native tags', () => {
     expect(isInteractiveNode({ tagName: 'div', role: 'BUTTON' })).toBe(true);
   });
 
-  test('multi-token role: any interactive token in the fallback chain promotes the node', () => {
-    // ARIA permits a space-separated fallback chain; the user agent
-    // honours the first valid token. Earlier code compared the whole
-    // string against the role set and missed `<div role="switch checkbox">`,
-    // dropping these nodes from the histogram.
+  test('multi-token role: first recognised token wins (ARIA 1.2 precedence)', () => {
+    // ARIA fallback chain semantics: user agent resolves to the first
+    // recognised token. `switch` is a known interactive role → interactive.
     expect(isInteractiveNode({ tagName: 'div', role: 'switch checkbox' })).toBe(true);
+    // First token unknown → fall through to next.
     expect(isInteractiveNode({ tagName: 'div', role: 'unknown button' })).toBe(true);
-    expect(isInteractiveNode({ tagName: 'div', role: 'heading button' })).toBe(true);
+    // First token is a recognised non-interactive role → element is
+    // resolved as `heading`, NOT promoted by the trailing `button`.
+    // This was a false positive in the earlier "any-token" check.
+    expect(isInteractiveNode({ tagName: 'div', role: 'heading button' })).toBe(false);
   });
 
   test('multi-token role with no interactive tokens stays non-interactive', () => {
     expect(isInteractiveNode({ tagName: 'div', role: 'heading note' })).toBe(false);
+  });
+
+  test('all tokens unknown → role chain is treated as non-interactive', () => {
+    expect(isInteractiveNode({ tagName: 'div', role: 'totallymade up' })).toBe(false);
   });
 });
 
