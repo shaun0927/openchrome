@@ -144,4 +144,16 @@ describe('replay server — endpoints', () => {
     const r = await getJson(`${handle.url}does/not/exist`);
     expect(r.status).toBe(404);
   });
+
+  test('malformed percent-encoded session id is rejected with 400 (no crash)', async () => {
+    // Regression: an unguarded `decodeURIComponent` on the session id let
+    // a single bad local request kill the request handler with URIError,
+    // which would terminate the listener until restart. The handler now
+    // catches URIError and returns 400; the server remains live for the
+    // follow-up request below.
+    const r = await getJson(`${handle.url}api/trace/%E0%A4%A/meta`);
+    expect(r.status).toBe(400);
+    const r2 = await getJson(`${handle.url}api/trace/list`);
+    expect(r2.status).toBe(200);
+  });
 });

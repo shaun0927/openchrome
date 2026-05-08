@@ -265,7 +265,17 @@ export function registerTraceCommand(program: Command): void {
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const cp = require('child_process');
-          cp.spawn(cmd, [handle.url], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref();
+          const child = cp.spawn(cmd, [handle.url], {
+            detached: true,
+            stdio: 'ignore',
+            shell: process.platform === 'win32',
+          });
+          // `spawn` reports a missing launcher (e.g. xdg-open absent on a
+          // minimal CI image) via an asynchronous 'error' event, not a
+          // synchronous throw. Without a listener, the event would crash
+          // the process — defeating the "best-effort" contract. Swallow it.
+          child.on('error', () => undefined);
+          child.unref();
         } catch {
           // Open is best-effort — user can copy the URL from stdout.
         }

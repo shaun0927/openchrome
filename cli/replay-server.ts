@@ -83,7 +83,29 @@ function send404(res: http.ServerResponse): void {
 }
 
 function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const url = new URL(req.url ?? '/', 'http://localhost');
+  // Top-level guard so a malformed URL (URIError from new URL or
+  // decodeURIComponent on a bad percent-encoded segment) cannot escape
+  // and terminate the listener — that would let one bad local request
+  // DoS the replay server until restart.
+  try {
+    handleRequestInner(req, res);
+  } catch (err) {
+    if (err instanceof URIError) {
+      send(res, 400, { error: 'bad_request', detail: 'malformed URI' });
+      return;
+    }
+    console.error('[replay] request handler crashed:', err);
+    if (!res.headersSent) send(res, 500, { error: 'internal' });
+  }
+}
+
+function handleRequestInner(req: http.IncomingMessage, res: http.ServerResponse): void {
+  let url: URL;
+  try {
+    url = new URL(req.url ?? '/', 'http://localhost');
+  } catch {
+    return send(res, 400, { error: 'bad_request', detail: 'malformed URL' });
+  }
   const rootDir = traceRoot();
 
   // Static index
@@ -119,7 +141,12 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
   // Trace meta + events
   const traceMatch = /^\/api\/trace\/([^/]+)\/(meta|events)$/.exec(url.pathname);
   if (req.method === 'GET' && traceMatch) {
-    const sessionId = decodeURIComponent(traceMatch[1]);
+    let sessionId: string;
+    try {
+      sessionId = decodeURIComponent(traceMatch[1]);
+    } catch {
+      return send(res, 400, { error: 'bad_request', detail: 'malformed session id' });
+    }
     const which = traceMatch[2];
     let db: Database;
     try {
