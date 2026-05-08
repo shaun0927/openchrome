@@ -14,7 +14,6 @@
  *
  *   - Map<contractId, { successesInWindow, failuresInWindow }>
  *     (entries within failWindowMs of `now`)
- *   - Map<contractId, lastRunAtMs>  (entries within statsWindowMs)
  *   - Map<skillId,    lastRunAtMs>  (entries within statsWindowMs)
  *
  * Subsequent per-skill calls are O(1) lookups into these maps. This
@@ -111,25 +110,6 @@ function* readLinesFromFile(filePath: string): Iterable<string> {
   }
 }
 
-/**
- * Match entries that came out of the contract runtime. The audit-log
- * extended schema (see src/security/audit-logger.ts) writes
- * `{ ts, tool, args, ... }`; the runtime sets `tool = 'contract_runtime'`
- * and spreads the entire TransactionRecord into `args` (the runtime
- * passed it through verbatim — see runtime.ts settle()).
- */
-interface RuntimeAuditRow {
-  ts?: string;
-  tool?: string;
-  args?: {
-    contract_id?: string;
-    contract_ref?: string;
-    verdict?: string;
-    started_at?: number;
-    ended_at?: number;
-  };
-}
-
 interface SkillRunAuditRow {
   ts?: string;
   tool?: string;
@@ -156,8 +136,6 @@ function parseTs(value: unknown): number | null {
 interface AuditIndex {
   /** Win/loss tallies within failWindowMs, keyed by skillId. */
   verdicts: Map<string, { successesInWindow: number; failuresInWindow: number }>;
-  /** Most-recent-run timestamp within statsWindowMs, keyed by contractId. */
-  lastRunByContract: Map<string, number>;
   /** Most-recent-run timestamp within statsWindowMs, keyed by skillId. */
   lastRunBySkill: Map<string, number>;
 }
@@ -177,7 +155,6 @@ function buildIndex(
   const wideCutoff = Math.min(statsCutoff, failCutoff);
 
   const verdicts = new Map<string, { successesInWindow: number; failuresInWindow: number }>();
-  const lastRunByContract = new Map<string, number>();
   const lastRunBySkill = new Map<string, number>();
 
   for (const line of lines) {
@@ -189,18 +166,9 @@ function buildIndex(
       continue;
     }
     if (!parsed || typeof parsed !== 'object') continue;
-    const entry = parsed as RuntimeAuditRow & SkillRunAuditRow;
+    const entry = parsed as SkillRunAuditRow;
     const ts = parseTs(entry.ts);
     if (ts === null || ts < wideCutoff) continue;
-
-    if (entry.tool === 'contract_runtime' && entry.args) {
-      const cid = entry.args.contract_id;
-      if (typeof cid === 'string' && ts >= statsCutoff) {
-        // Update lastRunAt for all entries within the stats window.
-        const prev = lastRunByContract.get(cid);
-        if (prev === undefined || ts > prev) lastRunByContract.set(cid, ts);
-      }
-    }
 
     if (entry.tool === 'skill_run' && entry.args) {
       const sid = entry.args.skill_id;
@@ -228,7 +196,7 @@ function buildIndex(
     }
   }
 
-  return { verdicts, lastRunByContract, lastRunBySkill };
+  return { verdicts, lastRunBySkill };
 }
 
 /**
@@ -261,11 +229,10 @@ export function createAuditLogStatsResolver(
       index = buildIndex(readLines(auditLogPath), now(), failWindowMs, statsWindowMs);
     }
 
-    const matchContract = record.sidecar.contract_id;
     const matchSkillId = record.skill_id;
 
     const tally = verdicts_for(index, matchSkillId);
-    const lastRunAt = bestLastRunAt(index, matchContract, matchSkillId);
+    const lastRunAt = bestLastRunAt(index, matchSkillId);
 
     return {
       successesInWindow: tally.successesInWindow,
@@ -286,14 +253,9 @@ function verdicts_for(
 
 function bestLastRunAt(
   index: AuditIndex,
-  contractId: string,
   skillId: string,
 ): number | null {
-  const byContract = index.lastRunByContract.get(contractId) ?? null;
-  const bySkill = index.lastRunBySkill.get(skillId) ?? null;
-  if (byContract === null) return bySkill;
-  if (bySkill === null) return byContract;
-  return byContract > bySkill ? byContract : bySkill;
+  return index.lastRunBySkill.get(skillId) ?? null;
 }
 
 /**

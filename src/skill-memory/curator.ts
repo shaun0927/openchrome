@@ -73,7 +73,11 @@ export interface SkillRunStats {
   successesInWindow: number;
   /** Failed contract runs (postcondition_violation) in the window. */
   failuresInWindow: number;
-  /** ms epoch of the most recent skill_run audit event (regardless of outcome). */
+  /**
+   * ms epoch of the most recent `skill_run` audit event for this exact skill_id
+   * (regardless of verdict). Null if no `skill_run` entry for this skill_id
+   * exists within the scan window.
+   */
   lastRunAt: number | null;
   /** Demote events for this skill in the past `doubleDemoteWindowMs`. */
   demotesInDoubleDemoteWindow: number;
