@@ -38,16 +38,16 @@ export interface NormalizeUrlResult {
 }
 
 /**
- * Stable sentinel returned for inputs that do not parse as a URL. Chosen
- * because:
- *   • `about:invalid` is a real RFC-defined "always-invalid" address, so
- *     downstream code that treats the value as a URL won't be surprised by
- *     a host or query string.
- *   • The fragment marks it as the recorder's sentinel so operators can
- *     filter it out of skill-graph snapshots.
+ * Stable sentinel returned for inputs that do not parse as a URL. We use
+ * the bare `about:invalid` (RFC 6694) so re-normalising the sentinel is
+ * idempotent: `normalizeUrl()` always clears `u.hash`, so a sentinel that
+ * carried a fragment would round-trip to a different value than its
+ * first emission, leaking non-determinism into the state hash. The bare
+ * form has no host, query, or fragment, so all normalization steps are
+ * no-ops and `normalizeUrl(INVALID_URL_SENTINEL).url === INVALID_URL_SENTINEL`.
  * Callers must not depend on the exact string except for equality checks.
  */
-export const INVALID_URL_SENTINEL = 'about:invalid#openchrome-normalize';
+export const INVALID_URL_SENTINEL = 'about:invalid';
 
 /**
  * Normalize a URL string for hashing/equality:

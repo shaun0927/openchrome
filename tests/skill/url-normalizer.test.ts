@@ -75,4 +75,15 @@ describe('normalizeUrl — invalid input (total function, no throw)', () => {
     const b = normalizeUrl('also not a url');
     expect(a.url).toBe(b.url);
   });
+
+  test('sentinel is idempotent under re-normalization', () => {
+    // If an upstream stage already emitted the sentinel, normalising it
+    // again must produce the same string. A fragment-bearing sentinel
+    // would round-trip to a different value because `u.hash = ''` clears
+    // it, leaking non-determinism into the state hash.
+    const once = normalizeUrl('not a url');
+    const twice = normalizeUrl(once.url);
+    expect(twice.url).toBe(once.url);
+    expect(twice.url).toBe(INVALID_URL_SENTINEL);
+  });
 });
