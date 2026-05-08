@@ -21,6 +21,14 @@ import * as crypto from 'node:crypto';
 
 import { logAuditEntry } from '../security/audit-logger';
 
+/**
+ * Unforgeable sentinel used internally by the timeout Promise.race().
+ * Using a Symbol (rather than null/undefined) means a hook that legitimately
+ * resolves to null is NOT mistaken for a timeout — it falls through to the
+ * shape-validation guard and is reported as hook_invalid_response instead.
+ */
+const HOOK_TIMEOUT_SENTINEL = Symbol('hook_timeout');
+
 import type { Assertion, Evidence } from './types';
 import type { AssertionContext } from './evaluator';
 import { evaluate } from './evaluator';
@@ -334,11 +342,13 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       args.beforeIrreversibleActionTimeoutMs ??
       BEFORE_IRREVERSIBLE_ACTION_DEFAULT_TIMEOUT_MS;
 
-    // Build a sentinel promise that resolves to null after the timeout.
+    // Build a sentinel promise that resolves to the unforgeable HOOK_TIMEOUT_SENTINEL
+    // symbol after the timeout.  Using a Symbol (not null) means a hook that
+    // legitimately resolves to null is never misclassified as a timeout.
     // We use the same setTimer hook (if supplied) so tests can control time.
     let hookTimeoutHandle: unknown = null;
-    const timeoutPromise = new Promise<null>((resolve) => {
-      hookTimeoutHandle = setTimer(() => resolve(null), hookTimeoutMs);
+    const timeoutPromise = new Promise<typeof HOOK_TIMEOUT_SENTINEL>((resolve) => {
+      hookTimeoutHandle = setTimer(() => resolve(HOOK_TIMEOUT_SENTINEL), hookTimeoutMs);
     });
 
     let decision: IrreversibleActionDecision;
@@ -348,7 +358,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
         timeoutPromise,
       ]);
       if (hookTimeoutHandle !== null) clearTimer(hookTimeoutHandle);
-      if (result === null) {
+      if (result === HOOK_TIMEOUT_SENTINEL) {
         // Timeout fired before the hook resolved — escalate (fail-safe).
         return settle(audit, {
           txn_id,

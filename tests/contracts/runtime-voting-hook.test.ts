@@ -213,6 +213,25 @@ describe('runWithContract — beforeIrreversibleAction hook', () => {
     expect(records).toHaveLength(1);
   });
 
+  test('hook resolves to null → verdict=escalated with hook_invalid_response (NOT hook_timeout)', async () => {
+    // Regression: before the Symbol sentinel fix, a hook returning null was
+    // misclassified as hook_timeout because null was the timeout sentinel.
+    const hook: BeforeIrreversibleActionHook = async () => null as unknown as never;
+    const { emitter, records } = captureEmitter();
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_OK, critical: true },
+      skill: async () => 'should not run',
+      snapshot: async () => snap(),
+      beforeIrreversibleAction: hook,
+      audit: emitter,
+    });
+    expect(r.verdict).toBe('escalated');
+    expect(r.error_message).toContain('hook_invalid_response');
+    expect(r.error_message).not.toContain('hook_timeout');
+    expect(r.escalation?.target).toBe('human-review');
+    expect(records).toHaveLength(1);
+  });
+
   test('escalated record contains pre_evidence (when pre present and passed)', async () => {
     const hook: BeforeIrreversibleActionHook = async () => ({ proceed: false });
     const r = await runWithContract({
