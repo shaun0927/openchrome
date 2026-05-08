@@ -21,6 +21,7 @@ import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from 
 import { traceListResource, readTraceResource } from './resources/trace-resource';
 import {
   readTransactionResource,
+  transactionListResource,
   TRANSACTION_URI_PREFIX,
 } from './contracts/evidence';
 import { HintEngine } from './hints';
@@ -227,7 +228,10 @@ export class MCPServer {
     // Outcome Contracts (#707): per-transaction evidence bundles.
     //   openchrome://transaction/<txn_id>
     // Bundles are written by the contract runtime on every settled
-    // transaction; this prefix handler returns the manifest JSON.
+    // transaction; this prefix handler returns the manifest JSON. The
+    // static list resource surfaces the URI scheme via `resources/list`
+    // so MCP clients can discover it without already knowing a txn_id.
+    this.registerResource(transactionListResource);
     this.registerResourcePrefix(TRANSACTION_URI_PREFIX, readTransactionResource);
 
     // Initialize dashboard if enabled

@@ -330,21 +330,34 @@ function writeJsonSnapshot(
 ): { bytes: number; truncatedFlag: boolean } {
   const redacted = redactValue(value);
   const json = JSON.stringify(redacted);
-  if (json.length > truncateBytes) {
+  // truncateBytes is the on-disk byte budget; compare against UTF-8
+  // length so a CJK / emoji-heavy DOM can't pass the check (because
+  // `json.length` is UTF-16 code units) while the rendered file is
+  // 2-3x larger.
+  const jsonBytes = Buffer.byteLength(json, 'utf8');
+  if (jsonBytes > truncateBytes) {
     // Reserve room for the wrapper (`{"_truncated":true,"_original_bytes":N,"preview":""}`).
     // Without this the on-disk file is `truncateBytes + ~50 wrapper bytes`,
     // which compounds with per-file caps to push the bundle past the
     // configured ceiling.
-    const wrapperOverhead = JSON.stringify({
-      _truncated: true,
-      _original_bytes: json.length,
-      preview: '',
-    }).length;
+    const wrapperOverhead = Buffer.byteLength(
+      JSON.stringify({
+        _truncated: true,
+        _original_bytes: jsonBytes,
+        preview: '',
+      }),
+      'utf8',
+    );
     const previewBudget = Math.max(0, truncateBytes - wrapperOverhead);
+    // Slice on a UTF-8 byte boundary: `json.slice(0, previewBudget)`
+    // would index in UTF-16 code units. Build a Buffer view and slice
+    // bytes, then decode — losing any partial multibyte sequence at
+    // the tail to preserve well-formed UTF-8 output.
+    const previewBytes = Buffer.from(json, 'utf8').slice(0, previewBudget);
     const truncated = {
       _truncated: true,
-      _original_bytes: json.length,
-      preview: json.slice(0, previewBudget),
+      _original_bytes: jsonBytes,
+      preview: previewBytes.toString('utf8'),
     };
     const out = JSON.stringify(truncated);
     fs.writeFileSync(path.join(bundleDir, filename), out, 'utf8');
@@ -391,6 +404,16 @@ export async function readTransactionResource(
   uri: string,
   opts: EvidenceBundleOptions = {},
 ): Promise<{ mimeType: string; text: string } | null> {
+  // Discovery URI (`openchrome://transaction/` with no txn_id) returns
+  // the static help payload so the static list entry has matching
+  // read content. parseTransactionUri rejects empty rest deliberately;
+  // handle the bare-prefix case before delegating.
+  if (uri === TRANSACTION_URI_PREFIX) {
+    return {
+      mimeType: 'application/json',
+      text: JSON.stringify(transactionDiscoveryHelp),
+    };
+  }
   const txnId = parseTransactionUri(uri);
   if (!txnId) return null;
   const manifest = readEvidenceBundle(txnId, opts);
@@ -409,6 +432,23 @@ export const transactionDiscoveryHelp = {
     'Returns the bundle manifest (JSON). Bundles are written by the contract runtime ' +
     'on every settled transaction.',
 };
+
+/**
+ * Static resource definition that surfaces the `openchrome://transaction/`
+ * prefix in `resources/list` so MCP clients can discover the URI scheme
+ * without already knowing a `txn_id`. Mirrors the `traceListResource`
+ * pattern: list URI is static + discoverable, dynamic per-bundle URIs
+ * land via the prefix handler.
+ */
+export const transactionListResource = {
+  uri: 'openchrome://transaction/',
+  name: 'transaction-list',
+  description:
+    'Per-transaction evidence bundles. URI scheme: openchrome://transaction/<txn_id>. ' +
+    'Returns the bundle manifest (JSON) for that transaction. Bundles are written by ' +
+    'the contract runtime on every settled transaction.',
+  mimeType: 'application/json',
+} as const;
 
 // Defensive use of crypto so this module also doubles as a stable id helper
 // for callers that need a deterministic file name fingerprint.

@@ -342,4 +342,12 @@ describe('readTransactionResource', () => {
   test('returns null for non-transaction URI', async () => {
     expect(await readTransactionResource('openchrome://other')).toBeNull();
   });
+
+  test('returns discovery help for bare prefix URI (matches resources/list entry)', async () => {
+    const r = await readTransactionResource('openchrome://transaction/');
+    expect(r?.mimeType).toBe('application/json');
+    const payload = JSON.parse(r!.text);
+    expect(payload.uri).toBe('openchrome://transaction/');
+    expect(payload.hint).toMatch(/Per-transaction evidence bundles/);
+  });
 });
