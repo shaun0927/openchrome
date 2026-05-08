@@ -155,6 +155,7 @@ export class TraceStorage {
    */
   recordSessionStart(meta: Omit<TraceSessionMeta, 'byteSize'> & { byteSize?: number }): void {
     assertSafeSessionId(meta.sessionId);
+    fs.rmSync(path.join(this.rootDir, meta.sessionId), { recursive: true, force: true });
     this.db
       .prepare(
         `INSERT INTO traces (session_id, started_at, ended_at, domain, status, byte_size, parent_op)

@@ -121,6 +121,20 @@ describe('TraceStorage — recordSessionStart / End / get', () => {
     expect(after.endedAt).toBeUndefined();
     expect(after.byteSize).toBe(0);
   });
+
+  test('recordSessionStart on reused session_id clears prior JSONL files', () => {
+    store.recordSessionStart({ sessionId: 'reuse-files', startedAt: 100, status: 'running' });
+    const oldFile = store.appendEvents('reuse-files', [event(1, 100)]).filePath;
+    expect(fs.existsSync(oldFile)).toBe(true);
+
+    store.recordSessionStart({ sessionId: 'reuse-files', startedAt: 200, status: 'running' });
+    expect(fs.existsSync(oldFile)).toBe(false);
+
+    const nextFile = store.appendEvents('reuse-files', [event(2, 200)]).filePath;
+    expect(path.basename(nextFile)).toBe('200-1.jsonl');
+    expect(fs.existsSync(nextFile)).toBe(true);
+    expect(store.get('reuse-files')?.byteSize).toBeGreaterThan(0);
+  });
 });
 
 describe('TraceStorage — list filtering', () => {
