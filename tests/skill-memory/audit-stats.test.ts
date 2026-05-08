@@ -173,3 +173,50 @@ describe('createAuditLogStatsResolver — file-backed reader (smoke)', () => {
     expect(stats.lastRunAt).toBeNull();
   });
 });
+
+describe('createAuditLogStatsResolver — lastRunAt window decoupled from failWindowMs (#3 regression)', () => {
+  // A skill last used 45 days ago is within the 60-day untouched-archive
+  // threshold but OUTSIDE the 30-day failWindowMs. With the old code the
+  // outer loop bailed out at `ts < cutoff` so lastRunAt stayed null and
+  // the curator would archive the skill as "untouched". After the fix,
+  // lastRunAt is tracked over the full statsWindowMs (default 30d here
+  // overridden to 60d) independently of the fail window.
+  test('lastRunAt is non-null for a skill last run between failWindowMs and statsWindowMs ago', () => {
+    const FAIL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+    const STATS_WINDOW_DAYS = 60; // 60 days — wider than failWindowMs
+    // Entry at 45 days ago: outside the 30d fail window but inside the 60d stats window.
+    const fortyFiveDaysAgo = new Date(NOW - 45 * 24 * 60 * 60 * 1000).toISOString();
+    const lines = [
+      audit(fortyFiveDaysAgo, 'contract_runtime', { contract_id: 'amazon.checkout', verdict: 'success' }),
+    ];
+    const resolver = createInMemoryStatsResolver(lines, {
+      now: () => NOW,
+      failWindowMs: FAIL_WINDOW_MS,
+      statsWindowDays: STATS_WINDOW_DAYS,
+    });
+    const stats = resolver(rec());
+    // The entry is outside failWindowMs so tallies must be zero.
+    expect(stats.successesInWindow).toBe(0);
+    expect(stats.failuresInWindow).toBe(0);
+    // But lastRunAt must be populated — the skill was touched 45 days ago.
+    expect(stats.lastRunAt).toBe(Date.parse(fortyFiveDaysAgo));
+  });
+
+  test('lastRunAt is null when entry is outside both failWindowMs and statsWindowMs', () => {
+    const FAIL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+    const STATS_WINDOW_DAYS = 60;
+    // Entry at 61 days ago: outside both windows.
+    const sixtyOneDaysAgo = new Date(NOW - 61 * 24 * 60 * 60 * 1000).toISOString();
+    const lines = [
+      audit(sixtyOneDaysAgo, 'contract_runtime', { contract_id: 'amazon.checkout', verdict: 'success' }),
+    ];
+    const resolver = createInMemoryStatsResolver(lines, {
+      now: () => NOW,
+      failWindowMs: FAIL_WINDOW_MS,
+      statsWindowDays: STATS_WINDOW_DAYS,
+    });
+    const stats = resolver(rec());
+    expect(stats.successesInWindow).toBe(0);
+    expect(stats.lastRunAt).toBeNull();
+  });
+});
