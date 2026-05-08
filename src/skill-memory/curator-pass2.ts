@@ -218,6 +218,15 @@ export async function runPass2Merge(opts: RunPass2Options): Promise<Pass2Outcome
       0,
     );
 
+    // Preserve verification provenance from the sibling with the most recent
+    // last_verified_at. Using the curator runtime ts would make stale clusters
+    // appear freshly verified, biasing recall ranking and deferring archival.
+    const freshest = cluster.records.reduce((best, r) =>
+      Date.parse(r.frontmatter.last_verified_at) > Date.parse(best.frontmatter.last_verified_at)
+        ? r
+        : best,
+    );
+
     const merged = {
       frontmatter: {
         schema_version: SKILL_SCHEMA_VERSION as 1,
@@ -226,8 +235,8 @@ export async function runPass2Merge(opts: RunPass2Options): Promise<Pass2Outcome
         intent: result.intent.slice(0, 512),
         status: seed.frontmatter.status,
         verified_runs: aggregateRuns,
-        last_verified_at: isoUtc(ts),
-        contract_ref: seed.frontmatter.contract_ref,
+        last_verified_at: freshest.frontmatter.last_verified_at,
+        contract_ref: freshest.frontmatter.contract_ref,
         graph_node_anchor: seed.frontmatter.graph_node_anchor,
         author: 'agent' as const,
       },

@@ -513,6 +513,81 @@ describe('runPass2Merge', () => {
     expect(followUpResult.record.frontmatter.verified_runs).toBe(SKILL_RUN_LOG_MAX);
   });
 
+  test('umbrella adopts freshest sibling last_verified_at + paired contract_ref, not curator runtime ts', async () => {
+    // Arrange: two siblings with distinct last_verified_at and contract_ref values.
+    // The "stale" sibling was verified long ago; the "fresh" sibling was verified recently.
+    const STALE_TS = '2026-01-01T00:00:00Z';
+    const FRESH_TS = '2026-04-30T00:00:00Z';
+    const STALE_CONTRACT = 'txn-stale-aaa';
+    const FRESH_CONTRACT = 'txn-fresh-bbb';
+
+    // Write two siblings directly onto disk with controlled frontmatter.
+    // We need 4 runs each (≥ promoted threshold) so merge is attempted.
+    // Use distinct anchors with a shared 4-char prefix and SHARED_CONTRACT_ID
+    // so they cluster together.
+    const anchors = ['ccccffff0001', 'ccccffff0002'] as const;
+    let tick = FIXED_NOW;
+    for (const anchor of anchors) {
+      for (let i = 0; i < 4; i++) {
+        recordSuccessfulRun(
+          {
+            txn_id: `prov-${anchor}-${i}`,
+            contract_id: SHARED_CONTRACT_ID,
+            intent: 'Add cart item and pay',
+            domain: 'amazon.com',
+            graph_node_anchor: anchor,
+          },
+          { rootDir: root, now: () => tick++ },
+        );
+      }
+    }
+
+    // Now overwrite the frontmatter of the two siblings to set controlled
+    // last_verified_at / contract_ref values for the provenance test.
+    const skills = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(skills).toHaveLength(2);
+    const [sibA, sibB] = skills;
+    // Overwrite each sibling's .md with patched frontmatter.
+    for (const [sib, lva, cref] of [
+      [sibA, STALE_TS, STALE_CONTRACT],
+      [sibB, FRESH_TS, FRESH_CONTRACT],
+    ] as const) {
+      const text = fs.readFileSync(sib.filePath, 'utf8');
+      const patched = text
+        .replace(/last_verified_at: .+/, `last_verified_at: ${lva}`)
+        .replace(/contract_ref: .+/, `contract_ref: ${cref}`);
+      fs.writeFileSync(sib.filePath, patched);
+    }
+
+    // Act: merge
+    const CURATOR_TS = FIXED_NOW + 99_999; // distinct from both sibling timestamps
+    await runPass2Merge({
+      rootDir: root,
+      domain: 'amazon.com',
+      requester: async () => ({
+        ok: true,
+        name: 'amazon.cart-add-prov',
+        intent: 'Add cart item and pay (umbrella)',
+        body: '## Steps\n1. Add\n2. Pay\n',
+      }),
+      jaccardThreshold: 0.5,
+      prefixChars: 4,
+      now: () => CURATOR_TS,
+    });
+
+    const list = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(list).toHaveLength(1);
+    const parsed = parseSkillMd(fs.readFileSync(list[0].filePath, 'utf8'));
+
+    // Assert: umbrella carries the FRESH sibling's provenance pair.
+    expect(parsed.frontmatter.last_verified_at).toBe(FRESH_TS);
+    expect(parsed.frontmatter.contract_ref).toBe(FRESH_CONTRACT);
+
+    // Negative: must NOT equal the synthetic curator runtime timestamp.
+    const curatorIso = new Date(CURATOR_TS).toISOString();
+    expect(parsed.frontmatter.last_verified_at).not.toBe(curatorIso);
+  });
+
   test('umbrella filename equals computeSkillId(seed.graph_node_anchor, seed.contract_id) so recordSuccessfulRun finds it', async () => {
     // Regression: previously umbrellaSkillId() produced a synthetic hash from
     // sibling skill_ids, which recordSuccessfulRun (keyed on
