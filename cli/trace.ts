@@ -64,11 +64,16 @@ function fmtTime(ms: number | null | undefined): string {
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
 }
 
-function fmtBytes(n: number): string {
+function fmtBytes(n: number | null | undefined): string {
+  // Defensive: byte_size is INTEGER NOT NULL DEFAULT 0 in the schema, but
+  // older trace indexes may have NULL rows, and `Math.log(0)` = -Infinity
+  // would propagate to "NaN undefined". Treat any non-positive / non-finite
+  // input as zero so `oc trace list` never renders garbage for empty traces.
+  if (n == null || !Number.isFinite(n) || n <= 0) return '0 B';
   if (n < 1024) return `${n} B`;
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(n) / Math.log(k));
+  const i = Math.min(sizes.length - 1, Math.floor(Math.log(n) / Math.log(k)));
   return `${(n / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 

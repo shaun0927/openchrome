@@ -33,7 +33,23 @@ function skillRoot(): string {
   return process.env.OPENCHROME_SKILL_ROOT ?? DEFAULT_SKILL_ROOT;
 }
 
+/**
+ * Validate a domain argument before joining it into a filesystem path.
+ *
+ * Mirrors `SkillGraphStorage`'s constructor check (src/skill/storage.ts):
+ * empty strings, path separators, and `..` segments are rejected so that
+ * `<domain>.db` cannot escape `OPENCHROME_SKILL_ROOT`. Without this guard
+ * a value like `../../other/place/foo` would let the CLI read arbitrary
+ * `.db` files reachable from the current user.
+ */
+function assertSafeDomain(domain: string): void {
+  if (!domain || /[\\/]/.test(domain) || domain === '..' || domain === '.') {
+    throw new Error(`Invalid domain: ${JSON.stringify(domain)}`);
+  }
+}
+
 function openDomainDb(rootDir: string, domain: string): Database | null {
+  assertSafeDomain(domain);
   const dbPath = path.join(rootDir, `${domain}.db`);
   if (!fs.existsSync(dbPath)) return null;
   const Sqlite = loadSqlite();

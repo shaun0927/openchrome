@@ -120,6 +120,22 @@ describe('oc trace — list / show', () => {
     expect(r.code).not.toBe(0);
     expect(r.stderr).toContain('No trace found');
   });
+
+  test('list renders "0 B" for a freshly-started session (no NaN/undefined)', () => {
+    // recordSessionStart leaves byte_size at the schema default; this row is
+    // representative of any active or empty trace. Regression: fmtBytes used
+    // to render `Math.log(n)` for non-positive `n`, producing "NaN undefined".
+    store.recordSessionStart({
+      sessionId: 's-empty',
+      startedAt: 1000,
+      domain: 'example.com',
+      status: 'running',
+    });
+    const r = runCli(['trace', 'list'], { OPENCHROME_TRACE_ROOT: traceRoot });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('0 B');
+    expect(r.stdout).not.toMatch(/NaN|undefined/);
+  });
 });
 
 describe('oc skill — list / inspect', () => {
@@ -176,5 +192,16 @@ describe('oc skill — list / inspect', () => {
     expect(summary.edgeCount).toBe(1);
     expect(summary.topEdges).toHaveLength(1);
     expect(summary.topEdges[0].successCount).toBe(1);
+  });
+
+  test('inspect rejects path-traversal domain arguments', () => {
+    // A traversing domain must be refused before `path.join` builds a path
+    // that escapes OPENCHROME_SKILL_ROOT. Storage's constructor validates
+    // the same way (`/[\\/]/`), and the CLI must stay consistent.
+    for (const bad of ['../foo', '..\\foo', '/etc/passwd', '..']) {
+      const r = runCli(['skill', 'inspect', bad], { OPENCHROME_SKILL_ROOT: skillRoot });
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toMatch(/Invalid domain/);
+    }
   });
 });
