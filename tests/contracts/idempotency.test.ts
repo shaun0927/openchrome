@@ -472,6 +472,30 @@ describe('runWithContract — preemptive cancellation', () => {
     expect(r.error_message).toContain('preemptive timer');
   });
 
+  test('contract.pre = null is rejected as validation_error (skill never runs)', async () => {
+    // Truthy-only checks would silently treat `pre: null` (a JSON
+    // payload artifact) as "no precondition" and let the skill run
+    // unguarded; the runtime now routes null through the validator,
+    // which rejects it as wrong_type and short-circuits to
+    // validation_error before any skill side effect can occur.
+    let skillCalls = 0;
+    const r = await runWithContract({
+      contract: {
+        id: 'c-null-pre',
+        pre: null as unknown as Parameters<typeof runWithContract>[0]['contract']['pre'],
+        post: { kind: 'no_dialog' },
+      },
+      skill: async () => {
+        skillCalls++;
+        return 'unsafe-side-effect';
+      },
+      snapshot: async () => snap(),
+    });
+    expect(r.verdict).toBe('validation_error');
+    expect(skillCalls).toBe(0);
+    expect(r.validation_errors?.some((e) => e.path.startsWith('$.pre'))).toBe(true);
+  });
+
   test('skill that never resolves and ignores AbortSignal still settles (no hang)', async () => {
     // Without racing the skill against the AbortSignal, an
     // unresponsive skill (one that returns a Promise that never
