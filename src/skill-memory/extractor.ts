@@ -178,6 +178,65 @@ function writeAtomic(target: string, body: string): void {
 }
 
 /**
+ * Resolve the sidecar to merge against for an update.
+ *
+ * - No prior markdown on disk → returns null (fresh-creation path).
+ * - Markdown present, sidecar valid → returns the parsed sidecar.
+ * - Markdown present, sidecar missing or schema-invalid → reconstructs
+ *   a usable sidecar from the frontmatter so transient JSON-read
+ *   issues, partial syncs, or older sidecar schemas never reset
+ *   `verified_runs` and demote a previously-promoted skill back to
+ *   candidate.
+ *
+ * This is the single source of truth that proves "if `existing`
+ * is non-null then the merge path always sees a valid sidecar",
+ * removing the need for any subsequent existence guard.
+ */
+function loadPriorSidecar(
+  sidecarPath: string,
+  existing: ReturnType<typeof parseSkillMd> | null,
+  skillId: string,
+  contractId: string,
+  windowStartMs: number,
+  nowMs: number,
+): SkillSidecar | null {
+  if (existing === null) return null;
+  const raw = readJson<unknown>(sidecarPath);
+  if (isValidSidecar(raw)) return raw;
+
+  const priorTs = Date.parse(existing.frontmatter.last_verified_at);
+  const priorMs = Number.isFinite(priorTs) ? priorTs : nowMs;
+  const priorRuns = Math.max(0, existing.frontmatter.verified_runs);
+  // Seed one synthetic recent entry per prior verified run so the
+  // success-count recomputation in the merge path lands on the same
+  // verified_runs total, which preserves promoted status across a
+  // missing or malformed sidecar. Capped at SKILL_RUN_LOG_MAX-1 to
+  // leave room for the new entry the merge path appends. The exact
+  // timestamps are unknown — anchor at `last_verified_at` so the
+  // rolling-window eventually drops them naturally.
+  const seedCount = Math.min(priorRuns, SKILL_RUN_LOG_MAX - 1);
+  const recent: SkillSidecar['runs']['recent'] = [];
+  for (let i = 0; i < seedCount; i++) {
+    recent.push({
+      txn_id: existing.frontmatter.contract_ref,
+      ok: true,
+      ts: priorMs,
+    });
+  }
+  return {
+    schema_version: SKILL_SCHEMA_VERSION,
+    skill_id: skillId,
+    graph_node_anchor: existing.frontmatter.graph_node_anchor,
+    contract_id: contractId,
+    runs: {
+      count: priorRuns,
+      window_start: isoUtc(windowStartMs),
+      recent,
+    },
+  };
+}
+
+/**
  * Process one successful settlement. Idempotent: subsequent calls with
  * the same `(graph_node_anchor, contract_id)` increment counters in
  * place rather than producing a new file.
@@ -199,61 +258,36 @@ export function recordSuccessfulRun(
   const windowStartMs = t - ROLLING_WINDOW_MS;
 
   const existing = fs.existsSync(filePath) ? parseSkillMd(fs.readFileSync(filePath, 'utf8')) : null;
-  const rawSidecar = readJson<unknown>(sidecarPath);
-  // Validate sidecar shape — `readJson` only proves the file is JSON.
-  // A structurally malformed but parseable sidecar (`{}`, an older
-  // schema missing `runs.recent`, etc.) would otherwise pass the
-  // existence check and crash inside the merge path. Treating it as
-  // "missing" routes the call into the rebuild branch below.
-  let existingSidecar: SkillSidecar | undefined = isValidSidecar(rawSidecar) ? rawSidecar : undefined;
-  // Markdown exists but sidecar is missing or unreadable. Falling
-  // through to the "create new" path would silently reset
-  // verified_runs to 1 and discard the promotion state recorded in
-  // the markdown, so reconstruct a minimal sidecar from the
-  // frontmatter instead. This preserves the count across transient
-  // sidecar IO issues; the rolling window collapses to a single
-  // synthetic entry timestamped at the previous `last_verified_at`.
-  if (existing && !existingSidecar) {
-    const priorTs = Date.parse(existing.frontmatter.last_verified_at);
-    const priorMs = Number.isFinite(priorTs) ? priorTs : t;
-    const priorRuns = Math.max(0, existing.frontmatter.verified_runs);
-    // Seed one synthetic recent entry per prior verified run so the
-    // success-count recomputation in the merge path lands on the same
-    // verified_runs total, which preserves promoted status across a
-    // missing sidecar. Capped at SKILL_RUN_LOG_MAX-1 to leave room for
-    // the new entry the merge path appends. The exact timestamps are
-    // unknown — we anchor at last_verified_at so the rolling-window
-    // eventually drops them naturally.
-    const seedCount = Math.min(priorRuns, SKILL_RUN_LOG_MAX - 1);
-    const recent: SkillSidecar['runs']['recent'] = [];
-    for (let i = 0; i < seedCount; i++) {
-      recent.push({
-        txn_id: existing.frontmatter.contract_ref,
-        ok: true,
-        ts: priorMs,
-      });
-    }
-    existingSidecar = {
-      schema_version: SKILL_SCHEMA_VERSION,
-      skill_id: skillId,
-      graph_node_anchor: existing.frontmatter.graph_node_anchor,
-      contract_id: inputs.contract_id,
-      runs: {
-        count: priorRuns,
-        window_start: isoUtc(windowStartMs),
-        recent,
-      },
-    };
-  }
+
+  // Pick the prior sidecar to merge against. Read + shape-validate
+  // first; if validation fails BUT the markdown is present, rebuild
+  // from the frontmatter so a transient JSON read issue or older
+  // schema never resets verified_runs / promotion state. Returns null
+  // only when there is no prior skill at all (the fresh-creation
+  // path).
+  const priorSidecar = loadPriorSidecar(
+    sidecarPath,
+    existing,
+    skillId,
+    inputs.contract_id,
+    windowStartMs,
+    t,
+  );
 
   let frontmatter: SkillFrontmatter;
   let sidecar: SkillSidecar;
   let promoted = false;
-  let created = false;
+  const created = existing === null;
 
-  if (existing && existingSidecar) {
+  if (existing !== null) {
+    // Update path. `priorSidecar` is guaranteed non-null here because
+    // `loadPriorSidecar` always returns a usable sidecar when the
+    // markdown is present (rebuilding from frontmatter when needed),
+    // so no further nullability check is required against the
+    // markdown+sidecar product — the rebuild path closes that gap.
+    const prior = priorSidecar as SkillSidecar;
     const recent = trimRollingLog(
-      [...existingSidecar.runs.recent, { txn_id: inputs.txn_id, ok: true, ts: t }],
+      [...prior.runs.recent, { txn_id: inputs.txn_id, ok: true, ts: t }],
       windowStartMs,
     );
     const successes = recent.filter((e) => e.ok).length;
@@ -285,7 +319,7 @@ export function recordSuccessfulRun(
       },
     };
   } else {
-    created = true;
+    // Creation path — fresh skill, no prior on disk.
     const fallbackName = `skill-${skillId}`;
     frontmatter = {
       schema_version: SKILL_SCHEMA_VERSION,
