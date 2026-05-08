@@ -128,9 +128,10 @@ export async function runWithReplyParse(
 
   return {
     ok: false,
-    // 4096-char cap: large enough to hold a full merge envelope (body
-    // templates are 1-3 KB) while still bounding log spam.
-    error: { kind: 'malformed', raw: second.text.slice(0, 4096) },
+    // 8192-char cap: worst-case merge envelope is body(4000) + intent(512) +
+    // name(64) + JSON overhead(~50) = ~4626 chars. 8192 gives ~4 KB headroom
+    // against future cap increases while still bounding log spam.
+    error: { kind: 'malformed', raw: second.text.slice(0, 8192) },
     tokens: (first.tokens ?? 0) + (second.tokens ?? 0),
   };
 }

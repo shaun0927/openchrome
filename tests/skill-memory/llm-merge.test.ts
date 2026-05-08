@@ -301,14 +301,17 @@ describe('createLlmMergeRequester — VotingProvider adapter', () => {
     expect(r.ok).toBe(false);
   });
 
-  test('malformed raw > 500 chars with valid merge envelope parses successfully (regression: raw cap)', async () => {
-    // Skill body templates are 1-3 KB. Before the fix raw was capped at 500 chars,
-    // so a valid envelope with a body > ~400 chars would always fail to parse.
-    const longBody = '## Steps\n' + '1. Click the add-to-cart button\n'.repeat(50); // ~1650 chars
+  test('malformed raw > 4096 chars with valid merge envelope parses successfully (regression: raw cap)', async () => {
+    // Worst-case merge envelope: body(4000) + intent(512) + name(64) + JSON overhead(~50) = ~4626.
+    // Round 2 raised the cap to 4096, which still truncates envelopes in this range.
+    // Round 3 raised it to 8192. This test uses a ~5500-char body (above 4096, well within 8192)
+    // to confirm the recovery path parses envelopes that the previous cap would silently drop.
+    const longBody = '## Steps\n' + '1. Click the add-to-cart button\n'.repeat(170); // ~5550 chars
     const envelope = { name: 'amazon.cart-flow', intent: 'Add and buy', body: longBody };
     const raw = JSON.stringify(envelope);
-    // Confirm the raw envelope actually exceeds the old 500-char cap.
-    expect(raw.length).toBeGreaterThan(500);
+    // Confirm the raw envelope exceeds the old 4096-char cap but fits within 8192.
+    expect(raw.length).toBeGreaterThan(4096);
+    expect(raw.length).toBeLessThan(8192);
     // The provider returns it as a malformed reply (shape was {name,intent,body} not {action,args}).
     const provider = fakeVotingProvider([
       { ok: false, error: { kind: 'malformed', raw } },
