@@ -129,7 +129,13 @@ export function buildRecallPayload(
   const promoted = records.filter((r) => r.frontmatter.status === 'promoted');
   if (promoted.length === 0) return null;
   const topK = Math.max(1, opts.topK ?? envInt('OPENCHROME_SKILL_RECALL_TOPK', DEFAULT_TOP_K));
-  const maxBytes = Math.max(64, opts.maxBytes ?? envInt('OPENCHROME_SKILL_RECALL_BYTES', DEFAULT_MAX_BYTES));
+  // Honor caller-provided `maxBytes` as a hard cap. Only env / default
+  // fall-throughs are clamped (to a small positive minimum); any
+  // explicit caller value — including very small ones — is respected
+  // so embeddings into fixed-size envelopes can rely on the cap.
+  const maxBytes = opts.maxBytes !== undefined
+    ? Math.max(1, opts.maxBytes)
+    : Math.max(1, envInt('OPENCHROME_SKILL_RECALL_BYTES', DEFAULT_MAX_BYTES));
   const ranked = rank(promoted).slice(0, topK);
   const entries = ranked.map((r) => buildEntry(r, bodies.get(r.skill_id) ?? ''));
 

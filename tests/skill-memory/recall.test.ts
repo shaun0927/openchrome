@@ -194,6 +194,21 @@ describe('buildRecallPayload — drop policy', () => {
     }
   });
 
+  test('honors caller maxBytes below the historical 64-byte floor', () => {
+    // Caller asks for an extremely tight cap (10 bytes). The single-
+    // entry escape hatch still ships ≥1 skill with `oversized: true`,
+    // but the function MUST NOT silently clamp the cap to a larger
+    // floor — multi-entry truncation must use the caller's value.
+    const records: SkillRecord[] = [];
+    for (let i = 0; i < 4; i++) {
+      records.push(mkRec(`s${i}`, 4 - i, '2026-05-01T00:00:00Z', 'promoted'));
+    }
+    const tiny = buildRecallPayload('x.com', records, new Map(), { maxBytes: 10 });
+    expect(tiny).not.toBeNull();
+    expect(tiny!.oversized).toBe(true);
+    expect(tiny!.promoted_skills).toHaveLength(1);
+  });
+
   test('topK caps the candidate pool', () => {
     const records: SkillRecord[] = [];
     for (let i = 0; i < 10; i++) {
