@@ -363,6 +363,31 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
           error_message: `beforeIrreversibleAction hook timed out after ${hookTimeoutMs}ms (hook_timeout)`,
         });
       }
+      // Shape-validate the hook result before dereferencing any field.
+      // A JS caller or any-typed integration may resolve to undefined,
+      // a non-object, or an object missing the `proceed` boolean.
+      // Dereferencing an invalid result outside this try block would
+      // throw a TypeError and break the "always settles" guarantee, so
+      // we map every malformed response to an escalation here.
+      if (
+        result === null ||
+        result === undefined ||
+        typeof result !== 'object' ||
+        typeof (result as Record<string, unknown>).proceed !== 'boolean'
+      ) {
+        return settle(audit, {
+          txn_id,
+          contract_id: args.contract.id,
+          verdict: 'escalated',
+          started_at: startedAt,
+          ended_at: now(),
+          wall_ms: now() - startedAt,
+          retries: 0,
+          pre_evidence,
+          escalation: { target: 'human-review' },
+          error_message: 'beforeIrreversibleAction hook returned an invalid response (hook_invalid_response)',
+        });
+      }
       decision = result;
     } catch (e) {
       if (hookTimeoutHandle !== null) clearTimer(hookTimeoutHandle);
