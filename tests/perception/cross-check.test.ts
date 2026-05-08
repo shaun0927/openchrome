@@ -160,6 +160,55 @@ describe('runCrossCheck — empty_region guard', () => {
   });
 });
 
+describe('runCrossCheck — invalid override thresholds fall back to defaults', () => {
+  // A flat region matching the background → pixel_absent with defaults.
+  // If NaN/Infinity/-1 were used raw, edgeDensity < NaN is always false
+  // and the verdict would wrongly stay `consistent`.
+  function flatBgSetup() {
+    const bg = { r: 240, g: 240, b: 240 };
+    const buf = solid(32, 32, bg.r, bg.g, bg.b);
+    return { bg, buf };
+  }
+
+  test('NaN edgeDensityThreshold → falls back to default, cloak detection still works', () => {
+    const { bg, buf } = flatBgSetup();
+    const r = runCrossCheck(buf, 32, 32, { x: 0, y: 0, w: 32, h: 32 }, {
+      backgroundColor: bg,
+      edgeDensityThreshold: NaN,
+    });
+    expect(r.verdict).toBe('pixel_absent');
+  });
+
+  test('Infinity edgeDensityThreshold → falls back to default, cloak detection still works', () => {
+    const { bg, buf } = flatBgSetup();
+    const r = runCrossCheck(buf, 32, 32, { x: 0, y: 0, w: 32, h: 32 }, {
+      backgroundColor: bg,
+      edgeDensityThreshold: Infinity,
+    });
+    expect(r.verdict).toBe('pixel_absent');
+  });
+
+  test('negative edgeDensityThreshold → falls back to default, cloak detection still works', () => {
+    const { bg, buf } = flatBgSetup();
+    const r = runCrossCheck(buf, 32, 32, { x: 0, y: 0, w: 32, h: 32 }, {
+      backgroundColor: bg,
+      edgeDensityThreshold: -1,
+    });
+    expect(r.verdict).toBe('pixel_absent');
+  });
+
+  test('valid edgeDensityThreshold 0.5 is applied (raises cutoff → pixel_absent for flat region)', () => {
+    const { bg, buf } = flatBgSetup();
+    const r = runCrossCheck(buf, 32, 32, { x: 0, y: 0, w: 32, h: 32 }, {
+      backgroundColor: bg,
+      edgeDensityThreshold: 0.5,
+    });
+    // edge_density is 0 for a flat region, still below 0.5 → pixel_absent
+    expect(r.verdict).toBe('pixel_absent');
+    expect(r.edge_density).toBeLessThan(0.5);
+  });
+});
+
 describe('runCrossCheck — reasons surface for hint engine evidence', () => {
   test('pixel_absent path includes both edge_density and color_distance reasons', () => {
     const bg = { r: 240, g: 240, b: 240 };

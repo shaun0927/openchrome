@@ -64,6 +64,25 @@ function envFloat(name: string, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
+const _warnedOverrides = new Set<string>();
+
+/**
+ * Validate a per-call threshold override.
+ * Returns `value` only when it is a finite, non-negative number; otherwise
+ * emits a one-shot console.error warning and returns `fallback`.
+ */
+function coerceFiniteNonNegative(key: string, value: number, fallback: number): number {
+  if (Number.isFinite(value) && value >= 0) return value;
+  if (!_warnedOverrides.has(key)) {
+    _warnedOverrides.add(key);
+    console.error(
+      `[cross-check] runCrossCheck: override "${key}" value ${value} is not a finite non-negative number; ` +
+        `using fallback ${fallback}.`,
+    );
+  }
+  return fallback;
+}
+
 /**
  * Run cross-check on a single element pixelBox.
  *
@@ -80,15 +99,29 @@ export function runCrossCheck(
   crop: CropRect,
   opts: CrossCheckOptions,
 ): CrossCheckResult {
+  const edgeGradientThresholdDefault = envFloat(
+    'OPENCHROME_CROSS_CHECK_EDGE_THRESHOLD',
+    DEFAULT_EDGE_GRADIENT_THRESHOLD,
+  );
   const edgeGradientThreshold =
-    opts.edgeGradientThreshold ??
-    envFloat('OPENCHROME_CROSS_CHECK_EDGE_THRESHOLD', DEFAULT_EDGE_GRADIENT_THRESHOLD);
+    opts.edgeGradientThreshold !== undefined
+      ? coerceFiniteNonNegative('edgeGradientThreshold', opts.edgeGradientThreshold, edgeGradientThresholdDefault)
+      : edgeGradientThresholdDefault;
+
+  const edgeDensityThresholdDefault = envFloat(
+    'OPENCHROME_CROSS_CHECK_EDGE_DENSITY',
+    DEFAULT_PIXEL_ABSENT_EDGE_DENSITY,
+  );
   const edgeDensityThreshold =
-    opts.edgeDensityThreshold ??
-    envFloat('OPENCHROME_CROSS_CHECK_EDGE_DENSITY', DEFAULT_PIXEL_ABSENT_EDGE_DENSITY);
+    opts.edgeDensityThreshold !== undefined
+      ? coerceFiniteNonNegative('edgeDensityThreshold', opts.edgeDensityThreshold, edgeDensityThresholdDefault)
+      : edgeDensityThresholdDefault;
+
+  const colorToleranceDefault = envFloat('OPENCHROME_CROSS_CHECK_COLOR_TOLERANCE', DEFAULT_COLOR_BG_TOLERANCE);
   const colorTolerance =
-    opts.colorTolerance ??
-    envFloat('OPENCHROME_CROSS_CHECK_COLOR_TOLERANCE', DEFAULT_COLOR_BG_TOLERANCE);
+    opts.colorTolerance !== undefined
+      ? coerceFiniteNonNegative('colorTolerance', opts.colorTolerance, colorToleranceDefault)
+      : colorToleranceDefault;
 
   const edgeDensity = sobelEdgeDensity(rgba, width, height, crop, edgeGradientThreshold);
   const dom = dominantColor(rgba, width, height, crop);
