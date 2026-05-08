@@ -86,10 +86,7 @@ export class CuratorLock {
     }
     // Lock exists — decide whether to reclaim.
     if (this.shouldReclaim()) {
-      this.forceWrite();
-      // Verify ownership after the rename to guard against two processes
-      // racing on the same stale lock. Only the process whose PID is now
-      // in the file actually won the race.
+      if (!this.reclaimStaleLock()) return false;
       const verify = this.read();
       if (!verify || verify.pid !== process.pid) return false;
       this.acquired = true;
@@ -160,11 +157,35 @@ export class CuratorLock {
     }
   }
 
-  private forceWrite(): void {
-    const body = JSON.stringify({ pid: process.pid, start_ts: this.now() });
+  private reclaimStaleLock(): boolean {
     const tmp = this.target + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, body, { mode: 0o600 });
-    fs.renameSync(tmp, this.target);
+    try {
+      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, start_ts: this.now() }), {
+        flag: 'wx',
+        mode: 0o600,
+      });
+      if (!this.shouldReclaim()) return false;
+      try {
+        fs.unlinkSync(this.target);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') return false;
+      }
+      try {
+        fs.linkSync(tmp, this.target);
+        return true;
+      } catch {
+        return false;
+      }
+    } catch {
+      return false;
+    } finally {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   private shouldReclaim(): boolean {

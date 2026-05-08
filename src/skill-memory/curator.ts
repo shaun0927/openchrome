@@ -34,7 +34,7 @@ import * as path from 'node:path';
 
 import { listSkillsForDomain } from './extractor';
 import { parseSkillMd, stringifySkillMd } from './skill-md';
-import type { SkillRecord, SkillStatus } from './types';
+import { SKILL_SCHEMA_VERSION, type SkillRecord, type SkillSidecar, type SkillStatus } from './types';
 
 export type CuratorActionKind =
   | 'demote'
@@ -176,6 +176,18 @@ function demoteSkill(ctx: MutationContext): void {
   parsed.frontmatter.verified_runs = 1;
   parsed.frontmatter.last_verified_at = new Date(ctx.ts).toISOString();
   fs.writeFileSync(ctx.record.filePath, stringifySkillMd(parsed), { mode: 0o644 });
+  const sidecar: SkillSidecar = {
+    schema_version: SKILL_SCHEMA_VERSION,
+    skill_id: ctx.record.skill_id,
+    graph_node_anchor: ctx.record.sidecar.graph_node_anchor,
+    contract_id: ctx.record.sidecar.contract_id,
+    runs: {
+      count: 1,
+      window_start: new Date(ctx.ts).toISOString(),
+      recent: [{ txn_id: parsed.frontmatter.contract_ref, ok: true, ts: ctx.ts }],
+    },
+  };
+  fs.writeFileSync(ctx.record.sidecarPath, JSON.stringify(sidecar, null, 2), { mode: 0o644 });
 }
 
 /**
@@ -325,4 +337,3 @@ export function runCurator(
   report.stats.actions_count = report.actions.length;
   return report;
 }
-

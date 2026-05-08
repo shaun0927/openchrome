@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import { CuratorLock } from '../../src/skill-memory/curator-lock';
 
@@ -100,41 +101,47 @@ describe('CuratorLock — stale reclamation', () => {
     lock.release();
   });
 
-  test('stale-lock race: second acquire loses when a different PID wins the rename', () => {
-    // Simulate two processes that both passed shouldReclaim() and are about
-    // to forceWrite(). We do this by monkey-patching: after the first
-    // process writes its PID via forceWrite(), a "rival" synchronously
-    // overwrites the lock file with a different PID before the ownership
-    // verification re-read occurs.
-    //
-    // We achieve this by subclassing CuratorLock to intercept forceWrite
-    // via a spy that overwrites the lock with a foreign PID immediately
-    // after the rename. The verify re-read then sees the foreign PID and
-    // returns false — proving the post-write ownership check works.
+  test('stale-lock race: only one process acquires after reclaim', async () => {
     const lockPath = path.join(root, 'lock');
-    const foreignPid = process.pid + 9999;
-
-    // Plant a dead stale lock so shouldReclaim() returns true.
     fs.writeFileSync(lockPath, JSON.stringify({ pid: 0xfffffe, start_ts: 0 }));
 
-    // Build a lock instance and intercept forceWrite by replacing the
-    // file after it runs (simulating the rival winning the rename race).
-    const lock = new CuratorLock({ rootDir: root, isAlive: () => false });
+    const script = `
+      const { CuratorLock } = require('./src/skill-memory/curator-lock');
+      const [root] = process.argv.slice(1);
+      const lock = new CuratorLock({ rootDir: root, isAlive: (pid) => pid !== 0xfffffe });
+      const acquired = lock.acquire();
+      if (acquired) {
+        const shared = new SharedArrayBuffer(4);
+        Atomics.wait(new Int32Array(shared), 0, 0, 1000);
+        lock.release();
+      }
+      process.stdout.write(acquired ? '1' : '0');
+    `;
 
-    // Spy: after forceWrite renames our temp file into place, another
-    // process immediately renames its own content over the lock.
-    const origForceWrite = (lock as unknown as { forceWrite: () => void }).forceWrite.bind(lock);
-    (lock as unknown as { forceWrite: () => void }).forceWrite = () => {
-      origForceWrite();
-      // Rival overwrites synchronously — simulates losing the rename race.
-      fs.writeFileSync(lockPath, JSON.stringify({ pid: foreignPid, start_ts: Date.now() }));
-    };
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        new Promise<string>((resolve, reject) => {
+          const child = spawn(process.execPath, ['-r', 'ts-node/register/transpile-only', '-e', script, root], {
+            cwd: process.cwd(),
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', (chunk) => {
+            stdout += chunk.toString();
+          });
+          child.stderr.on('data', (chunk) => {
+            stderr += chunk.toString();
+          });
+          child.on('error', reject);
+          child.on('close', (code) => {
+            if (code === 0) resolve(stdout.trim());
+            else reject(new Error(stderr || `child exited ${code}`));
+          });
+        }),
+      ),
+    );
 
-    const result = lock.acquire();
-    // Our PID is not in the file — must return false.
-    expect(result).toBe(false);
-    // Confirm the lock really does contain the foreign PID (sanity check).
-    const onDisk = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as { pid: number };
-    expect(onDisk.pid).toBe(foreignPid);
+    expect(results.filter((r) => r === '1')).toHaveLength(1);
   });
 });

@@ -74,6 +74,8 @@ describe('runCurator — Pass 1 demote', () => {
     const after = listSkillsForDomain('amazon.com', { rootDir: root })[0];
     expect(after.frontmatter.status).toBe('candidate');
     expect(after.frontmatter.verified_runs).toBe(1);
+    expect(after.sidecar.runs.count).toBe(1);
+    expect(after.sidecar.runs.recent).toHaveLength(1);
   });
 
   test('does NOT demote when total runs < 5', () => {
