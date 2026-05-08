@@ -54,7 +54,21 @@ export function evaluate(assertion: Assertion, ctx: AssertionContext): Evidence 
     }
     case 'dom_text': {
       const selector = assertion.selector ?? 'body';
-      const haystack = selector === 'body' ? ctx.bodyText : ctx.domText(selector);
+      // Host-supplied probes throw on bad selectors (e.g.,
+      // `querySelector('#'.invalid)` raises SyntaxError). The evaluator
+      // promises never to throw — convert probe failures into a
+      // structured passed=false instead so composite evaluators see a
+      // normal evidence record and the runtime stays "always settles".
+      let haystack: string;
+      try {
+        haystack = selector === 'body' ? ctx.bodyText : ctx.domText(selector);
+      } catch (e) {
+        return mkEvidence('dom_text', false, {
+          selector,
+          contains: assertion.contains,
+          probe_error: e instanceof Error ? e.message : String(e),
+        }, ctx);
+      }
       const passed = haystack.includes(assertion.contains);
       return mkEvidence('dom_text', passed, {
         selector,
@@ -65,7 +79,17 @@ export function evaluate(assertion: Assertion, ctx: AssertionContext): Evidence 
       }, ctx);
     }
     case 'dom_count': {
-      const actual = ctx.domCount(assertion.selector);
+      let actual: number;
+      try {
+        actual = ctx.domCount(assertion.selector);
+      } catch (e) {
+        return mkEvidence('dom_count', false, {
+          selector: assertion.selector,
+          op: assertion.op,
+          expected: assertion.value,
+          probe_error: e instanceof Error ? e.message : String(e),
+        }, ctx);
+      }
       const passed = compareCount(actual, assertion.op, assertion.value);
       return mkEvidence('dom_count', passed, {
         selector: assertion.selector,
@@ -77,43 +101,75 @@ export function evaluate(assertion: Assertion, ctx: AssertionContext): Evidence 
     case 'no_dialog':
       return mkEvidence('no_dialog', !ctx.hasDialog, { hasDialog: ctx.hasDialog }, ctx);
     case 'network':
-      return mkEvidence('network', false, {
-        unsupported_in_pr9: true,
-        message: 'network assertion is wired in PR-10 (#705 closes there)',
-      }, ctx);
+      return mkUnsupportedEvidence(
+        'network',
+        'network assertion is wired in PR-10 (#705 closes there)',
+        ctx,
+      );
     case 'screenshot_class':
-      return mkEvidence('screenshot_class', false, {
-        unsupported_in_pr9: true,
-        message: 'screenshot_class assertion is wired in PR-10 (pHash + class registry)',
-      }, ctx);
+      return mkUnsupportedEvidence(
+        'screenshot_class',
+        'screenshot_class assertion is wired in PR-10 (pHash + class registry)',
+        ctx,
+      );
     case 'and': {
       const children = assertion.children.map((c) => evaluate(c, ctx));
-      const passed = children.every((c) => c.passed);
+      // An unsupported child fails the whole conjunction; the composite
+      // is also marked unsupported so callers / `not` can distinguish
+      // "evaluated and failed" from "could not be evaluated yet".
+      const unsupportedCount = children.filter(isUnsupported).length;
+      const passed = unsupportedCount === 0 && children.every((c) => c.passed);
+      const details: Record<string, unknown> = {
+        count: children.length,
+        failed_count: children.filter((c) => !c.passed).length,
+      };
+      if (unsupportedCount > 0) {
+        details.unsupported = true;
+        details.unsupported_count = unsupportedCount;
+      }
       return {
         passed,
         assertion_kind: 'and',
-        details: { count: children.length, failed_count: children.filter((c) => !c.passed).length },
+        details,
         children,
         ...(ctx.traceRef ? { trace_ref: ctx.traceRef } : {}),
       };
     }
     case 'or': {
       const children = assertion.children.map((c) => evaluate(c, ctx));
-      const passed = children.some((c) => c.passed);
+      // For `or`, a real pass from any supported child still wins. If
+      // no child passes AND any child is unsupported, mark the
+      // composite unsupported so `not` does not flip it into a true.
+      const supportedPasses = children.some((c) => !isUnsupported(c) && c.passed);
+      const anyUnsupported = children.some(isUnsupported);
+      const details: Record<string, unknown> = {
+        count: children.length,
+        passed_count: children.filter((c) => c.passed).length,
+      };
+      if (!supportedPasses && anyUnsupported) {
+        details.unsupported = true;
+      }
       return {
-        passed,
+        passed: supportedPasses,
         assertion_kind: 'or',
-        details: { count: children.length, passed_count: children.filter((c) => c.passed).length },
+        details,
         children,
         ...(ctx.traceRef ? { trace_ref: ctx.traceRef } : {}),
       };
     }
     case 'not': {
       const child = evaluate(assertion.child, ctx);
+      // Negating an unsupported child cannot yield a true result —
+      // otherwise `not(network)` would always "pass" before PR-10
+      // wires network up. Propagate the unsupported marker and keep
+      // passed=false so callers cannot drive logic off a stub.
+      const unsupported = isUnsupported(child);
+      const details: Record<string, unknown> = { negated: child.assertion_kind };
+      if (unsupported) details.unsupported = true;
       return {
-        passed: !child.passed,
+        passed: unsupported ? false : !child.passed,
         assertion_kind: 'not',
-        details: { negated: child.assertion_kind },
+        details,
         children: [child],
         ...(ctx.traceRef ? { trace_ref: ctx.traceRef } : {}),
       };
@@ -158,4 +214,24 @@ function mkEvidence(
     details,
     ...(ctx.traceRef ? { trace_ref: ctx.traceRef } : {}),
   };
+}
+
+/** Stable shape for "this assertion kind is not yet wired up". The
+ *  `unsupported: true` flag lives at the top of `details` so composite
+ *  evaluators can branch on it without sniffing kind-specific keys. */
+function mkUnsupportedEvidence(
+  kind: AssertionKind,
+  message: string,
+  ctx: AssertionContext,
+): Evidence {
+  return {
+    passed: false,
+    assertion_kind: kind,
+    details: { unsupported: true, message },
+    ...(ctx.traceRef ? { trace_ref: ctx.traceRef } : {}),
+  };
+}
+
+function isUnsupported(evidence: Evidence): boolean {
+  return evidence.details?.unsupported === true;
 }

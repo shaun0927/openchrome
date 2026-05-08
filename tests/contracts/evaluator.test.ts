@@ -137,7 +137,7 @@ describe('evaluate — network / screenshot_class are PR-10 stubs', () => {
       ctx(),
     );
     expect(r.passed).toBe(false);
-    expect(r.details.unsupported_in_pr9).toBe(true);
+    expect(r.details.unsupported).toBe(true);
   });
 
   test('screenshot_class returns passed=false with unsupported flag', () => {
@@ -146,7 +146,104 @@ describe('evaluate — network / screenshot_class are PR-10 stubs', () => {
       ctx(),
     );
     expect(r.passed).toBe(false);
-    expect(r.details.unsupported_in_pr9).toBe(true);
+    expect(r.details.unsupported).toBe(true);
+  });
+});
+
+describe('evaluate — host probe failures (always-settles guarantee)', () => {
+  test('dom_text whose probe throws → passed=false with probe_error', () => {
+    const r = evaluate(
+      { kind: 'dom_text', selector: '#bad', contains: 'x' },
+      {
+        url: 'https://x',
+        bodyText: '',
+        domText: () => {
+          throw new Error('Invalid selector');
+        },
+        domCount: () => 0,
+        hasDialog: false,
+      },
+    );
+    expect(r.passed).toBe(false);
+    expect(r.details.probe_error).toContain('Invalid selector');
+  });
+
+  test('dom_count whose probe throws → passed=false with probe_error', () => {
+    const r = evaluate(
+      { kind: 'dom_count', selector: '#bad', op: 'eq', value: 0 },
+      {
+        url: 'https://x',
+        bodyText: '',
+        domText: () => '',
+        domCount: () => {
+          throw new Error('querySelectorAll failed');
+        },
+        hasDialog: false,
+      },
+    );
+    expect(r.passed).toBe(false);
+    expect(r.details.probe_error).toContain('querySelectorAll');
+  });
+});
+
+describe('evaluate — composite propagates unsupported correctly', () => {
+  test('not(unsupported) cannot pass — propagates unsupported', () => {
+    // Without this guard `not(network)` would return passed=true while
+    // network is still a stub, letting authors drive logic off a kind
+    // that has not been wired up yet.
+    const r = evaluate(
+      {
+        kind: 'not',
+        child: { kind: 'network', url_pattern: '/x', status_in: [200], since: 'contract_enter' },
+      },
+      ctx(),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.details.unsupported).toBe(true);
+  });
+
+  test('and with an unsupported child → unsupported composite, passed=false', () => {
+    const r = evaluate(
+      {
+        kind: 'and',
+        children: [
+          { kind: 'no_dialog' },
+          { kind: 'network', url_pattern: '/x', status_in: [200], since: 'contract_enter' },
+        ],
+      },
+      ctx(),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.details.unsupported).toBe(true);
+  });
+
+  test('or with a real-passing child still passes (unsupported sibling does not poison)', () => {
+    const r = evaluate(
+      {
+        kind: 'or',
+        children: [
+          { kind: 'no_dialog' }, // passes
+          { kind: 'network', url_pattern: '/x', status_in: [200], since: 'contract_enter' },
+        ],
+      },
+      ctx(),
+    );
+    expect(r.passed).toBe(true);
+  });
+
+  test('or with only failing + unsupported children → unsupported composite', () => {
+    const r = evaluate(
+      {
+        kind: 'or',
+        children: [
+          { kind: 'url', pattern: 'will-not-match' },
+          { kind: 'network', url_pattern: '/x', status_in: [200], since: 'contract_enter' },
+        ],
+      },
+      ctx(),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.details.unsupported).toBe(true);
   });
 });
 
