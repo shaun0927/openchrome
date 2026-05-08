@@ -114,12 +114,17 @@
         fetch(`/api/trace/${encodeURIComponent(id)}/meta`),
         fetch(`/api/trace/${encodeURIComponent(id)}/events?limit=2000`),
       ]);
+      // Stale-fetch guard: if the user clicked another session while
+      // these requests were in flight, drop this response so a slower
+      // older fetch cannot overwrite a newer selection's UI.
+      if (activeId !== id) return;
       if (!metaRes.ok) {
         document.getElementById('events').innerHTML = '<div class="empty">trace not found</div>';
         return;
       }
       const meta = await metaRes.json();
       const data = await eventsRes.json();
+      if (activeId !== id) return;
       const metaEl = document.getElementById('meta');
       metaEl.innerHTML = `
         <dl class="meta-grid">
