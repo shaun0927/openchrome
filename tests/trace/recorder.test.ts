@@ -48,6 +48,16 @@ describe('TraceRecorder — disabled by default when env not set', () => {
     expect(storage.list()).toHaveLength(0);
     storage.close();
   });
+
+  test('disabled recorder does not eagerly instantiate TraceStorage', () => {
+    // No storage passed in opts. A default-off recorder must not touch the
+    // filesystem or load `better-sqlite3` until tracing is actually used.
+    const r = new TraceRecorder({ enabled: false });
+    expect(r._storageInitializedForTests()).toBe(false);
+    r.start({ sessionId: 's', startedAt: 1 });
+    r.recordEvent('s', 'k', {});
+    expect(r._storageInitializedForTests()).toBe(false);
+  });
 });
 
 describe('TraceRecorder — start / recordEvent / flush', () => {
@@ -109,6 +119,42 @@ describe('TraceRecorder — start / recordEvent / flush', () => {
   test('recordEvent on unknown session is a silent drop (no throw)', () => {
     const r = makeRecorder({ storage });
     expect(() => r.recordEvent('nope', 'k', {})).not.toThrow();
+  });
+
+  test('flush preserves buffered events when persistence fails', async () => {
+    // Fake storage that throws on the first appendEvents call, succeeds after.
+    let throwCount = 0;
+    const fake: Pick<TraceStorage, 'recordSessionStart' | 'recordSessionEnd' | 'appendEvents' | 'list' | 'get' | 'close'> = {
+      recordSessionStart: () => undefined,
+      recordSessionEnd: () => undefined,
+      appendEvents: (_id: string, events: TraceEvent[]) => {
+        if (throwCount === 0) {
+          throwCount++;
+          throw new Error('disk full');
+        }
+        return { bytes: 1, filePath: '/tmp/fake.jsonl', count: events.length } as ReturnType<TraceStorage['appendEvents']>;
+      },
+      list: () => [],
+      get: () => undefined,
+      close: () => undefined,
+    };
+    const r = new TraceRecorder({
+      storage: fake as unknown as TraceStorage,
+      enabled: true,
+      bufferSize: 100,
+      flushIntervalMs: 24 * 60 * 60 * 1000,
+      now: () => 1700000000000,
+    });
+    r.start({ sessionId: 's', startedAt: 1 });
+    r.recordEvent('s', 'a', { i: 1 });
+    r.recordEvent('s', 'b', { i: 2 });
+    expect(r._peekBuffer('s')).toHaveLength(2);
+    // First flush throws; events must remain buffered, not be dropped.
+    await expect(r.flush('s')).rejects.toThrow(/disk full/);
+    expect(r._peekBuffer('s')).toHaveLength(2);
+    // Second flush succeeds; buffer is drained only after persistence.
+    await r.flush('s');
+    expect(r._peekBuffer('s')).toHaveLength(0);
   });
 });
 

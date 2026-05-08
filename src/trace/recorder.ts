@@ -73,7 +73,7 @@ interface SessionState {
 }
 
 export class TraceRecorder {
-  private readonly storage: TraceStorage;
+  private _storage: TraceStorage | null;
   private readonly bufferSize: number;
   private readonly flushIntervalMs: number;
   private readonly capacityFlushRatio: number;
@@ -82,7 +82,12 @@ export class TraceRecorder {
   private readonly sessions = new Map<string, SessionState>();
 
   constructor(opts: TraceRecorderOptions = {}) {
-    this.storage = opts.storage ?? new TraceStorage({ rootDir: defaultTraceRootDir() });
+    // Storage is lazy: do NOT touch the filesystem or load `better-sqlite3`
+    // until the recorder actually needs to persist. A default-off recorder
+    // (env unset) must pay zero cost — initialising TraceStorage in the
+    // constructor would defeat that and break in environments where the
+    // optional native binding is unavailable.
+    this._storage = opts.storage ?? null;
     this.bufferSize = Math.max(1, opts.bufferSize ?? envInt('OPENCHROME_TRACE_BUFFER', 500));
     this.flushIntervalMs = Math.max(
       100,
@@ -93,6 +98,17 @@ export class TraceRecorder {
       opts.enabled ??
       (process.env.OPENCHROME_TRACE === '1' || process.env.OPENCHROME_TRACE === 'on');
     this.now = opts.now ?? Date.now;
+  }
+
+  /**
+   * Resolve the storage backend, lazily constructing the default one on
+   * first use. Only called from paths gated by `this.enabled`.
+   */
+  private getStorage(): TraceStorage {
+    if (!this._storage) {
+      this._storage = new TraceStorage({ rootDir: defaultTraceRootDir() });
+    }
+    return this._storage;
   }
 
   /** True when the recorder will actually capture events. */
@@ -111,7 +127,7 @@ export class TraceRecorder {
     const existing = this.sessions.get(meta.sessionId);
     if (existing) {
       existing.meta = { ...existing.meta, ...meta, status, byteSize: existing.meta.byteSize };
-      this.storage.recordSessionStart(existing.meta);
+      this.getStorage().recordSessionStart(existing.meta);
       return;
     }
     const fullMeta: TraceSessionMeta = {
@@ -122,7 +138,7 @@ export class TraceRecorder {
       status,
       byteSize: 0,
     };
-    this.storage.recordSessionStart(fullMeta);
+    this.getStorage().recordSessionStart(fullMeta);
     const state: SessionState = {
       meta: fullMeta,
       buffer: [],
@@ -203,13 +219,22 @@ export class TraceRecorder {
     }
   }
 
-  /** Force-flush the in-memory buffer to disk for a session. */
+  /**
+   * Force-flush the in-memory buffer to disk for a session. The events stay
+   * in the buffer until persistence succeeds; if `appendEvents` throws (disk
+   * full, permission error, sqlite write failure), the events are preserved
+   * for the next flush attempt instead of being silently dropped.
+   */
   async flush(sessionId: string): Promise<void> {
     if (!this.enabled) return;
     const state = this.sessions.get(sessionId);
     if (!state || state.buffer.length === 0) return;
-    const batch = state.buffer.splice(0, state.buffer.length);
-    const result = this.storage.appendEvents(sessionId, batch);
+    // Snapshot the current buffer prefix; do NOT remove yet.
+    const batch = state.buffer.slice();
+    const result = this.getStorage().appendEvents(sessionId, batch);
+    // Persistence succeeded — drop the persisted prefix. Anything appended
+    // by recordEvent during the (synchronous) write stays at the tail.
+    state.buffer.splice(0, batch.length);
     state.meta.byteSize += result.bytes;
   }
 
@@ -235,7 +260,7 @@ export class TraceRecorder {
       if (pageOff) pageOff.call(state.page, state.pageListener.event, state.pageListener.fn);
     }
     if (state.timer) clearInterval(state.timer);
-    this.storage.recordSessionEnd(sessionId, {
+    this.getStorage().recordSessionEnd(sessionId, {
       endedAt: this.now(),
       status,
       byteSize: state.meta.byteSize,
@@ -261,6 +286,11 @@ export class TraceRecorder {
   /** For tests: peek at the in-memory buffer without flushing. */
   _peekBuffer(sessionId: string): TraceEvent[] {
     return this.sessions.get(sessionId)?.buffer.slice() ?? [];
+  }
+
+  /** For tests: has storage been instantiated yet (lazy-init guard)? */
+  _storageInitializedForTests(): boolean {
+    return this._storage !== null;
   }
 }
 
