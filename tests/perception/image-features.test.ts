@@ -139,10 +139,12 @@ describe('dominantColor', () => {
   test('solid field → that color (modulo 16-bin quantization)', () => {
     const buf = solid(16, 16, 200, 100, 50);
     const d = dominantColor(buf, 16, 16);
+    // A full-image crop is never empty, so null is not expected here.
+    expect(d).not.toBeNull();
     // 16-bin: 200 → 192, 100 → 96, 50 → 48
-    expect(d.r).toBe(192);
-    expect(d.g).toBe(96);
-    expect(d.b).toBe(48);
+    expect(d!.r).toBe(192);
+    expect(d!.g).toBe(96);
+    expect(d!.b).toBe(48);
   });
 
   test('region restricts the sampled area', () => {
@@ -160,5 +162,21 @@ describe('dominantColor', () => {
     }
     expect(dominantColor(buf, 16, 16, { x: 0, y: 8, w: 16, h: 8 })).toEqual({ r: 0, g: 0, b: 0 });
     expect(dominantColor(buf, 16, 16, { x: 0, y: 0, w: 16, h: 8 })).toEqual({ r: 240, g: 240, b: 240 });
+  });
+
+  test('zero-width region → null sentinel (not {0,0,0})', () => {
+    const buf = solid(16, 16, 200, 100, 50);
+    expect(dominantColor(buf, 16, 16, { x: 4, y: 4, w: 0, h: 8 })).toBeNull();
+  });
+
+  test('zero-height region → null sentinel (not {0,0,0})', () => {
+    const buf = solid(16, 16, 200, 100, 50);
+    expect(dominantColor(buf, 16, 16, { x: 4, y: 4, w: 8, h: 0 })).toBeNull();
+  });
+
+  test('fully off-canvas region clamps to empty → null sentinel', () => {
+    const buf = solid(16, 16, 200, 100, 50);
+    // x=20 is beyond width=16, so clamped x0=x1=16 → empty
+    expect(dominantColor(buf, 16, 16, { x: 20, y: 0, w: 8, h: 8 })).toBeNull();
   });
 });

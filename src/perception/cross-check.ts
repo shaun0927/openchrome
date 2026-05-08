@@ -29,12 +29,13 @@ import {
   type RgbColor,
 } from './image-features';
 
-export type CrossCheckVerdict = 'consistent' | 'pixel_absent';
+export type CrossCheckVerdict = 'consistent' | 'pixel_absent' | 'empty_region';
 
 export interface CrossCheckResult {
   verdict: CrossCheckVerdict;
   edge_density: number;
-  dominant_color: RgbColor;
+  /** `null` when the crop clamped to an empty rectangle (verdict is `empty_region`). */
+  dominant_color: RgbColor | null;
   background_color: RgbColor;
   color_distance: number;
   /** Reasons the verdict was reached, for hint-engine evidence. */
@@ -91,6 +92,21 @@ export function runCrossCheck(
 
   const edgeDensity = sobelEdgeDensity(rgba, width, height, crop, edgeGradientThreshold);
   const dom = dominantColor(rgba, width, height, crop);
+
+  // Empty-region guard: pixelBox clamped to zero area — no pixels were
+  // sampled. This is a definitive mismatch (the element has no visible
+  // pixels), not a color match against black.
+  if (dom === null) {
+    return {
+      verdict: 'empty_region',
+      edge_density: edgeDensity,
+      dominant_color: null,
+      background_color: opts.backgroundColor,
+      color_distance: 0,
+      reasons: ['crop clamped to empty rectangle — no pixels sampled'],
+    };
+  }
+
   const dist = colorDistance(dom, opts.backgroundColor);
 
   const reasons: string[] = [];

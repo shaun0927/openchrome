@@ -142,17 +142,23 @@ export function colorDistance(a: RgbColor, b: RgbColor): number {
  * histogram-bucketed mode. Buckets are 16×16×16 (4 KB), good enough
  * for "what color is this background" — full k-means would be
  * dependency-rich for sub-1 % accuracy gain.
+ *
+ * Returns `null` when the region clamps to an empty rectangle (zero
+ * width or height after clamping to the image bounds). Callers must
+ * treat `null` as a sentinel meaning "no pixels were sampled" and
+ * propagate it as a flagged mismatch, not as a real color.
  */
 export function dominantColor(
   rgba: Uint8Array | Buffer,
   width: number,
   height: number,
   region?: CropRect,
-): RgbColor {
+): RgbColor | null {
   const x0 = region ? clampInt(region.x, 0, width) : 0;
   const y0 = region ? clampInt(region.y, 0, height) : 0;
   const x1 = region ? clampInt(region.x + region.w, 0, width) : width;
   const y1 = region ? clampInt(region.y + region.h, 0, height) : height;
+  if (x1 <= x0 || y1 <= y0) return null;
   const buckets = new Uint32Array(16 * 16 * 16);
   let bestCount = 0;
   let bestKey = 0;

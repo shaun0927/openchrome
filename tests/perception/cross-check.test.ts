@@ -129,6 +129,37 @@ describe('runCrossCheck — overrides', () => {
   });
 });
 
+describe('runCrossCheck — empty_region guard', () => {
+  test('fully off-canvas pixelBox → empty_region verdict, not consistent', () => {
+    // A 16x16 image with the crop placed entirely outside the canvas.
+    // Before the fix this would return consistent (synthetic black vs bg).
+    const bg = { r: 0, g: 0, b: 0 };
+    const buf = solid(16, 16, bg.r, bg.g, bg.b);
+    const r = runCrossCheck(buf, 16, 16, { x: 20, y: 20, w: 8, h: 8 }, { backgroundColor: bg });
+    expect(r.verdict).toBe('empty_region');
+    expect(r.dominant_color).toBeNull();
+    expect(r.reasons[0]).toContain('empty rectangle');
+  });
+
+  test('zero-width crop → empty_region verdict', () => {
+    const bg = { r: 240, g: 240, b: 240 };
+    const buf = solid(32, 32, bg.r, bg.g, bg.b);
+    const r = runCrossCheck(buf, 32, 32, { x: 8, y: 8, w: 0, h: 16 }, { backgroundColor: bg });
+    expect(r.verdict).toBe('empty_region');
+    expect(r.dominant_color).toBeNull();
+  });
+
+  test('empty_region is NOT consistent even when background is black', () => {
+    // Regression for the exact false-negative: bg={0,0,0}, off-canvas crop.
+    // Old code: dominantColor returned {0,0,0}, colorDistance=0, verdict=consistent.
+    const bg = { r: 0, g: 0, b: 0 };
+    const buf = solid(8, 8, bg.r, bg.g, bg.b);
+    const r = runCrossCheck(buf, 8, 8, { x: 100, y: 100, w: 10, h: 10 }, { backgroundColor: bg });
+    expect(r.verdict).not.toBe('consistent');
+    expect(r.verdict).toBe('empty_region');
+  });
+});
+
 describe('runCrossCheck — reasons surface for hint engine evidence', () => {
   test('pixel_absent path includes both edge_density and color_distance reasons', () => {
     const bg = { r: 240, g: 240, b: 240 };
