@@ -404,6 +404,47 @@ describe('runWithContract — idempotency cache', () => {
     expect(hookCalls).toBe(1);        // hook was NOT called on cache hit
   });
 
+  test('non-critical contract: flipping hook on does NOT invalidate cache (round-8 regression)', async () => {
+    // Scenario: non-critical contract runs (no hook possible), succeeds, cached.
+    // A second call that supplies a beforeIrreversibleAction hook (which will
+    // never fire because the contract is non-critical) MUST still hit the cache.
+    // Before this fix, hookActive was included as-is, so hook=true produced a
+    // different key and the skill ran a second time instead of short-circuiting.
+    let skillCalls = 0;
+    const hook = async () => ({ proceed: true });
+    const contract: Contract = {
+      id: 'c-noncritical-hook',
+      idempotency_key: 'noncritical-hook-key',
+      post: { kind: 'no_dialog' as const },
+      critical: false,
+    };
+
+    // Run 1: non-critical, no hook. Caches under hookActive=false.
+    const r1 = await runWithContract({
+      contract,
+      skill: async () => { skillCalls++; return 'run1'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+    });
+    expect(r1.verdict).toBe('success');
+    expect(r1.from_cache).toBeUndefined();
+    expect(skillCalls).toBe(1);
+
+    // Run 2: same non-critical contract, but caller wires a hook. Since the
+    // contract is non-critical, hookActive is normalized to false → same key
+    // → cache hit → skill does NOT run again.
+    const r2 = await runWithContract({
+      contract,
+      skill: async () => { skillCalls++; return 'run2'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+      beforeIrreversibleAction: hook,
+    });
+    expect(r2.verdict).toBe('success');
+    expect(r2.from_cache).toBe(true);  // must hit cache
+    expect(skillCalls).toBe(1);         // skill did NOT run again
+  });
+
   test('different idempotency_key bypasses the cache', async () => {
     let skillCalls = 0;
     const make = (key: string) => ({

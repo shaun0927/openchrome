@@ -282,10 +282,14 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       key = idem.saltIdempotencyOverride(
         args.idempotencyKey,
         !!args.contract.critical,
-        !!args.beforeIrreversibleAction,
+        args.contract.critical ? !!args.beforeIrreversibleAction : false,
       );
     } else {
-      key = idem.computeIdempotencyKey(args.contract, undefined, !!args.beforeIrreversibleAction);
+      key = idem.computeIdempotencyKey(
+        args.contract,
+        undefined,
+        args.contract.critical ? !!args.beforeIrreversibleAction : false,
+      );
     }
     const cached = args.idempotency.get(key);
     if (cached && cached.verdict === 'success') {
@@ -611,10 +615,14 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
         key = idem.saltIdempotencyOverride(
           args.idempotencyKey,
           !!args.contract.critical,
-          !!args.beforeIrreversibleAction,
+          args.contract.critical ? !!args.beforeIrreversibleAction : false,
         );
       } else {
-        key = idem.computeIdempotencyKey(args.contract, undefined, !!args.beforeIrreversibleAction);
+        key = idem.computeIdempotencyKey(
+          args.contract,
+          undefined,
+          args.contract.critical ? !!args.beforeIrreversibleAction : false,
+        );
       }
       try {
         args.idempotency.put(key, successRecord);
