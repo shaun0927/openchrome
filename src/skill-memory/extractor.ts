@@ -178,6 +178,18 @@ function isValidSidecar(v: unknown): v is SkillSidecar {
   if (!Array.isArray(s.runs.recent)) return false;
   if (typeof s.runs.count !== 'number') return false;
   if (typeof s.runs.window_start !== 'string') return false;
+  // Each entry must carry a numeric timestamp so `trimRollingLog`
+  // can compare against the rolling-window cutoff. A `null` /
+  // `{}` / older-schema entry would otherwise pass the array check
+  // and then throw at `e.ts` inside the merge path, blocking
+  // future successful runs from being recorded.
+  for (const e of s.runs.recent) {
+    if (!e || typeof e !== 'object') return false;
+    const entry = e as { txn_id?: unknown; ok?: unknown; ts?: unknown };
+    if (typeof entry.ts !== 'number' || !Number.isFinite(entry.ts)) return false;
+    if (typeof entry.ok !== 'boolean') return false;
+    if (typeof entry.txn_id !== 'string') return false;
+  }
   return true;
 }
 
@@ -276,6 +288,16 @@ export function recordSuccessfulRun(
   const rootDir = opts.rootDir ?? defaultSkillRootDir();
   const now = opts.now ?? Date.now;
   const promotionThreshold = opts.promotionThreshold ?? PROMOTION_RUN_THRESHOLD;
+  // The rolling-window log is capped at SKILL_RUN_LOG_MAX entries,
+  // so a threshold above that cap could never be reached: skills
+  // would silently saturate at 50 verified_runs and never promote.
+  // Refuse the misconfiguration loudly rather than letting it look
+  // like the promotion gate just never fires.
+  if (promotionThreshold < 1 || promotionThreshold > SKILL_RUN_LOG_MAX) {
+    throw new Error(
+      `skill-memory: promotionThreshold ${promotionThreshold} must be in [1, ${SKILL_RUN_LOG_MAX}]`,
+    );
+  }
   assertSafeDomain(inputs.domain);
   const skillId = computeSkillId(inputs.graph_node_anchor, inputs.contract_id);
   const domainDir = path.join(rootDir, inputs.domain);

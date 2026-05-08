@@ -297,6 +297,70 @@ describe('recordSuccessfulRun — domain validation', () => {
   });
 });
 
+describe('recordSuccessfulRun — sidecar entry validation', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('sidecar with malformed recent entries is treated as missing (no crash)', () => {
+    let t = FIXED_NOW;
+    const first = recordSuccessfulRun(record({ txn_id: 't1' }), { rootDir: root, now: () => t });
+
+    // Corrupt the sidecar so the array is present but contains garbage.
+    fs.writeFileSync(
+      first.record.sidecarPath,
+      JSON.stringify({
+        schema_version: 1,
+        skill_id: first.record.skill_id,
+        graph_node_anchor: 'a1b2c3d4',
+        contract_id: 'amazon.cart-add',
+        runs: {
+          count: 5,
+          window_start: '2026-04-01T00:00:00Z',
+          recent: [null, {}, { txn_id: 'no-ts', ok: true }],
+        },
+      }),
+    );
+
+    t += 60_000;
+    expect(() => recordSuccessfulRun(record({ txn_id: 't2' }), { rootDir: root, now: () => t })).not.toThrow();
+    const list = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(list).toHaveLength(1);
+  });
+});
+
+describe('recordSuccessfulRun — promotionThreshold bounds', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('rejects threshold above SKILL_RUN_LOG_MAX (would never promote)', () => {
+    expect(() =>
+      recordSuccessfulRun(record(), { rootDir: root, now: () => FIXED_NOW, promotionThreshold: 51 }),
+    ).toThrow();
+  });
+
+  test('rejects threshold below 1', () => {
+    expect(() =>
+      recordSuccessfulRun(record(), { rootDir: root, now: () => FIXED_NOW, promotionThreshold: 0 }),
+    ).toThrow();
+  });
+
+  test('accepts threshold equal to SKILL_RUN_LOG_MAX', () => {
+    expect(() =>
+      recordSuccessfulRun(record(), { rootDir: root, now: () => FIXED_NOW, promotionThreshold: 50 }),
+    ).not.toThrow();
+  });
+});
+
 describe('listSkillsForDomain', () => {
   let root: string;
   beforeEach(() => {
