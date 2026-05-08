@@ -202,10 +202,21 @@ async function streamSessionEvents(
   if (!fs.existsSync(sessionDir)) {
     return { total: 0, matched: [], truncated: false };
   }
+  // Recorder names chunks `<ts>-<seq>.jsonl`. A plain lexicographic
+  // sort would place `...-10.jsonl` before `...-2.jsonl`, and because
+  // recorder timestamps come from `Date.now()` two flushes can share a
+  // millisecond. Sort by parsed `(ts, seq)` numerically so the event
+  // stream returned through `openchrome://trace/<id>/events` matches
+  // capture order — replay / pagination clients depend on that.
   const files = fs
     .readdirSync(sessionDir)
     .filter((f) => f.endsWith('.jsonl'))
-    .sort();
+    .map((f) => {
+      const m = /^(\d+)-(\d+)\.jsonl$/.exec(f);
+      return { f, ts: m ? Number(m[1]) : 0, seq: m ? Number(m[2]) : 0 };
+    })
+    .sort((a, b) => (a.ts - b.ts) || (a.seq - b.seq))
+    .map((e) => e.f);
 
   const matched: TraceEventEnvelope[] = [];
   let total = 0;

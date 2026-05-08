@@ -296,6 +296,32 @@ describe('buildTraceContent — events', () => {
     expect(body.events.length).toBeLessThanOrEqual(10_000);
   });
 
+  test('orders chunk files numerically by (ts, seq), not lexically', async () => {
+    // Recorder chunk filenames are `<ts>-<seq>.jsonl`. A plain lexical
+    // sort placed `...-10.jsonl` before `...-2.jsonl`, so two flushes
+    // sharing a millisecond came back out of capture order — replay /
+    // pagination clients rely on that ordering.
+    const sessionDir = path.join(root, 'order');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, '1730000000000-2.jsonl'),
+      JSON.stringify({ ts: 100, seq: 2, kind: 'EARLIER', body: {} }) + '\n',
+    );
+    fs.writeFileSync(
+      path.join(sessionDir, '1730000000000-10.jsonl'),
+      JSON.stringify({ ts: 200, seq: 10, kind: 'LATER', body: {} }) + '\n',
+    );
+    store.recordSessionStart({ sessionId: 'order', startedAt: 1, status: 'completed' });
+
+    const r = await buildTraceContent({
+      sessionId: 'order',
+      kind: 'events',
+      query: new URLSearchParams(),
+    });
+    const body = JSON.parse(r!) as { events: Array<{ kind: string }> };
+    expect(body.events.map((e) => e.kind)).toEqual(['EARLIER', 'LATER']);
+  });
+
   test('MAX_TOTAL_SCAN cap counts every line read, not only valid events', async () => {
     // Plant a session backed by a single chunk of pure garbage. The
     // prior cap was driven by valid-event count, so a file of malformed
