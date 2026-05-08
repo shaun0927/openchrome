@@ -218,23 +218,29 @@ function writeAtomic(target: string, body: string): void {
 }
 
 function resolveMergedSkillId(domainDir: string, requestedSkillId: string): string {
-  const activePath = path.join(domainDir, `${requestedSkillId}.md`);
-  if (fs.existsSync(activePath)) return requestedSkillId;
+  const visited = new Set<string>();
+  let current = requestedSkillId;
 
-  const reason = readJson<unknown>(
-    path.join(domainDir, '.archive', requestedSkillId, 'reason.json'),
-  );
-  if (!reason || typeof reason !== 'object') return requestedSkillId;
+  while (!visited.has(current)) {
+    visited.add(current);
 
-  const mergedInto = (reason as { merged_into_skill_id?: unknown }).merged_into_skill_id;
-  if (typeof mergedInto !== 'string' || !/^[a-f0-9]{12}$/.test(mergedInto)) {
-    return requestedSkillId;
+    const activePath = path.join(domainDir, `${current}.md`);
+    const activeSidecarPath = path.join(domainDir, `${current}.json`);
+    if (fs.existsSync(activePath) && fs.existsSync(activeSidecarPath)) return current;
+
+    const reason = readJson<unknown>(
+      path.join(domainDir, '.archive', current, 'reason.json'),
+    );
+    if (!reason || typeof reason !== 'object') return requestedSkillId;
+
+    const mergedInto = (reason as { merged_into_skill_id?: unknown }).merged_into_skill_id;
+    if (typeof mergedInto !== 'string' || !/^[a-f0-9]{12}$/.test(mergedInto)) {
+      return requestedSkillId;
+    }
+    current = mergedInto;
   }
 
-  const mergedMd = path.join(domainDir, `${mergedInto}.md`);
-  const mergedSidecar = path.join(domainDir, `${mergedInto}.json`);
-  if (!fs.existsSync(mergedMd) || !fs.existsSync(mergedSidecar)) return requestedSkillId;
-  return mergedInto;
+  return requestedSkillId;
 }
 
 /**

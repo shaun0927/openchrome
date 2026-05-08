@@ -678,4 +678,95 @@ describe('runPass2Merge', () => {
       umbrellaBefore.frontmatter.verified_runs + 1,
     );
   });
+
+  test('follow-up runs for transitively archived sibling identities update the final umbrella', async () => {
+    const anchors = ['ddddffff0001', 'ddddffff0002', 'ddddffff0003'] as const;
+    let tick = FIXED_NOW;
+    for (const anchor of anchors) {
+      for (let i = 0; i < 4; i++) {
+        recordSuccessfulRun(
+          {
+            txn_id: `transitive-${anchor}-${i}`,
+            contract_id: SHARED_CONTRACT_ID,
+            intent: 'Add cart item and pay',
+            domain: 'amazon.com',
+            graph_node_anchor: anchor,
+          },
+          { rootDir: root, now: () => tick++ },
+        );
+      }
+    }
+
+    await runPass2Merge({
+      rootDir: root,
+      domain: 'amazon.com',
+      requester: async () => ({
+        ok: true,
+        name: 'amazon.cart-add-umbrella-one',
+        intent: 'Add cart item and complete checkout (umbrella)',
+        body: '## Steps\n1. Click add\n2. Click pay\n',
+      }),
+      jaccardThreshold: 0.5,
+      prefixChars: 4,
+      now: () => tick++,
+    });
+
+    const firstUmbrella = listSkillsForDomain('amazon.com', { rootDir: root })[0];
+    const oldArchivedAnchor = anchors.find(
+      (anchor) => anchor !== firstUmbrella.frontmatter.graph_node_anchor,
+    );
+    expect(oldArchivedAnchor).toBeDefined();
+
+    const final = recordSuccessfulRun(
+      {
+        txn_id: 'transitive-final',
+        contract_id: SHARED_CONTRACT_ID,
+        intent: 'Add cart item and pay',
+        domain: 'amazon.com',
+        graph_node_anchor: 'ddddffff9999',
+      },
+      { rootDir: root, now: () => tick++ },
+    ).record;
+
+    const domainDir = path.join(root, 'amazon.com');
+    const firstArchiveDir = path.join(domainDir, '.archive', firstUmbrella.skill_id);
+    fs.mkdirSync(firstArchiveDir, { recursive: true });
+    fs.renameSync(firstUmbrella.filePath, path.join(firstArchiveDir, 'SKILL.md'));
+    fs.renameSync(firstUmbrella.sidecarPath, path.join(firstArchiveDir, 'sidecar.json'));
+    fs.writeFileSync(
+      path.join(firstArchiveDir, 'reason.json'),
+      JSON.stringify(
+        {
+          reason: 'merged_into',
+          merged_into_skill_id: final.skill_id,
+          archived_at: new Date(tick++).toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
+
+    const finalUmbrellaBefore = listSkillsForDomain('amazon.com', { rootDir: root })[0];
+    expect(finalUmbrellaBefore.skill_id).not.toBe(firstUmbrella.skill_id);
+
+    const followUp = recordSuccessfulRun(
+      {
+        txn_id: 'post-transitive-archive-anchor',
+        contract_id: SHARED_CONTRACT_ID,
+        intent: 'Add cart item, then pay',
+        domain: 'amazon.com',
+        graph_node_anchor: oldArchivedAnchor!,
+      },
+      { rootDir: root, now: () => tick++ },
+    );
+
+    const active = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(active).toHaveLength(1);
+    expect(followUp.created).toBe(false);
+    expect(followUp.record.skill_id).toBe(finalUmbrellaBefore.skill_id);
+    expect(active[0].skill_id).toBe(finalUmbrellaBefore.skill_id);
+    expect(active[0].frontmatter.verified_runs).toBe(
+      finalUmbrellaBefore.frontmatter.verified_runs + 1,
+    );
+  });
 });
