@@ -95,6 +95,35 @@ describe('sobelEdgeDensity', () => {
     expect(() => sobelEdgeDensity(Buffer.alloc(10), 8, 8, { x: 0, y: 0, w: 1, h: 1 })).toThrow();
   });
 
+  test('fractional box touching one pixel is not collapsed to empty', () => {
+    // Box {x:0.4, y:0.4, w:0.4, h:0.4}: x0=floor(0.4)=0, x1=ceil(0.8)=1
+    // so the 1×1 region at (0,0) is sampled. With a solid image,
+    // density == 0 (no edges) — but crucially it must NOT return 0 via
+    // an empty-region short-circuit (cw<=0||ch<=0). We verify by using
+    // a non-solid image so density > 0 would show if sampling occurred.
+    // Simpler: use a solid field and confirm the result is 0 (not NaN,
+    // and not the 0 from cw<=0 guard — both are 0, so we also check
+    // that a contrasting pixel at (0,0) yields a non-zero density).
+    const base = solid(2, 2, 200, 200, 200);
+    const withEdge = withPixel(base, 2, 0, 0, 0, 0, 0);
+    const d = sobelEdgeDensity(withEdge, 2, 2, { x: 0.4, y: 0.4, w: 0.4, h: 0.4 });
+    // The box ceil-clamps to [0,1)×[0,1) — single pixel at (0,0).
+    // A lone contrasting pixel surrounded by clamp-replicated neighbors
+    // produces a non-zero Sobel gradient, so density > 0.
+    expect(d).toBeGreaterThan(0);
+  });
+
+  test('box touching right/bottom edge by less than a pixel still samples that edge pixel', () => {
+    // 4×4 canvas; box x=3.1, w=0.5 → x0=floor(3.1)=3, x1=ceil(3.6)=4
+    // so the rightmost column (x=3) is included.
+    const base = solid(4, 4, 200, 200, 200);
+    // Place a contrasting pixel at the rightmost column, row 0.
+    const withEdge = withPixel(base, 4, 3, 0, 0, 0, 0);
+    // Crop covers only the right edge strip (x=3..4, y=0..4).
+    const d = sobelEdgeDensity(withEdge, 4, 4, { x: 3.1, y: 0, w: 0.5, h: 4 });
+    expect(d).toBeGreaterThan(0);
+  });
+
   test('threshold tunable: a very high threshold zeros out density on a striped image', () => {
     // Vertical stripe has finite Sobel magnitudes (~510 at the
     // boundary, 0 elsewhere). Pushing the threshold beyond 510 — 1000
@@ -178,5 +207,9 @@ describe('dominantColor', () => {
     const buf = solid(16, 16, 200, 100, 50);
     // x=20 is beyond width=16, so clamped x0=x1=16 → empty
     expect(dominantColor(buf, 16, 16, { x: 20, y: 0, w: 8, h: 8 })).toBeNull();
+  });
+
+  test('rejects buffer length / dimension mismatch', () => {
+    expect(() => dominantColor(Buffer.alloc(10), 8, 8)).toThrow();
   });
 });

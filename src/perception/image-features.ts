@@ -45,6 +45,16 @@ function clampInt(v: number, lo: number, hi: number): number {
   return Math.floor(v);
 }
 
+/** Floor-clamp for region start coordinates (include only fully-contained start). */
+function clampStart(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, Math.floor(v)));
+}
+
+/** Ceil-clamp for region end coordinates (include any partially-touched pixel). */
+function clampEnd(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, Math.ceil(v)));
+}
+
 /** Rec. 601 luma — fast and good enough for edge detection. */
 function luma(r: number, g: number, b: number): number {
   return 0.299 * r + 0.587 * g + 0.114 * b;
@@ -81,10 +91,10 @@ export function sobelEdgeDensity(
   if (rgba.length !== width * height * 4) {
     throw new Error(`sobelEdgeDensity: buffer length ${rgba.length} != ${width * height * 4}`);
   }
-  const x0 = clampInt(crop.x, 0, width);
-  const y0 = clampInt(crop.y, 0, height);
-  const x1 = clampInt(crop.x + crop.w, 0, width);
-  const y1 = clampInt(crop.y + crop.h, 0, height);
+  const x0 = clampStart(crop.x, 0, width);
+  const y0 = clampStart(crop.y, 0, height);
+  const x1 = clampEnd(crop.x + crop.w, 0, width);
+  const y1 = clampEnd(crop.y + crop.h, 0, height);
   const cw = x1 - x0;
   const ch = y1 - y0;
   if (cw <= 0 || ch <= 0) return 0;
@@ -154,10 +164,13 @@ export function dominantColor(
   height: number,
   region?: CropRect,
 ): RgbColor | null {
-  const x0 = region ? clampInt(region.x, 0, width) : 0;
-  const y0 = region ? clampInt(region.y, 0, height) : 0;
-  const x1 = region ? clampInt(region.x + region.w, 0, width) : width;
-  const y1 = region ? clampInt(region.y + region.h, 0, height) : height;
+  if (rgba.length !== width * height * 4) {
+    throw new Error(`dominantColor: buffer length ${rgba.length} != ${width * height * 4}`);
+  }
+  const x0 = region ? clampStart(region.x, 0, width) : 0;
+  const y0 = region ? clampStart(region.y, 0, height) : 0;
+  const x1 = region ? clampEnd(region.x + region.w, 0, width) : width;
+  const y1 = region ? clampEnd(region.y + region.h, 0, height) : height;
   if (x1 <= x0 || y1 <= y0) return null;
   const buckets = new Uint32Array(16 * 16 * 16);
   let bestCount = 0;
