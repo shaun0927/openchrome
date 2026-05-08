@@ -201,7 +201,7 @@ export class VotingOrchestrator {
     this.timeoutMs = opts.timeoutMs ?? envInt('OPENCHROME_VOTING_TIMEOUT_MS', DEFAULT_TIMEOUT_MS);
     this.fallbackMode = opts.fallbackMode ?? 'graceful';
     this.equivalence = opts.equivalence ?? {};
-    this.budget = opts.budget ?? new VotingSessionBudget();
+    this.budget = opts.budget ?? new VotingSessionBudget(opts.sessionTokenCap);
   }
 
   getBudget(): VotingSessionBudget {
@@ -212,9 +212,18 @@ export class VotingOrchestrator {
     if (this.budget.isDisabled()) {
       return { proceed: false, reason: 'kill_switch' };
     }
-    const replies = await Promise.all(
+    // Use allSettled so a thrown provider error never aborts the vote
+    // — rejections are converted to ProviderReply { ok:false } so the
+    // normal disagreement / all_failed / strict-fallback paths remain
+    // in charge of the verdict.
+    const settled = await Promise.allSettled(
       this.providers.map((p) => p.ask(req, { timeoutMs: this.timeoutMs })),
     );
+    const replies: ProviderReply[] = settled.map((r) => {
+      if (r.status === 'fulfilled') return r.value;
+      const raw = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      return { ok: false, error: { kind: 'unknown', raw } };
+    });
     // Charge budget regardless of success.
     let totalTokens = 0;
     for (const r of replies) {
@@ -237,18 +246,22 @@ export class VotingOrchestrator {
       };
     }
 
+    // Strict policy: any unreachable provider counts as disagreement,
+    // regardless of how many other voters succeeded. This protects the
+    // 3+ provider case where 2 successes could otherwise hide a failed
+    // voter and let an action proceed without unanimous coverage.
+    if (this.fallbackMode === 'strict' && failures.length > 0) {
+      return {
+        proceed: false,
+        reason: 'disagreement',
+        disagreement: {
+          providers: [...successes, ...failures],
+        },
+      };
+    }
+
     if (this.providers.length >= 2 && successes.length === 1) {
-      // One success, one fail — fallback policy decides.
-      if (this.fallbackMode === 'strict') {
-        return {
-          proceed: false,
-          reason: 'disagreement',
-          disagreement: {
-            providers: [...successes, ...failures],
-          },
-        };
-      }
-      // graceful: advisory — let the primary's action stand.
+      // graceful: only one voter answered — advisory, primary's action stands.
       return {
         proceed: true,
         agreedAction: successes[0].reply.action!,

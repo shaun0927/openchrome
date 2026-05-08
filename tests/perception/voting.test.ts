@@ -366,6 +366,48 @@ describe('VotingOrchestrator — single-provider fallback', () => {
     if (!v.proceed) expect(v.reason).toBe('disagreement');
   });
 
+  test('strict: 3 providers, 2 success + 1 fail → disagreement (not proceed)', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { x: 100, y: 100 } };
+    const orch = new VotingOrchestrator({
+      fallbackMode: 'strict',
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 10 })),
+        fakeProvider('b', async () => ({ ok: true, action, tokens: 10 })),
+        fakeProvider('c', async () => ({
+          ok: false,
+          tokens: 0,
+          error: { kind: 'network', raw: 'EHOSTUNREACH' },
+        })),
+      ],
+    });
+    const v = await orch.runVote(REQ);
+    expect(v.proceed).toBe(false);
+    if (!v.proceed) {
+      expect(v.reason).toBe('disagreement');
+      expect(v.disagreement?.providers.map((p) => p.name).sort()).toEqual(['a', 'b', 'c']);
+    }
+  });
+
+  test('rejected provider promise is treated as failure (no throw)', async () => {
+    const action: ActionInvocation = { kind: 'click', args: { x: 100, y: 100 } };
+    const orch = new VotingOrchestrator({
+      fallbackMode: 'strict',
+      providers: [
+        fakeProvider('a', async () => ({ ok: true, action, tokens: 10 })),
+        {
+          name: 'b',
+          ask: async () => {
+            throw new Error('boom');
+          },
+        },
+      ],
+    });
+    const v = await orch.runVote(REQ);
+    // strict + one failure → disagreement, never crash
+    expect(v.proceed).toBe(false);
+    if (!v.proceed) expect(v.reason).toBe('disagreement');
+  });
+
   test('all providers fail → reason=all_failed', async () => {
     const orch = new VotingOrchestrator({
       providers: [
