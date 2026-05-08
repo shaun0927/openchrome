@@ -104,6 +104,22 @@ describe('TraceRecorder — start / recordEvent / flush', () => {
     expect(storage.get('s2')?.byteSize).toBeGreaterThan(0);
   });
 
+  test('manual flush keeps buffered events when append fails', async () => {
+    const r = makeRecorder({ storage, bufferSize: 100 }); // never auto-flushes
+    r.start({ sessionId: 's2-fail', startedAt: 100 });
+    r.recordEvent('s2-fail', 'k', { i: 1 });
+    r.recordEvent('s2-fail', 'k', { i: 2 });
+    const buffered = r._peekBuffer('s2-fail');
+    jest.spyOn(storage, 'appendEvents').mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+
+    await expect(r.flush('s2-fail')).rejects.toThrow('disk full');
+
+    expect(r._peekBuffer('s2-fail')).toEqual(buffered);
+    expect(storage.get('s2-fail')?.byteSize).toBe(0);
+  });
+
   test('redaction is applied at recordEvent time (sensitive keys scrubbed)', async () => {
     const r = makeRecorder({ storage, bufferSize: 100 });
     r.start({ sessionId: 's3', startedAt: 100 });
