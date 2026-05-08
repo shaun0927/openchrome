@@ -232,6 +232,80 @@ describe('runWithContract — beforeIrreversibleAction hook', () => {
     expect(records).toHaveLength(1);
   });
 
+  test('slow hook does not consume skill wall-budget — retries still fire (P2B regression)', async () => {
+    // Scenario: hook takes 4 s, skill takes 2 s, wall_ms budget = 5 s.
+    // Without the fix: elapsed from startedAt = 6 s > 5 s → retry suppressed.
+    // With the fix: elapsed from skillStartedAt = 2 s < 5 s → retry is allowed.
+    //
+    // We drive all time with a deterministic fake clock so no real waiting.
+    let t = 0;
+    const now = () => t;
+
+    // Hook occupies 4 000 ms of wall time.
+    const HOOK_DURATION = 4_000;
+    // Skill takes 2 000 ms.
+    const SKILL_DURATION = 2_000;
+    // Budget = 5 000 ms (less than hook+skill combined, but sufficient for skill alone).
+    const WALL_MS = 5_000;
+
+    // The hook advances the fake clock when it resolves.
+    const hook: BeforeIrreversibleActionHook = async () => {
+      t += HOOK_DURATION;
+      return { proceed: true };
+    };
+
+    // The skill advances the clock when it resolves.
+    let skillCalls = 0;
+    const skill = async () => {
+      skillCalls++;
+      t += SKILL_DURATION;
+      return 'done';
+    };
+
+    // Fake delay that advances the clock without real waiting.
+    const delay = async (ms: number) => { t += ms; };
+
+    // Post-check: fails on attempt 0, passes on attempt 1, so one retry fires.
+    let postChecks = 0;
+    const snapshot = async (): Promise<AssertionContext> => {
+      postChecks++;
+      return {
+        url: 'https://example.com/',
+        bodyText: postChecks >= 2 ? 'ready' : '',
+        domText: () => (postChecks >= 2 ? 'ready' : ''),
+        domCount: () => 0,
+        hasDialog: false,
+      };
+    };
+
+    // Use a setTimer that never fires automatically (budget preemption is not
+    // what we are testing here) so only the retry-gate logic is exercised.
+    const fakeSetTimer = (_h: () => void, _ms: number) => 99;
+    const fakeClearTimer = (_h: unknown) => undefined;
+
+    const r = await runWithContract({
+      contract: {
+        id: 'c-hook-budget',
+        post: { kind: 'dom_text', contains: 'ready' },
+        critical: true,
+        budget: { wall_ms: WALL_MS },
+        on_fail: { retry: 2 },
+      },
+      skill,
+      snapshot,
+      beforeIrreversibleAction: hook,
+      now,
+      delay,
+      setTimer: fakeSetTimer,
+      clearTimer: fakeClearTimer,
+    });
+
+    // The retry should have fired — post-check passes on attempt 1.
+    expect(r.verdict).toBe('success');
+    expect(r.retries).toBe(1);
+    expect(skillCalls).toBe(1);
+  });
+
   test('escalated record contains pre_evidence (when pre present and passed)', async () => {
     const hook: BeforeIrreversibleActionHook = async () => ({ proceed: false });
     const r = await runWithContract({

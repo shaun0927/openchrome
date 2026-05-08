@@ -94,6 +94,11 @@ export function computeIdempotencyKey(
     pre: contract.pre,
     post: contract.post,
     on_fail: contract.on_fail,
+    // critical gates whether beforeIrreversibleAction fires; a cached
+    // non-critical success MUST NOT short-circuit a critical run that
+    // would invoke the voting hook. Include it in the key so they are
+    // stored and retrieved independently.
+    critical: contract.critical ?? false,
     args: args ?? null,
   });
   return crypto.createHash('sha256').update(subject).digest('hex');

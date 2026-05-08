@@ -251,6 +251,45 @@ describe('runWithContract — idempotency cache', () => {
     expect(skillCalls).toBe(2);
   });
 
+  test('critical=false cached success does NOT short-circuit a critical=true run (P2A regression)', async () => {
+    // A non-critical run succeeds and is cached. A subsequent run with the
+    // same contract shape but critical=true MUST NOT hit that cache — the
+    // voting hook must be invoked, not bypassed.
+    let hookCalls = 0;
+    const hook = async () => {
+      hookCalls++;
+      return { proceed: true };
+    };
+    const baseContract = {
+      id: 'c-critical',
+      idempotency_key: 'critical-regression',
+      post: { kind: 'no_dialog' as const },
+    };
+    // First run: non-critical, no hook supplied. Caches the success.
+    const r1 = await runWithContract({
+      contract: { ...baseContract, critical: false },
+      skill: async () => 'non-critical run',
+      snapshot: async () => snap(),
+      idempotency: store,
+    });
+    expect(r1.verdict).toBe('success');
+    expect(r1.from_cache).toBeUndefined();
+
+    // Second run: critical=true with the hook. Must NOT be a cache hit.
+    let skillCalls = 0;
+    const r2 = await runWithContract({
+      contract: { ...baseContract, critical: true },
+      skill: async () => { skillCalls++; return 'critical run'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+      beforeIrreversibleAction: hook,
+    });
+    expect(r2.verdict).toBe('success');
+    expect(r2.from_cache).toBeUndefined(); // must not be from cache
+    expect(hookCalls).toBe(1); // hook was invoked
+    expect(skillCalls).toBe(1); // skill ran fresh
+  });
+
   test('different idempotency_key bypasses the cache', async () => {
     let skillCalls = 0;
     const make = (key: string) => ({

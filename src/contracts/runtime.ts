@@ -462,8 +462,16 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   //    (a) cooperative: skill receives AbortSignal it should observe
   //    (b) preemptive: setTimeout(wall_ms + grace) hard-aborts via the
   //        same AbortController and short-circuits the post-check loop.
+  //
+  // skillStartedAt is snapshotted HERE — after any beforeIrreversibleAction
+  // hook completes — so that hook latency is excluded from wall-budget
+  // retry-gate calculations. A slow hook must not eat the skill's budget.
+  // Audit/total-duration fields continue to use the original `startedAt`
+  // for observability (wall_ms in the TransactionRecord = total elapsed
+  // including hook time).
   const budgetWallMs = args.contract.budget?.wall_ms;
-  const skillStart = now();
+  const skillStartedAt = now();
+  const skillStart = skillStartedAt;
   const ctrl = new AbortController();
   let preemptedHardKill = false;
   let preemptHandle: unknown = null;
@@ -563,10 +571,12 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     if (post_evidence.passed) break;
     if (attempt >= maxRetries) break;
     // Bail if the next backoff would exceed the remaining wall budget.
+    // Use skillStartedAt (not startedAt) so hook latency does not consume
+    // the skill's wall budget — wall_ms covers skill execution only.
     const next = backoffMs(attempt);
     if (
       budgetWallMs !== undefined &&
-      now() - startedAt + next > budgetWallMs
+      now() - skillStartedAt + next > budgetWallMs
     ) {
       break;
     }
