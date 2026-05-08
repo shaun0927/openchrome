@@ -121,6 +121,46 @@ describe('TraceRecorder — start / recordEvent / flush', () => {
     expect(() => r.recordEvent('nope', 'k', {})).not.toThrow();
   });
 
+  test('fire-and-forget capacity flush swallows rejection (no unhandled promise)', async () => {
+    const fake: Pick<TraceStorage, 'recordSessionStart' | 'recordSessionEnd' | 'appendEvents' | 'list' | 'get' | 'close'> = {
+      recordSessionStart: () => undefined,
+      recordSessionEnd: () => undefined,
+      appendEvents: () => {
+        throw new Error('disk full');
+      },
+      list: () => [],
+      get: () => undefined,
+      close: () => undefined,
+    };
+    const r = new TraceRecorder({
+      storage: fake as unknown as TraceStorage,
+      enabled: true,
+      bufferSize: 4,
+      capacityFlushRatio: 0.5, // flush at >= 2 events
+      flushIntervalMs: 24 * 60 * 60 * 1000,
+      now: () => 1700000000000,
+    });
+    const errors: unknown[] = [];
+    const onUnhandled = (err: unknown): void => { errors.push(err); };
+    process.on('unhandledRejection', onUnhandled);
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      r.start({ sessionId: 's', startedAt: 1 });
+      r.recordEvent('s', 'a', { i: 1 });
+      r.recordEvent('s', 'b', { i: 2 }); // crosses capacity threshold → fire-and-forget flush
+      // Allow the rejected promise to settle.
+      await new Promise((res) => setImmediate(res));
+      await new Promise((res) => setImmediate(res));
+      expect(errors).toEqual([]); // No unhandled rejection escaped.
+      expect(errSpy).toHaveBeenCalled(); // The error was logged for ops visibility.
+      // Buffer is preserved for the next attempt (per the flush contract).
+      expect(r._peekBuffer('s')).toHaveLength(2);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      errSpy.mockRestore();
+    }
+  });
+
   test('flush preserves buffered events when persistence fails', async () => {
     // Fake storage that throws on the first appendEvents call, succeeds after.
     let throwCount = 0;

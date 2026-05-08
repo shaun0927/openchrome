@@ -146,7 +146,7 @@ export class TraceRecorder {
       cdpListeners: [],
     };
     state.timer = setInterval(() => {
-      void this.flush(meta.sessionId);
+      this.fireAndForgetFlush(meta.sessionId);
     }, this.flushIntervalMs);
     if (typeof state.timer.unref === 'function') state.timer.unref();
     this.sessions.set(meta.sessionId, state);
@@ -186,7 +186,7 @@ export class TraceRecorder {
       const navListener = (): void => {
         // Flush on each navigation boundary so per-URL slices land in
         // distinct files (helpful for replay / time-travel).
-        void this.flush(sessionId);
+        this.fireAndForgetFlush(sessionId);
       };
       page.on('framenavigated', navListener);
       state.pageListener = { event: 'framenavigated', fn: navListener };
@@ -215,8 +215,25 @@ export class TraceRecorder {
       state.buffer.shift();
     }
     if (state.buffer.length >= Math.ceil(this.bufferSize * this.capacityFlushRatio)) {
-      void this.flush(sessionId);
+      this.fireAndForgetFlush(sessionId);
     }
+  }
+
+  /**
+   * Wrap a fire-and-forget flush so a rejection never escapes as an
+   * unhandled-promise: capacity, timer, and navigation flushes are all
+   * void-typed, and an unhandled rejection there can crash Node when
+   * `--unhandled-rejections=strict` is active. The events stay in the
+   * buffer (per the flush() contract) so the next attempt will retry.
+   */
+  private fireAndForgetFlush(sessionId: string): void {
+    this.flush(sessionId).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[TraceRecorder] flush failed for session=${sessionId}: ${msg} ` +
+          '(events remain buffered for next flush attempt)',
+      );
+    });
   }
 
   /**
