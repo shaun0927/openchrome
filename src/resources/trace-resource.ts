@@ -166,6 +166,20 @@ interface TraceEventEnvelope {
   body: unknown;
 }
 
+/**
+ * Type guard: is `value` a parseable trace event envelope? A legacy or
+ * out-of-band JSONL line can be valid JSON yet not an event (a `null`,
+ * a number, an unrelated object) — accessing `parsed.ts` directly on
+ * such a value would throw and fail the entire read. Only `ts` is
+ * required to be numeric (filters key off it); other fields fall back
+ * to safe defaults during redaction / serialization.
+ */
+function isTraceEvent(value: unknown): value is TraceEventEnvelope {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.ts === 'number' && Number.isFinite(v.ts);
+}
+
 interface StreamReadResult {
   total: number;
   matched: TraceEventEnvelope[];
@@ -209,14 +223,21 @@ async function streamSessionEvents(
           truncated = true;
           break outer;
         }
-        let parsed: TraceEventEnvelope | null = null;
+        let raw: unknown;
         try {
-          parsed = JSON.parse(line) as TraceEventEnvelope;
+          raw = JSON.parse(line);
         } catch {
-          // skip malformed; do not increment total — total counts only
-          // well-formed events so callers can page consistently.
+          // not parseable — do not count toward total; legacy / external
+          // tooling may write incidental noise we should tolerate.
           continue;
         }
+        if (!isTraceEvent(raw)) {
+          // Parseable but not an event envelope (e.g. `null`, scalar,
+          // unrelated object). Skip without throwing so a single bad
+          // line cannot fail the whole read.
+          continue;
+        }
+        const parsed = raw;
         total += 1;
         if (filters.from !== undefined && parsed.ts < filters.from) continue;
         if (filters.to !== undefined && parsed.ts > filters.to) continue;

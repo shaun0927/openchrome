@@ -287,6 +287,35 @@ describe('buildTraceContent — events', () => {
     expect(body.events.length).toBeLessThanOrEqual(10_000);
   });
 
+  test('skips JSONL lines that parse but are not event envelopes', async () => {
+    // Plant a mix of valid events, a JSON `null`, and a scalar `42`.
+    // Each is independently parseable; without a shape guard, accessing
+    // `null.ts` or `(42).ts` would throw and fail the entire read.
+    const sessionDir = path.join(root, 'noise');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, '1-1.jsonl'),
+      [
+        JSON.stringify({ ts: 100, seq: 1, kind: 'OK', body: {} }),
+        'null',
+        '42',
+        '"a string"',
+        '{"unrelated": true}',
+        JSON.stringify({ ts: 200, seq: 2, kind: 'ALSO_OK', body: {} }),
+      ].join('\n') + '\n',
+    );
+    store.recordSessionStart({ sessionId: 'noise', startedAt: 1, status: 'completed' });
+
+    const r = await buildTraceContent({
+      sessionId: 'noise',
+      kind: 'events',
+      query: new URLSearchParams(),
+    });
+    const body = JSON.parse(r!) as { events: Array<{ kind: string }>; total: number };
+    expect(body.events.map((e) => e.kind)).toEqual(['OK', 'ALSO_OK']);
+    expect(body.total).toBe(2);
+  });
+
   test('redacts credential patterns in event bodies on read', async () => {
     // Defence in depth: a legacy / outside-of-recorder JSONL line that
     // still contains a credential must not be returned verbatim.
