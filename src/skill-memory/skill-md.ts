@@ -106,9 +106,21 @@ function unescapeStr(raw: string): string {
   return raw;
 }
 
+/**
+ * Reserved property names that cannot appear as keys in parsed
+ * frontmatter — they would either mutate `Object.prototype` (whole-
+ * process pollution) or alias `Object`'s constructor / prototype slot
+ * on the parsed map and propagate through downstream property access.
+ * The frontmatter schema does not legitimately use any of these.
+ */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /** Minimal `key: value` parser with dotted-path support. */
 function parseSimpleYaml(lines: string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+  // Use a null-prototype map so even if a forbidden key slipped past
+  // the explicit guard below, it could only land on this object — it
+  // could never reach `Object.prototype`.
+  const out = Object.create(null) as Record<string, unknown>;
   for (const line of lines) {
     if (!line.trim() || line.trim().startsWith('#')) continue;
     const colon = line.indexOf(':');
@@ -124,11 +136,20 @@ function parseSimpleYaml(lines: string[]): Record<string, unknown> {
 
 function setNested(target: Record<string, unknown>, dottedKey: string, value: unknown): void {
   const parts = dottedKey.split('.');
+  for (const seg of parts) {
+    if (FORBIDDEN_KEYS.has(seg)) {
+      // Refuse the whole assignment rather than partially writing the
+      // path. A crafted frontmatter cannot mutate `Object.prototype`
+      // through this parser.
+      throw new FrontmatterError(`forbidden frontmatter key segment: "${seg}"`);
+    }
+  }
   let cursor: Record<string, unknown> = target;
   for (let i = 0; i < parts.length - 1; i++) {
     const k = parts[i];
-    if (!cursor[k] || typeof cursor[k] !== 'object') {
-      cursor[k] = {};
+    const existing = cursor[k];
+    if (!existing || typeof existing !== 'object') {
+      cursor[k] = Object.create(null);
     }
     cursor = cursor[k] as Record<string, unknown>;
   }

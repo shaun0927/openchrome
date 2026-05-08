@@ -267,6 +267,36 @@ describe('recordSuccessfulRun — concurrent writes', () => {
   });
 });
 
+describe('recordSuccessfulRun — domain validation', () => {
+  let root: string;
+  beforeEach(() => {
+    root = tempRoot();
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test.each([
+    ['../escape'],
+    ['..'],
+    ['amazon.com/../etc'],
+    ['amazon.com/sub'],
+    ['amazon.com\\sub'],
+    ['has spaces'],
+    [''],
+  ])('rejects malformed domain "%s"', (badDomain) => {
+    expect(() =>
+      recordSuccessfulRun(record({ domain: badDomain }), { rootDir: root, now: () => FIXED_NOW }),
+    ).toThrow();
+    // No state should be left on disk for a rejected domain.
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+  test('listSkillsForDomain rejects malformed domain', () => {
+    expect(() => listSkillsForDomain('../escape', { rootDir: root })).toThrow();
+  });
+});
+
 describe('listSkillsForDomain', () => {
   let root: string;
   beforeEach(() => {

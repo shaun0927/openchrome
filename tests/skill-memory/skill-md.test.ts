@@ -126,6 +126,33 @@ describe('validateFrontmatter — schema rules', () => {
   });
 });
 
+describe('parseSkillMd — prototype pollution defense', () => {
+  test.each([
+    ['__proto__.polluted: 1'],
+    ['constructor.polluted: 2'],
+    ['prototype.polluted: 3'],
+    ['budget.__proto__.polluted: 4'],
+  ])('rejects forbidden key "%s"', (line) => {
+    const text =
+      '---\n' +
+      'schema_version: 1\n' +
+      'name: amazon.cart-add\n' +
+      'domain: amazon.com\n' +
+      'intent: x\n' +
+      'status: candidate\n' +
+      'verified_runs: 1\n' +
+      'last_verified_at: 2026-05-08T12:00:00Z\n' +
+      'contract_ref: txn-001\n' +
+      'graph_node_anchor: a1b2\n' +
+      'author: agent\n' +
+      line +
+      '\n---\n\nbody\n';
+    expect(() => parseSkillMd(text)).toThrow(FrontmatterError);
+    // Sanity: Object.prototype was not polluted as a side effect.
+    expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
 describe('parseSkillMd — preserves digit-only string fields', () => {
   test('contract_ref written as digits round-trips as a string', () => {
     const text = stringifySkillMd({

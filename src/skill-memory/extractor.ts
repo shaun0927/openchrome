@@ -86,6 +86,34 @@ export function defaultSkillRootDir(): string {
   return path.join(os.homedir(), '.openchrome', 'skills');
 }
 
+/**
+ * Reject any `domain` value that could escape the skill-storage tree
+ * via `path.join`. The frontmatter schema documents domain as the
+ * eTLD+1 host (e.g. `amazon.com`); this guard is the load-bearing
+ * check that keeps a malformed or hostile transaction record from
+ * writing files outside `~/.openchrome/skills/`.
+ *
+ * The character set is intentionally narrow: alphanumerics, dot,
+ * dash, underscore, and colon (so explicit non-default ports survive).
+ * Anything else — path separators, parent-directory tokens, null
+ * bytes — is a hard error.
+ */
+function assertSafeDomain(domain: string): void {
+  if (typeof domain !== 'string' || domain.length === 0) {
+    throw new Error('skill-memory: domain must be a non-empty string');
+  }
+  if (domain.length > 253) {
+    throw new Error('skill-memory: domain is implausibly long');
+  }
+  if (!/^[A-Za-z0-9._:-]+$/.test(domain)) {
+    throw new Error(`skill-memory: domain "${domain}" contains forbidden characters`);
+  }
+  // Reject parent-traversal segments even if individually valid chars.
+  if (domain === '.' || domain === '..' || domain.split(/[./\\]/).some((seg) => seg === '..')) {
+    throw new Error(`skill-memory: domain "${domain}" includes parent-directory traversal`);
+  }
+}
+
 export function computeSkillId(graphNodeAnchor: string, contractId: string): string {
   return crypto
     .createHash('sha256')
@@ -248,6 +276,7 @@ export function recordSuccessfulRun(
   const rootDir = opts.rootDir ?? defaultSkillRootDir();
   const now = opts.now ?? Date.now;
   const promotionThreshold = opts.promotionThreshold ?? PROMOTION_RUN_THRESHOLD;
+  assertSafeDomain(inputs.domain);
   const skillId = computeSkillId(inputs.graph_node_anchor, inputs.contract_id);
   const domainDir = path.join(rootDir, inputs.domain);
   fs.mkdirSync(domainDir, { recursive: true });
@@ -376,6 +405,7 @@ intent string.
 
 /** Read every SKILL.md under a domain (recall + curator consume this). */
 export function listSkillsForDomain(domain: string, opts: ExtractorOptions = {}): SkillRecord[] {
+  assertSafeDomain(domain);
   const rootDir = opts.rootDir ?? defaultSkillRootDir();
   const domainDir = path.join(rootDir, domain);
   if (!fs.existsSync(domainDir)) return [];
