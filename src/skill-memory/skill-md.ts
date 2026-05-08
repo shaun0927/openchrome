@@ -157,16 +157,20 @@ function setNested(target: Record<string, unknown>, dottedKey: string, value: un
 }
 
 function coerce(raw: string): unknown {
-  // Strings stay strings — numeric coercion happens at validation time
-  // for the small set of number-typed fields (schema_version,
-  // verified_runs, budget.*). Eager Number.parseInt() destroys
-  // string-typed fields like contract_ref or graph_node_anchor when
-  // they happen to be all digits or hex-with-no-letters (issue: a
-  // round-trip turns "12345" into a number, validateFrontmatter then
-  // rejects the file because mustString sees a number).
-  if (raw === '') return '';
-  if (raw === 'true') return true;
-  if (raw === 'false') return false;
+  // Strings stay strings — type coercion is deferred to validation
+  // time for the small closed set of non-string fields:
+  //   number-typed: schema_version, verified_runs, budget.*
+  //   none of the schema fields are boolean
+  // Eager Number.parseInt() destroyed string-typed fields like
+  // contract_ref / graph_node_anchor when they happened to be all
+  // digits, and eager `true`/`false` → boolean coercion likewise
+  // destroyed string-typed fields like `name: true` (a SKILL.md
+  // written through `stringifySkillMd` does not quote those tokens
+  // because the writer does not know they are reserved literals;
+  // the next read then turned the value into a boolean and
+  // `validateFrontmatter` threw). Returning the raw string lets
+  // both writers and validators stay in charge of their own
+  // type expectations.
   return raw;
 }
 

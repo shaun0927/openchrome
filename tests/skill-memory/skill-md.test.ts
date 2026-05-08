@@ -173,4 +173,18 @@ describe('parseSkillMd — preserves digit-only string fields', () => {
     expect(parsed.frontmatter.graph_node_anchor).toBe('0123456789');
     expect(typeof parsed.frontmatter.graph_node_anchor).toBe('string');
   });
+
+  test('boolean-like string field "true" round-trips as a string (not coerced)', () => {
+    // `name` is documented as a string and the NAME_PATTERN regex
+    // accepts the literal token "true". Without preserving raw
+    // strings, `coerce` turned this into a boolean and the next read
+    // tripped `mustString`, breaking re-record for the skill.
+    const text = stringifySkillMd({
+      frontmatter: fm({ name: 'true' }),
+      body: '',
+    });
+    const parsed = parseSkillMd(text);
+    expect(parsed.frontmatter.name).toBe('true');
+    expect(typeof parsed.frontmatter.name).toBe('string');
+  });
 });
