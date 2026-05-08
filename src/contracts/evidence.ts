@@ -250,12 +250,25 @@ export async function writeEvidenceBundle(
     manifest = buildManifest();
     manifestBytes = Buffer.byteLength(JSON.stringify(manifest, null, 2), 'utf8');
   }
+  // `byte_size` is self-referential: writing it grows the manifest by
+  // the digit count of the new value, which would make the recorded
+  // size lag the actual on-disk bytes. Iterate to a fixpoint (bounded
+  // since each step changes only the digit count of `byte_size`).
+  let prevManifestBytes = -1;
+  let iterations = 0;
+  while (manifestBytes !== prevManifestBytes && iterations < 4) {
+    prevManifestBytes = manifestBytes;
+    manifest.byte_size = byteSize + manifestBytes;
+    manifestBytes = Buffer.byteLength(JSON.stringify(manifest, null, 2), 'utf8');
+    iterations++;
+  }
   byteSize += manifestBytes;
   manifest.byte_size = byteSize;
+  const manifestText = JSON.stringify(manifest, null, 2);
 
   const tmpPath = path.join(bundleDir, TMP_MANIFEST_FILENAME);
   const finalPath = path.join(bundleDir, MANIFEST_FILENAME);
-  fs.writeFileSync(tmpPath, JSON.stringify(manifest, null, 2), 'utf8');
+  fs.writeFileSync(tmpPath, manifestText, 'utf8');
   fs.renameSync(tmpPath, finalPath);
 
   return { bundleDir, manifestPath: finalPath, byteSize };
