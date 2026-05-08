@@ -163,11 +163,15 @@ export function evaluate(assertion: Assertion, ctx: AssertionContext): Evidence 
       // otherwise `not(network)` would always "pass" before PR-10
       // wires network up. Propagate the unsupported marker and keep
       // passed=false so callers cannot drive logic off a stub.
-      const unsupported = isUnsupported(child);
+      // Host probe failures are also non-negatable: `not(dom_text)`
+      // must not pass just because the selector probe could not be
+      // evaluated.
+      const nonNegatable = isUnsupported(child) || hasProbeError(child);
       const details: Record<string, unknown> = { negated: child.assertion_kind };
-      if (unsupported) details.unsupported = true;
+      if (isUnsupported(child)) details.unsupported = true;
+      if (hasProbeError(child)) details.probe_error = true;
       return {
-        passed: unsupported ? false : !child.passed,
+        passed: nonNegatable ? false : !child.passed,
         assertion_kind: 'not',
         details,
         children: [child],
@@ -234,4 +238,8 @@ function mkUnsupportedEvidence(
 
 function isUnsupported(evidence: Evidence): boolean {
   return evidence.details?.unsupported === true;
+}
+
+function hasProbeError(evidence: Evidence): boolean {
+  return typeof evidence.details?.probe_error === 'string';
 }

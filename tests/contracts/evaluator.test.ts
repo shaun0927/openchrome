@@ -184,6 +184,23 @@ describe('evaluate — host probe failures (always-settles guarantee)', () => {
     expect(r.passed).toBe(false);
     expect(r.details.probe_error).toContain('querySelectorAll');
   });
+
+  test('not(dom_text) does not pass when the child probe throws', () => {
+    const r = evaluate(
+      {
+        kind: 'not',
+        child: { kind: 'dom_text', selector: '#bad', contains: 'x' },
+      },
+      ctx({
+        domText: () => {
+          throw new Error('Invalid selector');
+        },
+      }),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.details.probe_error).toBe(true);
+    expect(r.children?.[0].details.probe_error).toContain('Invalid selector');
+  });
 });
 
 describe('evaluate — composite propagates unsupported correctly', () => {
