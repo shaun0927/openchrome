@@ -14,6 +14,12 @@
  * the implementation is just a Map under the hood. We give it a
  * dedicated module so future strategies (LRU bounded by memory, etc.)
  * are a non-breaking swap.
+ *
+ * `styleHash` now covers ALL fields that `computePerceptualMetadata` reads,
+ * including `topElementBackendNodeId`, `descendantBackendNodeIds`, and
+ * `hasChildBoxes` — not just CSS style fields. This prevents stale entries
+ * when an overlay appears/disappears or a display:contents child-box state
+ * changes without triggering a documentUpdated event.
  */
 
 import type { NodeProbe, PerceptualMetadata, ViewportRect } from './types';
@@ -31,16 +37,30 @@ function keyString(k: CacheKey): string {
 }
 
 /**
- * Compute a stable hash of the perceptually-relevant fields from a NodeProbe.
- * Include this in the `styleHash` key part so that in-document SPA mutations
- * (which do not fire DOM.documentUpdated) still produce a cache miss.
+ * Compute a stable hash of ALL fields that `computePerceptualMetadata` reads
+ * from a NodeProbe. Include this in the `styleHash` key part so that
+ * in-document SPA mutations (which do not fire DOM.documentUpdated) still
+ * produce a cache miss.
+ *
+ * Covered fields:
+ *   - CSS/style: display, visibility, pointerEvents, opacityChain,
+ *     ancestorDisplayNone, ancestorVisibilityHidden, pixelBox
+ *   - Overlay/hit-test: topElementBackendNodeId
+ *   - Descendant set: descendantBackendNodeIds (serialised as a sorted array
+ *     for stability — set iteration order is insertion-order and may vary)
+ *   - display:contents child-box predicate: hasChildBoxes
  */
 export function computeStyleHash(probe: Pick<NodeProbe,
   'display' | 'visibility' | 'pointerEvents' | 'pixelBox' |
-  'opacityChain' | 'ancestorDisplayNone' | 'ancestorVisibilityHidden'
+  'opacityChain' | 'ancestorDisplayNone' | 'ancestorVisibilityHidden' |
+  'topElementBackendNodeId' | 'descendantBackendNodeIds' | 'hasChildBoxes'
 >): string {
   const box = probe.pixelBox;
   const boxStr = box ? `${box.x},${box.y},${box.w},${box.h}` : 'null';
+  const topId = probe.topElementBackendNodeId === null ? 'null' : String(probe.topElementBackendNodeId);
+  const descIds = probe.descendantBackendNodeIds !== undefined
+    ? [...probe.descendantBackendNodeIds].sort((a, b) => a - b).join(',')
+    : '';
   return [
     probe.display,
     probe.visibility,
@@ -49,6 +69,9 @@ export function computeStyleHash(probe: Pick<NodeProbe,
     probe.ancestorVisibilityHidden ? '1' : '0',
     probe.opacityChain.join(','),
     boxStr,
+    topId,
+    descIds,
+    probe.hasChildBoxes ? '1' : '0',
   ].join('|');
 }
 

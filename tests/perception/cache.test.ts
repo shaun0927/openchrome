@@ -17,7 +17,8 @@ function md(extra: Partial<PerceptualMetadata> = {}): PerceptualMetadata {
 /** Minimal NodeProbe fragment for style-hash tests. */
 function probe(extra: Partial<Pick<NodeProbe,
   'display' | 'visibility' | 'pointerEvents' | 'pixelBox' |
-  'opacityChain' | 'ancestorDisplayNone' | 'ancestorVisibilityHidden'
+  'opacityChain' | 'ancestorDisplayNone' | 'ancestorVisibilityHidden' |
+  'topElementBackendNodeId' | 'descendantBackendNodeIds' | 'hasChildBoxes'
 >> = {}): Parameters<typeof computeStyleHash>[0] {
   return {
     display: 'block',
@@ -27,6 +28,9 @@ function probe(extra: Partial<Pick<NodeProbe,
     opacityChain: [1],
     ancestorDisplayNone: false,
     ancestorVisibilityHidden: false,
+    topElementBackendNodeId: 1,
+    descendantBackendNodeIds: undefined,
+    hasChildBoxes: false,
     ...extra,
   };
 }
@@ -202,5 +206,84 @@ describe('PerceptualCache — style-hash invalidation (SPA in-document mutations
     expect(computeStyleHash({ ...base, opacityChain: [0.5] })).not.toBe(computeStyleHash(base));
     expect(computeStyleHash({ ...base, pixelBox: { x: 0, y: 0, w: 20, h: 20 } })).not.toBe(computeStyleHash(base));
     expect(computeStyleHash({ ...base, pixelBox: null })).not.toBe(computeStyleHash(base));
+    // Probe fields read by computePerceptualMetadata that were previously omitted.
+    expect(computeStyleHash({ ...base, topElementBackendNodeId: 99 })).not.toBe(computeStyleHash(base));
+    expect(computeStyleHash({ ...base, topElementBackendNodeId: null })).not.toBe(computeStyleHash(base));
+    expect(computeStyleHash({ ...base, descendantBackendNodeIds: new Set([10, 20]) })).not.toBe(computeStyleHash(base));
+    expect(computeStyleHash({ ...base, hasChildBoxes: true })).not.toBe(computeStyleHash(base));
+  });
+});
+
+describe('PerceptualCache — probe-field invalidation (overlay / descendant / child-box)', () => {
+  test('topElementBackendNodeId flip → recompute (overlay appearance simulated)', () => {
+    const cache = new PerceptualCache();
+    let calls = 0;
+
+    // Initial state: node is on top (topElementBackendNodeId === backendNodeId).
+    const hashBefore = computeStyleHash(probe({ topElementBackendNodeId: 1 }));
+    cache.getOrCompute(
+      { frameId: 'f1', viewport: VIEWPORT, backendNodeId: 1, styleHash: hashBefore },
+      () => { calls++; return md({ effectiveDisplay: 'rendered', interactionFeasibility: 'ok' }); },
+    );
+    expect(calls).toBe(1);
+
+    // Overlay appears: elementFromPoint now returns a different node (id 99).
+    const hashAfter = computeStyleHash(probe({ topElementBackendNodeId: 99 }));
+    expect(hashAfter).not.toBe(hashBefore);
+
+    const result = cache.getOrCompute(
+      { frameId: 'f1', viewport: VIEWPORT, backendNodeId: 1, styleHash: hashAfter },
+      () => { calls++; return md({ effectiveDisplay: 'covered_by', interactionFeasibility: 'blocked_by_overlay' }); },
+    );
+    // Must recompute — stale entry must NOT be returned.
+    expect(calls).toBe(2);
+    expect(result.effectiveDisplay).toBe('covered_by');
+    expect(result.interactionFeasibility).toBe('blocked_by_overlay');
+  });
+
+  test('descendantBackendNodeIds change → recompute', () => {
+    const cache = new PerceptualCache();
+    let calls = 0;
+
+    const hashBefore = computeStyleHash(probe({ descendantBackendNodeIds: new Set([10]) }));
+    cache.getOrCompute(
+      { frameId: 'f1', viewport: VIEWPORT, backendNodeId: 1, styleHash: hashBefore },
+      () => { calls++; return md(); },
+    );
+    expect(calls).toBe(1);
+
+    // Descendant set grows (e.g. lazy-rendered child added).
+    const hashAfter = computeStyleHash(probe({ descendantBackendNodeIds: new Set([10, 20]) }));
+    expect(hashAfter).not.toBe(hashBefore);
+
+    cache.getOrCompute(
+      { frameId: 'f1', viewport: VIEWPORT, backendNodeId: 1, styleHash: hashAfter },
+      () => { calls++; return md(); },
+    );
+    expect(calls).toBe(2);
+  });
+
+  test('hasChildBoxes change → recompute (display:contents child-box state flip)', () => {
+    const cache = new PerceptualCache();
+    let calls = 0;
+
+    // display:contents node with no child boxes yet.
+    const hashBefore = computeStyleHash(probe({ display: 'contents', hasChildBoxes: false }));
+    cache.getOrCompute(
+      { frameId: 'f1', viewport: VIEWPORT, backendNodeId: 1, styleHash: hashBefore },
+      () => { calls++; return md({ effectiveDisplay: 'display_contents_no_box' }); },
+    );
+    expect(calls).toBe(1);
+
+    // Child gets a layout box — hasChildBoxes flips to true.
+    const hashAfter = computeStyleHash(probe({ display: 'contents', hasChildBoxes: true }));
+    expect(hashAfter).not.toBe(hashBefore);
+
+    const result = cache.getOrCompute(
+      { frameId: 'f1', viewport: VIEWPORT, backendNodeId: 1, styleHash: hashAfter },
+      () => { calls++; return md({ effectiveDisplay: 'rendered' }); },
+    );
+    expect(calls).toBe(2);
+    expect(result.effectiveDisplay).toBe('rendered');
   });
 });
