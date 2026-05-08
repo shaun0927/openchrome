@@ -230,6 +230,15 @@ export class SkillGraphStorage {
    * counters, appends to the to_state distribution, and creates the edge
    * row if it didn't exist. Atomic via SQLite transaction.
    *
+   * The transaction runs in IMMEDIATE mode so the writer lock is acquired
+   * before the leading SELECT. Without this, two same-domain writers on
+   * separate connections can both observe the same snapshot and one will
+   * fail with `SQLITE_BUSY_SNAPSHOT` (or hit a unique-key collision on
+   * first insert) when upgrading to a write — silently dropping an
+   * outcome event under concurrent agent activity. With IMMEDIATE the
+   * second writer simply waits, matching the per-domain serialisation
+   * contract documented in #702 v2.
+   *
    * `observedToState` may be undefined when execution fails before the
    * page settles (e.g., navigation error). In that case the distribution
    * is not updated.
@@ -309,7 +318,8 @@ export class SkillGraphStorage {
           );
       }
     });
-    tx(args);
+    // Use IMMEDIATE so we take the writer lock before the leading SELECT.
+    tx.immediate(args);
   }
 
   /** Look up a single edge row. */
