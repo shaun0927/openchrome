@@ -30,6 +30,13 @@ export class PerceptualCache {
   private readonly entries = new Map<string, PerceptualMetadata>();
   /** Per-frame monotonic doc counter. Bumped on DOM.documentUpdated. */
   private readonly docCounters = new Map<string, number>();
+  /**
+   * Last-seen viewport per `frameId|docCounter`. When the viewport
+   * changes for a given doc, all entries with the previous viewport
+   * are evicted so memory stays bounded across window resizes and
+   * device-emulation toggles — matching the header-comment contract.
+   */
+  private readonly lastViewport = new Map<string, string>();
 
   /**
    * Read or compute. The host supplies the `compute` function which is
@@ -41,6 +48,7 @@ export class PerceptualCache {
     compute: () => PerceptualMetadata,
   ): PerceptualMetadata {
     const docCounter = this.getDocCounter(keyParts.frameId);
+    this.evictStaleViewport(keyParts.frameId, docCounter, keyParts.viewport);
     const k = keyString({ ...keyParts, docCounter });
     const hit = this.entries.get(k);
     if (hit) return hit;
@@ -69,12 +77,37 @@ export class PerceptualCache {
     for (const k of this.entries.keys()) {
       if (k.startsWith(prefix)) this.entries.delete(k);
     }
+    // Drop the stale-viewport tracking key for the old counter.
+    this.lastViewport.delete(`${frameId}|${next - 1}`);
   }
 
   /** Drop everything (test hook + reset on serve restart). */
   clear(): void {
     this.entries.clear();
     this.docCounters.clear();
+    this.lastViewport.clear();
+  }
+
+  /**
+   * If the incoming viewport for `(frameId, docCounter)` differs from
+   * the last-seen one, evict all entries that share the old viewport
+   * prefix for this doc, then record the new viewport as current.
+   */
+  private evictStaleViewport(frameId: string, docCounter: number, viewport: ViewportRect): void {
+    const vpStr = `${viewport.x},${viewport.y},${viewport.w},${viewport.h}`;
+    const trackKey = `${frameId}|${docCounter}`;
+    const prev = this.lastViewport.get(trackKey);
+    if (prev === undefined) {
+      this.lastViewport.set(trackKey, vpStr);
+      return;
+    }
+    if (prev === vpStr) return;
+    // Viewport changed — drop all cached entries for the old viewport.
+    const stalePrefix = `${frameId}|${docCounter}|${prev}|`;
+    for (const k of this.entries.keys()) {
+      if (k.startsWith(stalePrefix)) this.entries.delete(k);
+    }
+    this.lastViewport.set(trackKey, vpStr);
   }
 
   /** Inspect the current docCounter for a frame (debug + tests). */
