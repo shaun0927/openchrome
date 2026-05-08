@@ -107,7 +107,7 @@ describe('buildTraceListPayload + readTraceResource(list)', () => {
     expect(JSON.parse(r!.text)).toEqual([]);
   });
 
-  test('returns [] for api-key callers (fail-closed pending tenant tagging)', () => {
+  test('returns [] for tenant-bound callers (api-key + jwt) until tagging exists', () => {
     const root = tempRoot();
     process.env.OPENCHROME_TRACE_ROOT = root;
     const store = new TraceStorage({ rootDir: root });
@@ -116,8 +116,14 @@ describe('buildTraceListPayload + readTraceResource(list)', () => {
 
     const all = JSON.parse(buildTraceListPayload()) as unknown[];
     expect(all.length).toBe(1);
-    const isolated = JSON.parse(buildTraceListPayload({ mode: 'api-key' })) as unknown[];
-    expect(isolated).toEqual([]);
+    const apiKey = JSON.parse(buildTraceListPayload({ mode: 'api-key' })) as unknown[];
+    expect(apiKey).toEqual([]);
+    // JWT callers also carry tenant identity — same fail-closed treatment.
+    const jwt = JSON.parse(buildTraceListPayload({ mode: 'jwt' })) as unknown[];
+    expect(jwt).toEqual([]);
+    // disabled / legacy modes are not multi-tenant; they see all rows.
+    const disabled = JSON.parse(buildTraceListPayload({ mode: 'disabled' })) as unknown[];
+    expect(disabled.length).toBe(1);
     fs.rmSync(root, { recursive: true, force: true });
   });
 });
@@ -181,18 +187,25 @@ describe('buildTraceContent — meta', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('returns null for api-key callers (fail-closed pending tenant tagging)', async () => {
+  test('returns null for tenant-bound callers (api-key + jwt)', async () => {
     const root = tempRoot();
     process.env.OPENCHROME_TRACE_ROOT = root;
     const store = new TraceStorage({ rootDir: root });
     store.recordSessionStart({ sessionId: 's1', startedAt: 1000, status: 'completed' });
     store.close();
 
-    const r = await buildTraceContent(
-      { sessionId: 's1', kind: 'meta', query: new URLSearchParams() },
-      { mode: 'api-key' },
-    );
-    expect(r).toBeNull();
+    expect(
+      await buildTraceContent(
+        { sessionId: 's1', kind: 'meta', query: new URLSearchParams() },
+        { mode: 'api-key' },
+      ),
+    ).toBeNull();
+    expect(
+      await buildTraceContent(
+        { sessionId: 's1', kind: 'meta', query: new URLSearchParams() },
+        { mode: 'jwt' },
+      ),
+    ).toBeNull();
     fs.rmSync(root, { recursive: true, force: true });
   });
 });
@@ -274,6 +287,31 @@ describe('buildTraceContent — events', () => {
     expect(body.events.length).toBeLessThanOrEqual(10_000);
   });
 
+  test('redacts credential patterns in event bodies on read', async () => {
+    // Defence in depth: a legacy / outside-of-recorder JSONL line that
+    // still contains a credential must not be returned verbatim.
+    store.appendEvents('e', [
+      {
+        ts: 400,
+        seq: 4,
+        kind: 'Network.requestWillBeSent',
+        body: {
+          headers: { Authorization: 'Bearer abcdefghijklmnop' },
+          url: 'https://x.example?token=hunter2hunter2',
+        },
+      },
+    ]);
+    const r = await buildTraceContent({
+      sessionId: 'e',
+      kind: 'events',
+      query: new URLSearchParams(),
+    });
+    const text = r!;
+    expect(text).toContain('[REDACTED]');
+    expect(text).not.toContain('abcdefghijklmnop');
+    expect(text).not.toContain('hunter2hunter2');
+  });
+
   test('streams: limit=1 keeps matched array small even with many events', async () => {
     // Append a large batch and confirm the response cap is respected.
     // Regression target: the prior implementation read every event into
@@ -348,21 +386,27 @@ describe('readTraceResource — full URI dispatch', () => {
     expect(await readTraceResource('openchrome://other')).toBeNull();
   });
 
-  test('list URI returns [] for api-key callers (tenant isolation)', async () => {
-    const r = await readTraceResource(traceListResource.uri, { mode: 'api-key' });
-    expect(r?.mimeType).toBe('application/json');
-    expect(JSON.parse(r!.text)).toEqual([]);
+  test('list URI returns [] for tenant-bound callers (tenant isolation)', async () => {
+    for (const mode of ['api-key', 'jwt'] as const) {
+      const r = await readTraceResource(traceListResource.uri, { mode });
+      expect(r?.mimeType).toBe('application/json');
+      expect(JSON.parse(r!.text)).toEqual([]);
+    }
   });
 
-  test('meta URI returns null for api-key callers (tenant isolation)', async () => {
-    expect(
-      await readTraceResource('openchrome://trace/r/meta', { mode: 'api-key' }),
-    ).toBeNull();
+  test('meta URI returns null for tenant-bound callers (tenant isolation)', async () => {
+    for (const mode of ['api-key', 'jwt'] as const) {
+      expect(
+        await readTraceResource('openchrome://trace/r/meta', { mode }),
+      ).toBeNull();
+    }
   });
 
-  test('events URI returns null for api-key callers (tenant isolation)', async () => {
-    expect(
-      await readTraceResource('openchrome://trace/r/events', { mode: 'api-key' }),
-    ).toBeNull();
+  test('events URI returns null for tenant-bound callers (tenant isolation)', async () => {
+    for (const mode of ['api-key', 'jwt'] as const) {
+      expect(
+        await readTraceResource('openchrome://trace/r/events', { mode }),
+      ).toBeNull();
+    }
   });
 });

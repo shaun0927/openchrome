@@ -24,11 +24,22 @@
  * ----------------
  * The `traces` index does not yet carry a tenant id (the recorder writes
  * untagged rows; see #698 / #704). Until per-trace tenant tagging lands,
- * every read entry point refuses to serve api-key callers — `list`
- * returns `[]` and dynamic URIs return null. Other modes (stdio,
- * disabled-auth) are unaffected. This is fail-closed: it keeps trace
- * data inside the host process for legitimate operators while preventing
- * cross-tenant leakage in multi-tenant deployments.
+ * every read entry point refuses any caller that carries tenant identity
+ * — i.e. `mode: 'api-key'` and `mode: 'jwt'` — because both authenticate
+ * a specific tenant in multi-tenant deployments and would otherwise be
+ * able to enumerate other tenants' sessions. `list` returns `[]` and
+ * dynamic URIs return null for those callers. `disabled` / `legacy` /
+ * stdio (no principal) are unaffected. This is fail-closed.
+ *
+ * Defense in depth on read
+ * ------------------------
+ * The recorder runs the redactor on the write path (#735 / #736), but
+ * trace files written before a redactor pattern existed, written by
+ * tooling outside the recorder, or written by a buggy producer can
+ * still contain credentials. Every event returned through this module
+ * is therefore re-redacted before serialization — the cost is one
+ * pattern pass against already-stored JSONL and the redactor module is
+ * the same one the writer uses, so behaviour stays consistent.
  */
 
 import * as fs from 'node:fs';
@@ -36,6 +47,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
+import { redactTraceEvent } from '../trace/redactor';
 import type { MCPResourceDefinition } from './usage-guide';
 
 type BetterSqlite3 = typeof import('better-sqlite3');
@@ -65,16 +77,23 @@ function openIndex(): Database | null {
 /**
  * Caller identity carried into the resource read paths. Mirrors the
  * shape of `Principal` in src/auth/api-key-types.ts but is declared
- * structurally to keep this module free of an auth import. Only `mode`
- * is consulted; api-key callers are refused until per-trace tenant
- * tagging exists (see file header).
+ * structurally to keep this module free of an auth import.
  */
 export interface TraceResourceCaller {
   mode?: string;
+  tenantId?: string;
 }
 
-function isApiKeyCaller(caller?: TraceResourceCaller): boolean {
-  return caller?.mode === 'api-key';
+/**
+ * True when the caller carries a tenant identity that we cannot honour
+ * at read time yet — i.e. `api-key` or `jwt` modes. Both authenticate
+ * a specific tenant, so serving the un-tagged `traces` table to either
+ * would leak cross-tenant data. Returns false for stdio (no principal)
+ * and for `disabled` / `legacy` modes which are not multi-tenant.
+ */
+function isTenantBoundCaller(caller?: TraceResourceCaller): boolean {
+  if (!caller || !caller.mode) return false;
+  return caller.mode === 'api-key' || caller.mode === 'jwt';
 }
 
 /** Static-listing resource — discoverable via `resources/list`. */
@@ -89,8 +108,8 @@ export const traceListResource: MCPResourceDefinition = {
 
 /** Build the JSON payload for `openchrome://trace/list`. */
 export function buildTraceListPayload(caller?: TraceResourceCaller): string {
-  // Fail-closed for api-key callers — see file header on tenant isolation.
-  if (isApiKeyCaller(caller)) return JSON.stringify([]);
+  // Fail-closed for tenant-bound callers — see file header on isolation.
+  if (isTenantBoundCaller(caller)) return JSON.stringify([]);
   const db = openIndex();
   if (!db) return JSON.stringify([]);
   try {
@@ -233,14 +252,15 @@ const MAX_TOTAL_SCAN = 200_000;
 
 /**
  * Compute the JSON payload for a parsed dynamic URI. Returns null when
- * the underlying session is not found in the index, when the caller is
- * an api-key principal (fail-closed; see file header).
+ * the underlying session is not found in the index, or when the caller
+ * is tenant-bound (api-key / jwt) — fail-closed pending per-trace tenant
+ * tagging; see file header.
  */
 export async function buildTraceContent(
   parsed: ResolvedTraceUri,
   caller?: TraceResourceCaller,
 ): Promise<string | null> {
-  if (isApiKeyCaller(caller)) return null;
+  if (isTenantBoundCaller(caller)) return null;
   const db = openIndex();
   if (!db) return null;
   let meta: unknown;
@@ -269,12 +289,18 @@ export async function buildTraceContent(
     limit,
   });
 
+  // Defence in depth: re-run the redactor over every returned event so
+  // a legacy / outside-of-recorder JSONL line cannot leak credentials
+  // through the read path. Same module the recorder uses on write, so
+  // patterns stay aligned.
+  const redacted = result.matched.map((ev) => redactTraceEvent(ev));
+
   return JSON.stringify({
     sessionId: parsed.sessionId,
     total: result.total,
-    returned: result.matched.length,
+    returned: redacted.length,
     truncated: result.truncated,
-    events: result.matched,
+    events: redacted,
   });
 }
 
