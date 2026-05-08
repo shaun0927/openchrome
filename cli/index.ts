@@ -41,6 +41,7 @@ import {
   validateBase32,
 } from './totp-store';
 import { registerAdminKeysCommand } from './admin-keys';
+import { registerContractCommand } from './contract-teach';
 
 const program = new Command();
 
@@ -1246,5 +1247,8 @@ totp
 
 // Admin CLI — tenant API key management (issue #9 / PR3).
 registerAdminKeysCommand(program);
+
+// Outcome contract authoring helpers (issue #705).
+registerContractCommand(program);
 
 program.parse();
