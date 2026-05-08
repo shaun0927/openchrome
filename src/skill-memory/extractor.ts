@@ -454,6 +454,45 @@ intent string.
   };
 }
 
+export interface FailedRunInputs {
+  /** Settled transaction id. */
+  txn_id: string;
+  /** The contract-id this transaction settled under. */
+  contract_id: string;
+  /** eTLD+1 host this skill applies to. */
+  domain: string;
+  /** Hex state-hash from #702 — entry node in the skill graph. */
+  graph_node_anchor: string;
+  /** Failure verdict string (e.g. 'postcondition_violation'). */
+  verdict?: string;
+}
+
+/**
+ * Emit a `skill_run` audit event for a failed contract settlement.
+ *
+ * Symmetric with the success-path emission inside `recordSuccessfulRun`.
+ * The extractor does not persist any files on failure (failures don't
+ * increment `verified_runs`), but the audit-stats resolver needs a
+ * `skill_run` event with a non-success verdict so that `failuresInWindow`
+ * is correctly tallied and Pass 1 demotion in `runCurator` can fire.
+ *
+ * Callers (e.g. the contract runtime's failure settle path) should call
+ * this whenever a postcondition violation is detected for a known skill.
+ */
+export function recordFailedRun(inputs: FailedRunInputs, opts: ExtractorOptions = {}): void {
+  if (!opts.auditEmitter) return;
+  const now = opts.now ?? Date.now;
+  const skillId = computeSkillId(inputs.graph_node_anchor, inputs.contract_id);
+  opts.auditEmitter.emit('skill_run', opts.sessionId ?? '', {
+    skill_id: skillId,
+    verdict: inputs.verdict ?? 'postcondition_violation',
+    contract_id: inputs.contract_id,
+    graph_node_anchor: inputs.graph_node_anchor,
+    domain: inputs.domain,
+    ts: now(),
+  });
+}
+
 /** Read every SKILL.md under a domain (recall + curator consume this). */
 export function listSkillsForDomain(domain: string, opts: ExtractorOptions = {}): SkillRecord[] {
   assertSafeDomain(domain);

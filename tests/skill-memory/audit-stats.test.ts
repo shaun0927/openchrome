@@ -259,6 +259,72 @@ describe('createAuditLogStatsResolver — default stats window covers curator un
   });
 });
 
+describe('createAuditLogStatsResolver — failure tally via skill_run verdict (P1 regression)', () => {
+  // Approach A: extractor now emits skill_run with verdict='postcondition_violation'
+  // from recordFailedRun(). This test verifies audit-stats tallies those events so
+  // that failuresInWindow > 0 and Pass 1 demotion in runCurator can fire.
+  test('skill_run with verdict=postcondition_violation increments failuresInWindow', () => {
+    const lines = [
+      audit('2026-05-01T12:00:00Z', 'skill_run', { skill_id: 'sk-001', verdict: 'success' }),
+      audit('2026-05-02T12:00:00Z', 'skill_run', { skill_id: 'sk-001', verdict: 'postcondition_violation' }),
+      audit('2026-05-03T12:00:00Z', 'skill_run', { skill_id: 'sk-001', verdict: 'postcondition_violation' }),
+    ];
+    const resolver = createInMemoryStatsResolver(lines, { now: () => NOW });
+    const stats = resolver(rec());
+    expect(stats.successesInWindow).toBe(1);
+    expect(stats.failuresInWindow).toBe(2);
+  });
+
+  test('failuresInWindow stays 0 when no failure skill_run events exist', () => {
+    const lines = [
+      audit('2026-05-01T12:00:00Z', 'skill_run', { skill_id: 'sk-001', verdict: 'success' }),
+      // contract_runtime failure does NOT increment failuresInWindow (skill_run is required)
+      audit('2026-05-02T12:00:00Z', 'contract_runtime', { contract_id: 'amazon.checkout', verdict: 'postcondition_violation' }),
+    ];
+    const resolver = createInMemoryStatsResolver(lines, { now: () => NOW });
+    const stats = resolver(rec());
+    expect(stats.successesInWindow).toBe(1);
+    expect(stats.failuresInWindow).toBe(0);
+  });
+});
+
+describe('createAuditLogStatsResolver — fail-window independent of stats-window (P2 regression)', () => {
+  // Reducing statsWindowDays below failWindowMs must NOT truncate failure counts.
+  // A 7-day stats window with a 30-day fail window must count failures identically
+  // to a 30-day stats window with a 30-day fail window.
+  test('7-day stats window + 30-day fail window counts same failures as 30-day stats window', () => {
+    const FAIL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+    const fifteenDaysAgo = new Date(NOW - 15 * 24 * 60 * 60 * 1000).toISOString();
+    const lines = [
+      // 15 days ago: within fail window (30d), but OUTSIDE a 7-day stats window
+      audit(fifteenDaysAgo, 'skill_run', { skill_id: 'sk-001', verdict: 'postcondition_violation' }),
+    ];
+
+    const resolverNarrowStats = createInMemoryStatsResolver(lines, {
+      now: () => NOW,
+      failWindowMs: FAIL_WINDOW_MS,
+      statsWindowDays: 7,
+    });
+    const resolverWideStats = createInMemoryStatsResolver(lines, {
+      now: () => NOW,
+      failWindowMs: FAIL_WINDOW_MS,
+      statsWindowDays: 30,
+    });
+
+    const statsNarrow = resolverNarrowStats(rec());
+    const statsWide = resolverWideStats(rec());
+
+    // Both must report the failure regardless of statsWindowDays
+    expect(statsNarrow.failuresInWindow).toBe(1);
+    expect(statsWide.failuresInWindow).toBe(1);
+
+    // With the narrow stats window, lastRunAt should be null (entry is outside 7d)
+    expect(statsNarrow.lastRunAt).toBeNull();
+    // With the wide stats window, lastRunAt is populated
+    expect(statsWide.lastRunAt).toBe(Date.parse(fifteenDaysAgo));
+  });
+});
+
 describe('createAuditLogStatsResolver — sibling skill isolation (P1 regression)', () => {
   // Two skills share the same contract_id but differ in graph_node_anchor,
   // so they have different skill_ids. Before the fix, both would receive

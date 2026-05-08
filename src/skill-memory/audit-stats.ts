@@ -170,6 +170,11 @@ function buildIndex(
 ): AuditIndex {
   const failCutoff = now - failWindowMs;
   const statsCutoff = now - statsWindowMs;
+  // Use the wider of the two windows for the early-skip cutoff so that rows
+  // relevant to EITHER metric are not dropped before per-metric accounting
+  // runs. Without this, reducing statsWindowDays below failWindowMs would
+  // silently truncate failure tallies to the shorter stats window (P2).
+  const wideCutoff = Math.min(statsCutoff, failCutoff);
 
   const verdicts = new Map<string, { successesInWindow: number; failuresInWindow: number }>();
   const lastRunByContract = new Map<string, number>();
@@ -186,11 +191,11 @@ function buildIndex(
     if (!parsed || typeof parsed !== 'object') continue;
     const entry = parsed as RuntimeAuditRow & SkillRunAuditRow;
     const ts = parseTs(entry.ts);
-    if (ts === null || ts < statsCutoff) continue;
+    if (ts === null || ts < wideCutoff) continue;
 
     if (entry.tool === 'contract_runtime' && entry.args) {
       const cid = entry.args.contract_id;
-      if (typeof cid === 'string') {
+      if (typeof cid === 'string' && ts >= statsCutoff) {
         // Update lastRunAt for all entries within the stats window.
         const prev = lastRunByContract.get(cid);
         if (prev === undefined || ts > prev) lastRunByContract.set(cid, ts);
@@ -200,9 +205,11 @@ function buildIndex(
     if (entry.tool === 'skill_run' && entry.args) {
       const sid = entry.args.skill_id;
       if (typeof sid === 'string') {
-        // Update lastRunAt keyed by skill_id within the stats window.
-        const prev = lastRunBySkill.get(sid);
-        if (prev === undefined || ts > prev) lastRunBySkill.set(sid, ts);
+        if (ts >= statsCutoff) {
+          // Update lastRunAt keyed by skill_id within the stats window.
+          const prev = lastRunBySkill.get(sid);
+          if (prev === undefined || ts > prev) lastRunBySkill.set(sid, ts);
+        }
 
         // Win/loss tallies keyed by skill_id, only within the fail window.
         // This scopes verdicts to the exact skill identity (graph_node_anchor,
