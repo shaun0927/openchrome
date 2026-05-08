@@ -279,8 +279,11 @@ describe('runWithContract — audit emission', () => {
 
 describe('runWithContract — probe failure handling (always-settles guarantee)', () => {
   // The evaluator now wraps host probes in try/catch and returns
-  // passed=false with `probe_error` rather than re-throwing, so a
-  // throwing `domText` settles as a normal pre/postcondition failure.
+  // passed=false with `probe_error` rather than re-throwing. So a
+  // throwing `domText` no longer surfaces as `execution_error` from the
+  // runtime — it surfaces as a normal pre/postcondition failure with
+  // the probe error captured in evidence. Either way the runtime
+  // settles cleanly; that's the always-settles guarantee.
   const POST_BAD_SELECTOR: Assertion = {
     kind: 'dom_text',
     selector: 'button.primary',
@@ -391,6 +394,73 @@ describe('runWithContract — retry count normalization', () => {
       delay: async () => undefined,
     });
     expect(r.retries).toBe(0);
+  });
+});
+
+describe('runWithContract — domain propagation + escalate=abort', () => {
+  test('contract.domain is mirrored into TransactionRecord on every settle path', async () => {
+    const { emitter, records } = captureEmitter();
+    await runWithContract({
+      contract: { id: 'c', domain: 'checkout-flow', post: POST_OK },
+      skill: async () => 'ok',
+      snapshot: async () => snap({ bodyText: 'Order Placed' }),
+      audit: emitter,
+    });
+    expect(records[0].contract_domain).toBe('checkout-flow');
+  });
+
+  test('contract.domain absent → contract_domain stays undefined', async () => {
+    const { emitter, records } = captureEmitter();
+    await runWithContract({
+      contract: { id: 'c', post: POST_OK },
+      skill: async () => 'ok',
+      snapshot: async () => snap({ bodyText: 'Order Placed' }),
+      audit: emitter,
+    });
+    expect(records[0].contract_domain).toBeUndefined();
+  });
+
+  test('escalate=abort settles as postcondition_violation with explicit message', async () => {
+    // Without explicit handling, 'abort' would silently fall into the
+    // generic postcondition_violation path and audit consumers could
+    // not tell that the operator opted out of human escalation.
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: POST_OK,
+        on_fail: { escalate: 'abort' },
+      },
+      skill: async () => undefined,
+      snapshot: async () => snap({ bodyText: 'wrong page' }),
+    });
+    expect(r.verdict).toBe('postcondition_violation');
+    expect(r.error_message).toContain('escalate=abort');
+  });
+});
+
+describe('runWithContract — explicit null pre', () => {
+  test('contract.pre = null is rejected as validation_error (skill never runs)', async () => {
+    // Truthy-only checks would silently treat `pre: null` (a JSON
+    // payload artifact) as "no precondition" and let the skill run
+    // unguarded; the runtime now routes null through the validator,
+    // which rejects it as wrong_type and short-circuits to
+    // validation_error before any skill side effect can occur.
+    let skillCalls = 0;
+    const r = await runWithContract({
+      contract: {
+        id: 'c-null-pre',
+        pre: null as unknown as Assertion,
+        post: POST_OK,
+      },
+      skill: async () => {
+        skillCalls++;
+        return 'unsafe-side-effect';
+      },
+      snapshot: async () => snap({ bodyText: 'Order Placed' }),
+    });
+    expect(r.verdict).toBe('validation_error');
+    expect(skillCalls).toBe(0);
+    expect(r.validation_errors?.some((e) => e.path.startsWith('$.pre'))).toBe(true);
   });
 });
 
