@@ -16,6 +16,26 @@ describe('isInteractiveNode — native interactive tags', () => {
   });
 });
 
+describe('isInteractiveNode — media elements', () => {
+  test('video without `controls` is NOT interactive', () => {
+    // Decorative / auto-playing backgrounds should not inflate the
+    // interactive histogram and skew the state hash.
+    expect(isInteractiveNode({ tagName: 'video' })).toBe(false);
+    expect(isInteractiveNode({ tagName: 'audio' })).toBe(false);
+  });
+
+  test('video/audio with `controls` IS interactive', () => {
+    expect(isInteractiveNode({ tagName: 'video', hasControls: true })).toBe(true);
+    expect(isInteractiveNode({ tagName: 'audio', hasControls: true })).toBe(true);
+  });
+
+  test('video without controls but with role=button IS interactive (fall-through)', () => {
+    expect(
+      isInteractiveNode({ tagName: 'video', hasControls: false, role: 'button' }),
+    ).toBe(true);
+  });
+});
+
 describe('isInteractiveNode — anchor handling', () => {
   test('<a href> is interactive', () => {
     expect(isInteractiveNode({ tagName: 'a', hasHref: true })).toBe(true);

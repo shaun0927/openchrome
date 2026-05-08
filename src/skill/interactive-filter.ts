@@ -17,8 +17,13 @@ const INTERACTIVE_TAG_NAMES = new Set([
   'textarea',
   'option',
   'summary',
-  'video',
-  'audio',
+  // Note: `video` and `audio` are intentionally excluded. Without the
+  // `controls` attribute (or an explicit `role`/`tabindex`) these
+  // elements are not user-operable — they're typically decorative or
+  // auto-playing background media. Treating every `<video>` /
+  // `<audio>` as interactive inflated `interactive_node_count` and
+  // produced different state hashes for pages whose actual
+  // affordances were unchanged. See `hasControls` on `InteractiveProbe`.
 ]);
 
 const INTERACTIVE_ROLES = new Set([
@@ -80,6 +85,8 @@ export interface InteractiveProbe {
   role?: string;
   /** Presence of href on `<a>`. Anchors without href are not interactive. */
   hasHref?: boolean;
+  /** Presence of `controls` attribute on `<video>` / `<audio>`. */
+  hasControls?: boolean;
   /** Presence of contenteditable. Treated as interactive textbox-equivalent. */
   contentEditable?: boolean;
   /** tabindex >= 0 makes any element focusable. */
@@ -97,6 +104,12 @@ export function isInteractiveNode(probe: InteractiveProbe): boolean {
   // short-circuiting.
   if (tag === 'a') {
     if (probe.hasHref) return true;
+  } else if (tag === 'video' || tag === 'audio') {
+    // Media elements are only user-operable when `controls` is
+    // present. Without it they fall through to the role/tabindex
+    // checks (covers `<video role="button" tabindex="0">` patterns
+    // some sites use to wrap media in a clickable surface).
+    if (probe.hasControls) return true;
   } else if (INTERACTIVE_TAG_NAMES.has(tag)) {
     return true;
   }
