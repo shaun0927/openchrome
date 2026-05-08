@@ -258,31 +258,54 @@ export class TraceRecorder {
   /**
    * Finalize a session: flush remaining buffer, detach listeners, clear
    * the periodic timer, and write the terminal status to the index.
+   *
+   * Cleanup of listeners / timer / session entry is run inside `finally`
+   * so a `flush()` rejection (disk full, sqlite write failure) cannot
+   * leave the recorder still subscribed to CDP/page events with a live
+   * timer for a session the caller intended to close. The flush
+   * rejection is re-thrown after cleanup so callers learn that some
+   * events did not persist; `shutdown()` already swallows per-session
+   * errors so a single bad session never blocks the rest.
    */
   async end(sessionId: string, status: TraceStatus = 'completed'): Promise<void> {
     if (!this.enabled) return;
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    await this.flush(sessionId);
-    if (state.cdp) {
-      for (const { kind, fn } of state.cdpListeners) {
-        const off = state.cdp.off ?? state.cdp.removeListener;
-        if (off) off.call(state.cdp, kind, fn);
+    let flushError: unknown;
+    try {
+      await this.flush(sessionId);
+    } catch (err) {
+      flushError = err;
+    }
+    try {
+      if (state.cdp) {
+        for (const { kind, fn } of state.cdpListeners) {
+          const off = state.cdp.off ?? state.cdp.removeListener;
+          if (off) off.call(state.cdp, kind, fn);
+        }
       }
+      if (state.page && state.pageListener) {
+        // Page may not have an off(); use removeListener fallback when present.
+        const pageOff = (state.page as unknown as { off?: typeof state.page.on; removeListener?: typeof state.page.on }).off
+          ?? (state.page as unknown as { removeListener?: typeof state.page.on }).removeListener;
+        if (pageOff) pageOff.call(state.page, state.pageListener.event, state.pageListener.fn);
+      }
+      if (state.timer) clearInterval(state.timer);
+      // Best-effort terminal write; swallow storage failure here so
+      // cleanup completes. The flushError (if any) still surfaces below.
+      try {
+        this.getStorage().recordSessionEnd(sessionId, {
+          endedAt: this.now(),
+          status: flushError ? 'failed' : status,
+          byteSize: state.meta.byteSize,
+        });
+      } catch (err) {
+        if (!flushError) flushError = err;
+      }
+    } finally {
+      this.sessions.delete(sessionId);
     }
-    if (state.page && state.pageListener) {
-      // Page may not have an off(); use removeListener fallback when present.
-      const pageOff = (state.page as unknown as { off?: typeof state.page.on; removeListener?: typeof state.page.on }).off
-        ?? (state.page as unknown as { removeListener?: typeof state.page.on }).removeListener;
-      if (pageOff) pageOff.call(state.page, state.pageListener.event, state.pageListener.fn);
-    }
-    if (state.timer) clearInterval(state.timer);
-    this.getStorage().recordSessionEnd(sessionId, {
-      endedAt: this.now(),
-      status,
-      byteSize: state.meta.byteSize,
-    });
-    this.sessions.delete(sessionId);
+    if (flushError) throw flushError;
   }
 
   /**

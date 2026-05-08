@@ -282,6 +282,37 @@ describe('TraceRecorder — shutdown semantics', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  test('end() runs cleanup even when flush rejects (no leaked listeners/timer)', async () => {
+    const cdp = new EventEmitter();
+    const fake: Pick<TraceStorage, 'recordSessionStart' | 'recordSessionEnd' | 'appendEvents' | 'list' | 'get' | 'close'> = {
+      recordSessionStart: () => undefined,
+      recordSessionEnd: () => undefined,
+      appendEvents: () => {
+        throw new Error('disk full');
+      },
+      list: () => [],
+      get: () => undefined,
+      close: () => undefined,
+    };
+    const r = new TraceRecorder({
+      storage: fake as unknown as TraceStorage,
+      enabled: true,
+      bufferSize: 100,
+      flushIntervalMs: 24 * 60 * 60 * 1000,
+      now: () => 1700000000000,
+    });
+    r.start({ sessionId: 's', startedAt: 1 });
+    r.attach('s', cdp);
+    r.recordEvent('s', 'tool_call', { name: 'click' });
+    expect(r._peekBuffer('s')).toHaveLength(1);
+    expect(cdp.listenerCount('Page.frameNavigated')).toBeGreaterThan(0);
+    // end() must reject (so the caller learns events did not persist)
+    // but cleanup of CDP listeners + session entry must still happen.
+    await expect(r.end('s')).rejects.toThrow(/disk full/);
+    expect(cdp.listenerCount('Page.frameNavigated')).toBe(0);
+    expect(r._peekBuffer('s')).toEqual([]); // session removed
+  });
+
   test('shutdown flushes and ends every active session as aborted', async () => {
     const r = makeRecorder({ storage });
     r.start({ sessionId: 'a', startedAt: 1 });
