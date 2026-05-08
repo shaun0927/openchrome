@@ -259,13 +259,14 @@ export class TraceRecorder {
    * Finalize a session: flush remaining buffer, detach listeners, clear
    * the periodic timer, and write the terminal status to the index.
    *
-   * Cleanup of listeners / timer / session entry is run inside `finally`
-   * so a `flush()` rejection (disk full, sqlite write failure) cannot
-   * leave the recorder still subscribed to CDP/page events with a live
-   * timer for a session the caller intended to close. The flush
-   * rejection is re-thrown after cleanup so callers learn that some
-   * events did not persist; `shutdown()` already swallows per-session
-   * errors so a single bad session never blocks the rest.
+   * On flush failure (transient disk-full / sqlite-lock), CDP/page
+   * listeners and the periodic timer are still detached — the caller
+   * has asked the session to close, so we stop accumulating events —
+   * but the session entry and its buffer stay in `this.sessions`. That
+   * lets the caller retry `flush()`/`end()` later without losing the
+   * unpersisted tail. Successful retries write the terminal row and
+   * remove the entry; persistent failures leave the buffer for an
+   * eventual `shutdown()` or operator-driven discard.
    */
   async end(sessionId: string, status: TraceStatus = 'completed'): Promise<void> {
     if (!this.enabled) return;
@@ -277,35 +278,48 @@ export class TraceRecorder {
     } catch (err) {
       flushError = err;
     }
-    try {
-      if (state.cdp) {
-        for (const { kind, fn } of state.cdpListeners) {
-          const off = state.cdp.off ?? state.cdp.removeListener;
-          if (off) off.call(state.cdp, kind, fn);
-        }
+    // Detach listeners + timer regardless of flush outcome — recording
+    // is over either way. Idempotent: re-running end() after a retry
+    // sees state.cdp/page/timer already cleared and skips them.
+    if (state.cdp) {
+      for (const { kind, fn } of state.cdpListeners) {
+        const off = state.cdp.off ?? state.cdp.removeListener;
+        if (off) off.call(state.cdp, kind, fn);
       }
-      if (state.page && state.pageListener) {
-        // Page may not have an off(); use removeListener fallback when present.
-        const pageOff = (state.page as unknown as { off?: typeof state.page.on; removeListener?: typeof state.page.on }).off
-          ?? (state.page as unknown as { removeListener?: typeof state.page.on }).removeListener;
-        if (pageOff) pageOff.call(state.page, state.pageListener.event, state.pageListener.fn);
-      }
-      if (state.timer) clearInterval(state.timer);
-      // Best-effort terminal write; swallow storage failure here so
-      // cleanup completes. The flushError (if any) still surfaces below.
-      try {
-        this.getStorage().recordSessionEnd(sessionId, {
-          endedAt: this.now(),
-          status: flushError ? 'failed' : status,
-          byteSize: state.meta.byteSize,
-        });
-      } catch (err) {
-        if (!flushError) flushError = err;
-      }
-    } finally {
-      this.sessions.delete(sessionId);
+      state.cdp = undefined;
+      state.cdpListeners = [];
     }
-    if (flushError) throw flushError;
+    if (state.page && state.pageListener) {
+      const pageOff = (state.page as unknown as { off?: typeof state.page.on; removeListener?: typeof state.page.on }).off
+        ?? (state.page as unknown as { removeListener?: typeof state.page.on }).removeListener;
+      if (pageOff) pageOff.call(state.page, state.pageListener.event, state.pageListener.fn);
+      state.page = undefined;
+      state.pageListener = undefined;
+    }
+    if (state.timer) {
+      clearInterval(state.timer);
+      state.timer = undefined;
+    }
+    if (flushError) {
+      // Keep the session entry so the caller can retry flush()/end().
+      // The buffered tail is intact (flush() preserves it on failure).
+      throw flushError;
+    }
+    // Happy path: terminal write and remove the entry.
+    try {
+      this.getStorage().recordSessionEnd(sessionId, {
+        endedAt: this.now(),
+        status,
+        byteSize: state.meta.byteSize,
+      });
+    } catch (err) {
+      // Storage couldn't write the terminal row even though the data
+      // was already persisted. Surface the error but keep the session
+      // entry so the operator can decide; another end() call will
+      // retry the terminal write.
+      throw err;
+    }
+    this.sessions.delete(sessionId);
   }
 
   /**

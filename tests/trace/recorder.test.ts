@@ -282,13 +282,21 @@ describe('TraceRecorder — shutdown semantics', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('end() runs cleanup even when flush rejects (no leaked listeners/timer)', async () => {
+  test('end() detaches listeners but PRESERVES session+buffer on flush failure', async () => {
+    // Flush failure during end() must not silently drop the buffered
+    // tail. Listeners and the periodic timer are detached (recording
+    // is over) but the session entry and its buffer stay so the
+    // caller can retry flush()/end() once storage recovers.
     const cdp = new EventEmitter();
+    let throwOnAppend = true;
+    const persisted: Array<{ id: string; count: number }> = [];
     const fake: Pick<TraceStorage, 'recordSessionStart' | 'recordSessionEnd' | 'appendEvents' | 'list' | 'get' | 'close'> = {
       recordSessionStart: () => undefined,
       recordSessionEnd: () => undefined,
-      appendEvents: () => {
-        throw new Error('disk full');
+      appendEvents: (id: string, evts: unknown[]) => {
+        if (throwOnAppend) throw new Error('disk full');
+        persisted.push({ id, count: evts.length });
+        return { bytes: 1, filePath: '/tmp/fake.jsonl' } as ReturnType<TraceStorage['appendEvents']>;
       },
       list: () => [],
       get: () => undefined,
@@ -306,11 +314,17 @@ describe('TraceRecorder — shutdown semantics', () => {
     r.recordEvent('s', 'tool_call', { name: 'click' });
     expect(r._peekBuffer('s')).toHaveLength(1);
     expect(cdp.listenerCount('Page.frameNavigated')).toBeGreaterThan(0);
-    // end() must reject (so the caller learns events did not persist)
-    // but cleanup of CDP listeners + session entry must still happen.
+
+    // First end() rejects; listeners detached; buffer preserved.
     await expect(r.end('s')).rejects.toThrow(/disk full/);
     expect(cdp.listenerCount('Page.frameNavigated')).toBe(0);
-    expect(r._peekBuffer('s')).toEqual([]); // session removed
+    expect(r._peekBuffer('s')).toHaveLength(1);
+
+    // Storage recovers; retry end() drains the buffer and removes the session.
+    throwOnAppend = false;
+    await r.end('s');
+    expect(persisted).toEqual([{ id: 's', count: 1 }]);
+    expect(r._peekBuffer('s')).toEqual([]);
   });
 
   test('shutdown flushes and ends every active session as aborted', async () => {
