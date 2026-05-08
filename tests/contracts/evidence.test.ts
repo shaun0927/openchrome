@@ -207,6 +207,22 @@ describe('writeEvidenceBundle — truncation', () => {
     const domStr = fs.readFileSync(path.join(r.bundleDir, 'fail_dom.json'), 'utf8');
     expect(domStr).toContain('"_truncated":true');
   });
+
+  test('a single screenshot larger than maxBytes is dropped, not silently kept', async () => {
+    const big = Buffer.alloc(200 * 1024); // 200 KB
+    const r = await writeEvidenceBundle(
+      {
+        transaction: record(),
+        fail_screenshot: big,
+      },
+      { rootDir: root, maxBytes: 50 * 1024 }, // 50 KB cap
+    );
+    const m = JSON.parse(fs.readFileSync(r.manifestPath, 'utf8')) as BundleManifest;
+    expect(m.truncated?.fail_screenshot).toBe(true);
+    expect(m.files.fail_screenshot).toBeUndefined();
+    expect(fs.existsSync(path.join(r.bundleDir, 'fail_screenshot.png'))).toBe(false);
+    expect(r.byteSize).toBeLessThan(50 * 1024 + 4 * 1024); // manifest only, not 200KB
+  });
 });
 
 describe('readEvidenceBundle — round trip', () => {
@@ -244,6 +260,20 @@ describe('parseTransactionUri', () => {
 
   test('decodes URI-encoded ids', () => {
     expect(parseTransactionUri('openchrome://transaction/foo%20bar')).toBe('foo bar');
+  });
+
+  test('rejects percent-encoded path traversal', () => {
+    // The literal-`/` guard runs before decode, so the encoded forms
+    // sneak past unless we re-validate after decodeURIComponent.
+    expect(parseTransactionUri('openchrome://transaction/%2e%2e%2fother')).toBeNull();
+    expect(parseTransactionUri('openchrome://transaction/%2E%2E')).toBeNull();
+    expect(parseTransactionUri('openchrome://transaction/%2e')).toBeNull();
+    expect(parseTransactionUri('openchrome://transaction/foo%2fbar')).toBeNull();
+    expect(parseTransactionUri('openchrome://transaction/foo%5Cbar')).toBeNull();
+  });
+
+  test('rejects malformed percent-encoding instead of throwing', () => {
+    expect(parseTransactionUri('openchrome://transaction/%E0%A4%A')).toBeNull();
   });
 });
 

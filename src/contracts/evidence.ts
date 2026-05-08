@@ -96,7 +96,17 @@ export interface BundleManifest {
   transaction: TransactionRecord;
   suggested_next_steps?: EvidenceBundleInputs['suggested_next_steps'];
   /** Per-component truncation flags surfaced for the reader. */
-  truncated?: Partial<Record<'fail_dom' | 'lastgood_dom' | 'trace_slice', true>>;
+  truncated?: Partial<
+    Record<
+      | 'fail_dom'
+      | 'lastgood_dom'
+      | 'trace_slice'
+      | 'pre_screenshot'
+      | 'fail_screenshot'
+      | 'lastgood_screenshot',
+      true
+    >
+  >;
   /** Total bytes written. */
   byte_size: number;
 }
@@ -142,9 +152,18 @@ export async function writeEvidenceBundle(
   let byteSize = 0;
 
   // --- Screenshots (write as supplied; downscaling deferred) ---
-  byteSize += writeScreenshot(bundleDir, 'pre_screenshot.png', inputs.pre_screenshot, files, 'pre_screenshot');
-  byteSize += writeScreenshot(bundleDir, 'fail_screenshot.png', inputs.fail_screenshot, files, 'fail_screenshot');
-  byteSize += writeScreenshot(bundleDir, 'lastgood_screenshot.png', inputs.lastgood_screenshot, files, 'lastgood_screenshot');
+  // Pass `maxBytes` so a single failure-frame PNG larger than the cap is
+  // dropped (and surfaced via `truncated`) rather than silently blowing
+  // past the documented hard ceiling. The trace-slice path below already
+  // applies the same accounting; without this, screenshots could exceed
+  // OPENCHROME_BUNDLE_MAX_BYTES by megabytes on failure-heavy runs.
+  const skipped: Array<keyof BundleManifest['files']> = [];
+  byteSize += writeScreenshot(bundleDir, 'pre_screenshot.png', inputs.pre_screenshot, files, 'pre_screenshot', byteSize, maxBytes, skipped);
+  byteSize += writeScreenshot(bundleDir, 'fail_screenshot.png', inputs.fail_screenshot, files, 'fail_screenshot', byteSize, maxBytes, skipped);
+  byteSize += writeScreenshot(bundleDir, 'lastgood_screenshot.png', inputs.lastgood_screenshot, files, 'lastgood_screenshot', byteSize, maxBytes, skipped);
+  for (const key of skipped) {
+    (truncated as Record<string, true>)[key] = true;
+  }
 
   // --- DOM snapshots (redacted, truncated when oversize) ---
   if (inputs.fail_dom !== undefined) {
@@ -245,9 +264,11 @@ function writeScreenshot(
   source: Buffer | string | undefined,
   files: BundleManifest['files'],
   key: keyof BundleManifest['files'],
+  bytesSoFar: number,
+  maxBytes: number,
+  skipped: Array<keyof BundleManifest['files']>,
 ): number {
   if (source === undefined) return 0;
-  const target = path.join(bundleDir, filename);
   let buf: Buffer;
   if (Buffer.isBuffer(source)) {
     buf = source;
@@ -255,7 +276,14 @@ function writeScreenshot(
     if (!fs.existsSync(source)) return 0;
     buf = fs.readFileSync(source);
   }
-  fs.writeFileSync(target, buf);
+  // Honor the bundle byte cap: a single oversized frame is dropped and
+  // surfaced via `truncated[key]` rather than silently inflating the
+  // bundle past the configured limit.
+  if (bytesSoFar + buf.byteLength > maxBytes) {
+    skipped.push(key);
+    return 0;
+  }
+  fs.writeFileSync(path.join(bundleDir, filename), buf);
   files[key] = filename;
   return buf.byteLength;
 }
@@ -293,7 +321,26 @@ export function parseTransactionUri(uri: string): string | null {
   if (!uri.startsWith(TRANSACTION_URI_PREFIX)) return null;
   const rest = uri.slice(TRANSACTION_URI_PREFIX.length);
   if (!rest || rest.includes('/')) return null;
-  return decodeURIComponent(rest);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rest);
+  } catch {
+    return null;
+  }
+  // Defend against percent-encoded traversal (e.g. `%2e%2e%2fother`):
+  // `path.join(rootDir, '../...')` would escape the bundle root once we
+  // hit `readEvidenceBundle`. Reject any decoded segment that contains
+  // a path separator, NUL, or resolves to a `.`/`..` directory entry.
+  if (
+    decoded === '.' ||
+    decoded === '..' ||
+    decoded.includes('/') ||
+    decoded.includes('\\') ||
+    decoded.includes('\0')
+  ) {
+    return null;
+  }
+  return decoded;
 }
 
 export async function readTransactionResource(
