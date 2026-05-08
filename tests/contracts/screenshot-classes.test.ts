@@ -154,3 +154,45 @@ describe('ScreenshotClassRegistry — match', () => {
     expect(reg.match('nope', 'ffffffffffffffff').distance).toBe(Number.POSITIVE_INFINITY);
   });
 });
+
+describe('ScreenshotClassRegistry — robustness against corrupt exemplars', () => {
+  let root: string;
+  let reg: ScreenshotClassRegistry;
+
+  beforeEach(() => {
+    root = tempRoot();
+    reg = new ScreenshotClassRegistry({ rootDir: root });
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('match() ignores corrupt hex entries instead of throwing', () => {
+    reg.teach({
+      classId: 'cls',
+      precomputed: { bits: 0xff00ff00ff00ff00n, hex: 'ff00ff00ff00ff00' },
+    });
+    // exemplars.json is documented as human-readable / editable.
+    // Inject a hand-edit with one valid hash and several corrupt ones:
+    // wrong length, bad chars, completely non-hex.
+    const dir = path.join(root, 'cls');
+    fs.writeFileSync(
+      path.join(dir, 'exemplars.json'),
+      JSON.stringify({
+        hashes: [
+          'ff00ff00ff00ff00', // valid
+          'not-a-hash',       // garbage
+          'ff00',             // too short
+          'ff00ff00ff00ff00ff00', // too long
+          'ZZZZZZZZZZZZZZZZ', // bad chars
+        ],
+      }),
+      'utf8',
+    );
+    expect(() => reg.match('cls', 'ff00ff00ff00ff01')).not.toThrow();
+    const r = reg.match('cls', 'ff00ff00ff00ff01');
+    expect(r.distance).toBe(1);
+    expect(r.closestHex).toBe('ff00ff00ff00ff00');
+  });
+});

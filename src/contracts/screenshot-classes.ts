@@ -177,6 +177,11 @@ export class ScreenshotClassRegistry {
     let best = Number.POSITIVE_INFINITY;
     let closest: string | undefined;
     for (const ex of rec.exemplars) {
+      // exemplars.json is human-editable; one corrupt entry must not
+      // abort the whole class evaluation. Skip non-64-bit-hex strings
+      // so a typo or stray character degrades to "non-match for that
+      // exemplar" rather than throwing inside BigInt('0x' + ex).
+      if (!HEX64_PATTERN.test(ex)) continue;
       const d = hammingDistanceHex(ex, candidateHex);
       if (d < best) {
         best = d;
@@ -186,6 +191,9 @@ export class ScreenshotClassRegistry {
     return { distance: best, closestHex: closest };
   }
 }
+
+/** A 64-bit perceptual hash, hex-encoded (16 lowercase hex chars). */
+const HEX64_PATTERN = /^[0-9a-f]{16}$/;
 
 /**
  * Recommend a threshold given a set of exemplars. The pairwise mean

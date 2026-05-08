@@ -81,6 +81,19 @@ export function phashFromGrayscale(values: ArrayLike<number>): PhashResult {
  * @param height  Source image height in pixels.
  */
 export function phashFromRgba(rgba: Uint8Array | Buffer, width: number, height: number): PhashResult {
+  // Reject zero/non-positive/non-integer dimensions explicitly so that an
+  // empty buffer with width=height=0 doesn't pass the length check below
+  // and produce a deterministic-but-meaningless hash. Without this, an
+  // upstream decode failure that yields {rgba: empty, w: 0, h: 0} would
+  // silently turn into a "matches every empty class" result.
+  if (
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    throw new Error(`phashFromRgba: invalid dimensions ${width}x${height}`);
+  }
   if (rgba.length !== width * height * 4) {
     throw new Error(`phashFromRgba: rgba length ${rgba.length} != ${width * height * 4}`);
   }

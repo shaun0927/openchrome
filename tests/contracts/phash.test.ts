@@ -106,4 +106,17 @@ describe('phashFromRgba', () => {
   test('rejects mismatched buffer length', () => {
     expect(() => phashFromRgba(Buffer.alloc(10), 64, 64)).toThrow();
   });
+
+  test('rejects zero / non-positive / non-integer dimensions', () => {
+    // Without explicit dim validation, an empty buffer with width=0 and
+    // height=0 sneaks past the length check (`0 === 0 * 0 * 4`) and
+    // produces a deterministic-but-wrong hash. The fast-fail keeps a
+    // bad upstream decode from polluting class comparisons downstream.
+    expect(() => phashFromRgba(Buffer.alloc(0), 0, 0)).toThrow(/dimensions/);
+    expect(() => phashFromRgba(Buffer.alloc(0), 64, 0)).toThrow(/dimensions/);
+    expect(() => phashFromRgba(Buffer.alloc(0), 0, 64)).toThrow(/dimensions/);
+    expect(() => phashFromRgba(Buffer.alloc(0), -1, 64)).toThrow(/dimensions/);
+    expect(() => phashFromRgba(Buffer.alloc(0), 1.5, 64)).toThrow(/dimensions/);
+    expect(() => phashFromRgba(Buffer.alloc(0), Number.NaN, 64)).toThrow(/dimensions/);
+  });
 });
