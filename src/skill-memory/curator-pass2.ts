@@ -25,11 +25,10 @@
  * a real model.
  */
 
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { listSkillsForDomain } from './extractor';
+import { computeSkillId, listSkillsForDomain } from './extractor';
 import { parseSkillMd, stringifySkillMd, type FrontmatterError } from './skill-md';
 import { STOP_WORDS } from './stop-words';
 import type { CuratorAction, CuratorActionKind } from './curator';
@@ -141,11 +140,6 @@ export interface Pass2Outcome {
   errors: string[];
 }
 
-function umbrellaSkillId(cluster: SkillRecord[]): string {
-  const concat = cluster.map((r) => r.skill_id).sort().join('|');
-  return crypto.createHash('sha256').update(concat).digest('hex').slice(0, 12);
-}
-
 function archiveMergedSibling(args: {
   rootDir: string;
   domain: string;
@@ -214,11 +208,11 @@ export async function runPass2Merge(opts: RunPass2Options): Promise<Pass2Outcome
       continue;
     }
 
-    const newSkillId = umbrellaSkillId(cluster.records);
+    const seed = cluster.records[0];
+    const newSkillId = computeSkillId(seed.frontmatter.graph_node_anchor, seed.sidecar.contract_id);
     const writePath = path.join(opts.rootDir, opts.domain, `${newSkillId}.md`);
     const sidecarPath = path.join(opts.rootDir, opts.domain, `${newSkillId}.json`);
 
-    const seed = cluster.records[0];
     const aggregateRuns = cluster.records.reduce(
       (sum, r) => sum + r.frontmatter.verified_runs,
       0,
@@ -272,6 +266,10 @@ export async function runPass2Merge(opts: RunPass2Options): Promise<Pass2Outcome
     fs.renameSync(tmpSidecar, sidecarPath);
 
     for (const sibling of cluster.records) {
+      // The sibling whose skill_id equals newSkillId is the seed — its file
+      // was overwritten in place with the umbrella content above. Archiving
+      // it would delete the file we just wrote, so skip it.
+      if (sibling.skill_id === newSkillId) continue;
       try {
         archiveMergedSibling({
           rootDir: opts.rootDir,

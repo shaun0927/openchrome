@@ -9,7 +9,7 @@ import {
   tokenize,
   type MergeRequester,
 } from '../../src/skill-memory/curator-pass2';
-import { recordSuccessfulRun, listSkillsForDomain } from '../../src/skill-memory/extractor';
+import { computeSkillId, recordSuccessfulRun, listSkillsForDomain } from '../../src/skill-memory/extractor';
 import { parseSkillMd } from '../../src/skill-memory/skill-md';
 import type { SkillRecord } from '../../src/skill-memory/types';
 
@@ -226,9 +226,11 @@ describe('runPass2Merge', () => {
     const list = listSkillsForDomain('amazon.com', { rootDir: root });
     expect(list).toHaveLength(1);
     expect(list[0].frontmatter.name).toBe('amazon.cart-add');
-    // Both siblings archived under .archive/
+    // The seed sibling's file is overwritten in place with umbrella content
+    // (its canonical ID IS the umbrella ID), so only the non-seed sibling
+    // gets an archive entry. Total archive entries = cluster.length - 1.
     const archiveDir = path.join(root, 'amazon.com', '.archive');
-    expect(fs.readdirSync(archiveDir).length).toBe(2);
+    expect(fs.readdirSync(archiveDir).length).toBe(1);
   });
 
   test('archive reason.json carries merged_into_skill_id', async () => {
@@ -356,5 +358,50 @@ describe('runPass2Merge', () => {
     });
     expect(out.actions).toHaveLength(0);
     expect(out.errors).toHaveLength(0);
+  });
+
+  test('umbrella filename equals computeSkillId(seed.graph_node_anchor, seed.contract_id) so recordSuccessfulRun finds it', async () => {
+    // Regression: previously umbrellaSkillId() produced a synthetic hash from
+    // sibling skill_ids, which recordSuccessfulRun (keyed on
+    // (graph_node_anchor, contract_id)) would never match — duplicates reappear.
+    seedTwoSiblingsOnDisk(root);
+
+    // Capture the seed before merging (highest verified_runs wins; both are equal
+    // here so the first anchor alphabetically wins via stable sort — just grab it
+    // from the list before merge).
+    const preList = listSkillsForDomain('amazon.com', { rootDir: root });
+    // clusterSkills picks seed = highest verified_runs; both have 4, so pick
+    // whichever is first in the sorted order — mirror the same tie-break by
+    // computing the expected id for each anchor and checking one matches.
+    const expectedIds = preList.map((r) =>
+      computeSkillId(r.frontmatter.graph_node_anchor, r.sidecar.contract_id),
+    );
+
+    await runPass2Merge({
+      rootDir: root,
+      domain: 'amazon.com',
+      requester: async () => ({
+        ok: true,
+        name: 'amazon.cart-add-umbrella',
+        intent: 'Add cart item and complete checkout (umbrella)',
+        body: '## Steps\n1. Click add\n2. Click pay\n',
+      }),
+      jaccardThreshold: 0.5,
+      prefixChars: 4,
+      now: () => FIXED_NOW,
+    });
+
+    const postList = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(postList).toHaveLength(1);
+
+    const umbrellaSkillId = postList[0].skill_id;
+    // The umbrella's skill_id must equal computeSkillId for the seed's identity
+    // so that a subsequent recordSuccessfulRun call for that anchor+contract pair
+    // increments the umbrella rather than creating a fresh duplicate.
+    expect(expectedIds).toContain(umbrellaSkillId);
+
+    // Confirm the sidecar records the same canonical fields.
+    const sidecar = postList[0].sidecar;
+    expect(computeSkillId(sidecar.graph_node_anchor, sidecar.contract_id)).toBe(umbrellaSkillId);
   });
 });
