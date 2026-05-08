@@ -189,6 +189,45 @@ describe('runSkill — graph hit path', () => {
     expect(result.action?.kind).toBe('click');
   });
 
+  test('graph hit replays stored action args instead of deriving them from argsNorm', async () => {
+    const before = snap({ url: 'https://x.com/a' });
+    const after = snap({ url: 'https://x.com/b' });
+
+    const { computeStateHash } = await import('../../src/skill/state');
+    const fromHash = computeStateHash(before).hash;
+    const toHash = computeStateHash(after).hash;
+
+    storage.upsertNode({ stateHash: fromHash });
+    storage.upsertNode({ stateHash: toHash });
+    storage.recordOutcome({
+      fromState: fromHash,
+      actionKind: 'click',
+      actionArgsNorm: 'ref:a',
+      actionArgs: { ref: 'a' },
+      observedToState: toHash,
+      success: true,
+    });
+
+    let executed: ActionInvocation | undefined;
+    const router: ToolRouter = {
+      async pickFallbackAction() {
+        return null;
+      },
+      async runAction(action) {
+        executed = action;
+        return { ok: true };
+      },
+    };
+    const ctx = ctxWithStates([before, after]);
+    const result = await runSkill({ storage, router, ctx, intent: {} });
+
+    expect(result.outcome).toBe('graph_hit');
+    expect(result.ok).toBe(true);
+    expect(executed?.argsNorm).toBe('ref:a');
+    expect(executed?.args).toEqual({ ref: 'a' });
+    expect(result.action?.args).toEqual({ ref: 'a' });
+  });
+
   test('action runs but lands on unexpected state → reports expected_state_mismatch', async () => {
     const before = snap({ url: 'https://x.com/a' });
     const expected = snap({ url: 'https://x.com/b' });

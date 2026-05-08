@@ -9,7 +9,7 @@
  *   nodes(state_hash PK, evidence_blob, thumbnail_path, last_seen_at,
  *         visit_count)
  *   edges(from_state, action_kind, action_args_norm,
- *         to_state_distribution JSON, success_count, fail_count,
+ *         action_args_blob JSON, to_state_distribution JSON, success_count, fail_count,
  *         last_failed_at, PRIMARY KEY(from_state, action_kind, action_args_norm))
  *
  * `to_state_distribution` is included from day one (per #702 v2) so
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS edges (
   from_state            TEXT NOT NULL,
   action_kind           TEXT NOT NULL,
   action_args_norm      TEXT NOT NULL,
+  action_args_blob      TEXT,                       -- JSON lossless replay payload
   to_state_distribution TEXT NOT NULL DEFAULT '[]',  -- JSON: Array<{to_state, count}>
   success_count         INTEGER NOT NULL DEFAULT 0,
   fail_count            INTEGER NOT NULL DEFAULT 0,
@@ -77,6 +78,8 @@ export interface SkillEdge {
   fromState: string;
   actionKind: string;
   actionArgsNorm: string;
+  /** Lossless raw action args for replay. Older rows may omit this. */
+  actionArgs?: unknown;
   /** Sorted (by count DESC) distribution of observed `to_state` outcomes. */
   toStateDistribution: ToStateDistribution;
   successCount: number;
@@ -179,6 +182,7 @@ export class SkillGraphStorage {
 
   private applyMigrations(): void {
     this.db.exec(SCHEMA_V1);
+    this.ensureEdgeActionArgsColumn();
     // INSERT OR IGNORE makes the v1 marker idempotent across concurrent
     // same-domain initializers. The previous read-then-insert pattern
     // had a race: two constructors could both observe an empty
@@ -188,6 +192,13 @@ export class SkillGraphStorage {
     this.db
       .prepare('INSERT OR IGNORE INTO applied_migrations (version, applied_at) VALUES (?, ?)')
       .run(1, Date.now());
+  }
+
+  private ensureEdgeActionArgsColumn(): void {
+    const columns = this.db.prepare('PRAGMA table_info(edges)').all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'action_args_blob')) {
+      this.db.exec('ALTER TABLE edges ADD COLUMN action_args_blob TEXT');
+    }
   }
 
   getSchemaVersion(): number {
@@ -289,11 +300,13 @@ export class SkillGraphStorage {
     fromState: string;
     actionKind: string;
     actionArgsNorm: string;
+    actionArgs?: unknown;
     observedToState?: string;
     success: boolean;
     at?: number;
   }): void {
     const at = args.at ?? Date.now();
+    const actionArgsBlob = args.actionArgs !== undefined ? JSON.stringify(args.actionArgs) : null;
     const tx = this.db.transaction((a: typeof args) => {
       const existing = this.db
         .prepare(
@@ -326,6 +339,7 @@ export class SkillGraphStorage {
           .prepare(
             `UPDATE edges
                SET to_state_distribution = ?,
+                   action_args_blob = COALESCE(?, action_args_blob),
                    success_count = success_count + ?,
                    fail_count    = fail_count + ?,
                    last_failed_at = CASE WHEN ? = 0 THEN ? ELSE last_failed_at END
@@ -333,6 +347,7 @@ export class SkillGraphStorage {
           )
           .run(
             JSON.stringify(dist),
+            actionArgsBlob,
             a.success ? 1 : 0,
             a.success ? 0 : 1,
             a.success ? 1 : 0,
@@ -345,14 +360,15 @@ export class SkillGraphStorage {
         this.db
           .prepare(
             `INSERT INTO edges
-               (from_state, action_kind, action_args_norm, to_state_distribution,
+               (from_state, action_kind, action_args_norm, action_args_blob, to_state_distribution,
                 success_count, fail_count, last_failed_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             a.fromState,
             a.actionKind,
             a.actionArgsNorm,
+            actionArgsBlob,
             JSON.stringify(dist),
             a.success ? 1 : 0,
             a.success ? 0 : 1,
@@ -372,13 +388,14 @@ export class SkillGraphStorage {
   }): SkillEdge | undefined {
     const row = this.db
       .prepare(
-        'SELECT from_state, action_kind, action_args_norm, to_state_distribution, success_count, fail_count, last_failed_at FROM edges WHERE from_state = ? AND action_kind = ? AND action_args_norm = ?',
+        'SELECT from_state, action_kind, action_args_norm, action_args_blob, to_state_distribution, success_count, fail_count, last_failed_at FROM edges WHERE from_state = ? AND action_kind = ? AND action_args_norm = ?',
       )
       .get(args.fromState, args.actionKind, args.actionArgsNorm) as
       | {
           from_state: string;
           action_kind: string;
           action_args_norm: string;
+          action_args_blob: string | null;
           to_state_distribution: string;
           success_count: number;
           fail_count: number;
@@ -390,6 +407,7 @@ export class SkillGraphStorage {
       fromState: row.from_state,
       actionKind: row.action_kind,
       actionArgsNorm: row.action_args_norm,
+      actionArgs: row.action_args_blob ? JSON.parse(row.action_args_blob) : undefined,
       toStateDistribution: JSON.parse(row.to_state_distribution) as ToStateDistribution,
       successCount: row.success_count,
       failCount: row.fail_count,
@@ -405,12 +423,13 @@ export class SkillGraphStorage {
   edgesFrom(stateHash: string): SkillEdge[] {
     const rows = this.db
       .prepare(
-        'SELECT from_state, action_kind, action_args_norm, to_state_distribution, success_count, fail_count, last_failed_at FROM edges WHERE from_state = ?',
+        'SELECT from_state, action_kind, action_args_norm, action_args_blob, to_state_distribution, success_count, fail_count, last_failed_at FROM edges WHERE from_state = ?',
       )
       .all(stateHash) as Array<{
       from_state: string;
       action_kind: string;
       action_args_norm: string;
+      action_args_blob: string | null;
       to_state_distribution: string;
       success_count: number;
       fail_count: number;
@@ -420,6 +439,7 @@ export class SkillGraphStorage {
       fromState: row.from_state,
       actionKind: row.action_kind,
       actionArgsNorm: row.action_args_norm,
+      actionArgs: row.action_args_blob ? JSON.parse(row.action_args_blob) : undefined,
       toStateDistribution: JSON.parse(row.to_state_distribution) as ToStateDistribution,
       successCount: row.success_count,
       failCount: row.fail_count,

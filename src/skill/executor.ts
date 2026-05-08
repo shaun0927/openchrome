@@ -117,7 +117,9 @@ export async function runSkill(args: RunSkillArgs): Promise<RunSkillResult> {
     const action: ActionInvocation = {
       kind: candidate.actionKind,
       argsNorm: candidate.actionArgsNorm,
-      args: parseArgs(candidate.actionArgsNorm),
+      args: candidate.actionArgs !== undefined
+        ? candidate.actionArgs
+        : parseArgs(candidate.actionArgsNorm),
     };
     const result = await router.runAction(action);
     const after = await ctx.snapshotPageState();
@@ -170,6 +172,7 @@ export async function runSkill(args: RunSkillArgs): Promise<RunSkillResult> {
       fromState: fromHash,
       actionKind: fallback.kind,
       actionArgsNorm: fallback.argsNorm,
+      actionArgs: fallback.args,
       observedToState: toHash,
       success: true,
     });
@@ -190,6 +193,7 @@ export async function runSkill(args: RunSkillArgs): Promise<RunSkillResult> {
     fromState: fromHash,
     actionKind: fallback.kind,
     actionArgsNorm: fallback.argsNorm,
+    actionArgs: fallback.args,
     success: false,
   });
   return {
