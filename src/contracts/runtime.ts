@@ -276,9 +276,15 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   //    to do but return it (with from_cache=true) and emit one fresh
   //    audit row so the audit log records the *retrieval*.
   if (args.idempotency) {
-    let key = args.idempotencyKey;
-    if (!key) {
-      const idem = await import('./idempotency');
+    let key: string;
+    const idem = await import('./idempotency');
+    if (args.idempotencyKey) {
+      key = idem.saltIdempotencyOverride(
+        args.idempotencyKey,
+        !!args.contract.critical,
+        !!args.beforeIrreversibleAction,
+      );
+    } else {
       key = idem.computeIdempotencyKey(args.contract, undefined, !!args.beforeIrreversibleAction);
     }
     const cached = args.idempotency.get(key);
@@ -599,9 +605,15 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     };
     // Cache only successes per #706 v2.
     if (args.idempotency) {
-      let key = args.idempotencyKey;
-      if (!key) {
-        const idem = await import('./idempotency');
+      let key: string;
+      const idem = await import('./idempotency');
+      if (args.idempotencyKey) {
+        key = idem.saltIdempotencyOverride(
+          args.idempotencyKey,
+          !!args.contract.critical,
+          !!args.beforeIrreversibleAction,
+        );
+      } else {
         key = idem.computeIdempotencyKey(args.contract, undefined, !!args.beforeIrreversibleAction);
       }
       try {

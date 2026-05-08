@@ -115,6 +115,25 @@ export function computeIdempotencyKey(
   return crypto.createHash('sha256').update(subject).digest('hex');
 }
 
+/**
+ * Salt an explicit idempotency-key override with the same critical/hook
+ * state that `computeIdempotencyKey` encodes, so that enabling a hook or
+ * marking a contract critical produces a distinct cache key even when the
+ * caller supplies their own key.
+ *
+ * Without this, a success cached from a hookless/non-critical run could be
+ * replayed for a critical+hook run — the hook would never execute because
+ * the cache hit short-circuits block 2.5.
+ */
+export function saltIdempotencyOverride(
+  rawKey: string,
+  critical: boolean,
+  hookActive: boolean,
+): string {
+  const subject = canonicalJson({ key: rawKey, critical, hook_active: hookActive });
+  return crypto.createHash('sha256').update(subject).digest('hex');
+}
+
 export interface IdempotencyStore {
   /** Read a cached record. Side-effect: bumps `used_at` on hit. */
   get(key: string): TransactionRecord | undefined;

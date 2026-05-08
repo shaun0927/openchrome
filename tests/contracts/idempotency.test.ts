@@ -346,6 +346,64 @@ describe('runWithContract — idempotency cache', () => {
     expect(hookCalls).toBe(1);        // hook was NOT called on cache hit
   });
 
+  test('explicit args.idempotencyKey override is salted — critical/hook state change MUST NOT replay cache (round-7 regression)', async () => {
+    // Scenario: caller supplies args.idempotencyKey = 'foo'.
+    // Run 1: critical=false, no hook → success cached.
+    // Run 2: same override 'foo' but critical=true + hook enabled →
+    //   MUST NOT be a cache hit; hook must fire and skill must run fresh.
+    let skillCalls = 0;
+    let hookCalls = 0;
+    const hook = async () => {
+      hookCalls++;
+      return { proceed: true };
+    };
+    const contract: Contract = {
+      id: 'c-override-salt',
+      post: { kind: 'no_dialog' as const },
+    };
+
+    // Run 1: non-critical, no hook, explicit override key.
+    const r1 = await runWithContract({
+      contract: { ...contract, critical: false },
+      skill: async () => { skillCalls++; return 'run1'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+      idempotencyKey: 'foo',
+    });
+    expect(r1.verdict).toBe('success');
+    expect(r1.from_cache).toBeUndefined();
+    expect(skillCalls).toBe(1);
+
+    // Run 2: critical=true + hook. Same override key 'foo'.
+    // The override must be salted differently → cache miss → hook fires.
+    const r2 = await runWithContract({
+      contract: { ...contract, critical: true },
+      skill: async () => { skillCalls++; return 'run2'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+      idempotencyKey: 'foo',
+      beforeIrreversibleAction: hook,
+    });
+    expect(r2.verdict).toBe('success');
+    expect(r2.from_cache).toBeUndefined(); // must not replay run-1 cache
+    expect(hookCalls).toBe(1);             // hook invoked
+    expect(skillCalls).toBe(2);            // skill ran fresh
+
+    // Run 3: same critical=true + hook again → should now hit run-2 cache.
+    const r3 = await runWithContract({
+      contract: { ...contract, critical: true },
+      skill: async () => { skillCalls++; return 'run3'; },
+      snapshot: async () => snap(),
+      idempotency: store,
+      idempotencyKey: 'foo',
+      beforeIrreversibleAction: hook,
+    });
+    expect(r3.verdict).toBe('success');
+    expect(r3.from_cache).toBe(true); // now hits the salted cache entry
+    expect(skillCalls).toBe(2);       // skill did NOT run again
+    expect(hookCalls).toBe(1);        // hook was NOT called on cache hit
+  });
+
   test('different idempotency_key bypasses the cache', async () => {
     let skillCalls = 0;
     const make = (key: string) => ({
