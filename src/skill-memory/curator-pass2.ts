@@ -32,7 +32,7 @@ import { computeSkillId, listSkillsForDomain } from './extractor';
 import { parseSkillMd, stringifySkillMd, type FrontmatterError } from './skill-md';
 import { STOP_WORDS } from './stop-words';
 import type { CuratorAction, CuratorActionKind } from './curator';
-import { SKILL_SCHEMA_VERSION, type SkillRecord } from './types';
+import { SKILL_RUN_LOG_MAX, SKILL_SCHEMA_VERSION, type SkillRecord, type SkillSidecar } from './types';
 
 export interface ClusterCandidate {
   records: SkillRecord[];
@@ -249,13 +249,22 @@ export async function runPass2Merge(opts: RunPass2Options): Promise<Pass2Outcome
     const tmpMd = writePath + '.tmp';
     fs.writeFileSync(tmpMd, serialized, { mode: 0o644 });
     fs.renameSync(tmpMd, writePath);
+    // Carry forward the union of sibling run histories so that
+    // recordSuccessfulRun (which recomputes verified_runs/status solely from
+    // existingSidecar.runs.recent) does not reset the umbrella back to
+    // candidate on the very next successful run.
+    const mergedRecent: SkillSidecar['runs']['recent'] = cluster.records
+      .flatMap((r) => r.sidecar.runs.recent)
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, SKILL_RUN_LOG_MAX);
+
     const sidecarBody = JSON.stringify(
       {
         schema_version: SKILL_SCHEMA_VERSION,
         skill_id: newSkillId,
         graph_node_anchor: seed.frontmatter.graph_node_anchor,
         contract_id: seed.sidecar.contract_id,
-        runs: { count: aggregateRuns, window_start: isoUtc(ts), recent: [] },
+        runs: { count: aggregateRuns, window_start: isoUtc(ts), recent: mergedRecent },
         merged_from: cluster.records.map((r) => r.skill_id),
       },
       null,

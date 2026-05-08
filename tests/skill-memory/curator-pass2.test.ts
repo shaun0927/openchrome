@@ -11,6 +11,7 @@ import {
 } from '../../src/skill-memory/curator-pass2';
 import { computeSkillId, recordSuccessfulRun, listSkillsForDomain } from '../../src/skill-memory/extractor';
 import { parseSkillMd } from '../../src/skill-memory/skill-md';
+import { SKILL_RUN_LOG_MAX } from '../../src/skill-memory/types';
 import type { SkillRecord } from '../../src/skill-memory/types';
 
 function tempRoot(): string {
@@ -358,6 +359,73 @@ describe('runPass2Merge', () => {
     });
     expect(out.actions).toHaveLength(0);
     expect(out.errors).toHaveLength(0);
+  });
+
+  test('merged umbrella runs.recent carries sibling histories and a follow-up recordSuccessfulRun does not regress verified_runs', async () => {
+    // Two siblings, each with 5 run events in runs.recent (distinct timestamps).
+    // After merge the umbrella's runs.recent must be sorted newest-first, capped
+    // at SKILL_RUN_LOG_MAX, and a subsequent recordSuccessfulRun must NOT reduce
+    // verified_runs below the merged aggregate.
+    const SIBLING_RUNS = 5;
+    const anchors = ['aaaaffff0001', 'aaaaffff0002'] as const;
+    let tick = FIXED_NOW;
+
+    for (const anchor of anchors) {
+      for (let i = 0; i < SIBLING_RUNS; i++) {
+        recordSuccessfulRun(
+          {
+            txn_id: `reg-${anchor}-${i}`,
+            contract_id: SHARED_CONTRACT_ID,
+            intent: 'Add cart item and pay',
+            domain: 'amazon.com',
+            graph_node_anchor: anchor,
+          },
+          { rootDir: root, now: () => tick++ },
+        );
+      }
+    }
+
+    await runPass2Merge({
+      rootDir: root,
+      domain: 'amazon.com',
+      requester: async () => ({
+        ok: true,
+        name: 'amazon.cart-add-reg',
+        intent: 'Add cart item and pay (umbrella)',
+        body: '## Steps\n1. Add\n2. Pay\n',
+      }),
+      jaccardThreshold: 0.5,
+      prefixChars: 4,
+      now: () => tick,
+    });
+
+    const postList = listSkillsForDomain('amazon.com', { rootDir: root });
+    expect(postList).toHaveLength(1);
+    const umbrella = postList[0];
+    const recent = umbrella.sidecar.runs.recent;
+
+    // recent must contain entries from both siblings (up to the cap)
+    const totalSiblingRuns = anchors.length * SIBLING_RUNS; // 10, well under cap of 50
+    expect(recent.length).toBe(Math.min(totalSiblingRuns, SKILL_RUN_LOG_MAX));
+
+    // entries must be sorted newest-first
+    for (let i = 1; i < recent.length; i++) {
+      expect(recent[i - 1].ts).toBeGreaterThanOrEqual(recent[i].ts);
+    }
+
+    // A follow-up successful run must NOT reduce verified_runs below the merged aggregate
+    const mergedVerifiedRuns = umbrella.frontmatter.verified_runs;
+    const followUpResult = recordSuccessfulRun(
+      {
+        txn_id: 'follow-up-txn',
+        contract_id: SHARED_CONTRACT_ID,
+        intent: 'Add cart item and pay',
+        domain: 'amazon.com',
+        graph_node_anchor: umbrella.frontmatter.graph_node_anchor,
+      },
+      { rootDir: root, now: () => tick + 1000 },
+    );
+    expect(followUpResult.record.frontmatter.verified_runs).toBeGreaterThanOrEqual(mergedVerifiedRuns);
   });
 
   test('umbrella filename equals computeSkillId(seed.graph_node_anchor, seed.contract_id) so recordSuccessfulRun finds it', async () => {
