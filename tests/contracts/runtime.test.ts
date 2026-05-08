@@ -16,7 +16,11 @@ function snap(over: Partial<AssertionContext> = {}): AssertionContext {
 function captureEmitter(): { emitter: AuditEmitter; records: TransactionRecord[] } {
   const records: TransactionRecord[] = [];
   return {
-    emitter: { emit: (r) => records.push(r) },
+    emitter: {
+      emit: (r) => {
+        records.push(r);
+      },
+    },
     records,
   };
 }
@@ -212,6 +216,37 @@ describe('runWithContract — retry + backoff', () => {
     expect(captured.length).toBe(0);
     expect(r.retries).toBe(0);
   });
+
+  test('default retry delay keeps backoff timer referenced', async () => {
+    const realSetTimeout = global.setTimeout;
+    const unref = jest.fn();
+    const setTimeoutSpy = jest
+      .spyOn(global, 'setTimeout')
+      .mockImplementation(((...args: Parameters<typeof global.setTimeout>) => {
+        const [callback, , ...rest] = args;
+        const timer = realSetTimeout(callback, 0, ...rest);
+        const originalUnref = timer.unref.bind(timer);
+        timer.unref = (() => {
+          unref();
+          return originalUnref();
+        }) as typeof timer.unref;
+        return timer;
+      }) as typeof global.setTimeout);
+
+    try {
+      const r = await runWithContract({
+        contract: { id: 'c', post: POST_OK, on_fail: { retry: 1 } },
+        skill: async () => undefined,
+        snapshot: async () => snap({ bodyText: 'still pending' }),
+      });
+      expect(r.verdict).toBe('postcondition_violation');
+      expect(r.retries).toBe(1);
+      expect(setTimeoutSpy).toHaveBeenCalled();
+      expect(unref).not.toHaveBeenCalled();
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
 });
 
 describe('runWithContract — audit emission', () => {
@@ -273,6 +308,21 @@ describe('runWithContract — audit emission', () => {
         },
       },
     });
+    expect(r.verdict).toBe('success');
+  });
+
+  test('async audit-emitter rejection does not change verdict', async () => {
+    const r = await runWithContract({
+      contract: { id: 'c', post: POST_DIALOG },
+      skill: async () => undefined,
+      snapshot: async () => snap(),
+      audit: {
+        emit: async () => {
+          throw new Error('audit rejected');
+        },
+      },
+    });
+    await Promise.resolve();
     expect(r.verdict).toBe('success');
   });
 });

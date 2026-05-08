@@ -108,7 +108,7 @@ export interface ContractRuntimeArgs {
 }
 
 export interface AuditEmitter {
-  emit(record: TransactionRecord): void;
+  emit(record: TransactionRecord): void | Promise<void>;
 }
 
 /** Default emitter that writes through `logAuditEntry`. */
@@ -144,8 +144,7 @@ function backoffMs(attempt: number): number {
 
 const defaultDelay = (ms: number): Promise<void> =>
   new Promise((res) => {
-    const t = setTimeout(res, ms);
-    if (typeof t.unref === 'function') t.unref();
+    setTimeout(res, ms);
   });
 
 /**
@@ -413,7 +412,9 @@ function settle(
     record.contract_domain = contractDomain;
   }
   try {
-    audit.emit(record);
+    void Promise.resolve(audit.emit(record)).catch(() => {
+      // best-effort — async audit failure must not change the verdict
+    });
   } catch {
     // best-effort — audit failure must not change the verdict
   }
