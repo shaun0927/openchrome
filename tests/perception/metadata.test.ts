@@ -168,6 +168,18 @@ describe('computePerceptualMetadata — pointer-events regression (P1)', () => {
     expect(r.effectiveDisplay).toBe('rendered');
   });
 
+  test('pointer-events:none with foreign topElement → NOT covered_by (round-2 fix)', () => {
+    // elementFromPoint returns a different node when pointer-events:none —
+    // that is expected behavior, not an overlay. Must not set covered_by.
+    const r = computePerceptualMetadata(
+      probe({ pointerEvents: 'none', topElementBackendNodeId: 999 }),
+      VIEWPORT,
+    );
+    expect(r.effectiveDisplay).toBe('rendered');
+    expect(r.coveredByNodeId).toBeUndefined();
+    expect(r.interactionFeasibility).toBe('pointer_events_none');
+  });
+
   test('pointer-events:auto (default) → ok', () => {
     const r = computePerceptualMetadata(probe({ pointerEvents: 'auto' }), VIEWPORT);
     expect(r.interactionFeasibility).toBe('ok');

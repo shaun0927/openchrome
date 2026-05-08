@@ -105,8 +105,12 @@ export function computePerceptualMetadata(
   // "covered" for a node that's simply outside the viewport.
   // A hit on a descendant of the target is NOT an overlay — the target
   // itself is the interactable surface (e.g. <button> containing <span>).
+  // When pointer-events:none is set, elementFromPoint legitimately returns
+  // the element underneath — that is expected behavior, not an overlay.
+  const pointerEventsNone = probe.pointerEvents === 'none';
+
   let coveredByNodeId: number | undefined;
-  if (effective === 'rendered' && probe.topElementBackendNodeId !== null) {
+  if (effective === 'rendered' && !pointerEventsNone && probe.topElementBackendNodeId !== null) {
     const hitId = probe.topElementBackendNodeId;
     const isSelf = hitId === probe.backendNodeId;
     const isDescendant =
@@ -125,8 +129,6 @@ export function computePerceptualMetadata(
     (probe.descendantBackendNodeIds !== undefined &&
       probe.topElementBackendNodeId !== null &&
       probe.descendantBackendNodeIds.has(probe.topElementBackendNodeId));
-
-  const pointerEventsNone = probe.pointerEvents === 'none';
 
   const feasibility = classifyInteractionFeasibility(effective, box, viewport, topElementMatches, pointerEventsNone);
 
