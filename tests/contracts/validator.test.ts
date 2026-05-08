@@ -174,6 +174,39 @@ describe('validateAssertion — per-kind field rules', () => {
     });
     expect(errors.some((e) => e.path === '$.status_in')).toBe(true);
   });
+
+  test('network with non-integer status_in → wrong_type', () => {
+    const errors = validateAssertion({
+      kind: 'network',
+      url_pattern: '/x',
+      status_in: [200.5],
+      since: 'contract_enter',
+    });
+    expect(
+      errors.some((e) => e.path === '$.status_in[0]' && e.code === 'wrong_type'),
+    ).toBe(true);
+  });
+
+  test('network status_in below 100 or above 599 → out_of_range', () => {
+    const lo = validateAssertion({
+      kind: 'network',
+      url_pattern: '/x',
+      status_in: [42],
+      since: 'contract_enter',
+    });
+    expect(
+      lo.some((e) => e.path === '$.status_in[0]' && e.code === 'out_of_range'),
+    ).toBe(true);
+    const hi = validateAssertion({
+      kind: 'network',
+      url_pattern: '/x',
+      status_in: [700],
+      since: 'contract_enter',
+    });
+    expect(
+      hi.some((e) => e.path === '$.status_in[0]' && e.code === 'out_of_range'),
+    ).toBe(true);
+  });
 });
 
 describe('validateAssertion — composite rules', () => {

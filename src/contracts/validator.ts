@@ -109,7 +109,7 @@ function validateOne(
     case 'network':
       requireString(obj, 'url_pattern', path, errors);
       validateRegex(obj.url_pattern, `${path}.url_pattern`, errors);
-      requireNumberArray(obj, 'status_in', path, errors);
+      requireHttpStatusArray(obj, 'status_in', path, errors);
       requireEnum(obj, 'since', path, VALID_NETWORK_SINCE, errors);
       return;
     case 'screenshot_class':
@@ -263,6 +263,52 @@ function requireNumberArray(
         path: `${path}.${field}[${i}]`,
         code: 'wrong_type',
         message: 'expected finite number',
+      });
+    }
+  }
+}
+
+/** HTTP status codes are integer-valued in [100, 599]. Anything else
+ *  cannot match a real response and should fail registration so the
+ *  contract author can correct the typo before runtime evaluation. */
+function requireHttpStatusArray(
+  obj: Record<string, unknown>,
+  field: string,
+  path: string,
+  errors: ValidationError[],
+): void {
+  const v = obj[field];
+  if (!Array.isArray(v)) {
+    errors.push({
+      path: `${path}.${field}`,
+      code: 'wrong_type',
+      message: `${field} must be an array of HTTP status codes`,
+    });
+    return;
+  }
+  for (let i = 0; i < v.length; i++) {
+    const item = v[i];
+    if (typeof item !== 'number' || !Number.isFinite(item)) {
+      errors.push({
+        path: `${path}.${field}[${i}]`,
+        code: 'wrong_type',
+        message: 'expected finite number',
+      });
+      continue;
+    }
+    if (!Number.isInteger(item)) {
+      errors.push({
+        path: `${path}.${field}[${i}]`,
+        code: 'wrong_type',
+        message: 'HTTP status code must be an integer',
+      });
+      continue;
+    }
+    if (item < 100 || item > 599) {
+      errors.push({
+        path: `${path}.${field}[${i}]`,
+        code: 'out_of_range',
+        message: 'HTTP status code must be in [100, 599]',
       });
     }
   }
