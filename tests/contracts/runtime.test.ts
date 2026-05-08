@@ -277,10 +277,13 @@ describe('runWithContract — audit emission', () => {
   });
 });
 
-describe('runWithContract — evaluator throws (always-settles guarantee)', () => {
-  // dom_text default selector is "body" → exercised via bodyText (no probe).
-  // Force an exception by using a non-default selector that the snapshot's
-  // domText() callback rejects, mirroring real-world bad-selector failures.
+describe('runWithContract — probe failure handling (always-settles guarantee)', () => {
+  // The evaluator now wraps host probes in try/catch and returns
+  // passed=false with `probe_error` rather than re-throwing. So a
+  // throwing `domText` no longer surfaces as `execution_error` from the
+  // runtime — it surfaces as a normal pre/postcondition failure with
+  // the probe error captured in evidence. Either way the runtime
+  // settles cleanly; that's the always-settles guarantee.
   const POST_BAD_SELECTOR: Assertion = {
     kind: 'dom_text',
     selector: 'button.primary',
@@ -295,24 +298,26 @@ describe('runWithContract — evaluator throws (always-settles guarantee)', () =
     throw new Error('Invalid selector');
   };
 
-  test('evaluator throws during pre-check → execution_error (never propagates)', async () => {
+  test('throwing pre probe → precondition_violation with probe_error in evidence', async () => {
     const r = await runWithContract({
       contract: { id: 'c', pre: PRE_BAD_SELECTOR, post: POST_OK },
       skill: async () => 'ok',
       snapshot: async () => snap({ domText: throwingDomText }),
     });
-    expect(r.verdict).toBe('execution_error');
-    expect(r.error_message).toContain('pre-check');
+    expect(r.verdict).toBe('precondition_violation');
+    expect(r.pre_evidence?.passed).toBe(false);
+    expect(r.pre_evidence?.details.probe_error).toContain('Invalid selector');
   });
 
-  test('evaluator throws during post-check → execution_error (never propagates)', async () => {
+  test('throwing post probe → postcondition_violation with probe_error in evidence', async () => {
     const r = await runWithContract({
       contract: { id: 'c', post: POST_BAD_SELECTOR },
       skill: async () => 'ok',
       snapshot: async () => snap({ domText: throwingDomText }),
     });
-    expect(r.verdict).toBe('execution_error');
-    expect(r.error_message).toContain('post-check');
+    expect(r.verdict).toBe('postcondition_violation');
+    expect(r.post_evidence?.passed).toBe(false);
+    expect(r.post_evidence?.details.probe_error).toContain('Invalid selector');
   });
 });
 
@@ -389,6 +394,47 @@ describe('runWithContract — retry count normalization', () => {
       delay: async () => undefined,
     });
     expect(r.retries).toBe(0);
+  });
+});
+
+describe('runWithContract — domain propagation + escalate=abort', () => {
+  test('contract.domain is mirrored into TransactionRecord on every settle path', async () => {
+    const { emitter, records } = captureEmitter();
+    await runWithContract({
+      contract: { id: 'c', domain: 'checkout-flow', post: POST_OK },
+      skill: async () => 'ok',
+      snapshot: async () => snap({ bodyText: 'Order Placed' }),
+      audit: emitter,
+    });
+    expect(records[0].contract_domain).toBe('checkout-flow');
+  });
+
+  test('contract.domain absent → contract_domain stays undefined', async () => {
+    const { emitter, records } = captureEmitter();
+    await runWithContract({
+      contract: { id: 'c', post: POST_OK },
+      skill: async () => 'ok',
+      snapshot: async () => snap({ bodyText: 'Order Placed' }),
+      audit: emitter,
+    });
+    expect(records[0].contract_domain).toBeUndefined();
+  });
+
+  test('escalate=abort settles as postcondition_violation with explicit message', async () => {
+    // Without explicit handling, 'abort' would silently fall into the
+    // generic postcondition_violation path and audit consumers could
+    // not tell that the operator opted out of human escalation.
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: POST_OK,
+        on_fail: { escalate: 'abort' },
+      },
+      skill: async () => undefined,
+      snapshot: async () => snap({ bodyText: 'wrong page' }),
+    });
+    expect(r.verdict).toBe('postcondition_violation');
+    expect(r.error_message).toContain('escalate=abort');
   });
 });
 
