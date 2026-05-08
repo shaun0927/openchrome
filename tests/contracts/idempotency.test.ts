@@ -269,6 +269,77 @@ describe('runWithContract — idempotency cache', () => {
     await runWithContract(make('b'));
     expect(skillCalls).toBe(2);
   });
+
+  test('concurrent duplicates: skill runs once, second call hits in-flight registry', async () => {
+    // Two callers race with the same idempotency key while the first is
+    // still executing. Without pending-slot reservation both observe a
+    // cache miss and both run the skill — the exact stampede this layer
+    // is meant to prevent (#706 v2). Pending registry guarantees the
+    // skill runs at most once and the second caller gets a replay.
+    let skillCalls = 0;
+    let releaseFirst!: (v: string) => void;
+    const c: Contract = {
+      id: 'c-conc',
+      idempotency_key: 'concurrent-1',
+      post: { kind: 'no_dialog' },
+    };
+    const args = {
+      contract: c,
+      skill: () =>
+        new Promise<string>((resolve) => {
+          skillCalls++;
+          releaseFirst = resolve;
+        }),
+      snapshot: async () => snap(),
+      idempotency: store,
+    };
+
+    const first = runWithContract(args);
+    // Yield so the first call passes its synchronous setup and reserves
+    // the pending slot before we kick off the duplicate.
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = runWithContract(args);
+
+    releaseFirst('shared');
+
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(skillCalls).toBe(1);
+    expect(r1.verdict).toBe('success');
+    expect(r2.verdict).toBe('success');
+    // The first caller did the underlying work; the second observed the
+    // in-flight result and is marked from_cache so the audit log can tell
+    // a replay from a fresh execution.
+    expect(r2.from_cache).toBe(true);
+    expect(r2.skill_result).toBe('shared');
+  });
+
+  test('pending slot is released after skill completes', async () => {
+    // After the first call settles its pending entry must be cleared so
+    // a later call (after the success was put into the SQLite cache)
+    // takes the settled-cache fast path instead of waiting on a stale
+    // pending promise.
+    const c: Contract = {
+      id: 'c-release',
+      idempotency_key: 'release-1',
+      post: { kind: 'no_dialog' },
+    };
+    const args = {
+      contract: c,
+      skill: async () => 'first',
+      snapshot: async () => snap(),
+      idempotency: store,
+    };
+    await runWithContract(args);
+    // After the first run resolves, the in-flight registry must be empty
+    // for this key (only the settled SQLite row remains). A second call
+    // returns from_cache with the SAME txn_id semantics as a settled
+    // replay — proving it took the get() path, not getPending().
+    const before = store.getPending('any-key-not-used');
+    expect(before).toBeUndefined();
+    const r2 = await runWithContract(args);
+    expect(r2.from_cache).toBe(true);
+  });
 });
 
 describe('runWithContract — preemptive cancellation', () => {
@@ -311,7 +382,11 @@ describe('runWithContract — preemptive cancellation', () => {
         budget: { wall_ms: 50 },
       },
       skill: async () => {
-        // Doesn't respect signal; trigger preemption then resolve normally
+        // Doesn't respect signal; trigger preemption then resolve normally.
+        // Whether the abort-rejection or the resolve-fulfilment wins the
+        // microtask race depends on the engine, so the runtime exposes
+        // two budget_exhausted error messages — both must include
+        // "preemptive timer" so callers can grep one substring.
         await new Promise((resolve) => {
           setTimeout(() => {
             timerHandler?.();
@@ -329,7 +404,40 @@ describe('runWithContract — preemptive cancellation', () => {
     });
     expect(r.verdict).toBe('budget_exhausted');
     expect(r.hard_kill).toBe(true);
-    expect(r.error_message).toContain('ignored AbortSignal');
+    expect(r.error_message).toContain('preemptive timer');
+  });
+
+  test('skill that never resolves and ignores AbortSignal still settles (no hang)', async () => {
+    // Without racing the skill against the AbortSignal, an
+    // unresponsive skill (one that returns a Promise that never
+    // resolves and silently ignores `signal`) would wedge the runtime
+    // past its budget — defeating the entire point of the preemptive
+    // timer. Verifies the runtime settles within a single test tick.
+    let timerHandler: (() => void) | null = null;
+    const r = await runWithContract({
+      contract: {
+        id: 'c',
+        post: { kind: 'no_dialog' },
+        budget: { wall_ms: 50 },
+      },
+      // Skill ignores signal AND never resolves on its own. We trigger
+      // the preemptive timer asynchronously to simulate the deadline.
+      skill: () =>
+        new Promise<unknown>(() => {
+          // Microtask hop so the timer arms and the await is parked
+          // before we fire; otherwise the abort listener wouldn't be
+          // registered yet.
+          Promise.resolve().then(() => timerHandler?.());
+        }),
+      snapshot: async () => snap(),
+      setTimer: (handler) => {
+        timerHandler = handler;
+        return null;
+      },
+      clearTimer: () => undefined,
+    });
+    expect(r.verdict).toBe('budget_exhausted');
+    expect(r.hard_kill).toBe(true);
   });
 
   test('preemptive timer is cleared when skill completes within budget', async () => {

@@ -104,6 +104,19 @@ export interface IdempotencyStore {
   get(key: string): TransactionRecord | undefined;
   /** Write a record. Caller MUST only call on `verdict === 'success'`. */
   put(key: string, record: TransactionRecord): void;
+  /** Return the in-flight promise reserved by `reservePending()` for the
+   *  given key, or undefined when no execution is currently pending. The
+   *  pending registry exists so concurrent duplicates of the same key can
+   *  observe the original execution rather than re-entering the skill —
+   *  which is exactly the retry-storm / duplicate-click scenario the
+   *  cache is meant to protect. */
+  getPending(key: string): Promise<TransactionRecord> | undefined;
+  /** Reserve a key for an in-flight execution. The promise must resolve
+   *  to the final TransactionRecord (it never rejects — runWithContract
+   *  always settles). Pair with `releasePending(key)` in a `finally`. */
+  reservePending(key: string, promise: Promise<TransactionRecord>): void;
+  /** Release a previously-reserved pending slot. Idempotent. */
+  releasePending(key: string): void;
   /** Sweep entries older than `beforeMs`. Returns count purged. */
   purgeOlderThan(beforeMs: number): number;
   close(): void;
@@ -117,6 +130,11 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
   private readonly db: Database;
   private readonly ttlMs: number;
   private readonly now: () => number;
+  /** In-memory registry of in-flight executions. Pending state is
+   *  intentionally process-local — a restart correctly forces fresh
+   *  invocations (callers cannot rely on durable side-effect dedup from
+   *  this layer; see the 24h TTL note above). */
+  private readonly pending = new Map<string, Promise<TransactionRecord>>();
 
   constructor(opts: IdempotencyStoreOptions = {}) {
     const rootDir = opts.rootDir ?? defaultIdempotencyRootDir();
@@ -159,6 +177,18 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
            used_at     = excluded.used_at`,
       )
       .run(key, record.txn_id, JSON.stringify(record), t, t);
+  }
+
+  getPending(key: string): Promise<TransactionRecord> | undefined {
+    return this.pending.get(key);
+  }
+
+  reservePending(key: string, promise: Promise<TransactionRecord>): void {
+    this.pending.set(key, promise);
+  }
+
+  releasePending(key: string): void {
+    this.pending.delete(key);
   }
 
   purgeOlderThan(beforeMs: number): number {

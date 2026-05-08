@@ -175,37 +175,130 @@ const PREEMPTIVE_GRACE_MS = 5000;
  * Run a skill under a contract. Always settles (never throws). The
  * returned TransactionRecord is also passed to args.audit (or the
  * default emitter if omitted).
+ *
+ * Idempotency proceeds in three layers (per #706 v2):
+ *   - **Settled cache** (`store.get`): durable replay of prior successes.
+ *   - **In-flight registry** (`store.getPending` / `reservePending`):
+ *     stampede protection so concurrent duplicates of the same key wait
+ *     for the original execution rather than re-entering the skill.
+ *   - **Fresh execution**: only when both layers miss.
  */
 export async function runWithContract(args: ContractRuntimeArgs): Promise<TransactionRecord> {
   const now = args.now ?? Date.now;
-  const delay = args.delay ?? defaultDelay;
   const audit = args.audit ?? defaultAuditEmitter();
-  const startedAt = now();
-  const txn_id = crypto.randomUUID();
 
-  // 0. Idempotency cache check — short-circuit before validation /
-  //    pre-check. A cached success is a settled artifact; nothing else
-  //    to do but return it (with from_cache=true) and emit one fresh
-  //    audit row so the audit log records the *retrieval*.
+  // 0. Idempotency: settled-cache short-circuit, then in-flight short-circuit.
   if (args.idempotency) {
     let key = args.idempotencyKey;
     if (!key) {
       const idem = await import('./idempotency');
       key = idem.computeIdempotencyKey(args.contract);
     }
+
+    // 0a. Settled cache hit — replay (with from_cache=true) and emit a
+    //     fresh audit row so the audit log records the retrieval.
     const cached = args.idempotency.get(key);
     if (cached && cached.verdict === 'success') {
-      const replay: TransactionRecord = {
-        ...cached,
-        txn_id, // a fresh id for the retrieval event
-        started_at: startedAt,
-        ended_at: now(),
-        wall_ms: now() - startedAt,
-        from_cache: true,
-      };
-      return settle(audit, replay);
+      return emitReplay(audit, cached, now);
+    }
+
+    // 0b. In-flight registry hit — another caller is already running
+    //     this exact (contract, args). Wait for it instead of executing
+    //     a duplicate skill. Without this, two concurrent calls both
+    //     observe a cache miss and both run the skill, defeating the
+    //     stampede-protection guarantee. The pending promise never
+    //     rejects (runWithContract always settles); the original
+    //     execution's TransactionRecord is replayed for this caller.
+    const inflight = args.idempotency.getPending(key);
+    if (inflight) {
+      const orig = await inflight;
+      return emitReplay(audit, orig, now);
+    }
+
+    // 0c. Reserve our slot before any further await so a concurrent
+    //     caller that arrives while the skill is running observes our
+    //     in-flight promise (path 0b) and does not race-execute.
+    let resolveOurs!: (record: TransactionRecord) => void;
+    const ours = new Promise<TransactionRecord>((res) => {
+      resolveOurs = res;
+    });
+    args.idempotency.reservePending(key, ours);
+    try {
+      const record = await runInner(args, key, now, audit);
+      resolveOurs(record);
+      return record;
+    } finally {
+      args.idempotency.releasePending(key);
     }
   }
+
+  return runInner(args, undefined, now, audit);
+}
+
+function emitReplay(
+  audit: AuditEmitter,
+  cached: TransactionRecord,
+  now: () => number,
+): TransactionRecord {
+  const t = now();
+  const replay: TransactionRecord = {
+    ...cached,
+    txn_id: crypto.randomUUID(), // a fresh id for the retrieval event
+    started_at: t,
+    ended_at: t,
+    wall_ms: 0,
+    from_cache: true,
+  };
+  return settle(audit, replay);
+}
+
+/**
+ * Race a promise against an AbortSignal. Resolves with the promise's
+ * value if it settles before abort; rejects on abort regardless of
+ * whether the underlying promise eventually settles. This is the
+ * preemptive-cancellation safety net: a skill that ignores its
+ * AbortSignal would otherwise wedge `await args.skill(signal)` forever
+ * — we abandon the awaiter on signal even though the original
+ * promise may still complete in the background.
+ */
+function raceAgainstSignal<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(new Error('preemptive abort: signal already aborted before skill start'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('preemptive abort: signal fired while skill was in flight'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then(
+      (v) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      (e) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
+async function runInner(
+  args: ContractRuntimeArgs,
+  idemKey: string | undefined,
+  now: () => number,
+  audit: AuditEmitter,
+): Promise<TransactionRecord> {
+  const delay = args.delay ?? defaultDelay;
+  const startedAt = now();
+  const txn_id = crypto.randomUUID();
 
   // 1. Validate contract assertions structurally
   const errors: ValidationError[] = [];
@@ -281,7 +374,11 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
 
   let skillResult: unknown;
   try {
-    skillResult = await args.skill(ctrl.signal);
+    // Race the skill against the AbortSignal so a non-cooperative skill
+    // (one that never resolves and never observes its signal) cannot
+    // wedge the runtime past the preemptive deadline. The original skill
+    // promise may still settle in the background; we abandon the await.
+    skillResult = await raceAgainstSignal(args.skill(ctrl.signal), ctrl.signal);
   } catch (e) {
     if (preemptHandle !== null) clearTimer(preemptHandle);
     if (preemptedHardKill) {
@@ -392,15 +489,12 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       post_evidence,
       skill_result: skillResult,
     };
-    // Cache only successes per #706 v2.
-    if (args.idempotency) {
-      let key = args.idempotencyKey;
-      if (!key) {
-        const idem = await import('./idempotency');
-        key = idem.computeIdempotencyKey(args.contract);
-      }
+    // Cache only successes per #706 v2. The key was already resolved by
+    // the outer reservation path; reuse it instead of recomputing so the
+    // pending-registry slot and the cache write line up exactly.
+    if (args.idempotency && idemKey) {
       try {
-        args.idempotency.put(key, successRecord);
+        args.idempotency.put(idemKey, successRecord);
       } catch {
         // Cache failure must not change the verdict.
       }
