@@ -90,14 +90,20 @@ function clickEquivalent(
     const rb = ctx.resolveTarget(b);
     if (ra !== null && rb !== null && ra === rb) return true;
   }
-  // 2. Coordinate-pair fallback: ±5 px on both axes.
+  // 2. Coordinate-pair fallback: Euclidean distance ≤ tolerance.
+  // The original per-axis check accepted diagonal offsets like
+  // dx=5 / dy=5 even though the actual distance is sqrt(50) ≈ 7.07 px,
+  // which collapsed two genuinely distinct click targets into
+  // agreement and risked `proceed: true` for a critical action that
+  // should escalate. Radial distance matches the #711 v2 contract
+  // verbatim ("coordinate-pair distance ≤ 5 px").
   if (isObject(a.args) && isObject(b.args)) {
     const ax = asNumber(a.args.x);
     const ay = asNumber(a.args.y);
     const bx = asNumber(b.args.x);
     const by = asNumber(b.args.y);
     if (ax !== undefined && ay !== undefined && bx !== undefined && by !== undefined) {
-      return Math.abs(ax - bx) <= COORDINATE_TOLERANCE_PX && Math.abs(ay - by) <= COORDINATE_TOLERANCE_PX;
+      return Math.hypot(ax - bx, ay - by) <= COORDINATE_TOLERANCE_PX;
     }
   }
   return false;

@@ -27,6 +27,18 @@ describe('actionsEquivalent — click', () => {
     ).toBe(true);
   });
 
+  test('diagonal offset (5,5) is NOT equivalent — radial distance > 5px', () => {
+    // Per-axis check would have accepted this; radial distance is
+    // sqrt(50) ≈ 7.07px, exceeding the 5px tolerance — so it must
+    // escalate rather than merge two genuinely different click targets.
+    expect(
+      actionsEquivalent(
+        { kind: 'click', args: { x: 100, y: 200 } },
+        { kind: 'click', args: { x: 105, y: 205 } },
+      ),
+    ).toBe(false);
+  });
+
   test('coordinates outside ±5 px → not equivalent', () => {
     expect(
       actionsEquivalent(
@@ -234,6 +246,19 @@ describe('extractFirstJsonObject', () => {
       a: '{not json}',
       b: 1,
     });
+  });
+
+  test('continues past a non-JSON brace segment to find a later JSON object', () => {
+    // Provider replies sometimes contain brace-wrapped prose ahead
+    // of the structured payload. The scanner must not stop at the
+    // first balanced `{...}` if it does not parse — keep scanning.
+    expect(
+      extractFirstJsonObject('Reasoning: {note: this is prose} Result: {"action":"click","args":{}}'),
+    ).toEqual({ action: 'click', args: {} });
+  });
+
+  test('returns null when every brace segment fails to parse', () => {
+    expect(extractFirstJsonObject('{not json} {also bad}')).toBeNull();
   });
 
   test('returns null on unterminated input', () => {

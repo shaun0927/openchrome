@@ -141,7 +141,18 @@ export interface VotingOrchestratorOptions extends VotingPolicy {
   budget?: VotingSessionBudget;
 }
 
-/** Extract the first balanced-brace JSON object from a free-form string. */
+/**
+ * Extract the first *parseable* balanced-brace JSON object from a
+ * free-form string.
+ *
+ * Provider replies routinely contain explanatory prose alongside
+ * (sometimes preceding) the JSON payload. Some of that prose itself
+ * uses braces — `{some prose}`, citation-like `{ref}` markers, etc.
+ * The scanner walks every balanced `{...}` segment and tries
+ * `JSON.parse` on each; only when no segment parses does it return
+ * null. This avoids forcing avoidable `all_failed` / `disagreement`
+ * verdicts when a structured payload sits behind a stray brace.
+ */
 export function extractFirstJsonObject(text: string): unknown | null {
   if (!text) return null;
   const trimmed = text.trim();
@@ -149,7 +160,7 @@ export function extractFirstJsonObject(text: string): unknown | null {
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)\s*```/i);
   const candidate = fenced ? fenced[1] : trimmed;
 
-  // Balanced-brace scan: find first { … matching }.
+  // Balanced-brace scan: collect every top-level `{...}` slice.
   let depth = 0;
   let start = -1;
   let inString = false;
@@ -176,8 +187,9 @@ export function extractFirstJsonObject(text: string): unknown | null {
         try {
           return JSON.parse(slice);
         } catch {
-          return null;
+          // Not valid JSON — keep scanning for a later segment that is.
         }
+        start = -1;
       }
     }
   }
