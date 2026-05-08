@@ -1,4 +1,5 @@
 import { runCrossCheck } from '../../src/perception/cross-check';
+import * as zlib from 'zlib';
 
 function solid(w: number, h: number, r: number, g: number, b: number): Buffer {
   const buf = Buffer.alloc(w * h * 4);
@@ -7,6 +8,52 @@ function solid(w: number, h: number, r: number, g: number, b: number): Buffer {
     buf[i * 4 + 1] = g;
     buf[i * 4 + 2] = b;
     buf[i * 4 + 3] = 255;
+  }
+  return buf;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  chunk.write(type, 4, 4, 'ascii');
+  data.copy(chunk, 8);
+  // The decoder under test does not validate CRCs; zeros are sufficient.
+  chunk.writeUInt32BE(0, 8 + data.length);
+  return chunk;
+}
+
+function pngFromRgb(w: number, h: number, rgb: Buffer): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // truecolor RGB
+  ihdr[10] = 0; // compression
+  ihdr[11] = 0; // filter
+  ihdr[12] = 0; // no interlace
+
+  const stride = w * 3;
+  const scanlines = Buffer.alloc((stride + 1) * h);
+  for (let y = 0; y < h; y++) {
+    const rowStart = y * (stride + 1);
+    scanlines[rowStart] = 0;
+    rgb.copy(scanlines, rowStart + 1, y * stride, (y + 1) * stride);
+  }
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(scanlines)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function solidRgb(w: number, h: number, r: number, g: number, b: number): Buffer {
+  const buf = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < w * h; i++) {
+    buf[i * 3] = r;
+    buf[i * 3 + 1] = g;
+    buf[i * 3 + 2] = b;
   }
   return buf;
 }
@@ -43,6 +90,17 @@ describe('runCrossCheck — pixel_absent verdict', () => {
     expect(r.verdict).toBe('pixel_absent');
     expect(r.edge_density).toBe(0);
     expect(r.color_distance).toBeLessThan(30);
+  });
+
+  test('accepts Chromium-style encoded PNG screenshots before feature extraction', () => {
+    const bg = { r: 240, g: 240, b: 240 };
+    const png = pngFromRgb(16, 16, solidRgb(16, 16, bg.r, bg.g, bg.b));
+    const r = runCrossCheck(png, 16, 16, { x: 0, y: 0, w: 16, h: 16 }, {
+      backgroundColor: bg,
+    });
+    expect(r.verdict).toBe('pixel_absent');
+    expect(r.edge_density).toBe(0);
+    expect(r.dominant_color).toEqual({ r: 240, g: 240, b: 240 });
   });
 });
 

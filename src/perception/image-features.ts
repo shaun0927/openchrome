@@ -1,9 +1,12 @@
+import * as zlib from 'zlib';
+
 /**
  * Image feature primitives for the cross-check module (#710 v2).
  *
- * Pure JS, dependency-free — no sharp, no native bindings. Inputs are
- * tightly-packed RGBA byte buffers (4 bytes per pixel) which is the
- * format puppeteer's `Page.screenshot()` produces by default.
+ * Pure JS, dependency-free — no sharp, no native bindings. The low-level
+ * feature functions accept tightly-packed RGBA byte buffers (4 bytes per
+ * pixel); callers that receive Puppeteer's default encoded PNG screenshots
+ * can decode them with `decodePngToRgba` first.
  *
  * Per #710 v2 detection algorithm:
  *   - Edge density via 3x3 Sobel on grayscale; "high-gradient" pixel
@@ -21,6 +24,140 @@
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
 /** JPEG SOI marker: FF D8 FF */
 const JPEG_SOI = [0xff, 0xd8, 0xff] as const;
+
+export interface DecodedRgbaImage {
+  rgba: Buffer;
+  width: number;
+  height: number;
+}
+
+function isPngBuffer(input: Uint8Array | Buffer): boolean {
+  return input.length >= PNG_MAGIC.length && PNG_MAGIC.every((b, i) => input[i] === b);
+}
+
+function paethPredictor(left: number, up: number, upLeft: number): number {
+  const p = left + up - upLeft;
+  const pa = Math.abs(p - left);
+  const pb = Math.abs(p - up);
+  const pc = Math.abs(p - upLeft);
+  if (pa <= pb && pa <= pc) return left;
+  if (pb <= pc) return up;
+  return upLeft;
+}
+
+/**
+ * Decode a non-interlaced 8-bit PNG screenshot into raw RGBA bytes.
+ *
+ * This deliberately supports the PNG variants produced by Chromium
+ * screenshots: truecolor RGB and truecolor-alpha RGBA. Palette,
+ * grayscale, high-bit-depth, and interlaced PNGs should be decoded by
+ * a real image library before they reach this module.
+ */
+export function decodePngToRgba(input: Uint8Array | Buffer): DecodedRgbaImage {
+  if (!isPngBuffer(input)) {
+    throw new Error('decodePngToRgba: input is not an encoded PNG buffer');
+  }
+
+  let offset = PNG_MAGIC.length;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let compressionMethod = 0;
+  let filterMethod = 0;
+  let interlaceMethod = 0;
+  const idatChunks: Buffer[] = [];
+
+  while (offset + 12 <= input.length) {
+    const length = Buffer.from(input.subarray(offset, offset + 4)).readUInt32BE(0);
+    const type = Buffer.from(input.subarray(offset + 4, offset + 8)).toString('ascii');
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > input.length) {
+      throw new Error(`decodePngToRgba: truncated PNG chunk ${type}`);
+    }
+    const data = input.subarray(dataStart, dataEnd);
+
+    if (type === 'IHDR') {
+      if (length !== 13) throw new Error('decodePngToRgba: invalid IHDR length');
+      width = Buffer.from(data.subarray(0, 4)).readUInt32BE(0);
+      height = Buffer.from(data.subarray(4, 8)).readUInt32BE(0);
+      bitDepth = data[8];
+      colorType = data[9];
+      compressionMethod = data[10];
+      filterMethod = data[11];
+      interlaceMethod = data[12];
+    } else if (type === 'IDAT') {
+      idatChunks.push(Buffer.from(data));
+    } else if (type === 'IEND') {
+      break;
+    }
+
+    offset = dataEnd + 4;
+  }
+
+  if (!width || !height) throw new Error('decodePngToRgba: missing or invalid IHDR dimensions');
+  if (bitDepth !== 8 || (colorType !== 2 && colorType !== 6)) {
+    throw new Error(`decodePngToRgba: unsupported PNG color format bitDepth=${bitDepth} colorType=${colorType}`);
+  }
+  if (compressionMethod !== 0 || filterMethod !== 0 || interlaceMethod !== 0) {
+    throw new Error('decodePngToRgba: unsupported PNG compression/filter/interlace method');
+  }
+  if (idatChunks.length === 0) throw new Error('decodePngToRgba: missing IDAT data');
+
+  const channels = colorType === 6 ? 4 : 3;
+  const rawStride = width * channels;
+  const inflated = zlib.inflateSync(Buffer.concat(idatChunks));
+  const expectedLength = (rawStride + 1) * height;
+  if (inflated.length < expectedLength) {
+    throw new Error(`decodePngToRgba: inflated data too short ${inflated.length} < ${expectedLength}`);
+  }
+
+  const reconstructed = Buffer.alloc(rawStride * height);
+  let sourceOffset = 0;
+  for (let y = 0; y < height; y++) {
+    const filter = inflated[sourceOffset++];
+    const rowStart = y * rawStride;
+    const prevRowStart = rowStart - rawStride;
+    for (let x = 0; x < rawStride; x++) {
+      const raw = inflated[sourceOffset++];
+      const left = x >= channels ? reconstructed[rowStart + x - channels] : 0;
+      const up = y > 0 ? reconstructed[prevRowStart + x] : 0;
+      const upLeft = y > 0 && x >= channels ? reconstructed[prevRowStart + x - channels] : 0;
+      let value: number;
+      switch (filter) {
+        case 0:
+          value = raw;
+          break;
+        case 1:
+          value = raw + left;
+          break;
+        case 2:
+          value = raw + up;
+          break;
+        case 3:
+          value = raw + Math.floor((left + up) / 2);
+          break;
+        case 4:
+          value = raw + paethPredictor(left, up, upLeft);
+          break;
+        default:
+          throw new Error(`decodePngToRgba: unsupported PNG filter type ${filter}`);
+      }
+      reconstructed[rowStart + x] = value & 0xff;
+    }
+  }
+
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let i = 0, j = 0; i < reconstructed.length; i += channels, j += 4) {
+    rgba[j] = reconstructed[i];
+    rgba[j + 1] = reconstructed[i + 1];
+    rgba[j + 2] = reconstructed[i + 2];
+    rgba[j + 3] = channels === 4 ? reconstructed[i + 3] : 255;
+  }
+
+  return { rgba, width, height };
+}
 
 /**
  * Sniff the first bytes of a buffer and throw a descriptive error if it

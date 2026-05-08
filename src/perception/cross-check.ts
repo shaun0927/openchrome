@@ -23,6 +23,7 @@ import {
   DEFAULT_EDGE_GRADIENT_THRESHOLD,
   DEFAULT_PIXEL_ABSENT_EDGE_DENSITY,
   colorDistance,
+  decodePngToRgba,
   dominantColor,
   sobelEdgeDensity,
   type CropRect,
@@ -123,8 +124,18 @@ export function runCrossCheck(
       ? coerceFiniteNonNegative('colorTolerance', opts.colorTolerance, colorToleranceDefault)
       : colorToleranceDefault;
 
-  const edgeDensity = sobelEdgeDensity(rgba, width, height, crop, edgeGradientThreshold);
-  const dom = dominantColor(rgba, width, height, crop);
+  let image = rgba;
+  let imageWidth = width;
+  let imageHeight = height;
+  if (rgba.length >= 8 && rgba[0] === 0x89 && rgba[1] === 0x50 && rgba[2] === 0x4e && rgba[3] === 0x47) {
+    const decoded = decodePngToRgba(rgba);
+    image = decoded.rgba;
+    imageWidth = decoded.width;
+    imageHeight = decoded.height;
+  }
+
+  const edgeDensity = sobelEdgeDensity(image, imageWidth, imageHeight, crop, edgeGradientThreshold);
+  const dom = dominantColor(image, imageWidth, imageHeight, crop);
 
   // Empty-region guard: pixelBox clamped to zero area — no pixels were
   // sampled. This is a definitive mismatch (the element has no visible
