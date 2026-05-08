@@ -224,6 +224,28 @@ describe('TraceStorage — appendEvents', () => {
     expect(fs.existsSync(path.join(root, 'ghost'))).toBe(false);
   });
 
+  test('removes JSONL file when SQLite byte_size update fails after append', () => {
+    const dbHandle = (store as unknown as {
+      db: { prepare: (sql: string) => unknown };
+    }).db;
+    const originalPrepare = dbHandle.prepare.bind(dbHandle);
+    dbHandle.prepare = ((sql: string): unknown => {
+      if (sql.startsWith('UPDATE traces SET byte_size = byte_size + ?')) {
+        throw new Error('sqlite locked after append');
+      }
+      return originalPrepare(sql);
+    }) as typeof dbHandle.prepare;
+
+    try {
+      expect(() => store.appendEvents('s', [event(1, 123)])).toThrow(/sqlite locked/);
+    } finally {
+      dbHandle.prepare = originalPrepare as typeof dbHandle.prepare;
+    }
+
+    expect(fs.existsSync(path.join(root, 's', '123-1.jsonl'))).toBe(false);
+    expect(store.get('s')?.byteSize).toBe(0);
+  });
+
   test('rejects path-traversal session ids at all entry points', () => {
     // The recorder treats sessionId as a directory basename; without
     // validation `../foo` lets writes escape the trace root and a
