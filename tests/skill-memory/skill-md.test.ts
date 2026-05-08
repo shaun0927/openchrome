@@ -59,6 +59,16 @@ describe('parseSkillMd', () => {
     expect(parsed.frontmatter.intent).toBe('colon: in the middle');
   });
 
+  test('multiline strings are quoted and round-trip as one frontmatter value', () => {
+    const text = stringifySkillMd({
+      frontmatter: fm({ intent: 'step 1\nstep 2' }),
+      body: '',
+    });
+    expect(text).toContain('intent: "step 1\\nstep 2"');
+    const parsed = parseSkillMd(text);
+    expect(parsed.frontmatter.intent).toBe('step 1\nstep 2');
+  });
+
   test('comments and blank lines in frontmatter are tolerated', () => {
     const text = `---
 # top comment

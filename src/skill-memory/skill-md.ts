@@ -91,7 +91,7 @@ function escapeStr(value: string): string {
   // Quote only when the value contains a leading/trailing space, a
   // colon, a hash, or a double-quote — keeps the output tidy for
   // typical strings.
-  if (/[:#"]|^\s|\s$/.test(value)) return JSON.stringify(value);
+  if (/[:#"\r\n]|^\s|\s$/.test(value)) return JSON.stringify(value);
   return value;
 }
 
