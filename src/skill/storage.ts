@@ -124,14 +124,23 @@ export class SkillGraphStorage {
   readonly domain: string;
 
   constructor(domain: string, opts: SkillGraphStorageOptions = {}) {
-    if (!domain || /[\\/]/.test(domain)) {
+    if (!domain || domain === '.' || domain === '..') {
       throw new Error(`SkillGraphStorage: invalid domain "${domain}"`);
     }
     this.domain = domain;
     this.rootDir = opts.rootDir ?? defaultSkillGraphRootDir();
     fs.mkdirSync(this.rootDir, { recursive: true });
     const Sqlite = loadSqlite();
-    this.db = new Sqlite(path.join(this.rootDir, `${domain}.db`));
+    // Encode the domain into a filesystem-safe filename. URL hostnames
+    // can legitimately contain characters Windows rejects in filenames
+    // — most notably `:` in IPv6 literals like `[2001:db8::1]`, plus
+    // `[`/`]` themselves. encodeURIComponent covers `:`, `/`, `\`, `[`,
+    // `]`, `*`, `?`, `<`, `>`, `|`, `"` and most other unsafe ASCII,
+    // round-trips deterministically for the same input, and leaves
+    // ordinary domain characters (`a-z`, `0-9`, `.`, `-`) untouched so
+    // `amazon.com` still maps to `amazon.com.db`.
+    const fileSafeDomain = encodeURIComponent(domain);
+    this.db = new Sqlite(path.join(this.rootDir, `${fileSafeDomain}.db`));
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
     // SQLite ships with foreign-key checks OFF by default, on every

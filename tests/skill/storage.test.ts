@@ -39,9 +39,36 @@ describe('SkillGraphStorage — schema and lifecycle', () => {
     store = new SkillGraphStorage('amazon.com', { rootDir: root });
   });
 
-  test('rejects domains with path separators', () => {
-    expect(() => new SkillGraphStorage('a/b', { rootDir: root })).toThrow();
-    expect(() => new SkillGraphStorage('a\\b', { rootDir: root })).toThrow();
+  test('rejects empty / dot / dotdot domains', () => {
+    expect(() => new SkillGraphStorage('', { rootDir: root })).toThrow();
+    expect(() => new SkillGraphStorage('.', { rootDir: root })).toThrow();
+    expect(() => new SkillGraphStorage('..', { rootDir: root })).toThrow();
+  });
+
+  test('encodes filesystem-unsafe domain characters into a portable filename', () => {
+    // IPv6 literal hostnames carry `:` and `[`/`]` which are invalid
+    // filename characters on Windows. The constructor must encode them
+    // so storage initialisation works on every supported OS.
+    const ipv6 = '[2001:db8::1]';
+    const sg = new SkillGraphStorage(ipv6, { rootDir: root });
+    sg.close();
+    const expected = path.join(root, `${encodeURIComponent(ipv6)}.db`);
+    expect(fs.existsSync(expected)).toBe(true);
+    // Sanity: no file with the raw, unsafe name was created.
+    expect(fs.existsSync(path.join(root, `${ipv6}.db`))).toBe(false);
+  });
+
+  test('domain with `/` or `\\\\` is encoded, not rejected', () => {
+    // Path separators in a domain were previously a hard error. They
+    // cannot legitimately appear in a URL hostname, but if a caller
+    // passes one (mistakenly or maliciously), encoding keeps the file
+    // inside rootDir without an exception. The keying remains stable.
+    const a = new SkillGraphStorage('a/b', { rootDir: root });
+    a.close();
+    const b = new SkillGraphStorage('a\\b', { rootDir: root });
+    b.close();
+    expect(fs.existsSync(path.join(root, `${encodeURIComponent('a/b')}.db`))).toBe(true);
+    expect(fs.existsSync(path.join(root, `${encodeURIComponent('a\\b')}.db`))).toBe(true);
   });
 
   test('migrations table is INSERT-OR-IGNORE idempotent (concurrent-safe)', () => {
