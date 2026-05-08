@@ -149,7 +149,10 @@ export class MCPServer {
    */
   private resourcePrefixHandlers: Array<{
     prefix: string;
-    read: (uri: string) => Promise<{ mimeType: string; text: string } | null>;
+    read: (
+      uri: string,
+      caller?: { mode?: string; tenantId?: string },
+    ) => Promise<{ mimeType: string; text: string } | null>;
   }> = [];
   private manifestVersion: number = 1;
   private sessionManager: SessionManager;
@@ -269,7 +272,10 @@ export class MCPServer {
    */
   registerResourcePrefix(
     prefix: string,
-    read: (uri: string) => Promise<{ mimeType: string; text: string } | null>,
+    read: (
+      uri: string,
+      caller?: { mode?: string; tenantId?: string },
+    ) => Promise<{ mimeType: string; text: string } | null>,
   ): void {
     this.resourcePrefixHandlers.push({ prefix, read });
   }
@@ -593,7 +599,7 @@ export class MCPServer {
           break;
 
         case 'resources/read':
-          result = await this.handleResourcesRead(params);
+          result = await this.handleResourcesRead(params, principal);
           break;
 
         case 'sessions/list':
@@ -721,9 +727,15 @@ export class MCPServer {
   }
 
   /**
-   * Handle resources/read request
+   * Handle resources/read request. The transport-injected `principal`
+   * is forwarded to prefix handlers so they can apply tenant-aware
+   * filters (e.g. trace resources fail-closed for api-key callers until
+   * per-trace tenant tagging exists; see src/resources/trace-resource.ts).
    */
-  private async handleResourcesRead(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleResourcesRead(
+    params?: Record<string, unknown>,
+    principal?: Principal,
+  ): Promise<MCPResult> {
     if (!params) {
       throw new Error('Missing params for resources/read');
     }
@@ -742,7 +754,7 @@ export class MCPServer {
       } else {
         // Static resource without a hardcoded handler — try the prefix
         // handler chain (e.g., the trace subsystem owns its own list URI).
-        const fromPrefix = await this.tryPrefixHandlers(uri);
+        const fromPrefix = await this.tryPrefixHandlers(uri, principal);
         if (fromPrefix) {
           return {
             contents: [
@@ -760,7 +772,7 @@ export class MCPServer {
     }
 
     // 2. Prefix-match resources (dynamic URIs like openchrome://trace/<id>/meta)
-    const fromPrefix = await this.tryPrefixHandlers(uri);
+    const fromPrefix = await this.tryPrefixHandlers(uri, principal);
     if (fromPrefix) {
       return {
         contents: [
@@ -779,10 +791,14 @@ export class MCPServer {
    */
   private async tryPrefixHandlers(
     uri: string,
+    principal?: Principal,
   ): Promise<{ mimeType: string; text: string } | null> {
+    const caller = principal
+      ? { mode: principal.mode, tenantId: principal.tenantId }
+      : undefined;
     for (const { prefix, read } of this.resourcePrefixHandlers) {
       if (!uri.startsWith(prefix)) continue;
-      const r = await read(uri);
+      const r = await read(uri, caller);
       if (r) return r;
     }
     return null;
