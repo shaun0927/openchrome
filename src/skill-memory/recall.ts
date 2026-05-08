@@ -134,21 +134,21 @@ export function buildRecallPayload(
   const entries = ranked.map((r) => buildEntry(r, bodies.get(r.skill_id) ?? ''));
 
   // Drop from the bottom until the payload fits, but always keep ≥1.
-  let oversized = false;
+  // The serialized `,"oversized":true` adds ~18 bytes; we set the flag
+  // BEFORE the truncation loop in any case where dropping happens, so
+  // the size check accounts for the flag's overhead and we can never
+  // return an over-cap payload merely because the flag was appended
+  // after truncation finished. (The intentional escape hatch is the
+  // single-entry case: even one skill plus the flag may exceed
+  // maxBytes — we ship it anyway with `oversized: true` set.)
   let payload: SkillRecallPayload = { domain, promoted_skills: entries };
-  while (
-    Buffer.byteLength(JSON.stringify(payload), 'utf8') > maxBytes &&
-    payload.promoted_skills.length > 1
-  ) {
-    payload.promoted_skills = payload.promoted_skills.slice(0, -1);
+  const size = () => Buffer.byteLength(JSON.stringify(payload), 'utf8');
+  if (size() > maxBytes) {
+    payload = { ...payload, oversized: true };
+    while (size() > maxBytes && payload.promoted_skills.length > 1) {
+      payload.promoted_skills = payload.promoted_skills.slice(0, -1);
+    }
   }
-  if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > maxBytes) {
-    // Even the top-ranked skill alone exceeds the cap — flag and ship.
-    oversized = true;
-  } else if (payload.promoted_skills.length < entries.length) {
-    oversized = true;
-  }
-  if (oversized) payload = { ...payload, oversized: true };
   return payload;
 }
 

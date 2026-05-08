@@ -169,6 +169,31 @@ describe('buildRecallPayload — drop policy', () => {
     expect(r!.oversized).toBeUndefined();
   });
 
+  test('truncated payload (with oversized flag) stays within maxBytes', () => {
+    // Boundary case: enough entries that drop policy fires, and a
+    // maxBytes value where the post-truncation payload would tip over
+    // the cap if `,"oversized":true` is appended afterwards.
+    const records: SkillRecord[] = [];
+    for (let i = 0; i < 8; i++) {
+      records.push(mkRec(`skill${i}`, 8 - i, '2026-05-01T00:00:00Z', 'promoted'));
+    }
+    // Probe a range of byte caps to catch off-by-one cases where the
+    // flag's serialization overhead nudges the payload over.
+    for (let cap = 250; cap <= 600; cap += 5) {
+      const r = buildRecallPayload('x.com', records, new Map(), { maxBytes: cap });
+      expect(r).not.toBeNull();
+      const size = Buffer.byteLength(JSON.stringify(r), 'utf8');
+      // The single-entry escape hatch is the only allowed over-cap case.
+      if (r!.promoted_skills.length > 1) {
+        expect(size).toBeLessThanOrEqual(cap);
+      }
+      // If we dropped any entry, oversized MUST be set.
+      if (r!.promoted_skills.length < records.length) {
+        expect(r!.oversized).toBe(true);
+      }
+    }
+  });
+
   test('topK caps the candidate pool', () => {
     const records: SkillRecord[] = [];
     for (let i = 0; i < 10; i++) {
