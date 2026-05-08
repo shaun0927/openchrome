@@ -136,6 +136,48 @@ describe('oc trace — list / show', () => {
     expect(r.stdout).toContain('0 B');
     expect(r.stdout).not.toMatch(/NaN|undefined/);
   });
+
+  test('list does not truncate UUID-length session ids in table output', () => {
+    // Regression: the SESSION column was previously sliced to 22 chars,
+    // making it impossible to copy a UUID id back into `oc trace show`.
+    const fullId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    store.recordSessionStart({
+      sessionId: fullId,
+      startedAt: 1000,
+      domain: 'x.com',
+      status: 'completed',
+    });
+    const r = runCli(['trace', 'list'], { OPENCHROME_TRACE_ROOT: traceRoot });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(fullId);
+  });
+
+  test('show --limit returns the most recent events, not the oldest', () => {
+    // Regression: the prior `slice(0, limit)` returned the *oldest*
+    // events while help advertised "recent events"; for a long session
+    // the failure trigger (always near the end) was hidden by default.
+    store.recordSessionStart({ sessionId: 's-many', startedAt: 1, status: 'completed' });
+    const events = Array.from({ length: 10 }, (_, i) => ({
+      ts: 100 + i,
+      seq: i + 1,
+      kind: i === 9 ? 'Final' : `K${i}`,
+      body: { i },
+    }));
+    store.appendEvents('s-many', events);
+
+    const r = runCli(['trace', 'show', 's-many', '--limit', '3', '--json'], {
+      OPENCHROME_TRACE_ROOT: traceRoot,
+    });
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout) as {
+      events: Array<{ kind: string; seq: number }>;
+      totalEvents: number;
+      omitted: number;
+    };
+    expect(out.totalEvents).toBe(10);
+    expect(out.omitted).toBe(7);
+    expect(out.events.map((e) => e.kind)).toEqual(['K7', 'K8', 'Final']);
+  });
 });
 
 describe('oc skill — list / inspect', () => {

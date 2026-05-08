@@ -129,15 +129,22 @@ function listTraces(opts: {
       return;
     }
 
-    // Header
+    // Header. The SESSION column is sized to the widest id in this batch
+    // (with a 22-char floor for the header label) so the printed id can
+    // always be copy-pasted into `oc trace show <id>`. UUIDs (36) and
+    // longer ids stay intact.
     const cols = ['SESSION', 'STARTED', 'ENDED', 'STATUS', 'DOMAIN', 'SIZE'];
-    const widths = [22, 19, 19, 10, 24, 10];
+    const sessionWidth = rows.reduce(
+      (acc, r) => Math.max(acc, (r.session_id || '').length),
+      'SESSION'.length,
+    );
+    const widths = [sessionWidth, 19, 19, 10, 24, 10];
     console.log(cols.map((c, i) => c.padEnd(widths[i])).join(' '));
     console.log('-'.repeat(widths.reduce((a, b) => a + b + 1, -1)));
     for (const r of rows) {
       console.log(
         [
-          (r.session_id || '').slice(0, widths[0]).padEnd(widths[0]),
+          (r.session_id || '').padEnd(widths[0]),
           fmtTime(r.started_at).padEnd(widths[1]),
           fmtTime(r.ended_at).padEnd(widths[2]),
           (r.status || '').padEnd(widths[3]),
@@ -197,10 +204,21 @@ function showTrace(sessionId: string, opts: { limit?: string; json?: boolean }):
   }
 
   const limit = Math.max(1, Math.min(10000, parseInt(opts.limit ?? '50', 10) || 50));
-  const slice = events.slice(0, limit);
+  // The CLI help advertises "recent events", so when `events.length`
+  // exceeds the limit we keep the *tail* of the timeline. The previous
+  // `slice(0, limit)` returned the oldest events and hid the failure
+  // trigger that operators almost always need first.
+  const omitted = Math.max(0, events.length - limit);
+  const slice = events.slice(omitted);
 
   if (opts.json) {
-    console.log(JSON.stringify({ meta: row, events: slice, totalEvents: events.length }, null, 2));
+    console.log(
+      JSON.stringify(
+        { meta: row, events: slice, totalEvents: events.length, omitted },
+        null,
+        2,
+      ),
+    );
     return;
   }
 
@@ -211,15 +229,15 @@ function showTrace(sessionId: string, opts: { limit?: string; json?: boolean }):
   console.log(`Domain   : ${row.domain ?? '—'}`);
   console.log(`Parent op: ${row.parent_op ?? '—'}`);
   console.log(`Size     : ${fmtBytes(row.byte_size)}`);
-  console.log(`Events   : ${events.length} (showing first ${slice.length})`);
+  console.log(`Events   : ${events.length} (showing last ${slice.length})`);
   console.log('');
+  if (omitted > 0) {
+    console.log(`... (${omitted} earlier events; pass --limit to see more)`);
+  }
   for (const ev of slice) {
     const t = fmtTime(ev.ts);
     const seq = String(ev.seq).padStart(4);
     console.log(`[${t}] #${seq} ${ev.kind}`);
-  }
-  if (events.length > slice.length) {
-    console.log(`... (${events.length - slice.length} more events; pass --limit to see more)`);
   }
 }
 
