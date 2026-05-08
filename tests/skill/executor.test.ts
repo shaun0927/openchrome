@@ -122,6 +122,35 @@ describe('replayArgs / encodeReplayArgs — lossless action payload', () => {
     circular.self = circular;
     expect(encodeReplayArgs(circular)).toBeUndefined();
   });
+
+  test('encodeReplayArgs rejects silently lossy JSON serialization', () => {
+    // JSON.stringify happily mutates these — the resulting payload would
+    // execute against a different action shape than what worked. We
+    // refuse to store such payloads so graph_hit falls back cleanly.
+    expect(encodeReplayArgs({ x: Infinity })).toBeUndefined();
+    expect(encodeReplayArgs({ x: -Infinity })).toBeUndefined();
+    expect(encodeReplayArgs({ x: Number.NaN })).toBeUndefined();
+    expect(encodeReplayArgs({ x: undefined })).toBeUndefined();
+    expect(encodeReplayArgs({ x: () => 1 })).toBeUndefined();
+    expect(encodeReplayArgs(new Date('2026-01-01'))).toBeUndefined();
+    // Top-level undefined / function value: JSON.stringify returns
+    // undefined → no payload to store.
+    expect(encodeReplayArgs(undefined)).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    expect(encodeReplayArgs(() => {})).toBeUndefined();
+  });
+
+  test('encodeReplayArgs accepts plain JSON-safe inputs', () => {
+    // Sanity-check the happy path is unchanged after the round-trip
+    // tightening.
+    expect(encodeReplayArgs(null)).toBe('null');
+    expect(encodeReplayArgs(0)).toBe('0');
+    expect(encodeReplayArgs('text')).toBe('"text"');
+    expect(encodeReplayArgs([1, 2, 3])).toBe('[1,2,3]');
+    expect(encodeReplayArgs({ a: 'b', c: [true, false] })).toBe(
+      '{"a":"b","c":[true,false]}',
+    );
+  });
 });
 
 describe('pickBestEdge — selection', () => {

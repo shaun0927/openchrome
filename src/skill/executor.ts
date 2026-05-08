@@ -16,6 +16,8 @@
  * to `src/tools/` lives in PR-7).
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import { computeStateHash, type PageSnapshot } from './state';
 import {
   SkillGraphStorage,
@@ -351,17 +353,33 @@ export function replayArgs(edge: SkillEdge): unknown {
 
 /**
  * Serialise the original action args into the lossless replay payload.
- * Returns undefined when the args don't survive a JSON round-trip (for
- * example, args containing functions or circular references). In that
- * case the edge is still promoted, but graph_hit replay falls back to
- * parsing `actionArgsNorm` — same behaviour as before this change.
+ * Returns undefined when the args don't survive a JSON round-trip — that
+ * covers both *failures* (circular references, BigInt, etc.) and *silent
+ * mutations* (`Infinity`/`NaN` → `null`, dropped `undefined` properties,
+ * `Date` objects collapsing to ISO strings, function-valued props
+ * vanishing). When the payload is rejected the edge is still promoted,
+ * but graph_hit replay falls back to parsing `actionArgsNorm` — same
+ * behaviour as before lossless replay was added.
  */
 export function encodeReplayArgs(args: unknown): string | undefined {
+  let serialized: string;
   try {
-    return JSON.stringify(args);
+    serialized = JSON.stringify(args) as string;
   } catch {
     return undefined;
   }
+  if (typeof serialized !== 'string') return undefined; // top-level undefined / function
+  let roundTripped: unknown;
+  try {
+    roundTripped = JSON.parse(serialized);
+  } catch {
+    return undefined;
+  }
+  // Reject when the round-trip mutated the value. JSON.stringify is
+  // happy to silently coerce `Infinity`, drop `undefined`/function-valued
+  // properties, and stringify `Date` — replay would then run with
+  // different args than the original successful call.
+  return isDeepStrictEqual(roundTripped, args) ? serialized : undefined;
 }
 
 /** Test-internal helper for `to_state_distribution` math without an SkillEdge. */
