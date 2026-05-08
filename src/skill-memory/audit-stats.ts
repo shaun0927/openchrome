@@ -40,7 +40,10 @@ import type { SkillRunStats, SkillStatsResolver } from './curator';
 import type { SkillRecord } from './types';
 
 const DEFAULT_FAIL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-const DEFAULT_STATS_WINDOW_DAYS = 30;
+// Must be >= curator's untouched-archive horizon (curator.ts DEFAULTS.untouchedArchiveMs = 60 days).
+// A skill last used 31-60 days ago must be visible to the resolver so the curator does not
+// archive it as "untouched" when it was actually touched within the policy horizon.
+const DEFAULT_STATS_WINDOW_DAYS = 60;
 
 export interface AuditStatsResolverOptions {
   /** Path to the audit log JSONL. Default: reads from global config, then ~/.openchrome/audit.log. */
@@ -49,9 +52,16 @@ export interface AuditStatsResolverOptions {
   failWindowMs?: number;
   /**
    * Full scan window in days (controls how far back lastRunAt searches).
-   * Defaults to OPENCHROME_SKILL_MEM_STATS_WINDOW_DAYS env var, then 30 days.
-   * Decoupled from failWindowMs so a skill last used 31-60 days ago is not
-   * falsely treated as never-touched when failWindowMs is 30 days.
+   * Defaults to OPENCHROME_SKILL_MEM_STATS_WINDOW_DAYS env var, then 60 days.
+   *
+   * The default is anchored to the curator's untouched-archive horizon
+   * (curator.ts DEFAULTS.untouchedArchiveMs = 60 days). A skill last run
+   * 31-60 days ago must be visible here so the curator does not treat it as
+   * "never touched" and archive it prematurely. Setting this below 60 risks
+   * the silent data-loss bug described in PR #766 round-3 follow-up (P1).
+   *
+   * Decoupled from failWindowMs so success/failure tallies can still use a
+   * tighter 30-day window while lastRunAt searches the full 60-day horizon.
    */
   statsWindowDays?: number;
   /** Test hook: clock for "now". */

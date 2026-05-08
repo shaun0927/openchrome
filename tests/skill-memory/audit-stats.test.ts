@@ -221,6 +221,44 @@ describe('createAuditLogStatsResolver — lastRunAt window decoupled from failWi
   });
 });
 
+describe('createAuditLogStatsResolver — default stats window covers curator untouched horizon (P1 regression)', () => {
+  // PR #766 round-3 follow-up: the old default statsWindowDays was 30, but the
+  // curator's untouched-archive horizon is 60 days. A skill last used 31-60 days
+  // ago was invisible to the default resolver (lastRunAt = null) and got archived
+  // as "untouched" even though it had recent activity within the curator's policy.
+  // The fix raises the default to 60 to match the curator's horizon exactly.
+  test('50-day-old skill_run is visible with default options (no statsWindowDays override)', () => {
+    const fiftyDaysAgo = new Date(NOW - 50 * 24 * 60 * 60 * 1000).toISOString();
+    const lines = [
+      audit(fiftyDaysAgo, 'skill_run', { skill_id: 'sk-001' }),
+    ];
+    // Deliberately use NO statsWindowDays override — the default must be wide enough.
+    const resolver = createInMemoryStatsResolver(lines, { now: () => NOW });
+    const stats = resolver(rec());
+    expect(stats.lastRunAt).toBe(Date.parse(fiftyDaysAgo));
+  });
+
+  test('50-day-old contract_runtime entry is visible with default options', () => {
+    const fiftyDaysAgo = new Date(NOW - 50 * 24 * 60 * 60 * 1000).toISOString();
+    const lines = [
+      audit(fiftyDaysAgo, 'contract_runtime', { contract_id: 'amazon.checkout', verdict: 'success' }),
+    ];
+    const resolver = createInMemoryStatsResolver(lines, { now: () => NOW });
+    const stats = resolver(rec());
+    expect(stats.lastRunAt).toBe(Date.parse(fiftyDaysAgo));
+  });
+
+  test('61-day-old entry is NOT visible with default options (outside horizon)', () => {
+    const sixtyOneDaysAgo = new Date(NOW - 61 * 24 * 60 * 60 * 1000).toISOString();
+    const lines = [
+      audit(sixtyOneDaysAgo, 'skill_run', { skill_id: 'sk-001' }),
+    ];
+    const resolver = createInMemoryStatsResolver(lines, { now: () => NOW });
+    const stats = resolver(rec());
+    expect(stats.lastRunAt).toBeNull();
+  });
+});
+
 describe('createAuditLogStatsResolver — sibling skill isolation (P1 regression)', () => {
   // Two skills share the same contract_id but differ in graph_node_anchor,
   // so they have different skill_ids. Before the fix, both would receive
