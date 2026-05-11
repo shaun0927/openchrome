@@ -79,7 +79,7 @@ describe('HTTPTransport JSON-RPC batch limits', () => {
       id: msg.id as number,
       result: { ok: true },
     }));
-    transport = new HTTPTransport(port, '127.0.0.1');
+    transport = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(handler);
     transport.start();
 
@@ -111,7 +111,7 @@ describe('HTTPTransport JSON-RPC batch limits', () => {
   it('rejects an oversized notification-only batch with a single id:null error', async () => {
     const port = await ephemeralPort();
     const handler = jest.fn(async () => null);
-    transport = new HTTPTransport(port, '127.0.0.1');
+    transport = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(handler);
     transport.start();
 
@@ -140,7 +140,7 @@ describe('HTTPTransport JSON-RPC batch limits', () => {
     let maxActive = 0;
     const releaseHandlers: Array<() => void> = [];
 
-    transport = new HTTPTransport(port, '127.0.0.1');
+    transport = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(async (msg: JsonRpcMessage) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
