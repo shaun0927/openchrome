@@ -11,6 +11,7 @@ import { getGlobalConfig } from '../config/global';
 import { writeChromePid, removeChromePid, getChromePidFilePath, killProcessTree } from '../utils/pid-manager';
 import { spawnProcessGuardian } from '../utils/process-guardian';
 import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAST_SESSION } from '../config/defaults';
+import type { WindowBoundsConfig } from '../config/window-bounds';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
 import { writeMarker, removeMarker } from './ownership-marker';
@@ -71,9 +72,41 @@ export interface LaunchOptions {
   /** #659 launch-mode override (per-call). One of: 'auto' | 'attach' | 'isolated'.
    *  Highest precedence; falls back to OPENCHROME_LAUNCH_MODE then config then 'auto'. */
   launchMode?: 'auto' | 'attach' | 'isolated';
+  /** Headed Chrome window size. Ignored when windowBounds is set. */
+  windowSize?: WindowBoundsConfig['windowSize'];
+  /** Headed Chrome window position. Ignored when windowBounds is set. */
+  windowPosition?: WindowBoundsConfig['windowPosition'];
+  /** Headed Chrome window bounds. Overrides size and position. */
+  windowBounds?: WindowBoundsConfig['windowBounds'];
+  /** Maximize headed Chrome only when no explicit geometry is set. */
+  startMaximized?: boolean;
 }
 
 const DEFAULT_PORT = 9222;
+const DEFAULT_HEADED_WINDOW_POSITION = { x: 0, y: 0 } as const;
+const DEFAULT_HEADED_WINDOW_SIZE = { width: 1280, height: 900 } as const;
+
+export function getHeadedWindowArgs(config: WindowBoundsConfig): string[] {
+  const hasExplicitGeometry = Boolean(config.windowBounds || config.windowSize || config.windowPosition);
+
+  if (config.startMaximized === true && !hasExplicitGeometry) {
+    return ['--start-maximized'];
+  }
+
+  if (config.windowBounds) {
+    return [
+      `--window-position=${config.windowBounds.x},${config.windowBounds.y}`,
+      `--window-size=${config.windowBounds.width},${config.windowBounds.height}`,
+    ];
+  }
+
+  const position = config.windowPosition ?? DEFAULT_HEADED_WINDOW_POSITION;
+  const size = config.windowSize ?? DEFAULT_HEADED_WINDOW_SIZE;
+  return [
+    `--window-position=${position.x},${position.y}`,
+    `--window-size=${size.width},${size.height}`,
+  ];
+}
 
 /**
  * Find Chrome executable path based on platform
@@ -688,16 +721,27 @@ export class ChromeLauncher {
       ?? globalConfig.restoreLastSession
       ?? DEFAULT_RESTORE_LAST_SESSION;
 
+    // Headless mode: explicit option > global config (default when auto-launch)
+    const headless = options.headless ?? globalConfig.headless ?? false;
+
     // Essential flags — required for all modes
     args.push(
       '--no-first-run',
       '--no-default-browser-check',
       restoreSession ? '--restore-last-session' : '--no-restore-last-session',
-      // IMPORTANT: Start maximized for proper debugging experience
-      '--start-maximized',
-      // Fallback window size if maximize doesn't work
-      `--window-size=${DEFAULT_VIEWPORT.width},${DEFAULT_VIEWPORT.height}`,
     );
+
+    if (headless) {
+      // Preserve the previous headless argument shape; headed window placement is handled below.
+      args.push('--start-maximized', `--window-size=${DEFAULT_VIEWPORT.width},${DEFAULT_VIEWPORT.height}`);
+    } else {
+      args.push(...getHeadedWindowArgs({
+        windowSize: options.windowSize ?? globalConfig.windowSize,
+        windowPosition: options.windowPosition ?? globalConfig.windowPosition,
+        windowBounds: options.windowBounds ?? globalConfig.windowBounds,
+        startMaximized: options.startMaximized ?? globalConfig.startMaximized,
+      }));
+    }
 
     // Prevent Blink from setting navigator.webdriver = true when CDP is connected.
     // Without this, anti-automation systems (e.g., Cloudflare Turnstile) detect the
@@ -730,8 +774,6 @@ export class ChromeLauncher {
     //   --js-flags=--max-old-space-size  (non-standard V8 config)
     //   --disable-crash-reporter         (automation fingerprint signal)
 
-    // Headless mode: explicit option > global config (default when auto-launch)
-    const headless = options.headless ?? globalConfig.headless ?? false;
     if (headless) {
       args.push('--headless=new', '--disable-gpu', '--disable-dev-shm-usage');
       console.error('[ChromeLauncher] Running in headless mode (no visible window)');
