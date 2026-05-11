@@ -201,12 +201,14 @@ Or right-click the app → Open → Open.
 
 **Claude Code**
 ```bash
-npx openchrome-mcp setup
+npm install -g openchrome-mcp
+openchrome setup
 ```
 
 **Codex CLI**
 ```bash
-npx openchrome-mcp setup --client codex
+npm install -g openchrome-mcp
+openchrome setup --client codex
 ```
 
 One command. Configures the MCP server for the selected client.
@@ -217,7 +219,7 @@ Restart your MCP client after setup completes.
 
 **Claude Code:**
 ```bash
-claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
+claude mcp add openchrome -- openchrome serve --auto-launch
 ```
 
 **VS Code / Copilot** (`.vscode/mcp.json`):
@@ -226,8 +228,8 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
   "servers": {
     "openchrome": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
+      "command": "openchrome",
+      "args": ["serve", "--auto-launch"]
     }
   }
 }
@@ -238,8 +240,8 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
 {
   "mcpServers": {
     "openchrome": {
-      "command": "npm",
-      "args": ["exec", "--yes", "--prefer-online", "openchrome-mcp@latest", "--", "serve", "--auto-launch"]
+      "command": "openchrome",
+      "args": ["serve", "--auto-launch"]
     }
   }
 }
@@ -250,16 +252,17 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
 {
   "mcpServers": {
     "openchrome": {
-      "command": "npx",
-      "args": ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
+      "command": "openchrome",
+      "args": ["serve", "--auto-launch"]
     }
   }
 }
 ```
 
-> Some stdio clients wrap `npx` through `npm exec` and may parse flags differently.
-> If your client misinterprets `-y`, prefer a client-specific command shape (for example the Codex CLI config above)
-> or run a locally installed `openchrome` binary directly.
+To update the CLI later and refresh your MCP client configuration, run:
+```bash
+openchrome update
+```
 
 </details>
 
@@ -310,10 +313,11 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 ## CLI
 
 ```bash
-oc setup                    # Auto-configure
-oc serve --auto-launch      # Start server
-oc serve --headless-shell   # Headless mode
-oc doctor                   # Diagnose issues
+openchrome setup                    # Auto-configure
+openchrome serve --auto-launch      # Start server
+openchrome serve --headless-shell   # Headless mode
+openchrome doctor                   # Diagnose issues
+openchrome update                   # Update CLI
 ```
 
 ---
@@ -549,6 +553,10 @@ docker run openchrome
 | `OPENCHROME_PPID_WATCH_INTERVAL_MS` | Polling interval for the parent watcher in milliseconds. Default: `2000`. Clamped to `[500, 60000]`. |
 | `OPENCHROME_HEALTH_ENDPOINT` | Force-enable (`1`/`true`) or force-disable (`0`/`false`) the `/health` and `/metrics` HTTP listener. Default: on for `--transport http` / `both`, off for `--transport stdio`. Stdio-mode instances usually talk to a single MCP client over the pipe and do not need an external monitoring port; disabling it saves ~200-300 KB heap + one file descriptor per instance. Operators who run stdio under a supervisor can opt in with `OPENCHROME_HEALTH_ENDPOINT=1`; daemon-mode operators who run the health check externally can opt out with `OPENCHROME_HEALTH_ENDPOINT=0`. Invalid values (e.g. `yes`, `2`) fall through to the transport-mode default. |
 | `OPENCHROME_HEADLESS` | Opt into headless Chrome from CI / Docker without `--headless`. Accepts `1`/`true`/`yes` (headless) or `0`/`false`/`no` (headed). Lower precedence than the CLI flag, higher than persisted config. Default since #657 is headed. |
+| `OPENCHROME_WINDOW_SIZE` | Headed auto-launch window size as `width,height`, for example `1280,900`. Width and height must be positive integers. |
+| `OPENCHROME_WINDOW_POSITION` | Headed auto-launch window position as `x,y`, for example `0,0` or `1920,0`. Coordinates may be negative. |
+| `OPENCHROME_WINDOW_BOUNDS` | Headed auto-launch bounds as `x,y,width,height`. Overrides `OPENCHROME_WINDOW_SIZE` and `OPENCHROME_WINDOW_POSITION`. |
+| `OPENCHROME_START_MAXIMIZED` | Set to `1`/`true`/`yes` to start headed Chrome maximized when no explicit bounds, size, or position is configured. |
 | `OPENCHROME_FILE_UPLOAD_ROOTS` | Additional directories allowed for `file_upload`, separated with the platform path delimiter (`:` on POSIX, `;` on Windows). Defaults always include the server process current working directory and the temp upload directory. |
 | `OPENCHROME_FILE_UPLOAD_TEMP_DIR` | Temp/upload directory allowed for `file_upload`. Default: `path.join(os.tmpdir(), 'openchrome-uploads')`. |
 
@@ -571,7 +579,23 @@ openchrome serve \
 | `--headless` | `false` | Run Chrome headless. Also: `OPENCHROME_HEADLESS=1`. Default since #657 is headed. |
 | `--headless-shell` | `false` | Use chrome-headless-shell binary |
 | `--visible` | (deprecated) | No-op alias for headed; the new default is headed since #657. Will be removed in a future release. |
+| `--window-size <width,height>` | `1280,900` headed | Set headed Chrome auto-launch size. CLI overrides env. |
+| `--window-position <x,y>` | `0,0` headed | Set headed Chrome auto-launch position. CLI overrides env. |
+| `--window-bounds <x,y,width,height>` | unset | Set headed Chrome auto-launch position and size together. Overrides size/position. |
+| `--start-maximized` | `false` | Start headed Chrome maximized only when no explicit bounds, size, or position is set. |
 | `--server-mode` | `false` | Compound flag for server deployment (forces `--headless` + auto-launch) |
+
+Headed auto-launch defaults to `--window-position=0,0 --window-size=1280,900` so the first Chrome window lands predictably without maximizing. To place Chrome on the right side of a 1920px-wide primary display:
+
+```bash
+openchrome serve --auto-launch --window-bounds 1920,0,1280,900
+```
+
+To keep only a clipped strip visible on the right edge of the primary display:
+
+```bash
+openchrome serve --auto-launch --window-bounds 1720,0,1280,900
+```
 
 ---
 

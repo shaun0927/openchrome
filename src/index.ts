@@ -13,6 +13,7 @@ import { registerAllTools } from './tools';
 import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { resolveHeadlessMode } from './config/headless-resolver';
+import { resolveWindowBoundsConfig } from './config/window-bounds';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
 import { installParentWatcher, ParentWatcherHandle } from './utils/parent-watcher';
@@ -75,6 +76,10 @@ program
   .option('--headless-shell', 'Use chrome-headless-shell if available (default: false)')
   .option('--headless', 'Run Chrome headless (default: headed). Also: OPENCHROME_HEADLESS=1 env var.')
   .option('--visible', '[deprecated] Show Chrome window. Headed is the default since #657; this flag is now a no-op alias and will be removed in a future release.')
+  .option('--window-size <width,height>', 'Headed Chrome window size, e.g. 1280,900. Also: OPENCHROME_WINDOW_SIZE.')
+  .option('--window-position <x,y>', 'Headed Chrome window position, e.g. 0,0. Also: OPENCHROME_WINDOW_POSITION.')
+  .option('--window-bounds <x,y,width,height>', 'Headed Chrome window bounds. Overrides size/position. Also: OPENCHROME_WINDOW_BOUNDS.')
+  .option('--start-maximized', 'Start headed Chrome maximized when no explicit size, position, or bounds are set. Also: OPENCHROME_START_MAXIMIZED=1.')
   .option('--restart-chrome', 'Quit running Chrome to reuse real profile (default: uses temp profile)')
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
@@ -89,7 +94,7 @@ program
   .option('--allow-unauthenticated-http', 'Explicitly allow unauthenticated loopback-only HTTP development mode (also: OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1)')
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -152,8 +157,29 @@ program
       }
     }
 
+    let windowConfig;
+    try {
+      windowConfig = resolveWindowBoundsConfig(
+        {
+          windowSize: options.windowSize,
+          windowPosition: options.windowPosition,
+          windowBounds: options.windowBounds,
+          startMaximized: options.startMaximized,
+        },
+        {
+          OPENCHROME_WINDOW_SIZE: process.env.OPENCHROME_WINDOW_SIZE,
+          OPENCHROME_WINDOW_POSITION: process.env.OPENCHROME_WINDOW_POSITION,
+          OPENCHROME_WINDOW_BOUNDS: process.env.OPENCHROME_WINDOW_BOUNDS,
+          OPENCHROME_START_MAXIMIZED: process.env.OPENCHROME_START_MAXIMIZED,
+        },
+      );
+    } catch (err) {
+      console.error(`[openchrome] ${(err as Error).message}`);
+      process.exit(2);
+    }
+
     // Set global config before initializing anything
-    setGlobalConfig({ port, autoLaunch, userDataDir, profileDirectory, chromeBinary, useHeadlessShell, headless, restartChrome });
+    setGlobalConfig({ port, autoLaunch, userDataDir, profileDirectory, chromeBinary, useHeadlessShell, headless, restartChrome, ...windowConfig });
     if (restartChrome) {
       console.error(`[openchrome] Restart Chrome mode: enabled (will quit existing Chrome)`);
     }
