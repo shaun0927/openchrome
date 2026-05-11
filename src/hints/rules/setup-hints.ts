@@ -16,7 +16,7 @@ export const setupHintRules: HintRule[] = [
       // Only on non-error tool calls
       if (ctx.isError) return null;
       hasFired = true;
-      return 'Hint: To configure OpenChrome quickly, run: npx openchrome-mcp setup (or add --client codex for Codex CLI)';
+      return 'Hint: To configure OpenChrome quickly, run: openchrome setup (or add --client codex for Codex CLI)';
     },
   },
 ];

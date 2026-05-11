@@ -201,12 +201,14 @@ Or right-click the app → Open → Open.
 
 **Claude Code**
 ```bash
-npx openchrome-mcp setup
+npm install -g openchrome-mcp
+openchrome setup
 ```
 
 **Codex CLI**
 ```bash
-npx openchrome-mcp setup --client codex
+npm install -g openchrome-mcp
+openchrome setup --client codex
 ```
 
 One command. Configures the MCP server for the selected client.
@@ -217,7 +219,7 @@ Restart your MCP client after setup completes.
 
 **Claude Code:**
 ```bash
-claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
+claude mcp add openchrome -- openchrome serve --auto-launch
 ```
 
 **VS Code / Copilot** (`.vscode/mcp.json`):
@@ -226,8 +228,8 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
   "servers": {
     "openchrome": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
+      "command": "openchrome",
+      "args": ["serve", "--auto-launch"]
     }
   }
 }
@@ -238,8 +240,8 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
 {
   "mcpServers": {
     "openchrome": {
-      "command": "npm",
-      "args": ["exec", "--yes", "--prefer-online", "openchrome-mcp@latest", "--", "serve", "--auto-launch"]
+      "command": "openchrome",
+      "args": ["serve", "--auto-launch"]
     }
   }
 }
@@ -250,16 +252,17 @@ claude mcp add openchrome -- npx -y openchrome-mcp@latest serve --auto-launch
 {
   "mcpServers": {
     "openchrome": {
-      "command": "npx",
-      "args": ["-y", "openchrome-mcp@latest", "serve", "--auto-launch"]
+      "command": "openchrome",
+      "args": ["serve", "--auto-launch"]
     }
   }
 }
 ```
 
-> Some stdio clients wrap `npx` through `npm exec` and may parse flags differently.
-> If your client misinterprets `-y`, prefer a client-specific command shape (for example the Codex CLI config above)
-> or run a locally installed `openchrome` binary directly.
+To update the CLI later and refresh your MCP client configuration, run:
+```bash
+openchrome update
+```
 
 </details>
 
@@ -310,10 +313,11 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 ## CLI
 
 ```bash
-oc setup                    # Auto-configure
-oc serve --auto-launch      # Start server
-oc serve --headless-shell   # Headless mode
-oc doctor                   # Diagnose issues
+openchrome setup                    # Auto-configure
+openchrome serve --auto-launch      # Start server
+openchrome serve --headless-shell   # Headless mode
+openchrome doctor                   # Diagnose issues
+openchrome update                   # Update CLI
 ```
 
 ---

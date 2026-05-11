@@ -1,5 +1,6 @@
 import {
   formatMCPServerConfigSnippet,
+  getClaudeManualServerConfig,
   getClaudeSetupCommand,
   getCodexServerConfig,
   getServeArgs,
@@ -20,10 +21,17 @@ describe('cli/mcp-client-config', () => {
     expect(getServeArgs({ autoLaunch: false })).toEqual(['serve']);
   });
 
-  test('getCodexServerConfig uses npm exec with argument separator', () => {
+  test('getCodexServerConfig uses the installed openchrome binary', () => {
     expect(getCodexServerConfig()).toEqual({
-      command: 'npm',
-      args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', 'serve', '--auto-launch'],
+      command: 'openchrome',
+      args: ['serve', '--auto-launch'],
+    });
+  });
+
+  test('getClaudeManualServerConfig uses the installed openchrome binary', () => {
+    expect(getClaudeManualServerConfig()).toEqual({
+      command: 'openchrome',
+      args: ['serve', '--auto-launch'],
     });
   });
 
@@ -35,10 +43,7 @@ describe('cli/mcp-client-config', () => {
       '-s',
       'project',
       '--',
-      'npx',
-      '--prefer-online',
-      '-y',
-      'openchrome-mcp@latest',
+      'openchrome',
       'serve',
       '--auto-launch',
       '--dashboard',
@@ -66,8 +71,8 @@ describe('cli/mcp-client-config', () => {
           args: ['example.js'],
         },
         openchrome: {
-          command: 'npm',
-          args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', 'serve', '--auto-launch'],
+          command: 'openchrome',
+          args: ['serve', '--auto-launch'],
         },
       },
     });
@@ -77,11 +82,24 @@ describe('cli/mcp-client-config', () => {
     expect(JSON.parse(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig()))).toEqual({
       mcpServers: {
         openchrome: {
-          command: 'npm',
-          args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', 'serve', '--auto-launch'],
+          command: 'openchrome',
+          args: ['serve', '--auto-launch'],
         },
       },
     });
+  });
+
+  test('generated configs do not use transient package runners', () => {
+    const serialized = [
+      JSON.stringify(getCodexServerConfig()),
+      JSON.stringify(getClaudeManualServerConfig()),
+      formatMCPServerConfigSnippet('openchrome', getCodexServerConfig()),
+      getClaudeSetupCommand('user').join(' '),
+    ].join('\n');
+
+    expect(serialized).not.toContain('npx');
+    expect(serialized).not.toContain('@latest');
+    expect(serialized).not.toContain('--prefer-online');
   });
 
   test('isSupportedMCPClient validates supported names', () => {

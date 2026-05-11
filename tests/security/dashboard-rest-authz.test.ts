@@ -116,12 +116,23 @@ async function boot(
 
 describe('dashboard REST authorization', () => {
   let transport: InstanceType<typeof HTTPTransport> | undefined;
+  let previousAllowUnauthenticatedHttp: string | undefined;
   const readAlpha = 'oc_live_alpha_read';
   const adminAlpha = 'oc_live_alpha_admin';
+
+  beforeEach(() => {
+    previousAllowUnauthenticatedHttp = process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+    process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = 'true';
+  });
 
   afterEach(async () => {
     if (transport) await transport.close();
     transport = undefined;
+    if (previousAllowUnauthenticatedHttp === undefined) {
+      delete process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+    } else {
+      process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = previousAllowUnauthenticatedHttp;
+    }
   });
 
   it('returns 401 for dashboard REST endpoints when auth is configured but missing', async () => {

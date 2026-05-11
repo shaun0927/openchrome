@@ -10,6 +10,7 @@
  * - launch: Start Claude Code with isolated config
  * - doctor: Check installation status
  * - recover: Recover corrupted .claude.json
+ * - update: Update the globally installed OpenChrome package
  */
 
 import { Command } from 'commander';
@@ -21,6 +22,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
 import { checkForUpdates } from './update-check';
+import { runUpdateCommand } from './update-command';
 import {
   formatMCPServerConfigSnippet,
   getClientLabel,
@@ -75,13 +77,13 @@ program
     console.log('     {');
     console.log('       "mcpServers": {');
     console.log('         "openchrome": {');
-    console.log('           "command": "oc",');
+    console.log('           "command": "openchrome",');
     console.log('           "args": ["serve"]');
     console.log('         }');
     console.log('       }');
     console.log('     }\n');
     console.log('  3. Restart Claude Code\n');
-    console.log('Run "oc doctor" to verify your setup.');
+    console.log('Run "openchrome doctor" to verify your setup.');
   });
 
 program
@@ -141,9 +143,6 @@ program
         }
       }
 
-      // Use npx @latest with --prefer-online for reliable auto-updates.
-      // Without --prefer-online, npx caches a semver range (e.g. ^1.4.0) in ~/.npm/_npx/
-      // and never re-checks the registry, so @latest effectively becomes @cached.
       const setupArgs = getClaudeSetupCommand(scope, serveArgOptions);
 
       console.log(`Running: claude mcp add openchrome (scope: ${scope})...`);
@@ -187,7 +186,7 @@ program
         }
 
         console.log(`\nScope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}`);
-        console.log('Auto-updates: enabled (via npx)\n');
+        console.log('Updates: run "openchrome update"\n');
         console.log('Next steps:');
         console.log('  1. Restart Claude Code');
         console.log('  2. Just say "oc" — that\'s it.\n');
@@ -223,7 +222,7 @@ program
 
       console.log('\n✅ MCP server configured successfully!\n');
       console.log(`Config file: ${codexConfigPath}`);
-      console.log('Auto-updates: enabled (via npm exec)\n');
+      console.log('Updates: run "openchrome update"\n');
       console.log('Next steps:');
       console.log('  1. Restart Codex CLI');
       console.log('  2. Verify the openchrome MCP server reconnects cleanly\n');
@@ -261,6 +260,23 @@ program
   });
 
 program
+  .command('update')
+  .description('Update the globally installed OpenChrome package')
+  .option('--no-setup', 'skip MCP client reconfiguration after updating')
+  .option('--client <client>', 'MCP client to reconfigure after updating (claude, codex, vscode, cursor, windsurf)', 'claude')
+  .option('--scope <scope>', 'Claude Code scope to use during setup (user or project)', 'user')
+  .action((options) => {
+    const code = runUpdateCommand({
+      setup: options.setup,
+      client: options.client,
+      scope: options.scope,
+    });
+    if (code !== 0) {
+      process.exit(code);
+    }
+  });
+
+program
   .command('serve')
   .description('Start MCP server for Claude Code')
   .option('-p, --port <port>', 'Chrome remote debugging port', '9222')
@@ -285,23 +301,6 @@ program
   .action(async () => {
     // Non-blocking update check (fires in background)
     checkForUpdates(version).catch(() => {});
-
-    // Auto-migrate: patch ~/.claude.json to use @latest if still using bare package name.
-    try {
-      const claudeConfigPath = path.join(os.homedir(), '.claude.json');
-      if (fs.existsSync(claudeConfigPath)) {
-        const raw = fs.readFileSync(claudeConfigPath, 'utf8');
-        if (raw.includes('openchrome-mcp') && !raw.includes('openchrome-mcp@')) {
-          const patched = raw.replace(/openchrome-mcp(?!@)/g, 'openchrome-mcp@latest');
-          if (patched !== raw) {
-            fs.writeFileSync(claudeConfigPath, patched);
-            console.error('[openchrome] Auto-migrated MCP config to use @latest for auto-updates');
-          }
-        }
-      }
-    } catch {
-      // Best-effort migration
-    }
 
     // Forward to the full-featured serve implementation in dist/index.js
     // This includes self-healing, HTTP transport, event loop monitor, disk monitor,
@@ -403,7 +402,7 @@ program
       console.log('\nUsage:');
       console.log('  1. Start Chrome with: chrome --remote-debugging-port=9222');
       console.log('  2. Add to ~/.claude.json:');
-      console.log('     "mcpServers": { "openchrome": { "command": "oc", "args": ["serve"] } }');
+      console.log('     "mcpServers": { "openchrome": { "command": "openchrome", "args": ["serve"] } }');
       console.log('  3. Restart Claude Code');
     } else {
       if (!coreChecks['Chrome debugging port']) {
