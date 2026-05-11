@@ -64,15 +64,15 @@ export function getServeArgs(options: ServeArgOptions = {}): string[] {
 
 export function getCodexServerConfig(options: ServeArgOptions = {}): MCPServerConfig {
   return {
-    command: 'npm',
-    args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', ...getServeArgs(options)],
+    command: 'openchrome',
+    args: getServeArgs(options),
   };
 }
 
 export function getClaudeManualServerConfig(options: ServeArgOptions = {}): MCPServerConfig {
   return {
-    command: 'npx',
-    args: ['-y', 'openchrome-mcp@latest', ...getServeArgs(options)],
+    command: 'openchrome',
+    args: getServeArgs(options),
   };
 }
 
@@ -91,10 +91,7 @@ export function getClaudeSetupCommand(scope: SetupScope, options: ServeArgOption
     '-s',
     scope,
     '--',
-    'npx',
-    '--prefer-online',
-    '-y',
-    'openchrome-mcp@latest',
+    'openchrome',
     ...getServeArgs(options),
   ];
 }

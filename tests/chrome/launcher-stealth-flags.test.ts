@@ -58,8 +58,9 @@ describe('Chrome launch flag stealth optimization (#453)', () => {
       expect(launcherSource).toContain('--no-default-browser-check');
     });
 
-    it('should contain --start-maximized', () => {
+    it('should not add --start-maximized unconditionally', () => {
       expect(launcherSource).toContain('--start-maximized');
+      expect(launcherSource).toContain('startMaximized === true');
     });
 
     it('should contain --window-size', () => {

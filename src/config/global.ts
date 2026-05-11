@@ -2,7 +2,9 @@
  * Global Configuration - Runtime settings for the MCP server
  */
 
-export interface GlobalConfig {
+import type { WindowBoundsConfig } from './window-bounds';
+
+export interface GlobalConfig extends WindowBoundsConfig {
   /** Chrome remote debugging port */
   port: number;
   /** Auto-launch Chrome if not running (default: false) */

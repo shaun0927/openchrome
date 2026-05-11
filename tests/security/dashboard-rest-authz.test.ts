@@ -102,9 +102,9 @@ async function boot(
   smOverrides: { defaultTenantId?: string } = {},
 ) {
   const port = await freePort();
-  const options: Record<string, unknown> = store ? { apiKeyStore: store as never } : {};
-  if (!authToken && !store) options.allowUnauthenticatedHttp = true;
-  const transport = new HTTPTransport(port, '127.0.0.1', authToken, options as never);
+  const baseOptions = store ? { apiKeyStore: store as never } : {};
+  const options = authToken ? baseOptions : { ...baseOptions, allowUnauthenticatedHttp: true };
+  const transport = new HTTPTransport(port, '127.0.0.1', authToken, options);
   transport.setSessionManager(sessionManager(smOverrides) as never);
   transport.onMessage(async (msg: Record<string, unknown>) => ({
     jsonrpc: '2.0',
@@ -118,12 +118,23 @@ async function boot(
 
 describe('dashboard REST authorization', () => {
   let transport: InstanceType<typeof HTTPTransport> | undefined;
+  let previousAllowUnauthenticatedHttp: string | undefined;
   const readAlpha = 'oc_live_alpha_read';
   const adminAlpha = 'oc_live_alpha_admin';
+
+  beforeEach(() => {
+    previousAllowUnauthenticatedHttp = process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+    process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = 'true';
+  });
 
   afterEach(async () => {
     if (transport) await transport.close();
     transport = undefined;
+    if (previousAllowUnauthenticatedHttp === undefined) {
+      delete process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+    } else {
+      process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = previousAllowUnauthenticatedHttp;
+    }
   });
 
   it('returns 401 for dashboard REST endpoints when auth is configured but missing', async () => {
