@@ -371,6 +371,22 @@ read_page tabId="tab1" mode="dom"
 
 DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` IDs which are cleared on each AX-mode `read_page` call.
 
+### JavaScript and Shadow DOM
+
+`read_page` and `find` use CDP-pierced DOM reads, so they can show content inside open shadow roots that plain page JavaScript will not find with `document.querySelectorAll(...)`.
+
+`javascript_tool` runs in the page context and preserves normal browser semantics, but it also injects helper functions for open shadow roots:
+
+```javascript
+// Returns an array of matches from document plus recursively discovered open shadow roots.
+__pierce('.artdeco-button')
+
+// Same helper under the OpenChrome namespace, with an optional root.
+globalThis.__openchrome.querySelectorAllDeep('.feed-shared-update-v2', document)
+```
+
+These helpers traverse open shadow roots only. Closed shadow roots are not exposed to page JavaScript.
+
 ---
 
 ## Stable Selectors
