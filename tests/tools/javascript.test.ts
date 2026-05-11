@@ -11,6 +11,11 @@ jest.mock('../../src/session-manager', () => ({
 }));
 
 import { getSessionManager } from '../../src/session-manager';
+import {
+  buildJavascriptExpression,
+  formatCDPResult,
+  JAVASCRIPT_HELPER_INJECTION,
+} from '../../src/tools/javascript';
 
 describe('JavaScriptTool', () => {
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
@@ -66,7 +71,7 @@ describe('JavaScriptTool', () => {
         expect.anything(),
         'Runtime.evaluate',
         expect.objectContaining({
-          expression: '1 + 1',
+          expression: expect.stringContaining('1 + 1'),
           returnByValue: false,
           awaitPromise: true,
           userGesture: true,
@@ -389,6 +394,27 @@ describe('JavaScriptTool', () => {
       expect(result.content[0].text).toContain('SyntaxError');
     });
 
+    test('includes explicit diagnostic text for exception details', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'object', subtype: 'error' },
+        exceptionDetails: {
+          text: 'Uncaught ReferenceError',
+          exception: { description: 'ReferenceError: missingThing is not defined' },
+        },
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        code: 'missingThing',
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('JavaScript error: ReferenceError');
+      expect(result.content[0].text).toContain('Diagnostic: Uncaught ReferenceError');
+    });
+
     test('handles CDP call failures', async () => {
       const handler = await getJavascriptHandler();
 
@@ -504,6 +530,83 @@ describe('JavaScriptTool', () => {
 
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toBe('3');
+    });
+  });
+
+  describe('Result formatting diagnostics', () => {
+    test('returns an explicit Promise remote object diagnostic', async () => {
+      const mockSender = { send: jest.fn().mockResolvedValue({}) };
+
+      const result = await formatCDPResult(
+        {
+          type: 'object',
+          subtype: 'promise',
+          className: 'Promise',
+          description: 'Promise',
+          objectId: 'promise-1',
+        },
+        mockSender,
+        {}
+      );
+
+      expect(result).toContain('Promise');
+      expect(result).toContain('Diagnostic: CDP returned a Promise remote object');
+      expect(result).toContain('awaitPromise: true');
+      expect(mockSender.send).toHaveBeenCalledWith({}, 'Runtime.releaseObject', { objectId: 'promise-1' });
+    });
+  });
+
+  describe('Shadow DOM helpers', () => {
+    test('helper injection expression exposes helper APIs', () => {
+      const expression = buildJavascriptExpression('__pierce(".feed-shared-update-v2").length');
+
+      expect(expression).toContain('globalThis.__openchrome');
+      expect(expression).toContain('querySelectorAllDeep');
+      expect(expression).toContain('globalThis.__pierce');
+      expect(expression).toContain('__pierce(".feed-shared-update-v2").length');
+    });
+
+    test('pierces nested open shadow roots with LinkedIn-style selectors using mocks', () => {
+      type MockNode = {
+        shadowRoot?: MockNode;
+        querySelectorAll: (selector: string) => MockNode[];
+      };
+
+      const linkedInButton: MockNode = {
+        querySelectorAll: jest.fn(() => []),
+      };
+      const nestedShadow: MockNode = {
+        querySelectorAll: jest.fn((selector: string) =>
+          selector === '.artdeco-button' ? [linkedInButton] : []
+        ),
+      };
+      const nestedHost: MockNode = {
+        shadowRoot: nestedShadow,
+        querySelectorAll: jest.fn(() => []),
+      };
+      const topShadow: MockNode = {
+        querySelectorAll: jest.fn((selector: string) =>
+          selector === '*' ? [nestedHost] : []
+        ),
+      };
+      const topHost: MockNode = {
+        shadowRoot: topShadow,
+        querySelectorAll: jest.fn(() => []),
+      };
+      const documentMock: MockNode = {
+        querySelectorAll: jest.fn((selector: string) =>
+          selector === '*' ? [topHost] : []
+        ),
+      };
+      const sandbox = { document: documentMock };
+
+      const installAndPierce = new Function(
+        'globalThis',
+        'document',
+        `${JAVASCRIPT_HELPER_INJECTION}; return globalThis.__pierce('.artdeco-button');`
+      );
+
+      expect(installAndPierce(sandbox, documentMock)).toEqual([linkedInButton]);
     });
   });
 

@@ -357,7 +357,7 @@ describe('Headed Tool Interop (#485)', () => {
         mockPage,
         'Runtime.evaluate',
         expect.objectContaining({
-          expression: 'window.location.href',
+          expression: expect.stringContaining('window.location.href'),
           returnByValue: false,
           awaitPromise: true,
         }),
