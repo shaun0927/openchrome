@@ -40,7 +40,7 @@ export function isDevToolsExposureEnabled(): boolean {
  * Returns undefined if unreachable or exposure is disabled.
  */
 export async function collectDevToolsInfo(): Promise<
-  { instances: Awaited<ReturnType<typeof getDevToolsInstanceInfo> & {}>[] } | undefined
+  { instances: Awaited<ReturnType<typeof getDevToolsInstanceInfo>>[] } | undefined
 > {
   if (!isDevToolsExposureEnabled()) {
     return undefined;
