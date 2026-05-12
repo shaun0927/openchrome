@@ -107,6 +107,13 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
+import { registerOcTaskStartTool, getTaskStore } from './oc-task-start';
+import { registerOcTaskListTool } from './oc-task-list';
+import { registerOcTaskGetTool } from './oc-task-get';
+import { registerOcTaskCancelTool } from './oc-task-cancel';
+import { registerOcTaskWaitTool } from './oc-task-wait';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -217,6 +224,28 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+
+  // Async task ledger (#855) — persistent background task table
+  registerOcTaskStartTool(server);
+  registerOcTaskListTool(server);
+  registerOcTaskGetTool(server);
+  registerOcTaskCancelTool(server);
+  registerOcTaskWaitTool(server);
+
+  // Reap any RUNNING task whose owner pid is no longer alive. Runs
+  // once at server start (issue #855 invariant #2) so a crash on a
+  // previous boot transitions orphaned rows to FAILED before new
+  // tasks are accepted. Best-effort: log and continue on failure.
+  void getTaskStore()
+    .reapOrphans()
+    .then((reaped) => {
+      if (reaped.length > 0) {
+        console.error(`[task-ledger] Reaped ${reaped.length} orphaned task(s) at startup`);
+      }
+    })
+    .catch((err) => {
+      console.error('[task-ledger] startup reapOrphans failed:', err);
+    });
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
