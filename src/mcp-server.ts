@@ -1321,6 +1321,7 @@ export class MCPServer {
               rule: hintResult.rule,
               fireCount: hintResult.fireCount,
               ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+              ...(hintResult.candidates && { candidates: hintResult.candidates }),
               ...(hintResult.context && { context: hintResult.context }),
             };
             const content = (result as Record<string, unknown>).content;
@@ -1482,6 +1483,7 @@ export class MCPServer {
             rule: hintResult.rule,
             fireCount: hintResult.fireCount,
             ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+            ...(hintResult.candidates && { candidates: hintResult.candidates }),
             ...(hintResult.context && { context: hintResult.context }),
           };
           if (Array.isArray(errResult.content)) {

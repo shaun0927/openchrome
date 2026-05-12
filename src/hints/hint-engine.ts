@@ -18,6 +18,7 @@ import type { ToolCallEvent } from '../dashboard/types';
 import type { ActivityTracker } from '../dashboard/activity-tracker';
 import { PatternLearner } from './pattern-learner';
 import { ProgressTracker } from './progress-tracker.js';
+import { formatCandidateHint, rankRecoveryCandidates, type RecoveryCandidate } from '../recovery';
 import { errorRecoveryRules } from './rules/error-recovery';
 import { blockingPageRules } from './rules/blocking-page';
 import { compositeSuggestionRules } from './rules/composite-suggestions';
@@ -65,6 +66,7 @@ export interface HintResult {
     tool?: string;
     reason: string;
   };
+  candidates?: RecoveryCandidate[];
   context?: {
     element?: string;
     coordinates?: string;
@@ -160,9 +162,11 @@ export class HintEngine {
       const key = escalationKey('progress-tracker-stuck');
       const fireCount = (this.hintEscalation.get(key) || 0) + 1;
       this.hintEscalation.set(key, fireCount);
+      const candidates = rankRecoveryCandidates({ toolName, resultText, isError, recentCalls });
       const rawHintText = 'STOP — you are stuck. The last several tool calls made no meaningful progress ' +
         '(errors, stale refs, auth redirects, or timeouts). ' +
-        'Step back and try a completely different approach, or ask the user for help.';
+        'Step back and try a completely different approach, or ask the user for help.' +
+        formatCandidateHint(candidates);
       const severity = fireCount >= 2 ? 'critical' as const : 'warning' as const;
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stuck', hint: rawHintText, severity, fireCount });
       return {
@@ -171,6 +175,7 @@ export class HintEngine {
         fireCount,
         hint: this.formatHintMessage(severity, rawHintText, fireCount),
         rawHint: rawHintText,
+        ...(candidates.length > 0 && { candidates }),
       };
     }
 
@@ -178,8 +183,10 @@ export class HintEngine {
       const key = escalationKey('progress-tracker-stalling');
       const fireCount = (this.hintEscalation.get(key) || 0) + 1;
       this.hintEscalation.set(key, fireCount);
+      const candidates = rankRecoveryCandidates({ toolName, resultText, isError, recentCalls });
       const rawHintText = 'Warning: recent tool calls are not making progress. ' +
-        'Consider trying a different approach before getting stuck.';
+        'Consider trying a different approach before getting stuck.' +
+        formatCandidateHint(candidates);
       const severity = this.getSeverity(fireCount);
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stalling', hint: rawHintText, severity, fireCount });
       return {
@@ -188,6 +195,7 @@ export class HintEngine {
         fireCount,
         hint: this.formatHintMessage(severity, rawHintText, fireCount),
         rawHint: rawHintText,
+        ...(candidates.length > 0 && { candidates }),
       };
     }
 
