@@ -4,6 +4,12 @@ import { getMetricsCollector } from '../../src/metrics/collector';
 import { estimateOutputTokensFromChars, extractCacheStatus } from '../../src/mcp-server';
 
 describe('tool output observability metrics', () => {
+  afterEach(() => {
+    jest.dontMock('../../src/session-manager');
+    jest.dontMock('../../src/utils/ref-id-manager');
+    jest.dontMock('../../src/dom');
+  });
+
   test('registers output size, estimated token, compression, and cache metrics', () => {
     const m = getMetricsCollector();
 
