@@ -14,6 +14,8 @@ import { MainView, MainViewData } from './views/main-view.js';
 import { SessionsView, SessionsViewData } from './views/sessions-view.js';
 import { TabsView, TabsViewData } from './views/tabs-view.js';
 import { ConnectView, ConnectViewData } from './views/connect-view.js';
+import { TasksView, type TasksViewData, readTasksSnapshot } from './views/tasks-view.js';
+import { SkillsView, type SkillsViewData, readSkillsSnapshot } from './views/skills-view.js';
 import type { ViewMode, DashboardStats, SessionInfo, TabInfo } from './types.js';
 import type { SessionManager } from '../session-manager.js';
 
@@ -34,6 +36,10 @@ export class Dashboard extends EventEmitter {
   private sessionsView: SessionsView;
   private tabsView: TabsView;
   private connectView: ConnectView;
+  private tasksView: TasksView;
+  private skillsView: SkillsView;
+  private tasksViewData: TasksViewData = { tasks: [], version: '1' };
+  private skillsViewData: SkillsViewData = { rows: [], version: '1' };
 
   private sessionManager: SessionManager | null = null;
   private config: DashboardOptions;
@@ -66,6 +72,8 @@ export class Dashboard extends EventEmitter {
     this.sessionsView = new SessionsView(this.renderer);
     this.tabsView = new TabsView(this.renderer);
     this.connectView = new ConnectView(this.renderer);
+    this.tasksView = new TasksView(this.renderer);
+    this.skillsView = new SkillsView(this.renderer);
   }
 
   /**
@@ -197,6 +205,8 @@ export class Dashboard extends EventEmitter {
       this.handleConnectViewKey(key, event);
     } else if (this.currentView === 'tabs') {
       this.handleTabsViewKey(key, event);
+    } else if (this.currentView === 'tasks' || this.currentView === 'skills') {
+      this.handleLedgerViewKey(key);
     }
 
     // Refresh after key handling
@@ -223,7 +233,45 @@ export class Dashboard extends EventEmitter {
       case 'c':
         this.cancelCurrentOperation();
         break;
+      case 'j':
+        // Tasks ledger view (#865). Refresh on entry so the first paint
+        // shows current data; subsequent ticks update via refreshLedgers.
+        this.currentView = 'tasks';
+        this.selectedIndex = 0;
+        void this.refreshLedgers();
+        break;
+      case 'k':
+        // Skills ledger view (#865).
+        this.currentView = 'skills';
+        this.selectedIndex = 0;
+        void this.refreshLedgers();
+        break;
     }
+  }
+
+  /**
+   * Ledger-view key handling (#865). `escape` returns to the activity
+   * (main) view. The ledger views are otherwise read-only.
+   */
+  private handleLedgerViewKey(key: string): void {
+    if (key === 'escape') {
+      this.currentView = 'activity';
+      this.selectedIndex = 0;
+    }
+  }
+
+  /**
+   * Refresh ledger view snapshots. Called when entering a ledger view
+   * and on regular dashboard ticks. Read-only; errors surface in the
+   * view's `errorMessage` field rather than throwing.
+   */
+  private async refreshLedgers(): Promise<void> {
+    if (this.currentView === 'tasks') {
+      this.tasksViewData = await readTasksSnapshot();
+    } else if (this.currentView === 'skills') {
+      this.skillsViewData = await readSkillsSnapshot();
+    }
+    this.refresh();
   }
 
   private handleSessionsViewKey(key: string, _event: KeyEvent): void {
@@ -328,6 +376,12 @@ export class Dashboard extends EventEmitter {
         break;
       case 'tabs':
         lines = this.tabsView.render(this.getTabsViewData(), size);
+        break;
+      case 'tasks':
+        lines = this.tasksView.render(this.tasksViewData, size);
+        break;
+      case 'skills':
+        lines = this.skillsView.render(this.skillsViewData, size);
         break;
     }
 
