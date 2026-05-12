@@ -131,6 +131,42 @@ function normalize(p: string): string {
 }
 
 /**
+ * Canonicalize a path: resolve symlinks via `fs.realpathSync.native` so
+ * aliases (symlink, junction, or different case on case-insensitive
+ * filesystems) collapse to the same canonical form. Falls back to
+ * `path.resolve` if `realpath` fails (eg the target does not exist).
+ *
+ * Used by the managed-profile safety guard so operators cannot accidentally
+ * point `--auto-connect` at openchrome's own managed profile via an alias.
+ */
+function canonicalize(p: string): string {
+  const resolved = path.resolve(p);
+  try {
+    const real = fs.realpathSync.native
+      ? fs.realpathSync.native(resolved)
+      : fs.realpathSync(resolved);
+    // Strip trailing separators so `/foo/` and `/foo` compare equal.
+    return path.normalize(real);
+  } catch {
+    return path.normalize(resolved);
+  }
+}
+
+/**
+ * Compare two filesystem paths for equality after canonicalization. On
+ * darwin and win32 (case-insensitive by default) the comparison is
+ * case-insensitive; on linux it stays case-sensitive.
+ */
+export function pathsEqual(a: string, b: string): boolean {
+  const ca = canonicalize(a);
+  const cb = canonicalize(b);
+  if (process.platform === 'darwin' || process.platform === 'win32') {
+    return ca.toLowerCase() === cb.toLowerCase();
+  }
+  return ca === cb;
+}
+
+/**
  * Probe whether `port` accepts a TCP connection on 127.0.0.1.
  * Resolves true on connect, false on error/timeout.
  */
@@ -167,6 +203,15 @@ function parseDevToolsActivePort(raw: string): ParsedActivePort {
   // empty (older Chrome), in which case we default to '/'.
   const lines = raw.split(/\r?\n/);
   const portLine = (lines[0] ?? '').trim();
+  // Require the port line to be digits only so `parseInt`'s partial-number
+  // tolerance (`"9222junk" -> 9222`) cannot misroute attach to an unintended
+  // port.
+  if (!/^\d+$/.test(portLine)) {
+    throw new AutoConnectError(
+      `DevToolsActivePort first line is not a valid TCP port: "${portLine}"`,
+      'devtools_active_port_malformed',
+    );
+  }
   const port = parseInt(portLine, 10);
   if (!Number.isFinite(port) || port <= 0 || port > 65535) {
     throw new AutoConnectError(
@@ -224,12 +269,14 @@ export async function discoverActiveDevToolsPort(
   }
 
   // 2. Refuse openchrome's managed profile. The two paths must never overlap;
-  //    the managed profile is launched, never attached. Compare normalised
-  //    paths so trailing slashes / .. segments don't bypass the guard.
-  const managed = normalize(opts.managedProfileDir ?? managedProfileDir());
-  if (userDataDir === managed) {
+  //    the managed profile is launched, never attached. Compare canonicalised
+  //    paths (realpath + case-insensitive on darwin/win32) so trailing
+  //    slashes, `..` segments, symlink/junction aliases, and case variants
+  //    cannot bypass the guard.
+  const managed = opts.managedProfileDir ?? managedProfileDir();
+  if (pathsEqual(userDataDir, managed)) {
     throw new AutoConnectError(
-      `Refusing to auto-connect to openchrome's managed profile (${managed}). ` +
+      `Refusing to auto-connect to openchrome's managed profile (${canonicalize(managed)}). ` +
         `That profile is owned by openchrome and is only valid in launch mode. ` +
         `Pass --auto-connect=<other-dir> for an externally-launched Chrome.`,
       'managed_profile_refused',
@@ -296,4 +343,6 @@ export const __testing = {
   parseDevToolsActivePort,
   defaultUserDataDir,
   probePort,
+  canonicalize,
+  pathsEqual,
 };

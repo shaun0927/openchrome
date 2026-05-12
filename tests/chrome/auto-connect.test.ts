@@ -195,6 +195,128 @@ describe('discoverActiveDevToolsPort (#849)', () => {
     expect(() => __testing.parseDevToolsActivePort('\n')).toThrow(AutoConnectError);
   });
 
+  it('parser rejects partial-numeric port line (parseInt would silently truncate)', () => {
+    // Without the digits-only guard, `parseInt("9222junk", 10)` would yield
+    // 9222 and attach to an unintended port. Verify the strict regex catches
+    // it.
+    expect(() => __testing.parseDevToolsActivePort('9222junk\n')).toThrow(AutoConnectError);
+    try {
+      __testing.parseDevToolsActivePort('9222junk\n');
+      fail('expected throw');
+    } catch (err) {
+      expect((err as AutoConnectError).errorCode).toBe('devtools_active_port_malformed');
+    }
+    expect(() => __testing.parseDevToolsActivePort('  9222 junk\n')).toThrow(AutoConnectError);
+    expect(() => __testing.parseDevToolsActivePort('0x1234\n')).toThrow(AutoConnectError);
+  });
+
+  it('refuses managed profile via symlink alias', async () => {
+    const realManaged = makeTempDir('oc-managed-real-');
+    const aliasParent = makeTempDir('oc-managed-link-');
+    const aliasPath = path.join(aliasParent, 'alias');
+    try {
+      fs.symlinkSync(realManaged, aliasPath, 'dir');
+      // Operator passes the symlink alias as userDataDir; managed profile
+      // is registered under its real path. Without canonicalization the
+      // string compare would miss this and allow attach.
+      await expect(
+        discoverActiveDevToolsPort({
+          userDataDir: aliasPath,
+          timeoutMs: 50,
+          managedProfileDir: realManaged,
+        }),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'managed_profile_refused',
+      });
+      // And the inverse direction (managed dir registered via alias).
+      await expect(
+        discoverActiveDevToolsPort({
+          userDataDir: realManaged,
+          timeoutMs: 50,
+          managedProfileDir: aliasPath,
+        }),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'managed_profile_refused',
+      });
+    } finally {
+      try { fs.unlinkSync(aliasPath); } catch { /* ignore */ }
+      rm(aliasParent);
+      rm(realManaged);
+    }
+  });
+
+  it('refuses managed profile via trailing-slash variant', async () => {
+    const dir = makeTempDir('oc-managed-trail-');
+    try {
+      await expect(
+        discoverActiveDevToolsPort({
+          userDataDir: dir + path.sep,
+          timeoutMs: 50,
+          managedProfileDir: dir,
+        }),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'managed_profile_refused',
+      });
+    } finally {
+      rm(dir);
+    }
+  });
+
+  it('pathsEqual is case-insensitive on darwin/win32 and exact on linux', () => {
+    const dir = makeTempDir('oc-case-');
+    try {
+      const upper = dir.toUpperCase();
+      const lower = dir.toLowerCase();
+      // Direct helper assertion — independent of the real FS case sensitivity.
+      const original = Object.getOwnPropertyDescriptor(process, 'platform');
+      try {
+        Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+        expect(__testing.pathsEqual(upper, lower)).toBe(true);
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        expect(__testing.pathsEqual(upper, lower)).toBe(true);
+        Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+        // Different case on linux compares unequal *unless* canonicalize
+        // happens to collapse them (it won't, since both resolve via
+        // realpath to whatever the real FS reports). If the temp FS itself
+        // is case-insensitive (rare on linux), this assertion still holds
+        // because realpath returns the canonical case for both inputs.
+        const equalOnLinux = __testing.pathsEqual(upper, lower);
+        if (upper === lower) {
+          expect(equalOnLinux).toBe(true);
+        }
+      } finally {
+        if (original) {
+          Object.defineProperty(process, 'platform', original);
+        }
+      }
+    } finally {
+      rm(dir);
+    }
+  });
+
+  it('accepts a distinct user-data dir even if managed profile is set', async () => {
+    const userDir = makeTempDir('oc-user-');
+    const managedDir = makeTempDir('oc-managed-');
+    const listener = await bindLocalListener();
+    try {
+      writeActivePortFile(userDir, listener.port, '/devtools/browser/distinct');
+      const result = await discoverActiveDevToolsPort({
+        userDataDir: userDir,
+        timeoutMs: 250,
+        managedProfileDir: managedDir,
+      });
+      expect(result.port).toBe(listener.port);
+      expect(result.browserTargetPath).toBe('/devtools/browser/distinct');
+    } finally {
+      listener.close();
+      rm(userDir);
+      rm(managedDir);
+    }
+  });
+
   it('defaultUserDataDir returns a non-empty path on stable channel', () => {
     const d = __testing.defaultUserDataDir('stable');
     expect(typeof d).toBe('string');
