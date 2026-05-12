@@ -13,6 +13,13 @@ import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
+import {
+  buildSemanticView,
+  type SemanticAXNode,
+  type SemanticDomElement,
+  type SemanticRuleSet,
+} from '../core/perception/semantic';
+import semanticRulesJson from '../core/perception/semantic-rules.json';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -29,7 +36,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.',
+  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.\n\nWhen to use: Reading page structure, verifying content, or extracting the full DOM tree.\nWhen NOT to use: Use inspect for targeted state queries or find to locate a specific element.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -56,8 +63,8 @@ const definition: MCPToolDefinition = {
       },
       mode: {
         type: 'string',
-        enum: ['ax', 'dom', 'css'],
-        description: 'Output mode: dom (default), ax, or css',
+        enum: ['ax', 'dom', 'css', 'semantic'],
+        description: 'Output mode: dom (default), ax, css, or semantic',
       },
       includePagination: {
         type: 'boolean',
@@ -127,9 +134,9 @@ const handler: ToolHandler = async (
 
     // Mode dispatch
     const mode = (args.mode as string) || 'dom';
-    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
+    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic') {
       return {
-        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", or "semantic".` }],
         isError: true,
       };
     }
@@ -311,6 +318,199 @@ const handler: ToolHandler = async (
       };
     }
 
+    // Semantic mode: rule-based NL summary of regions + actions.
+    // Pure deterministic transform; no LLM (P3), no new deps (P5).
+    if (mode === 'semantic') {
+      const semanticPageStats = await withTimeout(page.evaluate(() => ({
+        url: window.location.href,
+        title: document.title,
+      })), 15000, 'read_page', context);
+
+      const { nodes: semanticAxNodes } = await withTimeout(
+        cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
+        15000,
+        'Accessibility.getFullAXTree',
+        context,
+      );
+
+      // Clear previous refs for this target so refs in the semantic
+      // response do not alias older AX/DOM-mode refs.
+      refIdManager.clearTargetRefs(sessionId, tabId);
+
+      // Convert CDP AX nodes into the semantic input shape.
+      // P1 codex fix: extract `url` from CDP AX properties so that
+      // `buildSemanticView` can pick the correct verb for links
+      // (navigate when href is present, click otherwise). Without
+      // this, every link emits `click`.
+      const semanticNodes: SemanticAXNode[] = semanticAxNodes.map((n) => {
+        let href: string | undefined;
+        if (n.role?.value === 'link' && n.properties) {
+          for (const prop of n.properties) {
+            if (prop.name === 'url') {
+              const raw = prop.value?.value;
+              if (typeof raw === 'string' && raw.length > 0) {
+                href = raw;
+              }
+              break;
+            }
+          }
+        }
+        return {
+          nodeId: n.nodeId,
+          backendDOMNodeId: n.backendDOMNodeId,
+          role: n.role?.value ?? 'unknown',
+          name: n.name?.value,
+          value: n.value?.value,
+          href,
+          childIds: n.childIds ? [...n.childIds] : [],
+        };
+      });
+
+      // Best-effort DOM snapshot for state extraction (microdata, classes).
+      // P1 codex fix: pulled via CDP `DOM.getDocument` instead of
+      // `page.evaluate(...)` so each element carries its `backendDOMNodeId`.
+      // Without this, `buildSemanticView`'s `byBackendNodeId` join map was
+      // always empty and every DOM-dependent classifier (microdata, data-*,
+      // class signals) degraded to AX-only behavior. CDP returns the full
+      // tree with backendNodeIds in a single call; we walk it in DFS order
+      // and cap at `SEMANTIC_DOM_MAX_ELEMENTS` to bound work on large pages.
+      const SEMANTIC_DOM_MAX_ELEMENTS = 2000;
+      let semanticDomSnapshot: { elements: SemanticDomElement[] } | undefined;
+      // Minimal CDP DOMNode shape needed for the walk; mirrors what
+      // `DOM.getDocument({depth: -1})` returns. Inlined to avoid pulling
+      // in dom/dom-serializer.ts which carries unrelated dependencies.
+      interface CdpDomNode {
+        backendNodeId?: number;
+        nodeType: number;
+        nodeName: string;
+        localName?: string;
+        attributes?: string[]; // parallel [name1, value1, name2, value2, ...]
+        nodeValue?: string;
+        children?: CdpDomNode[];
+      }
+      try {
+        const { root } = await withTimeout(
+          cdpClient.send<{ root: CdpDomNode }>(page, 'DOM.getDocument', {
+            depth: -1,
+            pierce: false,
+          }),
+          15000,
+          'DOM.getDocument',
+          context,
+        );
+        const elements: SemanticDomElement[] = [];
+        let totalCount = 0;
+        // Iterative DFS (avoids stack overflows on deep pages).
+        const stack: CdpDomNode[] = [root];
+        while (stack.length > 0) {
+          const node = stack.pop()!;
+          if (node.nodeType === 1 /* ELEMENT_NODE */) {
+            totalCount += 1;
+            if (elements.length < SEMANTIC_DOM_MAX_ELEMENTS) {
+              const tagName = (node.localName || node.nodeName || '').toLowerCase();
+              let itemType: string | undefined;
+              let itemProp: string | undefined;
+              let classNames: string | undefined;
+              const attrs: Record<string, string> = {};
+              const attrPairs = node.attributes;
+              if (attrPairs) {
+                for (let k = 0; k + 1 < attrPairs.length; k += 2) {
+                  const name = attrPairs[k];
+                  const value = attrPairs[k + 1];
+                  if (name === 'itemtype') itemType = value || undefined;
+                  else if (name === 'itemprop') itemProp = value || undefined;
+                  else if (name === 'class') classNames = value || undefined;
+                  else if (name === 'data-price') attrs[name] = value;
+                  else if (name === 'data-product-id') attrs[name] = value;
+                }
+              }
+              // Collect descendant text node values, capped at 200 chars.
+              let text = '';
+              const textStack: CdpDomNode[] = [];
+              if (node.children) {
+                for (let i = node.children.length - 1; i >= 0; i--) {
+                  textStack.push(node.children[i]);
+                }
+              }
+              while (textStack.length > 0 && text.length < 200) {
+                const tn = textStack.pop()!;
+                if (tn.nodeType === 3 /* TEXT_NODE */ && tn.nodeValue) {
+                  text += tn.nodeValue;
+                } else if (tn.children) {
+                  for (let i = tn.children.length - 1; i >= 0; i--) {
+                    textStack.push(tn.children[i]);
+                  }
+                }
+              }
+              if (text.length > 200) text = text.slice(0, 200);
+              elements.push({
+                backendDOMNodeId: node.backendNodeId,
+                tagName,
+                itemType,
+                itemProp,
+                classNames,
+                attrs: Object.keys(attrs).length ? attrs : undefined,
+                text: text || undefined,
+              });
+            }
+          }
+          // Always descend (so text nodes inside non-elements like
+          // documents are skipped naturally — they are not ELEMENT_NODE).
+          if (node.children) {
+            // Push children in reverse so iteration order matches DFS.
+            for (let i = node.children.length - 1; i >= 0; i--) {
+              stack.push(node.children[i]);
+            }
+          }
+        }
+        if (totalCount > SEMANTIC_DOM_MAX_ELEMENTS) {
+          // NEVER use console.log — corrupts MCP JSON-RPC on stdout.
+          console.error(
+            `[read_page semantic] DOM truncated: ${totalCount} elements -> cap ${SEMANTIC_DOM_MAX_ELEMENTS}`,
+          );
+        }
+        semanticDomSnapshot = { elements };
+      } catch {
+        semanticDomSnapshot = undefined;
+      }
+
+      const view = buildSemanticView(
+        {
+          url: semanticPageStats.url,
+          title: semanticPageStats.title,
+          axNodes: semanticNodes,
+          domSnapshot: semanticDomSnapshot,
+          allocateRef: (node) => {
+            if (node.backendDOMNodeId === undefined) return undefined;
+            const AX_ROLE_TO_TAG: Record<string, string> = {
+              button: 'button',
+              link: 'a',
+              textbox: 'input',
+              searchbox: 'input',
+              checkbox: 'input',
+              radio: 'input',
+              combobox: 'select',
+              listbox: 'select',
+            };
+            const tagName = AX_ROLE_TO_TAG[node.role];
+            return refIdManager.generateRef(
+              sessionId,
+              tabId,
+              node.backendDOMNodeId,
+              node.role,
+              node.name,
+              tagName,
+            );
+          },
+        },
+        semanticRulesJson as SemanticRuleSet,
+      );
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(view) }],
+      };
+    }
+
     if (mode === 'dom') {
       try {
         const refId = args.ref_id as string | undefined;
@@ -386,19 +586,6 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Add page stats header for AX mode (matching DOM mode format)
-    const axPageStats = await withTimeout(page.evaluate(() => ({
-      url: window.location.href,
-      title: document.title,
-      scrollX: Math.round(window.scrollX),
-      scrollY: Math.round(window.scrollY),
-      scrollWidth: document.documentElement.scrollWidth,
-      scrollHeight: document.documentElement.scrollHeight,
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-    })), 15000, 'read_page', context);
-    const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
-
     // Snapshot ref entry BEFORE clearing refs (needed for post-clear recovery)
     const refEntrySnapshot = refIdParam
       ? refIdManager.getRef(sessionId, tabId, refIdParam)
@@ -411,6 +598,19 @@ const handler: ToolHandler = async (
       'Accessibility.getFullAXTree',
       context,
     );
+
+    // Add page stats header for AX mode after the AX snapshot so stats are not older than the tree.
+    const axPageStats = await withTimeout(page.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      scrollX: Math.round(window.scrollX),
+      scrollY: Math.round(window.scrollY),
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    })), 15000, 'read_page', context);
+    const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
 
     // Clear previous refs for this target
     refIdManager.clearTargetRefs(sessionId, tabId);
@@ -668,9 +868,75 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return result;
   }
 
+  // P1 codex fix: semantic mode emits a JSON payload via `JSON.stringify(view)`.
+  // Running the string-level sanitizer over the serialized JSON would let
+  // patterns like `<!--` in one field and `-->` in a later field cross JSON
+  // delimiters and corrupt the structure. Parse first, sanitize each string
+  // value in place, then re-serialize. Sanitization metadata is attached as a
+  // structural `_sanitization` field so JSON.parse always succeeds. Other
+  // modes keep the legacy text-suffix behavior.
+  const isSemanticMode =
+    typeof (args as { mode?: unknown })?.mode === 'string' &&
+    (args as { mode: string }).mode === 'semantic';
+
+  function sanitizeStringsDeep(
+    value: unknown,
+    notes: string[],
+  ): unknown {
+    if (typeof value === 'string') {
+      const s = sanitizeContent(value);
+      if (s.sanitizationNote && s.sanitizationNote.length > 0) {
+        notes.push(s.sanitizationNote.trim());
+      }
+      return s.text;
+    }
+    if (Array.isArray(value)) {
+      return value.map((v) => sanitizeStringsDeep(v, notes));
+    }
+    if (value && typeof value === 'object') {
+      // P1 codex fix: object KEYS can be attacker-controlled too
+      // (`buildSemanticView` lifts `itemprop` strings into `state` keys),
+      // so sanitize keys as well as values. Previous version only walked
+      // values, which reopened a prompt-injection vector via keys.
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        const sk = sanitizeContent(k);
+        if (sk.sanitizationNote && sk.sanitizationNote.length > 0) {
+          notes.push(sk.sanitizationNote.trim());
+        }
+        // Reserve `_sanitization` for our own metadata channel: if a
+        // sanitized key collides, prefix it to keep the metadata intact.
+        const keyOut = sk.text === '_sanitization' ? '_sanitization_input' : sk.text;
+        out[keyOut] = sanitizeStringsDeep(v, notes);
+      }
+      return out;
+    }
+    return value;
+  }
+
   // Sanitize all text content blocks
   const sanitizedContent = result.content.map((block) => {
     if (block.type === 'text' && typeof block.text === 'string') {
+      if (isSemanticMode) {
+        // Parse first, then sanitize each string value inside. This prevents
+        // the sanitizer from stripping content across JSON delimiters.
+        try {
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          const notes: string[] = [];
+          const cleaned = sanitizeStringsDeep(parsed, notes) as Record<string, unknown>;
+          if (notes.length > 0) {
+            // Deduplicate identical notes; join the rest with `; `.
+            const unique = Array.from(new Set(notes));
+            cleaned['_sanitization'] = unique.join('; ');
+          }
+          return { ...block, text: JSON.stringify(cleaned) };
+        } catch {
+          // Parse failed — fall back to string-level sanitization so the
+          // security signal is not silently lost.
+          const sanitized = sanitizeContent(block.text);
+          return { ...block, text: sanitized.text + sanitized.sanitizationNote };
+        }
+      }
       const sanitized = sanitizeContent(block.text);
       return {
         ...block,

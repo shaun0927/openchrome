@@ -250,19 +250,31 @@ function clampEnd(v: number, lo: number, hi: number): number {
 }
 
 /** Rec. 601 luma — fast and good enough for edge detection. */
-function luma(r: number, g: number, b: number): number {
+export function luma(r: number, g: number, b: number): number {
   return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+/**
+ * Clamp (x, y) into bounds and return the byte offset into an RGBA buffer.
+ * Returns -1 when the image has zero width or height (degenerate buffer).
+ */
+function coordToIndex(x: number, y: number, w: number, h: number): number {
+  if (w <= 0 || h <= 0) return -1;
+  const cx = clampInt(x, 0, w - 1);
+  const cy = clampInt(y, 0, h - 1);
+  return (cy * w + cx) * 4;
 }
 
 /**
  * Index into an RGBA buffer at (x, y), returning {r, g, b}. Out-of-
  * bounds requests are clamped to the nearest in-bounds pixel — that's
  * the standard Sobel boundary policy.
+ *
+ * Returns `{r: 0, g: 0, b: 0}` when `w` or `h` is 0 (empty image).
  */
-function pixelRgb(rgba: Uint8Array | Buffer, w: number, h: number, x: number, y: number): RgbColor {
-  const cx = clampInt(x, 0, w - 1);
-  const cy = clampInt(y, 0, h - 1);
-  const i = (cy * w + cx) * 4;
+export function pixelRgb(rgba: Uint8Array | Buffer, w: number, h: number, x: number, y: number): RgbColor {
+  const i = coordToIndex(x, y, w, h);
+  if (i < 0) return { r: 0, g: 0, b: 0 };
   return { r: rgba[i], g: rgba[i + 1], b: rgba[i + 2] };
 }
 
@@ -343,17 +355,20 @@ export function sobelEdgeDensity(
   return highGradient / (cw * ch);
 }
 
-/** Inline tuple form so `luma(...rgbAt(...))` stays a single allocation. */
-function rgbAt(
+/**
+ * Inline tuple form so `luma(...rgbAt(...))` stays a single allocation.
+ *
+ * Returns `[0, 0, 0]` when `w` or `h` is 0 (empty image).
+ */
+export function rgbAt(
   rgba: Uint8Array | Buffer,
   w: number,
   h: number,
   x: number,
   y: number,
 ): [number, number, number] {
-  const cx = clampInt(x, 0, w - 1);
-  const cy = clampInt(y, 0, h - 1);
-  const i = (cy * w + cx) * 4;
+  const i = coordToIndex(x, y, w, h);
+  if (i < 0) return [0, 0, 0];
   return [rgba[i], rgba[i + 1], rgba[i + 2]];
 }
 

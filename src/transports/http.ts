@@ -19,6 +19,7 @@ import {
 } from '../config/defaults';
 import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport } from './index';
+import { renderPrometheusMetrics, type PrometheusMetric } from './prometheus';
 import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
 import {
@@ -532,6 +533,13 @@ export class HTTPTransport implements MCPTransport {
       this.handleMetrics(req, res);
       return;
     }
+    // Prometheus text exposition format (#839). Auth-required via the same
+    // bearer/api-key flow as /api/metrics. Hand-rolled — no prom-client
+    // dependency per P5.
+    if (pathname === '/metrics' && req.method === 'GET') {
+      this.handlePrometheusMetrics(req, res);
+      return;
+    }
 
     // Explicit /mcp/sse endpoint (MCP spec alias for GET /mcp SSE stream)
     if (pathname === '/mcp/sse') {
@@ -858,6 +866,130 @@ export class HTTPTransport implements MCPTransport {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(metrics));
+  }
+
+  /**
+   * GET /metrics — Prometheus text exposition format (#839).
+   *
+   * Auth-required via the existing bearer/api-key chain used by
+   * /api/metrics. Counters are read-only views over already-tracked
+   * in-process state; no new persistence is introduced. Hand-rolled
+   * exposition format avoids the prom-client dependency (P5).
+   */
+  private handlePrometheusMetrics(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const authz = authorizeDashboardEndpoint(req, 'metrics');
+    if (!authz.ok) {
+      this.writeDashboardAuthzFailure(res, 'metrics', 'anonymous', authz.status, authz.error);
+      return;
+    }
+
+    const mem = process.memoryUsage();
+    const dashboardState = getDashboardState();
+
+    let tabCount = 0;
+    let sessionCount = 0;
+    const toolCallCounts: Record<string, { success: number; error: number }> = {};
+    if (this.sessionManager) {
+      const visible = this.sessionManager.getAllSessionInfos()
+        .filter((info) => canSeeTenant(authz.principal, info.tenantId));
+      sessionCount = visible.length;
+      for (const info of visible) {
+        tabCount += info.targetCount;
+      }
+    }
+
+    // `openchrome_tool_calls_total` is read from the process-lifetime
+    // monotonic counter in DashboardState (#839, P2) — the ring buffer
+    // is bounded so deriving counts from it would let values shrink as
+    // old entries age out, violating Prometheus counter semantics.
+    //
+    // Each counter row carries the session that produced the call; we
+    // resolve that session's tenant and skip rows the principal cannot
+    // see, mirroring `handleToolCalls` (#839, P1). Sessions that have
+    // been deleted cannot be attributed to a tenant and are hidden.
+    const sm = this.sessionManager;
+    for (const row of dashboardState.getToolCallTotals()) {
+      if (!row.toolName) continue;
+      if (sm) {
+        const sessionTenantId = sm.getSession(row.sessionId)?.tenantId;
+        if (!canSeeTenant(authz.principal, sessionTenantId)) continue;
+      } else if (!canSeeTenant(authz.principal, undefined)) {
+        continue;
+      }
+      const slot = toolCallCounts[row.toolName] ?? { success: 0, error: 0 };
+      slot[row.result] += row.count;
+      toolCallCounts[row.toolName] = slot;
+    }
+
+    // `openchrome_tool_calls_active` is an inherently transient gauge: it
+    // reflects in-flight calls at scrape time. We read it from the dashboard
+    // ring (the only place active calls are tracked) and apply the same
+    // tenant filter as above.
+    let activeCount = 0;
+    for (const call of dashboardState.getToolCalls(undefined, 1000)) {
+      if (call.status !== 'running') continue;
+      if (sm) {
+        const sessionTenantId = sm.getSession(call.sessionId)?.tenantId;
+        if (!canSeeTenant(authz.principal, sessionTenantId)) continue;
+      } else if (!canSeeTenant(authz.principal, undefined)) {
+        continue;
+      }
+      activeCount++;
+    }
+
+    const toolCallSamples: Array<{ labels: Record<string, string>; value: number }> = [];
+    for (const [tool, counts] of Object.entries(toolCallCounts)) {
+      if (counts.success > 0) {
+        toolCallSamples.push({ labels: { tool, result: 'success' }, value: counts.success });
+      }
+      if (counts.error > 0) {
+        toolCallSamples.push({ labels: { tool, result: 'error' }, value: counts.error });
+      }
+    }
+
+    const metrics: PrometheusMetric[] = [
+      {
+        name: 'openchrome_uptime_seconds',
+        help: 'Server uptime in seconds since process start.',
+        type: 'gauge',
+        value: dashboardState.getUptimeSecs(),
+      },
+      {
+        name: 'openchrome_ram_bytes',
+        help: 'Resident set size (RSS) of the openchrome server process.',
+        type: 'gauge',
+        value: mem.rss,
+      },
+      {
+        name: 'openchrome_tab_count',
+        help: 'Number of Chrome tabs currently tracked across visible sessions.',
+        type: 'gauge',
+        value: tabCount,
+      },
+      {
+        name: 'openchrome_session_count',
+        help: 'Number of active MCP sessions visible to the requesting principal.',
+        type: 'gauge',
+        value: sessionCount,
+      },
+      {
+        name: 'openchrome_tool_calls_total',
+        help: 'Cumulative tool call count, labelled by tool name and result.',
+        type: 'counter',
+        samples: toolCallSamples,
+      },
+      {
+        name: 'openchrome_tool_calls_active',
+        help: 'Tool calls currently in flight (status="running" in the dashboard ring).',
+        type: 'gauge',
+        value: activeCount,
+      },
+    ];
+
+    res.writeHead(200, {
+      'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+    });
+    res.end(renderPrometheusMetrics(metrics));
   }
 
   /**

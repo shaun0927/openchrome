@@ -112,6 +112,11 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Return all cookies with full attributes, bypassing classification.',
       },
+      dryRun: {
+        type: 'boolean',
+        description:
+          'Preview-only mode for destructive actions (delete, clear). When true, returns counts and a sample of cookies that would be deleted without mutating any state. Default: false.',
+      },
     },
     required: ['tabId', 'action'],
   },
@@ -132,6 +137,7 @@ const handler: ToolHandler = async (
   const sameSite = args.sameSite as 'Strict' | 'Lax' | 'None' | undefined;
   const expires = args.expires as number | undefined;
   const raw = args.raw as boolean | undefined;
+  const dryRun = args.dryRun === true;
 
   const sessionManager = getSessionManager();
 
@@ -301,6 +307,41 @@ const handler: ToolHandler = async (
           path,
         };
 
+        // #878 — dryRun: report what would be deleted; no mutation.
+        if (dryRun) {
+          const cookies = await page.cookies();
+          const matching = cookies.filter(
+            (c) => c.name === name && c.domain === cookieToDelete.domain && c.path === cookieToDelete.path,
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'delete',
+                  dryRun: true,
+                  wouldAffect: {
+                    count: matching.length,
+                    samples: matching.slice(0, 10).map((c) => c.name),
+                    details: { name, domain: cookieToDelete.domain, path: cookieToDelete.path },
+                  },
+                  guidance:
+                    'Pass dryRun:false (or omit) to execute. Count==0 means no cookie matched the name+domain+path triple.',
+                }),
+              },
+            ],
+            structuredContent: {
+              dryRun: true,
+              wouldAffect: {
+                count: matching.length,
+                samples: matching.slice(0, 10).map((c) => c.name),
+                details: { name, domain: cookieToDelete.domain, path: cookieToDelete.path },
+              },
+              guidance: 'Pass dryRun:false (or omit) to execute.',
+            },
+          };
+        }
+
         await page.deleteCookie(cookieToDelete);
 
         return {
@@ -319,6 +360,37 @@ const handler: ToolHandler = async (
 
       case 'clear': {
         const cookies = await page.cookies();
+
+        // #878 — dryRun: report what would be cleared; no mutation.
+        if (dryRun) {
+          const domains = Array.from(new Set(cookies.map((c) => c.domain))).sort();
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'clear',
+                  dryRun: true,
+                  wouldAffect: {
+                    count: cookies.length,
+                    samples: cookies.slice(0, 10).map((c) => c.name),
+                    details: { domains },
+                  },
+                  guidance: 'Pass dryRun:false (or omit) to execute.',
+                }),
+              },
+            ],
+            structuredContent: {
+              dryRun: true,
+              wouldAffect: {
+                count: cookies.length,
+                samples: cookies.slice(0, 10).map((c) => c.name),
+                details: { domains },
+              },
+              guidance: 'Pass dryRun:false (or omit) to execute.',
+            },
+          };
+        }
 
         // Delete all cookies
         for (const cookie of cookies) {
