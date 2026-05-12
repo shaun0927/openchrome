@@ -543,8 +543,14 @@ const handler: ToolHandler = async (
               const statsLine = `[page_stats] url: ${result.pageStats.url} | title: ${result.pageStats.title} | scroll: ${result.pageStats.scrollX},${result.pageStats.scrollY} | viewport: ${result.pageStats.viewportWidth}x${result.pageStats.viewportHeight} | docSize: ${result.pageStats.scrollWidth}x${result.pageStats.scrollHeight}\n\n`;
               const includePaginationDom = args.includePagination !== false;
               const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+              const compressedText = statsLine + delta.content + domPaginationSection;
               return {
-                content: [{ type: 'text', text: statsLine + delta.content + domPaginationSection }],
+                content: [{ type: 'text', text: compressedText }],
+                _compression: {
+                  level: 'delta',
+                  originalChars: outputText.length,
+                  compressedChars: compressedText.length,
+                },
               };
             }
             // If not delta (too many changes), fall through to full response

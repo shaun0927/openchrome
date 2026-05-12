@@ -1667,7 +1667,7 @@ export class MCPServer {
         }
       }
 
-      if (compressionConfig?.enabled && compressionConfig?.trackSavings) {
+      if (compressionConfig?.enabled && compressionConfig?.trackSavings && !(result as Record<string, unknown>)._compression) {
         (result as Record<string, unknown>)._compression = {
           level: compressionConfig.level ?? 'light',
           verbosity,
