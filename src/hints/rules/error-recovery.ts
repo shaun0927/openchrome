@@ -5,6 +5,14 @@
 
 import type { HintRule } from '../hint-engine';
 
+/**
+ * Errors prefixed with `uid_evicted:` come from the backend-node uid contract
+ * (#844) and already carry a structured payload pointing at the new
+ * loaderId. Suppress the generic stale-ref hint so we do not double-report
+ * the same condition.
+ */
+const UID_EVICTED_PREFIX = /^\s*uid_evicted\b/i;
+
 const patterns: Array<{ test: RegExp; hint: string }> = [
   {
     test: /ref\b.+not found|invalid ref|stale ref/i,
@@ -61,6 +69,11 @@ export const errorRecoveryRules: HintRule[] = patterns.map((p, i) => ({
   priority: 100 + i,
   match(ctx) {
     if (!ctx.isError) return null;
+    // The first pattern is the stale-ref rule (i === 0). The structured
+    // `uid_evicted:` error from the backend-node uid contract (#844)
+    // already informs the caller about navigation epoch rotation, so we
+    // suppress the generic stale-ref hint when that prefix is present.
+    if (i === 0 && UID_EVICTED_PREFIX.test(ctx.resultText)) return null;
     return p.test.test(ctx.resultText) ? p.hint : null;
   },
 }));
