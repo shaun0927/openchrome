@@ -258,6 +258,68 @@ describe('dashboard REST authorization', () => {
     }
   });
 
+  it('filters Prometheus /metrics tool_calls_total by tenant visibility (#839 P1)', async () => {
+    const booted = await boot(
+      undefined,
+      fakeStore({ [adminAlpha]: { tenantId: 'alpha', scopes: ['admin'] } }),
+    );
+    transport = booted.transport;
+
+    const { getDashboardState } = await import('../../src/desktop/dashboard-state');
+    const state = getDashboardState();
+    // Use suffixed session IDs unique to this test so the monotonic
+    // counter is isolated from the preceding `hides cross-tenant tool
+    // calls` test that touches `alpha-session` / `beta-session` with the
+    // same singleton dashboardState.
+    state.recordToolStart('alpha-session-metrics', 'navigate', { url: 'https://alpha.example' }, 'metrics-call-alpha-success');
+    state.recordToolEnd('metrics-call-alpha-success', 'success');
+    state.recordToolStart('beta-session-metrics', 'click', { selector: 'a' }, 'metrics-call-beta-error');
+    state.recordToolEnd('metrics-call-beta-error', 'error', 'boom');
+    state.recordToolStart('beta-session-metrics', 'screenshot', undefined, 'metrics-call-beta-success');
+    state.recordToolEnd('metrics-call-beta-success', 'success');
+
+    const res = await request(booted.port, '/metrics', { Authorization: `Bearer ${adminAlpha}` });
+
+    expect(res.status).toBe(200);
+    // Tenant-alpha admin scraping /metrics must see only the navigate sample
+    // produced under alpha-session, not the click/screenshot calls from
+    // beta-session. Asserting against the rendered label sets makes any
+    // cross-tenant leak (tool name, count, result class) visible.
+    expect(res.body).toContain('openchrome_tool_calls_total{tool="navigate",result="success"} 1');
+    expect(res.body).not.toMatch(/openchrome_tool_calls_total\{tool="click"/);
+    expect(res.body).not.toMatch(/openchrome_tool_calls_total\{tool="screenshot"/);
+  });
+
+  it('exposes a monotonic openchrome_tool_calls_total counter (#839 P2)', async () => {
+    const booted = await boot();
+    transport = booted.transport;
+
+    const { getDashboardState } = await import('../../src/desktop/dashboard-state');
+    const state = getDashboardState();
+    state.recordToolStart('alpha-session', 'monotonic_tool', undefined, 'mono-call-1');
+    state.recordToolEnd('mono-call-1', 'success');
+
+    const first = await request(booted.port, '/metrics');
+    expect(first.status).toBe(200);
+    const firstMatch = first.body.match(/openchrome_tool_calls_total\{tool="monotonic_tool",result="success"\} (\d+)/);
+    expect(firstMatch).not.toBeNull();
+    const firstValue = Number(firstMatch![1]);
+
+    state.recordToolStart('alpha-session', 'monotonic_tool', undefined, 'mono-call-2');
+    state.recordToolEnd('mono-call-2', 'success');
+
+    const second = await request(booted.port, '/metrics');
+    expect(second.status).toBe(200);
+    const secondMatch = second.body.match(/openchrome_tool_calls_total\{tool="monotonic_tool",result="success"\} (\d+)/);
+    expect(secondMatch).not.toBeNull();
+    const secondValue = Number(secondMatch![1]);
+
+    // The defining property of a Prometheus counter: subsequent scrapes are
+    // never less than earlier ones for the same label set.
+    expect(secondValue).toBeGreaterThanOrEqual(firstValue);
+    expect(secondValue - firstValue).toBe(1);
+  });
+
   it('rejects tool-call requests targeting another tenant\'s session', async () => {
     const booted = await boot(
       undefined,
