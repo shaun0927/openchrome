@@ -64,6 +64,71 @@ describe('DOM serializer planningProfile=stable', () => {
     expect(stableResult.content.length).toBeLessThan(defaultResult.content.length * 0.8);
   });
 
+
+  test('keeps meaningful media descendants and control-enabled media in stable output', async () => {
+    const doc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [el(2, 'html', [], [el(3, 'body', [], [
+        el(10, 'a', ['href', '/hero'], [
+          el(11, 'picture', [], [
+            el(12, 'source', ['src', '/hero.webp']),
+            el(13, 'img', ['src', '/hero.png', 'alt', 'Hero product']),
+          ]),
+        ]),
+        el(20, 'video', ['src', '/demo.mp4', 'controls', ''], []),
+      ])])],
+    };
+
+    const result = await serializeDOM(page() as never, cdp(doc) as never, {
+      includePageStats: false,
+      compression: 'none',
+      planningProfile: 'stable',
+    });
+
+    expect(result.content).toContain('<a href="/hero"');
+    expect(result.content).toContain('<img src="/hero.png" alt="Hero product"');
+    expect(result.content).toContain('<video src="/demo.mp4" controls=""');
+  });
+
+  test('preserves volatile ids referenced by labels in stable output', async () => {
+    const doc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [el(2, 'html', [], [el(3, 'body', [], [
+        el(10, 'label', ['for', 'field-123456789abc'], [txt(11, 'Email')]),
+        el(12, 'input', ['id', 'field-123456789abc', 'type', 'email']),
+        el(13, 'input', ['id', 'generated-abcdef1234567890', 'type', 'text']),
+      ])])],
+    };
+
+    const result = await serializeDOM(page() as never, cdp(doc) as never, {
+      includePageStats: false,
+      compression: 'none',
+      planningProfile: 'stable',
+    });
+
+    expect(result.content).toContain('for="field-123456789abc"');
+    expect(result.content).toContain('id="field-123456789abc"');
+    expect(result.content).not.toContain('id="generated-abcdef1234567890"');
+  });
+
+  test('suppresses decorative media group summaries in stable output', async () => {
+    const doc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [el(2, 'html', [], [el(3, 'body', [], [
+        ...Array.from({ length: 5 }, (_, i) => el(10 + i, 'img', ['src', `/noise-${i}.png`])),
+      ])])],
+    };
+
+    const result = await serializeDOM(page() as never, cdp(doc) as never, {
+      includePageStats: false,
+      compression: 'light',
+      planningProfile: 'stable',
+    });
+
+    expect(result.content).not.toContain('img ×5');
+    expect(result.content).not.toContain('<img');
+  });
+
   test('emits stable planning metadata when page stats are included', async () => {
     const result = await serializeDOM(page() as never, cdp(noisyDoc) as never, {
       planningProfile: 'stable',
