@@ -107,6 +107,9 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// Portable context envelope (#873) — export/import surface
+import { registerOcContextTools } from './oc-context';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -217,6 +220,9 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+
+  // Portable context envelope (#873) — oc_context_export / oc_context_import
+  registerOcContextTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
