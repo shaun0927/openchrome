@@ -27,6 +27,7 @@ import { paginationDetectionRules } from './rules/pagination-detection';
 import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
 import { setupHintRules } from './rules/setup-hints';
+import { consoleBufferPressureRules } from './rules/console-buffer-pressure';
 
 export interface HintContext {
   toolName: string;
@@ -105,6 +106,7 @@ export class HintEngine {
     // Learned rules (350) sit between repetition (250) and success hints (400)
     this.rules = [
       ...setupHintRules,             // priority 90
+      ...consoleBufferPressureRules, // priority 95
       ...errorRecoveryRules,         // priority 100-108
       ...blockingPageRules,          // priority 120-122
       ...paginationDetectionRules,   // priority 190-192
