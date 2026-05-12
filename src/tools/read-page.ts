@@ -12,6 +12,7 @@ import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
+import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { getGlobalConfig } from '../config/global';
 import {
   buildSemanticView,
@@ -79,6 +80,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         enum: ['none', 'dom'],
         description: 'AX mode only: use "dom" to explicitly fall back to DOM output if AX output exceeds the output budget. Default: none.',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, append approximate returned size/token metrics to text output. Default: false.',
       },
     },
     required: ['tabId'],
@@ -914,6 +919,9 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return value;
   }
 
+  const includeMetrics = args.include_metrics === true;
+  const modeForMetrics = typeof args.mode === 'string' ? args.mode : 'dom';
+
   // Sanitize all text content blocks
   const sanitizedContent = result.content.map((block) => {
     if (block.type === 'text' && typeof block.text === 'string') {
@@ -929,6 +937,9 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
             const unique = Array.from(new Set(notes));
             cleaned['_sanitization'] = unique.join('; ');
           }
+          if (includeMetrics) {
+            cleaned['_metrics'] = buildTextMetrics(JSON.stringify(cleaned), { mode: modeForMetrics });
+          }
           return { ...block, text: JSON.stringify(cleaned) };
         } catch {
           // Parse failed — fall back to string-level sanitization so the
@@ -938,9 +949,12 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
         }
       }
       const sanitized = sanitizeContent(block.text);
+      const text = sanitized.text + sanitized.sanitizationNote;
       return {
         ...block,
-        text: sanitized.text + sanitized.sanitizationNote,
+        text: includeMetrics
+          ? appendMetricsFooter(text, buildTextMetrics(text, { mode: modeForMetrics }))
+          : text,
       };
     }
     return block;
