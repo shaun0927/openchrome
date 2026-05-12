@@ -126,11 +126,9 @@ describe('admin keys CLI', () => {
       '--description', 'test key',
     ]);
     expect(exitCode).toBeNull();
-    // Plaintext is the sole stdout payload.
-    const stdoutLines = stdout.split('\n').filter((l) => l.length > 0);
-    expect(stdoutLines).toHaveLength(1);
-    const plaintext = stdoutLines[0];
+    const plaintext = extractToken(stdout);
     expect(plaintext).toMatch(/^oc_live_acme_[A-Za-z0-9]+$/);
+    expect(stdout.match(/oc_live_acme_[A-Za-z0-9]+/g)).toHaveLength(1);
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
     // keyId is reported on stderr, not stdout.
