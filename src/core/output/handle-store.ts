@@ -71,6 +71,7 @@ const DEFAULT_TTL_HOURS = 24;
 const PREVIEW_MAX_BYTES = 2048;
 const DEFAULT_ITEM_LIMIT = 200;
 const DEFAULT_BYTE_LIMIT = 65536;
+const HANDLE_ID_RE = /^oh_[A-Z2-7]{12}$/;
 
 /** Crockford base32 alphabet (uppercase, no I/L/O/U) — 5 bits per char */
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -104,7 +105,7 @@ function buildPreview(payload: string | Buffer, mimeType: string): string | null
   // UTF-8 text: return up to PREVIEW_MAX_BYTES bytes
   const buf = Buffer.from(payload, 'utf8');
   if (buf.byteLength <= PREVIEW_MAX_BYTES) return payload;
-  return buf.slice(0, PREVIEW_MAX_BYTES).toString('utf8');
+  return buf.subarray(0, PREVIEW_MAX_BYTES).toString('utf8');
 }
 
 export class HandleStore {
@@ -127,7 +128,7 @@ export class HandleStore {
     const expiresAt = new Date(Date.now() + ttlHours * 3600_000).toISOString();
 
     const dir = todayDir(this.baseDir);
-    fs.mkdirSync(dir, { recursive: true });
+    await fs.promises.mkdir(dir, { recursive: true });
     const filePath = path.join(dir, `${handle}.json`);
 
     const serialized = JSON.stringify(payload);
@@ -163,12 +164,12 @@ export class HandleStore {
     const expiresAt = new Date(Date.now() + ttlHours * 3600_000).toISOString();
 
     const dir = todayDir(this.baseDir);
-    fs.mkdirSync(dir, { recursive: true });
+    await fs.promises.mkdir(dir, { recursive: true });
     const ext = mimeType === 'application/gzip' ? '.bin' : '.md';
     const filePath = path.join(dir, `${handle}${ext}`);
 
     const buf = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
-    fs.writeFileSync(filePath, buf);
+    await writeFileAtomicSafe(filePath, buf);
 
     const preview = buildPreview(payload, mimeType);
 
@@ -238,7 +239,7 @@ export class HandleStore {
       const buf = Buffer.from(raw, 'utf8');
       const limit = opts?.limit ?? DEFAULT_BYTE_LIMIT;
       const total = buf.byteLength;
-      const slice = buf.slice(offset, offset + limit);
+      const slice = buf.subarray(offset, offset + limit);
       const returned = slice.byteLength;
       const eof = offset + returned >= total;
       return {
@@ -262,7 +263,7 @@ export class HandleStore {
     }
     const limit = opts?.limit ?? DEFAULT_BYTE_LIMIT;
     const total = buf.byteLength;
-    const slice = buf.slice(offset, offset + limit);
+    const slice = buf.subarray(offset, offset + limit);
     const returned = slice.byteLength;
     const eof = offset + returned >= total;
     return {
@@ -302,7 +303,7 @@ export class HandleStore {
         continue;
       }
       for (const file of files) {
-        if (!file.startsWith('oh_')) continue;
+        if (!file.startsWith('oh_') || file.endsWith('.meta.json')) continue;
         const filePath = path.join(fullDir, file);
         // Read meta from handle name: we store expiry in a sidecar .meta.json
         const metaPath = filePath.replace(/\.(json|bin|md)$/, '.meta.json');
@@ -335,6 +336,7 @@ export class HandleStore {
    * We store a <handle>.meta.json alongside the payload.
    */
   private resolveHandle(handle: OutputHandle): HandleMeta | null {
+    if (typeof handle !== 'string' || !HANDLE_ID_RE.test(handle)) return null;
     // Scan date subdirs (typically only 1-2 exist)
     let dateDirs: string[];
     try {

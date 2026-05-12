@@ -29,11 +29,11 @@ export interface ReadResult<T> {
  */
 export async function writeFileAtomicSafe(
   filePath: string,
-  data: string | object,
+  data: string | object | Buffer,
   options: WriteOptions = {}
 ): Promise<void> {
   const { backup = false } = options;
-  const content = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  const content = Buffer.isBuffer(data) || typeof data === 'string' ? data : JSON.stringify(data, null, 2);
 
   // Ensure directory exists
   const dir = path.dirname(filePath);
@@ -47,7 +47,11 @@ export async function writeFileAtomicSafe(
   }
 
   // Use write-file-atomic for safe writing
-  await writeFileAtomic(filePath, content, { encoding: 'utf8' });
+  if (Buffer.isBuffer(content)) {
+    await writeFileAtomic(filePath, content);
+  } else {
+    await writeFileAtomic(filePath, content, { encoding: 'utf8' });
+  }
 }
 
 /**

@@ -89,6 +89,17 @@ describe('HandleStore — write/read roundtrip', () => {
     expect(result).toBeNull();
   });
 
+  test('fetch rejects malformed handle ids before path lookup', async () => {
+    const baseDir = mkTmp();
+    const store = new HandleStore({ baseDir });
+    const meta = await store.writeJson({ safe: true }, { ttlHours: 1 });
+    await store.saveMeta(meta);
+
+    expect(store.fetch('../' as any)).toBeNull();
+    expect(store.fetch('oh_../../escape' as any)).toBeNull();
+    expect(store.fetch(`${meta.output_handle}.meta.json` as any)).toBeNull();
+  });
+
   test('fetch returns null for expired handle', async () => {
     const baseDir = mkTmp();
     const store = new HandleStore({ baseDir });
@@ -123,6 +134,7 @@ describe('HandleStore — write/read roundtrip', () => {
     const purged = store.purgeExpired();
     expect(purged).toBeGreaterThanOrEqual(1);
     expect(fs.existsSync(meta.file_path)).toBe(false);
+    expect(fs.existsSync(meta.file_path.replace(/\.(json|bin|md)$/, '.meta.json'))).toBe(false);
   });
 
   test('purgeExpired returns 0 when no expired handles', async () => {
@@ -349,6 +361,22 @@ describe('TTL eviction', () => {
     // Purge removes the file
     store.purgeExpired();
     expect(fs.existsSync(meta.file_path)).toBe(false);
+  });
+
+  test('purgeExpired ignores sidecar entries and still removes payloads deterministically', async () => {
+    const baseDir = mkTmp();
+    const store = new HandleStore({ baseDir });
+
+    const meta = await store.writeJson({ v: 1 }, { ttlHours: 0 });
+    const expiredMeta = { ...meta, expires_at: new Date(Date.now() - 1).toISOString() };
+    await store.saveMeta(expiredMeta);
+    const metaPath = meta.file_path.replace(/\.(json|bin|md)$/, '.meta.json');
+    expect(fs.existsSync(metaPath)).toBe(true);
+
+    const purged = store.purgeExpired();
+    expect(purged).toBeGreaterThanOrEqual(1);
+    expect(fs.existsSync(meta.file_path)).toBe(false);
+    expect(fs.existsSync(metaPath)).toBe(false);
   });
 
   test('sweep loop purges expired handles within interval', async () => {

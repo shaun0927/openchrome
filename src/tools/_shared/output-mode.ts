@@ -56,11 +56,12 @@ export async function resolveOutputMode(
     return inlineResult;
   }
 
-  const serialized = JSON.stringify(payload);
-  const byteLength = Buffer.byteLength(serialized, 'utf8');
-
-  if (mode === 'auto' && byteLength <= inlineLimit) {
-    return inlineResult;
+  if (mode === 'auto') {
+    const serialized = JSON.stringify(payload);
+    const byteLength = Buffer.byteLength(serialized, 'utf8');
+    if (byteLength <= inlineLimit) {
+      return inlineResult;
+    }
   }
 
   // Write to handle store and return descriptor

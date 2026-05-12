@@ -660,7 +660,8 @@ const handler: ToolHandler = async (
     // Format nodes
     const lines: string[] = [];
     let charCount = 0;
-    const MAX_OUTPUT = MAX_OUTPUT_CHARS;
+    const outputMode = parseOutputMode(args).mode;
+    const MAX_OUTPUT = outputMode === 'inline' ? MAX_OUTPUT_CHARS : Number.MAX_SAFE_INTEGER;
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;

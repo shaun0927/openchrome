@@ -185,7 +185,7 @@ export class TaskJournal {
     const toolEntries = entries.filter((e): e is JournalEntry => 'tool' in e);
 
     return {
-      total: entries.length,
+      total: toolEntries.length,
       succeeded,
       failed,
       toolCounts,

@@ -418,6 +418,24 @@ describe('TaskJournal', () => {
       expect(summary.toolCounts['read_page']).toBe(1);
     });
 
+
+    it('excludes output-handle events from tool-call totals', () => {
+      journal.record(journal.createEntry('read_page', 'sess', {}, 10, true));
+      journal.recordOutputHandle({
+        event: 'output_handle_created',
+        handle: 'oh_ABCDEFGHIJKL',
+        source_tool: 'read_page',
+        size_bytes: 1234,
+        mime_type: 'application/json',
+      });
+
+      const summary = journal.getSummary();
+      expect(summary.total).toBe(1);
+      expect(summary.succeeded).toBe(1);
+      expect(summary.failed).toBe(0);
+      expect(summary.toolCounts.read_page).toBe(1);
+    });
+
     it('returns zeros when no entries exist', () => {
       const summary = journal.getSummary();
       expect(summary.total).toBe(0);
