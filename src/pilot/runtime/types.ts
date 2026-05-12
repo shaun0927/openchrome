@@ -112,9 +112,23 @@ export interface TransactionRecord {
     /** Set when the hook returned `{ proceed: 'await-human', externalToken }`. */
     external_token?: string;
   };
+  /**
+   * True when this record was served from the idempotency cache rather
+   * than from a fresh execution. Issue #791. Absent on cache misses
+   * (rather than `false`) so audit consumers can grep on presence.
+   */
+  from_cache?: boolean;
 }
 
-export type SkillFn = () => Promise<unknown>;
+/**
+ * Skill function executed inside a contract. Receives an optional
+ * `AbortSignal` so a preemptive cancellation (issue #791) can interrupt
+ * a long-running skill. Skills SHOULD observe the signal — those that
+ * ignore it will still run to completion, but the runtime will settle
+ * the verdict according to the cancellation, not the skill's eventual
+ * return value.
+ */
+export type SkillFn = (signal?: AbortSignal) => Promise<unknown>;
 
 /**
  * Audit emitter — accepts a `TransactionRecord` and persists / forwards it.
@@ -140,4 +154,33 @@ export interface ContractRuntimeArgs {
   now?: () => number;
   /** Test hook: delay function (defaults to a setTimeout-based sleep). */
   delay?: (ms: number) => Promise<void>;
+  /**
+   * Idempotency cache (#791). When provided, the runtime:
+   *   - Returns a cached `success` record on hit, skipping skill +
+   *     pre/post-check entirely.
+   *   - Records every fresh `success` verdict on miss.
+   *   - Registers the in-flight run so a later epoch can preempt it.
+   * Omit to disable both behaviours (the runtime no-ops the cache
+   * lookups so callers do not pay for what they do not use).
+   */
+  cache?: import('./idempotency.js').IdempotencyCache;
+  /**
+   * Caller args forming the second half of the cache key. Required when
+   * `cache` is provided AND the call site needs argument-level dedup
+   * granularity (e.g., "submit_order with order_id=42" vs ".=43"). When
+   * omitted, the cache key derives from `contract.id` alone.
+   */
+  args?: unknown;
+  /**
+   * Monotonic epoch counter for preemptive cancellation. A higher epoch
+   * arriving for the same cache key aborts the in-flight run. Defaults
+   * to 0; callers that do not need preemption can leave it unset.
+   */
+  epoch?: number;
+  /**
+   * TTL for cached success verdicts in ms. Defaults to
+   * `DEFAULT_CACHE_TTL_MS` (5 minutes). Set to 0 to disable caching
+   * while still benefiting from the in-flight registry.
+   */
+  cache_ttl_ms?: number;
 }

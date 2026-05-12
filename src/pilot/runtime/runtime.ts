@@ -44,6 +44,7 @@ import { evaluate } from '../../contracts/evaluate.js';
 import { validateAssertion, type ValidationError } from '../../contracts/validator.js';
 import { isContractRuntimeEnabled } from '../../harness/flags.js';
 import { getBeforeIrreversibleHook } from './before-irreversible.js';
+import { DEFAULT_CACHE_TTL_MS } from './idempotency.js';
 import type {
   AuditEmitter,
   Contract,
@@ -144,6 +145,62 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   const emit = (record: TransactionRecord): TransactionRecord =>
     settle(audit, record, args.contract.domain);
 
+  // --- Idempotency cache (#791) -----------------------------------
+  // Cache wiring is best-effort: a misbehaving cache must never break
+  // the always-settles guarantee, so every cache interaction is wrapped
+  // in `tryCache(...)`. The key is derived here; the hit-check is
+  // deferred until after `emitAndFinish` is defined so the cached
+  // record is re-emitted through the audit pipeline.
+  const cache = args.cache;
+  const epoch = typeof args.epoch === 'number' && Number.isFinite(args.epoch) ? args.epoch : 0;
+  const cacheTtl = args.cache_ttl_ms ?? DEFAULT_CACHE_TTL_MS;
+  let cacheKey: string | undefined;
+  if (cache) {
+    cacheKey = tryCache(() => cache.key(args.contract.id, args.args));
+  }
+
+  // Build the AbortSignal that the skill receives. The runtime registers
+  // an in-flight entry tied to `(cacheKey, epoch)` so a later epoch can
+  // call `controller.abort()` from `cancelInflight()` / a newer arrival.
+  // When the cache is absent we still pass an `AbortController.signal`
+  // so the skill's signature stays uniform.
+  let abortSignal: AbortSignal | undefined;
+  let pendingResolve: ((r: TransactionRecord) => void) | undefined;
+  let pendingPromise: Promise<TransactionRecord> | undefined;
+  if (cache && cacheKey !== undefined) {
+    pendingPromise = new Promise<TransactionRecord>((resolve) => {
+      pendingResolve = resolve;
+    });
+    abortSignal = tryCache(() => cache.registerInflight(cacheKey!, epoch, pendingPromise!));
+  }
+
+  // Wrap the rest of the routine so the in-flight registration is
+  // always released, regardless of which verdict we settle into.
+  const finishCache = (record: TransactionRecord): TransactionRecord => {
+    if (cache && cacheKey !== undefined) {
+      if (record.verdict === 'success' && cacheTtl > 0) {
+        tryCache(() => cache.record(cacheKey!, record, cacheTtl));
+      }
+      tryCache(() => cache.releaseInflight(cacheKey!, epoch));
+      pendingResolve?.(record);
+    }
+    return record;
+  };
+  const emitAndFinish = (record: TransactionRecord): TransactionRecord =>
+    finishCache(emit(record));
+
+  // --- Cache hit check (#791) ---------------------------------------------
+  // Now that `emitAndFinish` is defined, perform the lookup. A hit
+  // re-emits the cached record with `from_cache: true` so audit consumers
+  // can distinguish replays from fresh runs. The original txn_id and
+  // timestamps are preserved — the cached row is the source of truth.
+  if (cache && cacheKey !== undefined) {
+    const cached = tryCache(() => cache.lookup(cacheKey!));
+    if (cached !== undefined) {
+      return emitAndFinish({ ...cached, from_cache: true });
+    }
+  }
+
   // 1. Validate contract assertions structurally. Use `!== undefined`
   //    rather than a truthy check so an explicit `pre: null` from a
   //    JSON / API producer does not silently slip past validation and
@@ -167,7 +224,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     }
   }
   if (errors.length > 0) {
-    return emit({
+    return emitAndFinish({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'validation_error',
@@ -188,7 +245,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     try {
       preCtx = await args.snapshot();
     } catch (e) {
-      return emit({
+      return emitAndFinish({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -208,7 +265,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       // probe call between the await points can still escape. The
       // runtime contract is "always settles", so convert any escape
       // into a verdict. See Codex round 2 (355e9bd).
-      return emit({
+      return emitAndFinish({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -221,7 +278,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     }
     pre_evidence = preResult.evidence;
     if (!preResult.passed) {
-      return emit({
+      return emitAndFinish({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'precondition_violation',
@@ -316,9 +373,28 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   const skillStart = now();
   let skillResult: unknown;
   try {
-    skillResult = await args.skill();
+    // Pass the AbortSignal from the idempotency registry through to the
+    // skill. Skills that observe the signal can short-circuit a long
+    // operation when a newer epoch supersedes the in-flight run.
+    skillResult = await args.skill(abortSignal);
   } catch (e) {
-    return emit({
+    // Aborted-by-cache short-circuits to execution_error with a recognisable
+    // marker so audit consumers can grep for preempted runs without having
+    // to inspect a per-error-message taxonomy.
+    if (abortSignal?.aborted) {
+      return emitAndFinish({
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'execution_error',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: 0,
+        pre_evidence,
+        error_message: `skill aborted by idempotency cache: ${errMsg(e)}`,
+      });
+    }
+    return emitAndFinish({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'execution_error',
@@ -332,7 +408,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   }
   const skillEnd = now();
   if (budgetWallMs !== undefined && skillEnd - skillStart > budgetWallMs) {
-    return emit({
+    return emitAndFinish({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'budget_exhausted',
@@ -359,7 +435,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     try {
       postCtx = await args.snapshot();
     } catch (e) {
-      return emit({
+      return emitAndFinish({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -376,7 +452,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     try {
       postResult = await evaluate(args.contract.post, postCtx);
     } catch (e) {
-      return emit({
+      return emitAndFinish({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -409,7 +485,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       // convert the rejection into an execution_error verdict instead
       // of letting it escape and skip the audit emission. See Codex
       // round 2 (355e9bd).
-      return emit({
+      return emitAndFinish({
         txn_id,
         contract_id: args.contract.id,
         verdict: 'execution_error',
@@ -426,7 +502,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   }
 
   if (postPassed) {
-    return emit({
+    return emitAndFinish({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'success',
@@ -448,7 +524,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   //    round 5 (1ee8e1d).
   const escalateTarget = args.contract.on_fail?.escalate;
   if (escalateTarget === 'human-review' || escalateTarget === 'headed-handoff') {
-    return emit({
+    return emitAndFinish({
       txn_id,
       contract_id: args.contract.id,
       verdict: 'escalated',
@@ -461,7 +537,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       escalation: { target: escalateTarget },
     });
   }
-  return emit({
+  return emitAndFinish({
     txn_id,
     contract_id: args.contract.id,
     verdict: 'postcondition_violation',
@@ -531,6 +607,23 @@ function normalizeRetryCount(retry: unknown): number {
  * false, which would let every call slip past the guard, and a
  * negative budget would exhaust immediately for any execution time.
  */
+/**
+ * Best-effort cache helper. Cache operations (key derivation, lookup,
+ * record, registry maintenance) must never break the runtime's
+ * always-settles guarantee, so every call site routes through this
+ * wrapper. A throwing cache simply degrades the call to the uncached
+ * path; we deliberately do NOT log here — the audit pipeline already
+ * captures the eventual verdict, and a noisy stderr would mask the
+ * primary failure mode.
+ */
+function tryCache<T>(fn: () => T): T | undefined {
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizeBudgetMs(ms: number | undefined): number | undefined {
   if (ms === undefined) return undefined;
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return undefined;

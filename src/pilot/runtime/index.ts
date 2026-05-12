@@ -23,6 +23,14 @@ export {
   resetBeforeIrreversibleHookForTests,
 } from './before-irreversible.js';
 
+export {
+  canonicalJson,
+  DEFAULT_CACHE_TTL_MS,
+  IdempotencyCache,
+} from './idempotency.js';
+
+export type { IdempotencyCacheOptions } from './idempotency.js';
+
 export type {
   AuditEmitter,
   Contract,
