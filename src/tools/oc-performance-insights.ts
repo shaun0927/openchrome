@@ -239,15 +239,26 @@ const handler: ToolHandler = async (
   if (!page) return jsonError(`Tab ${args.tabId} not found`);
 
   let cdp: CDPSession | undefined;
+  // Track which emulation overrides were actually applied so the
+  // finally block resets ONLY what we set. Without this, a throw
+  // mid-trace would either skip the reset entirely (poisoning the tab
+  // for subsequent tool calls in the same session) or reset overrides
+  // that were never applied.
+  let cpuApplied = false;
+  let networkApplied = false;
   try {
     cdp = await page.createCDPSession();
 
     if (typeof args.cpuThrottling === 'number' && args.cpuThrottling > 1) {
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: args.cpuThrottling });
+      cpuApplied = true;
     }
     if (args.network && args.network !== 'none') {
       const preset = NETWORK_PRESETS[args.network];
-      if (preset) await cdp.send('Network.emulateNetworkConditions', preset);
+      if (preset) {
+        await cdp.send('Network.emulateNetworkConditions', preset);
+        networkApplied = true;
+      }
     }
 
     if (args.url) {
@@ -273,34 +284,12 @@ const handler: ToolHandler = async (
     await waitForAutoStop(page, args.autoStop);
 
     // Stopping triggers the tracingComplete event the collector awaits.
-    try {
-      await cdp.send('Tracing.end');
-    } catch {
-      // best-effort — collector will resolve via tracingComplete or hang
-      // if Chrome dropped the session, which we mitigate with the race
-      // below.
-    }
+    await cdp.send('Tracing.end');
 
     const events = await Promise.race([
       collectPromise,
       new Promise<TraceEventRecord[]>((resolve) => setTimeout(() => resolve([]), 5000)),
     ]);
-
-    // Clean up emulation overrides regardless of outcome.
-    if (typeof args.cpuThrottling === 'number' && args.cpuThrottling > 1) {
-      try {
-        await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
-      } catch {
-        /* best-effort */
-      }
-    }
-    if (args.network && args.network !== 'none') {
-      try {
-        await cdp.send('Network.emulateNetworkConditions', NETWORK_PRESETS.none);
-      } catch {
-        /* best-effort */
-      }
-    }
 
     const trace = { traceEvents: events };
     const { summaries } = evaluateInsights(trace);
@@ -329,7 +318,25 @@ const handler: ToolHandler = async (
       `oc_performance_insights failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   } finally {
+    // Always reset emulation overrides we applied — a throw between
+    // `setCPUThrottlingRate(rate>1)` / `emulateNetworkConditions(...)`
+    // and the end of the success block would otherwise leave the tab
+    // throttled for subsequent tool calls in this session.
     if (cdp) {
+      if (cpuApplied) {
+        try {
+          await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (networkApplied) {
+        try {
+          await cdp.send('Network.emulateNetworkConditions', NETWORK_PRESETS.none);
+        } catch {
+          /* best-effort */
+        }
+      }
       try {
         await cdp.detach();
       } catch {

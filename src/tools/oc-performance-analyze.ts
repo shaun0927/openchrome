@@ -53,7 +53,7 @@ function jsonResult(payload: Record<string, unknown>, opts?: { isError?: boolean
 }
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   rawArgs: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const traceId = typeof rawArgs.trace_id === 'string' ? rawArgs.trace_id : '';
@@ -79,7 +79,11 @@ const handler: ToolHandler = async (
 
   const store = getPerfTraceStore();
   const handle = store.getHandle(traceId);
-  if (!handle) {
+  // Session ownership check: trace handles are session-scoped. If the
+  // handle is missing OR belongs to a different session, return the
+  // same `unknown_trace_id` error so cross-session probers cannot
+  // confirm the existence of another session's trace.
+  if (!handle || handle.session_id !== sessionId) {
     return jsonResult(
       { error: 'unknown_trace_id', trace_id: traceId },
       { isError: true },

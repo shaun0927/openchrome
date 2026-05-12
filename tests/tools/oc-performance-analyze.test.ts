@@ -104,4 +104,34 @@ describe('oc_performance_analyze handler', () => {
     const payload = parsePayload(result);
     expect(payload.error).toMatch(/trace_id/);
   });
+
+  test('same-session call resolves trace details', async () => {
+    const handle = store.store({ sessionId: 's-1', events: richTrace().traceEvents });
+    const result = await handler('s-1', { trace_id: handle.trace_id, insight: 'LCPBreakdown' });
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    expect(payload.insight).toBe('LCPBreakdown');
+    expect(typeof payload.details_md).toBe('string');
+  });
+
+  test('cross-session trace_id is rejected as unknown_trace_id (no detail leak)', async () => {
+    // Owner session 's-owner' captured the trace.
+    const handle = store.store({ sessionId: 's-owner', events: richTrace().traceEvents });
+    // A different session 's-other' attempts to read it.
+    const result = await handler('s-other', {
+      trace_id: handle.trace_id,
+      insight: 'LCPBreakdown',
+    });
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result);
+    // Deliberate: same error shape as a truly-missing trace, so a
+    // probing caller cannot confirm the trace exists under another
+    // session. No details / evidence / paths should leak.
+    expect(payload.error).toBe('unknown_trace_id');
+    expect(payload.trace_id).toBe(handle.trace_id);
+    expect(payload.details_md).toBeUndefined();
+    expect(payload.evidence).toBeUndefined();
+    expect(payload.trace_path).toBeUndefined();
+    expect(payload.insight).toBeUndefined();
+  });
 });
