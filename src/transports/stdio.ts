@@ -6,17 +6,17 @@
 
 import * as readline from 'readline';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
-import { MCPTransport } from './index';
+import { MCPTransport, TransportMessageContext } from './index';
 import { shutdownSyncBestEffort } from '../utils/sync-shutdown';
 
 export class StdioTransport implements MCPTransport {
   private rl: readline.Interface | null = null;
   private messageHandler:
-    | ((msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>)
+    | ((msg: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) => Promise<MCPResponse | null>)
     | null = null;
 
   onMessage(
-    handler: (msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>,
+    handler: (msg: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) => Promise<MCPResponse | null>,
   ): void {
     this.messageHandler = handler;
   }
