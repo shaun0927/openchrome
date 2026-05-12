@@ -131,7 +131,7 @@ import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
 
-export async function registerAllTools(server: MCPServer): Promise<void> {
+export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
   registerComputerTool(server);
@@ -250,8 +250,9 @@ export async function registerAllTools(server: MCPServer): Promise<void> {
   // `src/pilot/**` dependency is loaded unless --pilot and
   // OPENCHROME_SKILL_REPLAY=1 are both active.
   if (isSkillReplayEnabled()) {
-    const mod = await import('./oc-skill-replay');
-    mod.registerOcSkillReplayTool(server);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcSkillReplayTool } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
+    registerOcSkillReplayTool(server);
   }
 
   // Doctor report tool (#898) — read cached `openchrome doctor` output
