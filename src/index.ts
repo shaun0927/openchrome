@@ -9,6 +9,7 @@
 
 import { Command } from 'commander';
 import { getMCPServer, setMCPServerOptions } from './mcp-server';
+import type { ToolCapability } from './types/mcp';
 import { registerAllTools } from './tools';
 import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
@@ -96,7 +97,9 @@ program
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean }) => {
+  .option('--tools-only <csv>', 'Expose only tools belonging to the specified capability groups (comma-separated). Valid values: core,crawl,recording,workflow,storage,profile,totp,pilot. Default: all groups exposed.')
+  .option('--disable-tools <csv>', 'Remove tools belonging to the specified capability groups (comma-separated). Valid values: core,crawl,recording,workflow,storage,profile,totp,pilot.')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; toolsOnly?: string; disableTools?: string }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -247,6 +250,33 @@ program
     } else if (envTier === 2) {
       setMCPServerOptions({ initialToolTier: 2 as ToolTier });
       console.error('[openchrome] Tier 2 tools exposed from startup');
+    }
+
+    // Capability filter configuration (#829)
+    const allCapabilities: ToolCapability[] = ['core', 'crawl', 'recording', 'workflow', 'storage', 'profile', 'totp', 'pilot'];
+    if (options.toolsOnly && options.disableTools) {
+      console.error('[openchrome] Error: --tools-only and --disable-tools are mutually exclusive');
+      process.exit(2);
+    }
+    if (options.toolsOnly) {
+      const requested = options.toolsOnly.split(',').map(s => s.trim()).filter(Boolean) as ToolCapability[];
+      const invalid = requested.filter(c => !allCapabilities.includes(c));
+      if (invalid.length > 0) {
+        console.error(`[openchrome] Error: unknown capability group(s): ${invalid.join(', ')}. Valid: ${allCapabilities.join(', ')}`);
+        process.exit(2);
+      }
+      setMCPServerOptions({ capabilityFilter: new Set(requested) });
+      console.error(`[openchrome] Capability filter (tools-only): ${requested.join(', ')}`);
+    } else if (options.disableTools) {
+      const disabled = options.disableTools.split(',').map(s => s.trim()).filter(Boolean) as ToolCapability[];
+      const invalid = disabled.filter(c => !allCapabilities.includes(c));
+      if (invalid.length > 0) {
+        console.error(`[openchrome] Error: unknown capability group(s): ${invalid.join(', ')}. Valid: ${allCapabilities.join(', ')}`);
+        process.exit(2);
+      }
+      const allowed = allCapabilities.filter(c => !disabled.includes(c));
+      setMCPServerOptions({ capabilityFilter: new Set(allowed) });
+      console.error(`[openchrome] Capability filter (disable-tools): disabled=${disabled.join(', ')}`);
     }
 
     // Set infinite reconnection for HTTP daemon mode BEFORE creating CDPClient singleton.
