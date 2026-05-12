@@ -13,6 +13,51 @@ import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
+import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+
+/**
+ * Build the `[node_refs]` block that surfaces the #844 backend-node uid
+ * contract in `read_page` DOM mode responses.
+ *
+ * P2 contract: this section is **always** present in the response shape so
+ * `tools/list` parity holds regardless of the `OPENCHROME_NODE_REF` env var.
+ * When the flag is off (or loaderId resolution fails), every uid is rendered
+ * as the literal `null`, keeping the field present but the runtime value
+ * inert.
+ *
+ * The format is line-oriented JSON-ish, one `<backendNodeId>=<nodeRef>` per
+ * line, so a trace-replay parser can reconstruct the registry state without
+ * bringing along a full JSON parser.
+ */
+async function formatNodeRefsBlock(
+  page: import('puppeteer-core').Page,
+  cdpClient: { send: (page: import('puppeteer-core').Page, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+  backendNodeIds: number[],
+): Promise<string> {
+  if (backendNodeIds.length === 0) {
+    return '\n\n[node_refs]\n(empty)\n';
+  }
+  let loaderId: string | null = null;
+  try {
+    loaderId = await getCurrentLoaderId(page, cdpClient as any);
+  } catch {
+    loaderId = null;
+  }
+  const lines: string[] = ['', '', '[node_refs]'];
+  for (const backendNodeId of backendNodeIds) {
+    let uid: string | null = null;
+    if (loaderId) {
+      try {
+        uid = mintNodeRefSync(page, loaderId, backendNodeId);
+      } catch {
+        uid = null;
+      }
+    }
+    lines.push(`${backendNodeId}=${uid ?? 'null'}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
 import {
   buildSemanticView,
   type SemanticAXNode,
@@ -528,6 +573,15 @@ const handler: ToolHandler = async (
           outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
         }
 
+        // #844: build the [node_refs] block from emitted backendNodeIds.
+        // P2 contract — block is always present (never gated by the flag);
+        // the flag only flips uid values to `null` at runtime.
+        const nodeRefsBlock = await formatNodeRefsBlock(
+          page,
+          cdpClient,
+          result.emittedBackendNodeIds ?? [],
+        );
+
         // Delta compression: cache DOM and return diff if applicable
         const compression = args.compression as string | undefined;
         if (compression === 'delta') {
@@ -546,7 +600,7 @@ const handler: ToolHandler = async (
               const includePaginationDom = args.includePagination !== false;
               const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
               return {
-                content: [{ type: 'text', text: statsLine + delta.content + domPaginationSection }],
+                content: [{ type: 'text', text: statsLine + delta.content + nodeRefsBlock + domPaginationSection }],
               };
             }
             // If not delta (too many changes), fall through to full response
@@ -559,7 +613,7 @@ const handler: ToolHandler = async (
         const includePaginationDom = args.includePagination !== false;
         const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
         return {
-          content: [{ type: 'text', text: outputText + domPaginationSection }],
+          content: [{ type: 'text', text: outputText + nodeRefsBlock + domPaginationSection }],
         };
       } catch (error) {
         if (isExplicitDomMode) {
@@ -820,6 +874,15 @@ const handler: ToolHandler = async (
           interactiveOnly: filter === 'interactive',
         });
 
+        // #844: include the [node_refs] block in the AX-overflow DOM
+        // fallback path too — P2 contract is unconditional across response
+        // shapes that ship DOM content.
+        const fallbackNodeRefsBlock = await formatNodeRefsBlock(
+          page,
+          cdpClient,
+          domResult.emittedBackendNodeIds ?? [],
+        );
+
         const fallbackNote =
           '\n\n[AX tree exceeded output limit (' + charCount + ' chars). ' +
           'Switched to DOM mode because fallback: "dom" was requested. ' +
@@ -829,7 +892,7 @@ const handler: ToolHandler = async (
           content: [
             {
               type: 'text',
-              text: domResult.content + fallbackNote + axPaginationSection,
+              text: domResult.content + fallbackNote + fallbackNodeRefsBlock + axPaginationSection,
             },
           ],
         };
