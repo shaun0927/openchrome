@@ -956,14 +956,10 @@ export class SessionManager {
     // context, so we bypass it for named contexts.
     let namedContext: import('puppeteer-core').BrowserContext | null = null;
     if (useNamedContext) {
-      try {
-        namedContext = await this.namedContextRegistry.getOrCreate(
-          cdpClient.getBrowser(),
-          isolatedContext!,
-        );
-      } catch (err) {
-        throw err;
-      }
+      namedContext = await this.namedContextRegistry.getOrCreate(
+        cdpClient.getBrowser(),
+        isolatedContext!,
+      );
     }
 
     // Snapshot existing target IDs before page creation.
