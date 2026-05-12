@@ -19,6 +19,7 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
@@ -544,5 +545,11 @@ const handler: ToolHandler = async (
 };
 
 export function registerInteractTool(server: MCPServer): void {
-  server.registerTool('interact', handler, definition);
+  // Snapshot-cache (#879): bump the active frame's docEpoch after a
+  // successful interaction so any later read sees a miss.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
+  );
+  server.registerTool('interact', wrapped, definition);
 }

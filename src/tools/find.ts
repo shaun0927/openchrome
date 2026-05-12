@@ -5,6 +5,8 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { lookupOrSet } from '../utils/snapshot-cache-helper';
+import { paramsHashFromArgs, FIND_PARAMS } from '../core/perception/params-hash';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
@@ -295,6 +297,28 @@ const handler: ToolHandler = async (
   }
 };
 
+/**
+ * Snapshot-cache wrapper (#879). See `src/tools/read-page.ts` for the
+ * shared rationale.
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return handler(sessionId, args, context);
+  const sessionManager = getSessionManager();
+  const page = await sessionManager.getPage(sessionId, tabId).catch(() => null);
+  if (!page) return handler(sessionId, args, context);
+  const { value } = await lookupOrSet<MCPResult>(
+    page,
+    {
+      kind: 'find',
+      paramsHash: paramsHashFromArgs(args, FIND_PARAMS),
+    },
+    () => handler(sessionId, args, context),
+    (v) => !v.isError,
+  );
+  return value;
+};
+
 export function registerFindTool(server: MCPServer): void {
-  server.registerTool('find', handler, definition);
+  server.registerTool('find', cachedHandler, definition);
 }

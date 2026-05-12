@@ -7,6 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
@@ -397,5 +398,10 @@ const handler: ToolHandler = async (
 };
 
 export function registerFormInputTool(server: MCPServer): void {
-  server.registerTool('form_input', handler, definition);
+  // Snapshot-cache (#879): bump docEpoch after every successful set.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
+  );
+  server.registerTool('form_input', wrapped, definition);
 }

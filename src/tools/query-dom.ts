@@ -9,6 +9,8 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
+import { lookupOrSet } from '../utils/snapshot-cache-helper';
+import { paramsHashFromArgs, QUERY_DOM_PARAMS } from '../core/perception/params-hash';
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -760,6 +762,28 @@ const handler: ToolHandler = async (
   }
 };
 
+/**
+ * Snapshot-cache wrapper (#879). See `src/tools/read-page.ts` for the
+ * shared rationale.
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return handler(sessionId, args, context);
+  const sessionManager = getSessionManager();
+  const page = await sessionManager.getPage(sessionId, tabId).catch(() => null);
+  if (!page) return handler(sessionId, args, context);
+  const { value } = await lookupOrSet<MCPResult>(
+    page,
+    {
+      kind: 'query_dom',
+      paramsHash: paramsHashFromArgs(args, QUERY_DOM_PARAMS),
+    },
+    () => handler(sessionId, args, context),
+    (v) => !v.isError,
+  );
+  return value;
+};
+
 export function registerQueryDomTool(server: MCPServer): void {
-  server.registerTool('query_dom', handler, definition);
+  server.registerTool('query_dom', cachedHandler, definition);
 }

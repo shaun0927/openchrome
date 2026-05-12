@@ -13,6 +13,8 @@ import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
+import { lookupOrSet } from '../utils/snapshot-cache-helper';
+import { paramsHashFromArgs, READ_PAGE_PARAMS } from '../core/perception/params-hash';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -683,6 +685,50 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
   return { ...result, content: sanitizedContent };
 };
 
+/**
+ * Snapshot-cache wrapper (#879).
+ *
+ * Wraps the sanitized handler with a `(kind, frameId, docEpoch, viewport,
+ * paramsHash)`-keyed cache. Successful results are cached; errors and
+ * the delta-compression branch skip caching entirely. The cache itself
+ * lives in `src/core/perception/snapshot-cache.ts` and stays pure JS —
+ * CDP eviction is wired host-side via the helper module.
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  const tabId = args.tabId as string | undefined;
+  const mode = (args.mode as string) || 'dom';
+  const compression = args.compression as string | undefined;
+
+  // Cache only the deterministic snapshot variants. Skip when no tabId
+  // (validation runs in the inner handler), when compression='delta'
+  // mutates the snapshot store, or when the mode is unrecognised.
+  const cacheKind =
+    mode === 'ax' ? 'read_page.ax' :
+    mode === 'dom' ? 'read_page.dom' :
+    mode === 'css' ? 'read_page.css' :
+    null;
+  if (!tabId || compression === 'delta' || cacheKind === null) {
+    return sanitizedHandler(sessionId, args, context);
+  }
+
+  const sessionManager = getSessionManager();
+  const page = await sessionManager.getPage(sessionId, tabId).catch(() => null);
+  if (!page) return sanitizedHandler(sessionId, args, context);
+
+  const { value } = await lookupOrSet<MCPResult>(
+    page,
+    {
+      kind: cacheKind,
+      paramsHash: paramsHashFromArgs(args, READ_PAGE_PARAMS),
+    },
+    () => sanitizedHandler(sessionId, args, context),
+    // Never cache error results — a transient failure would otherwise pin
+    // until the next mutation or TTL eviction.
+    (v) => !v.isError,
+  );
+  return value;
+};
+
 export function registerReadPageTool(server: MCPServer): void {
-  server.registerTool('read_page', sanitizedHandler, definition);
+  server.registerTool('read_page', cachedHandler, definition);
 }

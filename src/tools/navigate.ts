@@ -19,6 +19,7 @@ import { simulatePresence } from '../stealth/human-behavior';
 import { getHeadedFallback } from '../chrome/headed-fallback';
 import { getGlobalConfig } from '../config/global';
 import type { Page } from 'puppeteer-core';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
 const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
@@ -989,5 +990,11 @@ const handler: ToolHandler = async (
 };
 
 export function registerNavigateTool(server: MCPServer): void {
-  server.registerTool('navigate', handler, definition, { timeoutRecoverable: true });
+  // Snapshot-cache (#879): bump docEpoch after a successful navigation
+  // (loaderId change) so the next read recomputes against the new page.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
+  );
+  server.registerTool('navigate', wrapped, definition, { timeoutRecoverable: true });
 }

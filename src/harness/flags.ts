@@ -121,3 +121,19 @@ export async function bootstrapPilot(): Promise<unknown | null> {
 export function resetFlagsCache(): void {
   cachedPilot = null;
 }
+
+/**
+ * Core-tier feature gate.
+ *
+ * Returns `defaultOn` when the env var is unset or empty; otherwise parses
+ * the value as a boolean (`'1'` / `'true'` enable, anything else disables).
+ *
+ * TODO(#844): replace this inline copy with the shared helper introduced
+ * by issue #844 once that PR lands on `develop`. The signature is held
+ * stable so the swap is a one-line import change.
+ */
+export function isCoreFeatureEnabled(envVar: string, defaultOn: boolean): boolean {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === '') return defaultOn;
+  return raw === '1' || raw.toLowerCase() === 'true';
+}
