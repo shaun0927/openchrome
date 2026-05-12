@@ -414,6 +414,40 @@ describe('allow-wins composition', () => {
     expect(request.abort).not.toHaveBeenCalled();
   });
 
+  test('later modify rule does not override an earlier user block', async () => {
+    const handler = await loadHandler();
+
+    await addRule(handler, {
+      pattern: '*://assets.example.com/*',
+      resourceTypes: ['image'],
+      action: 'block',
+    });
+    await addRule(handler, {
+      pattern: '*://assets.example.com/placeholder.png',
+      resourceTypes: ['image'],
+      action: 'modify',
+      modifyOptions: {
+        status: 204,
+        headers: { 'content-type': 'image/png' },
+        body: '',
+      },
+    });
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+    });
+
+    const request = createMockRequest({
+      url: 'https://assets.example.com/placeholder.png',
+      resourceType: 'image',
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.abort).toHaveBeenCalledWith('blockedbyclient');
+    expect(request.respond).not.toHaveBeenCalled();
+    expect(request.continue).not.toHaveBeenCalled();
+  });
+
   test('modify rule overriding preset block executes response modification', async () => {
     const handler = await loadHandler();
 

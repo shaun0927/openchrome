@@ -467,8 +467,11 @@ const handler: ToolHandler = async (
           }
 
           if (matched && matchedRule?.action === 'block') {
+            const matchedBlockFromPreset = matchedRule.id.startsWith('preset-');
             // Look for explicit overrides that also match. Allow wins over
-            // modify regardless of their relative order in the override pass.
+            // block/modify conflicts. User-authored modify rules may override
+            // injected preset blocks, but not earlier user-authored blocks; that
+            // preserves the pre-preset first-match semantics for custom rule sets.
             let modifyOverride: InterceptRule | null = null;
             for (const rule of state!.rules) {
               if (rule === matchedRule) continue;
@@ -481,7 +484,7 @@ const handler: ToolHandler = async (
                 matchedRule = rule;
                 break;
               }
-              if (!modifyOverride) {
+              if (matchedBlockFromPreset && !modifyOverride) {
                 modifyOverride = rule;
               }
             }
