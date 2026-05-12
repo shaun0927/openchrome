@@ -6,13 +6,13 @@ This document is the authoritative reference for which transport modes OpenChrom
 
 ## Supported transports
 
-OpenChrome exposes three transport modes via the `--transport <mode>` CLI flag (or the `OPENCHROME_TRANSPORT` environment variable).
+OpenChrome exposes three transport modes. The package CLI uses stdio by default, enables HTTP with `--http [port]`, and can select explicit modes with the `OPENCHROME_TRANSPORT` environment variable.
 
-| Transport | `--transport` value | Status | Since | Sunset | Recommended use case |
-|-----------|---------------------|--------|-------|--------|----------------------|
-| stdio | `stdio` | **stable** | v1.0.0 | — | Default. Single MCP client over stdin/stdout. Use for Claude Code, Codex CLI, Cursor, Windsurf, and any stdio-native MCP client. |
-| HTTP daemon | `http` | **stable** | v1.0.0 | — | Long-running daemon serving multiple MCP clients. Binds a local port; auth via bearer token or per-tenant API key. |
-| Dual (stdio + HTTP) | `both` | **stable** | v1.0.0 | — | Run stdio and HTTP simultaneously. Intended for dashboard integrations that need both a direct MCP pipe and an HTTP fan-out endpoint. |
+| Transport | Selector | Status | Since | Sunset | Recommended use case |
+|-----------|----------|--------|-------|--------|----------------------|
+| stdio | default or `OPENCHROME_TRANSPORT=stdio` | **stable** | v1.0.0 | — | Default. Single MCP client over stdin/stdout. Use for Claude Code, Codex CLI, Cursor, Windsurf, and any stdio-native MCP client. |
+| HTTP daemon | `--http [port]` or `OPENCHROME_TRANSPORT=http` | **stable** | v1.0.0 | — | Long-running daemon serving multiple MCP clients. Binds a local port; auth via bearer token or per-tenant API key. |
+| Dual (stdio + HTTP) | `OPENCHROME_TRANSPORT=both` | **stable** | v1.0.0 | — | Run stdio and HTTP simultaneously. Intended for dashboard integrations that need both a direct MCP pipe and an HTTP fan-out endpoint. |
 
 > **Note on SSE:** The `/mcp/sse` endpoint is the _notification delivery channel_ inside the HTTP transport — it is not a separate transport mode. When a client connects via `GET /mcp/sse`, it receives server-initiated notifications over a persistent SSE stream while issuing requests via `POST /mcp`. Operators should not conflate `/mcp/sse` with a distinct transport; the lifecycle of that endpoint is tied to the `http` transport above.
 
@@ -71,7 +71,7 @@ When a transport (or a specific transport feature) is deprecated:
 When the server starts with a deprecated transport selected, it emits a single line to stderr:
 
 ```
-[openchrome] DEPRECATION WARNING: transport "<name>" is deprecated as of v<announcement-version>. Sunset: v<sunset-version>. Migrate before that release. See: https://github.com/openchrome/openchrome-mcp/blob/main/docs/transport-lifecycle.md
+[openchrome] DEPRECATION WARNING: transport "<name>" is deprecated as of v<announcement-version>. Sunset: v<sunset-version>. Migrate before that release. See: https://github.com/shaun0927/openchrome/blob/main/docs/transport-lifecycle.md
 ```
 
 This line:
@@ -101,13 +101,13 @@ openchrome serve --auto-launch
 **After (HTTP daemon):**
 ```bash
 # Start the HTTP daemon on port 3100 (default)
-openchrome serve --auto-launch --transport http
+openchrome serve --auto-launch --http
 
 # Or specify a custom port and bind address
-openchrome serve --auto-launch --transport http --http 4000 --http-host 0.0.0.0
+OPENCHROME_HTTP_HOST=0.0.0.0 openchrome serve --auto-launch --http 4000
 
 # With bearer-token authentication (recommended for non-loopback)
-openchrome serve --auto-launch --transport http --http 4000 --auth-token "$(openssl rand -hex 32)"
+OPENCHROME_AUTH_TOKEN="$(openssl rand -hex 32)" openchrome serve --auto-launch --http 4000
 ```
 
 Configure your MCP client to connect over HTTP:
@@ -125,21 +125,16 @@ Configure your MCP client to connect over HTTP:
 
 For unauthenticated loopback-only development:
 ```bash
-openchrome serve --auto-launch --transport http --allow-unauthenticated-http
+OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1 openchrome serve --auto-launch --http
 ```
 
 ### HTTP → Streamable HTTP (future)
 
 Streamable HTTP is the next-generation MCP transport (tracked in issue #839). It replaces the current HTTP transport with a fully bidirectional streaming protocol that is OAuth-capable and aligns with the broader MCP ecosystem direction.
 
-This recipe will be filled in when issue #839 lands. At that point, the migration will look like:
+This recipe will be filled in when issue #839 lands. At that point, this section will be updated with the supported command form.
 
-```bash
-# Anticipated command form — not yet available
-openchrome serve --auto-launch --transport streamable-http --http 3100
-```
-
-Until #839 is merged, continue using `--transport http`. The `http` transport is stable and has no sunset date.
+Until #839 is merged, continue using `--http`. The `http` transport is stable and has no sunset date.
 
 ---
 
@@ -147,4 +142,4 @@ Until #839 is merged, continue using `--transport http`. The `http` transport is
 
 - [docs/auth.md](auth.md) — API key store, bearer tokens, OAuth
 - [docs/roadmap/portability-harness-contract.md](roadmap/portability-harness-contract.md) — core/pilot tier split and portability principles
-- Issue [#839](https://github.com/openchrome/openchrome-mcp/issues/839) — Streamable HTTP transport implementation
+- Issue [#839](https://github.com/shaun0927/openchrome/issues/839) — Streamable HTTP transport implementation
