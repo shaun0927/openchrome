@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Bandwidth Heavy Test Page</title>
+  <!-- 2 stylesheets -->
+  <link rel="stylesheet" href="/bw-assets/style1.css">
+  <link rel="stylesheet" href="/bw-assets/style2.css">
+  <!-- 1 woff2 font via CSS @font-face is declared in style1.css -->
+</head>
+<body>
+  <h1>Bandwidth Heavy Page</h1>
+
+  <!-- 1 article with inline text — must survive preset blocking unchanged -->
+  <article id="main-article">
+    <h2>Sample Article</h2>
+    <p>This is the main article body text used to verify DOM parity between baseline and optimized loads. The content here must be character-identical regardless of which resources were blocked.</p>
+    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+  </article>
+
+  <!-- 5 PNGs (tiny 1x1 pixel stubs served by the test server) -->
+  <img src="/bw-assets/img1.png" alt="img1" id="img1">
+  <img src="/bw-assets/img2.png" alt="img2" id="img2">
+  <img src="/bw-assets/img3.png" alt="img3" id="img3">
+  <img src="/bw-assets/img4.png" alt="img4" id="img4">
+  <img src="/bw-assets/img5.png" alt="img5" id="img5">
+
+  <!-- 2 MP4 stubs -->
+  <video id="video1" src="/bw-assets/video1.mp4" preload="auto" muted></video>
+  <video id="video2" src="/bw-assets/video2.mp4" preload="auto" muted></video>
+
+  <script>
+    // Track resource load outcomes for test assertions
+    window.__bwTestLoaded = { png: 0, mp4: 0, css: 0, woff2: 0 };
+    document.querySelectorAll('img').forEach(function(img) {
+      img.addEventListener('load', function() { window.__bwTestLoaded.png++; });
+    });
+    document.querySelectorAll('video').forEach(function(v) {
+      v.addEventListener('canplay', function() { window.__bwTestLoaded.mp4++; });
+    });
+  </script>
+</body>
+</html>
