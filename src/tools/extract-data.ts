@@ -15,8 +15,11 @@ import {
   buildOpenGraphExtractor,
   buildCssHeuristicExtractor,
   buildMultipleItemExtractor,
+  buildStandardDomExtractor,
+  EXTRACTION_MODE_BUDGETS,
+  parseExtractionMode,
 } from '../extraction';
-import type { ExtractionSchema, SchemaProperty } from '../extraction';
+import type { ExtractionMode, ExtractionSchema, SchemaProperty } from '../extraction';
 
 const definition: MCPToolDefinition = {
   name: 'extract_data',
@@ -47,6 +50,11 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Extract array of items (for listings/tables). Default: false',
       },
+      mode: {
+        type: 'string',
+        enum: ['fast', 'standard'],
+        description: 'Extraction budget mode. fast is the default/current bounded strategy set; standard adds a broader bounded DOM pass.',
+      },
     },
     required: ['tabId', 'schema'],
   },
@@ -66,7 +74,7 @@ function countFields(data: Record<string, unknown>): number {
   return Object.values(data).filter(v => v !== null && v !== undefined && v !== '').length;
 }
 
-const handler: ToolHandler = async (
+export const extractDataHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   _context?: ToolContext
@@ -75,6 +83,13 @@ const handler: ToolHandler = async (
   const schema = args.schema as ExtractionSchema;
   const selector = args.selector as string | undefined;
   const multiple = (args.multiple as boolean) ?? false;
+  const modeCheck = parseExtractionMode(args.mode);
+
+  if (!modeCheck.ok) {
+    return { content: [{ type: 'text', text: `Error: ${modeCheck.error}` }], isError: true };
+  }
+  const mode = modeCheck.mode;
+  const budget = EXTRACTION_MODE_BUDGETS[mode];
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
@@ -110,16 +125,21 @@ const handler: ToolHandler = async (
     const pageUrl = page.url();
     const domain = extractDomainFromUrl(pageUrl);
 
+    const startedAt = Date.now();
+
     // Multiple items mode
     if (multiple) {
       const multiScript = buildMultipleItemExtractor(fieldNames, schemaProps, selector);
-      const rawItems = await withTimeout(page.evaluate(multiScript) as Promise<Record<string, unknown>[]>, 15000, 'extract_data');
+      const rawItems = await withTimeout(page.evaluate(multiScript) as Promise<Record<string, unknown>[]>, mode === 'standard' ? budget.standardDomTimeoutMs : budget.cssTimeoutMs, 'extract_data');
 
       if (!Array.isArray(rawItems) || rawItems.length === 0) {
         return {
           content: [{ type: 'text', text: JSON.stringify({
-            action: 'extract_data', url: pageUrl, multiple: true, items: [], count: 0,
-            message: 'No repeating items found. Try a more specific selector or check if the page has loaded.',
+            action: 'extract_data', url: pageUrl, multiple: true, modeUsed: mode, items: [], count: 0,
+            metrics: buildMetrics({}, fieldNames, startedAt, mode),
+            message: mode === 'fast'
+              ? 'No repeating items found. Try a more specific selector or retry with mode: "standard" if the list is rendered in a broader container.'
+              : 'No repeating items found. Try a more specific selector or check if the page has loaded.',
           }) }],
         };
       }
@@ -134,7 +154,8 @@ const handler: ToolHandler = async (
 
       return {
         content: [{ type: 'text', text: JSON.stringify({
-          action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
+          action: 'extract_data', url: pageUrl, multiple: true, modeUsed: mode, items: validated, count: validated.length,
+          metrics: buildMetrics(validated[0] || {}, fieldNames, startedAt, mode),
         }) }],
       };
     }
@@ -145,40 +166,54 @@ const handler: ToolHandler = async (
 
     // Strategy 1: JSON-LD
     try {
-      const r = await withTimeout(page.evaluate(buildJsonLdExtractor(fieldNames)) as Promise<Record<string, unknown>>, 5000, 'extract_data:jsonld');
+      const r = await withTimeout(page.evaluate(buildJsonLdExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.jsonLdTimeoutMs, 'extract_data:jsonld');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('json-ld'); }
     } catch { /* non-fatal */ }
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames);
+      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, startedAt);
     }
 
     // Strategy 2: Microdata
     try {
-      const r = await withTimeout(page.evaluate(buildMicrodataExtractor(fieldNames)) as Promise<Record<string, unknown>>, 5000, 'extract_data:microdata');
+      const r = await withTimeout(page.evaluate(buildMicrodataExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.microdataTimeoutMs, 'extract_data:microdata');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('microdata'); }
     } catch { /* non-fatal */ }
 
     // Strategy 3: OpenGraph
     try {
-      const r = await withTimeout(page.evaluate(buildOpenGraphExtractor(fieldNames)) as Promise<Record<string, unknown>>, 5000, 'extract_data:opengraph');
+      const r = await withTimeout(page.evaluate(buildOpenGraphExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.openGraphTimeoutMs, 'extract_data:opengraph');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('opengraph'); }
     } catch { /* non-fatal */ }
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames);
+      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, startedAt);
     }
 
     // Strategy 4: CSS heuristic
     try {
-      const r = await withTimeout(page.evaluate(buildCssHeuristicExtractor(fieldNames, schemaProps, selector)) as Promise<Record<string, unknown>>, 10000, 'extract_data:css');
+      const r = await withTimeout(page.evaluate(buildCssHeuristicExtractor(fieldNames, schemaProps, selector)) as Promise<Record<string, unknown>>, budget.cssTimeoutMs, 'extract_data:css');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('css-heuristic'); }
     } catch { /* non-fatal */ }
 
+    if (mode === 'standard' && countFields(merged) < fieldNames.length) {
+      try {
+        const r = await withTimeout(
+          page.evaluate(buildStandardDomExtractor(fieldNames, schemaProps, selector, budget.maxStandardDomNodes)) as Promise<Record<string, unknown>>,
+          budget.standardDomTimeoutMs,
+          'extract_data:standard-dom'
+        );
+        if (r && typeof r === 'object') {
+          merged = mergeResults(merged, r);
+          if (countFields(r) > 0) strategies.push('standard-dom');
+        }
+      } catch { /* non-fatal */ }
+    }
+
     const { result, validation } = validateAndCoerce(merged, schema);
-    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames);
+    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, startedAt);
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -186,7 +221,7 @@ const handler: ToolHandler = async (
 
 function buildResponse(
   data: Record<string, unknown>, errors: string[], url: string,
-  strategies: string[], domain: string, fieldNames: string[]
+  strategies: string[], domain: string, fieldNames: string[], mode: ExtractionMode, startedAt: number
 ): MCPResult {
   const fieldsFound = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k]) => k);
   const fieldsMissing = fieldNames.filter(f => !fieldsFound.includes(f));
@@ -199,17 +234,39 @@ function buildResponse(
   }
 
   const response: Record<string, unknown> = {
-    action: 'extract_data', url, data, fieldsFound: fieldsFound.length, fieldsTotal: fieldNames.length, strategies,
+    action: 'extract_data', url, modeUsed: mode, data, fieldsFound: fieldsFound.length, fieldsTotal: fieldNames.length, strategies,
+    metrics: buildMetrics(data, fieldNames, startedAt, mode),
   };
   if (fieldsMissing.length > 0) response.fieldsMissing = fieldsMissing;
   if (errors.length > 0) response.validationErrors = errors;
   if (fieldsFound.length === 0) {
-    response.message = 'No data extracted. Try: (1) read_page to verify content, (2) provide a CSS selector, (3) wait_for before extracting.';
+    response.message = mode === 'fast'
+      ? 'No data extracted. Try: (1) read_page to verify content, (2) provide a CSS selector, (3) wait_for before extracting, (4) retry with mode: "standard" when visible DOM context is needed.'
+      : 'No data extracted. Try: (1) read_page to verify content, (2) provide a CSS selector, (3) wait_for before extracting.';
   }
 
   return { content: [{ type: 'text', text: JSON.stringify(response) }] };
 }
 
+function buildMetrics(data: Record<string, unknown>, fieldNames: string[], startedAt: number, mode: ExtractionMode): Record<string, unknown> {
+  const fieldsFound = Object.values(data).filter(v => v !== null && v !== undefined && v !== '').length;
+  const outputChars = JSON.stringify(data).length;
+  const budget = EXTRACTION_MODE_BUDGETS[mode];
+  return {
+    mode,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    outputChars,
+    fieldsFound,
+    fieldsTotal: fieldNames.length,
+    budget: {
+      maxCssNodes: budget.maxCssNodes,
+      maxStandardDomNodes: budget.maxStandardDomNodes,
+      cssTimeoutMs: budget.cssTimeoutMs,
+      standardDomTimeoutMs: budget.standardDomTimeoutMs,
+    },
+  };
+}
+
 export function registerExtractDataTool(server: MCPServer): void {
-  server.registerTool('extract_data', handler, definition);
+  server.registerTool('extract_data', extractDataHandler, definition);
 }
