@@ -16,3 +16,6 @@ export type { RecoveryRewardClassification, RecoveryRewardInput, RecoveryRewardS
 
 export { formatCandidateHint, rankRecoveryCandidates } from './candidate-ranker';
 export type { RecoveryCandidate, RecoveryCandidateRankInput, RecoveryCandidateRisk, RecentToolCallLike } from './candidate-ranker';
+
+export { policyRankBoost, RecoveryPolicyLearner } from './policy-learner';
+export type { RecoveryPolicyOutcome, RecoveryPolicyRecord, RecoveryPolicyLearnerOptions } from './policy-learner';

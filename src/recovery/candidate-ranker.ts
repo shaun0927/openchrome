@@ -1,4 +1,5 @@
 /** Advisory recovery candidate ranking for stuck/stalling hints. */
+import { policyRankBoost, type RecoveryPolicyRecord } from './policy-learner';
 import { scoreRecoveryOutcome } from './reward-scorer';
 
 export type RecoveryCandidateRisk = 'read_only' | 'reversible' | 'side_effect_possible';
@@ -25,6 +26,7 @@ export interface RecoveryCandidateRankInput {
   isError: boolean;
   recentCalls: RecentToolCallLike[];
   maxCandidates?: number;
+  policies?: RecoveryPolicyRecord[];
 }
 
 const BLIND_INTERACTION_TOOLS = new Set(['click', 'interact', 'computer', 'form_input', 'fill_form', 'javascript_tool']);
@@ -50,7 +52,8 @@ export function rankRecoveryCandidates(input: RecoveryCandidateRankInput): Recov
       observationOnly: READ_TOOLS.has(candidate.tool),
       repeatedFailureCount: repeatedToolCount(input.recentCalls, input.toolName),
     });
-    const score = clamp(candidate.baseScore + evidence.score * 0.25 - repeatedPenalty - sameFailedPenalty - riskPenalty);
+    const learnedBoost = policyRankBoost(input.policies, candidate.tool, candidate.risk);
+    const score = clamp(candidate.baseScore + evidence.score * 0.25 + learnedBoost - repeatedPenalty - sameFailedPenalty - riskPenalty);
     candidates.push({ ...candidate, score });
   };
 
