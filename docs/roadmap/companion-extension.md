@@ -33,16 +33,16 @@ There are two architectures that close it:
 
 1. **Pivot to extension-only** (mcp-chrome's choice). Rejected: it breaks openchrome's parallel-tab model (one extension instance per Chrome, openchrome runs N isolated tabs), and breaks `--server-mode` (no extension can install in a freshly-spawned profile each run). Not on the table.
 
-2. **Optional companion extension + Native Messaging bridge**, gated behind `--pilot --companion-extension`, with zero impact when not installed. This RFC.
+2. **Optional companion extension + local IPC bridge**, gated behind `--pilot --companion-extension`, with zero impact when not installed. This RFC.
 
 ## The proposal
 
 Ship a separate npm package and Chrome extension:
 
-- **`openchrome-companion-extension`** — a small WebExtension (MV3) with a service worker that listens for Native Messaging connections. Distributed via:
+- **`openchrome-companion-extension`** — a small WebExtension (MV3) with a service worker that connects to the registered Native Messaging host and handles reconnects after MV3 worker suspension. Distributed via:
   - the Chrome Web Store under the openchrome account,
   - and an unpacked-load path documented for power users.
-- **`@openchrome/companion-bridge`** (lives in this monorepo under `packages/companion-bridge/`) — a small Node module that registers the Native Messaging host on first run, opens a port to the extension, and exposes typed proxies for `chrome.history`, `chrome.bookmarks`, `chrome.downloads` APIs.
+- **`@openchrome/companion-bridge`** (lives in this monorepo under `packages/companion-bridge/`) — a small Node module that registers the Native Messaging host on first run, exposes a local JSON IPC endpoint to `openchrome-mcp` (Unix domain socket on macOS/Linux, named pipe on Windows), and proxies Native Messaging frames to the extension for `chrome.history`, `chrome.bookmarks`, `chrome.downloads` APIs.
 
 In `openchrome-mcp`, three new tools are registered **only when** the `--companion-extension` CLI flag is set and the `--pilot` flag is set:
 
@@ -50,7 +50,7 @@ In `openchrome-mcp`, three new tools are registered **only when** the `--compani
 - `companion_bookmarks_query`
 - `companion_downloads_search`
 
-Each is a thin pass-through to the companion via Native Messaging. The companion is responsible for permission prompts and rate limiting; the server is the transport.
+Each is a thin pass-through to the companion bridge over local JSON IPC. The extension side is responsible for permission prompts and rate limiting; the bridge owns the Chrome Native Messaging host process.
 
 ## Architecture sketch
 
@@ -59,13 +59,13 @@ Agent
   │ MCP tool call: companion_history_search {query:"OpenChrome"}
   ▼
 openchrome-mcp (pilot tier)
-  │ JSON over Native Messaging (one persistent port per session)
+  │ JSON over local IPC (Unix socket or Windows named pipe)
   ▼
 companion-bridge (Node module, registered as a Native Messaging host)
   │ stdio frames (4-byte length-prefixed JSON, per Chrome spec)
   ▼
 Chrome browser
-  │ chrome.runtime.onConnectNative
+  │ chrome.runtime.connectNative
   ▼
 openchrome-companion-extension (MV3 service worker)
   │ chrome.history.search({text:"OpenChrome", maxResults:50})
@@ -78,9 +78,10 @@ chrome.history → ranked HistoryItem[] → back up the stack
 1. Without `--pilot --companion-extension`, `tools/list` is byte-identical to without this feature. **P2 hard requirement.**
 2. The companion is **not** required to be installed for openchrome itself to work. The CLI flag enables the tools; tools are registered with `available:false` and return a structured `{error:'companion_not_installed', remediation:'...'}` if the bridge cannot reach the extension.
 3. **No outbound LLM calls** from any companion component. The extension reads chrome.* APIs and replies with facts. **P3 + P4.**
-4. The bridge uses Native Messaging only; no HTTP server on the extension side, no localhost ports owned by the extension.
+4. Native Messaging is used only across the Chrome extension ↔ native host boundary. The `openchrome-mcp` ↔ `companion-bridge` boundary uses local JSON IPC such as a Unix domain socket or Windows named pipe; no HTTP server on the extension side, no localhost ports owned by the extension.
 5. Native Messaging host registration is opt-in: `openchrome companion install` writes the manifest under the platform's per-user directory after explicit user consent.
 6. The companion extension's manifest declares the minimum permission set needed for the three APIs: `history`, `bookmarks`, `downloads`, `nativeMessaging`. **Not** `tabs`, **not** `webRequest`, **not** `debugger` — those overlap openchrome's CDP surface and are intentionally out of scope.
+7. The bridge must tolerate an idle MV3 service worker. It cannot assume the host can wake the extension on demand; when the IPC endpoint receives a tool call and no extension port is active, it returns a structured `companion_extension_disconnected` error with remediation that asks the user to open/reload Chrome or the extension, then retries after the extension reconnects.
 
 ## Why this fits the contract
 
@@ -100,15 +101,15 @@ A decision on the following before any implementation issue is opened:
 2. **Permission ratchet**. The proposed permission set is `history`, `bookmarks`, `downloads`, `nativeMessaging`. Is that the floor we are willing to ship? Adding any later requires republishing.
 3. **Bridge package boundary**. The current monorepo holds only `openchrome-mcp`. Adding `packages/companion-bridge/` (and possibly `packages/companion-extension/`) requires a monorepo decision (npm workspaces? lerna?). What is acceptable?
 4. **Threat model**. The extension has read access to the user's full history. If openchrome is compromised, does the threat model assume the user's history is also compromised? What auditing surface (extension UI, log file) is required?
-5. **Cross-platform Native Messaging quirks**. mcp-chrome's open issues document recurring failures with nvm/asdf/volta/fnm-managed Node binaries (the manifest's `path` to the Node script changes with version). What is the fallback story?
+5. **Cross-platform Native Messaging and IPC quirks**. mcp-chrome's open issues document recurring failures with nvm/asdf/volta/fnm-managed Node binaries (the manifest's `path` to the Node script changes with version). The local IPC hop also needs per-platform socket/pipe path handling. What is the fallback story?
 6. **Tools opt-in granularity**. Single `--companion-extension` flag, or per-tool flags (`--companion-history`, `--companion-bookmarks`)?
-7. **MV3 service-worker lifetime**. The MV3 worker terminates after ~30 s of inactivity. Re-connection on each tool call is acceptable for our use? (Yes per spec, but the latency is non-zero.)
+7. **MV3 service-worker lifetime**. The MV3 worker terminates after inactivity, and the native host cannot wake a dormant service worker by itself. Is the documented behavior acceptable: tools fail closed with `companion_extension_disconnected` until Chrome wakes the extension and it reconnects, with retry handled by the next tool call?
 
 ## Phased plan (post-RFC)
 
 Only opened as separate issues if this RFC is accepted.
 
-- **Phase 1**: `companion-bridge` skeleton, Native Messaging handshake, manifest installer (`openchrome companion install/uninstall`). No extension yet — test against a hand-rolled echo extension.
+- **Phase 1**: `companion-bridge` skeleton, local IPC endpoint, Native Messaging handshake, manifest installer (`openchrome companion install/uninstall`). No extension yet — test against a hand-rolled echo extension.
 - **Phase 2**: `openchrome-companion-extension` MV3 stub with `chrome.history.search` only. Single round-trip end-to-end.
 - **Phase 3**: `chrome.bookmarks` + `chrome.downloads`. Tool surface and schemas finalized.
 - **Phase 4**: Web Store submission, signing, auto-update channel.
@@ -122,7 +123,7 @@ Each phase has its own acceptance criteria and `real verification` plan, written
 
 - [ ] The seven questions above each have a documented decision (link to comment thread or `docs/roadmap/companion-extension-rfc.md`).
 - [ ] At least one maintainer comment confirms alignment with `docs/roadmap/portability-harness-contract.md` P1–P5.
-- [ ] A `BACKED-OUT-IF` clause documents what observation would cause us to cancel Phase 1 (e.g., "if the Native Messaging manifest path proves unreliable on more than two of {macOS, Windows, Linux, nvm, volta} in a 1-week dogfood, we cancel and reopen the design").
+- [ ] A `BACKED-OUT-IF` clause documents what observation would cause us to cancel Phase 1 (e.g., "if the Native Messaging manifest path or local IPC endpoint proves unreliable on more than two of {macOS, Windows, Linux, nvm, volta} in a 1-week dogfood, we cancel and reopen the design").
 - [ ] If accepted, the RFC is committed under `docs/roadmap/companion-extension.md` with status `accepted` or `accepted-phased`; if rejected, the RFC is committed with status `rejected` and a reason. Either way it leaves an artifact.
 
 ## Real verification (when implementation lands)
@@ -130,7 +131,7 @@ Each phase has its own acceptance criteria and `real verification` plan, written
 Verification for each implementation phase belongs to that phase's issue. The pattern, sketched here for reference:
 
 - **Phase 1 verification**: `openchrome companion install` writes the manifest at the documented platform path; `openchrome companion uninstall` removes it. Idempotent. Tested on macOS / Ubuntu / Windows in CI.
-- **Phase 2 verification**: `mcp__openchrome__companion_history_search` with query="OpenChrome" returns a non-empty array on a profile that has visited the repo. With the companion uninstalled, the same call returns `{error:'companion_not_installed'}` with the documented remediation.
+- **Phase 2 verification**: `mcp__openchrome__companion_history_search` with query="OpenChrome" returns a non-empty array on a profile that has visited the repo. With the companion uninstalled, the same call returns `{error:'companion_not_installed'}` with the documented remediation. With Chrome open but the MV3 worker dormant/disconnected, the same call returns `{error:'companion_extension_disconnected'}` until the extension reconnects.
 - **Phase 3 verification**: `mcp__openchrome__companion_bookmarks_query` returns the bookmark tree shape from the Chrome API verbatim; `mcp__openchrome__companion_downloads_search` returns downloads filtered by `query.startedAfter`.
 - **Phase 5 verification**: `openchrome doctor` reports `companion-status` as `ok` / `not-installed` / `version-mismatch`.
 
