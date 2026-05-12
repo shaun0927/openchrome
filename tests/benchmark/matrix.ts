@@ -1,0 +1,184 @@
+import { BenchmarkTask, MCPAdapter, MCPToolResult, TaskResult } from './benchmark-runner';
+import { measureCall } from './utils';
+
+export type BenchmarkCategory =
+  | 'cold-start'
+  | 'read-page'
+  | 'interactive'
+  | 'action'
+  | 'screenshot'
+  | 'agent-loop'
+  | 'parallel-tabs';
+
+export interface BenchmarkMatrixScenario {
+  name: string;
+  category: BenchmarkCategory;
+  description: string;
+  steps: Array<{ tool: string; args: Record<string, unknown> }>;
+}
+
+export interface MatrixFilter {
+  category?: string;
+}
+
+export function estimateTokensFromChars(chars: number): number {
+  if (!Number.isFinite(chars) || chars <= 0) return 0;
+  return Math.ceil(chars / 4);
+}
+
+export function responsePayloadSize(result: MCPToolResult): { responseChars: number; screenshotBytes: number } {
+  let responseChars = 0;
+  let screenshotBytes = 0;
+
+  for (const item of result.content ?? []) {
+    if (typeof item.text === 'string') {
+      responseChars += item.text.length;
+    }
+    if (typeof item.data === 'string') {
+      responseChars += item.data.length;
+      screenshotBytes += Buffer.byteLength(item.data, 'base64');
+    }
+  }
+
+  return { responseChars, screenshotBytes };
+}
+
+export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
+  return [
+    {
+      name: 'cold-start-first-tab',
+      category: 'cold-start',
+      description: 'Session/server init to first usable tab',
+      steps: [{ tool: 'open_tabs', args: {} }],
+    },
+    {
+      name: 'warm-read-page-dom',
+      category: 'read-page',
+      description: 'Warm DOM read_page latency and payload size',
+      steps: [{ tool: 'read_page', args: { tabId: 'tab1', mode: 'dom' } }],
+    },
+    {
+      name: 'warm-read-page-ax',
+      category: 'read-page',
+      description: 'Warm AX read_page latency and payload size',
+      steps: [{ tool: 'read_page', args: { tabId: 'tab1', mode: 'ax' } }],
+    },
+    {
+      name: 'warm-read-page-dom-delta',
+      category: 'read-page',
+      description: 'Warm DOM delta read_page latency and payload size',
+      steps: [
+        { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom' } },
+        { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom', compression: 'delta' } },
+      ],
+    },
+    {
+      name: 'interactive-discovery',
+      category: 'interactive',
+      description: 'Interactive-only discovery payload and latency',
+      steps: [{ tool: 'read_page', args: { tabId: 'tab1', mode: 'dom', filter: 'interactive' } }],
+    },
+    {
+      name: 'click-fill-action-latency',
+      category: 'action',
+      description: 'Click/fill action latency in a simple action loop',
+      steps: [
+        { tool: 'act', args: { tabId: 'tab1', action: 'click', ref: 'ref_1' } },
+        { tool: 'act', args: { tabId: 'tab1', action: 'fill', ref: 'ref_2', text: 'benchmark' } },
+      ],
+    },
+    {
+      name: 'screenshot-inline-payload',
+      category: 'screenshot',
+      description: 'Screenshot latency and inline base64 payload size',
+      steps: [{ tool: 'screenshot', args: { tabId: 'tab1', mode: 'inline' } }],
+    },
+    {
+      name: 'agent-loop-read-action-delta',
+      category: 'agent-loop',
+      description: 'Representative read_page -> action -> read_page(delta) loop',
+      steps: [
+        { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom' } },
+        { tool: 'act', args: { tabId: 'tab1', action: 'click', ref: 'ref_1' } },
+        { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom', compression: 'delta' } },
+      ],
+    },
+    ...[1, 5, 20].map((tabs) => ({
+      name: `parallel-tabs-${tabs}`,
+      category: 'parallel-tabs' as const,
+      description: `Parallel tab read smoke with ${tabs} tab(s)`,
+      steps: Array.from({ length: tabs }, (_, i) => ({
+        tool: 'read_page',
+        args: { tabId: `tab${i + 1}`, mode: 'dom' },
+      })),
+    })),
+  ];
+}
+
+export function filterBenchmarkMatrix(
+  scenarios: BenchmarkMatrixScenario[],
+  filter: MatrixFilter = {},
+): BenchmarkMatrixScenario[] {
+  if (!filter.category) return scenarios;
+  return scenarios.filter((scenario) => scenario.category === filter.category || scenario.name === filter.category);
+}
+
+export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTask {
+  return {
+    name: scenario.name,
+    description: scenario.description,
+    async run(adapter: MCPAdapter): Promise<TaskResult> {
+      const startTime = Date.now();
+      const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
+      let responseChars = 0;
+      let screenshotBytes = 0;
+
+      try {
+        for (const step of scenario.steps) {
+          const result = await adapter.callTool(step.tool, step.args);
+          measureCall(result, step.args, counters);
+          const payload = responsePayloadSize(result);
+          responseChars += payload.responseChars;
+          screenshotBytes += payload.screenshotBytes;
+        }
+
+        const nodeRssBytes = process.memoryUsage().rss;
+        return {
+          success: true,
+          inputChars: counters.inputChars,
+          outputChars: counters.outputChars,
+          responseChars,
+          estimatedOutputTokens: estimateTokensFromChars(responseChars || counters.outputChars),
+          screenshotBytes,
+          nodeRssBytes,
+          chromeRssBytes: null,
+          toolCallCount: counters.toolCallCount,
+          wallTimeMs: Date.now() - startTime,
+          metadata: {
+            category: scenario.category,
+            chromeRssUnavailableReason: 'stub and portable benchmark paths do not own a Chrome process tree',
+          },
+        };
+      } catch (error) {
+        return {
+          success: false,
+          inputChars: counters.inputChars,
+          outputChars: counters.outputChars,
+          responseChars,
+          estimatedOutputTokens: estimateTokensFromChars(responseChars || counters.outputChars),
+          screenshotBytes,
+          nodeRssBytes: process.memoryUsage().rss,
+          chromeRssBytes: null,
+          toolCallCount: counters.toolCallCount,
+          wallTimeMs: Date.now() - startTime,
+          error: error instanceof Error ? error.message : String(error),
+          metadata: { category: scenario.category },
+        };
+      }
+    },
+  };
+}
+
+export function createMatrixTasks(filter: MatrixFilter = {}): BenchmarkTask[] {
+  return filterBenchmarkMatrix(createBenchmarkMatrix(), filter).map(createMatrixTask);
+}

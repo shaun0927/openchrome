@@ -328,3 +328,39 @@ describe('BenchmarkRunner', () => {
     expect(report.summary.totalToolCalls).toBe(0);
   });
 });
+
+describe('Benchmark matrix stats', () => {
+  test('run computes latency distribution and payload stats', async () => {
+    const runner = new BenchmarkRunner({ runsPerTask: 4 });
+    const adapter = makeAdapter();
+    let callCount = 0;
+    const task = makeTask(() => {
+      callCount++;
+      return {
+        success: true,
+        inputChars: 10,
+        outputChars: 100,
+        responseChars: 80,
+        estimatedOutputTokens: 20,
+        screenshotBytes: 5,
+        nodeRssBytes: 1000,
+        chromeRssBytes: null,
+        toolCallCount: 1,
+        wallTimeMs: callCount * 10,
+      };
+    });
+    runner.addTask(task);
+
+    const report = await runner.run(adapter);
+    const stats = report.tasks[0].stats;
+
+    expect(stats.minWallTimeMs).toBe(10);
+    expect(stats.p50WallTimeMs).toBe(20);
+    expect(stats.maxWallTimeMs).toBe(40);
+    expect(stats.stddevWallTimeMs).toBeCloseTo(11.18, 1);
+    expect(stats.meanResponseChars).toBe(80);
+    expect(stats.meanEstimatedOutputTokens).toBe(20);
+    expect(stats.meanScreenshotBytes).toBe(5);
+    expect(stats.meanNodeRssBytes).toBe(1000);
+  });
+});

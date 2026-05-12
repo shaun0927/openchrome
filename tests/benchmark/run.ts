@@ -15,27 +15,43 @@ import { createFormFillTask } from './tasks/form-fill';
 import { createClickSequenceTask } from './tasks/click-sequence';
 import { createSearchTask } from './tasks/search';
 import { createAllParallelTasks } from './tasks/parallel';
+import { createMatrixTasks } from './matrix';
 
 async function main(): Promise<void> {
   const ciMode = process.argv.includes('--ci');
+  const jsonMode = process.argv.includes('--json') || ciMode;
   const modeIndex = process.argv.indexOf('--mode');
   const mode = modeIndex !== -1 && modeIndex + 1 < process.argv.length
     ? process.argv[modeIndex + 1]
     : 'stub';
+  const categoryIndex = process.argv.indexOf('--category');
+  const category = categoryIndex !== -1 && categoryIndex + 1 < process.argv.length
+    ? process.argv[categoryIndex + 1]
+    : undefined;
+  const runsIndex = process.argv.indexOf('--runs');
+  const parsedRuns = runsIndex !== -1 && runsIndex + 1 < process.argv.length
+    ? Number(process.argv[runsIndex + 1])
+    : undefined;
 
   const runner = new BenchmarkRunner({
-    runsPerTask: ciMode ? 3 : 5,
+    runsPerTask: Number.isFinite(parsedRuns) && parsedRuns! > 0 ? parsedRuns : (ciMode ? 3 : 5),
     ciMode,
   });
 
-  // Register all benchmark tasks
-  runner.addTask(createNavigationTask());
-  runner.addTask(createReadingTask());
-  runner.addTask(createFormFillTask());
-  runner.addTask(createClickSequenceTask());
-  runner.addTask(createSearchTask());
-  for (const task of createAllParallelTasks()) {
-    runner.addTask(task);
+  if (category) {
+    for (const task of createMatrixTasks({ category })) {
+      runner.addTask(task);
+    }
+  } else {
+    // Register legacy benchmark tasks
+    runner.addTask(createNavigationTask());
+    runner.addTask(createReadingTask());
+    runner.addTask(createFormFillTask());
+    runner.addTask(createClickSequenceTask());
+    runner.addTask(createSearchTask());
+    for (const task of createAllParallelTasks()) {
+      runner.addTask(task);
+    }
   }
 
   // Run with both AX and DOM adapters
@@ -54,8 +70,8 @@ async function main(): Promise<void> {
 
   const reports: BenchmarkReport[] = [axReport, domReport];
 
-  if (ciMode) {
-    // CI mode: JSON output + regression check
+  if (jsonMode) {
+    // JSON/CI mode: machine-readable output for before/after comparisons.
     console.log(JSON.stringify(reports, null, 2));
 
     // Check for regressions (DOM vs AX baseline)
