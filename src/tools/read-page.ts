@@ -386,19 +386,6 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Add page stats header for AX mode (matching DOM mode format)
-    const axPageStats = await withTimeout(page.evaluate(() => ({
-      url: window.location.href,
-      title: document.title,
-      scrollX: Math.round(window.scrollX),
-      scrollY: Math.round(window.scrollY),
-      scrollWidth: document.documentElement.scrollWidth,
-      scrollHeight: document.documentElement.scrollHeight,
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-    })), 15000, 'read_page', context);
-    const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
-
     // Snapshot ref entry BEFORE clearing refs (needed for post-clear recovery)
     const refEntrySnapshot = refIdParam
       ? refIdManager.getRef(sessionId, tabId, refIdParam)
@@ -411,6 +398,19 @@ const handler: ToolHandler = async (
       'Accessibility.getFullAXTree',
       context,
     );
+
+    // Add page stats header for AX mode after the AX snapshot so stats are not older than the tree.
+    const axPageStats = await withTimeout(page.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      scrollX: Math.round(window.scrollX),
+      scrollY: Math.round(window.scrollY),
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    })), 15000, 'read_page', context);
+    const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
 
     // Clear previous refs for this target
     refIdManager.clearTargetRefs(sessionId, tabId);
