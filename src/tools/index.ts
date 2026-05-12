@@ -107,6 +107,9 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
+import { registerOcDevToolsUrlTool } from './oc-devtools-url';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -217,6 +220,9 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+
+  // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
+  registerOcDevToolsUrlTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
