@@ -23,7 +23,8 @@
     "lint:tier": "depcruise --config .dependency-cruiser.cjs src",
     "clean": "rimraf dist",
     "prepare": "npm run build",
-    "lint:changed": "node scripts/lint-changed-src.js"
+    "lint:changed": "node scripts/lint-changed-src.js",
+    "benchmark:perception": "ts-node tests/benchmark/run-perception.ts"
   },
   "keywords": [
     "openchrome",
