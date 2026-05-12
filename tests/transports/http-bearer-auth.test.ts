@@ -6,13 +6,25 @@
 
 import * as http from 'node:http';
 import * as net from 'node:net';
+import { AddressInfo } from 'node:net';
 
 // Inline require to avoid TS module resolution issues with dynamic transport loading
 const { HTTPTransport } = require('../../src/transports/http');
 
-const TEST_PORT = 19876;
 const TEST_TOKEN = 'test-s...c123';
 const TRUSTED_ORIGIN = 'http://127.0.0.1:5173';
+let testPort: number;
+
+function ephemeralPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const address = srv.address() as AddressInfo;
+      srv.close(() => resolve(address.port));
+    });
+    srv.on('error', reject);
+  });
+}
 
 function request(
   path: string,
@@ -22,7 +34,7 @@ function request(
 ): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: '127.0.0.1', port: TEST_PORT, path, method, headers, timeout: 3000 },
+      { hostname: '127.0.0.1', port: testPort, path, method, headers, timeout: 3000 },
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
@@ -46,7 +58,7 @@ function rawRequest(
   raw: string,
 ): Promise<{ status: number; body: string; headers: Record<string, string> }> {
   return new Promise((resolve, reject) => {
-    const socket = net.connect({ host: '127.0.0.1', port: TEST_PORT });
+    const socket = net.connect({ host: '127.0.0.1', port: testPort });
     let response = '';
 
     socket.setTimeout(3000);
@@ -92,13 +104,29 @@ async function startTransport(transport: InstanceType<typeof HTTPTransport>): Pr
     return { jsonrpc: '2.0', id: msg.id, result: { ok: true } };
   });
   transport.start();
-  await new Promise((r) => setTimeout(r, 100));
+  await new Promise<void>((resolve, reject) => {
+    const server = (transport as unknown as { server: http.Server | null }).server;
+    if (!server) {
+      reject(new Error('HTTPTransport did not create a server'));
+      return;
+    }
+    if (server.listening) {
+      resolve();
+      return;
+    }
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
 }
 
 describe('HTTP Bearer Token Auth', () => {
   let transport: InstanceType<typeof HTTPTransport> | null = null;
   const originalCorsOrigins = process.env.OPENCHROME_HTTP_CORS_ORIGINS;
   const originalAllowUnauthenticated = process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+
+  beforeEach(async () => {
+    testPort = await ephemeralPort();
+  });
 
   afterEach(async () => {
     if (transport) {
@@ -119,7 +147,7 @@ describe('HTTP Bearer Token Auth', () => {
 
   describe('with auth token configured', () => {
     beforeEach(async () => {
-      transport = new HTTPTransport(TEST_PORT, '127.0.0.1', TEST_TOKEN);
+      transport = new HTTPTransport(testPort, '127.0.0.1', TEST_TOKEN);
       await startTransport(transport);
     });
 
@@ -171,11 +199,11 @@ describe('HTTP Bearer Token Auth', () => {
 
   describe('unauthenticated HTTP policy', () => {
     it('fails closed by default when no auth is configured', () => {
-      expect(() => new HTTPTransport(TEST_PORT, '127.0.0.1')).toThrow(/Refusing to start unauthenticated HTTP transport/);
+      expect(() => new HTTPTransport(testPort, '127.0.0.1')).toThrow(/Refusing to start unauthenticated HTTP transport/);
     });
 
     it('allows explicit loopback-only development mode', async () => {
-      transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
+      transport = new HTTPTransport(testPort, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       await startTransport(transport);
       const res = await request('/mcp', 'POST', { 'Content-Type': 'application/json' },
         JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
@@ -184,14 +212,14 @@ describe('HTTP Bearer Token Auth', () => {
 
     it('allows explicit loopback development mode via env flag', async () => {
       process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = '1';
-      transport = new HTTPTransport(TEST_PORT, '127.0.0.1');
+      transport = new HTTPTransport(testPort, '127.0.0.1');
       await startTransport(transport);
       const res = await request('/health');
       expect(res.status).toBe(200);
     });
 
     it('refuses external bind without auth even with development opt-in', () => {
-      expect(() => new HTTPTransport(TEST_PORT, '0.0.0.0', undefined, { allowUnauthenticatedHttp: true }))
+      expect(() => new HTTPTransport(testPort, '0.0.0.0', undefined, { allowUnauthenticatedHttp: true }))
         .toThrow(/non-loopback host/);
     });
   });
@@ -199,7 +227,7 @@ describe('HTTP Bearer Token Auth', () => {
   describe('CORS allowlist', () => {
     beforeEach(async () => {
       process.env.OPENCHROME_HTTP_CORS_ORIGINS = TRUSTED_ORIGIN;
-      transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
+      transport = new HTTPTransport(testPort, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       await startTransport(transport);
     });
 
@@ -225,14 +253,14 @@ describe('HTTP Bearer Token Auth', () => {
     });
 
     it('accepts same-origin MCP preflight even when Origin is not in allowlist', async () => {
-      const res = await request('/mcp', 'OPTIONS', { Origin: `http://127.0.0.1:${TEST_PORT}` });
+      const res = await request('/mcp', 'OPTIONS', { Origin: `http://127.0.0.1:${testPort}` });
       expect(res.status).toBe(204);
     });
 
     it('accepts same-origin MCP POST even when Origin is not in allowlist', async () => {
       const res = await request('/mcp', 'POST', {
         'Content-Type': 'application/json',
-        Origin: `http://127.0.0.1:${TEST_PORT}`,
+        Origin: `http://127.0.0.1:${testPort}`,
       }, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
       expect(res.status).toBe(200);
     });
@@ -242,7 +270,7 @@ describe('HTTP Bearer Token Auth', () => {
       // same host:port is cross-origin per the CORS scheme/host/port tuple.
       const res = await request('/mcp', 'POST', {
         'Content-Type': 'application/json',
-        Origin: `https://127.0.0.1:${TEST_PORT}`,
+        Origin: `https://127.0.0.1:${testPort}`,
       }, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
       expect(res.status).toBe(403);
     });
