@@ -98,6 +98,16 @@ export async function runPlaybook(playbook: Playbook, options: RunOptions): Prom
           }
         }
       } catch (err) {
+        // P1 codex fix: distinguish transport-class failures from step/assertion
+        // failures. TransportError indicates the MCP client could not deliver
+        // the call (timeout, broken pipe, child exit). These must surface as
+        // exit code 3 in the CLI, not exit code 1 (test/assert failure), so we
+        // re-throw and let the CLI's outer handler map TransportError -> 3.
+        // Note: stepResults so far are intentionally discarded — the run is
+        // aborted at the transport boundary, not reported as a failed scenario.
+        if (err instanceof TransportError) {
+          throw err;
+        }
         status = 'failed';
         failed = true;
         error = `Step ${i} (${step.verb}): ${err instanceof Error ? err.message : String(err)}`;

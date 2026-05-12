@@ -72,6 +72,18 @@ function parseRawStep(raw: unknown, index: number): Step {
     );
   }
 
+  // P2 codex fix: strict validation — reject extra non-verb keys even when a
+  // valid verb is present. Without this, typos or misplaced fields at the step
+  // top level (e.g. `args:` alongside `navigate:`) would be silently dropped,
+  // making playbooks harder to debug. A step is exactly { <verb>: <args> }.
+  if (unknownKeys.length > 0) {
+    throw new ParseError(
+      `Step ${index}: unexpected key "${unknownKeys[0]}" alongside verb "${verbKeys[0]}". ` +
+        `Each step must contain exactly one verb key; put step parameters inside the verb's value. ` +
+        `Supported verbs: ${SUPPORTED_VERBS.join(', ')}`,
+    );
+  }
+
   const verb = verbKeys[0] as Verb;
   const args = raw[verb];
 
