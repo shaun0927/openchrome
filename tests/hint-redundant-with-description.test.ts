@@ -78,6 +78,34 @@ describe('Hint engine — redundant_with_description suppression (#841)', () => 
     }
   });
 
+  test('tools/list suppression is scoped to the session that consumed descriptions', () => {
+    const tracker = makeStubTracker([findCall]);
+    const engine = new HintEngine(tracker);
+
+    engine.markToolsListServed('session-a');
+    expect(engine.hasServedToolsList('session-a')).toBe(true);
+    expect(engine.hasServedToolsList('session-b')).toBe(false);
+
+    const suppressed = engine.getHint(
+      'computer',
+      { content: [{ type: 'text', text: 'clicked at (10, 10)' }] },
+      false,
+      'session-a',
+    );
+    if (suppressed !== null) {
+      expect(suppressed.rule).not.toBe('find-then-click');
+    }
+
+    const visible = engine.getHint(
+      'computer',
+      { content: [{ type: 'text', text: 'clicked at (10, 10)' }] },
+      false,
+      'session-b',
+    );
+    expect(visible).not.toBeNull();
+    expect(visible!.rule).toBe('find-then-click');
+  });
+
   test('rules WITHOUT redundant_with_description still fire after markToolsListServed', () => {
     // Drive a scenario where progress-tracker emits "stalling" / a non-tagged
     // rule fires. The simplest is the multiple-form-input rule — it is

@@ -554,7 +554,7 @@ export class MCPServer {
           break;
 
         case 'tools/list':
-          result = await this.handleToolsList();
+          result = await this.handleToolsList(params);
           break;
 
         case 'tools/call':
@@ -644,12 +644,14 @@ export class MCPServer {
   /**
    * Handle tools/list request
    */
-  private async handleToolsList(): Promise<MCPResult> {
-    // Signal the hint engine that the client has consumed tool descriptions,
+  private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
+    // Signal the hint engine that this session has consumed tool descriptions,
     // so rules whose guidance is already embedded in description "When to
-    // use / When NOT to use" blocks can suppress themselves.
+    // use / When NOT to use" blocks can suppress themselves without affecting
+    // other browser sessions that have not requested tools/list yet.
+    const sessionId = (params?.sessionId || 'default') as string;
     if (this.hintEngine) {
-      this.hintEngine.markToolsListServed();
+      this.hintEngine.markToolsListServed(sessionId);
     }
 
     const tools: MCPToolDefinition[] = [];

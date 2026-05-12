@@ -85,8 +85,8 @@ export class HintEngine {
   private learner: PatternLearner;
   private progressTracker: ProgressTracker;
   private logFilePath: string | null = null;
-  /** True once tools/list has been served — suppresses rules tagged redundant_with_description */
-  private toolsListServed = false;
+  /** Session IDs for which tools/list has been served — suppresses rules tagged redundant_with_description */
+  private toolsListServedSessions: Set<string> = new Set();
   private hintEscalation: Map<string, number> = new Map(); // ruleName -> session fire count
   private missCounts: Map<string, number> = new Map(); // ruleName -> consecutive miss count
 
@@ -147,15 +147,15 @@ export class HintEngine {
    * thereafter to avoid duplicating guidance already embedded in tool
    * descriptions.
    */
-  markToolsListServed(): void {
-    this.toolsListServed = true;
+  markToolsListServed(sessionId = 'default'): void {
+    this.toolsListServedSessions.add(sessionId);
   }
 
   /**
-   * Whether tools/list has been served. Exposed for tests.
+   * Whether tools/list has been served for a session. Exposed for tests.
    */
-  hasServedToolsList(): boolean {
-    return this.toolsListServed;
+  hasServedToolsList(sessionId = 'default'): boolean {
+    return this.toolsListServedSessions.has(sessionId);
   }
 
   /**
@@ -169,6 +169,7 @@ export class HintEngine {
    */
   getHint(toolName: string, result: Record<string, unknown>, isError: boolean, sessionId?: string): HintResult | null {
     const resultText = this.extractText(result);
+    const hintSessionId = sessionId ?? 'default';
     const recentCalls = this.activityTracker.getRecentCalls(5, sessionId);
 
     // Priority 50: Progress tracking (highest priority, runs before all rules)
@@ -227,7 +228,7 @@ export class HintEngine {
       // Suppress rules whose guidance is duplicated by an embedded tool
       // description "When to use / When NOT to use" block, once the client
       // has consumed tools/list.
-      if (rule.redundant_with_description && this.toolsListServed) {
+      if (rule.redundant_with_description && this.hasServedToolsList(hintSessionId)) {
         continue;
       }
       const h = rule.match(ctx);
