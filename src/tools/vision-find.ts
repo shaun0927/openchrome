@@ -122,17 +122,28 @@ const handler: ToolHandler = async (
     const textMap = formatElementMapAsText(result.elementMap);
     console.error(`[vision_find] Analyzed tab ${tabId}: ${result.elementCount} elements in ${result.annotationTimeMs}ms`);
 
+    // P1 codex fix: when mode='tiled' was requested, emit every captured tile
+    // as a separate image block. Previously the response only carried
+    // `result.screenshot` (the first tile), so callers explicitly opting into
+    // tiled mode could not access the additional tile screenshots and the
+    // feature was effectively unusable for downstream vision workflows.
+    const tiles = mode === 'tiled' ? (result.tiling?.tiles ?? []) : [];
+    const tileNote =
+      mode === 'tiled' && tiles.length > 0
+        ? `\n\nTiled mode: ${tiles.length} tile screenshot(s) attached below in document-Y order.`
+        : '';
+    const imageBlocks =
+      tiles.length > 0
+        ? tiles.map((t) => ({ type: 'image' as const, data: t.imageBase64, mimeType: t.mimeType }))
+        : [{ type: 'image' as const, data: result.screenshot, mimeType: result.mimeType }];
+
     return {
       content: [
         {
           type: 'text',
-          text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)\n\n${textMap}`,
+          text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)${tileNote}\n\n${textMap}`,
         },
-        {
-          type: 'image',
-          data: result.screenshot,
-          mimeType: result.mimeType,
-        },
+        ...imageBlocks,
       ],
     };
   } catch (error) {

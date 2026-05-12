@@ -736,7 +736,13 @@ async function analyzeTiledScreenshot(
       );
 
       totalPixels += captured.pixels;
-      tiles.push({ tileTop, imageBase64: captured.screenshot, mimeType: captured.mimeType });
+      // P2 codex fix: record the *actual* post-scroll Y offset (`docOffsetY`)
+      // rather than the requested `tileTop`. When the document height isn't an
+      // exact multiple of the viewport height, the last scroll is clamped and
+      // `tileTop` overstates the real position. Coordinate translation already
+      // uses `docOffsetY`; using a different value in `tiles[i].tileTop` would
+      // break downstream reconstruction.
+      tiles.push({ tileTop: docOffsetY, imageBase64: captured.screenshot, mimeType: captured.mimeType });
       unifiedElements.push(...translated);
 
       if (totalPixels >= TILED_MAX_PIXELS) {
