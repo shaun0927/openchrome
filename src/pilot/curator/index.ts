@@ -44,6 +44,22 @@ export type {
 } from './types';
 
 export {
+  clusterSkills,
+  jaccard,
+  runMerge,
+  tokenize,
+} from './merge';
+export type {
+  ClusterCandidate,
+  MergeAction,
+  MergeActionKind,
+  MergeOutcome,
+  RunMergeOptions,
+} from './merge';
+
+export { STOP_WORDS } from './stop-words';
+
+export {
   SkillRecallStore,
   buildRecallPayload,
   rankSkillsForRecall,
