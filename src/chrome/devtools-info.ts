@@ -4,6 +4,10 @@
  */
 
 import * as http from 'http';
+import { isDomainBlocked } from '../security/domain-guard';
+
+/** Reject Chrome /json/* responses larger than 1 MiB to bound memory use. */
+const MAX_RESPONSE_BYTES = 1_048_576;
 
 export interface ChromePageInfo {
   id: string;
@@ -42,8 +46,18 @@ export async function fetchJsonList(port: number): Promise<ChromePageInfo[] | nu
       },
       (res) => {
         let data = '';
-        res.on('data', (chunk) => (data += chunk));
+        let aborted = false;
+        res.on('data', (chunk) => {
+          if (aborted) return;
+          data += chunk;
+          if (data.length > MAX_RESPONSE_BYTES) {
+            aborted = true;
+            req.destroy();
+            resolve(null);
+          }
+        });
         res.on('end', () => {
+          if (aborted) return;
           try {
             const parsed = JSON.parse(data);
             if (!Array.isArray(parsed)) {
@@ -82,8 +96,18 @@ export async function fetchJsonVersion(port: number): Promise<string | null> {
       },
       (res) => {
         let data = '';
-        res.on('data', (chunk) => (data += chunk));
+        let aborted = false;
+        res.on('data', (chunk) => {
+          if (aborted) return;
+          data += chunk;
+          if (data.length > MAX_RESPONSE_BYTES) {
+            aborted = true;
+            req.destroy();
+            resolve(null);
+          }
+        });
         res.on('end', () => {
+          if (aborted) return;
           try {
             const parsed = JSON.parse(data);
             // e.g. { "webSocketDebuggerUrl": "ws://127.0.0.1:9222/json/version" }
@@ -144,12 +168,17 @@ export async function getDevToolsInstanceInfo(port: number): Promise<DevToolsIns
   return {
     instancePort: port,
     browserInspectorUrl,
-    pages: pages.map((p) => ({
-      targetId: p.id,
-      instancePort: port,
-      url: p.url,
-      title: p.title,
-      devtoolsFrontendUrl: p.devtoolsFrontendUrl,
-    })),
+    // Block exposure of pages hosted on blocked domains. A leaked
+    // devtoolsFrontendUrl would grant full CDP control over the page, bypassing
+    // the domain guard that assertDomainAllowed() enforces on navigate.
+    pages: pages
+      .filter((p) => !isDomainBlocked(p.url))
+      .map((p) => ({
+        targetId: p.id,
+        instancePort: port,
+        url: p.url,
+        title: p.title,
+        devtoolsFrontendUrl: p.devtoolsFrontendUrl,
+      })),
   };
 }

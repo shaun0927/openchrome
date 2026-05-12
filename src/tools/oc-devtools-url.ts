@@ -166,10 +166,12 @@ const handler: ToolHandler = async (
 
   // Resolve the Chrome instance port for this target
   const portResult = await resolvePortForTarget(resolvedTargetId);
+  // Sanitize user-controlled targetId before reflecting in error messages.
+  const safeId = String(resolvedTargetId).slice(0, 128).replace(/[^\w-]/g, '_');
   if ('error' in portResult) {
     const message = portResult.error === 'chrome_unreachable'
-      ? `Chrome is unreachable — could not query any debug port for target '${resolvedTargetId}'.`
-      : `Target '${resolvedTargetId}' not found in any reachable Chrome instance.`;
+      ? `Chrome is unreachable — could not query any debug port for target '${safeId}'.`
+      : `Target '${safeId}' not found in any reachable Chrome instance.`;
     return {
       content: [{ type: 'text', text: JSON.stringify({ error: portResult.error, message }) }],
     };
@@ -183,7 +185,7 @@ const handler: ToolHandler = async (
           type: 'text',
           text: JSON.stringify({
             error: 'not_found',
-            message: `Target '${resolvedTargetId}' not found in Chrome's /json/list on port ${portResult.port}.`,
+            message: `Target '${safeId}' not found in Chrome's /json/list on port ${portResult.port}.`,
           }),
         },
       ],
