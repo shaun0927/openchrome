@@ -338,63 +338,138 @@ const handler: ToolHandler = async (
       refIdManager.clearTargetRefs(sessionId, tabId);
 
       // Convert CDP AX nodes into the semantic input shape.
-      const semanticNodes: SemanticAXNode[] = semanticAxNodes.map((n) => ({
-        nodeId: n.nodeId,
-        backendDOMNodeId: n.backendDOMNodeId,
-        role: n.role?.value ?? 'unknown',
-        name: n.name?.value,
-        value: n.value?.value,
-        childIds: n.childIds ? [...n.childIds] : [],
-      }));
+      // P1 codex fix: extract `url` from CDP AX properties so that
+      // `buildSemanticView` can pick the correct verb for links
+      // (navigate when href is present, click otherwise). Without
+      // this, every link emits `click`.
+      const semanticNodes: SemanticAXNode[] = semanticAxNodes.map((n) => {
+        let href: string | undefined;
+        if (n.role?.value === 'link' && n.properties) {
+          for (const prop of n.properties) {
+            if (prop.name === 'url') {
+              const raw = prop.value?.value;
+              if (typeof raw === 'string' && raw.length > 0) {
+                href = raw;
+              }
+              break;
+            }
+          }
+        }
+        return {
+          nodeId: n.nodeId,
+          backendDOMNodeId: n.backendDOMNodeId,
+          role: n.role?.value ?? 'unknown',
+          name: n.name?.value,
+          value: n.value?.value,
+          href,
+          childIds: n.childIds ? [...n.childIds] : [],
+        };
+      });
 
       // Best-effort DOM snapshot for state extraction (microdata, classes).
-      // Pulled via page.evaluate so we do not require a CDP DOMSnapshot pass;
-      // if the eval fails, semantic still operates on the AX tree alone.
-      // Cap mirrors the CSS-mode walk to bound work on large pages.
+      // P1 codex fix: pulled via CDP `DOM.getDocument` instead of
+      // `page.evaluate(...)` so each element carries its `backendDOMNodeId`.
+      // Without this, `buildSemanticView`'s `byBackendNodeId` join map was
+      // always empty and every DOM-dependent classifier (microdata, data-*,
+      // class signals) degraded to AX-only behavior. CDP returns the full
+      // tree with backendNodeIds in a single call; we walk it in DFS order
+      // and cap at `SEMANTIC_DOM_MAX_ELEMENTS` to bound work on large pages.
       const SEMANTIC_DOM_MAX_ELEMENTS = 2000;
       let semanticDomSnapshot: { elements: SemanticDomElement[] } | undefined;
+      // Minimal CDP DOMNode shape needed for the walk; mirrors what
+      // `DOM.getDocument({depth: -1})` returns. Inlined to avoid pulling
+      // in dom/dom-serializer.ts which carries unrelated dependencies.
+      interface CdpDomNode {
+        backendNodeId?: number;
+        nodeType: number;
+        nodeName: string;
+        localName?: string;
+        attributes?: string[]; // parallel [name1, value1, name2, value2, ...]
+        nodeValue?: string;
+        children?: CdpDomNode[];
+      }
       try {
-        const snap = await withTimeout(page.evaluate((maxElements: number) => {
-          const elements: Array<{
-            backendDOMNodeId?: number;
-            tagName: string;
-            itemType?: string;
-            itemProp?: string;
-            classNames?: string;
-            attrs?: Record<string, string>;
-            text?: string;
-          }> = [];
-          const all = document.querySelectorAll('*');
-          const totalCount = all.length;
-          const limit = Math.min(totalCount, maxElements);
-          for (let i = 0; i < limit; i++) {
-            const el = all[i] as HTMLElement;
-            const itemType = el.getAttribute('itemtype') || undefined;
-            const itemProp = el.getAttribute('itemprop') || undefined;
-            const dataPrice = el.getAttribute('data-price');
-            const dataProductId = el.getAttribute('data-product-id');
-            const attrs: Record<string, string> = {};
-            if (dataPrice) attrs['data-price'] = dataPrice;
-            if (dataProductId) attrs['data-product-id'] = dataProductId;
-            const text = (el.textContent || '').slice(0, 200);
-            elements.push({
-              tagName: el.tagName.toLowerCase(),
-              itemType,
-              itemProp,
-              classNames: el.className || undefined,
-              attrs: Object.keys(attrs).length ? attrs : undefined,
-              text: text || undefined,
-            });
+        const { root } = await withTimeout(
+          cdpClient.send<{ root: CdpDomNode }>(page, 'DOM.getDocument', {
+            depth: -1,
+            pierce: false,
+          }),
+          15000,
+          'DOM.getDocument',
+          context,
+        );
+        const elements: SemanticDomElement[] = [];
+        let totalCount = 0;
+        // Iterative DFS (avoids stack overflows on deep pages).
+        const stack: CdpDomNode[] = [root];
+        while (stack.length > 0) {
+          const node = stack.pop()!;
+          if (node.nodeType === 1 /* ELEMENT_NODE */) {
+            totalCount += 1;
+            if (elements.length < SEMANTIC_DOM_MAX_ELEMENTS) {
+              const tagName = (node.localName || node.nodeName || '').toLowerCase();
+              let itemType: string | undefined;
+              let itemProp: string | undefined;
+              let classNames: string | undefined;
+              const attrs: Record<string, string> = {};
+              const attrPairs = node.attributes;
+              if (attrPairs) {
+                for (let k = 0; k + 1 < attrPairs.length; k += 2) {
+                  const name = attrPairs[k];
+                  const value = attrPairs[k + 1];
+                  if (name === 'itemtype') itemType = value || undefined;
+                  else if (name === 'itemprop') itemProp = value || undefined;
+                  else if (name === 'class') classNames = value || undefined;
+                  else if (name === 'data-price') attrs[name] = value;
+                  else if (name === 'data-product-id') attrs[name] = value;
+                }
+              }
+              // Collect descendant text node values, capped at 200 chars.
+              let text = '';
+              const textStack: CdpDomNode[] = [];
+              if (node.children) {
+                for (let i = node.children.length - 1; i >= 0; i--) {
+                  textStack.push(node.children[i]);
+                }
+              }
+              while (textStack.length > 0 && text.length < 200) {
+                const tn = textStack.pop()!;
+                if (tn.nodeType === 3 /* TEXT_NODE */ && tn.nodeValue) {
+                  text += tn.nodeValue;
+                } else if (tn.children) {
+                  for (let i = tn.children.length - 1; i >= 0; i--) {
+                    textStack.push(tn.children[i]);
+                  }
+                }
+              }
+              if (text.length > 200) text = text.slice(0, 200);
+              elements.push({
+                backendDOMNodeId: node.backendNodeId,
+                tagName,
+                itemType,
+                itemProp,
+                classNames,
+                attrs: Object.keys(attrs).length ? attrs : undefined,
+                text: text || undefined,
+              });
+            }
           }
-          return { elements, totalCount };
-        }, SEMANTIC_DOM_MAX_ELEMENTS), 15000, 'read_page', context);
-        if (snap.totalCount > SEMANTIC_DOM_MAX_ELEMENTS) {
+          // Always descend (so text nodes inside non-elements like
+          // documents are skipped naturally — they are not ELEMENT_NODE).
+          if (node.children) {
+            // Push children in reverse so iteration order matches DFS.
+            for (let i = node.children.length - 1; i >= 0; i--) {
+              stack.push(node.children[i]);
+            }
+          }
+        }
+        if (totalCount > SEMANTIC_DOM_MAX_ELEMENTS) {
           // NEVER use console.log — corrupts MCP JSON-RPC on stdout.
           console.error(
-            `[read_page semantic] DOM truncated: ${snap.totalCount} elements -> cap ${SEMANTIC_DOM_MAX_ELEMENTS}`,
+            `[read_page semantic] DOM truncated: ${totalCount} elements -> cap ${SEMANTIC_DOM_MAX_ELEMENTS}`,
           );
         }
-        semanticDomSnapshot = { elements: snap.elements };
+        semanticDomSnapshot = { elements };
       } catch {
         semanticDomSnapshot = undefined;
       }

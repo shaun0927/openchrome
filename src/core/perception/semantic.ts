@@ -283,6 +283,12 @@ export function buildSemanticView(
   // Build regions (pre-list-collapse).
   type DraftRegion = {
     rootNodeId: number;
+    /**
+     * Parent AX node id (or -1 for top-level). Required by
+     * applyListCollapse to keep list-collapsing scoped to true siblings
+     * rather than any adjacent pair in DFS order (P2 codex fix).
+     */
+    parentId: number;
     kind: SemanticRegionKind;
     /** Stable digest of sorted child-role multiset for list-collapse. */
     digest: string;
@@ -294,6 +300,13 @@ export function buildSemanticView(
 
   const drafts: DraftRegion[] = [];
   const refs: Record<string, SemanticRefEntry> = {};
+
+  // Pre-compute child → parent map for every AX node so each draft can
+  // record its parent id (P2 codex fix for list-collapse scoping).
+  const parentOf = new Map<number, number>();
+  for (const node of axNodes) {
+    for (const c of node.childIds) parentOf.set(c, node.nodeId);
+  }
 
   for (const candNodeId of keptCandidates) {
     const node = axByNodeId.get(candNodeId)!;
@@ -330,6 +343,9 @@ export function buildSemanticView(
     const label = renderLabel(kind, state, ruleSet);
     drafts.push({
       rootNodeId: candNodeId,
+      // P2 codex fix: -1 marks top-level (no recorded parent in the
+      // forest) so two roots without a shared container do not collapse.
+      parentId: parentOf.get(candNodeId) ?? -1,
       kind,
       digest,
       state,
@@ -637,6 +653,16 @@ function computeChildRoleDigest(
 
 type DraftRegion = {
   rootNodeId: number;
+  /**
+   * Stable parent identifier used to keep list-collapse scoped to true
+   * AX siblings. Drafts that share the same parent are eligible to be
+   * collapsed into a single list region; adjacency in traversal order
+   * is not enough on its own.
+   */
+  // P2 codex fix: tracked so applyListCollapse cannot merge regions
+  // from different containers just because they appear next to one
+  // another in DFS order.
+  parentId: number;
   kind: SemanticRegionKind;
   digest: string;
   state: Record<string, string>;
@@ -653,7 +679,9 @@ function applyListCollapse(
   const threshold = ruleSet.listCollapseThreshold;
   if (drafts.length < threshold) return drafts;
 
-  // Group consecutive regions by (kind, digest).
+  // Group consecutive regions by (parentId, kind, digest) so unrelated
+  // adjacent regions from different containers are not silently merged
+  // (P2 codex fix).
   const out: DraftRegion[] = [];
   let i = 0;
   while (i < drafts.length) {
@@ -661,7 +689,8 @@ function applyListCollapse(
     while (
       j < drafts.length &&
       drafts[j].kind === drafts[i].kind &&
-      drafts[j].digest === drafts[i].digest
+      drafts[j].digest === drafts[i].digest &&
+      drafts[j].parentId === drafts[i].parentId
     ) {
       j++;
     }
@@ -670,6 +699,7 @@ function applyListCollapse(
       const first = drafts[i];
       const collapsed: DraftRegion = {
         rootNodeId: first.rootNodeId,
+        parentId: first.parentId,
         kind: 'list',
         digest: first.digest,
         state: {
@@ -703,12 +733,34 @@ function applyListCollapse(
  *
  * Syntax:
  *   {key}                — substitute state[key], empty string if missing
- *   {key?, literal {key}} — conditional: only emit if state[key] exists
- *   {key?A,B}            — pick state[A] if present else state[B]
+ *   {key?, literal {key}} — conditional with literal+nested template, only emits when state[key] is set
+ *   {key?A,B}            — conditional: lookup state[A] if state[key] is set else state[B]
+ *
+ * Templates may contain nested `{...}` inside conditional branches (e.g.
+ * `{price?, Price: {price}}`), so the scanner is brace-balanced rather
+ * than `indexOf('}')`-based.
  *
  * Keeping it deterministic and small avoids a dependency on a template
  * library (P5).
  */
+// P1 codex fix: walk to the matching `}` honoring nested braces so that
+// templates like `{price?, Price: {price}}` are parsed as a single
+// expression rather than truncated at the first inner `}`.
+function findMatchingClose(s: string, openIdx: number): number {
+  // openIdx points at the leading '{'. Returns the index of the matching
+  // '}' or -1 if unbalanced.
+  let depth = 0;
+  for (let i = openIdx; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 function renderLabel(
   kind: SemanticRegionKind,
   state: Record<string, string>,
@@ -724,8 +776,9 @@ function renderLabel(
       i++;
       continue;
     }
-    // Find matching closing brace (no nested braces in templates).
-    const close = tpl.indexOf('}', i + 1);
+    // P1 codex fix: balanced-brace scan replaces the previous
+    // `indexOf('}')` which broke `{price?, Price: {price}}`.
+    const close = findMatchingClose(tpl, i);
     if (close === -1) {
       out += tpl.slice(i);
       break;
@@ -744,17 +797,54 @@ function renderExpr(expr: string, state: Record<string, string>): string {
   if (q !== -1) {
     const key = expr.slice(0, q).trim();
     const rest = expr.slice(q + 1);
-    const comma = rest.indexOf(',');
+    // Find the top-level comma separating then/else, skipping commas
+    // that appear inside nested `{...}` placeholders.
+    let comma = -1;
+    let depth = 0;
+    for (let k = 0; k < rest.length; k++) {
+      const ch = rest[k];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      else if (ch === ',' && depth === 0) {
+        comma = k;
+        break;
+      }
+    }
     const thenPart = comma === -1 ? rest : rest.slice(0, comma);
     const elsePart = comma === -1 ? '' : rest.slice(comma + 1);
-    if (state[key] !== undefined && state[key].length > 0) {
-      return interpolate(thenPart, state);
-    }
-    return interpolate(elsePart, state);
+    const taken = state[key] !== undefined && state[key].length > 0 ? thenPart : elsePart;
+    return renderBranch(taken, state);
   }
   // Plain key.
   const v = state[expr.trim()];
   return v ?? '';
+}
+
+/**
+ * Render a conditional branch.
+ *
+ * If the branch contains placeholder syntax (`{...}`), interpolate it as
+ * a template. Otherwise, if the branch is a bare identifier, treat it
+ * as a `state[branch]` lookup so `{heading?heading,summary}` resolves to
+ * the heading or summary state value instead of literal "heading" /
+ * "summary" strings (P2 codex fix).
+ */
+// P1/P2 codex fix: branch text without `{` is a state-key reference,
+// not a literal. This lets `{heading?heading,summary}` evaluate either
+// `state.heading` or `state.summary` while leaving templated branches
+// like `, Price: {price}` untouched.
+function renderBranch(branch: string, state: Record<string, string>): string {
+  if (branch.indexOf('{') === -1) {
+    const trimmed = branch.trim();
+    if (trimmed.length === 0) return '';
+    // Bare identifier → state lookup. Restrict to identifier-like tokens
+    // so that branches like `, literal text` still interpolate as a
+    // literal (interpolate handles that path).
+    if (/^[A-Za-z_][\w-]*$/.test(trimmed)) {
+      return state[trimmed] ?? '';
+    }
+  }
+  return interpolate(branch, state);
 }
 
 function interpolate(s: string, state: Record<string, string>): string {
@@ -768,13 +858,17 @@ function interpolate(s: string, state: Record<string, string>): string {
       i++;
       continue;
     }
-    const close = s.indexOf('}', i + 1);
+    // P1 codex fix: balanced-brace scan for nested placeholders.
+    const close = findMatchingClose(s, i);
     if (close === -1) {
       out += s.slice(i);
       break;
     }
-    const key = s.slice(i + 1, close).trim();
-    out += state[key] ?? '';
+    const inner = s.slice(i + 1, close);
+    // Allow nested conditionals inside branches by recursing through
+    // renderExpr. For plain `{key}` placeholders this still resolves
+    // to state[key].
+    out += renderExpr(inner, state);
     i = close + 1;
   }
   return out;
