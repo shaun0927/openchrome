@@ -59,6 +59,21 @@ describe('parseDotenv', () => {
     }
   });
 
+  test('error message does NOT echo raw line content (no partial-secret leak in logs)', () => {
+    // Regression for PR #939 P2 security review: a malformed line like
+    // `MY_PASSWORD hunter2_unique_probe` (missing `=`) must not surface the
+    // raw line content via SecretLoadError.message, which propagates to
+    // console.error in src/index.ts.
+    try {
+      parseDotenv('MY_PASSWORD hunter2_unique_probe');
+      fail('expected SecretLoadError');
+    } catch (e) {
+      const msg = (e as SecretLoadError).message;
+      expect(msg).not.toContain('hunter2_unique_probe');
+      expect(msg).not.toContain('MY_PASSWORD hunter2');
+    }
+  });
+
   test('throws on invalid key shape', () => {
     expect(() => parseDotenv('1BAD=x')).toThrow(SecretLoadError);
     expect(() => parseDotenv('bad-key=x')).toThrow(SecretLoadError);

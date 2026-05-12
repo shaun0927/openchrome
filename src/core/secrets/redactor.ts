@@ -38,7 +38,23 @@ interface CompiledSecrets {
   minLen: number;
 }
 
+/**
+ * Cache compiled views per SecretStore identity. The store is immutable
+ * after `setSecretStore()`, so memoization is safe — no invalidation
+ * needed. WeakMap keeps the cache GC-friendly when the store is replaced
+ * (e.g. tests that swap in EMPTY_SECRET_STORE between runs).
+ *
+ * Without this cache `compile()` ran on every `redactSecrets()` call,
+ * sorting N pairs per response × 2-3 redaction sites per tool call. With
+ * the cache, every response after the first amortises to O(N) substring
+ * scan only.
+ */
+const compileCache = new WeakMap<SecretStore, CompiledSecrets>();
+
 function compile(store: SecretStore): CompiledSecrets {
+  const cached = compileCache.get(store);
+  if (cached !== undefined) return cached;
+
   const pairs: Array<{ name: string; value: string }> = [];
   let minLen = Number.POSITIVE_INFINITY;
   for (const [name, value] of store.entries()) {
@@ -47,7 +63,12 @@ function compile(store: SecretStore): CompiledSecrets {
     if (value.length < minLen) minLen = value.length;
   }
   pairs.sort((a, b) => b.value.length - a.value.length);
-  return { pairs, minLen: pairs.length === 0 ? 0 : minLen };
+  const compiled: CompiledSecrets = {
+    pairs,
+    minLen: pairs.length === 0 ? 0 : minLen,
+  };
+  compileCache.set(store, compiled);
+  return compiled;
 }
 
 /**

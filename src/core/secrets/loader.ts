@@ -71,7 +71,10 @@ export function parseDotenv(text: string): Map<string, string> {
 
     const eq = stripL.indexOf('=');
     if (eq < 0) {
-      throw new SecretLoadError(`missing "=" in line "${raw}"`, lineNo);
+      // Do NOT include the raw line content — a malformed line like
+      // `MY_PASSWORD hunter2` (missing `=`) would otherwise echo a partial
+      // secret into the startup log (P2 finding on PR #939).
+      throw new SecretLoadError('missing "=" — check line syntax', lineNo);
     }
     const key = stripL.slice(0, eq).trimEnd();
     if (key.length === 0) {

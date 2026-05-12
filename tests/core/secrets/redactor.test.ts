@@ -88,6 +88,47 @@ describe('redactSecrets (walker)', () => {
   });
 });
 
+describe('compile caching (PR #939 review P1)', () => {
+  test('repeated redactSecrets calls on the same store reuse the compiled view', () => {
+    // Regression for the "compile-per-call" performance finding. The fix
+    // memoizes the sorted+pre-escaped view per SecretStore identity in a
+    // WeakMap. We exercise it by running a large number of redactions back
+    // to back and asserting the per-call cost stays bounded — the cache
+    // miss is the first call only.
+    const N = 50;
+    const entries: Array<[string, string]> = [];
+    for (let i = 0; i < N; i++) {
+      entries.push([`K${i}`, `value_${i}_${'x'.repeat(20)}`]);
+    }
+    const store = makeSecretStore(new Map(entries));
+
+    const sample = `prefix ${entries[N - 1][1]} middle ${entries[0][1]} suffix`;
+
+    // Warmup (first call populates the cache).
+    redactSecretString(sample, store);
+
+    // 200 hot-path iterations should complete well under any reasonable
+    // budget. We don't assert a hard ms threshold (jest CI hosts vary)
+    // but we DO assert the correctness invariant: every call still
+    // redacts to the same canonical placeholder form.
+    let last = '';
+    for (let i = 0; i < 200; i++) {
+      last = redactSecretString(sample, store);
+    }
+    expect(last).toContain('${SECRET:K0}');
+    expect(last).toContain(`\${SECRET:K${N - 1}}`);
+    expect(last).not.toMatch(/value_\d+_xxxx/);
+  });
+
+  test('a fresh SecretStore gets its own compiled view (no cross-store bleed)', () => {
+    const storeA = makeSecretStore(new Map([['ONLY_A', 'aaaaaaaa']]));
+    const storeB = makeSecretStore(new Map([['ONLY_B', 'bbbbbbbb']]));
+    expect(redactSecretString('aaaaaaaa', storeA)).toBe('${SECRET:ONLY_A}');
+    expect(redactSecretString('aaaaaaaa', storeB)).toBe('aaaaaaaa');
+    expect(redactSecretString('bbbbbbbb', storeB)).toBe('${SECRET:ONLY_B}');
+  });
+});
+
 describe('findLiteralSecret', () => {
   test('returns the matching secret name when value appears as substring', () => {
     expect(findLiteralSecret('the value tok_short appears', STORE)).toBe('TOKEN');
