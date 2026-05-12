@@ -34,6 +34,8 @@ import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';
 import { getBrowserStateManager } from './browser-state';
 import { getListenerErrorStats, installUnhandledRejectionSafetyNet } from './utils/safe-listener';
+import { setComponent, resetReadinessMachine } from './watchdog/readiness';
+import { wireChromeReadiness } from './watchdog/chrome-readiness';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -263,8 +265,25 @@ program
       process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
     }
 
+    // Reset readiness machine so a fresh serve action starts from scratch.
+    resetReadinessMachine();
+
     const server = getMCPServer();
     registerAllTools(server);
+
+    // Dev-only hook: artificial delay for the tools component transition.
+    // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
+    const isDevHooks = process.env.NODE_ENV !== 'production' && process.env.OPENCHROME_DEV_HOOKS === '1';
+    if (isDevHooks && process.env.OPENCHROME_FAKE_SLOW_TOOLS) {
+      const delayMs = parseInt(process.env.OPENCHROME_FAKE_SLOW_TOOLS, 10);
+      if (delayMs > 0) {
+        setTimeout(() => setComponent('tools', 'ok'), delayMs);
+      } else {
+        setComponent('tools', 'ok');
+      }
+    } else {
+      setComponent('tools', 'ok');
+    }
 
     // Write PID file for zombie process detection
     writePidFile(port);
@@ -478,6 +497,12 @@ program
     const cdpClient = getCDPClient();
     const sessionManager = getSessionManager();
 
+    // Readiness: wire chrome component via CDPClient connection events, then
+    // proactively connect so daemon /ready probes can become ready before the
+    // first MCP tool call.
+    const chromeReadiness = wireChromeReadiness(cdpClient);
+    chromeReadiness.initializeStartupConnection();
+
     // Wire session manager into HTTP transport for dashboard API endpoints
     if (httpTransport) {
       httpTransport.setSessionManager(sessionManager);
@@ -520,7 +545,7 @@ program
     });
     processWatchdog.on('chrome-relaunched', () => {
       console.error('[SelfHealing] Chrome relaunched by watchdog, triggering reconnect...');
-      cdpClient.forceReconnect().catch((err: unknown) => {
+      chromeReadiness.handleChromeRelaunched().catch((err: unknown) => {
         console.error('[SelfHealing] Post-relaunch reconnect failed:', err);
       });
     });
@@ -533,7 +558,13 @@ program
         console.error(`[SelfHealing] ChromeProcessMonitor restarted (new pid=${newPid})`);
       }
     });
+    // Readiness: flip chrome to failing when watchdog detects Chrome died
+    processWatchdog.on('chrome-died', () => {
+      setComponent('chrome', 'failing');
+    });
     processWatchdog.start();
+    // Readiness: watchdogs component is ok once the first tick has been scheduled
+    setComponent('watchdogs', 'ok');
     console.error('[SelfHealing] ChromeProcessWatchdog started');
 
     // Tab Health Monitor (Layer 1)
