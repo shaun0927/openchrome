@@ -41,6 +41,7 @@ export interface TaskRunMeta {
 }
 
 export interface TaskRunEvent {
+  seq?: number;
   ts: number;
   kind: 'started' | 'updated' | 'checkpointed' | 'needs_help' | 'completed' | 'failed' | 'cancelled';
   data?: Record<string, unknown>;
@@ -49,8 +50,14 @@ export interface TaskRunEvent {
 export interface TaskRunCheckpoint {
   checkpoint_id: string;
   run_id: string;
+  source_event_range: { from: number; to: number };
   summary: string;
   current_cursor?: string;
+  completed_count?: number;
+  failed_count?: number;
+  last_url?: string;
+  event_count?: number;
+  redaction_applied?: boolean;
   evidence?: EvidencePointer[];
   created_at: number;
 }

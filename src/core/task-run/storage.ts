@@ -165,20 +165,45 @@ export class TaskRunStore {
       updated_at: ts,
     });
     await this.writeMeta(meta);
-    await this.appendEvent(runId, { ts, kind: 'updated', data: redactValue({ status: meta.status, resume_reason: input.resume_reason }) as Record<string, unknown> });
+    await this.appendEvent(runId, {
+      ts,
+      kind: 'updated',
+      data: redactValue({
+        status: meta.status,
+        resume_reason: input.resume_reason,
+        current_cursor: meta.current_cursor,
+        completed_count: meta.completed_items?.length || 0,
+        failed_count: meta.failed_items?.length || 0,
+        evidence: meta.last_evidence,
+      }) as Record<string, unknown>,
+    });
     return meta;
   }
 
-  async checkpoint(runId: string, summary: string, opts: { current_cursor?: string; evidence?: EvidencePointer[] } = {}): Promise<TaskRunCheckpoint> {
+  async checkpoint(runId: string, summary = '', opts: { current_cursor?: string; evidence?: EvidencePointer[] } = {}): Promise<TaskRunCheckpoint> {
     const meta = await this.get(runId);
     this.assertMutable(meta);
     const ts = this.now();
+    const events = await this.readEvents(runId);
+    const currentCursor = opts.current_cursor ? scrub(opts.current_cursor) : meta.current_cursor;
+    const evidence = sanitizeEvidence(opts.evidence) || meta.last_evidence;
+    const deterministicSummary = buildCheckpointSummary(meta, events, {
+      current_cursor: currentCursor,
+      evidence,
+      summary,
+    });
     const checkpoint: TaskRunCheckpoint = pruneUndefined({
       checkpoint_id: this.createRunId(`${runId}\0checkpoint\0${ts}`, ts),
       run_id: runId,
-      summary: limit(scrub(summary), MAX_SUMMARY_CHARS),
-      current_cursor: opts.current_cursor ? scrub(opts.current_cursor) : undefined,
-      evidence: sanitizeEvidence(opts.evidence),
+      source_event_range: sourceEventRange(events),
+      summary: deterministicSummary.summary,
+      current_cursor: currentCursor,
+      completed_count: meta.completed_items?.length,
+      failed_count: meta.failed_items?.length,
+      last_url: lastUrl(meta, currentCursor),
+      event_count: events.length,
+      redaction_applied: deterministicSummary.redaction_applied,
+      evidence,
       created_at: ts,
     });
     const checkpointPath = path.join(this.runDir(runId), 'checkpoints', `${checkpoint.checkpoint_id}.json`);
@@ -193,6 +218,19 @@ export class TaskRunStore {
     await this.writeMeta(updated);
     await this.appendEvent(runId, { ts, kind: 'checkpointed', data: { checkpoint_id: checkpoint.checkpoint_id } });
     return checkpoint;
+  }
+
+  async latestCheckpoint(runId: string): Promise<TaskRunCheckpoint | undefined> {
+    const dir = path.join(this.runDir(runId), 'checkpoints');
+    if (!fs.existsSync(dir)) return undefined;
+    const entries = await fs.promises.readdir(dir);
+    const checkpoints: TaskRunCheckpoint[] = [];
+    for (const entry of entries.filter(name => name.endsWith('.json'))) {
+      const result = await readFileSafe<TaskRunCheckpoint>(path.join(dir, entry));
+      if (result.success && result.data) checkpoints.push(result.data);
+    }
+    checkpoints.sort((a, b) => b.created_at - a.created_at || b.checkpoint_id.localeCompare(a.checkpoint_id));
+    return checkpoints[0];
   }
 
   async needsHelp(runId: string, input: NeedsHelpInput): Promise<TaskRunMeta> {
@@ -249,7 +287,10 @@ export class TaskRunStore {
     const eventsPath = this.eventsPath(runId);
     if (!fs.existsSync(eventsPath)) return [];
     const text = await fs.promises.readFile(eventsPath, 'utf8');
-    return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as TaskRunEvent);
+    return text.split('\n').filter(Boolean).map((line, index) => {
+      const event = JSON.parse(line) as TaskRunEvent;
+      return event.seq === undefined ? { ...event, seq: index + 1 } : event;
+    });
   }
 
   private createRunId(seed: string, ts: number): string {
@@ -276,8 +317,15 @@ export class TaskRunStore {
   private async appendEvent(runId: string, event: TaskRunEvent): Promise<void> {
     const dir = this.runDir(runId);
     await fs.promises.mkdir(dir, { recursive: true });
-    const safeEvent = redactValue(event) as TaskRunEvent;
+    const safeEvent = redactValue({ ...event, seq: await this.nextEventSeq(runId) }) as TaskRunEvent;
     await fs.promises.appendFile(this.eventsPath(runId), `${JSON.stringify(safeEvent)}\n`, 'utf8');
+  }
+
+  private async nextEventSeq(runId: string): Promise<number> {
+    const eventsPath = this.eventsPath(runId);
+    if (!fs.existsSync(eventsPath)) return 1;
+    const text = await fs.promises.readFile(eventsPath, 'utf8');
+    return text.split('\n').filter(Boolean).length + 1;
   }
 
   private runDir(runId: string): string {
@@ -374,4 +422,44 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): T {
     if (obj[key] === undefined) delete obj[key];
   }
   return obj;
+}
+
+function sourceEventRange(events: TaskRunEvent[]): { from: number; to: number } {
+  if (events.length === 0) return { from: 0, to: 0 };
+  return {
+    from: events[0].seq || 1,
+    to: events[events.length - 1].seq || events.length,
+  };
+}
+
+function buildCheckpointSummary(
+  meta: TaskRunMeta,
+  events: TaskRunEvent[],
+  opts: { current_cursor?: string; evidence?: EvidencePointer[]; summary?: string },
+): { summary: string; redaction_applied: boolean } {
+  const range = sourceEventRange(events);
+  const lines = [
+    'TaskRun checkpoint',
+    `status=${meta.status}`,
+    `events=${events.length} range=${range.from}-${range.to}`,
+    `completed=${meta.completed_items?.length || 0}`,
+    `failed=${meta.failed_items?.length || 0}`,
+  ];
+  if (opts.current_cursor) lines.push(`cursor=${opts.current_cursor}`);
+  const url = lastUrl(meta, opts.current_cursor);
+  if (url) lines.push(`last_url=${url}`);
+  if (meta.needs_help) lines.push(`needs_help=${meta.needs_help.reason}`);
+  if (opts.evidence?.length) {
+    lines.push(`evidence=${opts.evidence.map(item => `${item.kind}:${item.ref}`).join(',')}`);
+  }
+  if (opts.summary) lines.push(`caller_note=${opts.summary}`);
+  const raw = lines.join('\n');
+  const summary = limit(scrub(raw), MAX_SUMMARY_CHARS);
+  return { summary, redaction_applied: summary !== raw };
+}
+
+function lastUrl(meta: TaskRunMeta, cursor?: string): string | undefined {
+  const candidate = cursor || meta.last_evidence?.find(item => item.kind === 'url')?.ref;
+  if (!candidate) return undefined;
+  return /^https?:\/\//i.test(candidate) ? scrub(candidate) : undefined;
 }
