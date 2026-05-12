@@ -3,6 +3,18 @@
   "version": "1.11.0",
   "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./server": {
+      "require": "./dist/core/server.js"
+    },
+    "./lifecycle": {
+      "require": "./dist/core/lifecycle/index.js"
+    }
+  },
   "bin": {
     "openchrome": "./dist/cli/index.js",
     "oc": "./dist/cli/index.js"
