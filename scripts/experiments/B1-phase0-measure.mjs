@@ -187,7 +187,14 @@ async function measureOpenChrome(target) {
 
   // We drive OpenChrome over its stdio MCP transport.
   // Each MCP call is a JSON-RPC 2.0 request; we parse responses from stdout.
-  const child = spawn(process.execPath, [DIST_ENTRY, 'serve', '--transport', 'stdio'], {
+  const child = spawn(process.execPath, [
+    DIST_ENTRY,
+    'serve',
+    '--transport',
+    'stdio',
+    '--auto-launch',
+    '--headless',
+  ], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
