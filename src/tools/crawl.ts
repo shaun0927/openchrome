@@ -183,6 +183,41 @@ async function fetchRobotsTxt(
 // Single page fetch
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for `fetchOnePage` — kept open so future call sites (e.g. the
+ * resumable runner in `src/core/crawl/runner.ts`) can pass extra config
+ * without changing the shape that the legacy `crawl` tool relies on.
+ */
+export interface FetchOnePageOptions {
+  outputFormat: string;
+}
+
+/**
+ * Result returned by `fetchOnePage`. Mirrors the legacy `CrawledPage` and
+ * additionally carries the transient `_links` array used by both the legacy
+ * crawl BFS and the resumable runner to enqueue new URLs.
+ */
+export interface FetchOnePageResult extends CrawledPage {
+  _links?: string[];
+}
+
+/**
+ * Fetch a single page in a fresh tab and extract content + outbound links.
+ *
+ * Exported so the resumable crawl runner (issue #886) can reuse the exact
+ * same single-page fetch as the legacy `crawl` tool. External behavior of
+ * `crawl` is unchanged — this is a pure extract-method refactor.
+ */
+export async function fetchOnePage(
+  sessionId: string,
+  url: string,
+  depth: number,
+  opts: FetchOnePageOptions,
+  context?: ToolContext,
+): Promise<FetchOnePageResult> {
+  return fetchPage(sessionId, url, depth, opts.outputFormat, context);
+}
+
 async function fetchPage(
   sessionId: string,
   url: string,

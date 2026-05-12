@@ -85,6 +85,11 @@ import { registerRecordingTools } from './recording';
 import { registerCrawlTool } from './crawl';
 import { registerCrawlSitemapTool } from './crawl-sitemap';
 
+// Resumable host-driven crawl jobs (#886)
+import { registerCrawlStartTool } from './crawl-start';
+import { registerCrawlStatusTool } from './crawl-status';
+import { registerCrawlCancelTool } from './crawl-cancel';
+
 // Natural language action API (#578)
 import { registerActTool } from './act';
 
@@ -195,6 +200,11 @@ export function registerAllTools(server: MCPServer): void {
   // Crawl tools (#576)
   registerCrawlTool(server);
   registerCrawlSitemapTool(server);
+
+  // Resumable host-driven crawl jobs (#886)
+  registerCrawlStartTool(server);
+  registerCrawlStatusTool(server);
+  registerCrawlCancelTool(server);
 
   // Natural language action API (#578)
   registerActTool(server);
