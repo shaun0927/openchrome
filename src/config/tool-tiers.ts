@@ -20,6 +20,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   form_input: 1,
   fill_form: 1,
   read_page: 1,
+  oc_observe: 1,              // src/tools/oc-observe.ts — compact observable action map (#866)
   inspect: 1,
   query_dom: 1,
   javascript_tool: 1,
@@ -82,6 +83,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_connection_health: 1,  // src/tools/connection-health.ts
   oc_checkpoint: 1,         // src/tools/checkpoint.ts
   list_profiles: 1,         // src/tools/list-profiles.ts
+  oc_devtools_url: 1,       // src/tools/oc-devtools-url.ts (#860) — gated by env
 
   // Tier 3: Orchestration only
   workflow_init: 3,

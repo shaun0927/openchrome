@@ -114,6 +114,10 @@ import { registerOcSkillRecallTool } from './oc-skill-recall';
 // open — this preserves P2 (no module from `src/pilot/**` is loaded into the
 // process when `--pilot` is unset) while keeping `registerAllTools()` sync.
 import { isProxyHookEnabled } from '../harness/flags';
+// oc_observe (#866) — deterministic actionable-element enumeration
+import { registerOcObserveTool } from './oc-observe';
+// DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
+import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
 
@@ -237,6 +241,10 @@ export function registerAllTools(server: MCPServer): void {
     const { registerOcProxyHookTool } = require('../pilot/proxy/hook') as typeof import('../pilot/proxy/hook');
     registerOcProxyHookTool(server);
   }
+  // oc_observe (#866) — deterministic actionable-element enumeration
+  registerOcObserveTool(server);
+  // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
+  registerOcDevToolsUrlTool(server);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
   registerOcContextTools(server);
 
