@@ -27,9 +27,12 @@ const definition: MCPToolDefinition = {
 };
 
 const handler: ToolHandler = async (): Promise<MCPResult> => {
-  let stat: fs.Stats | null = null;
+  // The handler is async — use the promise-based fs API so we do not block
+  // the event loop while the MCP server is handling concurrent calls
+  // (Gemini medium). Behaviour is identical; only the I/O path changes.
+  let stat: fs.Stats;
   try {
-    stat = fs.statSync(REPORT_PATH);
+    stat = await fs.promises.stat(REPORT_PATH);
   } catch {
     return {
       content: [{
@@ -41,7 +44,7 @@ const handler: ToolHandler = async (): Promise<MCPResult> => {
 
   let report: DoctorReport;
   try {
-    const raw = fs.readFileSync(REPORT_PATH, 'utf8');
+    const raw = await fs.promises.readFile(REPORT_PATH, 'utf8');
     report = JSON.parse(raw) as DoctorReport;
   } catch (err) {
     return {

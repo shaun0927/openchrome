@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 import type { CheckFn } from '../../doctor';
 
 const WARN_THRESHOLD_MB = 500;
@@ -29,11 +30,18 @@ function getFreeSpaceMb(dirPath: string): number | null {
     // statfsSync not available on older Node or the dir doesn't exist
   }
 
-  // Fallback: use df command on Unix
+  // Fallback: use df command on Unix. Pass the dirPath as an *argument* via
+  // execFileSync — never interpolate it into a shell string — because the
+  // home directory can legitimately contain spaces, dollar signs, or other
+  // shell metacharacters that would otherwise be interpreted (Gemini
+  // security-high). execFileSync invokes `df` directly without spawning a
+  // shell, so the argument is passed as-is.
   if (process.platform !== 'win32') {
     try {
-      const { execSync } = require('child_process');
-      const output = execSync(`df -m "${dirPath}"`, { encoding: 'utf8', timeout: 3000 });
+      const output = execFileSync('df', ['-m', dirPath], {
+        encoding: 'utf8',
+        timeout: 3000,
+      });
       const lines = output.trim().split('\n');
       const dataLine = lines[lines.length - 1];
       const parts = dataLine.trim().split(/\s+/);
