@@ -1833,6 +1833,29 @@ export class MCPServer {
         // Best-effort journal recording
       }
 
+      // Codegen byproduct (#836). When --codegen is enabled, record the raw
+      // tool-call envelope into the active aggregator (auto-capture for every
+      // tool) and, for the 9 supported tools, attach a `replay` field to the
+      // response with Puppeteer / Playwright snippets. When --codegen is off,
+      // the aggregator slot is null and tool responses are byte-identical to
+      // v1.11.0 (acceptance criterion).
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { getCodegenAggregator } = require('./core/codegen');
+        const aggregator = getCodegenAggregator();
+        if (aggregator) {
+          const callIdForHook = `${sessionId}:${callId}`;
+          aggregator.recordToolCall(toolName, toolArgs, callIdForHook);
+          const replay = aggregator.buildReplay(toolName, toolArgs, callIdForHook);
+          if (replay) {
+            (result as Record<string, unknown>).replay = replay;
+          }
+        }
+      } catch (err) {
+        // Codegen is a side-effect surface — failure here must not bubble.
+        console.error('[MCPServer] codegen aggregation failed (non-fatal):', err instanceof Error ? err.message : err);
+      }
+
       // Record to session recording (best-effort, skip recording tools themselves)
       try {
         const recorder = getActionRecorder();

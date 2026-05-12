@@ -99,10 +99,11 @@ program
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
   .option('--introspect-tools-list', 'Print tools/list as compact JSON to stdout and exit (no Chrome/CDP startup). Used by lint-tool-schemas.mjs.')
+  .option('--codegen <format>', 'Emit a replay script for each tool call. Format: off|puppeteer|playwright|mcp-replay. Default: off. When set to puppeteer/playwright, the 9 most-common tools produce a runnable TS file under ~/.openchrome/codegen/. All other tools are auto-captured as JSONL via mcp-replay. (#836)', 'off')
   .option('--auto-connect [userDataDir]', 'Attach to a Chrome you started yourself by reading <userDataDir>/DevToolsActivePort (#849). When omitted, uses the platform-default Chrome user-data dir. Also: OPENCHROME_AUTO_CONNECT=<dir> env var. Implies --launch-mode=attach.')
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
     // --introspect-tools-list: print tools/list JSON and exit, NO Chrome/CDP/transport startup.
     if (options.introspectToolsList) {
       const { MCPServer } = await import('./mcp-server');
@@ -242,6 +243,33 @@ program
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[openchrome] Error: failed to load --secrets: ${msg}`);
         process.exit(2);
+      }
+    }
+
+    // Codegen byproduct (#836): when --codegen is set, install a singleton
+    // CodegenAggregator that the MCP tools/call dispatcher and the 9 listed
+    // tool handlers query. Default "off" leaves the aggregator slot null and
+    // tool responses byte-identical to v1.11.0 (P2 invariant).
+    {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const {
+        parseCodegenFormat,
+        setCodegenAggregator,
+        CodegenAggregator,
+        installCodegenShutdownHooks,
+      } = require('./core/codegen');
+      const codegenFormat = parseCodegenFormat(options.codegen);
+      if (codegenFormat !== 'off') {
+        const aggregator = new CodegenAggregator({ format: codegenFormat });
+        setCodegenAggregator(aggregator);
+        // Codex P1 (PR #949): without this, the per-language `.ts` footer
+        // (e.g. `main().catch(...)` for puppeteer) is never appended on
+        // process shutdown and replay scripts are syntactically broken.
+        // The hook is idempotent and only installs once per process.
+        installCodegenShutdownHooks();
+        console.error(`[openchrome] Codegen: enabled (format=${codegenFormat}, output=${aggregator.outputDir}, session=${aggregator.sessionId})`);
+      } else {
+        console.error('[openchrome] Codegen: disabled (default)');
       }
     }
 

@@ -114,6 +114,8 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
+// Skill export (#836) — generate Puppeteer / Playwright / mcp-replay script
+import { registerOcSkillExportTool } from './oc-skill-export';
 
 // Doctor report tool (#898) — read cached `openchrome doctor` output
 import { registerOcDoctorReportTool } from './oc-doctor-report';
@@ -268,6 +270,9 @@ export function registerAllTools(server: MCPServer): void {
     const { registerOcSkillReplayTool } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
     registerOcSkillReplayTool(server);
   }
+
+  // Skill export (#836) — codegen byproduct
+  registerOcSkillExportTool(server);
 
   // Doctor report tool (#898) — read cached `openchrome doctor` output
   registerOcDoctorReportTool(server);

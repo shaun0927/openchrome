@@ -1,0 +1,95 @@
+/**
+ * Playwright formatter (issue #836). Mirrors `puppeteer.spec.ts`.
+ */
+
+import * as ts from 'typescript';
+
+import {
+  formatPlaywright,
+  PLAYWRIGHT_FILE_HEADER,
+  PLAYWRIGHT_FILE_FOOTER,
+  PLAYWRIGHT_SUPPORTED_TOOLS,
+} from '../../../src/core/codegen/formatters/playwright';
+
+interface ToolCase {
+  tool: string;
+  args: Record<string, unknown>;
+}
+
+const NINE_TOOL_CASES: ToolCase[] = [
+  { tool: 'navigate', args: { url: 'https://example.com/forms.html' } },
+  { tool: 'interact', args: { action: 'click', selector: 'button[type=submit]' } },
+  { tool: 'form_input', args: { selector: 'input[name=q]', value: 'hello world' } },
+  {
+    tool: 'fill_form',
+    args: {
+      fields: { '#user': 'alice', '#pass': '${SECRET:TEST_PW}' },
+    },
+  },
+  { tool: 'page_screenshot', args: { fullPage: true, path: '/tmp/screen.png' } },
+  { tool: 'wait_for', args: { type: 'selector', value: '.result', timeout: 5000 } },
+  { tool: 'javascript_tool', args: { code: 'document.title' } },
+  { tool: 'tabs_create', args: { url: 'https://example.com/new' } },
+  { tool: 'tabs_close', args: { tabIds: ['t1'] } },
+];
+
+describe('formatPlaywright', () => {
+  it('covers every tool in PLAYWRIGHT_SUPPORTED_TOOLS', () => {
+    const covered = new Set(NINE_TOOL_CASES.map((c) => c.tool));
+    for (const tool of PLAYWRIGHT_SUPPORTED_TOOLS) {
+      expect(covered.has(tool)).toBe(true);
+    }
+  });
+
+  it('returns null for non-9 tools', () => {
+    expect(formatPlaywright('cookies', { action: 'list' })).toBeNull();
+  });
+
+  it.each(NINE_TOOL_CASES)('emits a non-empty snippet for $tool', ({ tool, args }) => {
+    const snippet = formatPlaywright(tool, args);
+    expect(snippet).not.toBeNull();
+    expect(snippet?.length).toBeGreaterThan(0);
+  });
+
+  it('preserves secret placeholders verbatim', () => {
+    const snippet = formatPlaywright('form_input', {
+      selector: '#password',
+      value: '${SECRET:TEST_PW}',
+    });
+    expect(snippet).toContain('${SECRET:TEST_PW}');
+  });
+
+  it('produces a complete TS file that transpiles without diagnostics', () => {
+    const body = [
+      PLAYWRIGHT_FILE_HEADER,
+      ...NINE_TOOL_CASES.map(({ tool, args }) => formatPlaywright(tool, args) as string),
+      PLAYWRIGHT_FILE_FOOTER,
+    ].join('\n');
+
+    const { diagnostics } = ts.transpileModule(body, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        strict: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        noEmit: true,
+      },
+      reportDiagnostics: true,
+    });
+
+    const syntaxErrors = (diagnostics ?? []).filter(
+      (d) => d.category === ts.DiagnosticCategory.Error,
+    );
+    if (syntaxErrors.length > 0) {
+      const formatted = ts.formatDiagnosticsWithColorAndContext(syntaxErrors, {
+        getCanonicalFileName: (f) => f,
+        getCurrentDirectory: () => process.cwd(),
+        getNewLine: () => '\n',
+      });
+      console.error(formatted);
+    }
+    expect(syntaxErrors).toEqual([]);
+  });
+});
