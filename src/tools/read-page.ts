@@ -868,10 +868,35 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return result;
   }
 
+  // P1 codex fix: semantic mode emits a JSON payload via `JSON.stringify(view)`.
+  // Appending a free-form sanitization note would break `JSON.parse` for any
+  // client consuming the structured output, so embed the note as a structural
+  // field (`_sanitization`) inside the JSON object instead. Other modes keep
+  // the legacy text-suffix behavior.
+  const isSemanticMode =
+    typeof (args as { mode?: unknown })?.mode === 'string' &&
+    (args as { mode: string }).mode === 'semantic';
+
   // Sanitize all text content blocks
   const sanitizedContent = result.content.map((block) => {
     if (block.type === 'text' && typeof block.text === 'string') {
       const sanitized = sanitizeContent(block.text);
+      if (isSemanticMode) {
+        // Try to parse the (already-sanitized) text as JSON, attach metadata
+        // when the sanitizer flagged anything, and re-serialize. Fall back to
+        // the suffix path on any parse failure so we never silently lose the
+        // sanitization note.
+        try {
+          const parsed = JSON.parse(sanitized.text) as Record<string, unknown>;
+          if (sanitized.sanitizationNote && sanitized.sanitizationNote.length > 0) {
+            parsed['_sanitization'] = sanitized.sanitizationNote.trim();
+          }
+          return { ...block, text: JSON.stringify(parsed) };
+        } catch {
+          // Parse failed — keep the legacy suffix so security info is not lost.
+          return { ...block, text: sanitized.text + sanitized.sanitizationNote };
+        }
+      }
       return {
         ...block,
         text: sanitized.text + sanitized.sanitizationNote,
