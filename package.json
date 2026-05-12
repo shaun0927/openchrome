@@ -67,7 +67,7 @@
   },
   "dependencies": {
     "argon2": "^0.43.0",
-    "cheerio": "^1.2.0",
+    "cheerio": "~1.0.0",
     "commander": "^12.0.0",
     "jose": "^5.10.0",
     "proper-lockfile": "^4.1.2",
@@ -81,7 +81,7 @@
     "ip-address": "^10.1.1"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.17.0"
   },
   "files": [
     "dist",

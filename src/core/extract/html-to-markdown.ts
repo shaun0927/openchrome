@@ -114,15 +114,20 @@ function buildTurndown(opts: ToMarkdownOptions): TurndownService {
   td.addRule('gfm-table', {
     filter: 'table',
     replacement: (_content: string, node: TurndownService.Node) => {
+      // Use the spec's `.rows` and `.cells` HTML-table properties so we
+      // pick up only the *direct* descendants of THIS table — not the
+      // recursive results of `querySelectorAll('tr' | 'th,td')`, which
+      // would conflate nested tables into the outer table's matrix
+      // (Gemini medium).
       const tableEl = node as unknown as HTMLTableElement;
-      const rows = Array.from(tableEl.querySelectorAll('tr'));
+      const rows: HTMLTableRowElement[] = Array.from(tableEl.rows ?? []);
       if (rows.length === 0) return '';
 
       const cellText = (cell: Element): string =>
         (cell.textContent || '').replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|');
 
       const matrix: string[][] = rows.map((r) =>
-        Array.from(r.querySelectorAll('th,td')).map(cellText),
+        Array.from(r.cells ?? []).map(cellText),
       );
 
       const colCount = Math.max(...matrix.map((row) => row.length));
@@ -132,7 +137,9 @@ function buildTurndown(opts: ToMarkdownOptions): TurndownService {
         while (row.length < colCount) row.push('');
       }
 
-      const headerRowIdx = rows.findIndex((r) => r.querySelector('th'));
+      const headerRowIdx = rows.findIndex(
+        (r) => Array.from(r.cells ?? []).some((c) => c.tagName === 'TH'),
+      );
       const headerRow = headerRowIdx >= 0 ? matrix[headerRowIdx] : matrix[0];
       const bodyRows = headerRowIdx >= 0 ? matrix.filter((_, i) => i !== headerRowIdx) : matrix.slice(1);
 

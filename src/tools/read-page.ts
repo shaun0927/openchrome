@@ -150,6 +150,17 @@ const handler: ToolHandler = async (
       };
     }
 
+    // The `selector` arg is CSS-mode only — applying it to AX or markdown
+    // would silently ignore the caller's request and return an unscoped
+    // payload. Validate before any mode-specific branch so the contract is
+    // identical across modes (Codex P2 regression fix).
+    if (mode !== 'css' && args.selector) {
+      return {
+        content: [{ type: 'text', text: 'Error: "selector" parameter is only supported in mode="css". Use ref_id for subtree scoping in "ax" mode.' }],
+        isError: true,
+      };
+    }
+
     // Markdown mode — clean HTML→Markdown extraction
     if (mode === 'markdown') {
       const onlyMainContent = args.onlyMainContent !== false;
@@ -173,7 +184,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Validate selector is only used with CSS mode
+    // (selector validation moved above the markdown branch — see Codex P2)
     if (mode !== 'css' && args.selector) {
       return {
         content: [{ type: 'text', text: 'Error: "selector" parameter is only supported in mode="css". Use ref_id for subtree scoping in "ax" mode.' }],
