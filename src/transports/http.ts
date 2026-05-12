@@ -898,25 +898,43 @@ export class HTTPTransport implements MCPTransport {
       }
     }
 
-    // DashboardState exposes a bounded per-session call history (capacity
-    // MAX_CALLS_PER_SESSION × N sessions). We aggregate the visible window
-    // by toolName + status so the exposition includes per-tool totals (the
-    // bulk of operator interest). Sessions invisible to this principal are
-    // already filtered out above; the dashboard ring is the same view.
-    let activeCount = 0;
-    for (const call of dashboardState.getToolCalls(undefined, 1000)) {
-      if (!call.toolName) continue;
-      if (call.status === 'running') {
-        activeCount++;
+    // `openchrome_tool_calls_total` is read from the process-lifetime
+    // monotonic counter in DashboardState (#839, P2) — the ring buffer
+    // is bounded so deriving counts from it would let values shrink as
+    // old entries age out, violating Prometheus counter semantics.
+    //
+    // Each counter row carries the session that produced the call; we
+    // resolve that session's tenant and skip rows the principal cannot
+    // see, mirroring `handleToolCalls` (#839, P1). Sessions that have
+    // been deleted cannot be attributed to a tenant and are hidden.
+    const sm = this.sessionManager;
+    for (const row of dashboardState.getToolCallTotals()) {
+      if (!row.toolName) continue;
+      if (sm) {
+        const sessionTenantId = sm.getSession(row.sessionId)?.tenantId;
+        if (!canSeeTenant(authz.principal, sessionTenantId)) continue;
+      } else if (!canSeeTenant(authz.principal, undefined)) {
         continue;
       }
-      const slot = toolCallCounts[call.toolName] ?? { success: 0, error: 0 };
-      if (call.status === 'error' || call.status === 'aborted') {
-        slot.error++;
-      } else if (call.status === 'success') {
-        slot.success++;
+      const slot = toolCallCounts[row.toolName] ?? { success: 0, error: 0 };
+      slot[row.result] += row.count;
+      toolCallCounts[row.toolName] = slot;
+    }
+
+    // `openchrome_tool_calls_active` is an inherently transient gauge: it
+    // reflects in-flight calls at scrape time. We read it from the dashboard
+    // ring (the only place active calls are tracked) and apply the same
+    // tenant filter as above.
+    let activeCount = 0;
+    for (const call of dashboardState.getToolCalls(undefined, 1000)) {
+      if (call.status !== 'running') continue;
+      if (sm) {
+        const sessionTenantId = sm.getSession(call.sessionId)?.tenantId;
+        if (!canSeeTenant(authz.principal, sessionTenantId)) continue;
+      } else if (!canSeeTenant(authz.principal, undefined)) {
+        continue;
       }
-      toolCallCounts[call.toolName] = slot;
+      activeCount++;
     }
 
     const toolCallSamples: Array<{ labels: Record<string, string>; value: number }> = [];
