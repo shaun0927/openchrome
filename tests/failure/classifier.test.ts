@@ -53,4 +53,13 @@ describe('failure classifier', () => {
     ]);
     expect(classifyFailure({ message: 'some unrecognized failure', fallbackToUnknown: false })).toEqual([]);
   });
+
+  it('classifies protocol errors for missing DOM nodes as stale references, not connection loss', () => {
+    const result = primaryFailureCategory({
+      error: new Error('Protocol error (DOM.resolveNode): No node with given id found'),
+      toolName: 'click',
+    });
+
+    expect(result.category).toBe('STALE_REF');
+  });
 });

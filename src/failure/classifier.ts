@@ -46,7 +46,7 @@ const RULES: Rule[] = [
     category: 'CONNECTION_LOST',
     confidence: 0.95,
     reason: 'CDP/browser transport connection was lost',
-    test: ({ text }) => /\b(not connected to chrome|call connect\(\) first|websocket.*closed|websocket is not open|browser has disconnected|browser disconnected|cdpsession connection closed|connection closed|session closed|protocol error|execution context was destroyed|cannot find context with specified id|inspected target navigated or closed|puppeteer\.connect\(\) timed out|session initialization timed out)\b/i.test(text),
+    test: ({ text }) => /\b(not connected to chrome|call connect\(\) first|websocket.*closed|websocket is not open|browser has disconnected|browser disconnected|cdpsession connection closed|connection closed|session closed|protocol error.*(?:connection|closed|disconnected|target closed)|execution context was destroyed|cannot find context with specified id|inspected target navigated or closed|puppeteer\.connect\(\) timed out|session initialization timed out)\b/i.test(text),
   },
   {
     category: 'BROWSER_CRASH',
