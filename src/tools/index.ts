@@ -378,21 +378,22 @@ const REGISTRATION_ENTRIES: readonly RegistrationEntry[] = [
   {
     tools: ['oc_performance_insights', 'oc_performance_analyze'],
     register: (server) => {
-      if (process.env.OPENCHROME_PERF_INSIGHTS === '0') return;
-      registerOcPerformanceInsightsTool(server);
-      registerOcPerformanceAnalyzeTool(server);
-      const sm = getSessionManager();
-      const store = getPerfTraceStore();
-      sm.addEventListener((event) => {
-        if (event.type === 'session:deleted' && event.sessionId) {
-          const removed = store.evictSession(event.sessionId);
-          if (removed > 0) {
-            console.error(
-              `[PerfInsights] Evicted ${removed} trace handle(s) for session ${event.sessionId}`,
-            );
+      if (process.env.OPENCHROME_PERF_INSIGHTS !== '0') {
+        registerOcPerformanceInsightsTool(server);
+        registerOcPerformanceAnalyzeTool(server);
+        const sm = getSessionManager();
+        const store = getPerfTraceStore();
+        sm.addEventListener((event) => {
+          if (event.type === 'session:deleted' && event.sessionId) {
+            const removed = store.evictSession(event.sessionId);
+            if (removed > 0) {
+              console.error(
+                `[PerfInsights] Evicted ${removed} trace handle(s) for session ${event.sessionId}`,
+              );
+            }
           }
-        }
-      });
+        });
+      }
     },
   },
 
