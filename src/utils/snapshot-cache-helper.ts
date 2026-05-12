@@ -35,9 +35,22 @@ import { getTargetId } from './puppeteer-helpers';
 
 const FLAG_ENV_VAR = 'OPENCHROME_SNAPSHOT_CACHE';
 
-/** Honor the env kill-switch; default on per the issue contract. */
+/**
+ * Honor the env kill-switch.
+ *
+ * **1.12 default: OFF (opt-in).** The cache layer is implemented and unit-
+ * tested (snapshot-cache.test.ts, params-hash.test.ts — 36 cases) but the
+ * P2 byte-parity regression test (`OPENCHROME_SNAPSHOT_CACHE=0` vs default
+ * → response byte-identical to v1.11) is not yet in place. Until that gate
+ * lands, default ON would risk a silent 1.11 → 1.12 response-shape drift,
+ * violating the Portability-Harness Contract P2.
+ *
+ * Operators who want to evaluate the cache during 1.12 can opt in with
+ * `OPENCHROME_SNAPSHOT_CACHE=1`. The flip back to default ON is tracked in
+ * the follow-up issue once the parity test lands.
+ */
 export function isSnapshotCacheEnabled(): boolean {
-  return isCoreFeatureEnabled(FLAG_ENV_VAR, true);
+  return isCoreFeatureEnabled(FLAG_ENV_VAR, false);
 }
 
 interface PageInternals {
