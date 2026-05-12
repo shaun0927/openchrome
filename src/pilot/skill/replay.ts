@@ -316,14 +316,35 @@ export async function runReplay(args: RunReplayArgs): Promise<SkillReplayResult>
   }
   if (snapshotOrigin !== null) {
     let activeUrl: string | null = null;
+    let activeUrlError: string | null = null;
     try {
       activeUrl = await args.cdp.getActiveUrl();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[skill-replay] getActiveUrl failed: ${msg}`);
+      activeUrlError = e instanceof Error ? e.message : String(e);
+      console.error(`[skill-replay] getActiveUrl failed: ${activeUrlError}`);
     }
+    // Fail closed: when the snapshot origin is known but the active URL
+    // cannot be retrieved (either threw or returned a non-parseable value),
+    // we cannot verify the precondition gate. Returning STEP_FAIL avoids
+    // a silent fail-open. See Gemini review on PR #928.
     const activeOrigin = parseOrigin(activeUrl);
-    if (activeOrigin !== null && activeOrigin !== snapshotOrigin) {
+    if (activeOrigin === null) {
+      const stepsTotal = Array.isArray(skill.steps) ? skill.steps.length : 0;
+      const err = activeUrlError
+        ? `origin_check_failed: ${activeUrlError}`
+        : 'origin_check_failed';
+      return finish(
+        'STEP_FAIL',
+        {
+          contract_id: contractId,
+          steps_total: stepsTotal,
+          steps_executed: 0,
+          step_failures: [{ index: -1, error: err }],
+        },
+        err,
+      );
+    }
+    if (activeOrigin !== snapshotOrigin) {
       const err = `precondition: snapshot origin "${snapshotOrigin}" does not match active origin "${activeOrigin}"`;
       const stepsTotal = Array.isArray(skill.steps) ? skill.steps.length : 0;
       return finish(

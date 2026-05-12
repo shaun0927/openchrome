@@ -270,6 +270,105 @@ describe('runReplay — outcome paths', () => {
     }
   });
 
+  test('STEP_FAIL: awaitFrameNavigated rejection is propagated (does not silently pass)', async () => {
+    const ctx = await setup();
+    try {
+      const skillId = await recordSkill(ctx, {
+        steps: [
+          { method: 'Input.dispatchMouseEvent', params: {}, awaitFrameNavigated: true },
+        ],
+      });
+      const cdp: ReplayCdpClient = {
+        async send() {
+          return undefined;
+        },
+        async getActiveUrl() {
+          return 'https://app.example.com/dashboard';
+        },
+        async awaitFrameNavigated() {
+          throw new Error('Page.frameNavigated never fired');
+        },
+      };
+      const evaluator = mkEvaluator({ evaluated: true, passed: true });
+
+      const result = await runReplay({
+        skillId,
+        store: ctx.store,
+        cdp,
+        snapshotReader: noSnapshotReader,
+        evaluator,
+      });
+
+      expect(result.outcome).toBe('STEP_FAIL');
+      expect(result.step_failures[0].error).toMatch(/frameNavigated never fired/);
+      expect(result.contract.evaluated).toBe(false);
+    } finally {
+      await teardown(ctx);
+    }
+  });
+
+  test('STEP_FAIL: origin_check_failed when snapshot origin is known but getActiveUrl throws', async () => {
+    const ctx = await setup();
+    try {
+      const skillId = await recordSkill(ctx);
+      const cdp: ReplayCdpClient = {
+        async send() {
+          throw new Error('replay must not execute steps when origin check fails');
+        },
+        async getActiveUrl() {
+          throw new Error('CDP target detached');
+        },
+      };
+      const snapshotReader: FrozenSnapshotReader = {
+        async readUrlOrigin() {
+          return 'https://the-internet.herokuapp.com';
+        },
+      };
+      const evaluator = mkEvaluator({ evaluated: true, passed: true });
+
+      const result = await runReplay({
+        skillId,
+        store: ctx.store,
+        cdp,
+        snapshotReader,
+        evaluator,
+      });
+
+      expect(result.outcome).toBe('STEP_FAIL');
+      expect(result.steps_executed).toBe(0);
+      expect(result.step_failures[0].error).toMatch(/origin_check_failed/);
+    } finally {
+      await teardown(ctx);
+    }
+  });
+
+  test('STEP_FAIL: origin_check_failed when getActiveUrl returns an unparseable URL', async () => {
+    const ctx = await setup();
+    try {
+      const skillId = await recordSkill(ctx);
+      const cdp = mkCdp({ url: 'about:blank' }); // opaque origin → null
+      const snapshotReader: FrozenSnapshotReader = {
+        async readUrlOrigin() {
+          return 'https://the-internet.herokuapp.com';
+        },
+      };
+      const evaluator = mkEvaluator({ evaluated: true, passed: true });
+
+      const result = await runReplay({
+        skillId,
+        store: ctx.store,
+        cdp,
+        snapshotReader,
+        evaluator,
+      });
+
+      expect(result.outcome).toBe('STEP_FAIL');
+      expect(result.step_failures[0].error).toMatch(/origin_check_failed/);
+    } finally {
+      await teardown(ctx);
+    }
+  });
+
   test('clamps step_timeout_ms to MAX_STEP_TIMEOUT_MS', async () => {
     const ctx = await setup();
     try {

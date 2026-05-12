@@ -122,14 +122,18 @@ const handler: ToolHandler = async (
       return cdpClient.send(page, method, params);
     },
     async getActiveUrl(): Promise<string | null> {
-      try {
-        return page.url();
-      } catch {
-        return null;
-      }
+      // Surface errors to the replay engine; the engine's origin gate now
+      // fails closed when the active URL cannot be retrieved (Gemini review
+      // on #928).
+      return page.url();
     },
     async awaitFrameNavigated(timeoutMs: number): Promise<void> {
-      await page.waitForNavigation({ timeout: timeoutMs }).catch(() => {});
+      // Propagate timeouts/errors as rejections so the replay engine can
+      // mark the step as STEP_FAIL. Previously this swallowed all failures
+      // via `.catch(() => {})`, which let a missing navigation be treated
+      // as a success and broke the deterministic step contract (Codex
+      // review on #928).
+      await page.waitForNavigation({ timeout: timeoutMs });
     },
   };
 

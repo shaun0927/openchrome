@@ -264,7 +264,7 @@ program
     }
 
     const server = getMCPServer();
-    registerAllTools(server);
+    await registerAllTools(server);
 
     // Write PID file for zombie process detection
     writePidFile(port);

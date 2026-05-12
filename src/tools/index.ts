@@ -106,10 +106,12 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
-// Skill replay (#856) — pilot-tier, gated by --pilot + OPENCHROME_SKILL_REPLAY=1
-import { registerOcSkillReplayTool } from './oc-skill-replay';
+// Skill replay (#856) is pilot-tier and dynamically imported below to keep
+// `src/pilot/**` out of the core static dependency graph when --pilot is off
+// (Codex review on #928).
+import { isSkillReplayEnabled } from '../harness/flags';
 
-export function registerAllTools(server: MCPServer): void {
+export async function registerAllTools(server: MCPServer): Promise<void> {
   // Core browser tools
   registerNavigateTool(server);
   registerComputerTool(server);
@@ -219,9 +221,15 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
-  // Skill replay (#856) — registration is gated inside the registrar so the
-  // toolset diff is empty when --pilot or OPENCHROME_SKILL_REPLAY is off.
-  registerOcSkillReplayTool(server);
+  // Skill replay (#856) — pilot-tier. Dynamically imported so that no module
+  // from `src/pilot/**` is pulled into the process when --pilot is off or
+  // OPENCHROME_SKILL_REPLAY is unset. Mirrors the `bootstrapPilot()` pattern
+  // in `src/harness/flags.ts`. The toolset diff remains empty when the gate
+  // is closed because the registrar itself is never loaded.
+  if (isSkillReplayEnabled()) {
+    const mod = await import('./oc-skill-replay');
+    mod.registerOcSkillReplayTool(server);
+  }
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
