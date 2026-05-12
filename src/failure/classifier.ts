@@ -32,7 +32,9 @@ interface NormalizedFailureInput {
   pageTitle: string;
 }
 
-const AUTH_CONTEXT = /\b(login|log in|signin|sign in|auth|authentication|password|credential|permission|mfa|2fa|totp|session expired)\b/i;
+const AUTH_CONTEXT = /\b(log in|login|signin|sign in|auth|authentication|password|credential|permissions?|mfa|2fa|totp|session expired)\b/i;
+const AUTH_DIRECT = /\b(401|unauthorized|please sign in|session expired)\b/i;
+const FORBIDDEN_SIGNAL = /\b(403|forbidden)\b/i;
 const WAF_CONTEXT = /\b(captcha|cloudflare|akamai|imperva|datadome|human verification|verify you are human|bot[- ]?check|anti[- ]?bot|ip block|request block|access denied|just a moment)\b/i;
 
 const RULES: Rule[] = [
@@ -46,7 +48,7 @@ const RULES: Rule[] = [
     category: 'CONNECTION_LOST',
     confidence: 0.95,
     reason: 'CDP/browser transport connection was lost',
-    test: ({ text }) => /\b(not connected to chrome|call connect\(\) first|websocket.*closed|websocket is not open|browser has disconnected|browser disconnected|cdpsession connection closed|connection closed|session closed|protocol error.*(?:connection|closed|disconnected|target closed)|puppeteer\.connect\(\) timed out|session initialization timed out)\b/i.test(text),
+    test: ({ text }) => /\b(not connected to chrome|call connect\(\) first|websocket.*closed|websocket is not open|browser has disconnected|browser disconnected|cdpsession connection closed|connection closed|session closed|protocol error.*(?:connection|disconnected)|puppeteer\.connect\(\) timed out|session initialization timed out)\b/i.test(text),
   },
   {
     category: 'BROWSER_CRASH',
@@ -90,7 +92,7 @@ const RULES: Rule[] = [
     reason: 'Page or failure indicates missing/expired authentication or credentials',
     test: (input) => {
       const combined = `${input.text} ${input.currentUrl} ${input.pageTitle}`;
-      return AUTH_CONTEXT.test(combined) || /\b(401|unauthorized|please sign in|session expired)\b/i.test(combined);
+      return AUTH_CONTEXT.test(combined) || AUTH_DIRECT.test(combined) || (FORBIDDEN_SIGNAL.test(combined) && AUTH_CONTEXT.test(combined));
     },
   },
   {

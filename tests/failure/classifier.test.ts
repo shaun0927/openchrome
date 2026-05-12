@@ -39,6 +39,15 @@ describe('failure classifier', () => {
     expect(categories('Forbidden: login session expired')).toContain('AUTH_REQUIRED');
   });
 
+  it('does not classify generic 403 forbidden server errors as auth-required', () => {
+    expect(categories('HTTP 403 Forbidden server error')).not.toContain('AUTH_REQUIRED');
+  });
+
+  it('classifies forbidden permission and auth contexts as auth-required', () => {
+    expect(categories('Forbidden: missing permission to access this tool')).toContain('AUTH_REQUIRED');
+    expect(categories('403 Forbidden: authentication credentials are required')).toContain('AUTH_REQUIRED');
+  });
+
   it('classifies CAPTCHA and WAF blockers', () => {
     expect(categories('Cloudflare says verify you are human captcha detected')).toContain('CAPTCHA_OR_WAF');
   });
@@ -73,6 +82,7 @@ describe('failure classifier', () => {
     expect(categories('Execution context was destroyed, most likely because of a navigation')).not.toContain('CONNECTION_LOST');
     expect(categories('Cannot find context with specified id')).not.toContain('CONNECTION_LOST');
     expect(categories('Inspected target navigated or closed')).not.toContain('CONNECTION_LOST');
+    expect(categories('Protocol error (Runtime.callFunctionOn): Inspected target navigated or closed')).not.toContain('CONNECTION_LOST');
   });
 
   it('keeps generic could-not-find runtime failures out of element-not-found', () => {
