@@ -38,6 +38,23 @@ export interface Contract {
   idempotency_key?: string;
   /** Domain label for audit log routing. */
   domain?: string;
+  /**
+   * Marks the skill as performing an irreversible side effect (submit
+   * checkout, send transfer, delete record). When true the runtime fires
+   * the `beforeIrreversibleAction` hook immediately before invoking the
+   * skill so operators can require additional verification. Non-critical
+   * contracts (`critical: false` / omitted) pass through unchanged —
+   * preserving 1.10.4 behavior by default. See issue #795.
+   */
+  critical?: boolean;
+  /**
+   * Operator-supplied action label forwarded to the
+   * `beforeIrreversibleAction` hook (e.g. `"submit-checkout"`,
+   * `"send-transfer"`). The runtime does not interpret it. Defaults to
+   * the contract id when omitted so the hook always receives a non-empty
+   * action string.
+   */
+  action?: string;
 }
 
 /** Verdict taxonomy emitted by the runtime. Exactly one per call. */
@@ -48,7 +65,8 @@ export type Verdict =
   | 'budget_exhausted'
   | 'execution_error'
   | 'validation_error'
-  | 'escalated';
+  | 'escalated'
+  | 'aborted_by_hook';
 
 /** Final settle record emitted by the runtime for every call. */
 export interface TransactionRecord {
@@ -80,6 +98,20 @@ export interface TransactionRecord {
   escalation?: { target: 'human-review' | 'headed-handoff' };
   /** Result returned by the skill on success paths. */
   skill_result?: unknown;
+  /**
+   * Decision summary written when verdict === 'aborted_by_hook' — captures
+   * the operator-supplied action label and either the deny reason or the
+   * external-token issued for an `await-human` resume. The `evidence` from
+   * the hook input is intentionally not duplicated here (it is already on
+   * `pre_evidence`) to keep the record compact. See issue #795.
+   */
+  hook_decision?: {
+    action: string;
+    /** Set when the hook returned `{ proceed: false, reason }`. */
+    reason?: string;
+    /** Set when the hook returned `{ proceed: 'await-human', externalToken }`. */
+    external_token?: string;
+  };
 }
 
 export type SkillFn = () => Promise<unknown>;

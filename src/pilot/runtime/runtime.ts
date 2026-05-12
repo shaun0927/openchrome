@@ -43,6 +43,7 @@ import type { EvalContext } from '../../contracts/eval-context.js';
 import { evaluate } from '../../contracts/evaluate.js';
 import { validateAssertion, type ValidationError } from '../../contracts/validator.js';
 import { isContractRuntimeEnabled } from '../../harness/flags.js';
+import { getBeforeIrreversibleHook } from './before-irreversible.js';
 import type {
   AuditEmitter,
   Contract,
@@ -233,7 +234,80 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     }
   }
 
-  // 3. Execute skill (cooperative budget tracking).
+  // 3. beforeIrreversibleAction hook — fires immediately before the
+  //    skill executes, but only for contracts flagged `critical: true`.
+  //    Non-critical contracts pass through unchanged, preserving 1.10.4
+  //    behavior by default (issue #795). The default registered hook is
+  //    a no-op pass-through, so even critical contracts proceed normally
+  //    until an operator installs a custom hook via
+  //    `registerBeforeIrreversibleHook()`.
+  //
+  //    The hook firing path is reachable only when
+  //    `isContractRuntimeEnabled()` returned true at the top of this
+  //    function — when the pilot tier is unset the runtime short-circuits
+  //    before this block runs (P2: 1.10.4 behavior preserved).
+  if (args.contract.critical === true) {
+    const action = args.contract.action ?? args.contract.id;
+    const hook = getBeforeIrreversibleHook();
+    let decision;
+    try {
+      decision = await hook({
+        contractId: args.contract.id,
+        action,
+        evidence: pre_evidence,
+      });
+    } catch (e) {
+      // The runtime contract is "always settles". A throwing operator
+      // hook must never let an irreversible action execute by accident,
+      // so we treat a throw as an implicit deny and abort with the
+      // throw message captured on the record.
+      return emit({
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'aborted_by_hook',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: 0,
+        pre_evidence,
+        error_message: `beforeIrreversibleAction hook threw: ${errMsg(e)}`,
+        hook_decision: { action, reason: errMsg(e) },
+      });
+    }
+    if (decision.proceed === false) {
+      return emit({
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'aborted_by_hook',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: 0,
+        pre_evidence,
+        error_message: decision.reason,
+        hook_decision: { action, reason: decision.reason },
+      });
+    }
+    if (decision.proceed === 'await-human') {
+      return emit({
+        txn_id,
+        contract_id: args.contract.id,
+        verdict: 'aborted_by_hook',
+        started_at: startedAt,
+        ended_at: now(),
+        wall_ms: now() - startedAt,
+        retries: 0,
+        pre_evidence,
+        error_message: `beforeIrreversibleAction hook deferred to external resume (token=${decision.externalToken})`,
+        hook_decision: { action, external_token: decision.externalToken },
+      });
+    }
+    // decision.proceed === true — fall through to the skill execution
+    // path. No `hook_decision` is emitted on success to keep the audit
+    // record compact for the common case.
+  }
+
+  // 4. Execute skill (cooperative budget tracking).
   //    Normalize wall_ms so non-finite or negative values cannot
   //    silently disable the budget guard (`x > NaN` is always false) or
   //    force every call to fail (`-1` immediately exhausts). See Codex
@@ -271,7 +345,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     });
   }
 
-  // 4. Post-check with retry + backoff. Normalize the retry count so a
+  // 5. Post-check with retry + backoff. Normalize the retry count so a
   //    runtime-supplied non-integer / NaN cannot drive an infinite loop
   //    (`attempt >= NaN` is always false) or expand the retry budget
   //    silently. See Codex round 3 (24481ed) and round 6 (d593354).
@@ -366,7 +440,7 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     });
   }
 
-  // 5. Escalate or postcondition_violation. The three escalate values
+  // 6. Escalate or postcondition_violation. The three escalate values
   //    are handled distinctly: 'human-review' / 'headed-handoff' route
   //    to the 'escalated' verdict; 'abort' is an explicit "settle as
   //    failed, do not escalate" so the audit trail records that the
