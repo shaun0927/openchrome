@@ -28,3 +28,6 @@
 // Keep this as a namespace export so adding sibling subdirs later does not
 // reorder the public surface and break consumer destructuring.
 export * as runtime from './runtime/index.js';
+
+// Phase 3 (issue #793): pilot-tier handoff token + manager.
+export * as handoff from './handoff/index.js';
