@@ -287,6 +287,32 @@ openchrome update
 
 ---
 
+## What's new in v1.11
+
+v1.11 establishes a **core / pilot tier split** inside the same npm package. Existing v1.10 configurations work bit-identically; new harness capabilities are additive.
+
+**Core tier** (active by default, no flag):
+
+- **Trace recorder** — JSONL session capture with credential redactor
+- **Skill state graph** — JSON-per-domain graph storage + `openchrome://skill-graph/<domain>` MCP resource
+- **Skill memory** — JSON store + audit-log-backed stats; `oc_skill_record`, `oc_skill_recall` MCP tools
+- **Outcome contracts** — DSL + evaluators (DOM, network, screenshot-class, perceptual hash); `oc_assert`, `oc_evidence_bundle` MCP tools
+- **Perception primitives** — perceptual DOM metadata + DOM↔screenshot cross-check (Sobel + color)
+
+**Pilot tier** (opt-in via `--pilot`):
+
+```bash
+openchrome serve --pilot
+```
+
+Adds: contract runtime (retry + idempotency + `beforeIrreversibleAction`), handoff token + AES-256-GCM persistence (ephemeral key default), multi-model voting framework (deterministic voters), skill curator (extractor + recall ranking + structural merge + PID lock + background runner).
+
+Pilot families are individually gated by `OPENCHROME_TRACE`, `OPENCHROME_STATE_GRAPH`, `OPENCHROME_CONTRACT_RUNTIME`, `OPENCHROME_HANDOFF_PERSIST`, `OPENCHROME_PERCEPTION_VOTING`, `OPENCHROME_SKILL_CURATOR`. All default *active* inside `--pilot`; set the env to `0` to turn one family off.
+
+**Design contract**: portability-harness policy at [`docs/roadmap/portability-harness-contract.md`](docs/roadmap/portability-harness-contract.md). Architecture overview at [`docs/architecture.md`](docs/architecture.md). End-to-end walkthrough at [`docs/getting-started.md`](docs/getting-started.md). Full v1.11 release notes at [`docs/releases/v1.11.1.md`](docs/releases/v1.11.1.md).
+
+---
+
 ## Examples
 
 **Parallel monitoring:**
@@ -309,7 +335,7 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 
 ---
 
-## 46 Tools
+## 50 Tools
 
 | Category | Tools |
 |----------|-------|
@@ -319,11 +345,16 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 | **Storage & Debug** | `cookies`, `storage`, `console_capture`, `performance_metrics`, `request_intercept` |
 | **Parallel Workflows** | `workflow_init`, `workflow_collect`, `worker_create`, `batch_execute` |
 | **Memory** | `memory_record`, `memory_query`, `memory_validate` |
+| **Contracts & Skills** *(v1.11)* | `oc_assert`, `oc_evidence_bundle`, `oc_skill_record`, `oc_skill_recall` |
+
+**MCP resources**: `openchrome://skill-graph/<domain>` (read-only JSON snapshot of the per-domain skill graph; v1.11).
 
 <details>
-<summary>Full tool list (46)</summary>
+<summary>Full tool list (50)</summary>
 
-`navigate` `interact` `computer` `read_page` `find` `form_input` `fill_form` `javascript_tool` `page_reload` `page_content` `page_pdf` `wait_for` `user_agent` `geolocation` `emulate_device` `network` `selector_query` `xpath_query` `cookies` `storage` `console_capture` `performance_metrics` `request_intercept` `drag_drop` `file_upload` `http_auth` `worker_create` `worker_list` `worker_update` `worker_complete` `worker_delete` `tabs_create` `tabs_context` `tabs_close` `workflow_init` `workflow_status` `workflow_collect` `workflow_collect_partial` `workflow_cleanup` `execute_plan` `batch_execute` `lightweight_scroll` `memory_record` `memory_query` `memory_validate` `oc_stop`
+`navigate` `interact` `computer` `read_page` `find` `form_input` `fill_form` `javascript_tool` `page_reload` `page_content` `page_pdf` `wait_for` `user_agent` `geolocation` `emulate_device` `network` `selector_query` `xpath_query` `cookies` `storage` `console_capture` `performance_metrics` `request_intercept` `drag_drop` `file_upload` `http_auth` `worker_create` `worker_list` `worker_update` `worker_complete` `worker_delete` `tabs_create` `tabs_context` `tabs_close` `workflow_init` `workflow_status` `workflow_collect` `workflow_collect_partial` `workflow_cleanup` `execute_plan` `batch_execute` `lightweight_scroll` `memory_record` `memory_query` `memory_validate` `oc_stop` `oc_assert` `oc_evidence_bundle` `oc_skill_record` `oc_skill_recall`
+
+With `--pilot` flag, additional pilot-tier tools are registered under the `oc_pilot_*` namespace (handoff, voting, curator). See [`docs/architecture.md`](docs/architecture.md).
 
 </details>
 
@@ -334,10 +365,13 @@ oc compare prices for "AirPods Pro" across Amazon, eBay, Walmart, Best Buy
 ```bash
 openchrome setup                    # Auto-configure
 openchrome serve --auto-launch      # Start server
+openchrome serve --pilot            # Opt into pilot tier (v1.11+)
 openchrome serve --headless-shell   # Headless mode
 openchrome doctor                   # Diagnose issues
 openchrome update                   # Update CLI
 ```
+
+Window placement (v1.11): `--window-size <w,h>`, `--window-position <x,y>`, `--window-bounds <x,y,w,h>`, `--start-maximized`, or set `OPENCHROME_WINDOW_*` env. Default is `0,0` + `1280×900` (previously `--start-maximized` + `1920×1080`).
 
 ---
 
