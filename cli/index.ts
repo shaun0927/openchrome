@@ -47,6 +47,7 @@ import {
 } from './totp-store';
 import { registerAdminKeysCommand } from './admin-keys';
 import { registerContractCommand } from './contract-teach';
+import { registerReplayCommand } from './replay';
 import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell } from './claude-cli';
 
 const program = new Command();
@@ -1300,5 +1301,8 @@ registerAdminKeysCommand(program);
 
 // Outcome contract authoring helpers (issue #705).
 registerContractCommand(program);
+
+// Session recording replay subcommands (issue #852).
+registerReplayCommand(program);
 
 program.parse();

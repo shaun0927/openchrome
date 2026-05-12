@@ -17,6 +17,8 @@ export const compositeSuggestionRules: HintRule[] = [
     name: 'find-then-click',
     priority: 200,
     maxSeverity: 'info',
+    // Duplicated by interact tool description "When to use" block.
+    redundant_with_description: true,
     match(ctx) {
       if (ctx.toolName !== 'computer' && ctx.toolName !== 'click') return null;
       if (!lastToolWas(ctx, 'find')) return null;
@@ -27,6 +29,8 @@ export const compositeSuggestionRules: HintRule[] = [
     name: 'multiple-form-input',
     priority: 201,
     maxSeverity: 'warning',
+    // Duplicated by form_input description (fill_form is named as alternative).
+    redundant_with_description: true,
     match(ctx) {
       if (ctx.toolName !== 'form_input') return null;
       if (recentToolCount(ctx, 'form_input') >= 1) {
@@ -104,6 +108,8 @@ export const compositeSuggestionRules: HintRule[] = [
     name: 'state-check-after-action',
     priority: 206,
     maxSeverity: 'warning',
+    // Duplicated by inspect description "When to use" + read_page "When NOT to use".
+    redundant_with_description: true,
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
       if (
@@ -119,6 +125,8 @@ export const compositeSuggestionRules: HintRule[] = [
     name: 'repeated-read-page',
     priority: 207,
     maxSeverity: 'warning',
+    // Duplicated by read_page description "When NOT to use" naming inspect/find as alternatives.
+    redundant_with_description: true,
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
       if (recentToolCount(ctx, 'read_page') >= 2) {
