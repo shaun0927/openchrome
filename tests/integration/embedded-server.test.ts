@@ -99,6 +99,7 @@ jest.mock('../../src/cdp/client', () => ({
     disconnect: jest.fn().mockResolvedValue(undefined),
   })),
   _resetCDPClientForTesting: jest.fn(),
+  _resetCDPClientFactoryForTesting: jest.fn(),
 }));
 
 jest.mock('../../src/browser-state', () => ({

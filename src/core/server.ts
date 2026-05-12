@@ -27,7 +27,7 @@ import { bootstrapPilot, logActiveFlags } from '../harness/flags';
 import { getChromeLauncher, _resetChromeLauncherForTesting } from '../chrome/launcher';
 import { getSessionManager, _resetSessionManagerForTesting } from '../session-manager';
 import { resetChromePool } from '../chrome/pool';
-import { getCDPClient } from '../cdp/client';
+import { getCDPClient, _resetCDPClientForTesting, _resetCDPClientFactoryForTesting } from '../cdp/client';
 import { getBrowserStateManager } from '../browser-state';
 import { HTTPTransport } from '../transports/http';
 import { ChromeProcessWatchdog } from '../chrome/process-watchdog';
@@ -124,17 +124,8 @@ function _resetAllSingletons(): void {
   _resetChromeLauncherForTesting();
   _resetSessionManagerForTesting();
   resetChromePool();
-  // CDPClient reset: it exposes a module-level singleton but no public reset.
-  // Re-requiring after null-ifying will construct fresh on first getXxx() call.
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cdpMod = require('../cdp/client') as Record<string, unknown>;
-    if (typeof cdpMod._resetCDPClientForTesting === 'function') {
-      (cdpMod._resetCDPClientForTesting as () => void)();
-    }
-  } catch (err) {
-    console.error('[openchrome] CDPClient reset skipped:', err);
-  }
+  _resetCDPClientForTesting();
+  _resetCDPClientFactoryForTesting();
 }
 
 // ---------------------------------------------------------------------------

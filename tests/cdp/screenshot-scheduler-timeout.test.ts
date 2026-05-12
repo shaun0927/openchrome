@@ -63,6 +63,50 @@ describe('ScreenshotScheduler - queue wait timeout', () => {
     expect(stats.active).toBe(0);
   });
 
+  test('omits lossy-only screenshot params for png but keeps them for jpeg', async () => {
+    const scheduler = new ScreenshotScheduler(2);
+    const cdpClient = makeMockCDPClient();
+    const page = makeMockPage();
+
+    const pngPromise = scheduler.capture(page, cdpClient, {
+      format: 'png',
+      quality: 40,
+      optimizeForSpeed: true,
+      clip: { x: 1, y: 2, width: 300, height: 200 },
+      fullPage: true,
+    });
+    jest.runAllTimers();
+    await pngPromise;
+
+    expect(cdpClient.send).toHaveBeenLastCalledWith(
+      page,
+      'Page.captureScreenshot',
+      {
+        format: 'png',
+        clip: { x: 1, y: 2, width: 300, height: 200 },
+        captureBeyondViewport: true,
+      }
+    );
+
+    const jpegPromise = scheduler.capture(page, cdpClient, {
+      format: 'jpeg',
+      quality: 75,
+      optimizeForSpeed: false,
+    });
+    jest.runAllTimers();
+    await jpegPromise;
+
+    expect(cdpClient.send).toHaveBeenLastCalledWith(
+      page,
+      'Page.captureScreenshot',
+      {
+        format: 'jpeg',
+        quality: 75,
+        optimizeForSpeed: false,
+      }
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // 2. Queue wait resolves when a slot opens
   // ---------------------------------------------------------------------------

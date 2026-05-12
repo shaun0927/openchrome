@@ -531,6 +531,22 @@ export class SkillGraphStorage {
   }
 
   /**
+   * Single-read snapshot of every edge originating at `fromState`.
+   * Callers that need to compare or rank multiple edges in one decision
+   * must use this in preference to looping `getEdge()` — a per-candidate
+   * `getEdge()` performs a fresh file read each call, so a concurrent
+   * writer can mutate the graph between iterations and produce a
+   * recommendation that does not correspond to any single graph state.
+   * Returns an empty array when the file is missing or invalid.
+   */
+  getEdgesFromStateSync(fromState: string): SkillEdge[] {
+    const graph = this.readGraphSync();
+    return graph.edges
+      .filter((row) => row.from_state === fromState)
+      .map(loadEdge);
+  }
+
+  /**
    * Top edges leaving `fromState` ordered by historical success rate
    * (success / (success+fail)) DESC, with raw success_count as the
    * tiebreaker. Replaces #738's `edgesFrom`; the ordering contract is
