@@ -175,6 +175,23 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('instruction is required');
     });
 
+
+
+    test('returns error before execution when placeholder variable is missing', async () => {
+      const handler = await getActHandler();
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction: 'type %password% in password',
+        variables: {},
+      }) as any;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Missing variable');
+      expect(page!.keyboard.type).not.toHaveBeenCalled();
+    });
+
     test('returns error when tab is not found', async () => {
       const handler = await getActHandler();
       const result = await handler(testSessionId, {
@@ -396,6 +413,36 @@ describe('ActTool', () => {
 
       expect(result.isError).toBeFalsy();
       expect(page!.keyboard.type).toHaveBeenCalledWith('hello world', expect.any(Object));
+    });
+
+
+
+    test('substitutes variables at execution time but redacts them from response', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
+        backendDOMNodeId: 401,
+        role: 'textbox',
+        name: 'Password',
+        matchLevel: 1,
+        rect: { x: 200, y: 100, width: 200, height: 30 },
+        properties: {},
+        source: 'ax',
+      }]);
+      mockSessionManager.mockCDPClient.send.mockResolvedValue({ model: { content: [180, 85, 380, 85, 380, 115, 180, 115] } });
+
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      (page!.evaluate as jest.Mock).mockResolvedValue({ url: 'https://example.com', title: 'Example' });
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction: 'type %password% in password',
+        variables: { password: 'S3cret-Value-Do-Not-Log' },
+      }) as any;
+
+      expect(result.isError).toBeFalsy();
+      expect(page!.keyboard.type).toHaveBeenCalledWith('S3cret-Value-Do-Not-Log', expect.any(Object));
+      expect(result.content[0].text).not.toContain('S3cret-Value-Do-Not-Log');
+      expect(result.content[0].text).toContain('%password%');
     });
 
     test('type with target finds element first', async () => {

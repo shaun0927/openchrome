@@ -64,6 +64,18 @@ import {
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
 
+
+function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  if (toolName !== 'act' || !args.variables || typeof args.variables !== 'object' || Array.isArray(args.variables)) {
+    return args;
+  }
+  const redactedVariables: Record<string, string> = {};
+  for (const key of Object.keys(args.variables as Record<string, unknown>)) {
+    redactedVariables[key] = '[VARIABLE]';
+  }
+  return { ...args, variables: redactedVariables };
+}
+
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_start',
@@ -1262,6 +1274,7 @@ export class MCPServer {
 
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
+    const telemetryToolArgs = redactActVariablesForTelemetry(toolName, toolArgs);
     // Use 'default' session if no sessionId is provided
     const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
 
@@ -1525,8 +1538,8 @@ export class MCPServer {
     }
 
     // Start activity tracking
-    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
-    getDashboardState().recordToolStart(sessionId || 'default', toolName, toolArgs, callId);
+    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
+    getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
     const toolStartTime = Date.now();
 
     // Adaptive heartbeat: switch to heavy mode during tool execution
@@ -1753,7 +1766,7 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, true);
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, true);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -1765,7 +1778,7 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const summary = (result as Record<string, unknown>)?._summary as string | undefined;
-          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -1936,7 +1949,7 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, false);
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, false);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -1948,7 +1961,7 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const errMsg = message;
-          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
         }
       } catch {
         // Best-effort recording
