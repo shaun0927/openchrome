@@ -1014,7 +1014,7 @@ const wrappedHandler: ToolHandler = async (sessionId, args, context) => {
         const isAuthRedirect = parsed.authRedirect === true;
         const action = typeof parsed.action === 'string' ? parsed.action : undefined;
         if (finalUrl && !isAuthRedirect && action !== 'back' && action !== 'forward') {
-          await emitDomainEnteredIfActive(sessionId, finalUrl);
+          void emitDomainEnteredIfActive(sessionId, finalUrl);
         }
       }
     } catch (err) {

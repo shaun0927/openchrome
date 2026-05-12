@@ -86,7 +86,26 @@ function paramToSchemaEntry(p: SkillParameter): { schema: Record<string, unknown
  * Returns an empty array when the shape isn't recognised — never throws.
  */
 export function extractSkillParameters(steps: unknown): SkillParameter[] {
-  if (!steps || typeof steps !== 'object' || Array.isArray(steps)) return [];
+  if (Array.isArray(steps)) {
+    const seen = new Set<string>();
+    const out: SkillParameter[] = [];
+    for (const entry of steps) {
+      if (!entry || typeof entry !== 'object') continue;
+      const raw = entry as Record<string, unknown>;
+      if (raw.kind !== 'fill') continue;
+      const name = raw.valueParam;
+      if (typeof name !== 'string' || name.length === 0 || seen.has(name)) continue;
+      seen.add(name);
+      out.push({
+        name,
+        type: 'string',
+        description: `Value for recorded fill step "${name}".`,
+        required: true,
+      });
+    }
+    return out;
+  }
+  if (!steps || typeof steps !== 'object') return [];
   const raw = (steps as InterpretedSkillSteps).parameters;
   if (!Array.isArray(raw)) return [];
   const out: SkillParameter[] = [];

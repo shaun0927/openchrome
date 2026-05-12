@@ -88,6 +88,29 @@ describe('extractSkillParameters', () => {
     });
     expect(out[0].type).toBe('string');
   });
+
+  test('derives required string params from array-form recorded fill steps', () => {
+    const out = extractSkillParameters([
+      { kind: 'navigate', url: 'https://example.com/login' },
+      { kind: 'fill', selector: '#user', valueParam: 'username' },
+      { kind: 'fill', selector: '#pass', valueParam: 'password' },
+      { kind: 'fill', selector: '#user2', valueParam: 'username' },
+    ]);
+    expect(out).toEqual([
+      {
+        name: 'username',
+        type: 'string',
+        description: 'Value for recorded fill step "username".',
+        required: true,
+      },
+      {
+        name: 'password',
+        type: 'string',
+        description: 'Value for recorded fill step "password".',
+        required: true,
+      },
+    ]);
+  });
 });
 
 describe('synthesizeToolDefinition', () => {

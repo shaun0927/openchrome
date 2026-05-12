@@ -229,9 +229,23 @@ function registerSynthesizedSkill(
   skill: SkillRecord,
 ): boolean {
   const { name, definition } = synthesizeToolDefinition(skill);
+  const registry = getDynamicSkillsRegistry();
+  const existing = registry.get(name);
+  if (existing && existing.skillId !== skill.skillId) {
+    state.attachment.emitAudit('skill_synthesis_collision', {
+      name,
+      domain: skill.domain,
+      skill_id: skill.skillId,
+      existing_skill_id: existing.skillId,
+    });
+    console.error(
+      `[dynamic-skills] synthesized tool-name collision: name=${name} existing_skill_id=${existing.skillId} new_skill_id=${skill.skillId}`,
+    );
+    return false;
+  }
   const handler = buildSynthesizedHandler(skill, state.attachment);
   state.server.registerTool(name, handler, definition);
-  const fresh = getDynamicSkillsRegistry().register({
+  const fresh = registry.register({
     name,
     domain: skill.domain,
     skillId: skill.skillId,
