@@ -114,6 +114,8 @@ import { registerOcSkillRecallTool } from './oc-skill-recall';
 // open — this preserves P2 (no module from `src/pilot/**` is loaded into the
 // process when `--pilot` is unset) while keeping `registerAllTools()` sync.
 import { isProxyHookEnabled } from '../harness/flags';
+// Portable context envelope (#873) — export/import surface
+import { registerOcContextTools } from './oc-context';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -235,6 +237,8 @@ export function registerAllTools(server: MCPServer): void {
     const { registerOcProxyHookTool } = require('../pilot/proxy/hook') as typeof import('../pilot/proxy/hook');
     registerOcProxyHookTool(server);
   }
+  // Portable context envelope (#873) — oc_context_export / oc_context_import
+  registerOcContextTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

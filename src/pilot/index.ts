@@ -48,3 +48,7 @@ export * as curator from './curator/index.js';
 // `isProxyHookEnabled()` from `src/harness/flags.ts` before invoking any
 // export from this namespace.
 export * as proxy from './proxy/index.js';
+// Phase 4 (issue #820, blocks #717): pilot-tier skill graph executor.
+// Pure `decide()` function — no I/O, no side effects. Gate call sites on
+// `isStateGraphEnabled()` from `src/harness/flags.ts` before invoking.
+export * as skill from './skill/index.js';
