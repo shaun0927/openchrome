@@ -18,6 +18,8 @@ import { withTimeout } from '../utils/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
 import { getHeadedFallback } from '../chrome/headed-fallback';
 import { getGlobalConfig } from '../config/global';
+import { isAutoRecallEnabled } from '../harness/flags';
+import { autoRecallForOrigin, type AutoRecallPayload } from '../core/skill-memory/auto-recall';
 import type { Page } from 'puppeteer-core';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
@@ -408,6 +410,46 @@ async function headedNavigateDirect(
   }
 }
 
+/**
+ * Resolve whether auto-recall should run for this call.
+ * Per-call arg takes precedence over the global flag.
+ */
+function shouldAutoRecall(recallArg: boolean | undefined): boolean {
+  if (recallArg === false) return false;
+  if (recallArg === true) return true;
+  return isAutoRecallEnabled();
+}
+
+/**
+ * Attempt to extract the hostname from a URL string.
+ * Returns null on parse failure so callers can skip recall silently.
+ */
+function hostnameFromUrl(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch domain_skills payload for a URL if recall is enabled.
+ * Returns undefined when recall is disabled or the URL is unparseable.
+ */
+async function fetchDomainSkills(
+  url: string,
+  recallArg: boolean | undefined,
+): Promise<AutoRecallPayload | undefined> {
+  if (!shouldAutoRecall(recallArg)) return undefined;
+  const hostname = hostnameFromUrl(url);
+  if (!hostname) return undefined;
+  try {
+    return await autoRecallForOrigin({ origin: hostname });
+  } catch {
+    return undefined;
+  }
+}
+
 const definition: MCPToolDefinition = {
   name: 'navigate',
   description: 'Navigate to URL or go forward/back. Omit tabId for new tab.',
@@ -446,6 +488,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Chrome profile directory name (e.g., "Profile 1"). Use list_profiles to see available profiles. Launches a separate Chrome instance for each profile. If omitted, uses the server default. Cannot be combined with workerId.',
       },
+      recall: {
+        type: 'boolean',
+        description: 'Override OPENCHROME_AUTO_RECALL for this call. true forces domain skill injection; false suppresses it even when the flag is on.',
+      },
     },
     required: ['url'],
   },
@@ -460,6 +506,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string | undefined;
   const url = args.url as string;
   const profileDirectory = args.profileDirectory as string | undefined;
+  const recallArg = args.recall as boolean | undefined;
   // P1-6: reject workerId + profileDirectory combination
   if (args.workerId && profileDirectory) {
     return {
@@ -611,6 +658,7 @@ const handler: ToolHandler = async (
             const reuseUrl = page.url();
             const reuseTitle = await safeTitle(page);
             const reuseAuthGuidance = sameSiteAuthRedirectGuidance(targetUrl, reuseUrl, reuseTitle);
+            const reuseDomainSkills = await fetchDomainSkills(reuseUrl, recallArg);
             const reuseResultText = JSON.stringify({
               action: 'navigate',
               url: reuseUrl,
@@ -625,6 +673,7 @@ const handler: ToolHandler = async (
               ...(reuseBlocking && { blockingPage: reuseBlocking }),
               ...blockingDetectionErrorFields(reuseBlockingDetection),
               ...(reuseAuthGuidance ?? {}),
+              ...(reuseDomainSkills !== undefined && { domain_skills: reuseDomainSkills }),
             });
             return {
               content: [{ type: 'text', text: reuseResultText }],
@@ -678,6 +727,7 @@ const handler: ToolHandler = async (
       const newTabUrl = page.url();
       const newTabTitle = await safeTitle(page);
       const newTabAuthGuidance = sameSiteAuthRedirectGuidance(targetUrl, newTabUrl, newTabTitle);
+      const newTabDomainSkills = await fetchDomainSkills(newTabUrl, recallArg);
       const newTabResultText = JSON.stringify({
         action: 'navigate',
         url: newTabUrl,
@@ -693,6 +743,7 @@ const handler: ToolHandler = async (
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
         ...blockingDetectionErrorFields(newTabBlockingDetection),
         ...(newTabAuthGuidance ?? {}),
+        ...(newTabDomainSkills !== undefined && { domain_skills: newTabDomainSkills }),
       });
       return {
         content: [{ type: 'text', text: newTabResultText }],
@@ -920,10 +971,13 @@ const handler: ToolHandler = async (
       // Non-critical — proceed without count
     }
     const navReadiness = await getReadiness(page, context);
+    const navFinalUrl = page.url();
+    const navFinalTitle = await safeTitle(page);
+    const navDomainSkills = await fetchDomainSkills(navFinalUrl, recallArg);
     const navResultText = JSON.stringify({
       action: 'navigate',
-      url: page.url(),
-      title: await safeTitle(page),
+      url: navFinalUrl,
+      title: navFinalTitle,
       elementCount: navElementCount,
       readiness: navReadiness,
       ...(navSummary && { visualSummary: navSummary }),
@@ -931,6 +985,7 @@ const handler: ToolHandler = async (
       ...(navBlocking && { blockingPage: navBlocking }),
       ...blockingDetectionErrorFields(navBlockingDetection),
       ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
+      ...(navDomainSkills !== undefined && { domain_skills: navDomainSkills }),
     });
     return {
       content: [{ type: 'text', text: navResultText }],

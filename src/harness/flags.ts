@@ -65,6 +65,14 @@ export const isHandoffPersistEnabled = (): boolean => isFamilyEnabled('OPENCHROM
 export const isPerceptionVotingEnabled = (): boolean => isFamilyEnabled('OPENCHROME_PERCEPTION_VOTING');
 export const isSkillCuratorEnabled = (): boolean => isFamilyEnabled('OPENCHROME_SKILL_CURATOR');
 
+/**
+ * Returns true iff OPENCHROME_AUTO_RECALL is set to a truthy value.
+ * Core-tier flag — no pilot gate. No caching so tests can reset env freely.
+ */
+export function isAutoRecallEnabled(): boolean {
+  return isTruthy(process.env.OPENCHROME_AUTO_RECALL);
+}
+
 const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['trace', isTraceEnabled],
   ['state_graph', isStateGraphEnabled],
