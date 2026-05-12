@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 
 import { getMetricsCollector } from '../../src/metrics/collector';
+import { estimateOutputTokensFromChars, extractCacheStatus } from '../../src/mcp-server';
 
 describe('tool output observability metrics', () => {
   test('registers output size, estimated token, compression, and cache metrics', () => {
@@ -28,5 +29,36 @@ describe('tool output observability metrics', () => {
     expect(dump).not.toContain('https://');
     expect(dump).not.toContain('selector=');
     expect(dump).not.toContain('instruction=');
+  });
+
+  test('estimates tokens from characters rather than UTF-8 bytes', () => {
+    const output = '測試'.repeat(4);
+
+    expect(Buffer.byteLength(output, 'utf8')).toBeGreaterThan(output.length);
+    expect(estimateOutputTokensFromChars(output.length)).toBe(2);
+  });
+
+  test('normalizes cache metric labels to bounded buckets', () => {
+    expect(extractCacheStatus({
+      content: [],
+      cache: {
+        status: 'hit:user-123',
+        keyVersion: '2026-05-12T15:20:00.000Z-request-specific',
+      },
+    })).toEqual({
+      status: 'UNKNOWN',
+      keyVersion: 'other',
+    });
+
+    expect(extractCacheStatus({
+      content: [],
+      structuredContent: {
+        cacheStatus: 'miss',
+        cacheKeyVersion: 'v2',
+      },
+    })).toEqual({
+      status: 'MISS',
+      keyVersion: 'v2',
+    });
   });
 });
