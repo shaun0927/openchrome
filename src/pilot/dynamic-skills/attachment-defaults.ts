@@ -174,13 +174,11 @@ export async function defaultRunStep(
  *                                     pass iff the expression resolves to
  *                                     boolean `true`. This is the explicit
  *                                     opt-in for inline checks.
- *   • any other identifier    → fail with reason
- *                               `contract_runtime_not_wired` — the
- *                               orchestrator/curator family will later
- *                               inject a richer verifier via the
- *                               `assertContract` override. We fail closed
- *                               rather than report a false-positive success
- *                               for normal recorded contract identifiers.
+ *   • any other identifier    → resolve against an in-page contract registry
+ *                               (`globalThis.__openchromeContracts[id]`) or
+ *                               a same-named global function/boolean. Missing
+ *                               identifiers fail closed; found predicates pass
+ *                               only when they return boolean true.
  *
  * Together this matches the "no false positives, no false negatives"
  * contract codex asked for: only explicit JS expressions are graded;
@@ -199,14 +197,33 @@ export async function defaultAssertContract(
     return { pass: true, reason: 'no_contract' };
   }
   if (!contractId.startsWith(JS_EXPR_PREFIX)) {
-    // Bare identifier — no inline verifier. Fail closed instead of treating an
-    // unevaluated recorded contract as success.
-    return { pass: false, reason: 'contract_runtime_not_wired' };
+    const quotedId = JSON.stringify(contractId);
+    const expr = `(() => {
+      const id = ${quotedId};
+      const registry = globalThis.__openchromeContracts;
+      const candidate =
+        registry && typeof registry === 'object' && id in registry
+          ? registry[id]
+          : globalThis[id];
+      if (typeof candidate === 'function') return Promise.resolve(candidate()).then(Boolean);
+      if (typeof candidate === 'boolean') return candidate;
+      return { __openchrome_contract_missing: true };
+    })()`;
+    return evaluateJsContractExpression(expr, sessionId, tab, `contract_id:${contractId}`);
   }
   const expr = contractId.slice(JS_EXPR_PREFIX.length).trim();
   if (expr.length === 0) {
     return { pass: false, reason: 'contract_eval_empty_expression' };
   }
+  return evaluateJsContractExpression(expr, sessionId, tab, 'js');
+}
+
+async function evaluateJsContractExpression(
+  expr: string,
+  sessionId: string,
+  tab: CurrentTabInfo,
+  source: string,
+): Promise<ContractAssertionVerdict> {
   try {
     const sessionManager = getSessionManager();
     const page = await sessionManager.getPage(
@@ -233,6 +250,13 @@ export async function defaultAssertContract(
         };
       }
       const value = result?.result?.value;
+      if (
+        value &&
+        typeof value === 'object' &&
+        (value as { __openchrome_contract_missing?: unknown }).__openchrome_contract_missing === true
+      ) {
+        return { pass: false, reason: `contract_not_found: ${source}` };
+      }
       if (value === true) return { pass: true };
       return { pass: false, reason: `contract_eval_falsey: got ${JSON.stringify(value)}` };
     } finally {
