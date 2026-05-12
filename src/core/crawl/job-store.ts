@@ -26,6 +26,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { acquireLock } from '../../utils/atomic-file';
+import { normalizeUrl } from '../../utils/crawl-utils';
 import { redactValue } from '../trace/redactor';
 
 /** A page recorded in the job log (mirrors the legacy `crawl` tool shape). */
@@ -123,6 +124,7 @@ const VALID_JOB_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 // fetch signed/basic-auth start URLs via this map. After a restart, only the
 // redacted URL remains available, which is the safe recovery fallback.
 const ORIGINAL_START_URLS = new Map<string, string>();
+const ORIGINAL_QUEUED_URLS = new Map<string, Map<string, string>>();
 
 /**
  * Reject any jobId that is not a well-formed ULID. Throws a clear error
@@ -248,6 +250,32 @@ export async function createJob(config: JobConfig): Promise<string> {
 export function getOriginalStartUrl(jobId: string): string | undefined {
   assertValidJobId(jobId);
   return ORIGINAL_START_URLS.get(jobId);
+}
+
+export function rememberOriginalQueuedUrls(jobId: string, entries: QueueEntry[]): void {
+  assertValidJobId(jobId);
+  if (entries.length === 0) return;
+  let bySafeUrl = ORIGINAL_QUEUED_URLS.get(jobId);
+  if (!bySafeUrl) {
+    bySafeUrl = new Map<string, string>();
+    ORIGINAL_QUEUED_URLS.set(jobId, bySafeUrl);
+  }
+  for (const entry of entries) {
+    const safeUrl = scrubUrlString(entry.url);
+    bySafeUrl.set(safeUrl, entry.url);
+    try {
+      bySafeUrl.set(normalizeUrl(safeUrl), entry.url);
+    } catch {
+      /* keep the raw scrubbed key only */
+    }
+  }
+}
+
+export function getOriginalQueuedUrl(jobId: string, safeUrl: string): string | undefined {
+  assertValidJobId(jobId);
+  const bySafeUrl = ORIGINAL_QUEUED_URLS.get(jobId);
+  if (!bySafeUrl) return undefined;
+  return bySafeUrl.get(safeUrl);
 }
 
 export function appendEventUnlocked(jobId: string, event: JobEvent): void {

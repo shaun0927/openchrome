@@ -374,6 +374,35 @@ describe('crawl review follow-ups', () => {
     expect(raw.split('\n')[0]).toContain('token=[REDACTED]');
   });
 
+  test('same-process jobs fetch original signed discovered URLs while persisting redacted queue entries', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer({
+      '/root': {
+        body:
+          '<!doctype html><html><head><title>root</title></head><body>' +
+          '<a href="/child?token=child-secret">child</a>' +
+          '</body></html>',
+      },
+      '/child': {
+        body: '<!doctype html><html><head><title>child</title></head><body>child</body></html>',
+      },
+    });
+    bootTools();
+    const spy: SpyState = { calls: [] };
+    _setAdvanceOptionsForTests({ fetcher: makeSpyFetcher(spy) });
+
+    const signedChildUrl = `${server.origin}/child?token=child-secret`;
+    const startBody = parseResult(
+      await crawlStart!('s', { url: `${server.origin}/root`, max_pages: 2, max_depth: 1 }),
+    );
+    await crawlStatus!('s', { jobId: startBody.jobId, advance: 2 });
+
+    expect(spy.calls.map((c) => c.url)).toEqual([`${server.origin}/root`, signedChildUrl]);
+    const raw = fs.readFileSync(jobFilePath(startBody.jobId as string), 'utf8');
+    expect(raw).not.toContain('child-secret');
+    expect(raw).toContain('token=[REDACTED]');
+  });
+
   test('respect_robots blocks disallowed pages before the fetcher runs', async () => {
     mkTmpRoot();
     server = await startFixtureServer({

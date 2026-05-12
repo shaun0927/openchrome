@@ -31,9 +31,11 @@ import {
 
 import {
   appendEventUnlocked,
+  getOriginalQueuedUrl,
   getOriginalStartUrl,
   isExpired,
   loadJob,
+  rememberOriginalQueuedUrls,
   setStatusUnlocked,
   withJobLock,
   type CrawledPage,
@@ -267,7 +269,11 @@ export async function advanceJob(
       if (next.depth > maxDepth) return 'continue';
 
       const originalStartUrl = getOriginalStartUrl(jobId);
-      const fetchUrl = next.depth === 0 && originalStartUrl ? originalStartUrl : next.url;
+      const originalQueuedUrl = getOriginalQueuedUrl(jobId, next.url);
+      const fetchUrl =
+        next.depth === 0 && originalStartUrl
+          ? originalStartUrl
+          : (originalQueuedUrl ?? next.url);
       tracker.visit(next.url);
 
       if (respectRobots) {
@@ -362,6 +368,7 @@ export async function advanceJob(
           newEntries.push({ url: normalized, depth: next.depth + 1 });
         }
         if (newEntries.length > 0) {
+          rememberOriginalQueuedUrls(jobId, newEntries);
           appendEventUnlocked(jobId, { kind: 'enqueue', urls: newEntries, t: Date.now() });
         }
       }
