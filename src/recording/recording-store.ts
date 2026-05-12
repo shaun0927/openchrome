@@ -7,7 +7,31 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { RecordingAction, RecordingMetadata, RecordingConfig, DEFAULT_RECORDING_CONFIG } from './types';
+import { RecordingAction, RecordingMetadata, RecordingConfig, DEFAULT_RECORDING_CONFIG, ContractResultEntry } from './types';
+
+/**
+ * Append-only sidecar row recorded by oc_assert when a contract result is
+ * attached to an already-flushed action. Persisted as a separate JSONL line so
+ * appendContractResult() can never clobber concurrent recordAction() writes.
+ *
+ * `actionIndex` is the `seq` of the action the result belongs to.
+ */
+interface ContractResultRow {
+  kind: 'contract_result';
+  actionIndex: number;
+  entry: ContractResultEntry;
+}
+
+function isContractResultRow(row: unknown): row is ContractResultRow {
+  if (!row || typeof row !== 'object') return false;
+  const r = row as Record<string, unknown>;
+  return (
+    r['kind'] === 'contract_result' &&
+    typeof r['actionIndex'] === 'number' &&
+    typeof r['entry'] === 'object' &&
+    r['entry'] !== null
+  );
+}
 
 /** Default base directory for all recordings */
 export const RECORDINGS_DIR = path.join(os.homedir(), '.openchrome', 'recordings');
@@ -93,6 +117,24 @@ export class RecordingStore {
   }
 
   /**
+   * Append a single contract-result sidecar row referencing an already-flushed
+   * action. Used by oc_assert so contract annotation never has to rewrite the
+   * actions file (which would race against concurrent recordAction() appends).
+   *
+   * Sidecar rows are merged back into their parent action on read via
+   * readActions().
+   */
+  async appendContractResultRow(
+    id: string,
+    actionIndex: number,
+    entry: ContractResultEntry,
+  ): Promise<void> {
+    const filepath = path.join(this.getRecordingDir(id), ACTIONS_FILE);
+    const row: ContractResultRow = { kind: 'contract_result', actionIndex, entry };
+    await fs.promises.appendFile(filepath, JSON.stringify(row) + '\n');
+  }
+
+  /**
    * Write (or overwrite) the metadata JSON file for a recording.
    */
   async writeMetadata(metadata: RecordingMetadata): Promise<void> {
@@ -118,21 +160,35 @@ export class RecordingStore {
   /**
    * Read all actions from a recording's JSONL file.
    * Skips malformed lines.
+   *
+   * Append-only `contract_result` sidecar rows (written by oc_assert) are
+   * merged into their parent action's `contractResults` array by matching
+   * `actionIndex` against `seq`. The 4 KB cap is re-applied after merging so
+   * a flurry of contract rows cannot bloat any one action beyond the limit.
    */
   readActions(id: string): RecordingAction[] {
     const filepath = path.join(this.getRecordingDir(id), ACTIONS_FILE);
     try {
       const content = fs.readFileSync(filepath, 'utf-8');
       const actions: RecordingAction[] = [];
+      const pendingResults: ContractResultRow[] = [];
       for (const line of content.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed) continue;
+        let parsed: unknown;
         try {
-          actions.push(JSON.parse(trimmed) as RecordingAction);
+          parsed = JSON.parse(trimmed);
         } catch {
           // Skip malformed lines
+          continue;
+        }
+        if (isContractResultRow(parsed)) {
+          pendingResults.push(parsed);
+        } else {
+          actions.push(parsed as RecordingAction);
         }
       }
+      mergeContractResultRows(actions, pendingResults);
       return actions;
     } catch {
       return [];
@@ -251,6 +307,49 @@ export class RecordingStore {
     const d = new Date(`${year}-${month}-${day}T${hour}:${min}:${sec}Z`);
     return isNaN(d.getTime()) ? null : d.getTime();
   }
+}
+
+/** Maximum bytes for the merged `contractResults` array per action. */
+const CONTRACT_RESULTS_MAX_BYTES = 4096;
+
+/**
+ * Merge append-only contract_result rows into their parent actions, in-place.
+ * Re-applies the 4 KB cap so a long sequence of asserts cannot bloat an action
+ * past the documented limit. Sidecar rows whose `actionIndex` does not match
+ * any known action are silently dropped.
+ */
+function mergeContractResultRows(
+  actions: RecordingAction[],
+  rows: ContractResultRow[],
+): void {
+  if (rows.length === 0) return;
+  const bySeq = new Map<number, RecordingAction>();
+  for (const a of actions) bySeq.set(a.seq, a);
+
+  for (const row of rows) {
+    const target = bySeq.get(row.actionIndex);
+    if (!target) continue;
+    const existing = target.contractResults ?? [];
+    existing.push(row.entry);
+    target.contractResults = capContractResultsByBytes(existing);
+  }
+}
+
+/**
+ * Enforce the documented 4 KB byte cap on a contractResults array. If the
+ * total serialized size exceeds the cap, replace the array with a single
+ * truncation marker matching the shape used by applyContractResultsBounds().
+ */
+function capContractResultsByBytes(
+  entries: ContractResultEntry[],
+): ContractResultEntry[] {
+  if (entries.length === 0) return entries;
+  const json = JSON.stringify(entries);
+  const bytes = Buffer.byteLength(json, 'utf8');
+  if (bytes > CONTRACT_RESULTS_MAX_BYTES) {
+    return [{ truncated: true, originalBytes: bytes } as unknown as ContractResultEntry];
+  }
+  return entries;
 }
 
 /** Singleton instance */

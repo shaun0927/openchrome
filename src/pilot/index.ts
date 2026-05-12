@@ -41,3 +41,8 @@ export * as voting from './voting/index.js';
 // no LLM calls. Gate call sites on `isSkillCuratorEnabled()` from
 // `src/harness/flags.ts` before invoking any export from this namespace.
 export * as curator from './curator/index.js';
+
+// Phase 4 (issue #820, blocks #717): pilot-tier skill graph executor.
+// Pure `decide()` function — no I/O, no side effects. Gate call sites on
+// `isStateGraphEnabled()` from `src/harness/flags.ts` before invoking.
+export * as skill from './skill/index.js';

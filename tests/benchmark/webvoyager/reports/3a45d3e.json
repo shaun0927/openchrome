@@ -1,0 +1,82 @@
+{
+  "git_sha": "3a45d3e",
+  "adapter": "mock",
+  "total_tasks": 10,
+  "pass_count": 3,
+  "fail_count": 0,
+  "pending_count": 7,
+  "contract_eval_score": "3 / 3",
+  "timestamp": "2026-05-12T10:46:03.099Z",
+  "tasks": [
+    {
+      "name": "task-01-example-com-title",
+      "result": "passed",
+      "duration_ms": 2,
+      "tool_calls": 2,
+      "response_bytes": 765
+    },
+    {
+      "name": "task-02-mdn-fetch-syntax",
+      "result": "pending",
+      "duration_ms": 0,
+      "tool_calls": 0,
+      "response_bytes": 0
+    },
+    {
+      "name": "task-03-wikipedia-eiffel-height",
+      "result": "pending",
+      "duration_ms": 0,
+      "tool_calls": 0,
+      "response_bytes": 0
+    },
+    {
+      "name": "task-04-rfc-9110-section-9-title",
+      "result": "passed",
+      "duration_ms": 2,
+      "tool_calls": 2,
+      "response_bytes": 768
+    },
+    {
+      "name": "task-05-w3c-html-section-definition",
+      "result": "pending",
+      "duration_ms": 0,
+      "tool_calls": 0,
+      "response_bytes": 0
+    },
+    {
+      "name": "task-06-arxiv-2401-13919-abstract",
+      "result": "pending",
+      "duration_ms": 0,
+      "tool_calls": 0,
+      "response_bytes": 0
+    },
+    {
+      "name": "task-07-rust-string-trim-method",
+      "result": "pending",
+      "duration_ms": 0,
+      "tool_calls": 0,
+      "response_bytes": 0
+    },
+    {
+      "name": "task-08-mdn-array-map-return",
+      "result": "pending",
+      "duration_ms": 0,
+      "tool_calls": 0,
+      "response_bytes": 0
+    },
+    {
+      "name": "task-09-wikipedia-speed-of-light",
+      "result": "pending",
+      "duration_ms": 0,
+      "tool_calls": 0,
+      "response_bytes": 0
+    },
+    {
+      "name": "task-10-tc39-ecma262-strict-mode",
+      "result": "passed",
+      "duration_ms": 2,
+      "tool_calls": 1,
+      "response_bytes": 433
+    }
+  ]
+}
