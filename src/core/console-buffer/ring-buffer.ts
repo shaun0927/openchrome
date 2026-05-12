@@ -75,37 +75,31 @@ class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
   }
 
   push(entry: T, sizeBytes: number): void {
-    // Decide what we're about to store and its accounted size.
-    //   - Normal entry: stored as-is at `sizeBytes`.
-    //   - Oversized entry (sizeBytes > maxBytes): replaced by a tiny
+    // First decide WHAT we're going to store and the byte-count we'll
+    // charge against the buffer:
+    //   - normal entry → stored as-is at `sizeBytes`.
+    //   - oversized entry (sizeBytes > maxBytes) → replaced by a tiny
     //     placeholder accounted at 0 bytes (the placeholder IS the entry,
     //     not an eviction).
-    // Both paths funnel through the same `_insertWithEviction` helper so
-    // every push enforces BOTH caps before touching `_insert`. This makes
-    // the line-cap invariant (count ≤ maxLines) trivially structural —
-    // no separate code path can grow `count` past `maxLines`.
     const ts = this._entryTimestamp(entry);
-    if (sizeBytes > this.maxBytes) {
-      const ph = this.placeholder(sizeBytes);
-      this._insertWithEviction(ph, 0, ts);
-      return;
-    }
-    this._insertWithEviction(entry, sizeBytes, ts);
-  }
+    const oversized = sizeBytes > this.maxBytes;
+    const target: T = oversized ? this.placeholder(sizeBytes) : entry;
+    const accountedBytes = oversized ? 0 : sizeBytes;
 
-  /**
-   * Evict oldest entries until both caps would be respected after a single
-   * subsequent _insert of the supplied size, then insert. Always preserves
-   * `count <= maxLines` and `retainedBytes <= maxBytes` post-condition.
-   */
-  private _insertWithEviction(entry: T, sizeBytes: number, ts: number): void {
+    // Single linear evict-then-insert. This is the ONLY code path from
+    // push() to _insert(), so the line-cap invariant (count ≤ maxLines)
+    // is enforced regardless of whether we're storing a normal entry or
+    // the oversized placeholder. Codex P1: previously the placeholder
+    // branch could grow `count` to `maxLines + 1`; eliminated by funnelling
+    // both branches through the same eviction loop here.
     while (
       this.count > 0 &&
-      (this.count >= this.maxLines || this.retainedBytes + sizeBytes > this.maxBytes)
+      (this.count >= this.maxLines ||
+        this.retainedBytes + accountedBytes > this.maxBytes)
     ) {
       this._evictOldest();
     }
-    this._insert(entry, sizeBytes, ts);
+    this._insert(target, accountedBytes, ts);
   }
 
   tail(n: number): T[] {
