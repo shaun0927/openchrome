@@ -128,6 +128,8 @@ import { registerOcObserveTool } from './oc-observe';
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
+// Goal-level TaskRun lifecycle (#1039)
+import { registerTaskRunTools } from './task-run';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -283,6 +285,9 @@ export function registerAllTools(server: MCPServer): void {
   registerOcDevToolsUrlTool(server);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
   registerOcContextTools(server);
+
+  // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
+  registerTaskRunTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
