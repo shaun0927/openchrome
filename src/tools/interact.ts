@@ -196,7 +196,7 @@ const handler: ToolHandler = async (
         { type: 'text' as const, text: lines.join('\n') },
       ];
 
-      if (verify) {
+      if (verifyMode !== 'none') {
         try {
           const screenshotBuf = await withTimeout(
             page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
