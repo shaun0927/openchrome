@@ -47,7 +47,7 @@ interface InterceptRule {
   id: string;
   pattern: string;
   resourceTypes?: string[];
-  action: 'block' | 'modify' | 'log';
+  action: 'block' | 'modify' | 'log' | 'allow';
   modifyOptions?: {
     headers?: Record<string, string>;
     body?: string;
@@ -214,7 +214,7 @@ const definition: MCPToolDefinition = {
     'Pass preset="optimize-bandwidth" to block Image, Media, Font, and Stylesheet resources in one call ' +
     '(70-90 % bandwidth reduction on typical content pages). ' +
     'Pass preset="optimize-bandwidth-light" to block Image, Media, and Font only (keeps CSS for layout-sensitive pages). ' +
-    'User-supplied block/allow rules are applied after preset rules; allow always wins. ' +
+    'User-supplied block/allow/modify rules are applied after preset rules; explicit allow rules always win. ' +
     'Set env OPENCHROME_OPTIMIZE_BANDWIDTH=<preset> to auto-apply to every new target.',
   inputSchema: {
     type: 'object',
@@ -250,7 +250,7 @@ const definition: MCPToolDefinition = {
           },
           action: {
             type: 'string',
-            enum: ['block', 'modify', 'log'],
+            enum: ['block', 'modify', 'log', 'allow'],
             description: 'Rule action',
           },
           modifyOptions: {
@@ -309,7 +309,7 @@ const handler: ToolHandler = async (
   const ruleArg = args.rule as {
     pattern?: string;
     resourceTypes?: string[];
-    action?: 'block' | 'modify' | 'log';
+    action?: 'block' | 'modify' | 'log' | 'allow';
     modifyOptions?: { status?: number; headers?: Record<string, string>; body?: string };
   } | undefined;
   const ruleId = args.ruleId as string | undefined;
@@ -396,10 +396,11 @@ const handler: ToolHandler = async (
             : undefined);
 
         // Inject preset rules at the front; user rules (added via addRule) come after.
+        // Always clear old injected preset rules first so re-enabling without a preset
+        // leaves only the user's rules active.
+        state.rules = state.rules.filter(r => !r.id.startsWith('preset-'));
         if (activePreset) {
           const presetRules = presetToRules(activePreset);
-          // Remove any previously injected preset rules to avoid duplicates on re-enable.
-          state.rules = state.rules.filter(r => !r.id.startsWith('preset-'));
           state.rules.unshift(...presetRules);
         }
 
@@ -414,10 +415,9 @@ const handler: ToolHandler = async (
 
           let matched = false;
           let matchedRule: InterceptRule | null = null;
-          let allowMatched = false;
 
-          // Two-pass rule evaluation: first pass finds block/modify/log match,
-          // second checks if any allow pattern overrides (allow wins).
+          // Two-pass rule evaluation: first pass finds the selected match,
+          // second lets later explicit allow/modify rules override a block.
           for (const rule of state!.rules) {
             if (matchesPattern(url, rule.pattern)) {
               // Check resource type filter
@@ -432,20 +432,15 @@ const handler: ToolHandler = async (
             }
           }
 
-          // Check allow rules — they are stored with action='log' and pattern prefixed 'allow:'
-          // In this implementation allow rules are user-supplied rules with action !== 'block'.
-          // The "allow wins" contract: if a later rule with action !== 'block' matches the same
-          // URL after preset block rules, the request is allowed through.
           if (matched && matchedRule?.action === 'block') {
-            // Look for any non-block rule that also matches — allow wins.
+            // Look for a later explicit override that also matches.
             for (const rule of state!.rules) {
               if (rule === matchedRule) continue;
-              if (rule.action === 'block') continue;
+              if (rule.action !== 'allow' && rule.action !== 'modify') continue;
               if (!matchesPattern(url, rule.pattern)) continue;
               if (rule.resourceTypes && rule.resourceTypes.length > 0) {
                 if (!rule.resourceTypes.includes(resourceType)) continue;
               }
-              allowMatched = true;
               matchedRule = rule;
               break;
             }
@@ -478,7 +473,7 @@ const handler: ToolHandler = async (
           }
 
           // Apply rule action
-          if (matchedRule && !allowMatched) {
+          if (matchedRule) {
             try {
               if (matchedRule.action === 'block') {
                 // Increment blocked-bytes counter before aborting.

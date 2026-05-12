@@ -27,6 +27,59 @@ import {
   BandwidthPreset,
 } from '../../src/tools/request-intercept';
 
+type RequestAction = 'block' | 'modify' | 'log' | 'allow';
+
+function parseToolResult(result: unknown): Record<string, unknown> {
+  return JSON.parse((result as { content: Array<{ text: string }> }).content[0].text);
+}
+
+async function getMockPage() {
+  return (await mockSessionManager.getPage(testSessionId, testTargetId)) as unknown as {
+    on: jest.Mock;
+  };
+}
+
+async function getRequestListener(): Promise<(request: unknown) => Promise<void>> {
+  const page = await getMockPage();
+  return page.on.mock.calls
+    .slice()
+    .reverse()
+    .find(([event]) => event === 'request')?.[1] as (request: unknown) => Promise<void>;
+}
+
+function createMockRequest(options: {
+  url: string;
+  resourceType: string;
+  method?: string;
+  headers?: Record<string, string>;
+}) {
+  return {
+    url: jest.fn(() => options.url),
+    resourceType: jest.fn(() => options.resourceType),
+    method: jest.fn(() => options.method ?? 'GET'),
+    headers: jest.fn(() => options.headers ?? {}),
+    abort: jest.fn().mockResolvedValue(undefined),
+    respond: jest.fn().mockResolvedValue(undefined),
+    continue: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+async function addRule(
+  handler: (sessionId: string, args: Record<string, unknown>) => Promise<unknown>,
+  rule: {
+    pattern: string;
+    action: RequestAction;
+    resourceTypes?: string[];
+    modifyOptions?: { status?: number; headers?: Record<string, string>; body?: string };
+  },
+) {
+  return handler(testSessionId, {
+    tabId: testTargetId,
+    action: 'addRule',
+    rule,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Helper: load the handler fresh for each test (needed to re-read ENV_PRESET
 // which is captured at module load time via jest.resetModules).
@@ -241,6 +294,156 @@ describe('allow-wins composition', () => {
       (r: { id: string; action: string }) => !r.id.startsWith('preset-'),
     );
     expect(lastPresetIdx).toBeLessThan(firstUserIdx);
+  });
+
+  test('log rule does not override preset block', async () => {
+    const handler = await loadHandler();
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+      preset: 'optimize-bandwidth',
+    });
+    await addRule(handler, {
+      pattern: '*://cdn.example.com/*',
+      resourceTypes: ['image'],
+      action: 'log',
+    });
+
+    const request = createMockRequest({
+      url: 'https://cdn.example.com/hero.png',
+      resourceType: 'image',
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.abort).toHaveBeenCalledWith('blockedbyclient');
+    expect(request.continue).not.toHaveBeenCalled();
+    expect(request.respond).not.toHaveBeenCalled();
+  });
+
+  test('log rule does not override user block', async () => {
+    const handler = await loadHandler();
+
+    await addRule(handler, {
+      pattern: '*://assets.example.com/*',
+      resourceTypes: ['image'],
+      action: 'block',
+    });
+    await addRule(handler, {
+      pattern: '*://assets.example.com/*',
+      resourceTypes: ['image'],
+      action: 'log',
+    });
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+    });
+
+    const request = createMockRequest({
+      url: 'https://assets.example.com/photo.jpg',
+      resourceType: 'image',
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.abort).toHaveBeenCalledWith('blockedbyclient');
+    expect(request.continue).not.toHaveBeenCalled();
+    expect(request.respond).not.toHaveBeenCalled();
+  });
+
+  test('explicit allow rule overrides preset block', async () => {
+    const handler = await loadHandler();
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+      preset: 'optimize-bandwidth',
+    });
+    await addRule(handler, {
+      pattern: '*://cdn.example.com/keep.png',
+      resourceTypes: ['image'],
+      action: 'allow',
+    });
+
+    const request = createMockRequest({
+      url: 'https://cdn.example.com/keep.png',
+      resourceType: 'image',
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.continue).toHaveBeenCalled();
+    expect(request.abort).not.toHaveBeenCalled();
+    expect(request.respond).not.toHaveBeenCalled();
+  });
+
+  test('modify rule overriding preset block executes response modification', async () => {
+    const handler = await loadHandler();
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+      preset: 'optimize-bandwidth',
+    });
+    await addRule(handler, {
+      pattern: '*://cdn.example.com/placeholder.png',
+      resourceTypes: ['image'],
+      action: 'modify',
+      modifyOptions: {
+        status: 204,
+        headers: { 'content-type': 'image/png' },
+        body: '',
+      },
+    });
+
+    const request = createMockRequest({
+      url: 'https://cdn.example.com/placeholder.png',
+      resourceType: 'image',
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.respond).toHaveBeenCalledWith({
+      status: 204,
+      headers: { 'content-type': 'image/png' },
+      body: '',
+    });
+    expect(request.abort).not.toHaveBeenCalled();
+    expect(request.continue).not.toHaveBeenCalled();
+  });
+
+  test('preset rules are cleared across disable and enable without preset', async () => {
+    const handler = await loadHandler();
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+      preset: 'optimize-bandwidth',
+    });
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'disable',
+    });
+
+    const enableResult = await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+    });
+    expect(parseToolResult(enableResult).preset).toBeNull();
+
+    const listResult = await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'listRules',
+    });
+    const rules = parseToolResult(listResult).rules as Array<{ id: string }>;
+    expect(rules.some((r) => r.id.startsWith('preset-'))).toBe(false);
+
+    const request = createMockRequest({
+      url: 'https://cdn.example.com/photo.jpg',
+      resourceType: 'image',
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.continue).toHaveBeenCalled();
+    expect(request.abort).not.toHaveBeenCalled();
+    expect(request.respond).not.toHaveBeenCalled();
   });
 });
 
