@@ -75,33 +75,37 @@ class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
   }
 
   push(entry: T, sizeBytes: number): void {
-    // Case 1: single entry exceeds the byte cap — store placeholder instead.
-    // The placeholder still consumes one slot, so we MUST first enforce the
-    // line-cap invariant by evicting the oldest entry when the buffer is
-    // full. Without this guard `count` would become `maxLines + 1`, and
-    // drain()/tail() would iterate `count` entries modulo `maxLines` —
-    // duplicating the oldest survivor (Codex P1 corruption path).
+    // Decide what we're about to store and its accounted size.
+    //   - Normal entry: stored as-is at `sizeBytes`.
+    //   - Oversized entry (sizeBytes > maxBytes): replaced by a tiny
+    //     placeholder accounted at 0 bytes (the placeholder IS the entry,
+    //     not an eviction).
+    // Both paths funnel through the same `_insertWithEviction` helper so
+    // every push enforces BOTH caps before touching `_insert`. This makes
+    // the line-cap invariant (count ≤ maxLines) trivially structural —
+    // no separate code path can grow `count` past `maxLines`.
+    const ts = this._entryTimestamp(entry);
     if (sizeBytes > this.maxBytes) {
-      while (this.count >= this.maxLines) {
-        this._evictOldest();
-      }
       const ph = this.placeholder(sizeBytes);
-      // The placeholder itself is considered zero bytes for cap accounting
-      // (it is tiny), so we push it as size 0. This matches the invariant:
-      // the placeholder IS the entry, not an eviction.
-      this._insert(ph, 0, this._entryTimestamp(entry));
+      this._insertWithEviction(ph, 0, ts);
       return;
     }
+    this._insertWithEviction(entry, sizeBytes, ts);
+  }
 
-    // Case 2: normal entry — evict oldest entries until both caps are satisfied.
+  /**
+   * Evict oldest entries until both caps would be respected after a single
+   * subsequent _insert of the supplied size, then insert. Always preserves
+   * `count <= maxLines` and `retainedBytes <= maxBytes` post-condition.
+   */
+  private _insertWithEviction(entry: T, sizeBytes: number, ts: number): void {
     while (
       this.count > 0 &&
       (this.count >= this.maxLines || this.retainedBytes + sizeBytes > this.maxBytes)
     ) {
       this._evictOldest();
     }
-
-    this._insert(entry, sizeBytes, this._entryTimestamp(entry));
+    this._insert(entry, sizeBytes, ts);
   }
 
   tail(n: number): T[] {
@@ -207,14 +211,28 @@ class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
  * @param opts       Cap options (maxLines, maxBytes). Defaults use env vars.
  * @param placeholder Factory that produces a typed truncation placeholder.
  */
+/**
+ * Coerce a caller-supplied cap to a positive integer. Any value that would
+ * crash the constructor (`0`, `NaN`, `-1`, `'abc'`, `Infinity`, non-integer)
+ * silently falls back to the documented default — see Codex P1 (zero
+ * `maxLines` makes the buffer's modulo arithmetic produce invalid indices
+ * and the eviction loop spin forever).
+ */
+function sanePositiveInt(v: unknown, fallback: number): number {
+  if (v === undefined || v === null) return fallback;
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return fallback;
+  return n;
+}
+
 export function createConsoleRingBuffer<T>(
   opts: Partial<ConsoleRingBufferOptions>,
   placeholder: PlaceholderFactory<T>,
 ): ConsoleRingBuffer<T> {
   return new ConsoleRingBufferImpl<T>(
     {
-      maxLines: opts.maxLines ?? DEFAULT_MAX_LINES,
-      maxBytes: opts.maxBytes ?? DEFAULT_MAX_BYTES,
+      maxLines: sanePositiveInt(opts.maxLines, DEFAULT_MAX_LINES),
+      maxBytes: sanePositiveInt(opts.maxBytes, DEFAULT_MAX_BYTES),
     },
     placeholder,
   );

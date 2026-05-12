@@ -14,6 +14,20 @@ import { getSessionManager } from '../session-manager';
 import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '../core/console-buffer/ring-buffer';
 import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
 
+/**
+ * Validate caller-supplied cap values. Used to reject `maxLogs`/`maxBytes`
+ * inputs that would corrupt the ring buffer (zero, negative, NaN, Infinity,
+ * non-integer, non-number) before they reach `createConsoleRingBuffer`.
+ *
+ * The factory itself also coerces invalid values back to defaults as a
+ * defense-in-depth measure, but the tool-level check returns a clear
+ * structured error to the caller so they see the bad input.
+ */
+function isPositiveInteger(v: unknown): boolean {
+  if (typeof v !== 'number') return false;
+  return Number.isFinite(v) && Number.isInteger(v) && v > 0;
+}
+
 // Console log entry structure
 interface ConsoleLogEntry {
   type: string;
@@ -243,9 +257,28 @@ const handler: ToolHandler = async (
   const action = args.action as string;
   const filter = args.filter as string[] | undefined;
   const limit = args.limit as number | undefined;
-  // maxLogs is a backward-compatible alias for maxLines
-  const maxLogs = (args.maxLogs as number | undefined) ?? DEFAULT_MAX_LINES;
-  const maxBytes = (args.maxBytes as number | undefined) ?? DEFAULT_MAX_BYTES;
+  // maxLogs is a backward-compatible alias for maxLines. Defense-in-depth:
+  // reject zero / non-positive / non-integer values BEFORE forwarding to
+  // createConsoleRingBuffer so a malformed `start` request returns a clear
+  // error to the caller instead of silently flipping to the default
+  // (Codex P1 — `maxLogs: 0` is currently in the schema's value range).
+  const rawMaxLogs = args.maxLogs as unknown;
+  const rawMaxBytes = args.maxBytes as unknown;
+  const maxLogsValid = rawMaxLogs === undefined || isPositiveInteger(rawMaxLogs);
+  const maxBytesValid = rawMaxBytes === undefined || isPositiveInteger(rawMaxBytes);
+  if (!maxLogsValid || !maxBytesValid) {
+    return {
+      content: [{
+        type: 'text',
+        text:
+          'Error: maxLogs and maxBytes must be positive integers when supplied. ' +
+          `Received maxLogs=${JSON.stringify(rawMaxLogs)}, maxBytes=${JSON.stringify(rawMaxBytes)}.`,
+      }],
+      isError: true,
+    };
+  }
+  const maxLogs = (rawMaxLogs as number | undefined) ?? DEFAULT_MAX_LINES;
+  const maxBytes = (rawMaxBytes as number | undefined) ?? DEFAULT_MAX_BYTES;
 
   const sessionManager = getSessionManager();
 
