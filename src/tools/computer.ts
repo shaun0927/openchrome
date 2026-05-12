@@ -22,7 +22,7 @@ import {
 
 const definition: MCPToolDefinition = {
   name: 'computer',
-  description: 'Mouse, keyboard, and screenshot actions on a tab.',
+  description: 'Mouse, keyboard, and screenshot actions on a tab. Supports click, type, scroll, key, hover, and screenshot by pixel coordinate or element ref.\n\nWhen to use: Precise coordinate-based input, screenshots, or keyboard shortcuts.\nWhen NOT to use: Use interact for natural-language element actions, or act for multi-step sequences.',
   inputSchema: {
     type: 'object',
     properties: {

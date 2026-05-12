@@ -40,6 +40,13 @@ export interface HintRule {
   name: string;
   priority: number;
   maxSeverity?: HintSeverity;
+  /**
+   * When true, this rule duplicates guidance already embedded in a tool
+   * description's "When to use / When NOT to use" block. If the client has
+   * consumed tools/list (i.e. descriptions have been delivered), the rule
+   * is suppressed to avoid redundant output.
+   */
+  redundant_with_description?: boolean;
   match(ctx: HintContext): string | null;
 }
 
@@ -78,6 +85,8 @@ export class HintEngine {
   private learner: PatternLearner;
   private progressTracker: ProgressTracker;
   private logFilePath: string | null = null;
+  /** True once tools/list has been served — suppresses rules tagged redundant_with_description */
+  private toolsListServed = false;
   private hintEscalation: Map<string, number> = new Map(); // ruleName -> session fire count
   private missCounts: Map<string, number> = new Map(); // ruleName -> consecutive miss count
 
@@ -130,6 +139,23 @@ export class HintEngine {
    */
   enableLearning(dirPath: string): void {
     this.learner.enablePersistence(dirPath);
+  }
+
+  /**
+   * Signal that tools/list has been served to a client this session.
+   * Rules tagged `redundant_with_description: true` will be suppressed
+   * thereafter to avoid duplicating guidance already embedded in tool
+   * descriptions.
+   */
+  markToolsListServed(): void {
+    this.toolsListServed = true;
+  }
+
+  /**
+   * Whether tools/list has been served. Exposed for tests.
+   */
+  hasServedToolsList(): boolean {
+    return this.toolsListServed;
   }
 
   /**
@@ -198,6 +224,12 @@ export class HintEngine {
     let matchedMaxSeverity: HintSeverity | undefined;
 
     for (const rule of this.rules) {
+      // Suppress rules whose guidance is duplicated by an embedded tool
+      // description "When to use / When NOT to use" block, once the client
+      // has consumed tools/list.
+      if (rule.redundant_with_description && this.toolsListServed) {
+        continue;
+      }
       const h = rule.match(ctx);
       if (h) {
         matchedRule = rule.name;

@@ -645,6 +645,13 @@ export class MCPServer {
    * Handle tools/list request
    */
   private async handleToolsList(): Promise<MCPResult> {
+    // Signal the hint engine that the client has consumed tool descriptions,
+    // so rules whose guidance is already embedded in description "When to
+    // use / When NOT to use" blocks can suppress themselves.
+    if (this.hintEngine) {
+      this.hintEngine.markToolsListServed();
+    }
+
     const tools: MCPToolDefinition[] = [];
     for (const registry of this.tools.values()) {
       const tier = getToolTier(registry.definition.name);

@@ -23,7 +23,7 @@ import {
 const definition: MCPToolDefinition = {
   name: 'crawl_sitemap',
   description:
-    'Crawl a website using its sitemap.xml. Auto-discovers sitemaps from robots.txt or well-known URLs (/sitemap.xml, /sitemap_index.xml). Supports sitemap index files and URL filtering.',
+    'Crawl a website using its sitemap.xml. Auto-discovers sitemaps from robots.txt or /sitemap.xml. Supports sitemap index files and URL filtering.\n\nWhen to use: Extracting content from many pages of a site that publishes a sitemap.xml.\nWhen NOT to use: Use crawl for BFS discovery when no sitemap exists, or navigate for a single page.',
   inputSchema: {
     type: 'object',
     properties: {

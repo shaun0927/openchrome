@@ -22,7 +22,7 @@ import { humanMouseMove } from '../stealth/human-behavior';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find element, act, wait, return state summary.',
+  description: 'Find element by natural language, perform click/hover/double_click, wait for DOM to settle, and return state summary.\n\nWhen to use: Clicking or hovering an element described in plain language in a single call.\nWhen NOT to use: Use computer for coordinate-based clicks, or act for multi-step sequences.',
   inputSchema: {
     type: 'object',
     properties: {
