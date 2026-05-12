@@ -42,6 +42,12 @@ export * as voting from './voting/index.js';
 // `src/harness/flags.ts` before invoking any export from this namespace.
 export * as curator from './curator/index.js';
 
+// Phase 5 (issue #874): user-supplied proxy lifecycle binding. Pilot-tier
+// MCP tool that lets the host declare origin→upstream rules without
+// openchrome ever contacting the upstream proxy. Gate call sites on
+// `isProxyHookEnabled()` from `src/harness/flags.ts` before invoking any
+// export from this namespace.
+export * as proxy from './proxy/index.js';
 // Phase 4 (issue #820, blocks #717): pilot-tier skill graph executor.
 // Pure `decide()` function — no I/O, no side effects. Gate call sites on
 // `isStateGraphEnabled()` from `src/harness/flags.ts` before invoking.
