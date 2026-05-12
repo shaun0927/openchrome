@@ -25,7 +25,7 @@ import {
 const definition: MCPToolDefinition = {
   name: 'crawl',
   description:
-    'Recursively crawl a website via BFS. Opens each page in a new tab, extracts text content and discovers links, then follows them up to max_depth. Respects robots.txt and scope constraints.',
+    'Recursively crawl a website via BFS. Opens pages in new tabs, extracts text and links, follows them up to max_depth. Respects robots.txt and scope constraints.\n\nWhen to use: Extracting content from multiple pages of a site when the URL structure is not known in advance.\nWhen NOT to use: Use crawl_sitemap when the site has a sitemap.xml, or navigate for a single page.',
   inputSchema: {
     type: 'object',
     properties: {

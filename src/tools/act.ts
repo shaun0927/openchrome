@@ -38,7 +38,7 @@ interface StepResult {
 
 const definition: MCPToolDefinition = {
   name: 'act',
-  description: 'Execute multi-step browser actions from natural language instruction.',
+  description: 'Execute multi-step browser actions from a natural language instruction. Parses and runs click, type, select, scroll, hover, navigate, and wait steps in sequence.\n\nWhen to use: Automating a known multi-step flow (login, form fill, navigation) in one call.\nWhen NOT to use: Use interact for a single element action, or computer for raw coordinate input.',
   inputSchema: {
     type: 'object',
     properties: {
