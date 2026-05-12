@@ -95,6 +95,7 @@ import { registerValidatePageTool } from './validate-page';
 
 // Structured extraction (#571)
 import { registerExtractDataTool } from './extract-data';
+import { registerOcQueryDebugTool } from './oc-query-debug';
 
 // 2FA tools (#575)
 import { registerTotpGenerateTool } from './totp-generate';
@@ -231,6 +232,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Structured extraction (#571)
   registerExtractDataTool(server);
+  registerOcQueryDebugTool(server);
 
   // 2FA tools (#575)
   registerTotpGenerateTool(server);
