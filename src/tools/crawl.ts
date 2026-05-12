@@ -655,9 +655,11 @@ const handler: ToolHandler = async (
         if (!probe) break; // Queue is truly empty
         // If it's beyond depth, we're done
         if (probe.depth > maxDepth) break;
-        // Otherwise put it back and try again — shouldn't happen but be safe
+        // Otherwise put it back and retry. In best_first mode an over-depth
+        // item can sort ahead of an in-depth item; breaking here would stop
+        // the crawl even though valid work remains behind the probe.
         enqueueItems([probe]);
-        break;
+        continue;
       }
 
       // Fetch batch in parallel with concurrency limiter

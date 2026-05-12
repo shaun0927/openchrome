@@ -34,6 +34,16 @@ describe('url scorer', () => {
     expect(low.reasons).toContain('low-signal:tag');
   });
 
+
+  test('does not throw on malformed percent-encoded pathnames', () => {
+    const scored = scoreUrl('https://example.com/docs/%zz-enterprise', 1, {
+      query: 'enterprise',
+    });
+
+    expect(Number.isFinite(scored.score)).toBe(true);
+    expect(scored.reasons).toEqual(expect.arrayContaining(['keyword:enterprise']));
+  });
+
   test('normalizes issue url_score options', () => {
     const opts = buildUrlScoreOptions({
       query: 'workflow secrets',

@@ -41,6 +41,14 @@ function queryTerms(query?: string): string[] {
   return Array.from(seen);
 }
 
+function safeDecodePathname(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+}
+
 function normalizePathPrefix(path: string): string {
   const trimmed = path.trim();
   if (!trimmed) return '';
@@ -97,7 +105,8 @@ export function scoreUrl(candidateUrl: string, depth: number, options: UrlScoreO
 
   const explicitKeywords = (options.keywords || []).map(normalizeTerm).filter(Boolean);
   const terms = Array.from(new Set([...queryTerms(options.query), ...explicitKeywords]));
-  const haystack = `${decodeURIComponent(parsed.pathname)} ${parsed.searchParams.toString()}`.toLowerCase();
+  const decodedPathname = safeDecodePathname(parsed.pathname);
+  const haystack = `${decodedPathname} ${parsed.searchParams.toString()}`.toLowerCase();
 
   for (const term of terms) {
     if (!term) continue;
