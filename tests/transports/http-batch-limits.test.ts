@@ -54,10 +54,21 @@ function request(port: number, body: unknown): Promise<HttpResult> {
 
 describe('HTTPTransport JSON-RPC batch limits', () => {
   let transport: HTTPTransport;
+  let previousAllowUnauthenticatedHttp: string | undefined;
+
+  beforeEach(() => {
+    previousAllowUnauthenticatedHttp = process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+    process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = 'true';
+  });
 
   afterEach(async () => {
     if (transport) {
       await transport.close();
+    }
+    if (previousAllowUnauthenticatedHttp === undefined) {
+      delete process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+    } else {
+      process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = previousAllowUnauthenticatedHttp;
     }
   });
 
@@ -68,7 +79,7 @@ describe('HTTPTransport JSON-RPC batch limits', () => {
       id: msg.id as number,
       result: { ok: true },
     }));
-    transport = new HTTPTransport(port, '127.0.0.1');
+    transport = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(handler);
     transport.start();
 
@@ -100,7 +111,7 @@ describe('HTTPTransport JSON-RPC batch limits', () => {
   it('rejects an oversized notification-only batch with a single id:null error', async () => {
     const port = await ephemeralPort();
     const handler = jest.fn(async () => null);
-    transport = new HTTPTransport(port, '127.0.0.1');
+    transport = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(handler);
     transport.start();
 
@@ -129,7 +140,7 @@ describe('HTTPTransport JSON-RPC batch limits', () => {
     let maxActive = 0;
     const releaseHandlers: Array<() => void> = [];
 
-    transport = new HTTPTransport(port, '127.0.0.1');
+    transport = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     transport.onMessage(async (msg: JsonRpcMessage) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
