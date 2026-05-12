@@ -423,19 +423,17 @@ export async function runReplay(args: RunReplayArgs): Promise<SkillReplayResult>
         narrowed.awaitFrameNavigated && args.cdp.awaitFrameNavigated
           ? args.cdp.awaitFrameNavigated(stepTimeoutMs)
           : null;
-      // Swallow the pending rejection until we explicitly await it below; this
-      // is only needed to silence "unhandled rejection" reports during the
-      // send() phase. The real rejection still surfaces from the awaited
-      // withTimeout() call.
-      if (navWait) navWait.catch(() => {});
+      const send = args.cdp.send(narrowed.method, narrowed.params);
+      const stepWork = navWait
+        ? Promise.all([send, navWait]).then(() => undefined)
+        : send.then(() => undefined);
       await withTimeout(
-        args.cdp.send(narrowed.method, narrowed.params),
+        stepWork,
         stepTimeoutMs,
-        `cdp ${narrowed.method}`,
+        narrowed.awaitFrameNavigated
+          ? `cdp ${narrowed.method} + Page.frameNavigated`
+          : `cdp ${narrowed.method}`,
       );
-      if (navWait) {
-        await withTimeout(navWait, stepTimeoutMs, 'Page.frameNavigated');
-      }
       stepsExecuted++;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

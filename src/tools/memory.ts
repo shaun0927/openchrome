@@ -12,6 +12,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getDomainMemory } from '../memory/domain-memory';
+import { findLiteralSecret } from '../core/secrets';
 
 const definition: MCPToolDefinition = {
   name: 'memory',
@@ -64,6 +65,33 @@ function handleRecord(args: Record<string, unknown>): MCPResult {
     return {
       content: [
         { type: 'text', text: 'Error: domain, key, and value are required for record action' },
+      ],
+      isError: true,
+    };
+  }
+
+  // Defense-in-depth (#834): refuse values that literally contain a loaded
+  // secret. The substitution layer rewrites tokens to values during request
+  // dispatch, so an agent that accidentally records a substituted secret
+  // would write it to disk in cleartext. Catching this here keeps the
+  // domain-memory store secret-free even when the response redactor on the
+  // outgoing path is bypassed (e.g., direct internal callers).
+  const leakedName = findLiteralSecret(value);
+  if (leakedName !== undefined) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            error: 'SECRET_LITERAL_IN_VALUE',
+            code: 'SECRET_LITERAL_IN_VALUE',
+            key,
+            secret_name: leakedName,
+            message:
+              `Refusing to record key "${key}" because value contains a loaded secret ` +
+              `("${leakedName}"). Use \${SECRET:${leakedName}} as a placeholder instead.`,
+          }),
+        },
       ],
       isError: true,
     };

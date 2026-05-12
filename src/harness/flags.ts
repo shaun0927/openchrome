@@ -67,14 +67,21 @@ export const isSkillCuratorEnabled = (): boolean => isFamilyEnabled('OPENCHROME_
 
 /**
  * Pilot-tier skill replay (#856). Off-by-default even when `--pilot` is on:
- * the operator must explicitly opt in via `OPENCHROME_SKILL_REPLAY=1`. This
- * keeps the toolset diff identical to the 1.11 baseline unless the operator
- * deliberately wires the new MCP tool in.
+ * the operator must explicitly opt in via `OPENCHROME_SKILL_REPLAY=1`.
  */
 export function isSkillReplayEnabled(): boolean {
   if (!isPilotEnabled()) return false;
   return isTruthy(process.env.OPENCHROME_SKILL_REPLAY);
 }
+
+/**
+ * Proxy hook family (issue #874). Explicit opt-in on top of --pilot.
+ */
+export function isProxyHookEnabled(): boolean {
+  if (!isPilotEnabled()) return false;
+  return isTruthy(process.env.OPENCHROME_PROXY_HOOK);
+}
+
 
 const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['trace', isTraceEnabled],
@@ -84,6 +91,7 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['perception_voting', isPerceptionVotingEnabled],
   ['skill_curator', isSkillCuratorEnabled],
   ['skill_replay', isSkillReplayEnabled],
+  ['proxy_hook', isProxyHookEnabled]
 ];
 
 /**
