@@ -153,20 +153,81 @@ import { registerOcContextTools } from './oc-context';
 
 /**
  * One entry per registrar invocation. `tools` is the list of MCP-visible
- * names that calling `register()` will produce; the entry is invoked iff at
- * least one of those names belongs to an enabled category.
+ * names that calling `register()` will produce.
  *
- * Granularity intentionally matches the original `registerAllTools` body —
- * we don't fan out multi-tool registrars (e.g. orchestration, recording,
- * connect) into per-tool entries because the registrar is a unit of code
- * cost, not a unit of selection. Per-tool selection is achieved by the fact
- * that EVERY tool produced by the registrar shares the same category in the
- * canonical map; the lint script enforces total coverage.
+ * Selection is per-TOOL, not per-registrar: a registrar that emits tools
+ * across multiple categories (e.g. orchestration emits `worker_update` in
+ * `tabs` and `workflow_*` in `workflow`) is still invoked, and the proxy
+ * server passed to it silently drops the individual `registerTool()` calls
+ * whose category is disabled. The `tools` list is preserved here both for
+ * the category lint (`scripts/lint-tool-categories.mjs` parses it) and so
+ * the disabled-tools sidecar resource can report the exact names that were
+ * filtered out, with category-specific restart hints.
  */
 interface RegistrationEntry {
   /** MCP names produced by `register`. Must all be present in TOOL_TO_CATEGORY. */
   tools: readonly string[];
   register: (server: MCPServer) => void;
+}
+
+/**
+ * Build a `MCPServer` proxy that delegates `registerTool` only when the
+ * tool's category is in the enabled set. Every other property/method is
+ * forwarded untouched. Disabled tools are appended to `disabledOut` so the
+ * caller can publish them on the sidecar resource.
+ *
+ * Why a Proxy instead of editing each `registerXxx(server)` callsite:
+ *   - A registrar may emit tools in DIFFERENT categories (orchestration ⇒
+ *     `tabs` + `workflow`). The pre-#944 "all-or-nothing per registrar"
+ *     branch silently dropped workflow_* tools when only `tabs` was
+ *     disabled. The proxy makes the filter run per individual tool, which
+ *     restores the contract advertised by --disable-categories.
+ *   - Keeps every existing registrar untouched: they keep calling
+ *     `server.registerTool(...)` exactly as before.
+ */
+function makeFilteredServer(
+  server: MCPServer,
+  enabled: Set<ToolCategory>,
+  disabledOut: DisabledToolEntry[],
+): MCPServer {
+  return new Proxy(server, {
+    get(target, prop, receiver) {
+      if (prop === 'registerTool') {
+        return function filteredRegisterTool(
+          this: unknown,
+          name: string,
+          ...rest: unknown[]
+        ): void {
+          const category = TOOL_TO_CATEGORY[name];
+          if (category === undefined) {
+            // Misconfiguration — fail loud at startup so a missing category
+            // assignment never silently slips into production. Mirrors the
+            // CI lint check (scripts/lint-tool-categories.mjs).
+            throw new Error(
+              `[Tools] Tool "${name}" has no category in TOOL_TO_CATEGORY. ` +
+                `Add it to src/tools/_shared/category.ts.`,
+            );
+          }
+          if (!enabled.has(category)) {
+            disabledOut.push({
+              name,
+              category,
+              hint: buildDisabledHint(category),
+            });
+            return;
+          }
+          // Forward to the real registerTool. We invoke via the underlying
+          // method bound to `target` so internal `this` references resolve
+          // against the real server, not the proxy.
+          const original = Reflect.get(target, prop, target) as (
+            ...args: unknown[]
+          ) => void;
+          original.call(target, name, ...rest);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
 }
 
 const REGISTRATION_ENTRIES: readonly RegistrationEntry[] = [
@@ -369,49 +430,30 @@ export function registerAllTools(
   const enabled = resolveEnabledCategories(selection);
   const disabledEntries: DisabledToolEntry[] = [];
 
+  // Pre-validate every advertised tool name has a category assignment. We
+  // do this up front (rather than only during the proxy's registerTool
+  // dispatch) so a missing TOOL_TO_CATEGORY entry on a registrar that
+  // happens to be category-disabled still fails loud at startup, exactly
+  // as the v1.11.0 unconditional registration path did.
   for (const entry of REGISTRATION_ENTRIES) {
-    // A registrar is invoked iff EVERY tool it produces belongs to an
-    // enabled category. Multi-tool registrars whose names span categories
-    // would normally be a smell — but TOOL_TO_CATEGORY is verified by the
-    // lint script + snapshot test to assign one canonical category per
-    // name, so in practice every multi-tool registrar in this file shares
-    // a single category among its outputs (orchestration → workflow,
-    // recording → capture, connect → host).
-    let allEnabled = true;
     for (const name of entry.tools) {
-      const cat = TOOL_TO_CATEGORY[name];
-      if (cat === undefined) {
-        // Misconfiguration — fail loud at startup so a missing category
-        // assignment never silently slips into production. Mirrors the
-        // CI lint check (scripts/lint-tool-categories.mjs).
+      if (TOOL_TO_CATEGORY[name] === undefined) {
         throw new Error(
           `[Tools] Tool "${name}" has no category in TOOL_TO_CATEGORY. ` +
             `Add it to src/tools/_shared/category.ts.`,
         );
       }
-      if (!enabled.has(cat)) {
-        allEnabled = false;
-      }
     }
+  }
 
-    if (allEnabled) {
-      entry.register(server);
-    } else {
-      // Record every individual tool the registrar would have produced as
-      // disabled, with its own category-specific restart hint. We surface
-      // ALL skipped names here, even ones whose category happens to be
-      // enabled (in case a future multi-tool registrar bundles tools across
-      // categories) — an operator can then read the resource and see
-      // exactly what's missing and why.
-      for (const name of entry.tools) {
-        const cat = TOOL_TO_CATEGORY[name] as ToolCategory;
-        disabledEntries.push({
-          name,
-          category: cat,
-          hint: buildDisabledHint(cat),
-        });
-      }
-    }
+  // Per-tool filtering: every registrar is invoked, but the proxy server
+  // it receives silently drops registerTool() calls whose category is
+  // disabled. This restores the per-category filtering contract for
+  // registrars that emit tools across multiple categories (e.g.
+  // orchestration → `worker_update` is `tabs`, `workflow_*` is `workflow`).
+  const filteredServer = makeFilteredServer(server, enabled, disabledEntries);
+  for (const entry of REGISTRATION_ENTRIES) {
+    entry.register(filteredServer);
   }
 
   // Publish the disabled-tools snapshot to the sidecar resource so agents

@@ -11,8 +11,42 @@
  * The order check matters: the resolver re-emits in canonical order so
  * snapshot consumers (the disabled-tools resource, the registration snapshot
  * test) get a stable serialization regardless of input order.
+ *
+ * Also covers per-tool registration filtering for registrars that emit
+ * tools across multiple categories (regression for PR #944 / Codex P1).
  */
 
+// ─── Mocks (mirrors tests/tools/registration-default.snapshot.test.ts) ──────
+// Required because the per-tool filtering regression suite below constructs
+// a real MCPServer and invokes registerAllTools, which transitively touches
+// the session manager and chrome launcher singletons.
+
+jest.mock('../../src/session-manager', () => ({
+  getSessionManager: jest.fn(() => ({
+    getAllSessionInfos: jest.fn().mockReturnValue([]),
+    getOrCreateSession: jest.fn().mockResolvedValue({}),
+    cleanupAllSessions: jest.fn().mockResolvedValue(undefined),
+    deleteSession: jest.fn().mockResolvedValue(undefined),
+    addEventListener: jest.fn(),
+  })),
+}));
+
+jest.mock('../../src/chrome/launcher', () => ({
+  getChromeLauncher: jest.fn(() => ({
+    isConnected: jest.fn().mockReturnValue(false),
+    getProfileState: jest.fn().mockReturnValue({
+      type: 'temp',
+      extensionsAvailable: false,
+    }),
+  })),
+}));
+
+import { MCPServer } from '../../src/mcp-server';
+import { registerAllTools } from '../../src/tools';
+import {
+  getDisabledToolsSnapshot,
+  setDisabledToolsSnapshot,
+} from '../../src/resources/tools-disabled';
 import {
   ALL_CATEGORIES,
   ALWAYS_ON_CATEGORIES,
@@ -186,5 +220,94 @@ describe('parseCategoryCsv', () => {
   test('returns [] for empty input', () => {
     expect(parseCategoryCsv('', 'test')).toEqual([]);
     expect(parseCategoryCsv('  ', 'test')).toEqual([]);
+  });
+});
+
+// ─── Per-tool filter regression (PR #944 / Codex P1) ────────────────────────
+//
+// Before #944 the registration dispatch was all-or-nothing per registrar:
+// if ANY tool produced by a registrar belonged to a disabled category, the
+// ENTIRE registrar was skipped. The orchestration registrar emits
+// `worker_update` (categorized `tabs`) alongside the `workflow_*` family
+// (categorized `workflow`), so --disable-categories=tabs unintentionally
+// removed all workflow_* tools. These tests pin the fixed behavior: every
+// individual tool is gated by its own category, not its registrar's union.
+
+describe('registerAllTools — per-tool filter on mixed-category registrars', () => {
+  let server: MCPServer;
+
+  beforeEach(() => {
+    // Reset the sidecar disabled-tools snapshot so cross-test state from
+    // the registration-default snapshot suite (or prior cases here) does
+    // not bleed in.
+    setDisabledToolsSnapshot([]);
+    server = new MCPServer();
+  });
+
+  test('--disable-categories=tabs preserves orchestration workflow_* tools', () => {
+    registerAllTools(server, { disabled: ['tabs'] });
+    const names = new Set(server.getToolNames());
+
+    // worker_update is the only orchestration tool in the `tabs` category
+    // and MUST be dropped.
+    expect(names.has('worker_update')).toBe(false);
+    // Sibling `tabs` tools also gone.
+    expect(names.has('worker')).toBe(false);
+    expect(names.has('tabs_create')).toBe(false);
+    expect(names.has('tabs_close')).toBe(false);
+    expect(names.has('tabs_context')).toBe(false);
+
+    // Workflow-category tools live in the SAME registrar
+    // (registerOrchestrationTools) but must SURVIVE the tabs disable.
+    expect(names.has('workflow_init')).toBe(true);
+    expect(names.has('workflow_status')).toBe(true);
+    expect(names.has('workflow_collect')).toBe(true);
+    expect(names.has('workflow_collect_partial')).toBe(true);
+    expect(names.has('workflow_cleanup')).toBe(true);
+    expect(names.has('worker_complete')).toBe(true);
+    expect(names.has('execute_plan')).toBe(true);
+  });
+
+  test('--disable-categories=tabs,workflow drops both orchestration slices', () => {
+    registerAllTools(server, { disabled: ['tabs', 'workflow'] });
+    const names = new Set(server.getToolNames());
+
+    // tabs slice
+    expect(names.has('worker_update')).toBe(false);
+    expect(names.has('worker')).toBe(false);
+    expect(names.has('tabs_create')).toBe(false);
+
+    // workflow slice (same orchestration registrar)
+    expect(names.has('workflow_init')).toBe(false);
+    expect(names.has('workflow_status')).toBe(false);
+    expect(names.has('worker_complete')).toBe(false);
+    expect(names.has('execute_plan')).toBe(false);
+    // workflow-category tools outside the orchestration registrar also gone.
+    expect(names.has('batch_execute')).toBe(false);
+    expect(names.has('batch_paginate')).toBe(false);
+    expect(names.has('lightweight_scroll')).toBe(false);
+
+    // Sibling categories untouched.
+    expect(names.has('navigate')).toBe(true);
+    expect(names.has('vision_find')).toBe(true);
+  });
+
+  test('disabled-tools snapshot lists per-tool category for mixed registrars', () => {
+    registerAllTools(server, { disabled: ['tabs'] });
+    const snap = getDisabledToolsSnapshot();
+    const byName = new Map(snap.tools.map((t) => [t.name, t]));
+
+    // worker_update is categorized `tabs` and must surface as disabled
+    // with its OWN category, not the registrar's union.
+    const workerUpdate = byName.get('worker_update');
+    expect(workerUpdate).toBeDefined();
+    expect(workerUpdate?.category).toBe('tabs');
+    expect(workerUpdate?.hint).toMatch(/--enable-categories=/);
+
+    // workflow_* tools from the SAME registrar are NOT disabled and must
+    // not appear in the disabled snapshot.
+    expect(byName.has('workflow_init')).toBe(false);
+    expect(byName.has('worker_complete')).toBe(false);
+    expect(byName.has('execute_plan')).toBe(false);
   });
 });
