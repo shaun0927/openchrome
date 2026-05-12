@@ -111,36 +111,37 @@ export function isPidAlive(pid: number): boolean {
 export function summariseArgs(
   args: Record<string, unknown>,
 ): Record<string, unknown> {
-  // Strip obvious credential fields and clamp size.
-  const REDACT_KEYS = new Set([
-    'password',
-    'passwd',
-    'secret',
-    'token',
-    'apiKey',
-    'api_key',
-    'authorization',
-    'cookie',
-  ]);
-  const redacted: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args ?? {})) {
-    if (REDACT_KEYS.has(k)) {
-      redacted[k] = '[redacted]';
-      continue;
+  const redactKey = (key: string): boolean => {
+    const normalised = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return (
+      normalised.includes('password') ||
+      normalised.includes('passwd') ||
+      normalised.includes('secret') ||
+      normalised.includes('token') ||
+      normalised.includes('apikey') ||
+      normalised.includes('authorization') ||
+      normalised === 'cookie' ||
+      normalised.endsWith('cookie')
+    );
+  };
+
+  const redactDeep = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(redactDeep);
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        out[key] = redactKey(key) ? '[redacted]' : redactDeep(child);
+      }
+      return out;
     }
-    redacted[k] = v;
-  }
-  // If still too big after redaction, truncate the serialised form.
-  let serialised = JSON.stringify(redacted);
-  if (Buffer.byteLength(serialised, 'utf8') > MAX_ARGS_SUMMARY_BYTES) {
-    serialised = serialised.slice(0, MAX_ARGS_SUMMARY_BYTES - 16) + '..."}';
-    // Best-effort: if truncation produced invalid JSON, fall back to a
-    // stub so meta.json stays parseable.
-    try {
-      return JSON.parse(serialised) as Record<string, unknown>;
-    } catch {
-      return { _truncated: true, _bytes: Buffer.byteLength(JSON.stringify(redacted), 'utf8') };
-    }
+    return value;
+  };
+
+  const redacted = redactDeep(args ?? {}) as Record<string, unknown>;
+  const serialised = JSON.stringify(redacted);
+  const bytes = Buffer.byteLength(serialised, 'utf8');
+  if (bytes > MAX_ARGS_SUMMARY_BYTES) {
+    return { _truncated: true, _bytes: bytes };
   }
   return redacted;
 }
@@ -211,6 +212,24 @@ export class TaskStore {
     await writeFileAtomicSafe(this.metaPath(meta.task_id), JSON.stringify(meta, null, 2));
   }
 
+
+  /** Async best-effort meta.json read. Returns undefined on miss/corruption. */
+  async readMeta(taskId: string): Promise<TaskMeta | undefined> {
+    try {
+      assertSafeTaskId(taskId);
+    } catch {
+      return undefined;
+    }
+    try {
+      const raw = await fs.promises.readFile(this.metaPath(taskId), 'utf8');
+      const parsed = JSON.parse(raw) as TaskMeta;
+      if (!parsed || typeof parsed.task_id !== 'string') return undefined;
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
    * Create a new task row in PENDING. Fails if a row with the same id
    * already exists (collisions are vanishingly unlikely given the
@@ -222,11 +241,11 @@ export class TaskStore {
     this.ensureRoot();
     const dir = this.taskDir(meta.task_id);
     fs.mkdirSync(dir, { recursive: true });
-    if (fs.existsSync(this.metaPath(meta.task_id))) {
-      throw new Error(`TaskStore.create: task ${meta.task_id} already exists`);
-    }
     const release = await acquireLock(this.lockFile(meta.task_id));
     try {
+      if (fs.existsSync(this.metaPath(meta.task_id))) {
+        throw new Error(`TaskStore.create: task ${meta.task_id} already exists`);
+      }
       await this.writeMetaUnderLock(meta);
     } finally {
       await release();
@@ -308,11 +327,10 @@ export class TaskStore {
    * descending, default limit 50). Corrupt meta.json files are skipped
    * rather than failing the entire listing.
    */
-  list(filter: TaskListFilter = {}): TaskMeta[] {
-    if (!fs.existsSync(this.rootDir)) return [];
+  async list(filter: TaskListFilter = {}): Promise<TaskMeta[]> {
     let entries: string[];
     try {
-      entries = fs.readdirSync(this.rootDir);
+      entries = await fs.promises.readdir(this.rootDir);
     } catch {
       return [];
     }
@@ -326,7 +344,7 @@ export class TaskStore {
     for (const entry of entries) {
       if (entry.startsWith('.')) continue;
       if (!TASK_ID_RE.test(entry)) continue;
-      const meta = this.readMetaSync(entry);
+      const meta = await this.readMeta(entry);
       if (!meta) continue;
       if (filter.since !== undefined && meta.created_at < filter.since) continue;
       if (statusFilter && !statusFilter.has(meta.status)) continue;
@@ -347,7 +365,7 @@ export class TaskStore {
    */
   async reapOrphans(now: number = Date.now()): Promise<string[]> {
     const reaped: string[] = [];
-    const candidates = this.list({ status: 'RUNNING', limit: Number.MAX_SAFE_INTEGER });
+    const candidates = await this.list({ status: 'RUNNING', limit: Number.MAX_SAFE_INTEGER });
     for (const meta of candidates) {
       if (isPidAlive(meta.pid)) continue;
       try {

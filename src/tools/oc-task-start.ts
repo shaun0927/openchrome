@@ -91,13 +91,9 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
     }
 
     const store = getTaskStore();
-    // Reap any orphaned RUNNING rows before accepting a new task — the
-    // contract requires the reaper to run "before any new task is
-    // accepted" (issue invariant #2).
-    await store.reapOrphans().catch((err) => {
-      console.error('[oc_task_start] reapOrphans failed:', err);
-    });
-
+    // Orphan reaping is wired once during tool registration/startup. Keep
+    // oc_task_start on the latency-sensitive path and avoid rescanning the
+    // whole ledger for every new background job.
     const createdAt = Date.now();
     const taskId = computeTaskId(kind, args, createdAt);
     const meta: TaskMeta = {

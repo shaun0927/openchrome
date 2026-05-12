@@ -55,7 +55,7 @@ const handler: ToolHandler = async (
   if (typeof params.since === 'number') filter.since = params.since;
   if (typeof params.limit === 'number') filter.limit = params.limit;
 
-  const rows = getTaskStore().list(filter);
+  const rows = await getTaskStore().list(filter);
   const summary = rows
     .map((r) => `${r.task_id}\t${r.status}\t${r.kind}\t${new Date(r.created_at).toISOString()}`)
     .join('\n');
