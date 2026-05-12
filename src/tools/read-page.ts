@@ -869,34 +869,64 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
   }
 
   // P1 codex fix: semantic mode emits a JSON payload via `JSON.stringify(view)`.
-  // Appending a free-form sanitization note would break `JSON.parse` for any
-  // client consuming the structured output, so embed the note as a structural
-  // field (`_sanitization`) inside the JSON object instead. Other modes keep
-  // the legacy text-suffix behavior.
+  // Running the string-level sanitizer over the serialized JSON would let
+  // patterns like `<!--` in one field and `-->` in a later field cross JSON
+  // delimiters and corrupt the structure. Parse first, sanitize each string
+  // value in place, then re-serialize. Sanitization metadata is attached as a
+  // structural `_sanitization` field so JSON.parse always succeeds. Other
+  // modes keep the legacy text-suffix behavior.
   const isSemanticMode =
     typeof (args as { mode?: unknown })?.mode === 'string' &&
     (args as { mode: string }).mode === 'semantic';
 
+  function sanitizeStringsDeep(
+    value: unknown,
+    notes: string[],
+  ): unknown {
+    if (typeof value === 'string') {
+      const s = sanitizeContent(value);
+      if (s.sanitizationNote && s.sanitizationNote.length > 0) {
+        notes.push(s.sanitizationNote.trim());
+      }
+      return s.text;
+    }
+    if (Array.isArray(value)) {
+      return value.map((v) => sanitizeStringsDeep(v, notes));
+    }
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        out[k] = sanitizeStringsDeep(v, notes);
+      }
+      return out;
+    }
+    return value;
+  }
+
   // Sanitize all text content blocks
   const sanitizedContent = result.content.map((block) => {
     if (block.type === 'text' && typeof block.text === 'string') {
-      const sanitized = sanitizeContent(block.text);
       if (isSemanticMode) {
-        // Try to parse the (already-sanitized) text as JSON, attach metadata
-        // when the sanitizer flagged anything, and re-serialize. Fall back to
-        // the suffix path on any parse failure so we never silently lose the
-        // sanitization note.
+        // Parse first, then sanitize each string value inside. This prevents
+        // the sanitizer from stripping content across JSON delimiters.
         try {
-          const parsed = JSON.parse(sanitized.text) as Record<string, unknown>;
-          if (sanitized.sanitizationNote && sanitized.sanitizationNote.length > 0) {
-            parsed['_sanitization'] = sanitized.sanitizationNote.trim();
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          const notes: string[] = [];
+          const cleaned = sanitizeStringsDeep(parsed, notes) as Record<string, unknown>;
+          if (notes.length > 0) {
+            // Deduplicate identical notes; join the rest with `; `.
+            const unique = Array.from(new Set(notes));
+            cleaned['_sanitization'] = unique.join('; ');
           }
-          return { ...block, text: JSON.stringify(parsed) };
+          return { ...block, text: JSON.stringify(cleaned) };
         } catch {
-          // Parse failed — keep the legacy suffix so security info is not lost.
+          // Parse failed — fall back to string-level sanitization so the
+          // security signal is not silently lost.
+          const sanitized = sanitizeContent(block.text);
           return { ...block, text: sanitized.text + sanitized.sanitizationNote };
         }
       }
+      const sanitized = sanitizeContent(block.text);
       return {
         ...block,
         text: sanitized.text + sanitized.sanitizationNote,
