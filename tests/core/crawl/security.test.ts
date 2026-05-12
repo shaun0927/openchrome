@@ -22,6 +22,8 @@ import * as path from 'node:path';
 import {
   assertValidJobId,
   createJob,
+  getOriginalQueuedUrl,
+  getOriginalStartUrl,
   jobFilePath,
   loadJob,
   type JobConfig,
@@ -401,6 +403,13 @@ describe('crawl review follow-ups', () => {
     const raw = fs.readFileSync(jobFilePath(startBody.jobId as string), 'utf8');
     expect(raw).not.toContain('child-secret');
     expect(raw).toContain('token=[REDACTED]');
+    expect(getOriginalStartUrl(startBody.jobId as string)).toBeUndefined();
+    expect(
+      getOriginalQueuedUrl(
+        startBody.jobId as string,
+        `${server.origin}/child?token=%5BREDACTED%5D`,
+      ),
+    ).toBeUndefined();
   });
 
   test('respect_robots blocks disallowed pages before the fetcher runs', async () => {

@@ -278,6 +278,22 @@ export function getOriginalQueuedUrl(jobId: string, safeUrl: string): string | u
   return bySafeUrl.get(safeUrl);
 }
 
+function forgetOriginalQueuedUrl(jobId: string, safeUrl: string): void {
+  const bySafeUrl = ORIGINAL_QUEUED_URLS.get(jobId);
+  if (!bySafeUrl) return;
+  bySafeUrl.delete(safeUrl);
+  bySafeUrl.delete(normalizeUrl(safeUrl));
+  if (bySafeUrl.size === 0) {
+    ORIGINAL_QUEUED_URLS.delete(jobId);
+  }
+}
+
+export function clearJobRuntimeSecrets(jobId: string): void {
+  assertValidJobId(jobId);
+  ORIGINAL_START_URLS.delete(jobId);
+  ORIGINAL_QUEUED_URLS.delete(jobId);
+}
+
 export function appendEventUnlocked(jobId: string, event: JobEvent): void {
   assertValidJobId(jobId);
   ensureRoot();
@@ -395,6 +411,7 @@ function applyEvent(state: JobState, evt: JobEvent): void {
       return;
     case 'fetched': {
       state.visited.add(evt.url);
+      forgetOriginalQueuedUrl(state.jobId, evt.url);
       // Drop all queued duplicates for the URL. Duplicate links may be
       // discovered from multiple parents; leaving stale duplicate queue entries
       // can keep a job running even after every unique URL has been visited.
@@ -421,6 +438,7 @@ function applyEvent(state: JobState, evt: JobEvent): void {
         evt.status === 'expired'
       ) {
         state.finishedAt = evt.t;
+        clearJobRuntimeSecrets(state.jobId);
       }
       return;
     }
