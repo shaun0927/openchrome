@@ -884,4 +884,30 @@ describe('DOM Serializer', () => {
     expect(result.content).toEqual(expect.any(String));
     expect(cdpClient.send).toHaveBeenCalledWith(page, 'DOM.getDocument', { depth: -1, pierce: true });
   });
+
+  it('treats computed contenteditable controls as interactive hints', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+    page.evaluate = jest.fn()
+      .mockResolvedValueOnce({ nodeCount: 1, textLength: 4, truncated: false })
+      .mockImplementationOnce(async (fn: Function, hintAttr: string) => {
+        const el = {
+          tagName: 'DIV',
+          shadowRoot: null,
+          onclick: null,
+          isContentEditable: true,
+          getAttribute: (name: string) => name === 'contenteditable' ? 'plaintext-only' : null,
+          hasAttribute: () => false,
+          setAttribute: jest.fn(),
+        };
+        const root = { querySelectorAll: () => [el] };
+        const previousDocument = (global as any).document;
+        (global as any).document = root;
+        try { await fn(hintAttr); } finally { (global as any).document = previousDocument; }
+        expect(el.setAttribute).toHaveBeenCalledWith(hintAttr, 'editable');
+      })
+      .mockResolvedValueOnce(undefined);
+
+    await serializeDOM(page as never, cdpClient as never, { interactiveOnly: true });
+  });
 });
