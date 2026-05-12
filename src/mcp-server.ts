@@ -1468,7 +1468,7 @@ export class MCPServer {
       // surface, so pushing into content[] guarantees the hint reaches the
       // user. Mirrors the error-path injection below for consistency.
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
+        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId, toolArgs, callId);
         if (hintResult) {
           const injectHint =
             verbosity !== 'compact' ||
@@ -1638,7 +1638,7 @@ export class MCPServer {
 
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId);
+        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId, toolArgs, callId);
         if (hintResult) {
           (errResult as Record<string, unknown>)._hint = hintResult.hint;
           (errResult as Record<string, unknown>)._hintMeta = {
