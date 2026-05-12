@@ -1,5 +1,5 @@
 import { buildExtractionPlan } from '../../src/extraction/plan';
-import { buildCssHeuristicExtractor, buildJsonLdExtractor } from '../../src/extraction/strategies';
+import { buildCssHeuristicExtractor, buildJsonLdExtractor, buildOpenGraphExtractor } from '../../src/extraction/strategies';
 
 function runExtractor<T>(script: string, documentMock: unknown): T {
   const previous = (global as any).document;
@@ -50,5 +50,17 @@ describe('schema-aware extraction strategies', () => {
     );
 
     expect(result).toEqual({ salePrice: '$19.99' });
+  });
+
+  test('OpenGraph resolves site_name after alias normalization', () => {
+    const plan = buildExtractionPlan({ site_name: { type: 'string' } });
+    const script = buildOpenGraphExtractor(plan.fields);
+    const documentMock = {
+      querySelector: (selector: string) => selector === 'meta[property="og:site_name"]'
+        ? { getAttribute: (name: string) => name === 'content' ? 'OpenChrome' : null }
+        : null,
+    };
+
+    expect(runExtractor<Record<string, unknown>>(script, documentMock)).toEqual({ site_name: 'OpenChrome' });
   });
 });
