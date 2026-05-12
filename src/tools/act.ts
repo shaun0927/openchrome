@@ -329,11 +329,12 @@ async function resolveElement(
   page: Parameters<typeof resolveElementsByAXTree>[0],
   cdpClient: Parameters<typeof resolveElementsByAXTree>[1],
   query: string,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<AXResolvedElement | null> {
   try {
     const matches = await withTimeout(
-      resolveElementsByAXTree(page, cdpClient, normalizeQuery(query), { useCenter: true, maxResults: 3 }),
+      resolveElementsByAXTree(page, cdpClient, normalizeQuery(query), { useCenter: true, maxResults: 3, contextHint }),
       8000,
       'ax-resolution',
       context
@@ -377,14 +378,15 @@ async function executeClick(
   parsedAction: ParsedAction,
   stepIndex: number,
   isStealth: boolean,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const target = parsedAction.target;
   if (!target) {
     return { step: stepIndex, action: 'click', outcome: 'ELEMENT_NOT_FOUND', error: 'No target specified for click' };
   }
 
-  const el = await resolveElement(page, cdpClient, target, context);
+  const el = await resolveElement(page, cdpClient, target, context, contextHint);
   if (!el) {
     return { step: stepIndex, action: 'click', target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${target}"` };
   }
@@ -415,7 +417,8 @@ async function executeType(
   parsedAction: ParsedAction,
   stepIndex: number,
   isStealth: boolean,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const value = parsedAction.value;
   if (!value) {
@@ -424,7 +427,7 @@ async function executeType(
 
   // If a target is specified, find and focus it
   if (parsedAction.target) {
-    const el = await resolveElement(page, cdpClient, parsedAction.target, context);
+    const el = await resolveElement(page, cdpClient, parsedAction.target, context, contextHint);
     if (!el) {
       return { step: stepIndex, action: 'type', target: parsedAction.target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${parsedAction.target}"` };
     }
@@ -463,14 +466,15 @@ async function executeSelect(
   tabId: string,
   parsedAction: ParsedAction,
   stepIndex: number,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const query = parsedAction.target || parsedAction.value;
   if (!query) {
     return { step: stepIndex, action: 'select', outcome: 'EXCEPTION', error: 'No target specified for select' };
   }
 
-  const el = await resolveElement(page, cdpClient, query, context);
+  const el = await resolveElement(page, cdpClient, query, context, contextHint);
   if (!el) {
     return { step: stepIndex, action: 'select', target: query, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${query}"` };
   }
@@ -514,14 +518,15 @@ async function executeHover(
   cdpClient: any,
   parsedAction: ParsedAction,
   stepIndex: number,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const target = parsedAction.target;
   if (!target) {
     return { step: stepIndex, action: 'hover', outcome: 'EXCEPTION', error: 'No target specified for hover' };
   }
 
-  const el = await resolveElement(page, cdpClient, target, context);
+  const el = await resolveElement(page, cdpClient, target, context, contextHint);
   if (!el) {
     return { step: stepIndex, action: 'hover', target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${target}"` };
   }
@@ -538,10 +543,11 @@ async function executeScroll(
   cdpClient: any,
   parsedAction: ParsedAction,
   stepIndex: number,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   if (parsedAction.target) {
-    const el = await resolveElement(page, cdpClient, parsedAction.target, context);
+    const el = await resolveElement(page, cdpClient, parsedAction.target, context, contextHint);
     if (!el) {
       return { step: stepIndex, action: 'scroll', target: parsedAction.target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${parsedAction.target}"` };
     }
@@ -617,14 +623,15 @@ async function executeCheckUncheck(
   parsedAction: ParsedAction,
   stepIndex: number,
   isStealth: boolean,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const target = parsedAction.target;
   if (!target) {
     return { step: stepIndex, action: parsedAction.action, outcome: 'EXCEPTION', error: `No target specified for ${parsedAction.action}` };
   }
 
-  const el = await resolveElement(page, cdpClient, target, context);
+  const el = await resolveElement(page, cdpClient, target, context, contextHint);
   if (!el) {
     return { step: stepIndex, action: parsedAction.action, target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${target}"` };
   }
@@ -673,6 +680,7 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const verifyTextSummary =
     args.verify === undefined ? true : verifyMode !== 'none';
+  const actionContext = typeof args.context === 'string' ? args.context.slice(0, 240) : undefined;
   const timeoutMs = Math.min(Math.max((args.timeout as number) || 30000, 1000), 120000);
   const variables = normalizeVariables(args.variables);
   const missingVariables = findMissingVariables(instruction || '', variables);
@@ -775,19 +783,19 @@ const handler: ToolHandler = async (
     try {
       switch (parsedAction.action) {
         case 'click':
-          result = await executeClick(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context);
+          result = await executeClick(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context, actionContext);
           break;
         case 'type':
-          result = await executeType(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context);
+          result = await executeType(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context, actionContext);
           break;
         case 'select':
-          result = await executeSelect(page, cdpClient, sessionId, tabId, parsedAction, i + 1, context);
+          result = await executeSelect(page, cdpClient, sessionId, tabId, parsedAction, i + 1, context, actionContext);
           break;
         case 'hover':
-          result = await executeHover(page, cdpClient, parsedAction, i + 1, context);
+          result = await executeHover(page, cdpClient, parsedAction, i + 1, context, actionContext);
           break;
         case 'scroll':
-          result = await executeScroll(page, cdpClient, parsedAction, i + 1, context);
+          result = await executeScroll(page, cdpClient, parsedAction, i + 1, context, actionContext);
           break;
         case 'wait':
           result = await executeWait(page, parsedAction, i + 1, context);
@@ -797,7 +805,7 @@ const handler: ToolHandler = async (
           break;
         case 'check':
         case 'uncheck':
-          result = await executeCheckUncheck(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context);
+          result = await executeCheckUncheck(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context, actionContext);
           break;
         default:
           result = { step: i + 1, action: parsedAction.action, outcome: 'EXCEPTION', error: `Unknown action: ${parsedAction.action}` };
