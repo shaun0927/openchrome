@@ -22,7 +22,7 @@ import { humanMouseMove } from '../stealth/human-behavior';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find element, act, wait, return state summary.',
+  description: 'Find element, act, wait, return state summary. Pass intent="..." (≤120 chars) to label this action in audit logs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -60,6 +60,11 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      intent: {
+        type: 'string',
+        description: 'Human-readable label for this action in audit logs (≤120 chars)',
+        maxLength: 120,
+      },
     },
     required: ['tabId', 'query'],
   },
@@ -79,6 +84,23 @@ const handler: ToolHandler = async (
   const verify = args.verify as boolean | undefined;
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
+  const intent = args.intent as string | undefined;
+
+  // Validate intent when provided
+  if (intent !== undefined) {
+    if (intent === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must not be an empty string' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: `INVALID_INTENT: intent exceeds 120 characters (got ${intent.length})` }],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();

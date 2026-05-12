@@ -10,7 +10,7 @@ import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
-  description: 'Set form element value by ref.',
+  description: 'Set form element value by ref. Pass intent="..." (≤120 chars) to label this action in audit logs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -26,6 +26,11 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Value to set. Checkboxes: "true"/"false"',
       },
+      intent: {
+        type: 'string',
+        description: 'Human-readable label for this action in audit logs (≤120 chars)',
+        maxLength: 120,
+      },
     },
     required: ['ref', 'value', 'tabId'],
   },
@@ -39,6 +44,23 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const ref = args.ref as string;
   const value = args.value;
+  const intent = args.intent as string | undefined;
+
+  // Validate intent when provided
+  if (intent !== undefined) {
+    if (intent === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must not be an empty string' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: `INVALID_INTENT: intent exceeds 120 characters (got ${intent.length})` }],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();

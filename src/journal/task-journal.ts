@@ -184,26 +184,35 @@ export class TaskJournal {
 
   /**
    * Generate human-readable 1-line summary.
+   *
+   * When `args.intent` is a non-empty string (issue #894, BrowserMCP adoption
+   * A-2), it is appended as `[intent: "..."]` so audit-trail consumers see the
+   * caller's stated purpose alongside the tool action. Absent or empty intent
+   * leaves the summary byte-identical to v1.11.0.
    */
   generateSummary(tool: string, args: Record<string, unknown>, ok: boolean): string {
     const s = ok ? '✓' : '✗';
+    let base: string;
     switch (tool) {
-      case 'navigate': return `${s} → ${args.url || 'unknown'}`;
-      case 'read_page': return `${s} Read page`;
-      case 'interact': return `${s} Click "${args.description || args.selector || ''}"`;
+      case 'navigate': base = `${s} → ${args.url || 'unknown'}`; break;
+      case 'read_page': base = `${s} Read page`; break;
+      case 'interact': base = `${s} Click "${args.description || args.selector || ''}"`; break;
       case 'fill_form': {
         const fields = args.fields as Record<string, unknown> | undefined;
-        return `${s} Fill form (${fields ? Object.keys(fields).length : 0} fields)`;
+        base = `${s} Fill form (${fields ? Object.keys(fields).length : 0} fields)`;
+        break;
       }
-      case 'find': return `${s} Find "${args.description || args.selector || ''}"`;
-      case 'javascript_tool': return `${s} JS eval`;
-      case 'tabs_create': return `${s} New tab${args.url ? ` → ${args.url}` : ''}`;
-      case 'tabs_close': return `${s} Close tab`;
-      case 'oc_stop': return `${s} Stop OpenChrome`;
-      case 'oc_session_snapshot': return `${s} Snapshot saved`;
-      case 'workflow_init': return `${s} Workflow started`;
-      default: return `${s} ${tool}`;
+      case 'find': base = `${s} Find "${args.description || args.selector || ''}"`; break;
+      case 'javascript_tool': base = `${s} JS eval`; break;
+      case 'tabs_create': base = `${s} New tab${args.url ? ` → ${args.url}` : ''}`; break;
+      case 'tabs_close': base = `${s} Close tab`; break;
+      case 'oc_stop': base = `${s} Stop OpenChrome`; break;
+      case 'oc_session_snapshot': base = `${s} Snapshot saved`; break;
+      case 'workflow_init': base = `${s} Workflow started`; break;
+      default: base = `${s} ${tool}`; break;
     }
+    const intent = typeof args.intent === 'string' && args.intent.length > 0 ? args.intent : undefined;
+    return intent ? `${base} [intent: "${intent}"]` : base;
   }
 
   /**

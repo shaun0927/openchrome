@@ -19,7 +19,7 @@ import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
-  description: 'Fill form fields and optionally submit.',
+  description: 'Fill form fields and optionally submit. Pass intent="..." (≤120 chars) to label this action in audit logs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -55,6 +55,11 @@ const definition: MCPToolDefinition = {
         enum: ['auto', 'off'],
         description: 'After submit, run a generic login-failure detector that flips success → failure when the password form is still mounted. Default: "auto". Set "off" to restore pre-#658 behavior.',
       },
+      intent: {
+        type: 'string',
+        description: 'Human-readable label for this action in audit logs (≤120 chars)',
+        maxLength: 120,
+      },
     },
     required: ['tabId', 'fields'],
   },
@@ -74,6 +79,23 @@ const handler: ToolHandler = async (
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 300, 50), 2000);
   const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
+  const intent = args.intent as string | undefined;
+
+  // Validate intent when provided
+  if (intent !== undefined) {
+    if (intent === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must not be an empty string' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: `INVALID_INTENT: intent exceeds 120 characters (got ${intent.length})` }],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
 
