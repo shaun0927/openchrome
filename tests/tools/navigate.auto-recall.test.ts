@@ -34,7 +34,10 @@ jest.mock('../../src/utils/smart-goto', () => ({
 // Mock auto-recall so tests do not touch the real filesystem.
 const mockAutoRecall = jest.fn<Promise<AutoRecallPayload>, [any]>();
 jest.mock('../../src/core/skill-memory/auto-recall', () => ({
-  autoRecallForOrigin: mockAutoRecall,
+  autoRecallForUrl: async (url: string, recallArg?: boolean) => {
+    const enabled = recallArg === true || (recallArg !== false && process.env.OPENCHROME_AUTO_RECALL === '1');
+    return enabled ? mockAutoRecall({ origin: new URL(url).hostname }) : undefined;
+  },
 }));
 
 import { getSessionManager } from '../../src/session-manager';
@@ -60,7 +63,10 @@ async function getHandler() {
     }),
   }));
   jest.doMock('../../src/core/skill-memory/auto-recall', () => ({
-    autoRecallForOrigin: mockAutoRecall,
+    autoRecallForUrl: async (url: string, recallArg?: boolean) => {
+    const enabled = recallArg === true || (recallArg !== false && process.env.OPENCHROME_AUTO_RECALL === '1');
+    return enabled ? mockAutoRecall({ origin: new URL(url).hostname }) : undefined;
+  },
   }));
 
   const { registerNavigateTool } = await import('../../src/tools/navigate');

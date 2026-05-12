@@ -23,7 +23,10 @@ jest.mock('../../src/session-manager', () => ({
 
 const mockAutoRecall = jest.fn<Promise<AutoRecallPayload>, [any]>();
 jest.mock('../../src/core/skill-memory/auto-recall', () => ({
-  autoRecallForOrigin: mockAutoRecall,
+  autoRecallForUrl: async (url: string, recallArg?: boolean) => {
+    const enabled = recallArg === true || (recallArg !== false && process.env.OPENCHROME_AUTO_RECALL === '1');
+    return enabled ? mockAutoRecall({ origin: new URL(url).hostname }) : undefined;
+  },
 }));
 
 import { getSessionManager } from '../../src/session-manager';
@@ -40,7 +43,10 @@ async function getHandler() {
     getSessionManager: () => mockSessionManager,
   }));
   jest.doMock('../../src/core/skill-memory/auto-recall', () => ({
-    autoRecallForOrigin: mockAutoRecall,
+    autoRecallForUrl: async (url: string, recallArg?: boolean) => {
+    const enabled = recallArg === true || (recallArg !== false && process.env.OPENCHROME_AUTO_RECALL === '1');
+    return enabled ? mockAutoRecall({ origin: new URL(url).hostname }) : undefined;
+  },
   }));
 
   const { registerTabsCreateTool } = await import('../../src/tools/tabs-create');

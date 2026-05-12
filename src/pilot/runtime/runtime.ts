@@ -43,6 +43,7 @@ import type { EvalContext } from '../../contracts/eval-context.js';
 import { evaluate } from '../../contracts/evaluate.js';
 import { validateAssertion, type ValidationError } from '../../contracts/validator.js';
 import { isContractRuntimeEnabled } from '../../harness/flags.js';
+import { getLifecycleBus } from '../../core/lifecycle/index.js';
 import { getBeforeIrreversibleHook } from './before-irreversible.js';
 import { DEFAULT_CACHE_TTL_MS } from './idempotency.js';
 import type {
@@ -305,6 +306,23 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   //    before this block runs (P2: 1.10.4 behavior preserved).
   if (args.contract.critical === true) {
     const action = args.contract.action ?? args.contract.id;
+    // #857: announce the same transition the existing hook represents so
+    // bus consumers (recorder, future journal) see irreversible actions
+    // without needing to wrap the operator-installed hook. The runtime has
+    // no sessionId/targetId in scope at this point, so we emit empty
+    // identifiers — consumers correlate via the contract id and adjacent
+    // session:create / target:create events. emit() is no-throw.
+    try {
+      getLifecycleBus().emit({
+        kind: 'irreversible-action:before',
+        sessionId: '',
+        targetId: '',
+        action,
+        ts: Date.now(),
+      });
+    } catch {
+      /* bus is no-throw; defence in depth */
+    }
     const hook = getBeforeIrreversibleHook();
     let decision;
     try {

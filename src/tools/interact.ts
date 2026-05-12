@@ -19,10 +19,23 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
+import { dispatchCoordinateClick } from '../cdp/input';
+import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+
+/**
+ * Inject the structured {@link VerifyReport} onto an MCPResult under
+ * `result.verify` (mirrors the issue #827 schema). When the report is
+ * undefined we return the input unchanged — this keeps the default
+ * `verify: 'none' | false | absent` path byte-identical to develop.
+ */
+function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined): MCPResult {
+  if (!report) return result;
+  return { ...result, verify: report };
+}
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find element, act, wait, return state summary.',
+  description: 'Find an element by natural language and click/hover/double_click; returns state summary after DOM settles.\n\nWhen to use: clicking/hovering an element you can describe in plain language. For Shadow DOM / canvas / cross-origin iframes, screenshot first and call with mode:"coordinate".\nWhen NOT to use: computer for plain-DOM coordinate clicks, or act for multi-step sequences.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -32,7 +45,28 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Element to act on (natural language)',
+        description: 'Element to act on (natural language). Required when mode is "ref" (default).',
+      },
+      mode: {
+        type: 'string',
+        enum: ['ref', 'coordinate'],
+        default: 'ref',
+        description: 'Dispatch mode. "ref" (default) resolves the element by query; "coordinate" sends a CDP mouse event directly to pixel coordinates.',
+      },
+      coordinate: {
+        type: 'object',
+        description: 'Pixel coordinates for coordinate mode. Required when mode is "coordinate".',
+        properties: {
+          x: { type: 'integer', minimum: 0 },
+          y: { type: 'integer', minimum: 0 },
+          button: { type: 'string', enum: ['left', 'right', 'middle'], default: 'left' },
+          clickCount: { type: 'integer', minimum: 1, maximum: 3, default: 1 },
+          modifiers: {
+            type: 'array',
+            items: { type: 'string', enum: ['alt', 'ctrl', 'meta', 'shift'] },
+          },
+        },
+        required: ['x', 'y'],
       },
       action: {
         type: 'string',
@@ -48,10 +82,7 @@ const definition: MCPToolDefinition = {
         enum: ['state_summary', 'dom_delta', 'both'],
         description: 'Response content. Default: both',
       },
-      verify: {
-        type: 'boolean',
-        description: 'Return screenshot after action',
-      },
+      verify: VERIFY_FIELD_SCHEMA,
       waitForMs: {
         type: 'number',
         description: 'Poll timeout for element in ms. Max: 30000',
@@ -61,7 +92,7 @@ const definition: MCPToolDefinition = {
         description: 'Poll interval in ms. Default: 200',
       },
     },
-    required: ['tabId', 'query'],
+    required: ['tabId'],
   },
 };
 
@@ -72,11 +103,13 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   throwIfAborted(context);
   const tabId = args.tabId as string;
+  const mode = (args.mode as string) || 'ref';
   const query = args.query as string;
+  const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
   const returnFormat = (args.returnFormat as string) || 'both';
-  const verify = args.verify as boolean | undefined;
+  const verifyMode = coerceVerifyMode(args.verify);
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
 
@@ -90,9 +123,117 @@ const handler: ToolHandler = async (
     };
   }
 
+  // ─── Mode: coordinate ───
+  if (mode === 'coordinate') {
+    if (query) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
+        isError: true,
+      };
+    }
+    if (!coordinateArg) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" block is required when mode is "coordinate".' }],
+        isError: true,
+      };
+    }
+    const cx = coordinateArg.x as number;
+    const cy = coordinateArg.y as number;
+    if (typeof cx !== 'number' || typeof cy !== 'number') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: coordinate.x and coordinate.y must be integers.' }],
+        isError: true,
+      };
+    }
+
+    try {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+      if (!page) {
+        return {
+          content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.` }],
+          isError: true,
+        };
+      }
+
+      // Viewport clamping
+      const viewport = page.viewport() ?? await page.evaluate(() => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      })).catch(() => null);
+
+      if (viewport && (cx > viewport.width || cy > viewport.height || cx < 0 || cy < 0)) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'OOB_COORDINATE',
+              message: `Coordinates (${cx}, ${cy}) are outside viewport bounds.`,
+              viewport: { width: viewport.width, height: viewport.height },
+            }),
+          }],
+          isError: true,
+        };
+      }
+
+      const cdpClient = sessionManager.getCDPClient();
+      const isStealth = sessionManager.isStealthTarget(tabId);
+
+      const { delta } = await withDomDelta(page, async () => {
+        if (isStealth) await humanMouseMove(page, cx, cy);
+        await dispatchCoordinateClick(cdpClient, page, {
+          x: cx,
+          y: cy,
+          button: (coordinateArg.button as 'left' | 'right' | 'middle') ?? 'left',
+          clickCount: (coordinateArg.clickCount as number) ?? 1,
+          modifiers: (coordinateArg.modifiers as Array<'alt' | 'ctrl' | 'meta' | 'shift'>) ?? [],
+        });
+      }, { settleMs: Math.max(150, waitAfter) });
+
+      const lines: string[] = [`Clicked coordinate (${cx}, ${cy}) via CDP`];
+      if (delta) lines.push('', '[DOM Delta]', delta);
+
+      const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+        { type: 'text' as const, text: lines.join('\n') },
+      ];
+
+      if (verifyMode !== 'none') {
+        try {
+          const screenshotBuf = await withTimeout(
+            page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
+            DEFAULT_SCREENSHOT_TIMEOUT_MS,
+            'verify-screenshot',
+            context
+          ) as string;
+          resultContent.push({ type: 'image' as const, data: screenshotBuf, mimeType: 'image/webp' });
+        } catch { /* screenshot failed, non-fatal */ }
+      }
+
+      return { content: resultContent };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Mode: ref (default) ───
+  if (mode !== 'ref') {
+    return {
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: mode must be "ref" or "coordinate".' }],
+      isError: true,
+    };
+  }
+  if (coordinateArg) {
+    return {
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" instead.' }],
+      isError: true,
+    };
+  }
+
   if (!query) {
     return {
-      content: [{ type: 'text', text: 'Error: query is required' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" is required when mode is "ref".' }],
       isError: true,
     };
   }
@@ -157,15 +298,22 @@ const handler: ToolHandler = async (
         const axX = Math.round(ax.rect.x);
         const axY = Math.round(ax.rect.y);
 
-        // Perform action with DOM delta
+        // Perform action with DOM delta — wrapped in runVerify so the per-action
+        // verify report (AX-hash + pHash) is captured around the actual click.
         const isStealth = sessionManager.isStealthTarget(tabId);
-        const { delta: axDelta } = await withDomDelta(page, async () => {
-          // Stealth: use Bézier curve mouse path to avoid bot detection
-          if (isStealth) await humanMouseMove(page, axX, axY);
-          if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
-          else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
-          else await page.mouse.click(axX, axY);
-        }, { settleMs: Math.max(150, waitAfter) });
+        const { verify: axVerifyReport, result: axActionResult } = await runVerify(
+          page,
+          verifyMode,
+          async () =>
+            withDomDelta(page, async () => {
+              // Stealth: use Bézier curve mouse path to avoid bot detection
+              if (isStealth) await humanMouseMove(page, axX, axY);
+              if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
+              else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
+              else await page.mouse.click(axX, axY);
+            }, { settleMs: Math.max(150, waitAfter) }),
+        );
+        const axDelta = axActionResult.delta;
 
         // Invalidate AX cache after interaction
         invalidateAXCache(getTargetId(page.target()));
@@ -207,8 +355,9 @@ const handler: ToolHandler = async (
           { type: 'text' as const, text: lines.join('\n') },
         ];
 
-        // Optional screenshot (verify mode)
-        if (verify) {
+        // Legacy screenshot content (backcompat for `verify: true` → 'screenshot').
+        // Preserved verbatim so callers that accept the WebP image still receive it.
+        if (verifyMode === 'screenshot' || verifyMode === 'both') {
           try {
             const screenshotBuf = await withTimeout(
               page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
@@ -220,7 +369,7 @@ const handler: ToolHandler = async (
           } catch { /* screenshot failed, non-fatal */ }
         }
 
-        return { content: resultContent };
+        return attachVerifyReport({ content: resultContent }, axVerifyReport);
       }
     } catch (axError) {
       throwIfAborted(context);
@@ -330,23 +479,30 @@ const handler: ToolHandler = async (
     const finalX = Math.round(bestMatch.rect.x);
     const finalY = Math.round(bestMatch.rect.y);
 
-    // Perform the action with DOM delta capture
+    // Perform the action with DOM delta capture, wrapped in runVerify so the
+    // structured verify report (AX-hash + pHash) covers the actual click.
     const isStealthCSS = sessionManager.isStealthTarget(tabId);
-    const { delta } = await withDomDelta(
+    const { result: cssDomResult, verify: cssVerifyReport } = await runVerify(
       page,
-      async () => {
-        // Stealth: use Bézier curve mouse path to avoid bot detection
-        if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
-        if (action === 'double_click') {
-          await page.mouse.click(finalX, finalY, { clickCount: 2 });
-        } else if (action === 'hover') {
-          if (!isStealthCSS) await page.mouse.move(finalX, finalY);
-        } else {
-          await page.mouse.click(finalX, finalY);
-        }
-      },
-      { settleMs: Math.max(150, waitAfter) }
+      verifyMode,
+      async () =>
+        withDomDelta(
+          page,
+          async () => {
+            // Stealth: use Bézier curve mouse path to avoid bot detection
+            if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
+            if (action === 'double_click') {
+              await page.mouse.click(finalX, finalY, { clickCount: 2 });
+            } else if (action === 'hover') {
+              if (!isStealthCSS) await page.mouse.move(finalX, finalY);
+            } else {
+              await page.mouse.click(finalX, finalY);
+            }
+          },
+          { settleMs: Math.max(150, waitAfter) }
+        ),
     );
+    const { delta } = cssDomResult;
 
     // Generate ref for the interacted element
     let refId = '';
@@ -477,9 +633,12 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG
+    // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG.
+    // Legacy attachment: only emit the embedded image when the caller asked for
+    // a screenshot mode (true → 'screenshot' via coerceVerifyMode, or the new
+    // 'screenshot'/'both' enum values). Default 'none' path is unchanged.
     let screenshotContent: { type: 'image'; data: string; mimeType: string } | null = null;
-    if (verify) {
+    if (verifyMode === 'screenshot' || verifyMode === 'both') {
       try {
         const screenshotResult = await Promise.race([
           (async () => {
@@ -527,9 +686,7 @@ const handler: ToolHandler = async (
       responseContent.push(screenshotContent);
     }
 
-    return {
-      content: responseContent,
-    };
+    return attachVerifyReport({ content: responseContent }, cssVerifyReport);
   } catch (error) {
     return {
       content: [

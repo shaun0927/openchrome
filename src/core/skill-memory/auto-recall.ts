@@ -13,6 +13,7 @@
  * When a ceiling is hit the relevant `truncated` flag is set to true.
  */
 
+import { isAutoRecallEnabled } from '../../harness/flags';
 import { SkillMemoryStore } from './store';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,50 @@ const DEFAULT_MAX_TOTAL_BYTES = 8192;
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
+
+
+export function shouldAutoRecall(recallArg: boolean | undefined): boolean {
+  if (recallArg === false) return false;
+  if (recallArg === true) return true;
+  return isAutoRecallEnabled();
+}
+
+export function hostnameFromUrl(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+export async function autoRecallForUrl(
+  url: string,
+  recallArg: boolean | undefined,
+): Promise<AutoRecallPayload | undefined> {
+  if (!shouldAutoRecall(recallArg)) return undefined;
+  const hostname = hostnameFromUrl(url);
+  if (!hostname) return undefined;
+  try {
+    return await autoRecallForOrigin({ origin: hostname });
+  } catch {
+    return undefined;
+  }
+}
+
+function truncateUtf8ToBytes(value: string, maxBytes: number): { text: string; bytes: number; truncated: boolean } {
+  const buf = Buffer.from(value, 'utf8');
+  if (buf.length <= maxBytes) {
+    return { text: value, bytes: buf.length, truncated: false };
+  }
+
+  let end = maxBytes;
+  while (end > 0 && (buf[end] & 0b1100_0000) === 0b1000_0000) {
+    end--;
+  }
+  const text = buf.subarray(0, end).toString('utf8');
+  return { text, bytes: Buffer.byteLength(text, 'utf8'), truncated: true };
+}
+
 
 export interface AutoRecallOptions {
   origin: string;
@@ -101,19 +146,13 @@ export async function autoRecallForOrigin(opts: AutoRecallOptions): Promise<Auto
     // Serialize the skill body: name + steps as JSON text.
     const rawBody = JSON.stringify({ name: record.name, steps: record.steps });
 
-    let body: string;
-    let skillTruncated = false;
-
-    if (Buffer.byteLength(rawBody, 'utf8') > maxBodyBytes) {
-      // Truncate to maxBodyBytes (byte-safe slice).
-      body = Buffer.from(rawBody, 'utf8').slice(0, maxBodyBytes).toString('utf8');
-      skillTruncated = true;
+    const truncated = truncateUtf8ToBytes(rawBody, maxBodyBytes);
+    const body = truncated.text;
+    const bodyBytes = truncated.bytes;
+    const skillTruncated = truncated.truncated;
+    if (skillTruncated) {
       payloadTruncated = true;
-    } else {
-      body = rawBody;
     }
-
-    const bodyBytes = Buffer.byteLength(body, 'utf8');
     if (totalBytes + bodyBytes > maxTotalBytes) {
       // Adding this skill would exceed the total ceiling — stop here.
       payloadTruncated = true;

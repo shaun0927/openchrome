@@ -78,6 +78,22 @@ describe('autoRecallForOrigin', () => {
     expect(Buffer.byteLength(result.skills[0].body, 'utf8')).toBeLessThanOrEqual(100);
   });
 
+
+  test('UTF-8 truncation never exceeds maxBodyBytes for multibyte input', async () => {
+    await writeSkill(rootDir, 'utf8.com', 'emoji-skill', [{ note: '😀'.repeat(50) }]);
+
+    const result = await autoRecallForOrigin({
+      origin: 'utf8.com',
+      rootDir,
+      maxBodyBytes: 101,
+    });
+
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].truncated).toBe(true);
+    expect(Buffer.byteLength(result.skills[0].body, 'utf8')).toBeLessThanOrEqual(101);
+    expect(result.skills[0].body).not.toContain('�');
+  });
+
   test('more than 3 skills clips the list and sets payload.truncated', async () => {
     for (let i = 0; i < 5; i++) {
       await writeSkill(rootDir, 'many.com', `skill-${i}`, [{ step: i }]);

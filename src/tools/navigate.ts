@@ -18,8 +18,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
 import { getHeadedFallback } from '../chrome/headed-fallback';
 import { getGlobalConfig } from '../config/global';
-import { isAutoRecallEnabled } from '../harness/flags';
-import { autoRecallForOrigin, type AutoRecallPayload } from '../core/skill-memory/auto-recall';
+import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import type { Page } from 'puppeteer-core';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
@@ -410,45 +409,28 @@ async function headedNavigateDirect(
   }
 }
 
-/**
- * Resolve whether auto-recall should run for this call.
- * Per-call arg takes precedence over the global flag.
- */
-function shouldAutoRecall(recallArg: boolean | undefined): boolean {
-  if (recallArg === false) return false;
-  if (recallArg === true) return true;
-  return isAutoRecallEnabled();
-}
-
-/**
- * Attempt to extract the hostname from a URL string.
- * Returns null on parse failure so callers can skip recall silently.
- */
-function hostnameFromUrl(url: string): string | null {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Fetch domain_skills payload for a URL if recall is enabled.
- * Returns undefined when recall is disabled or the URL is unparseable.
- */
-async function fetchDomainSkills(
-  url: string,
+async function withDomainSkillsResult(
+  result: MCPResult,
   recallArg: boolean | undefined,
-): Promise<AutoRecallPayload | undefined> {
-  if (!shouldAutoRecall(recallArg)) return undefined;
-  const hostname = hostnameFromUrl(url);
-  if (!hostname) return undefined;
+): Promise<MCPResult> {
+  if (result.isError) return result;
+  const first = result.content?.[0];
+  if (!first || first.type !== 'text' || typeof first.text !== 'string') return result;
+
   try {
-    return await autoRecallForOrigin({ origin: hostname });
+    const payload = JSON.parse(first.text) as Record<string, unknown>;
+    if (payload.domain_skills !== undefined || typeof payload.url !== 'string') return result;
+    const domainSkills = await autoRecallForUrl(payload.url, recallArg);
+    if (domainSkills === undefined) return result;
+    return {
+      ...result,
+      content: [{ ...first, text: JSON.stringify({ ...payload, domain_skills: domainSkills }) }],
+    };
   } catch {
-    return undefined;
+    return result;
   }
 }
+
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -589,7 +571,7 @@ const handler: ToolHandler = async (
       // Uses headedNavigateDirect() which does NOT fabricate a BlockingInfo. (#560, #561, #562)
       if (headed) {
         const headedResult = await headedNavigateDirect(targetUrl, sessionId, { profileDirectory });
-        if (headedResult) return headedResult;
+        if (headedResult) return await withDomainSkillsResult(headedResult, recallArg);
         return {
           content: [{ type: 'text', text: 'Error: headed mode requested but no display available for headed Chrome.' }],
           isError: true,
@@ -652,13 +634,16 @@ const handler: ToolHandler = async (
 
             // Auto-fallback: if reused tab hit a CDN/WAF block, retry with stealth in a new tab (#459)
             if (reuseBlocking && autoFallback && RETRYABLE_BLOCK_TYPES.has(reuseBlocking.type)) {
-              return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context);
+              return await withDomainSkillsResult(
+                await stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context),
+                recallArg,
+              );
             }
 
             const reuseUrl = page.url();
             const reuseTitle = await safeTitle(page);
             const reuseAuthGuidance = sameSiteAuthRedirectGuidance(targetUrl, reuseUrl, reuseTitle);
-            const reuseDomainSkills = await fetchDomainSkills(reuseUrl, recallArg);
+            const reuseDomainSkills = await autoRecallForUrl(reuseUrl, recallArg);
             const reuseResultText = JSON.stringify({
               action: 'navigate',
               url: reuseUrl,
@@ -714,20 +699,23 @@ const handler: ToolHandler = async (
 
       // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
       if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
-        return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context);
+        return await withDomainSkillsResult(
+          await stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context),
+          recallArg,
+        );
       }
 
       // When explicit stealth hits a block, escalate directly to tier 3 (headed Chrome)
       // since tier 2 (stealth) is already being used. (#453)
       if (newTabBlocking && stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
         const headedResult = await headedAutoRetry(targetUrl, newTabBlocking, sessionId, profileDirectory);
-        if (headedResult) return headedResult;
+        if (headedResult) return await withDomainSkillsResult(headedResult, recallArg);
       }
 
       const newTabUrl = page.url();
       const newTabTitle = await safeTitle(page);
       const newTabAuthGuidance = sameSiteAuthRedirectGuidance(targetUrl, newTabUrl, newTabTitle);
-      const newTabDomainSkills = await fetchDomainSkills(newTabUrl, recallArg);
+      const newTabDomainSkills = await autoRecallForUrl(newTabUrl, recallArg);
       const newTabResultText = JSON.stringify({
         action: 'navigate',
         url: newTabUrl,
@@ -973,7 +961,7 @@ const handler: ToolHandler = async (
     const navReadiness = await getReadiness(page, context);
     const navFinalUrl = page.url();
     const navFinalTitle = await safeTitle(page);
-    const navDomainSkills = await fetchDomainSkills(navFinalUrl, recallArg);
+    const navDomainSkills = await autoRecallForUrl(navFinalUrl, recallArg);
     const navResultText = JSON.stringify({
       action: 'navigate',
       url: navFinalUrl,

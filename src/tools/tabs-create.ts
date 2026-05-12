@@ -1,5 +1,11 @@
 /**
  * Tabs Create Tool - Create a new tab in the session with a specific URL
+ *
+ * #848: optional `isolatedContext` opens the new tab inside a named
+ * puppeteer-core BrowserContext. Cookies, localStorage, sessionStorage,
+ * and HTTP cache are isolated per name; the same Chrome process serves
+ * all named contexts. When omitted, behaviour is byte-identical to
+ * v1.11.0.
  */
 
 import { MCPServer } from '../mcp-server';
@@ -7,8 +13,12 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
-import { isAutoRecallEnabled } from '../harness/flags';
-import { autoRecallForOrigin, type AutoRecallPayload } from '../core/skill-memory/auto-recall';
+import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
+import {
+  DEFAULT_CONTEXT_NAME,
+  InvalidContextNameError,
+  assertValidContextName,
+} from '../chrome/contexts';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_create',
@@ -32,35 +42,19 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Override OPENCHROME_AUTO_RECALL for this call. true forces domain skill injection; false suppresses it even when the flag is on.',
       },
+      isolatedContext: {
+        type: 'string',
+        description:
+          'Optional name of a puppeteer BrowserContext to open the tab in (#848). ' +
+          'Multiple named contexts share a single Chrome process but have isolated ' +
+          'cookies / localStorage / sessionStorage / HTTP cache. Created on first use, ' +
+          'looked up by name on subsequent calls. Names match [A-Za-z0-9_-]{1,64}; ' +
+          '"default" is reserved.',
+      },
     },
     required: ['url'],
   },
 };
-
-function shouldAutoRecall(recallArg: boolean | undefined): boolean {
-  if (recallArg === false) return false;
-  if (recallArg === true) return true;
-  return isAutoRecallEnabled();
-}
-
-async function fetchDomainSkills(
-  url: string,
-  recallArg: boolean | undefined,
-): Promise<AutoRecallPayload | undefined> {
-  if (!shouldAutoRecall(recallArg)) return undefined;
-  let hostname: string;
-  try {
-    hostname = new URL(url).hostname;
-  } catch {
-    return undefined;
-  }
-  if (!hostname) return undefined;
-  try {
-    return await autoRecallForOrigin({ origin: hostname });
-  } catch {
-    return undefined;
-  }
-}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -70,6 +64,7 @@ const handler: ToolHandler = async (
   const url = args.url as string;
   const profileDirectory = args.profileDirectory as string | undefined;
   const recallArg = args.recall as boolean | undefined;
+  const isolatedContext = args.isolatedContext as string | undefined;
   if (args.workerId && profileDirectory) {
     return {
       content: [{ type: 'text', text: 'Error: workerId and profileDirectory cannot be used together. Use profileDirectory alone (a worker is auto-created per profile).' }],
@@ -91,6 +86,20 @@ const handler: ToolHandler = async (
     };
   }
 
+  // Validate isolatedContext name (#848). Reserved name `default` is
+  // accepted explicitly: it maps to the no-op default-context path.
+  if (isolatedContext !== undefined && isolatedContext !== DEFAULT_CONTEXT_NAME) {
+    try {
+      assertValidContextName(isolatedContext);
+    } catch (err) {
+      const msg = err instanceof InvalidContextNameError ? err.message : String(err);
+      return {
+        content: [{ type: 'text', text: `Error: ${msg}` }],
+        isError: true,
+      };
+    }
+  }
+
   // Domain blocklist check before creating the tab
   try {
     assertDomainAllowed(url);
@@ -107,15 +116,23 @@ const handler: ToolHandler = async (
   }
 
   try {
-    const { targetId, page, workerId: assignedWorkerId } = await sessionManager.createTarget(sessionId, url, workerId, profileDirectory);
+    const result = await sessionManager.createTarget(
+      sessionId,
+      url,
+      workerId,
+      profileDirectory,
+      isolatedContext,
+    );
+    const { targetId, page, workerId: assignedWorkerId, contextName, isolated } = result;
 
     const finalUrl = page.url();
-    const domainSkills = await fetchDomainSkills(finalUrl, recallArg);
+    const domainSkills = await autoRecallForUrl(finalUrl, recallArg);
     const payload: Record<string, unknown> = {
       tabId: targetId,
       workerId: assignedWorkerId,
       url: finalUrl,
       title: await safeTitle(page),
+      context: { name: contextName, isolated },
     };
     if (domainSkills !== undefined) {
       payload.domain_skills = domainSkills;
