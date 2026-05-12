@@ -16,7 +16,10 @@ describe('check: network-local', () => {
     expect(result.title).toContain('Local network');
     // On a normal dev/CI machine, loopback should be ok
     expect(['ok', 'warn', 'fail']).toContain(result.status);
-    expect(typeof result.durationMs === 'undefined' || result.id === 'network-local').toBe(true);
+    // CheckFn return type is Omit<CheckResult, 'durationMs'> — wrapper
+    // adds the timing field outside the check function. The original
+    // tautology `result.durationMs === undefined || result.id === ...`
+    // is dropped: the .id assertion above already covers the second clause.
   });
 
   test('ok when DNS resolves localhost and TCP works', async () => {
