@@ -21,6 +21,7 @@ import {
   flushRecorderBuffer,
   validateReplayArtifact,
   type ReplayArtifact,
+  REPLAY_ARTIFACT_SCHEMA_VERSION,
   type ReplayArtifactStep,
 } from '../core/skill-memory';
 import { isCoreFeatureEnabled } from '../harness/flags';
@@ -288,7 +289,7 @@ const handler: ToolHandler = async (
  */
 function wrapStepAsArtifact(step: ReplayArtifactStep): ReplayArtifact {
   return {
-    schema_version: 1,
+    schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
     recorded_at: Date.now(),
     recorder: { openchrome_version: 'core' },
     steps: [step],

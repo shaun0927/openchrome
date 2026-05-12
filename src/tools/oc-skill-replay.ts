@@ -38,6 +38,12 @@ const MAX_STEP_TIMEOUT_MS = 60_000;
 /** Resolution strategy outcome — one per attempted selector. */
 type ResolvedVia = ReplaySelector['type'];
 
+type MinimalPage = {
+  evaluate: (fn: (...a: any[]) => unknown, ...args: unknown[]) => Promise<unknown>;
+  goto?: (url: string, options?: Record<string, unknown>) => Promise<unknown>;
+  keyboard?: { press: (key: string) => Promise<unknown> };
+};
+
 interface OcSkillReplayStepResult {
   index: number;
   resolved_via: ResolvedVia | null;
@@ -153,87 +159,186 @@ async function resolveSelector(
   page: unknown,
 ): Promise<{ ok: true; backendNodeId: number } | { ok: false }> {
   if (!page) return { ok: false };
-  // Cast to a minimal shape — we only call `evaluate` on the page. Avoids
-  // pulling a puppeteer-core type dependency into this module. The function
-  // signature mirrors what puppeteer expects.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const p = page as { evaluate: (fn: (...a: any[]) => unknown, ...args: unknown[]) => Promise<unknown> };
+  const p = page as MinimalPage;
   try {
-    if (selector.type === 'xpath') {
-      const found = await p.evaluate((xpath: string) => {
-        const r = document.evaluate(
-          xpath,
-          document,
-          null,
-          XPathResult.FIRST_ORDERED_NODE_TYPE,
-          null,
-        );
-        return r.singleNodeValue !== null;
-      }, selector.value);
-      return found ? { ok: true, backendNodeId: 0 } : { ok: false };
-    }
-    if (selector.type === 'css') {
-      const found = await p.evaluate(
-        (sel: string) => document.querySelector(sel) !== null,
-        selector.value,
-      );
-      return found ? { ok: true, backendNodeId: 0 } : { ok: false };
-    }
-    if (selector.type === 'text') {
-      const found = await p.evaluate((needle: string) => {
+    const found = await p.evaluate((sel: ReplaySelector) => {
+      const cssEscape = (value: string): string => {
+        const esc = (globalThis as unknown as { CSS?: { escape?: (v: string) => string } }).CSS?.escape;
+        if (esc) return esc(value);
+        return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      };
+      const textOf = (el: Element): string => (el.textContent || '').replace(/\s+/g, ' ').trim();
+      const roleCandidates = (role: string): Element[] => {
+        const native = role === 'button'
+          ? ',button,input[type="button"],input[type="submit"],input[type="reset"]'
+          : role === 'link'
+            ? ',a[href]'
+            : role === 'textbox'
+              ? ',input:not([type]),input[type="text"],input[type="search"],input[type="email"],input[type="url"],textarea'
+              : '';
+        return Array.from(document.querySelectorAll(`[role="${cssEscape(role)}"]${native}`));
+      };
+      const matches = (el: Element): boolean => {
+        if (sel.type === 'xpath') {
+          const r = document.evaluate(sel.value, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          return r.singleNodeValue === el;
+        }
+        if (sel.type === 'css') return el.matches(sel.value);
+        if (sel.type === 'text') return textOf(el).includes(sel.value);
+        if (sel.type === 'accessible_name') {
+          const name = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
+          return name === sel.value;
+        }
+        if (sel.type === 'role_name') {
+          const role = el.getAttribute('role') || el.tagName.toLowerCase();
+          if (role !== sel.role && !(sel.role === 'button' && ['button', 'input'].includes(el.tagName.toLowerCase())) && !(sel.role === 'link' && el.tagName.toLowerCase() === 'a')) return false;
+          const name = el.getAttribute('aria-label') || textOf(el);
+          return sel.name === '' || name === sel.name;
+        }
+        return false;
+      };
+      let el: Element | null = null;
+      if (sel.type === 'xpath') {
+        const r = document.evaluate(sel.value, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        el = r.singleNodeValue as Element | null;
+      } else if (sel.type === 'css') {
+        el = document.querySelector(sel.value);
+      } else if (sel.type === 'text') {
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         let n: Node | null;
         while ((n = walker.nextNode())) {
-          if (n.nodeValue && n.nodeValue.includes(needle)) return true;
+          if (n.nodeValue && n.nodeValue.includes(sel.value)) {
+            el = n.parentElement;
+            break;
+          }
         }
+      } else if (sel.type === 'accessible_name') {
+        const escaped = cssEscape(sel.value);
+        el = document.querySelector(`[aria-label="${escaped}"],[alt="${escaped}"],[title="${escaped}"]`);
+      } else if (sel.type === 'role_name') {
+        el = roleCandidates(sel.role).find(matches) ?? null;
+      } else if (sel.type === 'node_ref') {
         return false;
-      }, selector.value);
-      return found ? { ok: true, backendNodeId: 0 } : { ok: false };
-    }
-    if (selector.type === 'accessible_name') {
-      const found = await p.evaluate((needle: string) => {
-        const candidates = Array.from(document.querySelectorAll<HTMLElement>('*'));
-        return candidates.some((el) => {
-          const label =
-            el.getAttribute('aria-label') ||
-            el.getAttribute('alt') ||
-            el.getAttribute('title') ||
-            '';
-          return label === needle;
-        });
-      }, selector.value);
-      return found ? { ok: true, backendNodeId: 0 } : { ok: false };
-    }
-    if (selector.type === 'role_name') {
-      const { role, name } = selector;
-      const found = await p.evaluate(
-        (r: string, n: string) => {
-          const els = Array.from(document.querySelectorAll<HTMLElement>('*'));
-          return els.some((el) => {
-            const elRole = el.getAttribute('role') || el.tagName.toLowerCase();
-            if (elRole !== r) return false;
-            const elName =
-              el.getAttribute('aria-label') ||
-              el.textContent?.trim() ||
-              '';
-            return n === '' || elName === n;
-          });
-        },
-        role,
-        name,
-      );
-      return found ? { ok: true, backendNodeId: 0 } : { ok: false };
-    }
-    if (selector.type === 'node_ref') {
-      // node_ref resolution depends on #844's backend-node-registry, which is
-      // optional at this stage. When the registry is unavailable we treat the
-      // strategy as a miss and fall through to the next selector.
-      return { ok: false };
-    }
+      }
+      return el !== null;
+    }, selector);
+    return found ? { ok: true, backendNodeId: 0 } : { ok: false };
   } catch {
     return { ok: false };
   }
-  return { ok: false };
+}
+
+async function dispatchStep(step: ReplayArtifactStep, selector: ReplaySelector | null, page: unknown, timeoutMs: number): Promise<{ ok: true } | { ok: false; detail: string }> {
+  const p = page as MinimalPage | null;
+  try {
+    if (step.kind === 'navigate') {
+      const url = step.args?.url;
+      if (typeof url !== 'string' || url.length === 0) return { ok: false, detail: 'navigate step requires args.url' };
+      if (p?.goto) await withDeadline(Promise.resolve(p.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs })), timeoutMs);
+      return { ok: true };
+    }
+    if (!p || !selector) return { ok: false, detail: 'no live page or resolved selector available for action dispatch' };
+    if (step.kind === 'press' && p.keyboard) {
+      const key = step.args?.key;
+      if (typeof key !== 'string' || key.length === 0) return { ok: false, detail: 'press step requires args.key' };
+      await withDeadline(Promise.resolve(p.keyboard.press(key)), timeoutMs);
+      return { ok: true };
+    }
+    const result = await withDeadline(Promise.resolve(p.evaluate((sel: ReplaySelector, kind: string, args: Record<string, unknown> | undefined) => {
+      const cssEscape = (value: string): string => {
+        const esc = (globalThis as unknown as { CSS?: { escape?: (v: string) => string } }).CSS?.escape;
+        if (esc) return esc(value);
+        return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      };
+      const textOf = (el: Element): string => (el.textContent || '').replace(/\s+/g, ' ').trim();
+      const roleCandidates = (role: string): Element[] => {
+        const native = role === 'button'
+          ? ',button,input[type="button"],input[type="submit"],input[type="reset"]'
+          : role === 'link'
+            ? ',a[href]'
+            : role === 'textbox'
+              ? ',input:not([type]),input[type="text"],input[type="search"],input[type="email"],input[type="url"],textarea'
+              : '';
+        return Array.from(document.querySelectorAll(`[role="${cssEscape(role)}"]${native}`));
+      };
+      const matches = (el: Element): boolean => {
+        if (sel.type === 'css') return el.matches(sel.value);
+        if (sel.type === 'text') return textOf(el).includes(sel.value);
+        if (sel.type === 'accessible_name') return (el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '') === sel.value;
+        if (sel.type === 'role_name') {
+          const role = el.getAttribute('role') || el.tagName.toLowerCase();
+          if (role !== sel.role && !(sel.role === 'button' && ['button', 'input'].includes(el.tagName.toLowerCase())) && !(sel.role === 'link' && el.tagName.toLowerCase() === 'a')) return false;
+          const name = el.getAttribute('aria-label') || textOf(el);
+          return sel.name === '' || name === sel.name;
+        }
+        return false;
+      };
+      let el: Element | null = null;
+      if (sel.type === 'xpath') {
+        const r = document.evaluate(sel.value, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        el = r.singleNodeValue as Element | null;
+      } else if (sel.type === 'css') {
+        el = document.querySelector(sel.value);
+      } else if (sel.type === 'text') {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let n: Node | null;
+        while ((n = walker.nextNode())) {
+          if (n.nodeValue && n.nodeValue.includes(sel.value)) { el = n.parentElement; break; }
+        }
+      } else if (sel.type === 'accessible_name') {
+        const escaped = cssEscape(sel.value);
+        el = document.querySelector(`[aria-label="${escaped}"],[alt="${escaped}"],[title="${escaped}"]`);
+      } else if (sel.type === 'role_name') {
+        el = roleCandidates(sel.role).find(matches) ?? null;
+      }
+      if (!el) return { ok: false, detail: 'resolved selector no longer matches at dispatch time' };
+      const htmlEl = el as HTMLElement;
+      if (kind === 'click') {
+        htmlEl.click();
+        return { ok: true };
+      }
+      if (kind === 'fill') {
+        const value = args?.value;
+        if (typeof value !== 'string') return { ok: false, detail: 'fill step requires args.value' };
+        if (!('value' in htmlEl)) return { ok: false, detail: 'target is not fillable' };
+        htmlEl.focus();
+        (htmlEl as HTMLInputElement | HTMLTextAreaElement).value = value;
+        htmlEl.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+        htmlEl.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true };
+      }
+      if (kind === 'select') {
+        const value = args?.value;
+        if (typeof value !== 'string') return { ok: false, detail: 'select step requires args.value' };
+        if (!(htmlEl instanceof HTMLSelectElement)) return { ok: false, detail: 'target is not a select element' };
+        htmlEl.value = value;
+        htmlEl.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true };
+      }
+      if (kind === 'submit') {
+        const form = htmlEl instanceof HTMLFormElement ? htmlEl : htmlEl.closest('form');
+        if (form) {
+          if (typeof form.requestSubmit === 'function') form.requestSubmit();
+          else form.submit();
+          return { ok: true };
+        }
+        htmlEl.click();
+        return { ok: true };
+      }
+      if (kind === 'scroll') {
+        const x = typeof args?.x === 'number' ? args.x : 0;
+        const y = typeof args?.y === 'number' ? args.y : 0;
+        if (x !== 0 || y !== 0) window.scrollBy(x, y);
+        else htmlEl.scrollIntoView({ block: 'center', inline: 'center' });
+        return { ok: true };
+      }
+      if (kind === 'press') return { ok: false, detail: 'press requires page.keyboard support' };
+      return { ok: false, detail: `unsupported step kind: ${kind}` };
+    }, selector, step.kind, step.args)), timeoutMs) as { ok: boolean; detail?: string };
+    return result.ok ? { ok: true } : { ok: false, detail: result.detail ?? 'action dispatch failed' };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**
@@ -247,20 +352,21 @@ async function resolveStep(
 ): Promise<{
   resolvedVia: ResolvedVia | null;
   attempts: number;
+  selector: ReplaySelector | null;
 }> {
   // `navigate` is a no-resolve action — its target is `args.url`.
   if (step.kind === 'navigate') {
-    return { resolvedVia: null, attempts: 0 };
+    return { resolvedVia: null, attempts: 0, selector: null };
   }
   let attempts = 0;
   for (const sel of step.selectors) {
     attempts++;
     const r = await resolveSelector(sel, page);
     if (r.ok) {
-      return { resolvedVia: sel.type, attempts };
+      return { resolvedVia: sel.type, attempts, selector: sel };
     }
   }
-  return { resolvedVia: null, attempts };
+  return { resolvedVia: null, attempts, selector: null };
 }
 
 const handler: ToolHandler = async (
@@ -359,8 +465,15 @@ const handler: ToolHandler = async (
   let page: unknown = null;
   try {
     const sm = getSessionManager();
-    if (sm && typeof sm.getPage === 'function' && typeof tabId === 'string' && tabId.length > 0) {
-      page = await sm.getPage(sessionId, tabId, undefined, 'oc_skill_replay');
+    if (sm && typeof sm.getPage === 'function') {
+      let targetId = typeof tabId === 'string' && tabId.length > 0 ? tabId : undefined;
+      if (!targetId && typeof (sm as { getSessionTargetIds?: (sid: string) => string[] }).getSessionTargetIds === 'function') {
+        const ids = (sm as { getSessionTargetIds: (sid: string) => string[] }).getSessionTargetIds(sessionId);
+        targetId = ids[ids.length - 1];
+      }
+      if (targetId) {
+        page = await sm.getPage(sessionId, targetId, undefined, 'oc_skill_replay');
+      }
     }
   } catch {
     page = null;
@@ -409,7 +522,7 @@ const handler: ToolHandler = async (
     }
 
     const started = Date.now();
-    let resolution: { resolvedVia: ResolvedVia | null; attempts: number };
+    let resolution: { resolvedVia: ResolvedVia | null; attempts: number; selector: ReplaySelector | null };
     try {
       resolution = await withDeadline(resolveStep(step, page), stepTimeoutMs);
     } catch (err) {
@@ -439,6 +552,27 @@ const handler: ToolHandler = async (
           'ARTIFACT_RESOLUTION_FAILED',
           i,
           `no selector strategy resolved (tried ${resolution.attempts}/${step.selectors.length})`,
+          totalSteps,
+          stepResults,
+          executed,
+        ),
+      );
+    }
+
+    const action = await dispatchStep(step, resolution.selector, page, stepTimeoutMs);
+    if (!action.ok) {
+      stepResults.push({
+        index: i,
+        resolved_via: resolution.resolvedVia,
+        selector_attempts: resolution.attempts,
+        elapsed_ms: Date.now() - started,
+        ok: false,
+      });
+      return jsonResult(
+        failure(
+          step.kind === 'navigate' ? 'TARGET_NAVIGATED_AWAY' : 'ARTIFACT_RESOLUTION_FAILED',
+          i,
+          action.detail,
           totalSteps,
           stepResults,
           executed,
@@ -519,5 +653,6 @@ export function registerOcSkillReplayTool(server: MCPServer): void {
 export const __test = {
   resolveStep,
   resolveSelector,
+  dispatchStep,
   clampStepTimeout,
 };

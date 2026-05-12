@@ -19,7 +19,7 @@ import {
 
 function validArtifact(): ReplayArtifact {
   return {
-    schema_version: 1,
+    schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
     recorded_at: Date.now(),
     recorder: { openchrome_version: '1.11.0' },
     steps: [
@@ -139,6 +139,18 @@ describe('validateReplayArtifactStep', () => {
       args: [] as unknown as Record<string, unknown>,
     });
     expect(r.ok).toBe(false);
+  });
+
+  test('rejects action kinds whose required args are missing', () => {
+    expect(validateReplayArtifactStep({ kind: 'press', selectors: [{ type: 'css', value: 'body' }] }).ok).toBe(false);
+    expect(validateReplayArtifactStep({ kind: 'select', selectors: [{ type: 'css', value: 'select' }] }).ok).toBe(false);
+    expect(validateReplayArtifactStep({ kind: 'scroll', selectors: [{ type: 'css', value: 'body' }], args: { y: 'down' } }).ok).toBe(false);
+  });
+
+  test('accepts press, select, and scroll steps with valid args', () => {
+    expect(validateReplayArtifactStep({ kind: 'press', selectors: [{ type: 'css', value: 'body' }], args: { key: 'Enter' } }).ok).toBe(true);
+    expect(validateReplayArtifactStep({ kind: 'select', selectors: [{ type: 'css', value: 'select' }], args: { value: 'US' } }).ok).toBe(true);
+    expect(validateReplayArtifactStep({ kind: 'scroll', selectors: [{ type: 'css', value: 'body' }], args: { y: 300 } }).ok).toBe(true);
   });
 });
 

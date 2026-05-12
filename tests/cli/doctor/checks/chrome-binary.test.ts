@@ -25,7 +25,6 @@ describe('check: chrome-binary', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.resetModules();
     process.env = { ...originalEnv };
     delete process.env.CHROME_PATH;
   });

@@ -204,6 +204,27 @@ export function validateReplayArtifactStep(value: unknown): ValidationResult {
       return { ok: false, error: 'fill step requires args.value string' };
     }
   }
+  if (s.kind === 'press') {
+    const key = (s.args as Record<string, unknown> | undefined)?.key;
+    if (typeof key !== 'string' || key.length === 0) {
+      return { ok: false, error: 'press step requires args.key string' };
+    }
+  }
+  if (s.kind === 'select') {
+    const value = (s.args as Record<string, unknown> | undefined)?.value;
+    if (typeof value !== 'string') {
+      return { ok: false, error: 'select step requires args.value string' };
+    }
+  }
+  if (s.kind === 'scroll') {
+    const args = s.args as Record<string, unknown> | undefined;
+    if (args?.x !== undefined && typeof args.x !== 'number') {
+      return { ok: false, error: 'scroll args.x must be a number when present' };
+    }
+    if (args?.y !== undefined && typeof args.y !== 'number') {
+      return { ok: false, error: 'scroll args.y must be a number when present' };
+    }
+  }
   return { ok: true };
 }
 

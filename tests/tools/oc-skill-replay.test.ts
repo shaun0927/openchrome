@@ -13,6 +13,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 let _testRoot = '';
+let _mockPage: unknown = null;
+let _mockTargetIds: string[] = [];
 
 jest.mock('../../src/core/skill-memory', () => {
   const real = jest.requireActual<typeof import('../../src/core/skill-memory')>(
@@ -30,14 +32,15 @@ jest.mock('../../src/core/skill-memory', () => {
 
 jest.mock('../../src/session-manager', () => ({
   getSessionManager: () => ({
-    getPage: async () => null,
+    getPage: jest.fn(async () => _mockPage),
+    getSessionTargetIds: jest.fn(() => _mockTargetIds),
     getCDPClient: () => null,
   }),
 }));
 
 import { registerOcSkillReplayTool } from '../../src/tools/oc-skill-replay';
 import { registerOcSkillRecordTool } from '../../src/tools/oc-skill-record';
-import { SkillMemoryStore, type ReplayArtifact } from '../../src/core/skill-memory';
+import { REPLAY_ARTIFACT_SCHEMA_VERSION, SkillMemoryStore, type ReplayArtifact } from '../../src/core/skill-memory';
 import type { MCPServer } from '../../src/mcp-server';
 
 type HandlerFn = (sessionId: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -65,7 +68,7 @@ function parseResult(result: Record<string, unknown>): Record<string, unknown> {
 
 function singleStepArtifact(): ReplayArtifact {
   return {
-    schema_version: 1,
+    schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
     recorded_at: Date.now(),
     recorder: { openchrome_version: '1.11.0-test' },
     steps: [
@@ -79,7 +82,7 @@ function singleStepArtifact(): ReplayArtifact {
 
 function navigateArtifact(url: string): ReplayArtifact {
   return {
-    schema_version: 1,
+    schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
     recorded_at: Date.now(),
     recorder: { openchrome_version: '1.11.0-test' },
     steps: [{ kind: 'navigate', selectors: [], args: { url } }],
@@ -90,6 +93,8 @@ let server: FakeMCPServer;
 
 beforeEach(() => {
   _testRoot = tempRoot();
+  _mockPage = null;
+  _mockTargetIds = [];
   delete process.env.OPENCHROME_SKILL_REPLAY;
   server = new FakeMCPServer();
   registerOcSkillReplayTool(server as unknown as MCPServer);
@@ -200,6 +205,37 @@ describe('oc_skill_replay — artifact handling', () => {
     expect(r.steps_total).toBe(1);
     expect((r.step_results as Array<{ resolved_via: string | null }>)[0].resolved_via).toBeNull();
   });
+
+  test('uses the active session tab when tabId is omitted and dispatches click', async () => {
+    const calls: unknown[][] = [];
+    _mockTargetIds = ['tab-a', 'tab-active'];
+    _mockPage = {
+      evaluate: jest.fn(async (_fn: unknown, ...args: unknown[]) => {
+        calls.push(args);
+        return calls.length === 1 ? true : { ok: true };
+      }),
+    };
+    const store = new SkillMemoryStore({ domain: 'localhost' });
+    const recorded = await store.record({
+      domain: 'localhost',
+      name: 'active-click',
+      steps: [{ kind: 'click' }],
+      contractId: 'c1',
+      successCount: 0,
+      lastUsedAt: 0,
+      frozenSnapshotPath: null,
+      replayArtifacts: [singleStepArtifact()],
+    });
+
+    const r = parseResult(
+      await server.call('oc_skill_replay', { skill_id: recorded.skill_id, domain: 'localhost' }),
+    );
+
+    expect(r.ok).toBe(true);
+    expect(r.steps_executed).toBe(1);
+    expect((_mockPage as { evaluate: jest.Mock }).evaluate).toHaveBeenCalledTimes(2);
+    expect(calls[0][0]).toMatchObject({ type: 'css', value: '#submit' });
+  });
 });
 
 describe('oc_skill_record — replay_artifacts plumb-through', () => {
@@ -231,7 +267,7 @@ describe('oc_skill_record — replay_artifacts plumb-through', () => {
         contract_id: 'c1',
         replay_artifacts: [
           {
-            schema_version: 1,
+            schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
             recorded_at: Date.now(),
             recorder: { openchrome_version: 'x' },
             // empty steps — invalid
