@@ -21,6 +21,7 @@ import { cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';
 import { getCachedSequence, cacheSequence, validateCachedSequence } from '../actions/action-cache';
+import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
 
 // ─── Types ───
 
@@ -38,7 +39,7 @@ interface StepResult {
 
 const definition: MCPToolDefinition = {
   name: 'act',
-  description: 'Execute multi-step browser actions from natural language instruction.',
+  description: 'Execute multi-step browser actions from a natural language instruction. Parses and runs click, type, select, scroll, hover, navigate, and wait steps in sequence.\n\nWhen to use: Automating a known multi-step flow (login, form fill, navigation) in one call.\nWhen NOT to use: Use interact for a single element action, or computer for raw coordinate input.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -54,10 +55,7 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Additional context (e.g., "on the login page")',
       },
-      verify: {
-        type: 'boolean',
-        description: 'Verify outcome after execution. Default: true',
-      },
+      verify: VERIFY_FIELD_SCHEMA,
       timeout: {
         type: 'number',
         description: 'Max time in ms for entire sequence. Default: 30000',
@@ -408,7 +406,18 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const instruction = args.instruction as string;
-  const verify = args.verify !== false; // default true
+  // Legacy text-summary verification fires when:
+  //   * args.verify is undefined  → pre-#827 default of "always summarize"
+  //   * args.verify is any value coercing to a non-'none' mode (true, the
+  //     legacy default; "ax-diff"; "screenshot"; "both")
+  // It is suppressed when args.verify is explicitly false or "none". Without
+  // the explicit undefined branch, `args.verify !== false` would also have
+  // accepted the string "none" (codex P2 bug); going through coerceVerifyMode
+  // closes that hole while preserving backwards compat for callers that
+  // omit the field entirely.
+  const verifyMode = coerceVerifyMode(args.verify);
+  const verifyTextSummary =
+    args.verify === undefined ? true : verifyMode !== 'none';
   const timeoutMs = Math.min(Math.max((args.timeout as number) || 30000, 1000), 120000);
 
   if (!tabId) {
@@ -483,6 +492,11 @@ const handler: ToolHandler = async (
 
   const deadline = Date.now() + timeoutMs;
 
+  // Wrap the entire action sequence in runVerify so AX-hash + pHash deltas
+  // bracket the whole composite operation (issue #827). When mode is 'none'
+  // this returns `verify: undefined` and the result is byte-identical to
+  // pre-#827 develop.
+  const verifyOutcome = await runVerify(page, verifyMode, async () => {
   for (let i = 0; i < actions.length; i++) {
     if (Date.now() >= deadline) {
       failedAt = i + 1;
@@ -541,6 +555,9 @@ const handler: ToolHandler = async (
       break;
     }
   }
+  return undefined as void;
+  });
+  const actVerifyReport: VerifyReport | undefined = verifyOutcome.verify;
 
   // Clean up any leftover discovery tags
   await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
@@ -588,8 +605,9 @@ const handler: ToolHandler = async (
 
   const lines: string[] = [headerLine, '', ...stepLines];
 
-  // Verification
-  if (verify && success) {
+  // Verification — legacy text summary. Preserved verbatim so default
+  // (`verify` absent or `true`) callers see the same `[Verification] …` line.
+  if (verifyTextSummary && success) {
     try {
       const state = await withTimeout(page.evaluate(() => ({
         url: window.location.href,
@@ -604,10 +622,11 @@ const handler: ToolHandler = async (
     lines.push('', `[Warning] ${parseWarning}`);
   }
 
-  return {
+  const baseResult: MCPResult = {
     content: [{ type: 'text', text: lines.join('\n') }],
     isError: !success,
   };
+  return actVerifyReport ? { ...baseResult, verify: actVerifyReport } : baseResult;
 };
 
 // ─── Registration ───

@@ -80,7 +80,7 @@ function argText(arg: { type: string; value?: unknown; description?: string }): 
 const definition: MCPToolDefinition = {
   name: 'validate_page',
   description:
-    'Composite "is this page healthy?" check. Navigates to a URL, waits for readiness, captures console errors for a short window, and returns a single structured summary (title, console errors/warnings, interactive element counts, body text sample). Use this instead of chaining navigate + wait_for + console_capture + read_page when you only need to verify a page renders correctly. Returns ~600 tokens vs ~4000 for the multi-call equivalent.',
+    'Composite health check: navigate, wait, capture console errors, return structured summary (title, errors, interactive count, body sample).\n\nWhen to use: Verifying a page renders correctly without errors in a single call instead of chaining navigate + wait_for + console_capture + read_page.\nWhen NOT to use: Use navigate + read_page when you need full DOM content, not just a health summary.',
   inputSchema: {
     type: 'object',
     properties: {
