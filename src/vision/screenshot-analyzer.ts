@@ -706,15 +706,21 @@ async function analyzeTiledScreenshot(
         translated.push({ ...el, y: docY });
       }
 
-      // Element-cap check before capturing the tile screenshot.
+      // P1 codex fix: detect element-cap *before* the capture so we know how
+      // many elements actually go into this tile, but still capture the
+      // screenshot before breaking out of the loop. Previously the cap break
+      // happened before `captureAnnotatedScreenshot`, so when tile 1 alone
+      // hit the cap, `tiles` stayed empty and `vision_find` returned an
+      // empty/invalid screenshot payload.
+      let capHit = false;
       if (unifiedElements.length + translated.length >= TILED_MAX_ELEMENTS) {
         const remaining = TILED_MAX_ELEMENTS - unifiedElements.length;
         if (remaining > 0) {
-          unifiedElements.push(...translated.slice(0, remaining));
+          translated.length = remaining; // truncate to the remaining budget
+        } else {
+          translated.length = 0;
         }
-        truncated = true;
-        truncatedReason = 'element-cap';
-        break;
+        capHit = true;
       }
 
       // Capture the annotated tile screenshot. Use viewport-local coords for the overlay,
@@ -744,6 +750,14 @@ async function analyzeTiledScreenshot(
       // break downstream reconstruction.
       tiles.push({ tileTop: docOffsetY, imageBase64: captured.screenshot, mimeType: captured.mimeType });
       unifiedElements.push(...translated);
+
+      // P1 codex fix (continued): if the element cap was reached this tile,
+      // record the truncation reason and stop iterating *after* the capture.
+      if (capHit) {
+        truncated = true;
+        truncatedReason = 'element-cap';
+        break;
+      }
 
       if (totalPixels >= TILED_MAX_PIXELS) {
         truncated = true;
