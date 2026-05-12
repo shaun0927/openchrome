@@ -29,6 +29,7 @@ import { getSessionManager, _resetSessionManagerForTesting } from '../session-ma
 import { resetChromePool } from '../chrome/pool';
 import { getCDPClient } from '../cdp/client';
 import { getBrowserStateManager } from '../browser-state';
+import { HTTPTransport } from '../transports/http';
 import { ChromeProcessWatchdog } from '../chrome/process-watchdog';
 import { TabHealthMonitor } from '../cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from '../watchdog/event-loop-monitor';
@@ -43,7 +44,6 @@ import { installIdleTimeout } from '../utils/idle-timeout';
 import { getIdleState } from '../utils/idle-state';
 import { getListenerErrorStats } from '../utils/safe-listener';
 import type { MCPServer } from '../mcp-server';
-import type { HTTPTransport } from '../transports/http';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -67,6 +67,7 @@ export interface CreateServerOptions {
   transport:
     | 'stdio'
     | { http: { port: number; host?: string; authToken?: string; allowUnauthenticated?: boolean } }
+    | { both: { httpPort: number; httpHost?: string; authToken?: string; allowUnauthenticated?: boolean } }
     | 'both';
 
   chrome?: {
@@ -91,6 +92,10 @@ export interface CreateServerOptions {
   idleTimeoutMs?: number;
   parentPid?: number;
   healthEndpointPort?: number;
+  /** Optional pre-loaded API key store (CLI: OPENCHROME_API_KEYS_PATH). */
+  apiKeyStore?: import('../auth/api-key-store').ApiKeyStore;
+  /** Hybrid Lightpanda routing. */
+  hybrid?: { enabled: true; lightpandaPort: number };
 }
 
 /** Returned by `server.start()`. */
@@ -127,8 +132,8 @@ function _resetAllSingletons(): void {
     if (typeof cdpMod._resetCDPClientForTesting === 'function') {
       (cdpMod._resetCDPClientForTesting as () => void)();
     }
-  } catch {
-    // best-effort
+  } catch (err) {
+    console.error('[openchrome] CDPClient reset skipped:', err);
   }
 }
 
@@ -281,8 +286,24 @@ class OpenChromeServerImpl implements OpenChromeServer {
       httpHost = opts.transport.http.host ?? '127.0.0.1';
       authToken = opts.transport.http.authToken ?? process.env.OPENCHROME_AUTH_TOKEN;
       allowUnauthenticatedHttp = opts.transport.http.allowUnauthenticated;
+    } else if (typeof opts.transport === 'object' && 'both' in opts.transport) {
+      transportMode = 'both';
+      httpPort = opts.transport.both.httpPort;
+      httpHost = opts.transport.both.httpHost ?? '127.0.0.1';
+      authToken = opts.transport.both.authToken ?? process.env.OPENCHROME_AUTH_TOKEN;
+      allowUnauthenticatedHttp = opts.transport.both.allowUnauthenticated;
     } else {
       transportMode = 'stdio';
+    }
+
+    // Hybrid mode plumbing
+    if (opts.hybrid?.enabled) {
+      setGlobalConfig({
+        hybrid: {
+          enabled: true,
+          lightpandaPort: opts.hybrid.lightpandaPort,
+        },
+      });
     }
 
     const useHttp = transportMode === 'http' || transportMode === 'both';
@@ -307,11 +328,10 @@ class OpenChromeServerImpl implements OpenChromeServer {
     if (transportMode === 'both') {
       const resolvedPort = httpPort ?? 3100;
       const resolvedHost = httpHost ?? '127.0.0.1';
-      const { HTTPTransport } = require('../transports/http');
       const httpTrans = new HTTPTransport(
         resolvedPort, resolvedHost, authToken,
-        { allowUnauthenticatedHttp },
-      ) as HTTPTransport;
+        { ...(opts.apiKeyStore ? { apiKeyStore: opts.apiKeyStore } : {}), allowUnauthenticatedHttp },
+      );
       this._httpTransport = httpTrans;
       server.start();
       httpTrans.onMessage(async (msg: Record<string, unknown>, signal?: AbortSignal) =>
@@ -324,7 +344,8 @@ class OpenChromeServerImpl implements OpenChromeServer {
       const resolvedPort = httpPort ?? 3100;
       const resolvedHost = httpHost ?? '127.0.0.1';
       const transport = createTransport('http', {
-        port: resolvedPort, host: resolvedHost, authToken, allowUnauthenticatedHttp,
+        port: resolvedPort, host: resolvedHost, authToken,
+        apiKeyStore: opts.apiKeyStore, allowUnauthenticatedHttp,
       });
       this._httpTransport = transport as HTTPTransport;
       server.start(transport);
