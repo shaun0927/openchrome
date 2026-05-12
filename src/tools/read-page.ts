@@ -13,6 +13,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
+import { prependHeaderText } from './_shared/state-header';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -306,8 +307,9 @@ const handler: ToolHandler = async (
       const cssText = lines.join('\n');
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+      const cssPayload = cssText + cssPaginationSection;
       return {
-        content: [{ type: 'text', text: cssText + cssPaginationSection }],
+        content: [{ type: 'text', text: prependHeaderText({ url: page.url(), title: await page.title(), mode: 'css', capturedAt: Date.now(), tabId }, cssPayload) }],
       };
     }
 
@@ -343,8 +345,9 @@ const handler: ToolHandler = async (
               const statsLine = `[page_stats] url: ${result.pageStats.url} | title: ${result.pageStats.title} | scroll: ${result.pageStats.scrollX},${result.pageStats.scrollY} | viewport: ${result.pageStats.viewportWidth}x${result.pageStats.viewportHeight} | docSize: ${result.pageStats.scrollWidth}x${result.pageStats.scrollHeight}\n\n`;
               const includePaginationDom = args.includePagination !== false;
               const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+              const domDeltaPayload = statsLine + delta.content + domPaginationSection;
               return {
-                content: [{ type: 'text', text: statsLine + delta.content + domPaginationSection }],
+                content: [{ type: 'text', text: prependHeaderText({ url: page.url(), title: await page.title(), mode: 'dom', capturedAt: Date.now(), tabId }, domDeltaPayload) }],
               };
             }
             // If not delta (too many changes), fall through to full response
@@ -356,8 +359,9 @@ const handler: ToolHandler = async (
 
         const includePaginationDom = args.includePagination !== false;
         const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+        const domFullPayload = outputText + domPaginationSection;
         return {
-          content: [{ type: 'text', text: outputText + domPaginationSection }],
+          content: [{ type: 'text', text: prependHeaderText({ url: page.url(), title: await page.title(), mode: 'dom', capturedAt: Date.now(), tabId }, domFullPayload) }],
         };
       } catch {
         // DOM serialization failed — fall through to AX mode as fallback
@@ -585,15 +589,16 @@ const handler: ToolHandler = async (
       // the caller explicitly opts into that fallback. Otherwise preserve AX
       // intent and return the bounded/truncated AX representation.
       if (axOverflowFallback !== 'dom') {
+        const axTruncPayload =
+          pageStatsLine +
+          output +
+          '\n\n[Output truncated. AX output exceeded the output budget. Use mode: "dom" or fallback: "dom" for DOM output, or use smaller depth / ref_id to focus on specific element.]' +
+          axPaginationSection;
         return {
           content: [
             {
               type: 'text',
-              text:
-                pageStatsLine +
-                output +
-                '\n\n[Output truncated. AX output exceeded the output budget. Use mode: "dom" or fallback: "dom" for DOM output, or use smaller depth / ref_id to focus on specific element.]' +
-                axPaginationSection,
+              text: prependHeaderText({ url: page.url(), title: await page.title(), mode: 'ax', capturedAt: Date.now(), tabId }, axTruncPayload),
             },
           ],
         };
@@ -613,33 +618,36 @@ const handler: ToolHandler = async (
           'Switched to DOM mode because fallback: "dom" was requested. ' +
           'Use mode: "ax" with smaller depth / ref_id to scope specific subtrees for AX format.]';
 
+        const axFallbackPayload = domResult.content + fallbackNote + axPaginationSection;
         return {
           content: [
             {
               type: 'text',
-              text: domResult.content + fallbackNote + axPaginationSection,
+              text: prependHeaderText({ url: page.url(), title: await page.title(), mode: 'dom', capturedAt: Date.now(), tabId }, axFallbackPayload),
             },
           ],
         };
       } catch {
         // If DOM serialization fails, fall back to truncated AX (original behavior)
+        const axDomFailPayload =
+          pageStatsLine +
+          output +
+          '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]' +
+          axPaginationSection;
         return {
           content: [
             {
               type: 'text',
-              text:
-                pageStatsLine +
-                output +
-                '\n\n[Output truncated. Try mode: "dom" for ~5-10x fewer tokens, or use smaller depth / ref_id to focus on specific element.]' +
-                axPaginationSection,
+              text: prependHeaderText({ url: page.url(), title: await page.title(), mode: 'ax', capturedAt: Date.now(), tabId }, axDomFailPayload),
             },
           ],
         };
       }
     }
 
+    const axNormalPayload = pageStatsLine + output + axPaginationSection;
     return {
-      content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
+      content: [{ type: 'text', text: prependHeaderText({ url: page.url(), title: await page.title(), mode: 'ax', capturedAt: Date.now(), tabId }, axNormalPayload) }],
     };
   } catch (error) {
     return {

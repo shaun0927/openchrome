@@ -1,0 +1,6 @@
+[page_stats] url: https://example.com | title: Test Page | scroll: 0,0 | viewport: 1920x1080 | docSize: 1920x3000
+
+[ref_1] document: "Test Page"
+  [ref_2] button: "Submit" (focused)
+  [ref_3] textbox: "Username"
+  [ref_4] link: "Learn more"

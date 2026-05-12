@@ -13,6 +13,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
+import { prependHeaderText } from './_shared/state-header';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
@@ -527,8 +528,9 @@ const handler: ToolHandler = async (
     // Footer with page context (always included)
     lines.push(`[Page] ${inspectResult.url} | "${inspectResult.title}"`);
 
+    const inspectPayload = lines.join('\n');
     return {
-      content: [{ type: 'text', text: lines.join('\n') }],
+      content: [{ type: 'text', text: prependHeaderText({ url: inspectResult.url, title: inspectResult.title, mode: 'inspect', capturedAt: Date.now(), tabId }, inspectPayload) }],
     };
   } catch (error) {
     return {
