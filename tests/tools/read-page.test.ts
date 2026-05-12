@@ -535,7 +535,7 @@ describe('ReadPageTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid mode "html"');
-      expect(result.content[0].text).toContain('Must be "ax", "dom", or "css"');
+      expect(result.content[0].text).toContain('Must be "ax", "dom", "css", or "markdown"');
     });
   });
 

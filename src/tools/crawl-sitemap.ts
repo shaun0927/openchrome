@@ -19,6 +19,7 @@ import {
   CrawlTracker,
   urlGlobToRegex,
 } from '../utils/crawl-utils';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 
 const definition: MCPToolDefinition = {
   name: 'crawl_sitemap',
@@ -45,8 +46,16 @@ const definition: MCPToolDefinition = {
       },
       output_format: {
         type: 'string',
-        enum: ['markdown', 'text', 'structured'],
-        description: 'Content format per page. Default: markdown',
+        enum: ['markdown', 'text', 'structured', 'markdown-clean'],
+        description: 'Content format per page. "markdown-clean" uses cheerio+turndown to strip nav/footer/ads. Default: markdown',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'markdown-clean only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'markdown-clean only: preserve <a> as markdown links. Default: true.',
       },
       concurrency: {
         type: 'number',
@@ -264,6 +273,7 @@ async function fetchPage(
   sessionId: string,
   url: string,
   outputFormat: string,
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
   context?: ToolContext,
 ): Promise<CrawledPage> {
   const sessionManager = getSessionManager();
@@ -275,6 +285,48 @@ async function fetchPage(
 
     // Small settle delay for dynamic content
     await new Promise((r) => setTimeout(r, 500));
+
+    if (outputFormat === 'markdown-clean') {
+      const fullHtml = await withTimeout(
+        page.content(),
+        15000,
+        'crawl_sitemap.page.content',
+        context,
+      );
+      const meta = await withTimeout(
+        page.evaluate(() => {
+          const title = document.title || '';
+          let count = 0;
+          document.querySelectorAll('a[href]').forEach((a) => {
+            const href = (a as HTMLAnchorElement).href;
+            if (href && !href.startsWith('javascript:') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
+              count++;
+            }
+          });
+          return { title, linksCount: count };
+        }),
+        15000,
+        'crawl_sitemap.page.linkScan',
+        context,
+      );
+
+      const { html: cleaned } = extractMainContent(fullHtml, { onlyMainContent: cleanOpts.onlyMainContent });
+      let cleanMd = toMarkdown(cleaned, { includeLinks: cleanOpts.includeLinks });
+
+      await sessionManager.closeTarget(sessionId, tid);
+      targetId = null;
+
+      if (cleanMd.length > MAX_OUTPUT_CHARS) {
+        cleanMd = cleanMd.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
+      }
+
+      return {
+        url,
+        title: meta.title,
+        content: cleanMd,
+        links_found: meta.linksCount,
+      };
+    }
 
     const result = await withTimeout(
       page.evaluate((format: string) => {
@@ -422,6 +474,10 @@ const handler: ToolHandler = async (
   const filterPattern = args.filter as string | undefined;
   const maxPages = args.max_pages != null ? Number(args.max_pages) : 50;
   const outputFormat = (args.output_format as string) || 'markdown';
+  const cleanOpts = {
+    onlyMainContent: args.onlyMainContent !== false,
+    includeLinks: args.includeLinks !== false,
+  };
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 
   const startTime = Date.now();
@@ -541,7 +597,7 @@ const handler: ToolHandler = async (
             }
             tracker.visit(pageUrl);
 
-            return fetchPage(sessionId, pageUrl, outputFormat, context);
+            return fetchPage(sessionId, pageUrl, outputFormat, cleanOpts, context);
           }),
         ),
       );

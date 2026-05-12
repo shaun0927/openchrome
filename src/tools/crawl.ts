@@ -21,6 +21,7 @@ import {
   CrawlTracker,
   RobotsRules,
 } from '../utils/crawl-utils';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
@@ -58,8 +59,16 @@ const definition: MCPToolDefinition = {
       },
       output_format: {
         type: 'string',
-        enum: ['markdown', 'text', 'structured'],
-        description: 'Content format per page. Default: markdown',
+        enum: ['markdown', 'text', 'structured', 'markdown-clean'],
+        description: 'Content format per page. "markdown-clean" uses cheerio+turndown to strip nav/footer/ads. Default: markdown',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'markdown-clean only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'markdown-clean only: preserve <a> as markdown links. Default: true.',
       },
       respect_robots: {
         type: 'boolean',
@@ -188,6 +197,7 @@ async function fetchPage(
   url: string,
   depth: number,
   outputFormat: string,
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
   context?: ToolContext,
 ): Promise<CrawledPage> {
   const sessionManager = getSessionManager();
@@ -207,6 +217,50 @@ async function fetchPage(
 
     // Small settle delay for dynamic content
     await new Promise((r) => setTimeout(r, 500));
+
+    if (outputFormat === 'markdown-clean') {
+      const fullHtml = await withTimeout(
+        page.content(),
+        15000,
+        'crawl.page.content',
+        context,
+      );
+      const linkResult = await withTimeout(
+        page.evaluate(() => {
+          const title = document.title || '';
+          const links: string[] = [];
+          document.querySelectorAll('a[href]').forEach((a) => {
+            const href = (a as HTMLAnchorElement).href;
+            if (href && !href.startsWith('javascript:') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
+              links.push(href);
+            }
+          });
+          return { title, links };
+        }),
+        15000,
+        'crawl.page.linkScan',
+        context,
+      );
+
+      const { html: cleaned } = extractMainContent(fullHtml, { onlyMainContent: cleanOpts.onlyMainContent });
+      let cleanMd = toMarkdown(cleaned, { includeLinks: cleanOpts.includeLinks });
+
+      await sessionManager.closeTarget(sessionId, tid);
+      targetId = null;
+
+      if (cleanMd.length > MAX_OUTPUT_CHARS) {
+        cleanMd = cleanMd.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
+      }
+
+      return {
+        url,
+        title: linkResult.title,
+        content: cleanMd,
+        depth,
+        links_found: linkResult.links.length,
+        ...(linkResult.links.length > 0 ? { _links: linkResult.links } as Record<string, unknown> : {}),
+      } as CrawledPage & { _links?: string[] };
+    }
 
     // Extract content and links in one page.evaluate call
     const result = await withTimeout(
@@ -366,6 +420,10 @@ const handler: ToolHandler = async (
   const includePatterns = args.include_patterns as string[] | undefined;
   const excludePatterns = args.exclude_patterns as string[] | undefined;
   const outputFormat = (args.output_format as string) || 'markdown';
+  const cleanOpts = {
+    onlyMainContent: args.onlyMainContent !== false,
+    includeLinks: args.includeLinks !== false,
+  };
   const respectRobots = args.respect_robots !== false;
   const delayMs = args.delay_ms != null ? Number(args.delay_ms) : 1000;
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
@@ -483,7 +541,7 @@ const handler: ToolHandler = async (
             // Mark as visited
             tracker.visit(item.url);
 
-            const result = await fetchPage(sessionId, item.url, item.depth, outputFormat, context);
+            const result = await fetchPage(sessionId, item.url, item.depth, outputFormat, cleanOpts, context);
 
             // Extract discovered links (stored transiently)
             const links = ((result as CrawledPage & { _links?: string[] })._links || []);

@@ -13,6 +13,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -29,7 +30,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.',
+  description: 'Get page as DOM, accessibility tree (ax), CSS diagnostics, or clean Markdown (article-shaped).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -56,8 +57,16 @@ const definition: MCPToolDefinition = {
       },
       mode: {
         type: 'string',
-        enum: ['ax', 'dom', 'css'],
-        description: 'Output mode: dom (default), ax, or css',
+        enum: ['ax', 'dom', 'css', 'markdown'],
+        description: 'Output mode: dom (default), ax, css, or markdown (clean article extraction).',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'Markdown mode only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'Markdown mode only: preserve <a> as markdown links. Default: true.',
       },
       includePagination: {
         type: 'boolean',
@@ -127,9 +136,9 @@ const handler: ToolHandler = async (
 
     // Mode dispatch
     const mode = (args.mode as string) || 'dom';
-    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
+    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'markdown') {
       return {
-        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", or "markdown".` }],
         isError: true,
       };
     }
@@ -138,6 +147,29 @@ const handler: ToolHandler = async (
       return {
         content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],
         isError: true,
+      };
+    }
+
+    // Markdown mode — clean HTML→Markdown extraction
+    if (mode === 'markdown') {
+      const onlyMainContent = args.onlyMainContent !== false;
+      const includeLinks = args.includeLinks !== false;
+      const html = await withTimeout(
+        page.content(),
+        15000,
+        'read_page.markdown.content',
+        context,
+      );
+      const { html: cleaned } = extractMainContent(html, { onlyMainContent });
+      let md = toMarkdown(cleaned, { includeLinks });
+      let truncated = false;
+      if (md.length > MAX_OUTPUT_CHARS) {
+        md = md.slice(0, MAX_OUTPUT_CHARS);
+        truncated = true;
+      }
+      const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
+      return {
+        content: [{ type: 'text', text: md + suffix }],
       };
     }
 
