@@ -99,7 +99,8 @@ export type ReplayActionStep =
   | { readonly kind: 'navigate'; readonly url: string }
   | { readonly kind: 'fill'; readonly selector: string; readonly valueParam: string }
   | { readonly kind: 'click'; readonly selector: string }
-  | { readonly kind: 'wait'; readonly ms: number };
+  | { readonly kind: 'wait'; readonly ms: number }
+  | { readonly kind: 'wait_for'; readonly selector: string; readonly timeout_ms?: number };
 
 export interface ReplayHandlerOpts {
   /** Resolve the tab the replay should target. Required. */
@@ -167,6 +168,16 @@ function coerceStep(raw: Record<string, unknown>): ReplayActionStep | null {
   if (kind === 'wait' && typeof raw.ms === 'number' && Number.isFinite(raw.ms) && raw.ms >= 0) {
     return { kind: 'wait', ms: raw.ms };
   }
+  if (kind === 'wait_for' && typeof raw.selector === 'string' && raw.selector.length > 0) {
+    return {
+      kind: 'wait_for',
+      selector: raw.selector,
+      timeout_ms:
+        typeof raw.timeout_ms === 'number' && Number.isFinite(raw.timeout_ms) && raw.timeout_ms >= 0
+          ? raw.timeout_ms
+          : undefined,
+    };
+  }
   return null;
 }
 
@@ -177,8 +188,15 @@ function coerceStep(raw: Record<string, unknown>): ReplayActionStep | null {
  * (rather than silently no-oping in the runner).
  */
 function extractActions(steps: unknown): Record<string, unknown>[] | null {
-  if (!steps || typeof steps !== 'object' || Array.isArray(steps)) return null;
-  const actions = (steps as InterpretedSkillSteps).actions;
+  // `oc_skill_record` stores `steps` as a top-level array, while the
+  // synthesizer convention (and several test fixtures) wrap them in
+  // `{ parameters, actions }`. Accept both shapes — anything else
+  // surfaces as the typed `skill_invalid_steps` error.
+  const actions = Array.isArray(steps)
+    ? steps
+    : steps && typeof steps === 'object'
+      ? (steps as InterpretedSkillSteps).actions
+      : null;
   if (!Array.isArray(actions)) return null;
   const filtered: Record<string, unknown>[] = [];
   for (const entry of actions) {

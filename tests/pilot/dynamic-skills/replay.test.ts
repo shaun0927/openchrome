@@ -178,3 +178,76 @@ describe('runReplay — step failures', () => {
     if (!out.success) expect(out.code).toBe('skill_invalid_steps');
   });
 });
+
+describe('runReplay — wait_for + array steps (#930 review)', () => {
+  test('accepts wait_for steps with selector + timeout_ms', async () => {
+    const calls: ReplayActionStep[] = [];
+    const opts = makeOpts({
+      runStep: async (_tab, step) => {
+        calls.push(step);
+        return { ok: true };
+      },
+    });
+    const skill = makeSkill({
+      steps: {
+        parameters: [],
+        actions: [
+          { kind: 'click', selector: 'button[type=submit]' },
+          { kind: 'wait_for', selector: '.logged-in', timeout_ms: 5000 },
+        ],
+      },
+    });
+    const out = await runReplay(skill, {}, opts);
+    expect(out).toEqual({ success: true, contract_id: 'ctr_login_success' });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({ kind: 'wait_for', selector: '.logged-in', timeout_ms: 5000 });
+  });
+
+  test('accepts wait_for without timeout_ms (replay runner picks a default)', async () => {
+    const calls: ReplayActionStep[] = [];
+    const opts = makeOpts({
+      runStep: async (_tab, step) => {
+        calls.push(step);
+        return { ok: true };
+      },
+    });
+    const skill = makeSkill({
+      steps: { parameters: [], actions: [{ kind: 'wait_for', selector: '#ready' }] },
+    });
+    const out = await runReplay(skill, {}, opts);
+    expect(out.success).toBe(true);
+    expect(calls[0]).toEqual({ kind: 'wait_for', selector: '#ready', timeout_ms: undefined });
+  });
+
+  test('accepts top-level array steps as recorded by oc_skill_record', async () => {
+    // oc_skill_record stores steps as an array, not { actions: [...] }.
+    // The replay handler now accepts both shapes.
+    const calls: ReplayActionStep[] = [];
+    const opts = makeOpts({
+      runStep: async (_tab, step) => {
+        calls.push(step);
+        return { ok: true };
+      },
+    });
+    const skill = makeSkill({
+      steps: [
+        { kind: 'fill', selector: '#user', valueParam: 'username' },
+        { kind: 'click', selector: 'button[type=submit]' },
+      ] as unknown as SkillRecord['steps'],
+    });
+    const out = await runReplay(skill, { username: 'demo' }, opts);
+    expect(out).toEqual({ success: true, contract_id: 'ctr_login_success' });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({ kind: 'fill', selector: '#user', valueParam: 'username' });
+  });
+
+  test('rejects wait_for missing a selector', async () => {
+    const opts = makeOpts();
+    const skill = makeSkill({
+      steps: { actions: [{ kind: 'wait_for', timeout_ms: 1000 }] },
+    });
+    const out = await runReplay(skill, {}, opts);
+    expect(out.success).toBe(false);
+    if (!out.success) expect(out.code).toBe('skill_unsupported_step');
+  });
+});

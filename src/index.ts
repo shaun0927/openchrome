@@ -277,7 +277,12 @@ program
       if (isDynamicSkillsEnabled()) {
         try {
           const mod = await import('./pilot/dynamic-skills/index.js');
-          mod.attachDynamicSkillsToServer(server);
+          const defaults = await import('./pilot/dynamic-skills/attachment-defaults.js');
+          mod.attachDynamicSkillsToServer(server, {
+            resolveCurrentTab: defaults.defaultResolveCurrentTab,
+            runStep: defaults.defaultRunStep,
+            assertContract: defaults.defaultAssertContract,
+          });
           console.error('[openchrome] Pilot family: dynamic_skills attached');
         } catch (err) {
           console.error(
