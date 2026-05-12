@@ -40,6 +40,23 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Only show interactive elements (buttons, links, inputs). Default: true',
       },
+      occlusionFilter: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, drops elements whose center is covered by another element via elementFromPoint. Defaults to false to preserve today\'s output; set to true for stricter accuracy.',
+      },
+      iframes: {
+        type: 'string',
+        enum: ['none', 'same-origin', 'all'],
+        default: 'none',
+        description: 'Frame traversal mode. "all" still respects same-origin policy; cross-origin frames are listed in iframes.skipped.',
+      },
+      mode: {
+        type: 'string',
+        enum: ['viewport', 'tiled'],
+        default: 'viewport',
+        description: 'viewport: today\'s single-shot capture. tiled: full document scrolled in viewport-tall steps; returns per-tile screenshots and a unified element map.',
+      },
     },
     required: ['tabId'],
   },
@@ -85,11 +102,20 @@ const handler: ToolHandler = async (
     const showGrid = args.showGrid === true;
     const showBoundingBoxes = args.showBoundingBoxes !== false;
     const interactiveOnly = args.interactiveOnly !== false;
+    const occlusionFilter = args.occlusionFilter === true;
+    const iframesArg = args.iframes;
+    const iframes: 'none' | 'same-origin' | 'all' =
+      iframesArg === 'same-origin' || iframesArg === 'all' ? iframesArg : 'none';
+    const modeArg = args.mode;
+    const mode: 'viewport' | 'tiled' = modeArg === 'tiled' ? 'tiled' : 'viewport';
 
     const result = await analyzeScreenshot(page, {
       showGrid,
       showBoundingBoxes,
       interactiveOnly,
+      occlusionFilter,
+      iframes,
+      mode,
     });
 
     trackVisionUsage(result.annotationTimeMs);
