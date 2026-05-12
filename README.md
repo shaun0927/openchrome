@@ -534,6 +534,8 @@ By default, benchmarks run in **stub mode** — measuring protocol correctness a
 
 OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 46 tools function with unauthenticated Chrome — navigation, scraping, screenshots, form filling, and parallel workflows all work in clean sessions.
 
+OpenChrome supports three transport modes (`stdio`, `http`, `both`). For stability guarantees, deprecation policy, and migration recipes, see **[docs/transport-lifecycle.md](docs/transport-lifecycle.md)**.
+
 ### Quick start
 
 ```bash
