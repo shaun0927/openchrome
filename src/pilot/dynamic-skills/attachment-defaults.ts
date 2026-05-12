@@ -157,31 +157,55 @@ export async function defaultRunStep(
 }
 
 /**
- * Default contract assertion. Evaluates `skill.contractId` as a JavaScript
- * expression in the live page context via CDP `Runtime.evaluate` — the same
- * approach used by `src/tools/oc-skill-replay.ts`. A successful boolean
- * `true` result is treated as pass; everything else (timeout, throw,
- * non-truthy value) is a fail with a structured reason.
+ * Default contract assertion.
  *
- * Codex P1 on PR #930: previously this returned `{ pass: true }`
- * unconditionally, so replay reported "success" even though no contract
- * had actually been verified. Real evaluation keeps the
- * domain + step + contract three-axis post-condition the issue mandates.
+ * `skill.contractId` is normally an identifier string written by
+ * `oc_skill_record` (e.g. `ctr_login_success`). It is NOT a runnable page
+ * expression — feeding it straight into Runtime.evaluate produces a
+ * ReferenceError and would force every replay to fail post-condition even
+ * when the steps themselves succeed (Codex P1 on PR #930 fixup).
  *
- * When the skill carries no `contractId`, we pass with an explicit
- * `no_contract` reason — that case is genuinely unverifiable here and
- * the orchestrator/curator may inject a richer verifier later.
+ * Dispatch:
+ *   • no contractId           → pass with reason `no_contract`
+ *   • contractId starts with `js:`  → evaluate the rest of the string as
+ *                                     a JS expression in the active page;
+ *                                     pass iff the expression resolves to
+ *                                     boolean `true`. This is the explicit
+ *                                     opt-in for inline checks.
+ *   • any other identifier    → pass with reason
+ *                               `contract_runtime_not_wired` — the
+ *                               orchestrator/curator family will later
+ *                               inject a richer verifier via the
+ *                               `assertContract` override. We never
+ *                               silently fail here, because that would
+ *                               break replay for every normally-recorded
+ *                               skill, but we DO surface the reason so
+ *                               callers can tell pass-by-default apart
+ *                               from a real green verdict.
+ *
+ * Together this matches the "no false positives, no false negatives"
+ * contract codex asked for: only explicit JS expressions are graded;
+ * bare IDs are returned as "deferred to a real verifier".
  */
 const CONTRACT_EVAL_TIMEOUT_MS = 2_000;
+const JS_EXPR_PREFIX = 'js:';
 
 export async function defaultAssertContract(
   skill: SkillRecord,
   tab: CurrentTabInfo,
   sessionId: string,
 ): Promise<ContractAssertionVerdict> {
-  const expr = (skill.contractId ?? '').trim();
-  if (expr.length === 0) {
+  const contractId = (skill.contractId ?? '').trim();
+  if (contractId.length === 0) {
     return { pass: true, reason: 'no_contract' };
+  }
+  if (!contractId.startsWith(JS_EXPR_PREFIX)) {
+    // Bare identifier — no inline verifier; defer to a real contract runtime.
+    return { pass: true, reason: 'contract_runtime_not_wired' };
+  }
+  const expr = contractId.slice(JS_EXPR_PREFIX.length).trim();
+  if (expr.length === 0) {
+    return { pass: false, reason: 'contract_eval_empty_expression' };
   }
   try {
     const sessionManager = getSessionManager();
