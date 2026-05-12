@@ -17,7 +17,7 @@ import { prependHeaderText } from './_shared/state-header';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
-  description: 'Extract focused page state by query.',
+  description: 'Extract focused page state by query. Returns headings, form fields, errors, tabs, and interactive counts scoped to the query intent.\n\nWhen to use: Checking focused aspects of page state (forms, errors, tabs) without loading the full DOM.\nWhen NOT to use: Use read_page for full DOM/AX tree, or find to locate a specific element.',
   inputSchema: {
     type: 'object',
     properties: {

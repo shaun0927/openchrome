@@ -7,7 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS, DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
-import { mergeHeaderJson } from './_shared/state-header';
+import { mergeHeaderJson, isStateHeaderEnabled } from './_shared/state-header';
 
 const definition: MCPToolDefinition = {
   name: 'page_content',
@@ -69,10 +69,12 @@ const handler: ToolHandler = async (
           content: null,
           message: `No element found matching "${selector}"`,
         };
-        const missingWithState = mergeHeaderJson(
-          { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
-          missingBody,
-        );
+        const missingWithState = isStateHeaderEnabled()
+          ? mergeHeaderJson(
+              { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
+              missingBody,
+            )
+          : missingBody;
         return {
           content: [{ type: 'text', text: JSON.stringify(missingWithState) }],
           isError: true,
@@ -99,10 +101,12 @@ const handler: ToolHandler = async (
         contentLength: originalLength,
         content: html,
       };
-      const elementWithState = mergeHeaderJson(
-        { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
-        elementBody,
-      );
+      const elementWithState = isStateHeaderEnabled()
+        ? mergeHeaderJson(
+            { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
+            elementBody,
+          )
+        : elementBody;
       return {
         content: [{ type: 'text', text: JSON.stringify(elementWithState) }],
       };
@@ -121,10 +125,12 @@ const handler: ToolHandler = async (
         contentLength: originalLength,
         content: html,
       };
-      const fullPageWithState = mergeHeaderJson(
-        { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
-        fullPageBody,
-      );
+      const fullPageWithState = isStateHeaderEnabled()
+        ? mergeHeaderJson(
+            { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
+            fullPageBody,
+          )
+        : fullPageBody;
       return {
         content: [{ type: 'text', text: JSON.stringify(fullPageWithState) }],
       };
