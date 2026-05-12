@@ -413,6 +413,7 @@ const handler: ToolHandler = async (
     }
 
     interface Candidate extends CandidateBase {
+      ref: string;
       bbox: { x: number; y: number; w: number; h: number };
       inViewport: boolean;
     }
