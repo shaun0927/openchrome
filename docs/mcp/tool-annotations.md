@@ -46,15 +46,12 @@ Categories below are documentation-only — the runtime source is
 | `page_content`             | HTML content read                                    |
 | `tabs_context`             | Tab list snapshot                                    |
 | `list_profiles`            | Chrome profile enumeration                           |
-| `console_capture`          | Console buffer read                                  |
 | `performance_metrics`      | Page performance read                                |
 | `oc_profile_status`        | Profile status read                                  |
 | `oc_get_connection_info`   | Server/Chrome connection metadata read               |
 | `oc_connection_health`     | Health probe                                         |
 | `oc_skill_recall`          | Read skill memory                                    |
 | `vision_find`              | Read-only image-based discovery                      |
-| `validate_page`            | Composite page-health probe                          |
-| `batch_paginate`           | Read-only pagination over prior results              |
 | `oc_assert`                | Single-call contract verifier (read-only)            |
 | `oc_recording_list`        | List existing recordings                             |
 | `workflow_status`          | Workflow read                                        |
@@ -64,12 +61,14 @@ Categories below are documentation-only — the runtime source is
 
 ### Network egress — `{ readOnly:F, destructive:F, idempotent:F, openWorld:T }`
 
-| Tool            | Notes                                                                |
-| --------------- | -------------------------------------------------------------------- |
-| `navigate`      | Loads a URL — fires real network requests                            |
-| `page_reload`   | Re-fetches the page                                                  |
-| `crawl`         | Visits N pages from a seed                                           |
-| `crawl_sitemap` | Visits N pages from a sitemap                                        |
+| Tool             | Notes                                                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `navigate`       | Loads a URL — fires real network requests                                                                        |
+| `page_reload`    | Re-fetches the page                                                                                              |
+| `crawl`          | Visits N pages from a seed                                                                                       |
+| `crawl_sitemap`  | Visits N pages from a sitemap                                                                                    |
+| `validate_page`  | Calls `smartGoto`, may create a new tab, waits on live page state — open-world, mutating, non-idempotent         |
+| `batch_paginate` | Presses keys / clicks / scrolls; `url` strategy creates tabs and navigates to generated URLs — worst-case egress |
 
 ### Network egress + destructive — `{ readOnly:F, destructive:T, idempotent:F, openWorld:T }`
 
@@ -95,6 +94,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | `oc_recording_stop` | Terminates a recording session                                       |
 | `workflow_cleanup`  | Removes workflow state                                               |
 | `worker_complete`   | Terminates a worker                                                  |
+| `console_capture`   | `clear` action deletes buffered logs; `start`/`stop` mutate capture state |
 
 ### Mutating (not destructive, no network) — `{ readOnly:F, destructive:F, idempotent:F, openWorld:F }`
 

@@ -44,6 +44,8 @@ describe('TOOL_ANNOTATIONS table', () => {
       'batch_execute',
       'act',
       'network',
+      // `console_capture` supports `clear`, which deletes buffered logs.
+      'console_capture',
     ];
     for (const name of destructive) {
       expect(TOOL_ANNOTATIONS[name as keyof typeof TOOL_ANNOTATIONS].destructiveHint).toBe(true);
@@ -62,10 +64,8 @@ describe('TOOL_ANNOTATIONS table', () => {
       'oc_get_connection_info',
       'oc_connection_health',
       'oc_skill_recall',
-      'console_capture',
       'performance_metrics',
       'vision_find',
-      'validate_page',
     ];
     for (const name of readonly) {
       expect(TOOL_ANNOTATIONS[name as keyof typeof TOOL_ANNOTATIONS].readOnlyHint).toBe(true);
@@ -73,7 +73,7 @@ describe('TOOL_ANNOTATIONS table', () => {
   });
 
   test('expected open-world tools are annotated as openWorld', () => {
-    const openWorld = ['navigate', 'crawl', 'crawl_sitemap', 'act', 'page_reload', 'network', 'request_intercept', 'javascript_tool', 'batch_execute'];
+    const openWorld = ['navigate', 'crawl', 'crawl_sitemap', 'act', 'page_reload', 'network', 'request_intercept', 'javascript_tool', 'batch_execute', 'validate_page', 'batch_paginate'];
     for (const name of openWorld) {
       expect(TOOL_ANNOTATIONS[name as keyof typeof TOOL_ANNOTATIONS].openWorldHint).toBe(true);
     }

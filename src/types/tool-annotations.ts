@@ -69,15 +69,16 @@ export const TOOL_ANNOTATIONS = {
   page_content: READ_ONLY,
   tabs_context: READ_ONLY,
   list_profiles: READ_ONLY,
-  console_capture: READ_ONLY,
+  // `console_capture` supports `clear` which deletes buffered logs, plus
+  // `start`/`stop` which mutate module-level capture state — destructive
+  // under the worst-case rule.
+  console_capture: DESTRUCTIVE,
   performance_metrics: READ_ONLY,
   oc_profile_status: READ_ONLY,
   oc_get_connection_info: READ_ONLY,
   oc_connection_health: READ_ONLY,
   oc_skill_recall: READ_ONLY,
   vision_find: READ_ONLY,
-  validate_page: READ_ONLY,
-  batch_paginate: READ_ONLY,
   oc_assert: READ_ONLY,
   oc_recording_list: READ_ONLY,
   workflow_status: READ_ONLY,
@@ -86,10 +87,22 @@ export const TOOL_ANNOTATIONS = {
   wait_for: READ_ONLY,
 
   // ── Network egress (navigation, crawling) ───────────────────────────────
+  //
+  // `validate_page` calls `smartGoto` (real navigation), can create a new tab
+  // when `tabId` is omitted, and waits on live page state — open-world,
+  // mutating, non-idempotent.
+  //
+  // `batch_paginate` presses keys, clicks selectors, and scrolls; in `url`
+  // strategy it creates new tabs and navigates to generated URLs. At least
+  // one valid input combination triggers non-loopback network egress, so the
+  // worst-case envelope is open-world (which also implies non-read-only and
+  // non-idempotent).
   navigate: OPEN_WORLD,
   page_reload: OPEN_WORLD,
   crawl: OPEN_WORLD,
   crawl_sitemap: OPEN_WORLD,
+  validate_page: OPEN_WORLD,
+  batch_paginate: OPEN_WORLD,
 
   // ── Network-modifying / blocking / arbitrary-execution ──────────────────
   //
