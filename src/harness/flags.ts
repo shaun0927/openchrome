@@ -58,6 +58,22 @@ function isFamilyEnabled(envVar: string): boolean {
   return isTruthy(raw);
 }
 
+/**
+ * Generic env-var feature gate for `core` tier features that ship default-on
+ * but allow opt-out for parity testing (e.g. `OPENCHROME_SKILL_REPLAY=0`).
+ *
+ * Unlike `isFamilyEnabled` above, this does NOT require the pilot tier to
+ * be enabled — core features are always reachable, the env var only
+ * controls the runtime branch.
+ *
+ * TODO(#844): replace inline copy with the shared helper when #844 lands.
+ */
+export function isCoreFeatureEnabled(envVar: string, defaultOn: boolean): boolean {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === '') return defaultOn;
+  return raw === '1' || raw.toLowerCase() === 'true';
+}
+
 export const isTraceEnabled = (): boolean => isFamilyEnabled('OPENCHROME_TRACE');
 export const isStateGraphEnabled = (): boolean => isFamilyEnabled('OPENCHROME_STATE_GRAPH');
 export const isContractRuntimeEnabled = (): boolean => isFamilyEnabled('OPENCHROME_CONTRACT_RUNTIME');

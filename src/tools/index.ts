@@ -107,6 +107,9 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// Skill memory tools (#875) — deterministic replay
+import { registerOcSkillReplayTool } from './oc-skill-replay';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -217,6 +220,9 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+
+  // Skill memory tools (#875) — deterministic replay
+  registerOcSkillReplayTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
