@@ -798,10 +798,32 @@ async function analyzeTiledScreenshot(
   let iframes: VisionIframesInfo | undefined;
   let iframeElements: RawElement[] = [];
   if (opts.iframes !== 'none') {
-    const framesResult = await collectFromFrames(page, opts.iframes, opts.interactiveOnly, opts.occlusionFilter);
-    iframes = framesResult.iframes;
-    iframeElements = framesResult.elements;
-    occludedDropped += framesResult.occludedDropped;
+    // P1 codex fix: `collectFromFrames` returns coordinates computed from
+    // frame-local rects plus `iframeHandle.boundingBox()`, which is viewport
+    // -relative to the *current* scroll position. The tile loop produces
+    // document-space coordinates (`el.y + docOffsetY`), so merging viewport
+    // -space iframe coords into the unified tiled map would offset clicks by
+    // `originalScroll{X,Y}` whenever the caller's page wasn't already at
+    // (0, 0). Scroll to the origin first so `collectFromFrames` runs at
+    // scroll=(0,0) — viewport coords then equal document coords. Restore the
+    // original scroll after, even on failure.
+    try {
+      await page.evaluate(() => window.scrollTo(0, 0));
+    } catch {
+      /* best-effort */
+    }
+    try {
+      const framesResult = await collectFromFrames(page, opts.iframes, opts.interactiveOnly, opts.occlusionFilter);
+      iframes = framesResult.iframes;
+      iframeElements = framesResult.elements;
+      occludedDropped += framesResult.occludedDropped;
+    } finally {
+      await page.evaluate(
+        (x: number, y: number) => window.scrollTo(x, y),
+        originalScrollX,
+        originalScrollY,
+      ).catch(() => {});
+    }
   }
 
   return { elements: unifiedElements, tiling, occludedDropped, iframes, iframeElements };
