@@ -250,7 +250,7 @@ function clampEnd(v: number, lo: number, hi: number): number {
 }
 
 /** Rec. 601 luma — fast and good enough for edge detection. */
-function luma(r: number, g: number, b: number): number {
+export function luma(r: number, g: number, b: number): number {
   return 0.299 * r + 0.587 * g + 0.114 * b;
 }
 
@@ -259,7 +259,7 @@ function luma(r: number, g: number, b: number): number {
  * bounds requests are clamped to the nearest in-bounds pixel — that's
  * the standard Sobel boundary policy.
  */
-function pixelRgb(rgba: Uint8Array | Buffer, w: number, h: number, x: number, y: number): RgbColor {
+export function pixelRgb(rgba: Uint8Array | Buffer, w: number, h: number, x: number, y: number): RgbColor {
   const cx = clampInt(x, 0, w - 1);
   const cy = clampInt(y, 0, h - 1);
   const i = (cy * w + cx) * 4;
@@ -344,7 +344,7 @@ export function sobelEdgeDensity(
 }
 
 /** Inline tuple form so `luma(...rgbAt(...))` stays a single allocation. */
-function rgbAt(
+export function rgbAt(
   rgba: Uint8Array | Buffer,
   w: number,
   h: number,
