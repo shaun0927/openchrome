@@ -251,6 +251,28 @@ const definition: MCPToolDefinition = {
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
+const BOX_MODEL_CONCURRENCY = 8;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex++;
+        results[index] = await worker(items[index], index);
+      }
+    }),
+  );
+
+  return results;
+}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -380,18 +402,22 @@ const handler: ToolHandler = async (
     }
     const roots = axNodes.filter((n) => !childIdSet.has(n.nodeId));
 
-    interface Candidate {
-      ref: string;
+    interface CandidateBase {
+      backendDOMNodeId: number;
       role: string;
       name: string;
       value?: string | boolean;
       props: Record<string, unknown>;
       domOrder: number;
-      bbox: { x: number; y: number; w: number; h: number };
-      inViewport: boolean;
       actions: ObserveAction[];
     }
 
+    interface Candidate extends CandidateBase {
+      bbox: { x: number; y: number; w: number; h: number };
+      inViewport: boolean;
+    }
+
+    const boxCandidates: CandidateBase[] = [];
     const candidates: Candidate[] = [];
     let domOrderCounter = 0;
     let totalConsidered = 0;
@@ -401,7 +427,7 @@ const handler: ToolHandler = async (
     const vpRight = vpLeft + pageStats.viewportWidth;
     const vpBottom = vpTop + pageStats.viewportHeight;
 
-    const visit = async (node: AXNode): Promise<void> => {
+    const visit = (node: AXNode): void => {
       throwIfAborted(context);
 
       const role = node.role?.value || '';
@@ -419,60 +445,28 @@ const handler: ToolHandler = async (
 
           const hidden = !includeHidden && isHidden(props);
           if (!hidden) {
-            const box = await getBoxModel(
-              page,
-              cdpClient,
-              node.backendDOMNodeId,
-            );
-            if (box) {
-              // Viewport math is page-relative (CDP getBoxModel returns
-              // coordinates relative to the layout viewport, accounting
-              // for scroll).
-              const inViewport =
-                box.x < vpRight &&
-                box.x + box.w > vpLeft &&
-                box.y < vpBottom &&
-                box.y + box.h > vpTop;
-
-              // Apply scope filter early — keeps the candidate list small.
-              if (scope === 'viewport' && !inViewport) {
-                // skip
-              } else {
-                const ref = refIdManager.generateRef(
-                  sessionId,
-                  tabId,
-                  node.backendDOMNodeId,
-                  role,
-                  name,
-                  AX_ROLE_TO_TAG[role.toLowerCase()],
-                );
-
-                let value: string | boolean | undefined;
-                if (roleHasValue(role)) {
-                  if (typeof node.value?.value === 'string') {
-                    value = node.value.value;
-                  } else if (typeof node.value?.value === 'boolean') {
-                    value = node.value.value;
-                  } else if (props['checked'] === true) {
-                    value = true;
-                  } else if (props['checked'] === false) {
-                    value = false;
-                  }
-                }
-
-                candidates.push({
-                  ref,
-                  role,
-                  name,
-                  value,
-                  props,
-                  domOrder: domOrderCounter++,
-                  bbox: box,
-                  inViewport,
-                  actions: acts,
-                });
+            let value: string | boolean | undefined;
+            if (roleHasValue(role)) {
+              if (typeof node.value?.value === 'string') {
+                value = node.value.value;
+              } else if (typeof node.value?.value === 'boolean') {
+                value = node.value.value;
+              } else if (props['checked'] === true) {
+                value = true;
+              } else if (props['checked'] === false) {
+                value = false;
               }
             }
+
+            boxCandidates.push({
+              backendDOMNodeId: node.backendDOMNodeId,
+              role,
+              name,
+              value,
+              props,
+              domOrder: domOrderCounter++,
+              actions: acts,
+            });
           }
         }
       }
@@ -480,12 +474,56 @@ const handler: ToolHandler = async (
       if (node.childIds) {
         for (const cid of node.childIds) {
           const child = nodeMap.get(cid);
-          if (child) await visit(child);
+          if (child) visit(child);
         }
       }
     };
 
-    for (const root of roots) await visit(root);
+    for (const root of roots) visit(root);
+
+    const boxedCandidates = await mapWithConcurrency(
+      boxCandidates,
+      BOX_MODEL_CONCURRENCY,
+      async (candidate) => {
+        throwIfAborted(context);
+        const box = await getBoxModel(
+          page,
+          cdpClient,
+          candidate.backendDOMNodeId,
+        );
+        return { candidate, box };
+      },
+    );
+
+    for (const { candidate, box } of boxedCandidates) {
+      if (!box) continue;
+
+      // Viewport math is page-relative (CDP getBoxModel returns coordinates
+      // relative to the layout viewport, accounting for scroll).
+      const inViewport =
+        box.x < vpRight &&
+        box.x + box.w > vpLeft &&
+        box.y < vpBottom &&
+        box.y + box.h > vpTop;
+
+      if (scope === 'viewport' && !inViewport) continue;
+
+      const ref = refIdManager.generateRef(
+        sessionId,
+        tabId,
+        candidate.backendDOMNodeId,
+        candidate.role,
+        candidate.name,
+        AX_ROLE_TO_TAG[candidate.role.toLowerCase()],
+      );
+
+      candidates.push({
+        ...candidate,
+        ref,
+        bbox: box,
+        inViewport,
+      });
+    }
 
     // 6. Apply the user's action filter (intersect, not union — entry must
     //    offer AT LEAST ONE of the requested verbs).
@@ -508,6 +546,9 @@ const handler: ToolHandler = async (
     //    this response — callers reference `nodes[i].ref`, not the index,
     //    for any subsequent action (the index is purely human-readable).
     const nodes: ObservableNode[] = limited.map((c, i) => {
+      const publicActions = actionFilter
+        ? c.actions.filter((action) => actionFilter.has(action))
+        : c.actions;
       const entry: ObservableNode = {
         index: i + 1,
         ref: c.ref,
@@ -515,9 +556,9 @@ const handler: ToolHandler = async (
         name: c.name,
         bbox: c.bbox,
         inViewport: c.inViewport,
-        actions: c.actions,
+        actions: publicActions,
       };
-      if (c.value !== undefined) entry.value = c.value;
+      if (c.value !== undefined && c.value !== '') entry.value = c.value;
       return entry;
     });
 

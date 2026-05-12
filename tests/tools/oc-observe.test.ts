@@ -224,6 +224,80 @@ describe('oc_observe', () => {
     });
   });
 
+  describe('Box-model fetching', () => {
+    test('fetches candidate boxes concurrently with a safe upper bound', async () => {
+      const nodes = [
+        {
+          nodeId: 1,
+          backendDOMNodeId: 1,
+          role: { value: 'WebArea' },
+          name: { value: '' },
+          childIds: Array.from({ length: 20 }, (_, i) => i + 10),
+        },
+        ...Array.from({ length: 20 }, (_, i) => ({
+          nodeId: i + 10,
+          backendDOMNodeId: i + 10,
+          role: { value: 'button' },
+          name: { value: `Button ${i + 1}` },
+          childIds: [],
+        })),
+      ];
+
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.evaluate as jest.Mock).mockResolvedValue({
+        url: 'http://fixture.local/static',
+        scrollX: 0,
+        scrollY: 0,
+        viewportWidth: 1024,
+        viewportHeight: 768,
+      });
+
+      let activeBoxCalls = 0;
+      let maxActiveBoxCalls = 0;
+      mockSessionManager.mockCDPClient.send = jest
+        .fn()
+        .mockImplementation(
+          async (
+            _page: unknown,
+            method: string,
+            params?: Record<string, unknown>,
+          ) => {
+            if (method === 'Page.getFrameTree') {
+              return { frameTree: { frame: { loaderId: 'loader-fixed-1' } } };
+            }
+            if (method === 'Accessibility.getFullAXTree') {
+              return { nodes };
+            }
+            if (method === 'DOM.getBoxModel') {
+              activeBoxCalls++;
+              maxActiveBoxCalls = Math.max(maxActiveBoxCalls, activeBoxCalls);
+              await new Promise((resolve) => setTimeout(resolve, 5));
+              activeBoxCalls--;
+
+              const id = (params?.backendNodeId as number) || 0;
+              return {
+                model: {
+                  content: makeBox(16, id * 10, 50, 20),
+                },
+              };
+            }
+            return {};
+          },
+        );
+
+      const handler = await getObserveHandler();
+      const r = await handler(testSessionId, {
+        tabId: testTargetId,
+        scope: 'document',
+      });
+      const resp = parseResponse(r.content[0].text);
+
+      expect(resp.nodes).toHaveLength(20);
+      expect(maxActiveBoxCalls).toBeGreaterThan(1);
+      expect(maxActiveBoxCalls).toBeLessThanOrEqual(8);
+    });
+  });
+
   describe('Filters', () => {
     test("actions=['click'] excludes textboxes", async () => {
       const handler = await getObserveHandler();

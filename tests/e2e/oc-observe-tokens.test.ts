@@ -35,7 +35,7 @@ import { getRefIdManager } from '../../src/utils/ref-id-manager';
 function buildAxFixture() {
   return {
     nodes: [
-      { nodeId: 1, backendDOMNodeId: 1, role: { value: 'WebArea' }, name: { value: '' }, childIds: [10, 11, 20, 21, 22, 23, 24, 25] },
+      { nodeId: 1, backendDOMNodeId: 1, role: { value: 'WebArea' }, name: { value: '' }, childIds: [10, 11, 20, 21, 22, 23, 24, 25, 26, 27] },
       { nodeId: 10, backendDOMNodeId: 10, role: { value: 'link' }, name: { value: 'Home' }, childIds: [] },
       { nodeId: 11, backendDOMNodeId: 11, role: { value: 'link' }, name: { value: 'About' }, childIds: [] },
       { nodeId: 20, backendDOMNodeId: 20, role: { value: 'textbox' }, name: { value: 'Full name' }, value: { value: '' }, childIds: [] },
@@ -44,6 +44,8 @@ function buildAxFixture() {
       { nodeId: 23, backendDOMNodeId: 23, role: { value: 'combobox' }, name: { value: 'Country' }, value: { value: 'us' }, childIds: [] },
       { nodeId: 24, backendDOMNodeId: 24, role: { value: 'checkbox' }, name: { value: 'I agree' }, childIds: [] },
       { nodeId: 25, backendDOMNodeId: 25, role: { value: 'button' }, name: { value: 'Submit' }, childIds: [] },
+      { nodeId: 26, backendDOMNodeId: 26, role: { value: 'textbox' }, name: { value: 'Company legal name exactly as it appears on billing documents' }, value: { value: '' }, childIds: [] },
+      { nodeId: 27, backendDOMNodeId: 27, role: { value: 'textbox' }, name: { value: 'Detailed shipping instructions and delivery access notes' }, value: { value: '' }, childIds: [] },
     ],
   };
 }
@@ -61,6 +63,8 @@ const BOXES: Record<number, number[]> = {
   23: makeBox(16, 210, 200, 30),
   24: makeBox(16, 250, 200, 20),
   25: makeBox(16, 280, 100, 30),
+  26: makeBox(16, 320, 280, 30),
+  27: makeBox(16, 360, 280, 60),
 };
 
 describe('oc_observe + interact total bytes < read_page(ax) + interact total bytes', () => {

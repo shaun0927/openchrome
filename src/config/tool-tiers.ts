@@ -20,6 +20,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   form_input: 1,
   fill_form: 1,
   read_page: 1,
+  oc_observe: 1,              // src/tools/oc-observe.ts — compact observable action map (#866)
   inspect: 1,
   query_dom: 1,
   javascript_tool: 1,
