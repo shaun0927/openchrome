@@ -10,7 +10,7 @@ import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
-  description: 'Set form element value by ref.',
+  description: 'Set one form element value by ref.\n\nWhen to use: Filling a single known input, textarea, select, or checkbox by ref.\nWhen NOT to use: Use fill_form({fields:{...}}) for multiple fields or optional submit.',
   inputSchema: {
     type: 'object',
     properties: {

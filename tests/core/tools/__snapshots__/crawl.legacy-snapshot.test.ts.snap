@@ -1,0 +1,50 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`crawl legacy CDP output (P2 byte-identical contract) engine="cdp" matches committed snapshot 1`] = `
+{
+  "pages": [
+    {
+      "content": "# Snapshot Fixture
+
+Deterministic body content used for the legacy CDP snapshot test.",
+      "depth": 0,
+      "engine_used": "cdp",
+      "links_found": 0,
+      "title": "Snapshot Fixture",
+      "url": "<origin>/snapshot.html",
+    },
+  ],
+  "summary": {
+    "duration_ms": 0,
+    "failed": 0,
+    "max_depth_reached": 0,
+    "scope": "<origin>/**",
+    "succeeded": 1,
+    "total_pages": 1,
+  },
+}
+`;
+
+exports[`crawl legacy CDP output (P2 byte-identical contract) no engine arg (legacy default) matches committed snapshot 1`] = `
+{
+  "pages": [
+    {
+      "content": "# Snapshot Fixture
+
+Deterministic body content used for the legacy CDP snapshot test.",
+      "depth": 0,
+      "links_found": 0,
+      "title": "Snapshot Fixture",
+      "url": "<origin>/snapshot.html",
+    },
+  ],
+  "summary": {
+    "duration_ms": 0,
+    "failed": 0,
+    "max_depth_reached": 0,
+    "scope": "<origin>/**",
+    "succeeded": 1,
+    "total_pages": 1,
+  },
+}
+`;
