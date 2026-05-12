@@ -1,0 +1,8 @@
+{
+  "expected_pass_count": 10,
+  "transcripts_required": [
+    "task-01-example-com-title",
+    "task-04-rfc-9110-section-9-title",
+    "task-10-tc39-ecma262-strict-mode"
+  ]
+}

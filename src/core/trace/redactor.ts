@@ -209,12 +209,24 @@ function walk(value: unknown, siblingName?: string): unknown {
 /**
  * Top-level entry: redact a captured trace event's `body`. The wrapper
  * envelope (`ts`, `seq`, `kind`) is preserved as-is.
+ *
+ * Composition (#834): the body is first walked through the credential
+ * pattern matcher (this file), then through the loaded-secrets redactor
+ * (`src/core/secrets/redactor.ts`). The secrets pass is a no-op when
+ * `--secrets` was not provided.
  */
 export function redactTraceEvent<T extends { body: unknown }>(event: T): T {
-  return { ...event, body: walk(event.body) } as T;
+  // Lazy import keeps the credential-pattern redactor self-contained for
+  // callers that pull the trace module in isolation (no implicit
+  // dependency cycle with the secrets module's own redactor walk).
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactSecrets } = require('../secrets/redactor') as typeof import('../secrets/redactor');
+  return { ...event, body: redactSecrets(walk(event.body)) } as T;
 }
 
 /** Convenience for tests: redact an arbitrary value tree. */
 export function redactValue(value: unknown): unknown {
-  return walk(value);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactSecrets } = require('../secrets/redactor') as typeof import('../secrets/redactor');
+  return redactSecrets(walk(value));
 }

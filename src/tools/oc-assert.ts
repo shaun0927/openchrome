@@ -25,6 +25,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { evaluate } from '../contracts/evaluate';
 import { validateAssertion } from '../contracts/validator';
+import { getActiveActionRecorder } from '../recording/action-recorder';
 import type { EvalContext, NetworkLogEntry } from '../contracts/eval-context';
 import type {
   Assertion,
@@ -273,7 +274,7 @@ function isInconclusive(evidence: Evidence): boolean {
 }
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const contractInline = args.contract;
@@ -357,6 +358,19 @@ const handler: ToolHandler = async (
       typeof result.evidence.details.error === 'string'
         ? (result.evidence.details.error as string)
         : 'evaluation was inconclusive';
+  }
+
+  // Wire into active recording: append verdict to most-recent action's contractResults.
+  // No-op if no recording is active for this session or if no action has been recorded yet.
+  const recorder = getActiveActionRecorder(sessionId);
+  if (recorder) {
+    recorder.appendContractResult({
+      assertion: contractInline,
+      verdict,
+      details: result.evidence.details as Record<string, unknown> | undefined,
+    }).catch((err: unknown) => {
+      console.error('[oc_assert] Failed to append contract result to recorder:', err instanceof Error ? err.message : err);
+    });
   }
 
   return jsonResult(output);

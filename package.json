@@ -16,6 +16,8 @@
     "check": "node dist/cli/index.js check",
     "benchmark": "ts-node tests/benchmark/run.ts",
     "benchmark:ci": "ts-node tests/benchmark/run.ts --ci",
+    "bench:webvoyager:mock": "ts-node tests/benchmark/webvoyager/runner.ts --adapter mock",
+    "bench:webvoyager:real": "ts-node tests/benchmark/webvoyager/runner.ts --adapter claude",
     "test": "jest",
     "test:e2e": "node --expose-gc node_modules/.bin/jest --config tests/e2e/jest.e2e.config.js",
     "test:coverage": "jest --coverage",
@@ -71,7 +73,8 @@
     "proper-lockfile": "^4.1.2",
     "puppeteer-core": "npm:rebrowser-puppeteer-core@23.10.3",
     "uuid": "^9.0.0",
-    "write-file-atomic": "^5.0.1"
+    "write-file-atomic": "^5.0.1",
+    "yaml": "^2.9.0"
   },
   "overrides": {
     "basic-ftp": "^5.3.1",

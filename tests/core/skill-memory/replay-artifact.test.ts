@@ -132,8 +132,11 @@ describe('validateReplayArtifactStep', () => {
     const r = validateReplayArtifactStep({
       kind: 'click',
       selectors: [{ type: 'css', value: '#x' }],
-      // @ts-expect-error testing runtime guard
-      args: [],
+      // The runtime guard test passes an array where the runtime expects an
+      // object. With develop's tightened input typing the cast is now
+      // explicit so TS no longer flags it (the prior `@ts-expect-error`
+      // directive is unused).
+      args: [] as unknown as Record<string, unknown>,
     });
     expect(r.ok).toBe(false);
   });
