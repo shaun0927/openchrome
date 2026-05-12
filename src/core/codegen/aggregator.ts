@@ -28,7 +28,7 @@ import * as path from 'node:path';
 
 import { formatPuppeteer, PUPPETEER_FILE_HEADER, PUPPETEER_FILE_FOOTER, PUPPETEER_SUPPORTED_TOOLS } from './formatters/puppeteer';
 import { formatPlaywright, PLAYWRIGHT_FILE_HEADER, PLAYWRIGHT_FILE_FOOTER, PLAYWRIGHT_SUPPORTED_TOOLS } from './formatters/playwright';
-import { formatMcpReplay } from './formatters/mcp-replay';
+import { formatMcpReplay, McpReplayOutcome } from './formatters/mcp-replay';
 import { getOriginalArgs as getOriginalArgsFromHook } from './secrets-hook';
 
 export type CodegenFormat = 'off' | 'puppeteer' | 'playwright' | 'mcp-replay';
@@ -163,28 +163,45 @@ export class CodegenAggregator {
    * embedded a `replay` field. The always-on JSONL line provides
    * mcp-replay coverage for the non-9 tools. The .ts script-line is
    * written only for the 9 supported tools.
+   *
+   * `outcome` differentiates success vs error rows in the JSONL so
+   * failure-heavy sessions can be fully reconstructed by replay clients
+   * (codex P2 review on PR #949). Failed tool calls also skip the
+   * per-language `.ts` snippet line because the snippets are designed to
+   * be replayed verbatim and a failed step would not be safe to embed
+   * into a generated script.
    */
   recordToolCall(
     tool: string,
     args: Record<string, unknown>,
     toolCallId?: string,
+    outcome: McpReplayOutcome = 'success',
+    errorMessage?: string,
   ): void {
     if (this.closed) return;
     this.callCount += 1;
 
     const effectiveArgs = toolCallId ? (getOriginalArgsFromHook(toolCallId) ?? args) : args;
 
-    // Always write to JSONL — auto-capture for any tool.
+    // Always write to JSONL — auto-capture for any tool, including failures.
     try {
       if (!this.jsonlHeaderWritten) {
         this.jsonlHeaderWritten = true;
       }
-      fs.appendFileSync(this.jsonlPath, `${formatMcpReplay(tool, effectiveArgs)}\n`, 'utf8');
+      fs.appendFileSync(
+        this.jsonlPath,
+        `${formatMcpReplay(tool, effectiveArgs, Date.now(), outcome, errorMessage)}\n`,
+        'utf8',
+      );
     } catch (err) {
       console.error('[codegen] jsonl append failed:', err instanceof Error ? err.message : err);
     }
 
     // Per-language script line is gated on format + supported tool set.
+    // Skip the snippet for failed calls so generated scripts only contain
+    // steps that actually ran to completion (matches the original intent
+    // of replay-able .ts scripts).
+    if (outcome !== 'success') return;
     if (!this.tsPath) return;
 
     const snippet =
@@ -232,6 +249,7 @@ export class CodegenAggregator {
 // ─── Module-level singleton slot ─────────────────────────────────────────
 
 let active: CodegenAggregator | null = null;
+let shutdownHooksInstalled = false;
 
 /**
  * Install the active aggregator. Called once by `src/index.ts` after the
@@ -244,6 +262,38 @@ export function setCodegenAggregator(
   const prev = active;
   active = next;
   return prev;
+}
+
+/**
+ * Register process-shutdown hooks (SIGINT / SIGTERM / beforeExit / exit) so
+ * the active aggregator is always closed and its language-specific footer
+ * is appended. Without this, Puppeteer/Playwright `.ts` files stay
+ * syntactically incomplete at process shutdown and replay scripts are
+ * unusable (codex P1 review on PR #949).
+ *
+ * Hooks are installed once per process; `close()` itself is idempotent so
+ * we can also call it on `beforeExit` and signal paths without
+ * double-appending the footer.
+ */
+export function installCodegenShutdownHooks(): void {
+  if (shutdownHooksInstalled) return;
+  shutdownHooksInstalled = true;
+
+  const closeActive = (): void => {
+    try {
+      active?.close();
+    } catch (err) {
+      console.error('[codegen] shutdown close failed:', err instanceof Error ? err.message : err);
+    }
+  };
+
+  // beforeExit fires on natural process drain; signal handlers fire on
+  // SIGINT/SIGTERM. We don't call process.exit() here — the existing
+  // shutdown() in src/index.ts already handles that.
+  process.on('beforeExit', closeActive);
+  process.on('exit', closeActive);
+  process.on('SIGINT', closeActive);
+  process.on('SIGTERM', closeActive);
 }
 
 /**

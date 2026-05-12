@@ -6,6 +6,7 @@ export {
   CodegenAggregator,
   defaultCodegenDir,
   getCodegenAggregator,
+  installCodegenShutdownHooks,
   parseCodegenFormat,
   setCodegenAggregator,
 } from './aggregator';

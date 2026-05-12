@@ -2078,6 +2078,23 @@ export class MCPServer {
         // Best-effort recording
       }
 
+      // Codegen byproduct (#836) — capture failed tool calls in the JSONL
+      // envelope log so replay clients see every call, not just successes
+      // (codex P2 review on PR #949). The aggregator skips the .ts snippet
+      // line for failures, but the JSONL row carries `outcome: "error"`
+      // (plus the error message) so downstream tooling can branch on it.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { getCodegenAggregator } = require('./core/codegen');
+        const aggregator = getCodegenAggregator();
+        if (aggregator) {
+          const callIdForHook = `${sessionId}:${callId}`;
+          aggregator.recordToolCall(toolName, toolArgs, callIdForHook, aborted ? 'error' : 'error', message);
+        }
+      } catch (err) {
+        console.error('[MCPServer] codegen error-path aggregation failed (non-fatal):', err instanceof Error ? err.message : err);
+      }
+
       // Transition from heavy back to active after tool completes
       try {
         const cdpClient = getCDPClient();

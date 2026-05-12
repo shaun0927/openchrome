@@ -48,6 +48,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_evidence_bundle: 1,      // src/tools/oc-evidence-bundle.ts — Outcome Contracts evidence bundle capture (#792)
   oc_skill_record: 1,         // src/tools/oc-skill-record.ts — skill memory write surface (#785)
   oc_skill_recall: 1,         // src/tools/oc-skill-recall.ts — skill memory read surface (#785)
+  oc_skill_export: 1,         // src/tools/oc-skill-export.ts — replay-script export for stored skills (#836)
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
