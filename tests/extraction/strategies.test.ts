@@ -64,3 +64,24 @@ describe('schema-aware extraction strategies', () => {
     expect(runExtractor<Record<string, unknown>>(script, documentMock)).toEqual({ site_name: 'OpenChrome' });
   });
 });
+
+test('JSON-LD ignores inherited enumerable properties when matching aliases', () => {
+  const plan = buildExtractionPlan({ headline: { type: 'string' } });
+  const script = buildJsonLdExtractor(plan.fields);
+  const documentMock = {
+    querySelectorAll: (selector: string) => selector === 'script[type="application/ld+json"]'
+      ? [{ textContent: JSON.stringify({ description: 'own description' }) }]
+      : [],
+  };
+
+  Object.defineProperty(Object.prototype, 'headline', {
+    configurable: true,
+    enumerable: true,
+    value: 'inherited headline',
+  });
+  try {
+    expect(runExtractor<Record<string, unknown>>(script, documentMock)).toEqual({});
+  } finally {
+    delete (Object.prototype as { headline?: string }).headline;
+  }
+});
