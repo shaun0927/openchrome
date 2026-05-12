@@ -250,6 +250,30 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('Could not find');
     });
 
+    test('workflow_debug reports guarded workflow cache miss without changing fallback execution', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      (page!.evaluate as jest.Mock).mockResolvedValue({
+        title: 'Example',
+        actionLabels: ['Login'],
+        actionRoles: ['button'],
+        formShape: [],
+      });
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction: 'click missing-button',
+        use_workflow_cache: true,
+        workflow_debug: true,
+        verify: false,
+      }) as any;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Could not find');
+      expect(result.content[0].text).toContain('[WorkflowCache] decision=miss reason=no_candidate');
+    });
+
     test('navigate step calls page.goto', async () => {
       const page = await mockSessionManager.getPage(testSessionId, testTargetId);
       (page!.evaluate as jest.Mock).mockResolvedValue({ url: 'https://target.com', title: 'Target' });
