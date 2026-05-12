@@ -121,11 +121,12 @@ type PostActionInput = {
   delta: string | null | undefined;
   returnFormat: string;
   verify: boolean | undefined;
+  verifyReport?: VerifyReport;
   extraTopLevel?: Record<string, unknown>;
 };
 
 async function buildPostActionResponse(input: PostActionInput): Promise<MCPResult> {
-  const { page, context, headerLine, delta, returnFormat, verify, extraTopLevel } = input;
+  const { page, context, headerLine, delta, returnFormat, verify, verifyReport, extraTopLevel } = input;
 
   const lines: string[] = [headerLine];
 
@@ -276,10 +277,11 @@ async function buildPostActionResponse(input: PostActionInput): Promise<MCPResul
   ];
   if (screenshotContent) responseContent.push(screenshotContent);
 
-  return {
+  const result = {
     content: responseContent,
     ...(extraTopLevel || {}),
   } as MCPResult;
+  return attachVerifyReport(result, verifyReport);
 }
 
 const handler: ToolHandler = async (
@@ -502,15 +504,21 @@ const handler: ToolHandler = async (
         }
 
         const isStealthRef = sessionManager.isStealthTarget(tabId);
-        const { delta: refDelta } = await withDomDelta(page, async () => {
-          if (isStealthRef) await humanMouseMove(page, rectX, rectY);
-          if (action === 'double_click') await page.mouse.click(rectX, rectY, { clickCount: 2 });
-          else if (action === 'hover') {
-            if (!isStealthRef) await page.mouse.move(rectX, rectY);
-          } else {
-            await page.mouse.click(rectX, rectY);
-          }
-        }, { settleMs: Math.max(150, waitAfter) });
+        const { result: refActionResult, verify: refVerifyReport } = await runVerify(
+          page,
+          verifyMode,
+          async () =>
+            withDomDelta(page, async () => {
+              if (isStealthRef) await humanMouseMove(page, rectX, rectY);
+              if (action === 'double_click') await page.mouse.click(rectX, rectY, { clickCount: 2 });
+              else if (action === 'hover') {
+                if (!isStealthRef) await page.mouse.move(rectX, rectY);
+              } else {
+                await page.mouse.click(rectX, rectY);
+              }
+            }, { settleMs: Math.max(150, waitAfter) }),
+        );
+        const refDelta = refActionResult.delta;
 
         invalidateAXCache(getTargetId(page.target()));
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
@@ -529,6 +537,7 @@ const handler: ToolHandler = async (
           delta: refDelta,
           returnFormat,
           verify: verifyMode === 'screenshot' || verifyMode === 'both',
+          verifyReport: refVerifyReport,
           extraTopLevel: { via: 'ref' },
         });
       } catch (refErr) {
