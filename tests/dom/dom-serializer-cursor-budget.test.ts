@@ -37,6 +37,11 @@ async function withMockTreeWalker(elements: any[], run: () => void | Promise<voi
   const previousPerformance = (global as any).performance;
   const previousGetComputedStyle = (global as any).getComputedStyle;
 
+  const documentRoot: any = { nodes: elements };
+  for (const element of elements) {
+    if (!element.parentNode) element.parentNode = documentRoot;
+  }
+
   (global as any).document = {
     createTreeWalker: (root: { nodes?: any[] }) => {
       const nodes = root.nodes ?? [];
@@ -109,28 +114,17 @@ describe('DOM serializer cursor hint scan budget', () => {
         .mockResolvedValueOnce(createStats())
         .mockImplementationOnce(async (
           fn: Function,
-          hintAttr: string,
-          ownedAttr: string,
           maxMs: number,
           maxElements: number,
+          includeIframes: boolean,
         ) => {
           const elements = Array.from({ length: maxElements + 5 }, () => createMockElement({
             computedStyle: { cursor: 'pointer', display: 'block', visibility: 'visible' },
           }));
-          const skippedElement = elements[maxElements];
-
-          await withMockTreeWalker(elements, () => fn(hintAttr, ownedAttr, maxMs, maxElements));
-
-          expect(elements[maxElements - 1].setAttribute).toHaveBeenCalledWith(hintAttr, 'cursor:pointer');
-          expect(elements[maxElements - 1].setAttribute).toHaveBeenCalledWith(ownedAttr, 'true');
-          expect(skippedElement.setAttribute).not.toHaveBeenCalled();
-          return { completed: false, inspected: maxElements + 1, marked: maxElements };
-        })
-        .mockImplementationOnce(async (fn: Function, hintAttr: string, ownedAttr: string) => {
-          await withMockTreeWalker([], () => fn(hintAttr, ownedAttr));
-        })
-        .mockImplementationOnce(async (fn: Function, hintAttr: string, ownedAttr: string) => {
-          await withMockTreeWalker([], () => fn(hintAttr, ownedAttr));
+          const result = await withMockTreeWalker(elements, () => fn(maxMs, maxElements, includeIframes));
+          expect(elements[maxElements - 1].setAttribute).not.toHaveBeenCalled();
+          expect(elements[maxElements].setAttribute).not.toHaveBeenCalled();
+          return result;
         }),
     };
     const cdpClient = {
@@ -143,17 +137,16 @@ describe('DOM serializer cursor hint scan budget', () => {
     expect(cdpClient.send).toHaveBeenCalledWith(page, 'DOM.getDocument', { depth: -1, pierce: true });
   });
 
-  it('falls back without custom hints and removes owned markers when the scan budget is exceeded', async () => {
+  it('falls back without custom hints and leaves the page untouched when the scan budget is exceeded', async () => {
     let cursorElement: any;
     const page = {
       evaluate: jest.fn()
         .mockResolvedValueOnce(createStats())
         .mockImplementationOnce(async (
           fn: Function,
-          hintAttr: string,
-          ownedAttr: string,
           maxMs: number,
           maxElements: number,
+          includeIframes: boolean,
         ) => {
           cursorElement = createMockElement({
             computedStyle: { cursor: 'pointer', display: 'block', visibility: 'visible' },
@@ -162,19 +155,13 @@ describe('DOM serializer cursor hint scan budget', () => {
             cursorElement,
             ...Array.from({ length: maxElements }, () => createMockElement()),
           ];
-          return await withMockTreeWalker(elements, () => fn(hintAttr, ownedAttr, maxMs, maxElements));
-        })
-        .mockImplementationOnce(async (fn: Function, hintAttr: string, ownedAttr: string) => {
-          await withMockTreeWalker([cursorElement], () => fn(hintAttr, ownedAttr));
-        })
-        .mockImplementationOnce(async (fn: Function, hintAttr: string, ownedAttr: string) => {
-          await withMockTreeWalker([cursorElement], () => fn(hintAttr, ownedAttr));
+          return await withMockTreeWalker(elements, () => fn(maxMs, maxElements, includeIframes));
         }),
     };
     const cdpClient = {
       send: jest.fn().mockImplementation(async () => {
-        expect(cursorElement.getAttribute('data-oc-interactive-hints')).toBeNull();
-        expect(cursorElement.getAttribute('data-oc-interactive-hints-owned')).toBeNull();
+        expect(cursorElement.setAttribute).not.toHaveBeenCalled();
+        expect(cursorElement.removeAttribute).not.toHaveBeenCalled();
         return {
           root: createDoc([
             {
@@ -196,30 +183,24 @@ describe('DOM serializer cursor hint scan budget', () => {
 
     expect(result.content).not.toContain('[940]');
     expect(result.content).toContain('[941]<button/> ★');
-    expect(cursorElement.removeAttribute).toHaveBeenCalledWith('data-oc-interactive-hints');
-    expect(cursorElement.removeAttribute).toHaveBeenCalledWith('data-oc-interactive-hints-owned');
-    expect(cursorElement.getAttribute('data-oc-interactive-hints')).toBeNull();
-    expect(cursorElement.getAttribute('data-oc-interactive-hints-owned')).toBeNull();
+    expect(cursorElement.setAttribute).not.toHaveBeenCalled();
+    expect(cursorElement.removeAttribute).not.toHaveBeenCalled();
   });
 
-  it('preserves pre-existing interactive hint attributes during cleanup', async () => {
+  it('ignores pre-existing page-authored interactive hint attributes', async () => {
     const existingElement = createMockElement({
       attributes: { 'data-oc-interactive-hints': 'existing' },
-      computedStyle: { cursor: 'pointer', display: 'block', visibility: 'visible' },
+      computedStyle: { cursor: 'default', display: 'block', visibility: 'visible' },
     });
     const page = {
       evaluate: jest.fn()
         .mockResolvedValueOnce(createStats())
         .mockImplementationOnce(async (
           fn: Function,
-          hintAttr: string,
-          ownedAttr: string,
           maxMs: number,
           maxElements: number,
-        ) => await withMockTreeWalker([existingElement], () => fn(hintAttr, ownedAttr, maxMs, maxElements)))
-        .mockImplementationOnce(async (fn: Function, hintAttr: string, ownedAttr: string) => {
-          await withMockTreeWalker([existingElement], () => fn(hintAttr, ownedAttr));
-        }),
+          includeIframes: boolean,
+        ) => await withMockTreeWalker([existingElement], () => fn(maxMs, maxElements, includeIframes))),
     };
     const cdpClient = {
       send: jest.fn().mockResolvedValue({
@@ -233,9 +214,9 @@ describe('DOM serializer cursor hint scan budget', () => {
 
     const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, interactiveOnly: true });
 
-    expect(result.content).toContain('[950]<div/> ★ [existing]');
-    expect(existingElement.setAttribute).not.toHaveBeenCalledWith('data-oc-interactive-hints', expect.any(String));
-    expect(existingElement.getAttribute('data-oc-interactive-hints')).toBe('existing');
+    expect(result.content).not.toContain('[950]');
+    expect(result.content).not.toContain('existing');
+    expect(existingElement.setAttribute).not.toHaveBeenCalled();
     expect(existingElement.removeAttribute).not.toHaveBeenCalled();
   });
 
@@ -246,22 +227,13 @@ describe('DOM serializer cursor hint scan budget', () => {
     const page = {
       evaluate: jest.fn()
         .mockResolvedValueOnce(createStats())
-        .mockImplementationOnce(async (
-          fn: Function,
-          hintAttr: string,
-          ownedAttr: string,
-          maxMs: number,
-          maxElements: number,
-        ) => await withMockTreeWalker([cursorElement], () => fn(hintAttr, ownedAttr, maxMs, maxElements)))
-        .mockImplementationOnce(async (fn: Function, hintAttr: string, ownedAttr: string) => {
-          await withMockTreeWalker([cursorElement], () => fn(hintAttr, ownedAttr));
-        }),
+        .mockResolvedValueOnce({ completed: true, inspected: 1, hints: [{ path: 'd/c:0/c:0', hints: 'cursor:pointer' }] }),
     };
     const cdpClient = {
       send: jest.fn().mockImplementation(async () => ({
         root: createDoc([{
           nodeId: 3, backendNodeId: 960, nodeType: 1, nodeName: 'DIV', localName: 'div',
-          attributes: ['data-oc-interactive-hints', cursorElement.getAttribute('data-oc-interactive-hints')],
+          attributes: [],
           children: [{
             nodeId: 4, backendNodeId: 4, nodeType: 3, nodeName: '#text', localName: '',
             nodeValue: 'Open menu',
@@ -273,7 +245,7 @@ describe('DOM serializer cursor hint scan budget', () => {
     const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, interactiveOnly: true });
 
     expect(result.content).toContain('[960]<div/>Open menu ★ [cursor:pointer]');
-    expect(cursorElement.getAttribute('data-oc-interactive-hints')).toBeNull();
-    expect(cursorElement.getAttribute('data-oc-interactive-hints-owned')).toBeNull();
+    expect(cursorElement.setAttribute).not.toHaveBeenCalled();
+    expect(cursorElement.removeAttribute).not.toHaveBeenCalled();
   });
 });

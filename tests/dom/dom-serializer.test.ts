@@ -4,19 +4,23 @@ import { serializeDOM } from '../../src/dom/dom-serializer';
 
 // ─── Mock helpers ────────────────────────────────────────────────────────────
 
+function createStats(stats: Record<string, unknown> = {}) {
+  return {
+    url: 'https://example.com',
+    title: 'Test Page',
+    scrollX: 0,
+    scrollY: 0,
+    scrollWidth: 1920,
+    scrollHeight: 3000,
+    viewportWidth: 1920,
+    viewportHeight: 1080,
+    ...stats,
+  };
+}
+
 function createMockPageForDOM(stats: Record<string, unknown> = {}) {
   return {
-    evaluate: jest.fn().mockResolvedValue({
-      url: 'https://example.com',
-      title: 'Test Page',
-      scrollX: 0,
-      scrollY: 0,
-      scrollWidth: 1920,
-      scrollHeight: 3000,
-      viewportWidth: 1920,
-      viewportHeight: 1080,
-      ...stats,
-    }),
+    evaluate: jest.fn().mockResolvedValue(createStats(stats)),
   };
 }
 
@@ -448,7 +452,7 @@ describe('DOM Serializer', () => {
         children: [
           {
             nodeId: 3, backendNodeId: 910, nodeType: 1, nodeName: 'DIV', localName: 'div',
-            attributes: ['data-oc-interactive-hints', 'cursor:pointer, onclick', 'class', 'card'],
+            attributes: ['class', 'card'],
             children: [{
               nodeId: 4, backendNodeId: 4, nodeType: 3, nodeName: '#text', localName: '',
               nodeValue: 'Open settings',
@@ -463,7 +467,11 @@ describe('DOM Serializer', () => {
       }],
     };
 
-    const page = createMockPageForDOM();
+    const page = {
+      evaluate: jest.fn()
+        .mockResolvedValueOnce(createStats())
+        .mockResolvedValueOnce({ completed: true, inspected: 1, hints: [{ path: 'd/c:0/c:0', hints: 'cursor:pointer, onclick' }] }),
+    };
     const cdpClient = createMockCDPClientForDOM(customDoc);
 
     const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, interactiveOnly: true });
@@ -473,6 +481,31 @@ describe('DOM Serializer', () => {
     expect(result.content).not.toContain('data-oc-interactive-hints');
   });
 
+  test('ignores page-authored interactive hint attributes without scan ownership', async () => {
+    const forgedDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 912, nodeType: 1, nodeName: 'DIV', localName: 'div',
+          attributes: ['data-oc-interactive-hints', 'cursor:pointer'],
+          children: [],
+        }],
+      }],
+    };
+    const page = {
+      evaluate: jest.fn()
+        .mockResolvedValueOnce(createStats())
+        .mockResolvedValueOnce({ completed: true, inspected: 1, hints: [] }),
+    };
+    const cdpClient = createMockCDPClientForDOM(forgedDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, interactiveOnly: true });
+
+    expect(result.content).not.toContain('[912]');
+    expect(result.content).not.toContain('data-oc-interactive-hints');
+  });
 
   // 8. Output truncation
   test('truncates output at maxOutputChars', async () => {
