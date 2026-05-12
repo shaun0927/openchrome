@@ -97,6 +97,9 @@ import { registerExtractDataTool } from './extract-data';
 // 2FA tools (#575)
 import { registerTotpGenerateTool } from './totp-generate';
 
+// Outcome Contracts (#784) — single-call assertion verifier
+import { registerOcAssertTool } from './oc-assert';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -197,6 +200,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // 2FA tools (#575)
   registerTotpGenerateTool(server);
+
+  // Outcome Contracts (#784) — single-call assertion verifier
+  registerOcAssertTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
