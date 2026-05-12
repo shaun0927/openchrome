@@ -53,7 +53,7 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
-import { RecoveryTrajectoryLedger, type RecoveryResultStatus } from './recovery';
+import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -1728,6 +1728,15 @@ export class MCPServer {
         previous.result === 'error' &&
         previous.toolName !== toolName;
 
+      const score = scoreFromToolResult({
+        toolName,
+        isError: resultStatus === 'error' || resultStatus === 'aborted',
+        resultText: summarizeResult(result),
+        errorText: error,
+        repeatedFailureCount: previous?.result === 'error' ? 1 : 0,
+        repeatedNoProgressCount: resultStatus === 'no_progress' ? 1 : 0,
+      });
+
       this.recoveryLedger.record({
         sessionId,
         tabId: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
@@ -1738,6 +1747,7 @@ export class MCPServer {
         error,
         result,
         recoveryTool: recovered ? toolName : undefined,
+        reward: score.score,
       });
     } catch {
       // Recovery telemetry is best-effort and must not affect tool behavior.

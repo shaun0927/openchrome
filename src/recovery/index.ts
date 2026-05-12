@@ -10,3 +10,6 @@ export type {
   RecoveryTrajectoryNode,
   RecoveryTrajectoryNodeInput,
 } from './trajectory-ledger';
+
+export { scoreRecoveryOutcome, scoreFromToolResult } from './reward-scorer';
+export type { RecoveryRewardClassification, RecoveryRewardInput, RecoveryRewardScore } from './reward-scorer';
