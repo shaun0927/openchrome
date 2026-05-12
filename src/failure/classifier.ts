@@ -90,7 +90,7 @@ const RULES: Rule[] = [
     reason: 'Page or failure indicates missing/expired authentication or credentials',
     test: (input) => {
       const combined = `${input.text} ${input.currentUrl} ${input.pageTitle}`;
-      return AUTH_CONTEXT.test(combined) || /\b(401|unauthorized|forbidden|please sign in|session expired)\b/i.test(combined);
+      return AUTH_CONTEXT.test(combined) || /\b(401|unauthorized|please sign in|session expired)\b/i.test(combined);
     },
   },
   {

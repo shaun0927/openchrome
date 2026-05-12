@@ -33,6 +33,12 @@ describe('failure classifier', () => {
     expect(primaryFailureCategory({ message: 'Access Denied reference from Akamai bot block' }).category).toBe('CAPTCHA_OR_WAF');
   });
 
+  it('does not treat bare forbidden responses as auth-required', () => {
+    expect(categories('403 Forbidden')).not.toContain('AUTH_REQUIRED');
+    expect(primaryFailureCategory({ message: '403 Forbidden', fallbackToUnknown: false })).toBeUndefined();
+    expect(categories('Forbidden: login session expired')).toContain('AUTH_REQUIRED');
+  });
+
   it('classifies CAPTCHA and WAF blockers', () => {
     expect(categories('Cloudflare says verify you are human captcha detected')).toContain('CAPTCHA_OR_WAF');
   });
