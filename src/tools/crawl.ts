@@ -22,6 +22,8 @@ import {
   RobotsRules,
 } from '../utils/crawl-utils';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { sanitizeContent } from '../security/content-sanitizer';
+import { getGlobalConfig } from '../config/global';
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
@@ -244,6 +246,15 @@ async function fetchPage(
 
       const { html: cleaned } = extractMainContent(fullHtml, { onlyMainContent: cleanOpts.onlyMainContent });
       let cleanMd = toMarkdown(cleaned, { includeLinks: cleanOpts.includeLinks });
+
+      // Sanitize markdown-clean output the same way read_page does — strips
+      // invisible characters, HTML comments, and flags suspicious instruction
+      // patterns. Mirrors the sanitizedHandler wrapper in read-page.ts.
+      const cfg = getGlobalConfig();
+      if (cfg.security?.sanitize_content !== false) {
+        const sanitized = sanitizeContent(cleanMd);
+        cleanMd = sanitized.text + sanitized.sanitizationNote;
+      }
 
       await sessionManager.closeTarget(sessionId, tid);
       targetId = null;

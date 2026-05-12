@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { extractMainContent, toMarkdown } from '../../../src/core/extract/html-to-markdown';
+import { sanitizeContent } from '../../../src/security/content-sanitizer';
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 
@@ -182,5 +183,123 @@ describe('html-to-markdown integration on fixture', () => {
     const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
     const md = toMarkdown(cleaned, { includeLinks: true });
     expect(md).toContain('Main page');
+  });
+});
+
+describe('extractMainContent security: dangerous href schemes', () => {
+  it('strips javascript: href so Turndown cannot emit clickable link', () => {
+    const html = '<body><p>see <a href="javascript:alert(1)">click</a></p></body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    const md = toMarkdown(cleaned, { includeLinks: true });
+    expect(md).not.toContain('javascript:');
+    // Anchor text must survive even when href is stripped.
+    expect(md).toContain('click');
+  });
+
+  it('strips data: href (e.g. data:text/html,...)', () => {
+    const html = '<body><p><a href="data:text/html,<script>alert(1)</script>">click</a></p></body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    const md = toMarkdown(cleaned, { includeLinks: true });
+    expect(md).not.toContain('data:');
+    expect(md).toContain('click');
+  });
+
+  it('strips vbscript: href', () => {
+    const html = '<body><p><a href="vbscript:msgbox(1)">click</a></p></body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    const md = toMarkdown(cleaned, { includeLinks: true });
+    expect(md).not.toContain('vbscript:');
+    expect(md).toContain('click');
+  });
+
+  it('handles mixed-case scheme prefixes (JavaScript:, DATA:, VBScript:)', () => {
+    const html =
+      '<body>' +
+      '<p><a href="JavaScript:alert(1)">a</a></p>' +
+      '<p><a href="  DATA:text/html,x">b</a></p>' +
+      '<p><a href="VBScript:msgbox(1)">c</a></p>' +
+      '</body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    const md = toMarkdown(cleaned, { includeLinks: true });
+    expect(md.toLowerCase()).not.toContain('javascript:');
+    expect(md.toLowerCase()).not.toContain('data:');
+    expect(md.toLowerCase()).not.toContain('vbscript:');
+  });
+
+  it('preserves safe href schemes (http, https, mailto)', () => {
+    const html =
+      '<body>' +
+      '<p><a href="https://example.com">https</a></p>' +
+      '<p><a href="http://example.com">http</a></p>' +
+      '<p><a href="mailto:a@b.c">mail</a></p>' +
+      '</body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    const md = toMarkdown(cleaned, { includeLinks: true });
+    expect(md).toContain('(https://example.com)');
+    expect(md).toContain('(http://example.com)');
+    expect(md).toContain('(mailto:a@b.c)');
+  });
+});
+
+describe('extractMainContent security: inline event handlers', () => {
+  it('strips onload attribute', () => {
+    const html = '<body><img src="x" onload="alert(1)"><p>real</p></body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    expect(cleaned).not.toMatch(/onload\s*=/i);
+    expect(cleaned).toContain('real');
+  });
+
+  it('strips onclick attribute', () => {
+    const html = '<body><div onclick="alert(1)">hi</div></body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    expect(cleaned).not.toMatch(/onclick\s*=/i);
+    expect(cleaned).toContain('hi');
+  });
+
+  it('strips onerror / onmouseover / onfocus attributes', () => {
+    const html =
+      '<body>' +
+      '<img onerror="alert(1)" src="x">' +
+      '<div onmouseover="alert(2)">m</div>' +
+      '<input onfocus="alert(3)">' +
+      '</body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    expect(cleaned).not.toMatch(/onerror\s*=/i);
+    expect(cleaned).not.toMatch(/onmouseover\s*=/i);
+    expect(cleaned).not.toMatch(/onfocus\s*=/i);
+  });
+
+  it('strips all on* attributes on an element with a matching trigger attribute', () => {
+    // Cheerio selector matches by trigger attributes (onload/onerror/onclick/onmouseover/onfocus),
+    // and we strip every remaining on* attribute on the same element.
+    const html = '<body><div onclick="a()" oncopy="b()" onkeydown="c()">x</div></body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    expect(cleaned).not.toMatch(/onclick\s*=/i);
+    expect(cleaned).not.toMatch(/oncopy\s*=/i);
+    expect(cleaned).not.toMatch(/onkeydown\s*=/i);
+    expect(cleaned).toContain('x');
+  });
+});
+
+describe('crawl markdown-clean sanitizer spot-check (integration)', () => {
+  // End-to-end safety net: a fixture that previously could leak
+  // `alert(1)` via a <script> tag should produce no `alert(1)` in the final
+  // sanitized markdown, because extractMainContent strips <script> entirely.
+  it('sanitized markdown of a script-laden page contains no alert(1) payload', () => {
+    const html = `
+      <html>
+        <body>
+          <script>alert(1)</script>
+          <p>real paragraph content</p>
+          <a href="javascript:alert(1)">do not click</a>
+        </body>
+      </html>`;
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    const md = toMarkdown(cleaned, { includeLinks: true });
+    const sanitized = sanitizeContent(md);
+    const finalText = sanitized.text + sanitized.sanitizationNote;
+    expect(finalText).not.toContain('alert(1)');
+    expect(finalText).not.toContain('javascript:');
+    expect(finalText).toContain('real paragraph content');
   });
 });

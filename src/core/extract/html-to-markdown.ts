@@ -52,6 +52,28 @@ export function extractMainContent(html: string, opts: ExtractOptions = {}): Ext
     }
   }
 
+  // Strip dangerous href schemes so Turndown cannot emit clickable
+  // [text](javascript:...) / data:/ vbscript: markdown links.
+  $('a[href]').each((_, el) => {
+    const href = ($(el).attr('href') || '').trim().toLowerCase();
+    if (
+      href.startsWith('javascript:') ||
+      href.startsWith('data:') ||
+      href.startsWith('vbscript:')
+    ) {
+      $(el).removeAttr('href');
+    }
+  });
+
+  // Strip inline event-handler attributes (onclick, onload, etc.) — these
+  // can survive serialization and end up as visible noise in the markdown.
+  $('[onload], [onerror], [onclick], [onmouseover], [onfocus]').each((_, el) => {
+    const attribs = (el as { attribs?: Record<string, string> }).attribs || {};
+    for (const attr of Object.keys(attribs)) {
+      if (attr.toLowerCase().startsWith('on')) $(el).removeAttr(attr);
+    }
+  });
+
   if (opts.onlyMainContent !== false) {
     for (const sel of MAIN_CONTENT_REMOVE) {
       const els = $(sel);
