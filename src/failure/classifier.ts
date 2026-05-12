@@ -142,8 +142,12 @@ export function classifyFailure(input: ClassifyFailureInput = {}): FailureClassi
   return results;
 }
 
-export function primaryFailureCategory(input: ClassifyFailureInput = {}): FailureClassification {
-  return classifyFailure(input)[0] ?? { category: 'UNKNOWN', confidence: 0.5, reason: 'No failure classifier rule matched' };
+export function primaryFailureCategory(input: ClassifyFailureInput & { fallbackToUnknown: false }): FailureClassification | undefined;
+export function primaryFailureCategory(input?: ClassifyFailureInput): FailureClassification;
+export function primaryFailureCategory(input: ClassifyFailureInput = {}): FailureClassification | undefined {
+  const [classification] = classifyFailure(input);
+  if (classification || input.fallbackToUnknown === false) return classification;
+  return { category: 'UNKNOWN', confidence: 0.5, reason: 'No failure classifier rule matched' };
 }
 
 function normalize(input: ClassifyFailureInput): NormalizedFailureInput {
