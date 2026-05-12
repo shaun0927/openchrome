@@ -51,6 +51,23 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include annotated image output. Defaults to true for legacy/both and false for snapshot.',
       },
+      occlusionFilter: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, drops elements whose center is covered by another element via elementFromPoint. Defaults to false to preserve today\'s output; set to true for stricter accuracy.',
+      },
+      iframes: {
+        type: 'string',
+        enum: ['none', 'same-origin', 'all'],
+        default: 'none',
+        description: 'Frame traversal mode. "all" still respects same-origin policy; cross-origin frames are listed in iframes.skipped.',
+      },
+      mode: {
+        type: 'string',
+        enum: ['viewport', 'tiled'],
+        default: 'viewport',
+        description: 'viewport: today\'s single-shot capture. tiled: full document scrolled in viewport-tall steps; returns per-tile screenshots and a unified element map.',
+      },
     },
     required: ['tabId'],
   },
@@ -106,23 +123,46 @@ const handler: ToolHandler = async (
     const includeImage = args.includeImage !== undefined
       ? args.includeImage === true
       : format !== 'snapshot';
+    const occlusionFilter = args.occlusionFilter === true;
+    const iframesArg = args.iframes;
+    const iframes: 'none' | 'same-origin' | 'all' =
+      iframesArg === 'same-origin' || iframesArg === 'all' ? iframesArg : 'none';
+    const modeArg = args.mode;
+    const mode: 'viewport' | 'tiled' = modeArg === 'tiled' ? 'tiled' : 'viewport';
 
     const provider = new DomAnnotatorPerceptionProvider(page);
     const { result, snapshot } = await provider.captureAnnotated(tabId, page.url(), {
       showGrid,
       showBoundingBoxes,
       interactiveOnly,
+      occlusionFilter,
+      iframes,
+      mode,
     });
 
     trackVisionUsage(result.annotationTimeMs);
     const textMap = formatElementMapAsText(result.elementMap);
     console.error(`[vision_find] Analyzed tab ${tabId}: ${result.elementCount} elements in ${result.annotationTimeMs}ms`);
 
+    const tiles = mode === 'tiled' ? (result.tiling?.tiles ?? []) : [];
+    const tileNote =
+      mode === 'tiled' && tiles.length > 0
+        ? `
+
+Tiled mode: ${tiles.length} tile screenshot(s) attached below in document-Y order.`
+        : '';
+    const imageBlocks =
+      tiles.length > 0
+        ? tiles.map((t) => ({ type: 'image' as const, data: t.imageBase64, mimeType: t.mimeType }))
+        : [{ type: 'image' as const, data: result.screenshot, mimeType: result.mimeType }];
+
     const content: MCPResult['content'] = [];
     if (format === 'legacy' || format === 'both') {
       content.push({
         type: 'text',
-        text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)\n\n${textMap}`,
+        text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)${tileNote}
+
+${textMap}`,
       });
     }
     if (format === 'snapshot' || format === 'both') {
@@ -132,11 +172,7 @@ const handler: ToolHandler = async (
       });
     }
     if (includeImage) {
-      content.push({
-        type: 'image',
-        data: result.screenshot,
-        mimeType: result.mimeType,
-      });
+      content.push(...imageBlocks);
     }
 
     return { content };
