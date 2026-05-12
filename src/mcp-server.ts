@@ -53,6 +53,12 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import {
+  substituteSecrets,
+  redactSecrets,
+  MissingSecretError,
+  getSecretStore,
+} from './core/secrets';
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -134,6 +140,103 @@ const RECONNECTION_GUIDANCE =
   '\n\nNote: The browser connection was lost and auto-reconnect was attempted. ' +
   'Simply retry your operation — Chrome will be re-launched automatically if needed. ' +
   'If the error persists, use tabs_context to get fresh tab IDs.';
+
+/**
+ * Secrets substitution whitelist (#834).
+ *
+ * Single chokepoint for `${SECRET:NAME}` → real-value substitution. Each
+ * entry below describes a tool argument path that legitimately needs the
+ * raw secret value (typing it into the page, setting it as a cookie, etc.).
+ * Every other argument is passed through unchanged so secrets never leak
+ * into ad-hoc fields a tool might log or echo.
+ *
+ * Adding a site is intentionally hand-rolled (not config-driven): a new
+ * whitelist entry must be justified against the P3 contract in review.
+ */
+function applySecretWhitelist(
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  // Short-circuit when --secrets is unset and no secrets are loaded. The
+  // substituter still has to scan strings for unknown `${SECRET:NAME}`
+  // tokens (MISSING_SECRET semantics survive even without a loaded store),
+  // so we always at least probe.
+  const store = getSecretStore();
+  const out: Record<string, unknown> = { ...args };
+  switch (toolName) {
+    case 'form_input': {
+      if (typeof out.value === 'string') {
+        out.value = substituteSecrets(out.value as string, store);
+      }
+      break;
+    }
+    case 'fill_form': {
+      const fields = out.fields;
+      if (Array.isArray(fields)) {
+        out.fields = fields.map((f) => {
+          if (f && typeof f === 'object' && typeof (f as Record<string, unknown>).value === 'string') {
+            return {
+              ...(f as Record<string, unknown>),
+              value: substituteSecrets((f as Record<string, unknown>).value as string, store),
+            };
+          }
+          return f;
+        });
+      }
+      break;
+    }
+    case 'interact': {
+      if (out.action === 'type' && typeof out.text === 'string') {
+        out.text = substituteSecrets(out.text as string, store);
+      }
+      break;
+    }
+    case 'javascript_tool': {
+      if (typeof out.expression === 'string') {
+        out.expression = substituteSecrets(out.expression as string, store);
+      }
+      break;
+    }
+    case 'cookies': {
+      // `cookies` is a multi-action tool; only the `set` action's value
+      // payload is whitelisted.
+      const action = out.action;
+      if (action === 'set') {
+        // Single cookie shape: { name, value, ... } at the top level.
+        if (typeof out.value === 'string') {
+          out.value = substituteSecrets(out.value as string, store);
+        }
+        // Batched cookies: { cookies: [{ name, value, ... }] }.
+        const list = out.cookies;
+        if (Array.isArray(list)) {
+          out.cookies = list.map((c) => {
+            if (c && typeof c === 'object' && typeof (c as Record<string, unknown>).value === 'string') {
+              return {
+                ...(c as Record<string, unknown>),
+                value: substituteSecrets((c as Record<string, unknown>).value as string, store),
+              };
+            }
+            return c;
+          });
+        }
+      }
+      break;
+    }
+    case 'http_auth': {
+      if (typeof out.password === 'string') {
+        out.password = substituteSecrets(out.password as string, store);
+      }
+      break;
+    }
+    default:
+      // Non-whitelisted tool: pass through unchanged. Secrets present in
+      // those arguments would never reach the page anyway, but we also do
+      // NOT scan them — that would surprise agents passing literal
+      // `${SECRET:...}` strings into unrelated fields.
+      break;
+  }
+  return out;
+}
 
 export interface MCPServerOptions {
   dashboard?: boolean;
@@ -894,6 +997,36 @@ export class MCPServer {
       }
     }
 
+    // ─── Secrets substitution (#834) ──────────────────────────────────────
+    // Replace `${SECRET:NAME}` tokens with real values at the whitelisted
+    // argument paths only. The handler receives the literal secret value
+    // for typing/network use, but the response/trace/skill record layers
+    // re-redact it on the way out so secrets never reach LLM-visible
+    // artifacts. A missing secret raises MissingSecretError → structured
+    // MCP error result.
+    let substitutedArgs: Record<string, unknown>;
+    try {
+      substitutedArgs = applySecretWhitelist(toolName, toolArgs);
+    } catch (err) {
+      if (err instanceof MissingSecretError) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'MISSING_SECRET',
+                code: 'MISSING_SECRET',
+                name: err.secretName,
+                message: `Secret "${err.secretName}" is referenced via \${SECRET:${err.secretName}} but was not loaded. Pass --secrets <path> at server startup.`,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      throw err;
+    }
+
     // All static gates passed (scope, tool existence, required args). Only
     // now do we claim the session for the caller's tenant — a denied or
     // invalid call must NOT be able to lock a sessionId that would then
@@ -1094,7 +1227,7 @@ export class MCPServer {
         };
         let tid: ReturnType<typeof setTimeout>;
         result = await Promise.race([
-          Promise.resolve(tool.handler(sessionId, toolArgs, toolContext)).finally(() => clearTimeout(tid)),
+          Promise.resolve(tool.handler(sessionId, substitutedArgs, toolContext)).finally(() => clearTimeout(tid)),
           new Promise<never>((_, reject) => {
             tid = setTimeout(
               () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms`)),
@@ -1129,7 +1262,7 @@ export class MCPServer {
             };
             let tid2: ReturnType<typeof setTimeout>;
             result = await Promise.race([
-              Promise.resolve(tool.handler(sessionId, toolArgs, retryToolContext)).finally(() => clearTimeout(tid2)),
+              Promise.resolve(tool.handler(sessionId, substitutedArgs, retryToolContext)).finally(() => clearTimeout(tid2)),
               new Promise<never>((_, reject) => {
                 tid2 = setTimeout(
                   () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (retry)`)),
@@ -1165,7 +1298,7 @@ export class MCPServer {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
             };
-            result = await Promise.resolve(tool.handler(sessionId, toolArgs, swallowedRetryContext));
+            result = await Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext));
             console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);
           } catch (retryError) {
             console.error(`[MCPServer] Retry after swallowed connection error failed for "${toolName}":`, retryError);
@@ -1336,7 +1469,13 @@ export class MCPServer {
         };
       }
 
-      return result;
+      // ─── Secrets redaction (#834) ─────────────────────────────────────
+      // Last line of defense before the MCP envelope: replace any literal
+      // secret value still present in the response (handler may have echoed
+      // the substituted input, returned it inside a JSON blob, or surfaced
+      // it via an error message) with `${SECRET:NAME}` placeholders. No-op
+      // when --secrets was not passed.
+      return redactSecrets(result);
     } catch (error) {
       const message = formatError(error);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
@@ -1487,7 +1626,9 @@ export class MCPServer {
         }
       }
 
-      return errResult;
+      // Secrets redaction (#834) — see success path. Error messages can
+      // include the literal value (e.g. "type ... failed for value X").
+      return redactSecrets(errResult);
     }
   }
 
