@@ -6,6 +6,7 @@ import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
@@ -225,24 +226,23 @@ const handler: ToolHandler = async (
           try {
             const screenshotData = await Promise.race([
               (async () => {
-                const cdpSession = await (page as any).target().createCDPSession();
-                try {
-                  // PNG is lossless: omit the quality field (CDP rejects
-                  // quality for png) and skip optimizeForSpeed (it only
-                  // applies to lossy encoders).
-                  const captureParams: Record<string, unknown> =
-                    effectiveFormat === 'png'
-                      ? { format: 'png' }
-                      : {
-                          format: effectiveFormat,
-                          quality: preset.quality,
-                          optimizeForSpeed: true,
-                        };
-                  const { data } = await cdpSession.send('Page.captureScreenshot', captureParams);
-                  return data as string;
-                } finally {
-                  await cdpSession.detach().catch(() => {});
-                }
+                // PNG is lossless: omit the quality field (CDP rejects
+                // quality for png) and skip optimizeForSpeed (it only
+                // applies to lossy encoders).
+                const captureParams: Record<string, unknown> =
+                  effectiveFormat === 'png'
+                    ? { format: 'png' }
+                    : {
+                        format: effectiveFormat,
+                        quality: preset.quality,
+                        optimizeForSpeed: true,
+                      };
+                const { data } = await getScreenshotScheduler().capture(
+                  page,
+                  sessionManager.getCDPClient(),
+                  captureParams
+                );
+                return data;
               })(),
               new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
             ]);
