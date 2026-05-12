@@ -970,11 +970,13 @@ const cachedHandler: ToolHandler = async (sessionId, args, context) => {
   const mode = (args.mode as string) || 'dom';
   const compression = args.compression as string | undefined;
 
-  // Cache only the deterministic snapshot variants. Skip when no tabId
-  // (validation runs in the inner handler), when compression='delta'
-  // mutates the snapshot store, or when the mode is unrecognised.
+  // Cache only deterministic snapshots that do not mint ephemeral refs.
+  // AX mode mutates RefIdManager state (clear + generate refs); serving a
+  // cached AX payload would replay stale ref_* identifiers without restoring
+  // that side effect, so callers could receive refs that follow-up tools no
+  // longer recognize. Keep AX uncached until the cache can replay/refreeze
+  // ref mappings together with the payload.
   const cacheKind =
-    mode === 'ax' ? 'read_page.ax' :
     mode === 'dom' ? 'read_page.dom' :
     mode === 'css' ? 'read_page.css' :
     null;
