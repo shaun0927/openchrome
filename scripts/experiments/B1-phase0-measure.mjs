@@ -22,8 +22,8 @@
  *   - PNG screenshots to docs/experiments/B1-phase0-evidence/<slot>-<arm>.png
  *   - JSON records to docs/experiments/B1-phase0-evidence/<slot>-<arm>.json
  *
- * The script completes cleanly when the network is unreachable — rows are
- * marked "skipped (no network)" rather than hanging or crashing.
+ * The script completes cleanly when navigation fails — rows are recorded as
+ * failed/skipped by the OpenChrome arm rather than hanging or crashing.
  *
  * Operational pass/fail definition (from fixture):
  *   PASS iff ALL of:
@@ -100,36 +100,6 @@ fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Check basic target reachability before spending time launching OpenChrome.
- * Returns true if the target responds to HEAD/GET, false otherwise.
- */
-async function isTargetReachable(url) {
-  return fetchWithTimeout(url, 'HEAD')
-    .then((res) => res.status < 600)
-    .catch(async () => {
-      try {
-        const res = await fetchWithTimeout(url, 'GET');
-        return res.status < 600;
-      } catch {
-        return false;
-      }
-    });
-}
-
-async function fetchWithTimeout(url, method) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
-  try {
-    return await fetch(url, {
-      method,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /** Format a JSON record and write it to the evidence directory. */
@@ -570,29 +540,10 @@ async function main() {
       writeRecord(target.slot, rec);
     }
   } else {
-    // openchrome arm
+    // openchrome arm. Do not pre-gate targets with Node fetch: the experiment
+    // measures browser navigation, and non-browser HEAD/GET probes can be
+    // blocked differently by WAFs. Let navigate provide the measured outcome.
     for (const target of ALL_SLOTS) {
-      const targetReachable = await isTargetReachable(target.url);
-      if (!targetReachable) {
-        console.error(`[B1-measure][${target.slot}] SKIP: target unreachable: ${target.url}`);
-        const rec = {
-          slot: target.slot,
-          url: target.url,
-          arm: 'openchrome',
-          pass: false,
-          httpStatus: null,
-          challengeFound: null,
-          headingFound: false,
-          screenshotPath: null,
-          error: 'skipped — no network',
-          skipped: true,
-          measuredAt: new Date().toISOString(),
-        };
-        records.push(rec);
-        writeRecord(target.slot, rec);
-        continue;
-      }
-
       console.error(`[B1-measure] Measuring ${target.slot}: ${target.url}`);
       const rec = await measureOpenChrome(target);
       records.push(rec);
