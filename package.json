@@ -73,7 +73,8 @@
     "proper-lockfile": "^4.1.2",
     "puppeteer-core": "npm:rebrowser-puppeteer-core@23.10.3",
     "uuid": "^9.0.0",
-    "write-file-atomic": "^5.0.1"
+    "write-file-atomic": "^5.0.1",
+    "yaml": "^2.9.0"
   },
   "overrides": {
     "basic-ftp": "^5.3.1",
