@@ -241,13 +241,17 @@ export function wrapMutatingHandler<R extends MaybeErrorResult>(
   getPage: (sessionId: string, tabId?: string) => Promise<Page | null>,
 ): MutatingHandlerLike<R> {
   return async (sessionId, args, context) => {
-    const result = await handler(sessionId, args, context);
-    if (!result.isError) {
+    try {
+      return await handler(sessionId, args, context);
+    } finally {
+      // Mutators can change page state before returning an error (for example,
+      // form fill followed by submit/login verification failure). Invalidate on
+      // every completion path so later cached reads cannot observe the pre-call
+      // epoch after a partial mutation.
       for (const tabId of tabIdsFromArgs(args)) {
         await markFrameDirtyForTab(sessionId, tabId, getPage);
       }
     }
-    return result;
   };
 }
 
