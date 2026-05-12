@@ -104,6 +104,14 @@ function parseAttributes(attrs: string[] | undefined): Map<string, string> {
   return map;
 }
 
+function escapeAttributeValue(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /**
  * Check if a node is interactive
  */
@@ -163,7 +171,7 @@ function formatElement(
   const attrParts: string[] = [];
   for (const [k, v] of attrMap) {
     if (KEEP_ATTRS.has(k)) {
-      attrParts.push(`${k}="${v}"`);
+      attrParts.push(`${k}="${escapeAttributeValue(v)}"`);
     }
   }
   const attrStr = attrParts.length > 0 ? ' ' + attrParts.join(' ') : '';
