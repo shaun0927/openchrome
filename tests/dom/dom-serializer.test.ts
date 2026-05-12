@@ -870,4 +870,18 @@ describe('DOM Serializer', () => {
     expect(result.content).toMatch(/--page-separator--[\s\S]*\[12\]<body/);
     expect(result.content).not.toContain('id="iframe-content"');
   });
+
+  it('continues when cursor hint discovery fails', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+    page.evaluate = jest.fn()
+      .mockResolvedValueOnce({ nodeCount: 1, textLength: 4, truncated: false })
+      .mockRejectedValueOnce(new Error('hint scan failed'))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { interactiveOnly: true });
+
+    expect(result.content).toEqual(expect.any(String));
+    expect(cdpClient.send).toHaveBeenCalledWith(page, 'DOM.getDocument', { depth: -1, pierce: true });
+  });
 });

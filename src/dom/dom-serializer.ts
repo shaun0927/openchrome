@@ -588,7 +588,10 @@ async function markCursorInteractiveElements(page: Page): Promise<void> {
             }
           }
 
-          el.setAttribute(hintAttr, hints.join(', '));
+          if (!el.hasAttribute(hintAttr)) {
+            el.setAttribute(hintAttr, hints.join(', '));
+            el.setAttribute(`${hintAttr}-owned`, 'true');
+          }
         }
       }
     }, INTERACTIVE_HINT_ATTR),
@@ -607,7 +610,10 @@ async function clearCursorInteractiveMarkers(page: Page): Promise<void> {
           const all = Array.from(root.querySelectorAll('*')) as HTMLElement[];
           for (const el of all) {
             if (el.shadowRoot) roots.push(el.shadowRoot);
-            if (el.hasAttribute(hintAttr)) el.removeAttribute(hintAttr);
+            if (el.getAttribute(`${hintAttr}-owned`) === 'true') {
+              el.removeAttribute(hintAttr);
+              el.removeAttribute(`${hintAttr}-owned`);
+            }
           }
         }
       }, INTERACTIVE_HINT_ATTR),
@@ -662,7 +668,13 @@ export async function serializeDOM(
   ) as PageStats;
 
   if (interactiveOnly) {
-    await markCursorInteractiveElements(page);
+    try {
+      await markCursorInteractiveElements(page);
+    } catch {
+      // Cursor/onclick hint discovery is opportunistic. Large or hostile pages
+      // should still serialize using native tags and ARIA roles if this pre-scan
+      // times out or throws.
+    }
   }
 
   // Get DOM tree via CDP. Always pierce at the CDP layer so shadowRoots are
