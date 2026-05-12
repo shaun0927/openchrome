@@ -31,12 +31,13 @@ import {
 
 import {
   appendEventUnlocked,
-  getOriginalQueuedUrl,
   getOriginalStartUrl,
   isExpired,
   loadJob,
+  queueEntryKey,
   rememberOriginalQueuedUrls,
   setStatusUnlocked,
+  takeOriginalQueuedUrl,
   withJobLock,
   type CrawledPage,
   type JobState,
@@ -259,7 +260,7 @@ export async function advanceJob(
       // grown since the last iteration (this caller's own enqueue events,
       // or a concurrent advance in another process).
       const tracker = new CrawlTracker();
-      for (const v of fresh.visited) tracker.visit(v);
+      for (const v of fresh.visited) tracker.visit(v, v);
       for (const q of fresh.queue) tracker.enqueue([q]);
 
       if (fresh.pages.length >= maxPages) return 'break';
@@ -269,12 +270,12 @@ export async function advanceJob(
       if (next.depth > maxDepth) return 'continue';
 
       const originalStartUrl = getOriginalStartUrl(jobId);
-      const originalQueuedUrl = getOriginalQueuedUrl(jobId, next.url);
+      const originalQueuedUrl = takeOriginalQueuedUrl(jobId, next.key);
       const fetchUrl =
         next.depth === 0 && originalStartUrl
           ? originalStartUrl
           : (originalQueuedUrl ?? next.url);
-      tracker.visit(next.url);
+      tracker.visit(next.url, next.key);
 
       if (respectRobots) {
         const rules = await fetchRobotsRulesForUrl(fetchUrl, robotsCache, context);
@@ -295,6 +296,7 @@ export async function advanceJob(
               error: message,
             },
             t: Date.now(),
+            ...(next.key ? { key: next.key } : {}),
           });
           fetched++;
           return 'continue';
@@ -324,6 +326,7 @@ export async function advanceJob(
             error: message,
           },
           t: Date.now(),
+          ...(next.key ? { key: next.key } : {}),
         });
         fetched++;
         return 'continue';
@@ -354,6 +357,7 @@ export async function advanceJob(
         depth: next.depth,
         page,
         t: Date.now(),
+        ...(next.key ? { key: next.key } : {}),
       });
       fetched++;
 
@@ -364,8 +368,9 @@ export async function advanceJob(
           const normalized = normalizeUrl(link);
           if (!matchesScope(normalized, scope)) continue;
           if (!passesFilters(normalized, includePatterns, excludePatterns)) continue;
-          if (tracker.hasVisited(normalized)) continue;
-          newEntries.push({ url: normalized, depth: next.depth + 1 });
+          const key = queueEntryKey(normalized);
+          if (tracker.hasVisited(normalized, key)) continue;
+          newEntries.push({ url: normalized, depth: next.depth + 1, key });
         }
         if (newEntries.length > 0) {
           rememberOriginalQueuedUrls(jobId, newEntries);

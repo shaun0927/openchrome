@@ -69,6 +69,7 @@ export type JobStatus =
 export interface QueueEntry {
   url: string;
   depth: number;
+  key?: string;
 }
 
 export interface JobError {
@@ -97,7 +98,7 @@ interface HeaderRecord {
 
 export type JobEvent =
   | { kind: 'enqueue'; urls: QueueEntry[]; t: number }
-  | { kind: 'fetched'; url: string; depth: number; page: CrawledPage; t: number }
+  | { kind: 'fetched'; url: string; depth: number; page: CrawledPage; t: number; key?: string }
   | { kind: 'error'; url: string; message: string; t: number }
   | { kind: 'status'; status: JobStatus; t: number };
 
@@ -261,13 +262,8 @@ export function rememberOriginalQueuedUrls(jobId: string, entries: QueueEntry[])
     ORIGINAL_QUEUED_URLS.set(jobId, bySafeUrl);
   }
   for (const entry of entries) {
-    const safeUrl = scrubUrlString(entry.url);
-    bySafeUrl.set(safeUrl, entry.url);
-    try {
-      bySafeUrl.set(normalizeUrl(safeUrl), entry.url);
-    } catch {
-      /* keep the raw scrubbed key only */
-    }
+    const key = entry.key ?? queueEntryKey(entry.url);
+    bySafeUrl.set(key, entry.url);
   }
 }
 
@@ -278,9 +274,23 @@ export function getOriginalQueuedUrl(jobId: string, safeUrl: string): string | u
   return bySafeUrl.get(safeUrl);
 }
 
-function forgetOriginalQueuedUrl(jobId: string, safeUrl: string): void {
+export function takeOriginalQueuedUrl(jobId: string, key: string | undefined): string | undefined {
+  assertValidJobId(jobId);
+  if (!key) return undefined;
+  const bySafeUrl = ORIGINAL_QUEUED_URLS.get(jobId);
+  if (!bySafeUrl) return undefined;
+  const original = bySafeUrl.get(key);
+  bySafeUrl.delete(key);
+  if (bySafeUrl.size === 0) {
+    ORIGINAL_QUEUED_URLS.delete(jobId);
+  }
+  return original;
+}
+
+function forgetOriginalQueuedUrl(jobId: string, safeUrl: string, key?: string): void {
   const bySafeUrl = ORIGINAL_QUEUED_URLS.get(jobId);
   if (!bySafeUrl) return;
+  if (key) bySafeUrl.delete(key);
   bySafeUrl.delete(safeUrl);
   bySafeUrl.delete(normalizeUrl(safeUrl));
   if (bySafeUrl.size === 0) {
@@ -404,18 +414,20 @@ function applyEvent(state: JobState, evt: JobEvent): void {
   switch (evt.kind) {
     case 'enqueue':
       for (const entry of evt.urls) {
-        if (!state.visited.has(entry.url)) {
+        if (!state.visited.has(entry.key ?? entry.url)) {
           state.queue.push(entry);
         }
       }
       return;
     case 'fetched': {
-      state.visited.add(evt.url);
-      forgetOriginalQueuedUrl(state.jobId, evt.url);
-      // Drop all queued duplicates for the URL. Duplicate links may be
-      // discovered from multiple parents; leaving stale duplicate queue entries
-      // can keep a job running even after every unique URL has been visited.
-      state.queue = state.queue.filter((q) => q.url !== evt.url);
+      const visitedKey = evt.key ?? evt.url;
+      state.visited.add(visitedKey);
+      forgetOriginalQueuedUrl(state.jobId, evt.url, evt.key);
+      // Drop all queued duplicates for the same logical queue key. For older
+      // events without keys, preserve the legacy URL-based duplicate removal.
+      state.queue = state.queue.filter((q) =>
+        evt.key ? q.key !== evt.key : q.url !== evt.url,
+      );
       state.pages.push(evt.page);
       if (state.startedAt === undefined) state.startedAt = evt.t;
       return;
@@ -469,4 +481,7 @@ export async function withJobLock<T>(jobId: string, fn: () => Promise<T>): Promi
   } finally {
     await release();
   }
+}
+export function queueEntryKey(url: string): string {
+  return `q_${crypto.createHash('sha256').update(url).digest('hex').slice(0, 16)}`;
 }

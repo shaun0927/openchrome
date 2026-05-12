@@ -26,6 +26,7 @@ import {
   getOriginalStartUrl,
   jobFilePath,
   loadJob,
+  queueEntryKey,
   type JobConfig,
 } from '../../../src/core/crawl/job-store';
 import { registerCrawlStartTool } from '../../../src/tools/crawl-start';
@@ -407,9 +408,41 @@ describe('crawl review follow-ups', () => {
     expect(
       getOriginalQueuedUrl(
         startBody.jobId as string,
-        `${server.origin}/child?token=%5BREDACTED%5D`,
+        queueEntryKey(signedChildUrl),
       ),
     ).toBeUndefined();
+  });
+
+  test('same-process jobs preserve distinct original URLs when redaction collides', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer({
+      '/root': {
+        body:
+          '<!doctype html><html><head><title>root</title></head><body>' +
+          '<a href="/child?token=a">child a</a>' +
+          '<a href="/child?token=b">child b</a>' +
+          '</body></html>',
+      },
+      '/child': {
+        body: '<!doctype html><html><head><title>child</title></head><body>child</body></html>',
+      },
+    });
+    bootTools();
+    const spy: SpyState = { calls: [] };
+    _setAdvanceOptionsForTests({ fetcher: makeSpyFetcher(spy) });
+
+    const childA = `${server.origin}/child?token=a`;
+    const childB = `${server.origin}/child?token=b`;
+    const startBody = parseResult(
+      await crawlStart!('s', { url: `${server.origin}/root`, max_pages: 3, max_depth: 1 }),
+    );
+    await crawlStatus!('s', { jobId: startBody.jobId, advance: 3 });
+
+    expect(spy.calls.map((c) => c.url)).toEqual([`${server.origin}/root`, childA, childB]);
+    const raw = fs.readFileSync(jobFilePath(startBody.jobId as string), 'utf8');
+    expect(raw).not.toContain('token=a');
+    expect(raw).not.toContain('token=b');
+    expect(raw).toContain('token=[REDACTED]');
   });
 
   test('respect_robots blocks disallowed pages before the fetcher runs', async () => {
