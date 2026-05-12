@@ -11,7 +11,9 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
+import { formatElementMapAsText } from '../vision/screenshot-analyzer';
+import { formatPerceptionSnapshotAsText } from '../vision/perception-provider';
+import { DomAnnotatorPerceptionProvider } from '../vision/providers/dom-annotator-provider';
 import { trackVisionUsage } from '../vision/config';
 
 const definition: MCPToolDefinition = {
@@ -39,6 +41,15 @@ const definition: MCPToolDefinition = {
       interactiveOnly: {
         type: 'boolean',
         description: 'Only show interactive elements (buttons, links, inputs). Default: true',
+      },
+      format: {
+        type: 'string',
+        enum: ['legacy', 'snapshot', 'both'],
+        description: 'Output format: legacy text+image, provider-neutral snapshot JSON, or both. Default: legacy.',
+      },
+      includeImage: {
+        type: 'boolean',
+        description: 'Include annotated image output. Defaults to true for legacy/both and false for snapshot.',
       },
     },
     required: ['tabId'],
@@ -85,8 +96,19 @@ const handler: ToolHandler = async (
     const showGrid = args.showGrid === true;
     const showBoundingBoxes = args.showBoundingBoxes !== false;
     const interactiveOnly = args.interactiveOnly !== false;
+    const format = (args.format as string | undefined) || 'legacy';
+    if (format !== 'legacy' && format !== 'snapshot' && format !== 'both') {
+      return {
+        content: [{ type: 'text', text: `Error: Invalid format "${format}". Must be "legacy", "snapshot", or "both".` }],
+        isError: true,
+      };
+    }
+    const includeImage = args.includeImage !== undefined
+      ? args.includeImage === true
+      : format !== 'snapshot';
 
-    const result = await analyzeScreenshot(page, {
+    const provider = new DomAnnotatorPerceptionProvider(page);
+    const { result, snapshot } = await provider.captureAnnotated(tabId, page.url(), {
       showGrid,
       showBoundingBoxes,
       interactiveOnly,
@@ -96,19 +118,28 @@ const handler: ToolHandler = async (
     const textMap = formatElementMapAsText(result.elementMap);
     console.error(`[vision_find] Analyzed tab ${tabId}: ${result.elementCount} elements in ${result.annotationTimeMs}ms`);
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)\n\n${textMap}`,
-        },
-        {
-          type: 'image',
-          data: result.screenshot,
-          mimeType: result.mimeType,
-        },
-      ],
-    };
+    const content: MCPResult['content'] = [];
+    if (format === 'legacy' || format === 'both') {
+      content.push({
+        type: 'text',
+        text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)\n\n${textMap}`,
+      });
+    }
+    if (format === 'snapshot' || format === 'both') {
+      content.push({
+        type: 'text',
+        text: formatPerceptionSnapshotAsText(snapshot),
+      });
+    }
+    if (includeImage) {
+      content.push({
+        type: 'image',
+        data: result.screenshot,
+        mimeType: result.mimeType,
+      });
+    }
+
+    return { content };
   } catch (error) {
     return {
       content: [

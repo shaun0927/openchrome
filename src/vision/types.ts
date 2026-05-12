@@ -42,6 +42,37 @@ export interface AnnotatedScreenshotResult {
   annotationTimeMs: number;
 }
 
+/** Provider-neutral perception element for visual grounding. */
+export interface PerceptionElement {
+  id: string;
+  type: 'text' | 'icon' | 'control' | 'image' | 'unknown';
+  label: string;
+  role?: string;
+  interactive: boolean | 'unknown';
+  bbox: { x: number; y: number; width: number; height: number };
+  bboxRatio: { x: number; y: number; width: number; height: number };
+  confidence?: number;
+  source: 'dom-annotator' | 'omniparser-http' | 'mock' | string;
+  backendDOMNodeId?: number;
+  refId?: string;
+  metadata?: Record<string, string | number | boolean>;
+}
+
+/** Provider-neutral snapshot returned by visual perception providers. */
+export interface PerceptionSnapshot {
+  version: 1;
+  provider: string;
+  tabId: string;
+  url: string;
+  capturedAt: number;
+  viewport: { width: number; height: number };
+  screenshotHash?: string;
+  screenshotMimeType?: string;
+  elements: PerceptionElement[];
+  warnings: string[];
+  latencyMs: number;
+}
+
 /** Vision mode configuration */
 export type VisionMode = 'off' | 'fallback' | 'auto';
 
