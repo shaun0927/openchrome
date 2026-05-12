@@ -147,6 +147,8 @@ describe('console_capture get response — v1.11.0 baseline regression', () => {
       return;
     }
 
+    // Git may check out text fixtures with CRLF on Windows; compare logical JSON
+    // line content so the fixture remains portable while preserving the v1.11.0 shape.
     const baseline = fs.readFileSync(FIXTURE_PATH, 'utf8').replace(/\r\n/g, '\n');
     expect(responseJson).toBe(baseline);
   });
