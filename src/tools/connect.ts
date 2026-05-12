@@ -9,6 +9,7 @@ import { generateConnectionInfo, generateAllConnectionInfo, getHostIds } from '.
 import { copyToClipboard } from '../connect/clipboard';
 import { openInBrowser } from '../connect/open-url';
 import type { WebAIHostId, ServerConnectionState } from '../connect/types';
+import { getAutoConnectState } from '../chrome/auto-connect-state';
 
 function getServerState(): ServerConnectionState {
   const httpPort = process.env.OPENCHROME_HTTP_PORT || '3100';
@@ -25,14 +26,19 @@ function getServerState(): ServerConnectionState {
 const getConnectionInfoDef: MCPToolDefinition = {
   name: 'oc_get_connection_info',
   description:
-    'Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom). Returns the MCP server URL, bearer token, settings page URL, and step-by-step instructions.',
+    'Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom). ' +
+    'Returns the MCP server URL, bearer token, settings page URL, and step-by-step instructions. ' +
+    'Use host="openchrome" to introspect the openchrome server itself — when --auto-connect is ' +
+    'active, returns {mode: "auto-connect", userDataDir, port}.',
   inputSchema: {
     type: 'object',
     properties: {
       host: {
         type: 'string',
-        enum: ['claude', 'chatgpt', 'gemini', 'custom', 'all'],
-        description: 'Web AI host to generate config for. Use "all" for all hosts.',
+        enum: ['claude', 'chatgpt', 'gemini', 'custom', 'all', 'openchrome'],
+        description:
+          'Web AI host to generate config for. Use "all" for all hosts, ' +
+          'or "openchrome" for openchrome server status (e.g. auto-connect mode).',
       },
     },
     required: ['host'],
@@ -46,6 +52,40 @@ const getConnectionInfoHandler: ToolHandler = async (
   const hostArg = args.host as string;
   const state = getServerState();
 
+  if (hostArg === 'openchrome') {
+    // Issue #849: surface the auto-connect state so MCP clients can verify
+    // they are talking to an externally-launched Chrome.
+    const autoConnect = getAutoConnectState();
+    if (autoConnect) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                mode: autoConnect.mode,
+                userDataDir: autoConnect.userDataDir,
+                port: autoConnect.port,
+                wsEndpoint: autoConnect.wsEndpoint,
+                attachedAt: new Date(autoConnect.attachedAt).toISOString(),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ mode: 'managed' }, null, 2),
+        },
+      ],
+    };
+  }
+
   if (hostArg === 'all') {
     const all = generateAllConnectionInfo(state);
     return { content: [{ type: 'text', text: JSON.stringify(all, null, 2) }] };
@@ -54,7 +94,7 @@ const getConnectionInfoHandler: ToolHandler = async (
   const validHosts = getHostIds();
   if (!validHosts.includes(hostArg as WebAIHostId)) {
     return {
-      content: [{ type: 'text', text: `Invalid host: ${hostArg}. Valid hosts: ${validHosts.join(', ')}` }],
+      content: [{ type: 'text', text: `Invalid host: ${hostArg}. Valid hosts: ${validHosts.join(', ')}, openchrome` }],
       isError: true,
     };
   }
