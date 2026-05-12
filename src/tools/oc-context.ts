@@ -238,6 +238,31 @@ export function verifyEnvelopeIntegrity(envelope: ContextEnvelope): string | nul
   return null;
 }
 
+export function assertEnvelopeImportAllowed(envelope: ContextEnvelope): void {
+  assertHttpOrigin(envelope.origin);
+  assertDomainAllowed(envelope.origin);
+
+  for (const cookie of envelope.cookies ?? []) {
+    const bareDomain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
+    if (!bareDomain) {
+      throw new Error(`Invalid cookie domain in envelope: ${cookie.domain}`);
+    }
+    assertHttpOrigin(`https://${bareDomain}`);
+    assertDomainAllowed(`https://${bareDomain}/`);
+  }
+}
+
+function assertHttpOrigin(origin: string): void {
+  try {
+    const url = new URL(origin);
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) {
+      throw new Error('unsupported origin');
+    }
+  } catch {
+    throw new Error(`Invalid envelope origin: ${origin}`);
+  }
+}
+
 // ─── oc_context_export ───────────────────────────────────────────────────────
 
 const exportDefinition: MCPToolDefinition = {
@@ -410,6 +435,14 @@ const importHandler: ToolHandler = async (
     };
   }
 
+  try {
+    assertEnvelopeImportAllowed(envelope);
+  } catch (error) {
+    return errorResult(
+      `oc_context_import error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   const sessionManager = getSessionManager();
 
   try {
@@ -451,8 +484,8 @@ const importHandler: ToolHandler = async (
     const applyResult = await applyContextEnvelopeData(page, cdpClient, capture, {
       origin: envelope.origin,
       applyCookies: true,
-      applyLocalStorage: envelope.localStorage !== undefined,
-      applySessionStorage: envelope.sessionStorage !== undefined,
+      applyLocalStorage: true,
+      applySessionStorage: true,
     });
 
     // HTTP-auth round-trip (opt-in by exporter; envelope carries it inline).

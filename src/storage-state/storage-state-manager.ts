@@ -250,8 +250,7 @@ export async function applyContextEnvelopeData(
   if (opts.applyLocalStorage) {
     try {
       const pageOrigin = (await page.evaluate(() => window.location.origin)) as string;
-      // Only touch storage if the active origin matches the envelope origin
-      // (or the caller passed origin explicitly).
+      // Only touch storage when scoped callers match the active origin.
       if (pageOrigin && pageOrigin !== 'null' && (!opts.origin || pageOrigin === opts.origin)) {
         await page.evaluate(() => window.localStorage.clear());
         if (Object.keys(capture.localStorage).length > 0) {
@@ -294,9 +293,13 @@ export async function applyContextEnvelopeData(
 function hostnameFromOrigin(origin: string): string | null {
   if (!origin) return null;
   try {
-    return new URL(origin).hostname;
+    const url = new URL(origin);
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) {
+      throw new Error('unsupported origin');
+    }
+    return url.hostname;
   } catch {
-    return null;
+    throw new Error(`invalid envelope origin: ${origin}`);
   }
 }
 
@@ -312,7 +315,7 @@ function cookieUrlFor(
   fallbackOrigin: string,
 ): string {
   const bare = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
-  const scheme = cookie.secure ? 'https' : 'https'; // safer default
+  const scheme = cookie.secure ? 'https' : 'http';
   if (bare) return `${scheme}://${bare}${cookie.path || '/'}`;
   return fallbackOrigin || 'https://localhost/';
 }

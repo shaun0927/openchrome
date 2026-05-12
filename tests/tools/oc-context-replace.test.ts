@@ -23,6 +23,8 @@ import {
   computeIntegrity,
   canonicalize,
   verifyEnvelopeIntegrity,
+  assertEnvelopeImportAllowed,
+  registerOcContextTools,
   type ContextEnvelope,
 } from '../../src/tools/oc-context';
 import {
@@ -30,6 +32,8 @@ import {
   applyContextEnvelopeData,
   type EnvelopeCapture,
 } from '../../src/storage-state/storage-state-manager';
+import { setGlobalConfig } from '../../src/config/global';
+import * as sessionManagerModule from '../../src/session-manager';
 import type { Page } from 'puppeteer-core';
 
 interface CdpCall {
@@ -438,6 +442,129 @@ describe('applyContextEnvelopeData strict-replace', () => {
 
     expect(dest.state.cookies.map((c) => c.name)).toEqual(['alive']);
     expect(result.appliedCookies).toBe(1);
+  });
+
+  test('rejects invalid envelope origin before reading or deleting cookies', async () => {
+    const dest = makeHarness({
+      origin: 'https://httpbin.org',
+      cookies: [cookie('stale', 'remove_me'), cookie('other', 'keep_me', { domain: 'other.example' })],
+      localStorage: { stale: 'remove_me' },
+      sessionStorage: {},
+    });
+
+    await expect(
+      applyContextEnvelopeData(
+        dest.page,
+        dest.cdpClient,
+        {
+          origin: 'not a valid origin',
+          cookies: [],
+          localStorage: {},
+          sessionStorage: {},
+        },
+        { origin: 'not a valid origin' },
+      ),
+    ).rejects.toThrow(/invalid envelope origin/);
+
+    expect(dest.calls).toEqual([]);
+    expect(dest.state.cookies.map((c) => c.name).sort()).toEqual(['other', 'stale']);
+  });
+
+  test('clean envelope with omitted storage maps still clears destination storage via import handler', async () => {
+    const envelope = buildEnvelope({
+      capture: {
+        origin: 'https://httpbin.org',
+        cookies: [],
+        localStorage: {},
+        sessionStorage: {},
+      },
+      origin: 'https://httpbin.org',
+      includeStorage: true,
+      includeHttpAuth: false,
+      captureUA: false,
+      capturedAt: 1000,
+    });
+    expect(envelope.localStorage).toBeUndefined();
+    expect(envelope.sessionStorage).toBeUndefined();
+
+    const dest = makeHarness({
+      origin: 'https://httpbin.org',
+      cookies: [],
+      localStorage: { stale: 'remove_me' },
+      sessionStorage: { wizard: 'remove_me' },
+    });
+
+    jest.spyOn(sessionManagerModule, 'getSessionManager').mockReturnValue({
+      getPage: async () => dest.page,
+      getCDPClient: () => dest.cdpClient,
+    } as unknown as ReturnType<typeof sessionManagerModule.getSessionManager>);
+
+    const handlers: Record<string, (sessionId: string, args: Record<string, unknown>) => Promise<unknown>> = {};
+    registerOcContextTools({
+      registerTool: (name: string, handler: (sessionId: string, args: Record<string, unknown>) => Promise<unknown>) => {
+        handlers[name] = handler;
+      },
+    } as never);
+
+    try {
+      const result = await handlers.oc_context_import('session', {
+        tabId: 'tab',
+        envelope,
+      }) as { ok: boolean; appliedStorageKeys: number };
+
+      expect(result.ok).toBe(true);
+      expect(dest.state.localStorage).toEqual({});
+      expect(dest.state.sessionStorage).toEqual({});
+      expect(result.appliedStorageKeys).toBe(0);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+});
+
+describe('oc_context_import security policy', () => {
+  afterEach(() => {
+    setGlobalConfig({ security: { blocked_domains: [] } });
+  });
+
+  test('rejects an envelope whose origin is blocked', () => {
+    setGlobalConfig({ security: { blocked_domains: ['blocked.example'] } });
+
+    const envelope = buildEnvelope({
+      capture: {
+        origin: 'https://blocked.example',
+        cookies: [],
+        localStorage: {},
+        sessionStorage: {},
+      },
+      origin: 'https://blocked.example',
+      includeStorage: true,
+      includeHttpAuth: false,
+      captureUA: false,
+      capturedAt: 1000,
+    });
+
+    expect(() => assertEnvelopeImportAllowed(envelope)).toThrow(/blocked by security policy/);
+  });
+
+  test('rejects imported cookies for blocked domains even when envelope origin is allowed', () => {
+    setGlobalConfig({ security: { blocked_domains: ['blocked.example'] } });
+
+    const envelope = buildEnvelope({
+      capture: {
+        origin: 'https://allowed.example',
+        cookies: [cookie('session', 'secret', { domain: 'blocked.example' })],
+        localStorage: {},
+        sessionStorage: {},
+      },
+      origin: 'https://allowed.example',
+      includeStorage: true,
+      includeHttpAuth: false,
+      captureUA: false,
+      capturedAt: 1000,
+    });
+
+    expect(() => assertEnvelopeImportAllowed(envelope)).toThrow(/blocked by security policy/);
   });
 });
 
