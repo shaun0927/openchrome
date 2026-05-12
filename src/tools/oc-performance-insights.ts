@@ -147,6 +147,45 @@ function jsonError(message: string): MCPResult {
   };
 }
 
+function jsonStructuredError(payload: Record<string, unknown>): MCPResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    isError: true,
+    ...payload,
+  };
+}
+
+/**
+ * Tagged error used by the trace-collection branch when
+ * `Tracing.tracingComplete` fails to fire within the configured budget.
+ * The outer try/catch maps this to a structured tool result and the
+ * `finally` block still runs (resetting emulation overrides).
+ *
+ * Distinct error class so the catch block can detect-and-shape the
+ * payload without parsing message strings.
+ */
+class TracingCompleteTimeoutError extends Error {
+  readonly elapsedMs: number;
+  constructor(elapsedMs: number) {
+    super(`Tracing.tracingComplete did not fire within ${elapsedMs}ms`);
+    this.name = 'TracingCompleteTimeoutError';
+    this.elapsedMs = elapsedMs;
+  }
+}
+
+/**
+ * Resolve the tracing-complete wait budget. Defaults to 5000ms; operators
+ * can raise it for heavier pages via the env var. Values below 1000ms or
+ * non-numeric are treated as the default to prevent foot-guns.
+ */
+function getTracingCompleteTimeoutMs(): number {
+  const raw = process.env.OC_PERF_TRACING_COMPLETE_TIMEOUT_MS;
+  if (!raw) return 5000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1000) return 5000;
+  return Math.floor(parsed);
+}
+
 /**
  * Wait for either the page load event (`autoStop === 'load'`), the
  * network-idle marker (`autoStop === 'idle'`), or a fixed timeout. The
@@ -286,9 +325,16 @@ const handler: ToolHandler = async (
     // Stopping triggers the tracingComplete event the collector awaits.
     await cdp.send('Tracing.end');
 
+    // If tracingComplete doesn't fire within the configured budget,
+    // surface a structured timeout error instead of persisting a
+    // half-built trace handle. Callers were previously fed an empty
+    // event list and saw misleading "no data" insights for every metric.
+    const timeoutMs = getTracingCompleteTimeoutMs();
     const events = await Promise.race([
       collectPromise,
-      new Promise<TraceEventRecord[]>((resolve) => setTimeout(() => resolve([]), 5000)),
+      new Promise<TraceEventRecord[]>((_resolve, reject) =>
+        setTimeout(() => reject(new TracingCompleteTimeoutError(timeoutMs)), timeoutMs),
+      ),
     ]);
 
     const trace = { traceEvents: events };
@@ -314,6 +360,15 @@ const handler: ToolHandler = async (
       insights: summaries,
     });
   } catch (err) {
+    if (err instanceof TracingCompleteTimeoutError) {
+      // Crucially: NO trace handle is created here — callers should not
+      // see a half-built handle that yields empty insights.
+      return jsonStructuredError({
+        error: 'tracing_complete_timeout',
+        elapsed_ms: err.elapsedMs,
+        hint: 'Increase OC_PERF_TRACING_COMPLETE_TIMEOUT_MS for heavy pages',
+      });
+    }
     return jsonError(
       `oc_performance_insights failed: ${err instanceof Error ? err.message : String(err)}`,
     );

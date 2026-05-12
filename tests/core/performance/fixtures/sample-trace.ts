@@ -13,6 +13,14 @@ import type { TraceDocument } from '../../../../src/core/performance/insights/ty
 export function richTrace(): TraceDocument {
   return {
     traceEvents: [
+      // Navigation start — anchor for trace-relative timestamps.
+      // Subtracted from each event's `ts` to derive elapsed-since-nav.
+      {
+        name: 'navigationStart',
+        cat: 'blink.user_timing',
+        ph: 'I',
+        ts: 0,
+      },
       // Document request — first ResourceSendRequest with resourceType=Document.
       {
         name: 'ResourceSendRequest',
@@ -143,6 +151,12 @@ export function emptyTrace(): TraceDocument {
 export function fastTrace(): TraceDocument {
   return {
     traceEvents: [
+      {
+        name: 'navigationStart',
+        cat: 'blink.user_timing',
+        ph: 'I',
+        ts: 0,
+      },
       {
         name: 'largestContentfulPaint::Candidate',
         cat: 'loading',

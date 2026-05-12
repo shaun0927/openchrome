@@ -54,6 +54,89 @@ describe('LCPBreakdown', () => {
     const lcp = summaries.find((s) => s.name === 'LCPBreakdown')!;
     expect(lcp.severity).toBe('info');
   });
+
+  // P1 codex finding: trace `ts` is tracing-clock μs, not elapsed-since-nav.
+  // Without normalizing against navigationStart, LCP from a real Chrome
+  // trace lands in the multi-billion-millisecond range (i.e. ~hours).
+  test('normalizes LCP to navigation-start (trace-relative time)', () => {
+    const trace = {
+      traceEvents: [
+        // navigationStart at 1s on the tracing clock.
+        {
+          name: 'navigationStart',
+          cat: 'blink.user_timing',
+          ph: 'I',
+          ts: 1_000_000_000,
+        },
+        // LCP candidate 2.5s later on the tracing clock.
+        {
+          name: 'largestContentfulPaint::Candidate',
+          cat: 'loading',
+          ph: 'I',
+          ts: 1_002_500_000,
+          args: { data: { size: 5000, nodeName: 'IMG' } },
+        },
+      ],
+    };
+    const { summaries } = evaluateInsights(trace);
+    const lcp = summaries.find((s) => s.name === 'LCPBreakdown')!;
+    // 2500 ms = "2.50s". Must NOT contain the raw tracing-clock value
+    // (1_002_500_000 ms or anything in the billions).
+    expect(lcp.one_line).toMatch(/2\.50s/);
+    expect(lcp.one_line).not.toMatch(/1002500000/);
+    expect(lcp.one_line).not.toMatch(/[0-9]{10,}/);
+  });
+
+  test('returns no_data with unknown_navigation_start when navStart is missing', () => {
+    const trace = {
+      traceEvents: [
+        // LCP candidate but no navigationStart marker — we cannot
+        // compute elapsed-since-nav, so report no_data with reason.
+        {
+          name: 'largestContentfulPaint::Candidate',
+          cat: 'loading',
+          ph: 'I',
+          ts: 1_002_500_000,
+          args: { data: { size: 5000, nodeName: 'IMG' } },
+        },
+      ],
+    };
+    const { summaries, details } = evaluateInsights(trace);
+    const lcp = summaries.find((s) => s.name === 'LCPBreakdown')!;
+    expect(lcp.severity).toBe('info');
+    expect(lcp.one_line).toMatch(/no data/);
+    expect(lcp.one_line).toMatch(/unknown_navigation_start/);
+    expect(details.LCPBreakdown.details_md).toMatch(/unknown_navigation_start/);
+    expect(
+      details.LCPBreakdown.evidence.some(
+        (e) => e.kind === 'metric' && e.ref.includes('unknown_navigation_start'),
+      ),
+    ).toBe(true);
+  });
+
+  test('returns no_data when winner.ts is before navStart (pathological trace)', () => {
+    const trace = {
+      traceEvents: [
+        {
+          name: 'navigationStart',
+          cat: 'blink.user_timing',
+          ph: 'I',
+          ts: 2_000_000_000,
+        },
+        // LCP candidate before navigationStart — pathological.
+        {
+          name: 'largestContentfulPaint::Candidate',
+          cat: 'loading',
+          ph: 'I',
+          ts: 1_000_000_000,
+          args: { data: { size: 5000, nodeName: 'IMG' } },
+        },
+      ],
+    };
+    const { summaries } = evaluateInsights(trace);
+    const lcp = summaries.find((s) => s.name === 'LCPBreakdown')!;
+    expect(lcp.one_line).toMatch(/unknown_navigation_start/);
+  });
 });
 
 describe('DocumentLatency', () => {

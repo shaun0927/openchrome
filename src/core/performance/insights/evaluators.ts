@@ -78,18 +78,50 @@ function safeUrl(url: string): string {
 }
 
 /** Build a no-data placeholder result for a given insight. */
-function noData(insight: InsightName): EvaluatorResult {
+function noData(insight: InsightName, reason?: string): EvaluatorResult {
+  const reasonSuffix = reason ? ` (${reason})` : '';
   const summary: InsightSummary = {
     name: insight,
     severity: 'info',
-    one_line: 'no data',
+    one_line: `no data${reasonSuffix}`,
   };
+  const reasonLine = reason ? `\n\n**Reason**: \`${reason}\`` : '';
   const details: InsightDetails = {
     insight,
-    details_md: `# ${insight}\n\nNo trace events matched this insight.`,
-    evidence: [],
+    details_md: `# ${insight}\n\nNo trace events matched this insight.${reasonLine}`,
+    evidence: reason ? [{ kind: 'metric', ref: `reason=${reason}` }] : [],
   };
   return { summary, details };
+}
+
+/**
+ * Find the trace-clock timestamp of the first `navigationStart` event.
+ * Chrome trace events use a tracing-clock (μs since an arbitrary epoch),
+ * NOT elapsed time since navigation. To convert a raw `ts` into an
+ * elapsed-since-nav value, callers must subtract this navStart.
+ *
+ * Returns `undefined` if no navigationStart marker is present — in that
+ * case evaluators that depend on a nav-relative timeline (LCP, FCP)
+ * should surface `no_data` with reason `unknown_navigation_start` rather
+ * than emit a multi-billion-millisecond bogus value.
+ */
+function findNavigationStartTs(trace: TraceDocument): number | undefined {
+  for (const e of trace.traceEvents) {
+    if (e.name !== 'navigationStart') continue;
+    if (typeof e.ts !== 'number') continue;
+    // Accept the conventional categories: blink.user_timing, loading,
+    // and the bare event (older traces). The first matching event wins.
+    const cats = typeof e.cat === 'string' ? e.cat.split(',').map((c) => c.trim()) : [];
+    if (
+      cats.length === 0 ||
+      cats.includes('blink.user_timing') ||
+      cats.includes('loading') ||
+      cats.includes('navigation')
+    ) {
+      return e.ts;
+    }
+  }
+  return undefined;
 }
 
 /* ──────────────────────────────────────────────────────────────────── */
@@ -131,7 +163,14 @@ const lcpBreakdown: EvaluatorFn = (trace) => {
   if (candidates.length === 0) return null;
   // Last candidate is the final LCP (CDP convention).
   const winner = candidates[candidates.length - 1];
-  const lcpMs = usToMs(winner.ts);
+  // Chrome trace `ts` values are tracing-clock μs, not elapsed-since-nav.
+  // We must normalize to navigation-start so reported LCP is a sane
+  // millisecond figure (vs. multi-billion μs from the tracing-clock epoch).
+  const navStart = findNavigationStartTs(trace);
+  if (navStart === undefined || winner.ts <= navStart) {
+    return noData('LCPBreakdown', 'unknown_navigation_start');
+  }
+  const lcpMs = usToMs(winner.ts - navStart);
   const severity = severityForMs(lcpMs, 2500, 4000);
   const target = winner.url
     ? safeUrl(winner.url)

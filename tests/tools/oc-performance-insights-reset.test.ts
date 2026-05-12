@@ -147,6 +147,87 @@ describe('oc_performance_insights emulation reset on error path', () => {
     expect(sentMethods).not.toContain('Network.emulateNetworkConditions');
   });
 
+  // P1 codex finding: the 5-second wait for Tracing.tracingComplete
+  // used to fall back to an empty event list, so the tool persisted
+  // and analyzed an empty trace as if it were valid. The handler now
+  // surfaces a structured error and does NOT create a trace handle.
+  describe('tracing_complete_timeout structured error', () => {
+    const ORIGINAL_ENV = process.env.OC_PERF_TRACING_COMPLETE_TIMEOUT_MS;
+    beforeEach(() => {
+      // Keep the test fast — minimum allowed value is 1000ms.
+      process.env.OC_PERF_TRACING_COMPLETE_TIMEOUT_MS = '1000';
+    });
+    afterEach(() => {
+      if (ORIGINAL_ENV === undefined) {
+        delete process.env.OC_PERF_TRACING_COMPLETE_TIMEOUT_MS;
+      } else {
+        process.env.OC_PERF_TRACING_COMPLETE_TIMEOUT_MS = ORIGINAL_ENV;
+      }
+    });
+
+    test('returns structured error when tracingComplete never fires', async () => {
+      const cdp = makeStubCdp(); // No throwOn — Tracing.end succeeds.
+      // `once('Tracing.tracingComplete', cb)` is a jest mock that does
+      // NOT invoke its callback, so the collectPromise never resolves
+      // and our timeout branch must fire.
+      const page = makeStubPage(cdp);
+      (getSessionManager as jest.Mock).mockReturnValue({
+        getPage: jest.fn(async () => page),
+      });
+
+      const result = await handler('s-1', {
+        tabId: 'tab-1',
+        cpuThrottling: 4,
+        network: 'slow-3g',
+        autoStop: { ms: 1 },
+      });
+
+      expect(result.isError).toBe(true);
+      const body = JSON.parse(result.content[0].text);
+      expect(body.error).toBe('tracing_complete_timeout');
+      expect(typeof body.elapsed_ms).toBe('number');
+      expect(body.elapsed_ms).toBeGreaterThanOrEqual(1000);
+      expect(typeof body.hint).toBe('string');
+      expect(body.hint).toMatch(/OC_PERF_TRACING_COMPLETE_TIMEOUT_MS/);
+
+      // No trace handle (no trace_id) is surfaced on this path.
+      expect(body.trace_id).toBeUndefined();
+      expect(body.trace_path).toBeUndefined();
+
+      // Crucially, emulation overrides are still reset (finally block).
+      const sentMethods = cdp.calls.map((c) => c.method);
+      expect(sentMethods).toContain('Emulation.setCPUThrottlingRate');
+      expect(sentMethods).toContain('Network.emulateNetworkConditions');
+      const cpuResetCall = [...cdp.calls]
+        .reverse()
+        .find((c) => c.method === 'Emulation.setCPUThrottlingRate');
+      expect(cpuResetCall!.params).toEqual({ rate: 1 });
+    }, 10_000);
+
+    test('does not persist a trace handle on timeout', async () => {
+      const cdp = makeStubCdp();
+      const page = makeStubPage(cdp);
+      (getSessionManager as jest.Mock).mockReturnValue({
+        getPage: jest.fn(async () => page),
+      });
+
+      // Spy on the store to assert nothing is persisted on this path.
+      const traceStore = await import('../../src/core/performance/insights/trace-store');
+      const storeSpy = jest.spyOn(traceStore.getPerfTraceStore(), 'store');
+
+      const result = await handler('s-1', {
+        tabId: 'tab-1',
+        autoStop: { ms: 1 },
+      });
+
+      expect(result.isError).toBe(true);
+      const body = JSON.parse(result.content[0].text);
+      expect(body.error).toBe('tracing_complete_timeout');
+      expect(storeSpy).not.toHaveBeenCalled();
+      storeSpy.mockRestore();
+    }, 10_000);
+  });
+
   test('resets ONLY CPU when only CPU throttling was applied', async () => {
     const cdp = makeStubCdp({ throwOn: 'Tracing.end' });
     const page = makeStubPage(cdp);
