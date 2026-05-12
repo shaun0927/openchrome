@@ -31,6 +31,8 @@ interface TabInfo {
   workerId: string;
   url: string;
   title: string;
+  /** #848: name of the BrowserContext owning this tab; 'default' for Chrome's default. */
+  context: string;
 }
 
 const handler: ToolHandler = async (
@@ -67,6 +69,7 @@ const handler: ToolHandler = async (
               workerId: workerInfo.id,
               url: page.url(),
               title: await safeTitle(page),
+              context: sessionManager.getTargetContextName(targetId),
             };
             tabInfos.push(tabInfo);
             workerTabs[workerInfo.id].push(tabInfo);
