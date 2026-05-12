@@ -138,8 +138,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
     test('Initial tools/list returns Tier 1 tools only (45 tools) + expand_tools', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       tier1Tools = response.result.tools;
-      // 45 Tier 1 tools (includes unmapped tools that default to Tier 1)
-      // + 1 expand_tools virtual tool = 46
+      // 45 Tier 1 tools (includes lifecycle, assertion, evidence, skill, observability,
+      // token-budget, and connection/request utility tools) + 1 expand_tools virtual tool = 46
       const toolNames = tier1Tools.map((t: any) => t.name);
       expect(toolNames).toContain('expand_tools');
 
