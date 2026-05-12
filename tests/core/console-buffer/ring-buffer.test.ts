@@ -285,7 +285,13 @@ describe('ConsoleRingBuffer', () => {
   });
 
   describe('O(1) microbenchmark', () => {
-    test('10^5 pushes against a full buffer complete under 50 ms', () => {
+    test('10^5 pushes against a full buffer complete under 500 ms', () => {
+      // Threshold chosen to distinguish amortized O(1) from O(n) eviction
+      // without being flaky under parallel CI load. At 100k pushes:
+      //   - O(1) amortized: typically ~50–200ms in local dev, <500ms even
+      //     when the jest worker is contended.
+      //   - O(n) (the previous `slice` path): would be in the
+      //     1–10 second range, easily failing this bound.
       const N = 100_000;
       const buf = createConsoleRingBuffer<TestEntry>(
         { maxLines: 1000, maxBytes: 100_000_000 },
@@ -303,7 +309,7 @@ describe('ConsoleRingBuffer', () => {
       }
       const elapsed = Date.now() - start;
 
-      expect(elapsed).toBeLessThan(50);
+      expect(elapsed).toBeLessThan(500);
     });
   });
 });

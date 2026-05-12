@@ -14,8 +14,20 @@
 
 import type { ConsoleRingBuffer, ConsoleRingBufferOptions, ConsoleRingBufferStats } from './types';
 
-const DEFAULT_MAX_LINES = parseInt(process.env['OPENCHROME_CONSOLE_BUFFER_MAX_LINES'] ?? '1000', 10);
-const DEFAULT_MAX_BYTES = parseInt(process.env['OPENCHROME_CONSOLE_BUFFER_MAX_BYTES'] ?? '4194304', 10);
+// Defensive env parsing — a non-numeric, NaN, negative, or zero value would
+// otherwise propagate into `new Array(NaN)` / `new Float64Array(NaN)` and
+// crash `console_capture start` at runtime (Codex P2). Reject anything that
+// isn't a positive integer and fall back to the documented default.
+function parsePositiveIntEnv(envKey: string, fallback: number): number {
+  const raw = process.env[envKey];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return fallback;
+  return n;
+}
+
+const DEFAULT_MAX_LINES = parsePositiveIntEnv('OPENCHROME_CONSOLE_BUFFER_MAX_LINES', 1000);
+const DEFAULT_MAX_BYTES = parsePositiveIntEnv('OPENCHROME_CONSOLE_BUFFER_MAX_BYTES', 4194304);
 
 /**
  * Create a truncated placeholder entry for an oversized push.
@@ -55,8 +67,8 @@ class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
     this.maxLines = opts.maxLines;
     this.maxBytes = opts.maxBytes;
     this.placeholder = placeholder;
-    // Allocate capacity = maxLines + 1 so we can distinguish full from empty
-    // without an extra boolean flag, but we track count directly for clarity.
+    // Allocate capacity = maxLines slots. We track `count` directly to
+    // distinguish full from empty without needing a sentinel slot.
     this.buf = new Array<T | undefined>(this.maxLines);
     this.sizes = new Float64Array(this.maxLines);
     this.timestamps = new Float64Array(this.maxLines);
@@ -64,7 +76,15 @@ class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
 
   push(entry: T, sizeBytes: number): void {
     // Case 1: single entry exceeds the byte cap — store placeholder instead.
+    // The placeholder still consumes one slot, so we MUST first enforce the
+    // line-cap invariant by evicting the oldest entry when the buffer is
+    // full. Without this guard `count` would become `maxLines + 1`, and
+    // drain()/tail() would iterate `count` entries modulo `maxLines` —
+    // duplicating the oldest survivor (Codex P1 corruption path).
     if (sizeBytes > this.maxBytes) {
+      while (this.count >= this.maxLines) {
+        this._evictOldest();
+      }
       const ph = this.placeholder(sizeBytes);
       // The placeholder itself is considered zero bytes for cap accounting
       // (it is tiny), so we push it as size 0. This matches the invariant:
@@ -108,7 +128,13 @@ class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
   }
 
   clear(): void {
-    // Eviction counters are preserved as an audit signal.
+    // Eviction counters are preserved as an audit signal. Null out the slot
+    // references so retained payloads become eligible for GC immediately —
+    // long-lived captures otherwise hold the previous buffer's entries
+    // strongly until the slots are overwritten by future pushes (Codex P2).
+    for (let i = 0; i < this.maxLines; i++) {
+      this.buf[i] = undefined;
+    }
     this._head = 0;
     this._tail = 0;
     this.count = 0;
