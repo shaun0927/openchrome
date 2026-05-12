@@ -28,8 +28,17 @@ import { resetFlagsCache } from '../../../src/harness/flags.js';
 
 let tmpRoot: string;
 
+// Capture and restore process.argv so the pilot flag we set in this suite
+// does not bleed into other Jest workers running in the same process.
+const ORIGINAL_ARGV = process.argv;
+
 beforeAll(() => {
   process.argv = ['node', 'cli/index.js', '--pilot'];
+  resetFlagsCache();
+});
+
+afterAll(() => {
+  process.argv = ORIGINAL_ARGV;
   resetFlagsCache();
 });
 
@@ -361,10 +370,10 @@ describe('decide() — input validation', () => {
 });
 
 describe('decide() — total / never throws', () => {
-  test('a getEdge() implementation that throws falls through to host_decides', () => {
+  test('a snapshot reader that throws falls through to host_decides', () => {
     const storage = openStorage();
     const wrapped = Object.create(storage);
-    wrapped.getEdge = () => {
+    wrapped.getEdgesFromStateSync = () => {
       throw new Error('synthetic storage failure');
     };
     const decision = decide(
@@ -377,6 +386,107 @@ describe('decide() — total / never throws', () => {
     );
     expect(decision.kind).toBe('host_decides');
     expect(decision.reason).toMatch(/storage_error: synthetic storage failure/);
+  });
+});
+
+describe('decide() — single snapshot coherence', () => {
+  // Regression guard for PR #823 review (Codex): "Read edge data from a
+  // single graph snapshot". The previous implementation invoked
+  // `storage.getEdge()` once per candidate, which re-read the JSON file
+  // each call and risked comparing edges from different graph versions
+  // when a concurrent writer mutated the file mid-decision. The current
+  // implementation must consult exactly one `getEdgesFromStateSync` read
+  // per call and must never reach for `getEdge` from within `decide()`.
+  test('decide() reads the graph exactly once regardless of candidate count', () => {
+    const storage = openStorage();
+    const counts = { snapshot: 0, edge: 0 };
+    const wrapped = Object.create(storage);
+    wrapped.getEdgesFromStateSync = (_fromState: string) => {
+      counts.snapshot += 1;
+      return [];
+    };
+    wrapped.getEdge = () => {
+      counts.edge += 1;
+      return null;
+    };
+    decide(
+      {
+        domain: 'example.com',
+        currentStateHash: COLD_STATE,
+        candidateActions: [CLICK_ADD, CLICK_CHECKOUT, NAV],
+      },
+      wrapped,
+    );
+    expect(counts.snapshot).toBe(1);
+    expect(counts.edge).toBe(0);
+  });
+
+  test('all candidates are ranked against the same snapshot even if storage mutates between iterations', () => {
+    const storage = openStorage();
+    // Two snapshot reads with different content. The first response wins
+    // — `decide` must consult the snapshot once, then iterate candidates
+    // in memory.
+    const snapshots = [
+      [
+        {
+          fromState: COLD_STATE,
+          actionKind: 'click',
+          actionArgsNorm: 'add-to-cart',
+          toStateDistribution: [{ to_state: POST_ADD_STATE, count: 10 }],
+          successCount: 10,
+          failCount: 0,
+        },
+      ],
+      // If decide() leaked a second read through, it would see this list
+      // and pick CLICK_CHECKOUT instead, which is the failure mode we
+      // are guarding against.
+      [
+        {
+          fromState: COLD_STATE,
+          actionKind: 'click',
+          actionArgsNorm: 'checkout',
+          toStateDistribution: [{ to_state: 'state_other', count: 50 }],
+          successCount: 50,
+          failCount: 0,
+        },
+      ],
+    ];
+    let call = 0;
+    const wrapped = Object.create(storage);
+    wrapped.getEdgesFromStateSync = (_fromState: string) =>
+      snapshots[Math.min(call++, snapshots.length - 1)];
+    const decision = decide(
+      {
+        domain: 'example.com',
+        currentStateHash: COLD_STATE,
+        candidateActions: [CLICK_ADD, CLICK_CHECKOUT],
+      },
+      wrapped,
+    );
+    expect(decision.kind).toBe('recommended');
+    expect(decision.recommended).toEqual(CLICK_ADD);
+  });
+});
+
+describe('executor source — text-tooling friendliness', () => {
+  // Regression guard for PR #823 review (Codex): "Remove embedded NUL
+  // byte from TypeScript source". Any control byte below U+0020 except
+  // TAB (0x09), LF (0x0A), and CR (0x0D) makes Git treat the file as
+  // binary, breaking diff/grep/code review. This assertion catches a
+  // future re-introduction.
+  test('src/pilot/skill/executor.ts contains no raw control bytes outside TAB/LF/CR', () => {
+    const buf = fs.readFileSync(
+      path.join(__dirname, '..', '..', '..', 'src', 'pilot', 'skill', 'executor.ts'),
+    );
+    const offenders: Array<{ offset: number; byte: number }> = [];
+    for (let i = 0; i < buf.length; i++) {
+      const b = buf[i];
+      if (b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) {
+        offenders.push({ offset: i, byte: b });
+        if (offenders.length >= 5) break;
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
 
