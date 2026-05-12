@@ -18,7 +18,7 @@ import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
-import { isStateHeaderEnabled } from './_shared/state-header';
+import { isStateHeaderEnabled, prependHeaderText } from './_shared/state-header';
 
 interface ConsoleLogEntry {
   type: string;
@@ -323,12 +323,12 @@ const handler: ToolHandler = async (
         ? `validate_page auth_redirect_required — redirected to ${authRedirect?.host ?? 'unknown'}`
         : `validate_page ${status}${navError ? ': ' + navError : ''}`;
 
-  const stateHeader = isStateHeaderEnabled()
-    ? { state: { url: finalUrl, title, mode: 'validate' as const, capturedAt: Date.now(), tabId: tabId! } }
-    : {};
+  const state = { url: finalUrl, title, mode: 'validate' as const, capturedAt: Date.now(), tabId: tabId! };
+  const stateHeader = isStateHeaderEnabled() ? { state } : {};
+  const text = prependHeaderText(state, summaryLine);
 
   return {
-    content: [{ type: 'text', text: summaryLine }],
+    content: [{ type: 'text', text }],
     tabId,
     created,
     url: finalUrl,
