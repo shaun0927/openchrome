@@ -41,3 +41,10 @@ export * as voting from './voting/index.js';
 // no LLM calls. Gate call sites on `isSkillCuratorEnabled()` from
 // `src/harness/flags.ts` before invoking any export from this namespace.
 export * as curator from './curator/index.js';
+
+// Phase 4 (issue #889): dynamic skill→tool synthesis. Gate call sites on
+// `isDynamicSkillsEnabled()` from `src/harness/flags.ts` before invoking
+// any export from this namespace. The bootstrap entry
+// `attachDynamicSkillsToServer()` is itself an internal no-op when the
+// flag is off, so accidental call sites stay byte-safe under P2.
+export * as dynamicSkills from './dynamic-skills/index.js';
