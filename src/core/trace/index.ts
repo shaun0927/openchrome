@@ -7,6 +7,11 @@
 
 export { REDACTED, redactTraceEvent, redactValue, scrubString } from './redactor';
 export {
+  TraceRecorder,
+  startTraceRecorder,
+  type TraceRecorderOptions,
+} from './recorder';
+export {
   TraceStorage,
   defaultTraceRootDir,
   type AppendResult,

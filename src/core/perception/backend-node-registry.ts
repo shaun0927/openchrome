@@ -64,13 +64,16 @@ interface InternalEntry extends StableUid {
  * Internal indexes:
  *   - `byComposite`: `${loaderId}_${backendNodeId}` -> entry, used by `get`.
  *   - `byUid`: `uid` -> entry, used by `resolve`.
+ *   - `byLoaderId`: `loaderId` -> entries, used by `rotate`.
  *
- * Both indexes hold the same `InternalEntry` references; `rotate()` walks
- * `byComposite` once and removes the matching entry from both maps.
+ * All indexes hold the same `InternalEntry` references. `rotate()` walks loader
+ * buckets rather than scanning every composite key repeatedly, so bulk
+ * snapshot/navigation churn remains linear in the number of evicted entries.
  */
 export class InMemoryBackendNodeRegistry implements BackendNodeRegistry {
   private readonly byComposite = new Map<string, InternalEntry>();
   private readonly byUid = new Map<string, InternalEntry>();
+  private readonly byLoaderId = new Map<string, Set<InternalEntry>>();
   private counter = 0;
 
   /** Visible for tests — do not call from production code. */
@@ -115,6 +118,12 @@ export class InMemoryBackendNodeRegistry implements BackendNodeRegistry {
     };
     this.byComposite.set(key, entry);
     this.byUid.set(uid, entry);
+    let loaderBucket = this.byLoaderId.get(loaderId);
+    if (!loaderBucket) {
+      loaderBucket = new Set<InternalEntry>();
+      this.byLoaderId.set(loaderId, loaderBucket);
+    }
+    loaderBucket.add(entry);
     return {
       uid: entry.uid,
       backendNodeId: entry.backendNodeId,
@@ -130,16 +139,16 @@ export class InMemoryBackendNodeRegistry implements BackendNodeRegistry {
         'BackendNodeRegistry.rotate: currentLoaderId must be a non-empty string',
       );
     }
+    const kept = this.byLoaderId.get(currentLoaderId)?.size ?? 0;
     let evicted = 0;
-    let kept = 0;
-    for (const [, entry] of this.byComposite) {
-      if (entry.loaderId !== currentLoaderId) {
+    for (const [loaderId, entries] of Array.from(this.byLoaderId.entries())) {
+      if (loaderId === currentLoaderId) continue;
+      for (const entry of entries) {
         this.byComposite.delete(entry.compositeKey);
         this.byUid.delete(entry.uid);
         evicted += 1;
-      } else {
-        kept += 1;
       }
+      this.byLoaderId.delete(loaderId);
     }
     return { evicted, kept };
   }

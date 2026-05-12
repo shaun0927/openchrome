@@ -94,6 +94,18 @@ export const isHandoffPersistEnabled = (): boolean => isFamilyEnabled('OPENCHROM
 export const isPerceptionVotingEnabled = (): boolean => isFamilyEnabled('OPENCHROME_PERCEPTION_VOTING');
 export const isSkillCuratorEnabled = (): boolean => isFamilyEnabled('OPENCHROME_SKILL_CURATOR');
 
+/**
+ * Proxy hook family (issue #874). Unlike the other pilot families this one
+ * does NOT default to active when `--pilot` is set — the operator must
+ * additionally export `OPENCHROME_PROXY_HOOK=1`. The extra opt-in reduces
+ * blast radius for users who run `--pilot` for other features (per the
+ * issue's r2 critic pass).
+ */
+export function isProxyHookEnabled(): boolean {
+  if (!isPilotEnabled()) return false;
+  return isTruthy(process.env.OPENCHROME_PROXY_HOOK);
+}
+
 const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['trace', isTraceEnabled],
   ['state_graph', isStateGraphEnabled],
@@ -101,6 +113,7 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['handoff_persist', isHandoffPersistEnabled],
   ['perception_voting', isPerceptionVotingEnabled],
   ['skill_curator', isSkillCuratorEnabled],
+  ['proxy_hook', isProxyHookEnabled],
 ];
 
 /**

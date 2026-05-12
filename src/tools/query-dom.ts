@@ -45,7 +45,7 @@ interface CSSElementInfo {
 const definition: MCPToolDefinition = {
   name: 'query_dom',
   description:
-    'Query DOM elements via CSS selector or XPath. Returns tag, attributes, text, position. CSS results include a ref field for use in subsequent calls.',
+    'Query DOM elements via CSS selector or XPath. Returns tag, attributes, text, position. CSS results include a ref field for use in subsequent calls.\n\nWhen to use: Precise element lookup by CSS selector or XPath when you know the exact selector.\nWhen NOT to use: Use find for natural-language element search or read_page for full DOM structure.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -416,10 +416,13 @@ async function handleCSS(
       } catch {
         loaderId = null;
       }
-      for (let i = 0; i < limitedElements.length && i < elementInfos.length; i++) {
-        const { nodeRef, backendNodeId } = await resolveNodeRefForHandle(
-          page, cdpClient, loaderId, limitedElements[i],
-        );
+      const enrichments = await Promise.all(
+        limitedElements
+          .slice(0, elementInfos.length)
+          .map((element) => resolveNodeRefForHandle(page, cdpClient, loaderId, element)),
+      );
+      for (let i = 0; i < enrichments.length; i++) {
+        const { nodeRef, backendNodeId } = enrichments[i];
         elementInfos[i].nodeRef = nodeRef;
         if (backendNodeId !== undefined) elementInfos[i].backendNodeId = backendNodeId;
       }

@@ -286,6 +286,23 @@ interface SerializeContext {
   emittedBackendNodeIds: Set<number>;
 }
 
+function appendTruncationMarker(ctx: SerializeContext): void {
+  const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
+  ctx.lines.push(truncationMsg);
+  ctx.truncated = true;
+}
+
+function appendBoundedLine(ctx: SerializeContext, line: string): boolean {
+  if (ctx.totalChars + line.length > ctx.maxOutputChars) {
+    appendTruncationMarker(ctx);
+    return false;
+  }
+
+  ctx.lines.push(line);
+  ctx.totalChars += line.length;
+  return true;
+}
+
 /**
  * Recursively serialize a DOM node
  */
@@ -353,9 +370,7 @@ function serializeNode(
       const fullLine = `${indent}${chainPrefix}${leafLine}\n`;
 
       if (ctx.totalChars + fullLine.length > ctx.maxOutputChars) {
-        const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
-        ctx.lines.push(truncationMsg);
-        ctx.truncated = true;
+        appendTruncationMarker(ctx);
         return;
       }
 
@@ -384,9 +399,7 @@ function serializeNode(
     const lineWithNewline = line + '\n';
 
     if (ctx.totalChars + lineWithNewline.length > ctx.maxOutputChars) {
-      const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
-      ctx.lines.push(truncationMsg);
-      ctx.truncated = true;
+      appendTruncationMarker(ctx);
       return;
     }
 
@@ -423,9 +436,7 @@ function serializeNode(
       const separator = `${childIndent}--shadow-root-- (${shadowType})\n`;
 
       if (ctx.totalChars + separator.length > ctx.maxOutputChars) {
-        const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
-        ctx.lines.push(truncationMsg);
-        ctx.truncated = true;
+        appendTruncationMarker(ctx);
         return;
       }
 
@@ -570,17 +581,9 @@ export async function serializeDOM(
     { depth: documentDepth, pierce: true },
   );
 
-  const lines: string[] = [];
-
-  // Add page stats header
-  if (includePageStats) {
-    const statsLine = `[page_stats] url: ${pageStats.url} | title: ${pageStats.title} | scroll: ${pageStats.scrollX},${pageStats.scrollY} | viewport: ${pageStats.viewportWidth}x${pageStats.viewportHeight} | docSize: ${pageStats.scrollWidth}x${pageStats.scrollHeight}\n\n`;
-    lines.push(statsLine);
-  }
-
   const ctx: SerializeContext = {
-    lines,
-    totalChars: lines.reduce((acc, l) => acc + l.length, 0),
+    lines: [],
+    totalChars: 0,
     truncated: false,
     maxOutputChars,
     maxDepth,
@@ -593,8 +596,16 @@ export async function serializeDOM(
     emittedBackendNodeIds: new Set<number>(),
   };
 
+  // Add page stats header through the same bounded append path as DOM lines.
+  if (includePageStats) {
+    const statsLine = `[page_stats] url: ${pageStats.url} | title: ${pageStats.title} | scroll: ${pageStats.scrollX},${pageStats.scrollY} | viewport: ${pageStats.viewportWidth}x${pageStats.viewportHeight} | docSize: ${pageStats.scrollWidth}x${pageStats.scrollHeight}\n\n`;
+    appendBoundedLine(ctx, statsLine);
+  }
+
   // Serialize from root
-  serializeNode(root, 0, ctx);
+  if (!ctx.truncated) {
+    serializeNode(root, 0, ctx);
+  }
 
   const content = ctx.lines.join('');
 

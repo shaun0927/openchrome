@@ -19,7 +19,7 @@ const FULL_PAGE_DIMENSION_TIMEOUT_MS = 5000;
 
 const definition: MCPToolDefinition = {
   name: 'page_screenshot',
-  description: 'Save page screenshot to file or return as base64. Supports full-page capture, region clipping, and multiple image formats.',
+  description: 'Save page screenshot to file or return as base64. Supports full-page capture, region clipping, and multiple image formats.\n\nWhen to use: Capturing a screenshot for saving to disk or when the full-page or clipped region is needed.\nWhen NOT to use: Use computer(action:"screenshot") for an inline viewport screenshot during interaction.',
   inputSchema: {
     type: 'object',
     properties: {
