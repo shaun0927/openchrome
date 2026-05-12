@@ -397,12 +397,16 @@ program
     // --enable-categories should not silently degrade to "all tools".
     let categorySelection: CategorySelection;
     try {
+      const cliCategoryOverride =
+        options.enableCategories !== undefined || options.disableCategories !== undefined;
       const slim =
-        options.slim === true || process.env.OPENCHROME_SLIM === '1';
-      const enabledCsv =
-        options.enableCategories ??
-        process.env.OPENCHROME_ENABLE_CATEGORIES ??
-        '';
+        options.slim === true ||
+        (!cliCategoryOverride && process.env.OPENCHROME_SLIM === '1');
+      const enabledCsv = slim
+        ? ''
+        : options.enableCategories ??
+          process.env.OPENCHROME_ENABLE_CATEGORIES ??
+          '';
       const disabledCsv =
         options.disableCategories ??
         process.env.OPENCHROME_DISABLE_CATEGORIES ??
