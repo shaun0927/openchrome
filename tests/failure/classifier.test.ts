@@ -66,6 +66,12 @@ describe('failure classifier', () => {
   it('does not classify navigation context churn as connection loss', () => {
     expect(categories('Execution context was destroyed, most likely because of a navigation')).not.toContain('CONNECTION_LOST');
     expect(categories('Cannot find context with specified id')).not.toContain('CONNECTION_LOST');
+    expect(categories('Inspected target navigated or closed')).not.toContain('CONNECTION_LOST');
+  });
+
+  it('keeps generic could-not-find runtime failures out of element-not-found', () => {
+    expect(categories('Could not find expected browser (chrome) locally')).not.toContain('ELEMENT_NOT_FOUND');
+    expect(categories('Could not find element for selector .submit')).toContain('ELEMENT_NOT_FOUND');
   });
 
 });

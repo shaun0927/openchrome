@@ -46,7 +46,7 @@ const RULES: Rule[] = [
     category: 'CONNECTION_LOST',
     confidence: 0.95,
     reason: 'CDP/browser transport connection was lost',
-    test: ({ text }) => /\b(not connected to chrome|call connect\(\) first|websocket.*closed|websocket is not open|browser has disconnected|browser disconnected|cdpsession connection closed|connection closed|session closed|protocol error.*(?:connection|closed|disconnected|target closed)|inspected target navigated or closed|puppeteer\.connect\(\) timed out|session initialization timed out)\b/i.test(text),
+    test: ({ text }) => /\b(not connected to chrome|call connect\(\) first|websocket.*closed|websocket is not open|browser has disconnected|browser disconnected|cdpsession connection closed|connection closed|session closed|protocol error.*(?:connection|closed|disconnected|target closed)|puppeteer\.connect\(\) timed out|session initialization timed out)\b/i.test(text),
   },
   {
     category: 'BROWSER_CRASH',
@@ -70,7 +70,7 @@ const RULES: Rule[] = [
     category: 'ELEMENT_NOT_FOUND',
     confidence: 0.88,
     reason: 'Requested selector/ref/semantic element could not be found',
-    test: ({ text }) => /\b(element not found|no elements? found|no matching element|selector.+not found|selector.+failed|queryselectorall.*(?:0|zero)|could not find|no good match found|no clickable elements found)\b/i.test(text),
+    test: ({ text }) => /\b(element not found|no elements? found|no matching element|selector.+not found|selector.+failed|queryselectorall.*(?:0|zero)|could not find (?:an? )?(?:element|selector|ref|button|link|input|field|node)|no good match found|no clickable elements found)\b/i.test(text),
   },
   {
     category: 'CAPTCHA_OR_WAF',
