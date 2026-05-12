@@ -10,3 +10,5 @@ export {
 export type { StrategyResult } from './strategies';
 export { buildExtractionPlan, buildFieldPlan, isSafeSelectorToken } from './plan';
 export type { ExtractionPlan, ExtractionFieldPlan } from './plan';
+export { buildExtractionQueryPlan, parseExtractionQuery, ExtractionQueryParseError } from './query-parser';
+export type { ExtractionQueryPlan } from './query-parser';

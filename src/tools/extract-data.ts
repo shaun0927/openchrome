@@ -16,6 +16,8 @@ import {
   buildCssHeuristicExtractor,
   buildMultipleItemExtractor,
   buildExtractionPlan,
+  buildExtractionQueryPlan,
+  ExtractionQueryParseError,
 } from '../extraction';
 import type { ExtractionSchema, SchemaProperty } from '../extraction';
 
@@ -36,6 +38,17 @@ const definition: MCPToolDefinition = {
           'JSON Schema defining output structure. ' +
           'Example: { "type": "object", "properties": { "title": { "type": "string" }, "price": { "type": "number" } } }',
       },
+      query: {
+        type: 'string',
+        description:
+          'OpenChrome local extraction query. Example: { products[] { product_name product_price(number) product_url(url) } }. ' +
+          'Mutually exclusive with schema; no external AgentQL/API calls are made.',
+      },
+      mode: {
+        type: 'string',
+        enum: ['fast'],
+        description: 'Extraction mode placeholder. V1 supports only fast/local extraction; standard mode is tracked separately in #989.',
+      },
       instruction: {
         type: 'string',
         description: 'Optional natural language hint (e.g., "product details")',
@@ -53,7 +66,7 @@ const definition: MCPToolDefinition = {
         description: 'Include field-level extraction diagnostics. Default: false',
       },
     },
-    required: ['tabId', 'schema'],
+    required: ['tabId'],
   },
 };
 
@@ -77,13 +90,45 @@ const handler: ToolHandler = async (
   _context?: ToolContext
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
-  const schema = args.schema as ExtractionSchema;
+  let schema = args.schema as ExtractionSchema | undefined;
+  const query = args.query as string | undefined;
   const selector = args.selector as string | undefined;
-  const multiple = (args.multiple as boolean) ?? false;
+  const mode = (args.mode as string | undefined) || 'fast';
+  let multiple = (args.multiple as boolean) ?? false;
   const debug = (args.debug as boolean) ?? false;
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
+  }
+
+  if (mode !== 'fast') {
+    return { content: [{ type: 'text', text: 'Error: Invalid mode. V1 extract_data query mode supports only mode="fast"; standard mode is tracked in #989.' }], isError: true };
+  }
+
+  if (schema && query) {
+    return { content: [{ type: 'text', text: 'Error: Provide either schema or query, not both.' }], isError: true };
+  }
+
+  let queryPlan: ReturnType<typeof buildExtractionQueryPlan> | null = null;
+  if (query) {
+    try {
+      queryPlan = buildExtractionQueryPlan(query);
+      schema = queryPlan.schema;
+      if (queryPlan.multiple) multiple = true;
+    } catch (error) {
+      const detail = error instanceof ExtractionQueryParseError ? error.message : String(error);
+      return {
+        content: [{
+          type: 'text',
+          text: `Error: Invalid query — ${detail}. Example: { products[] { product_name product_price(number) product_url(url) } }`,
+        }],
+        isError: true,
+      };
+    }
+  }
+
+  if (!schema) {
+    return { content: [{ type: 'text', text: 'Error: Either schema or query is required. Example query: { title price(number) }' }], isError: true };
   }
 
   const schemaCheck = validateSchema(schema);
@@ -126,7 +171,7 @@ const handler: ToolHandler = async (
       if (!Array.isArray(rawItems) || rawItems.length === 0) {
         return {
           content: [{ type: 'text', text: JSON.stringify({
-            action: 'extract_data', url: pageUrl, multiple: true, items: [], count: 0,
+            action: 'extract_data', url: pageUrl, multiple: true, ...(queryPlan ? { queryRoot: queryPlan.rootListField } : {}), items: [], count: 0,
             message: 'No repeating items found. Try a more specific selector or check if the page has loaded.',
           }) }],
         };
@@ -136,13 +181,16 @@ const handler: ToolHandler = async (
       const validated = rawItems.map(raw => validateAndCoerce(raw, itemSchema).result);
 
       const domainMemory = getDomainMemory();
-      domainMemory.record(domain, `extract:multiple:${fieldNames.sort().join(',')}`, JSON.stringify({
+      const memoryKey = queryPlan
+        ? `extract:multiple-query:${queryPlan.normalizedQuery}`
+        : `extract:multiple:${[...fieldNames].sort().join(',')}`;
+      domainMemory.record(domain, memoryKey, JSON.stringify({
         selector: selector || 'auto', fieldCount: fieldNames.length, itemCount: validated.length,
       }));
 
       return {
         content: [{ type: 'text', text: JSON.stringify({
-          action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
+          action: 'extract_data', url: pageUrl, multiple: true, ...(queryPlan ? { queryRoot: queryPlan.rootListField } : {}), items: validated, count: validated.length,
         }) }],
       };
     }
@@ -173,7 +221,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
+      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, queryPlan?.normalizedQuery, debug ? fieldDiagnostics : undefined);
     }
 
     // Strategy 2: Microdata
@@ -190,7 +238,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
+      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, queryPlan?.normalizedQuery, debug ? fieldDiagnostics : undefined);
     }
 
     // Strategy 4: CSS heuristic
@@ -200,7 +248,7 @@ const handler: ToolHandler = async (
     } catch { /* non-fatal */ }
 
     const { result, validation } = validateAndCoerce(merged, schema);
-    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
+    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, queryPlan?.normalizedQuery, debug ? fieldDiagnostics : undefined);
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -208,7 +256,7 @@ const handler: ToolHandler = async (
 
 function buildResponse(
   data: Record<string, unknown>, errors: string[], url: string,
-  strategies: string[], domain: string, fieldNames: string[],
+  strategies: string[], domain: string, fieldNames: string[], normalizedQuery?: string,
   fieldDiagnostics?: Record<string, { resolvedVia?: string; aliasesTried: string[] }>
 ): MCPResult {
   const fieldsFound = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k]) => k);
@@ -216,7 +264,10 @@ function buildResponse(
 
   if (fieldsFound.length > 0) {
     const dm = getDomainMemory();
-    dm.record(domain, `extract:single:${fieldNames.sort().join(',')}`, JSON.stringify({
+    const memoryKey = normalizedQuery
+      ? `extract:single-query:${normalizedQuery}`
+      : `extract:single:${[...fieldNames].sort().join(',')}`;
+    dm.record(domain, memoryKey, JSON.stringify({
       strategies, fieldsFound: fieldsFound.length, fieldsTotal: fieldNames.length,
     }));
   }
