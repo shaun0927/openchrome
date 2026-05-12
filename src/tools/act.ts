@@ -21,6 +21,7 @@ import { cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';
 import { getCachedSequence, cacheSequence, validateCachedSequence } from '../actions/action-cache';
+import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
 
 // ─── Types ───
 
@@ -54,10 +55,7 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Additional context (e.g., "on the login page")',
       },
-      verify: {
-        type: 'boolean',
-        description: 'Verify outcome after execution. Default: true',
-      },
+      verify: VERIFY_FIELD_SCHEMA,
       timeout: {
         type: 'number',
         description: 'Max time in ms for entire sequence. Default: 30000',
@@ -408,7 +406,10 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const instruction = args.instruction as string;
-  const verify = args.verify !== false; // default true
+  // Legacy text-summary verification fires whenever `verify` is not explicitly
+  // false (boolean true OR any of the new string enum values except 'none').
+  const verifyMode = coerceVerifyMode(args.verify);
+  const verifyTextSummary = args.verify !== false; // preserves pre-#827 default
   const timeoutMs = Math.min(Math.max((args.timeout as number) || 30000, 1000), 120000);
 
   if (!tabId) {
@@ -483,6 +484,11 @@ const handler: ToolHandler = async (
 
   const deadline = Date.now() + timeoutMs;
 
+  // Wrap the entire action sequence in runVerify so AX-hash + pHash deltas
+  // bracket the whole composite operation (issue #827). When mode is 'none'
+  // this returns `verify: undefined` and the result is byte-identical to
+  // pre-#827 develop.
+  const verifyOutcome = await runVerify(page, verifyMode, async () => {
   for (let i = 0; i < actions.length; i++) {
     if (Date.now() >= deadline) {
       failedAt = i + 1;
@@ -541,6 +547,9 @@ const handler: ToolHandler = async (
       break;
     }
   }
+  return undefined as void;
+  });
+  const actVerifyReport: VerifyReport | undefined = verifyOutcome.verify;
 
   // Clean up any leftover discovery tags
   await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
@@ -588,8 +597,9 @@ const handler: ToolHandler = async (
 
   const lines: string[] = [headerLine, '', ...stepLines];
 
-  // Verification
-  if (verify && success) {
+  // Verification — legacy text summary. Preserved verbatim so default
+  // (`verify` absent or `true`) callers see the same `[Verification] …` line.
+  if (verifyTextSummary && success) {
     try {
       const state = await withTimeout(page.evaluate(() => ({
         url: window.location.href,
@@ -604,10 +614,11 @@ const handler: ToolHandler = async (
     lines.push('', `[Warning] ${parseWarning}`);
   }
 
-  return {
+  const baseResult: MCPResult = {
     content: [{ type: 'text', text: lines.join('\n') }],
     isError: !success,
   };
+  return actVerifyReport ? { ...baseResult, verify: actVerifyReport } : baseResult;
 };
 
 // ─── Registration ───
