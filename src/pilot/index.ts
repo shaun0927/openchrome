@@ -41,3 +41,10 @@ export * as voting from './voting/index.js';
 // no LLM calls. Gate call sites on `isSkillCuratorEnabled()` from
 // `src/harness/flags.ts` before invoking any export from this namespace.
 export * as curator from './curator/index.js';
+
+// Phase 5 (issue #874): user-supplied proxy lifecycle binding. Pilot-tier
+// MCP tool that lets the host declare origin→upstream rules without
+// openchrome ever contacting the upstream proxy. Gate call sites on
+// `isProxyHookEnabled()` from `src/harness/flags.ts` before invoking any
+// export from this namespace.
+export * as proxy from './proxy/index.js';

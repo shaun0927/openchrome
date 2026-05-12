@@ -107,6 +107,14 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// Pilot-tier: user-supplied proxy hook (#874).
+// Registration is gated at runtime by `isProxyHookEnabled()` so the tool is
+// absent from `tools/list` unless BOTH `--pilot` AND `OPENCHROME_PROXY_HOOK=1`
+// are set. The pilot module is loaded via `require()` only when the gate is
+// open — this preserves P2 (no module from `src/pilot/**` is loaded into the
+// process when `--pilot` is unset) while keeping `registerAllTools()` sync.
+import { isProxyHookEnabled } from '../harness/flags';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -217,6 +225,16 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+
+  // Pilot-tier: user-supplied proxy hook (#874). Loaded lazily so v1.11
+  // behaviour is byte-identical when the family is off — no code from
+  // `src/pilot/**` is reached unless both `--pilot` and
+  // `OPENCHROME_PROXY_HOOK=1` are set.
+  if (isProxyHookEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcProxyHookTool } = require('../pilot/proxy/hook') as typeof import('../pilot/proxy/hook');
+    registerOcProxyHookTool(server);
+  }
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
