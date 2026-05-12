@@ -8,7 +8,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
@@ -91,6 +91,13 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      ref: {
+        type: 'string',
+        description:
+          'Optional element ref from a recent read_page(mode="ax") snapshot. ' +
+          'When supplied and fresh, the tool skips DOM/AX re-resolution. ' +
+          'Stale or unknown refs return a STALE_REF error — call read_page again.',
+      },
     },
     required: ['tabId'],
   },
@@ -104,7 +111,8 @@ const handler: ToolHandler = async (
   throwIfAborted(context);
   const tabId = args.tabId as string;
   const mode = (args.mode as string) || 'ref';
-  const query = args.query as string;
+  const query = args.query as string | undefined;
+  const ref = args.ref as string | undefined;
   const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
@@ -231,9 +239,12 @@ const handler: ToolHandler = async (
     };
   }
 
-  if (!query) {
+  // Either query or ref must be supplied for mode=ref. ref provides the
+  // fast-path that skips DOM re-resolution; query falls back to AX → CSS
+  // discovery (#831).
+  if (!query && !ref) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" is required when mode is "ref".' }],
+      content: [{ type: 'text', text: 'Error: query or ref is required' }],
       isError: true,
     };
   }
@@ -251,7 +262,99 @@ const handler: ToolHandler = async (
       };
     }
 
-    const queryNorm = normalizeQuery(query);
+    // ─── Ref Fast-Path (#831) ───
+    // When the caller provides an explicit `ref`, skip discovery entirely.
+    // A fresh ref → click via cached backendDOMNodeId.
+    // A stale/missing ref → STALE_REF (no silent coordinate fallback).
+    if (ref) {
+      const entry = refIdManager.getRef(sessionId, tabId, ref);
+      if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
+        return {
+          content: [{ type: 'text', text: formatStaleRefError(ref) }],
+          isError: true,
+          error: makeStaleRefError(ref),
+        };
+      }
+
+      const cdpClientForRef = sessionManager.getCDPClient();
+      try {
+        try {
+          await cdpClientForRef.send(page, 'DOM.scrollIntoViewIfNeeded', {
+            backendNodeId: entry.backendDOMNodeId,
+          });
+          await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+        } catch {
+          // Detached nodes are surfaced as STALE_REF by box-model resolution.
+        }
+
+        let rectX = 0, rectY = 0;
+        try {
+          const { model } = await cdpClientForRef.send<{ model: { content: number[] } }>(
+            page, 'DOM.getBoxModel', { backendNodeId: entry.backendDOMNodeId }
+          );
+          if (model?.content && model.content.length >= 8) {
+            const bx = model.content[0], by = model.content[1];
+            const bw = model.content[2] - bx, bh = model.content[5] - by;
+            if (bw > 0 && bh > 0) {
+              rectX = Math.round(bx + bw / 2);
+              rectY = Math.round(by + bh / 2);
+            }
+          }
+        } catch {
+          return {
+            content: [{ type: 'text', text: formatStaleRefError(ref) }],
+            isError: true,
+            error: makeStaleRefError(ref),
+          };
+        }
+
+        if (rectX === 0 && rectY === 0) {
+          return {
+            content: [{ type: 'text', text: formatStaleRefError(ref) }],
+            isError: true,
+            error: makeStaleRefError(ref),
+          };
+        }
+
+        const isStealthRef = sessionManager.isStealthTarget(tabId);
+        const { delta: refDelta } = await withDomDelta(page, async () => {
+          if (isStealthRef) await humanMouseMove(page, rectX, rectY);
+          if (action === 'double_click') await page.mouse.click(rectX, rectY, { clickCount: 2 });
+          else if (action === 'hover') {
+            if (!isStealthRef) await page.mouse.move(rectX, rectY);
+          } else {
+            await page.mouse.click(rectX, rectY);
+          }
+        }, { settleMs: Math.max(150, waitAfter) });
+
+        invalidateAXCache(getTargetId(page.target()));
+        await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
+
+        const refVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+        const refOutcome = classifyOutcome(refDelta, entry.role);
+        const refLabel = `${entry.role}${entry.name ? ` "${entry.name}"` : ''}`;
+        const refLine = formatOutcomeLine(refOutcome, refVerb, refLabel, `[${ref}]`, '[via ref]');
+
+        const refLines: string[] = [refLine];
+        if (refDelta) refLines.push('', '[DOM Delta]', refDelta);
+
+        return {
+          content: [{ type: 'text', text: refLines.join('\n') }],
+          via: 'ref',
+        };
+      } catch (refErr) {
+        throwIfAborted(context);
+        console.error(`[interact] ref fast-path failed for ${ref}: ${refErr instanceof Error ? refErr.message : String(refErr)}`);
+        return {
+          content: [{ type: 'text', text: formatStaleRefError(ref) }],
+          isError: true,
+          error: makeStaleRefError(ref),
+        };
+      }
+    }
+
+    const queryString = query as string;
+    const queryNorm = normalizeQuery(queryString);
     const queryLower = queryNorm;
     const queryTokens = tokenizeQuery(queryNorm);
 
@@ -265,7 +368,7 @@ const handler: ToolHandler = async (
     // Try AX tree first — the browser's accessibility engine understands all UI frameworks
     try {
       const axMatches = await withTimeout(
-        resolveElementsByAXTree(page, cdpClient, query, {
+        resolveElementsByAXTree(page, cdpClient, queryString, {
           useCenter: true,
           maxResults: 3,
         }),
@@ -380,7 +483,7 @@ const handler: ToolHandler = async (
     // Budget check before expensive CSS discovery path
     if (context && !hasBudget(context, 15_000)) {
       return {
-        content: [{ type: 'text', text: `interact: deadline approaching — skipped CSS fallback for "${query}"` }],
+        content: [{ type: 'text', text: `interact: deadline approaching — skipped CSS fallback for "${queryString}"` }],
         isError: true,
       };
     }
@@ -417,7 +520,7 @@ const handler: ToolHandler = async (
           continue;
         }
         return {
-          content: [{ type: 'text', text: `No elements found matching "${query}"` }],
+          content: [{ type: 'text', text: `No elements found matching "${queryString}"` }],
           isError: true,
         };
       }
@@ -450,7 +553,7 @@ const handler: ToolHandler = async (
         content: [
           {
             type: 'text',
-            text: `No good match found for "${query}". Best candidate was "${bestMatch?.name || 'unknown'}" with low confidence.`,
+            text: `No good match found for "${queryString}". Best candidate was "${bestMatch?.name || 'unknown'}" with low confidence.`,
           },
         ],
         isError: true,

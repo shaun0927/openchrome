@@ -5,7 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
@@ -656,6 +656,21 @@ const handler: ToolHandler = async (
     let charCount = 0;
     const MAX_OUTPUT = MAX_OUTPUT_CHARS;
 
+    /**
+     * Per-snapshot refs map (#831). Populated as the AX tree is walked so that
+     * the final response carries a structured `refs` map alongside the textual
+     * tree. Additive to the existing ax response — `mode='ax'` is unchanged.
+     */
+    const refsMap: Record<string, {
+      role: string;
+      name?: string;
+      tag_name?: string;
+      text_content?: string;
+      frame_id?: string;
+      created_at: number;
+      stale_after_ms: number;
+    }> = {};
+
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
 
@@ -708,6 +723,20 @@ const handler: ToolHandler = async (
           name,
           tagName
         );
+
+        // #831: record the structured ref entry for the response `refs` map.
+        // Fields mirror the RefEntry contract documented in the issue.
+        const entry = refIdManager.getRef(sessionId, tabId, refId);
+        const textContent = value || undefined;
+        refsMap[refId] = {
+          role,
+          ...(name ? { name } : {}),
+          ...(tagName ? { tag_name: tagName } : {}),
+          ...(textContent ? { text_content: textContent } : {}),
+          ...(entry?.frameId ? { frame_id: entry.frameId } : {}),
+          created_at: entry?.createdAt ?? Date.now(),
+          stale_after_ms: entry?.staleAfterMs ?? REF_TTL_MS,
+        };
       }
 
       // Build line
@@ -796,6 +825,7 @@ const handler: ToolHandler = async (
                 axPaginationSection,
             },
           ],
+          refs: refsMap,
         };
       }
 
@@ -834,12 +864,14 @@ const handler: ToolHandler = async (
                 axPaginationSection,
             },
           ],
+          refs: refsMap,
         };
       }
     }
 
     return {
       content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
+      refs: refsMap,
     };
   } catch (error) {
     return {
