@@ -4,7 +4,7 @@
  */
 
 import path from 'path';
-import { Page, Target, BrowserContext } from 'puppeteer-core';
+import { Page, Target, BrowserContext, Browser } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
@@ -108,11 +108,14 @@ export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private targetToWorker: Map<string, { sessionId: string; workerId: string }> = new Map();
   /**
-   * Maps targetId → named-context name (#848). Targets opened in the
-   * default Chrome context are not present here; tools can treat absence
-   * as `'default'`.
+   * Maps targetId → `{browser, name}` for the owning named context (#848).
+   * Targets opened in the default Chrome context are not present here;
+   * tools can treat absence as `'default'`. The browser is recorded so the
+   * registry's `(browser, name)` keying receives the correct browser when
+   * the tab closes — same name on a different Chrome instance must not
+   * cross-decrement.
    */
-  private targetToContext: Map<string, string> = new Map();
+  private targetToContext: Map<string, { browser: Browser; name: string }> = new Map();
   /** Named BrowserContext registry shared with the tabs_create tool. */
   private namedContextRegistry: DefaultNamedContextRegistry = getNamedContextRegistry();
   private cdpClient: CDPClient;
@@ -514,7 +517,7 @@ export class SessionManager {
         const flushedContexts = new Set<string>();
         for (const worker of session.workers.values()) {
           for (const tid of worker.targets) {
-            const ctxName = this.targetToContext.get(tid) ?? DEFAULT_CONTEXT_NAME;
+            const ctxName = this.targetToContext.get(tid)?.name ?? DEFAULT_CONTEXT_NAME;
             if (flushedContexts.has(ctxName)) continue;
             const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
             const p = await cdpClient.getPageByTargetId(tid);
@@ -1059,8 +1062,9 @@ export class SessionManager {
     let resolvedContextName: string = DEFAULT_CONTEXT_NAME;
     let resolvedIsolated = false;
     if (useNamedContext && isolatedContext) {
-      this.targetToContext.set(targetId, isolatedContext);
-      this.namedContextRegistry.incrementTabCount(isolatedContext);
+      const ownerBrowser = cdpClient.getBrowser();
+      this.targetToContext.set(targetId, { browser: ownerBrowser, name: isolatedContext });
+      this.namedContextRegistry.incrementTabCount(ownerBrowser, isolatedContext);
       resolvedContextName = isolatedContext;
       resolvedIsolated = true;
     }
@@ -1381,7 +1385,7 @@ export class SessionManager {
    * (read_page, interact, screenshot, etc.) work without a separate connection. (#485)
    */
   registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): void {
-    // Register target ownership
+    // Register target ownership (no parent — headed pages are top-level navigations).
     this.registerExternalTarget(targetId, sessionId, workerId);
 
     // Inject the page into the main CDPClient's index so getPageByTargetId()
@@ -1392,8 +1396,19 @@ export class SessionManager {
   /**
    * Register an externally-created target (e.g., popup via window.open) into a worker.
    * Only registers if the target is not already tracked, to avoid overwriting ownership.
+   *
+   * Codex P1 follow-up (#848): when `opts.inheritContextFromTargetId` is
+   * provided AND the parent target has a named-context association, the
+   * popup inherits that `{browser, name}` mapping and the registry's tab
+   * count is bumped so closing the parent tab cannot trigger
+   * `maybeDestroy` on a context that still has popups attached.
    */
-  registerExternalTarget(targetId: string, sessionId: string, workerId: string): void {
+  registerExternalTarget(
+    targetId: string,
+    sessionId: string,
+    workerId: string,
+    opts?: { inheritContextFromTargetId?: string },
+  ): void {
     // Don't overwrite existing entries
     if (this.targetToWorker.has(targetId)) return;
 
@@ -1406,6 +1421,17 @@ export class SessionManager {
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId });
+
+    // #848 Codex P1: inherit named-context mapping from the opener so popup
+    // tab accounting matches the parent. Skip when the parent lives in the
+    // default BrowserContext (no entry in `targetToContext`).
+    if (opts?.inheritContextFromTargetId) {
+      const parent = this.targetToContext.get(opts.inheritContextFromTargetId);
+      if (parent) {
+        this.targetToContext.set(targetId, { browser: parent.browser, name: parent.name });
+        this.namedContextRegistry.incrementTabCount(parent.browser, parent.name);
+      }
+    }
 
     this.emitEvent({
       type: 'session:target-added',
@@ -1470,11 +1496,11 @@ export class SessionManager {
       this.targetToWorker.delete(targetId);
 
       // #848: drop named-context association on graceful close.
-      const ctxName = this.targetToContext.get(targetId);
-      if (ctxName) {
+      const ctxEntry = this.targetToContext.get(targetId);
+      if (ctxEntry) {
         this.targetToContext.delete(targetId);
-        this.namedContextRegistry.decrementTabCount(ctxName).catch((err) => {
-          console.error(`[SessionManager] decrementTabCount(${ctxName}) failed:`, err);
+        this.namedContextRegistry.decrementTabCount(ctxEntry.browser, ctxEntry.name).catch((err) => {
+          console.error(`[SessionManager] decrementTabCount(${ctxEntry.name}) failed:`, err);
         });
       }
 
@@ -1568,11 +1594,11 @@ export class SessionManager {
         // #848: drop the named-context association and let the registry
         // GC the BrowserContext when the last tab closes AND no
         // oc_session_resume token still pins it.
-        const ctxName = this.targetToContext.get(targetId);
-        if (ctxName) {
+        const ctxEntry = this.targetToContext.get(targetId);
+        if (ctxEntry) {
           this.targetToContext.delete(targetId);
-          this.namedContextRegistry.decrementTabCount(ctxName).catch((err) => {
-            console.error(`[SessionManager] decrementTabCount(${ctxName}) failed:`, err);
+          this.namedContextRegistry.decrementTabCount(ctxEntry.browser, ctxEntry.name).catch((err) => {
+            console.error(`[SessionManager] decrementTabCount(${ctxEntry.name}) failed:`, err);
           });
         }
 
@@ -1592,22 +1618,30 @@ export class SessionManager {
    * Chrome's default BrowserContext return `'default'`. (#848)
    */
   getTargetContextName(targetId: string): string {
-    return this.targetToContext.get(targetId) ?? DEFAULT_CONTEXT_NAME;
+    return this.targetToContext.get(targetId)?.name ?? DEFAULT_CONTEXT_NAME;
   }
 
   /**
-   * Pin a named context against auto-destroy because an oc_session_resume
-   * token references it. Pair with {@link releaseContextResumeRef}. (#848)
+   * Pin the named context that owns `targetId` against auto-destroy because
+   * an oc_session_resume token references the tab. Pair with
+   * {@link releaseContextResumeRef}. Targets in the default BrowserContext
+   * are a no-op. (#848)
+   *
+   * Codex P1 follow-up: this takes a targetId rather than a bare name so the
+   * `(browser, name)` registry receives the correct browser. The same name
+   * on a different Chrome instance must not cross-pin.
    */
-  pinContextForResume(name: string): void {
-    if (name === DEFAULT_CONTEXT_NAME) return;
-    this.namedContextRegistry.addResumeRef(name);
+  pinContextForResume(targetId: string): void {
+    const entry = this.targetToContext.get(targetId);
+    if (!entry) return; // default context — nothing to pin
+    this.namedContextRegistry.addResumeRef(entry.browser, entry.name);
   }
 
-  /** Release a previously-added resume pin. (#848) */
-  async releaseContextResumeRef(name: string): Promise<void> {
-    if (name === DEFAULT_CONTEXT_NAME) return;
-    await this.namedContextRegistry.releaseResumeRef(name);
+  /** Release a previously-added resume pin for the tab `targetId`. (#848) */
+  async releaseContextResumeRef(targetId: string): Promise<void> {
+    const entry = this.targetToContext.get(targetId);
+    if (!entry) return;
+    await this.namedContextRegistry.releaseResumeRef(entry.browser, entry.name);
   }
 
   /** Test/diagnostic accessor for the named-context registry. (#848) */
@@ -1920,7 +1954,7 @@ export class SessionManager {
         const flushedContexts = new Set<string>();
         for (const worker of session.workers.values()) {
           for (const tid of worker.targets) {
-            const ctxName = this.targetToContext.get(tid) ?? DEFAULT_CONTEXT_NAME;
+            const ctxName = this.targetToContext.get(tid)?.name ?? DEFAULT_CONTEXT_NAME;
             if (flushedContexts.has(ctxName)) continue;
             const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
             const p = await cdpClient.getPageByTargetId(tid);

@@ -811,8 +811,12 @@ export class CDPClient {
       const targetId = getTargetId(target);
       if (!targetId) return;
 
-      // Register in the same worker as opener
-      sessionManager.registerExternalTarget(targetId, ownerInfo.sessionId, ownerInfo.workerId);
+      // Register in the same worker as opener and inherit the opener's
+      // named-context mapping (#848 Codex P1) so popups count toward the
+      // same context's tab total instead of slipping into the default.
+      sessionManager.registerExternalTarget(targetId, ownerInfo.sessionId, ownerInfo.workerId, {
+        inheritContextFromTargetId: openerTargetId,
+      });
 
       // target.page() can race with target close — keep the inner try/catch
       // as a localized best-effort, but any *other* failure in this handler

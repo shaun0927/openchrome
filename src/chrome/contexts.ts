@@ -1,6 +1,6 @@
 /**
  * NamedContextRegistry — in-memory registry of named puppeteer-core
- * BrowserContexts keyed by user-supplied name (#848).
+ * BrowserContexts keyed by (Browser instance, user-supplied name) (#848).
  *
  * Adopted from chrome-devtools-mcp's `new_page({isolatedContext})` pattern:
  * a single Chrome process serves N named BrowserContexts that each have
@@ -14,6 +14,14 @@
  * Names must match `[A-Za-z0-9_-]{1,64}` and are case-sensitive. The
  * reserved name `default` always refers to the Chrome process's default
  * context (never created here).
+ *
+ * Registry keying — Codex P1 follow-up:
+ * The registry is keyed by `(browserInstanceId, name)`, not by name alone.
+ * `browserInstanceId` is minted on first sight of each `Browser` via an
+ * internal `WeakMap<Browser, string>`. This prevents a same-named
+ * isolatedContext on a different Chrome instance (e.g., a per-profile
+ * worker on another port) from overwriting an existing entry and later
+ * tearing down the wrong BrowserContext when tab counts roll over.
  *
  * Lifecycle: a context is destroyed when its tab count drops to zero AND
  * no `oc_session_resume` token still references it. Until both conditions
@@ -36,6 +44,9 @@ export const DEFAULT_CONTEXT_NAME = 'default';
  * Case-sensitive; 1–64 chars; alphanumeric / underscore / hyphen.
  */
 const NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Separator used to build the internal composite key. */
+const KEY_SEP = '\x00';
 
 export class InvalidContextNameError extends Error {
   constructor(name: string) {
@@ -63,25 +74,31 @@ export interface NamedContextInfo {
 
 export interface NamedContextRegistry {
   /**
-   * Returns the existing BrowserContext for `name` or creates a new one
-   * inside `browser`. Reserved names (e.g. `default`) and malformed names
-   * throw {@link InvalidContextNameError}.
+   * Returns the existing BrowserContext for `(browser, name)` or creates a
+   * new one inside `browser`. Reserved names (e.g. `default`) and
+   * malformed names throw {@link InvalidContextNameError}.
    */
   getOrCreate(browser: Browser, name: string): Promise<BrowserContext>;
 
-  /** Lists active named contexts (excluding the default). */
-  list(): NamedContextInfo[];
+  /**
+   * Lists active named contexts. When `browser` is provided, restricts the
+   * listing to entries owned by that browser; otherwise returns every
+   * tracked entry across all browsers (de-duplicated by composite key).
+   */
+  list(browser?: Browser): NamedContextInfo[];
 
   /**
    * Closes a context and all its tabs.
    * Rejects with {@link ContextHasActiveTabsError} when tabs > 0 and
    * `force` is not set.
    */
-  close(name: string, opts?: { force?: boolean }): Promise<void>;
+  close(browser: Browser, name: string, opts?: { force?: boolean }): Promise<void>;
 }
 
 /** Internal record kept per named context. */
 interface ContextEntry {
+  /** Stable identifier of the owning browser (minted by the registry). */
+  browserInstanceId: string;
   name: string;
   context: BrowserContext;
   createdAt: number;
@@ -114,28 +131,49 @@ export function assertValidContextName(name: string): void {
  */
 export class DefaultNamedContextRegistry implements NamedContextRegistry {
   private readonly entries = new Map<string, ContextEntry>();
-  /** Coalesce concurrent creation requests for the same name. */
+  /** Coalesce concurrent creation requests for the same composite key. */
   private readonly inflight = new Map<string, Promise<BrowserContext>>();
+  /** Stable identifier per Browser, minted lazily on first access. */
+  private readonly browserIds = new WeakMap<Browser, string>();
+  private nextBrowserSeq = 1;
+
+  /** Returns the stable identifier for `browser`, minting one if needed. */
+  private browserIdFor(browser: Browser): string {
+    let id = this.browserIds.get(browser);
+    if (id === undefined) {
+      id = `b${this.nextBrowserSeq++}`;
+      this.browserIds.set(browser, id);
+    }
+    return id;
+  }
+
+  /** Build the composite `entries` / `inflight` key. */
+  private keyOf(browser: Browser, name: string): string {
+    return `${this.browserIdFor(browser)}${KEY_SEP}${name}`;
+  }
 
   async getOrCreate(browser: Browser, name: string): Promise<BrowserContext> {
     assertValidContextName(name);
 
-    const existing = this.entries.get(name);
+    const key = this.keyOf(browser, name);
+    const existing = this.entries.get(key);
     if (existing && this.isContextLive(browser, existing.context)) {
       return existing.context;
     }
 
     // Stale (Chrome restarted) — drop the entry and fall through.
     if (existing) {
-      this.entries.delete(name);
+      this.entries.delete(key);
     }
 
-    const inflight = this.inflight.get(name);
+    const inflight = this.inflight.get(key);
     if (inflight) return inflight;
 
+    const browserInstanceId = this.browserIdFor(browser);
     const promise = (async () => {
       const context = await browser.createBrowserContext();
-      this.entries.set(name, {
+      this.entries.set(key, {
+        browserInstanceId,
         name,
         context,
         createdAt: Date.now(),
@@ -144,30 +182,33 @@ export class DefaultNamedContextRegistry implements NamedContextRegistry {
       });
       return context;
     })().finally(() => {
-      this.inflight.delete(name);
+      this.inflight.delete(key);
     });
 
-    this.inflight.set(name, promise);
+    this.inflight.set(key, promise);
     return promise;
   }
 
-  list(): NamedContextInfo[] {
-    return Array.from(this.entries.values()).map((e) => ({
-      name: e.name,
-      createdAt: e.createdAt,
-      tabs: e.tabCount,
-    }));
+  list(browser?: Browser): NamedContextInfo[] {
+    const filterId = browser ? this.browserIdFor(browser) : undefined;
+    const out: NamedContextInfo[] = [];
+    for (const e of this.entries.values()) {
+      if (filterId !== undefined && e.browserInstanceId !== filterId) continue;
+      out.push({ name: e.name, createdAt: e.createdAt, tabs: e.tabCount });
+    }
+    return out;
   }
 
-  async close(name: string, opts?: { force?: boolean }): Promise<void> {
-    const entry = this.entries.get(name);
+  async close(browser: Browser, name: string, opts?: { force?: boolean }): Promise<void> {
+    const key = this.keyOf(browser, name);
+    const entry = this.entries.get(key);
     if (!entry) return;
 
     if (entry.tabCount > 0 && !opts?.force) {
       throw new ContextHasActiveTabsError(name, entry.tabCount);
     }
 
-    this.entries.delete(name);
+    this.entries.delete(key);
     try {
       await entry.context.close();
     } catch {
@@ -175,27 +216,28 @@ export class DefaultNamedContextRegistry implements NamedContextRegistry {
     }
   }
 
-  /** Increments the tab count for `name`. No-op if name unknown. */
-  incrementTabCount(name: string): void {
-    const entry = this.entries.get(name);
+  /** Increments the tab count for `(browser, name)`. No-op if unknown. */
+  incrementTabCount(browser: Browser, name: string): void {
+    const entry = this.entries.get(this.keyOf(browser, name));
     if (entry) entry.tabCount++;
   }
 
   /**
-   * Decrements the tab count for `name` and, when it reaches zero with no
-   * outstanding resume references, destroys the underlying BrowserContext.
-   * Returns true when the context was destroyed.
+   * Decrements the tab count for `(browser, name)` and, when it reaches
+   * zero with no outstanding resume references, destroys the underlying
+   * BrowserContext. Returns true when the context was destroyed.
    */
-  async decrementTabCount(name: string): Promise<boolean> {
-    const entry = this.entries.get(name);
+  async decrementTabCount(browser: Browser, name: string): Promise<boolean> {
+    const key = this.keyOf(browser, name);
+    const entry = this.entries.get(key);
     if (!entry) return false;
     if (entry.tabCount > 0) entry.tabCount--;
-    return this.maybeDestroy(entry);
+    return this.maybeDestroy(key, entry);
   }
 
   /** Adds a resume-token reference, preventing auto-destroy. */
-  addResumeRef(name: string): void {
-    const entry = this.entries.get(name);
+  addResumeRef(browser: Browser, name: string): void {
+    const entry = this.entries.get(this.keyOf(browser, name));
     if (entry) entry.resumeRefs++;
   }
 
@@ -203,35 +245,38 @@ export class DefaultNamedContextRegistry implements NamedContextRegistry {
    * Releases a resume-token reference. May trigger auto-destroy when the
    * referenced context has no tabs left.
    */
-  async releaseResumeRef(name: string): Promise<boolean> {
-    const entry = this.entries.get(name);
+  async releaseResumeRef(browser: Browser, name: string): Promise<boolean> {
+    const key = this.keyOf(browser, name);
+    const entry = this.entries.get(key);
     if (!entry) return false;
     if (entry.resumeRefs > 0) entry.resumeRefs--;
-    return this.maybeDestroy(entry);
+    return this.maybeDestroy(key, entry);
   }
 
   /** Test/diagnostic accessor. */
-  getInfo(name: string): NamedContextInfo | undefined {
-    const entry = this.entries.get(name);
+  getInfo(browser: Browser, name: string): NamedContextInfo | undefined {
+    const entry = this.entries.get(this.keyOf(browser, name));
     if (!entry) return undefined;
     return { name: entry.name, createdAt: entry.createdAt, tabs: entry.tabCount };
   }
 
   /** Test/diagnostic accessor. */
-  has(name: string): boolean {
-    return this.entries.has(name);
+  has(browser: Browser, name: string): boolean {
+    return this.entries.has(this.keyOf(browser, name));
   }
 
   /** Test helper — drops in-memory state without closing contexts. */
   resetForTests(): void {
     this.entries.clear();
     this.inflight.clear();
+    this.nextBrowserSeq = 1;
+    // WeakMap cannot be cleared directly; allow GC to reclaim entries.
   }
 
-  private async maybeDestroy(entry: ContextEntry): Promise<boolean> {
+  private async maybeDestroy(key: string, entry: ContextEntry): Promise<boolean> {
     if (entry.tabCount > 0 || entry.resumeRefs > 0) return false;
-    if (!this.entries.has(entry.name)) return false;
-    this.entries.delete(entry.name);
+    if (!this.entries.has(key)) return false;
+    this.entries.delete(key);
     try {
       await entry.context.close();
     } catch {
