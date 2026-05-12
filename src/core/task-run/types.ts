@@ -1,6 +1,6 @@
 export type TaskRunStatus = 'PENDING' | 'RUNNING' | 'NEEDS_HELP' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
-export type EvidenceKind = 'journal' | 'screenshot' | 'contract' | 'ledger_task' | 'workflow' | 'url';
+export type EvidenceKind = 'journal' | 'screenshot' | 'contract' | 'ledger_task' | 'workflow' | 'url' | 'handoff';
 
 export interface EvidencePointer {
   kind: EvidenceKind;

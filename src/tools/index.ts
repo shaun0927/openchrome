@@ -130,6 +130,7 @@ import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 import { registerOcContextTools } from './oc-context';
 // Goal-level TaskRun lifecycle (#1039)
 import { registerTaskRunTools } from './task-run';
+import { registerHandoffTools } from './handoff';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -288,6 +289,8 @@ export function registerAllTools(server: MCPServer): void {
 
   // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
   registerTaskRunTools(server);
+  // Secret-safe human takeover checkpoints (#1040) — opt-in and storage-only.
+  registerHandoffTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

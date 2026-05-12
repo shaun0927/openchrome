@@ -39,7 +39,7 @@ const evidenceSchema = {
   items: {
     type: 'object',
     properties: {
-      kind: { type: 'string', enum: ['journal', 'screenshot', 'contract', 'ledger_task', 'workflow', 'url'] },
+      kind: { type: 'string', enum: ['journal', 'screenshot', 'contract', 'ledger_task', 'workflow', 'url', 'handoff'] },
       ref: { type: 'string' },
       summary: { type: 'string' },
     },
