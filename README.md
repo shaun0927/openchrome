@@ -558,6 +558,46 @@ openchrome serve --server-mode
 | **Screenshots & PDF** | `computer(screenshot)`, `page_pdf` |
 | **Network & performance** | `request_intercept`, `performance_metrics`, `console_capture` |
 
+### HTTP daemon mode (multi-client / remote)
+
+OpenChrome ships a first-class HTTP transport that turns the server into a
+long-running daemon. Use it when:
+
+- you need **multiple MCP clients** (Claude Code, a CI job, a dashboard) to
+  share one browser process, or
+- the server must **outlive its launching process** (Docker, systemd, CI
+  orchestrator), or
+- a **sidecar** (monitoring probe, dashboard) needs to poll `/health` or
+  `/metrics` independently.
+
+Quick start (see the full guide for options, security, and Windows recipes):
+
+```bash
+# Start a token-authenticated daemon on loopback port 3100
+npx openchrome serve --http 3100 --auth-token mysecrettoken --idle-timeout 30m
+
+# Verify it is up
+curl -s http://127.0.0.1:3100/health
+# → {"status":"ok","uptime":1.2}
+
+# Send an MCP request
+curl -s -X POST http://127.0.0.1:3100/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer mysecrettoken" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+**[Full walkthrough → docs/getting-started/http-daemon.md](docs/getting-started/http-daemon.md)**
+
+The guide covers: stdio vs http vs both decision table, every flag and env-var
+interaction, multi-client architecture diagram, security model (bearer-token
+auth, loopback-only default, unauthenticated rejection rules), idle-timeout
+behaviour, dashboard endpoints, and troubleshooting.
+
+See also the [`OPENCHROME_PPID_WATCH`](#environment-variables) and
+[`OPENCHROME_HEALTH_ENDPOINT`](#environment-variables) rows in the environment
+variables table below, which cross-reference daemon behaviour.
+
 ### Important: MCP client required
 
 OpenChrome is an MCP server — it responds to tool calls, not standalone scripts. Server-side usage requires an MCP client (e.g., Claude API, Claude Code, or a custom MCP client) to drive it:
