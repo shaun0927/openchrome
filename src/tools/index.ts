@@ -32,6 +32,8 @@ import { registerPageScreenshotTool } from './page-screenshot';
 import { registerConsoleCaptureTool } from './console-capture';
 import { registerPerformanceMetricsTool } from './performance-metrics';
 import { registerRequestInterceptTool } from './request-intercept';
+import { registerNetworkCaptureLiteTool } from './network-capture-lite';
+import { registerNetworkCaptureFullTool } from './network-capture-full';
 
 // Phase 3 tools
 import { registerFileUploadTool } from './file-upload';
@@ -154,6 +156,11 @@ export function registerAllTools(server: MCPServer): void {
   registerConsoleCaptureTool(server);
   registerPerformanceMetricsTool(server);
   registerRequestInterceptTool(server);
+
+  // Passive network capture (#896) — lite=headers-only, full=bodies-with-cap.
+  // Coexists with request_intercept (which owns setRequestInterception(true)).
+  registerNetworkCaptureLiteTool(server);
+  registerNetworkCaptureFullTool(server);
 
   // Phase 3: Advanced tools
   registerFileUploadTool(server);
