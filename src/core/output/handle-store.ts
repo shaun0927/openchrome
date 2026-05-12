@@ -97,7 +97,7 @@ function defaultBaseDir(): string {
   return path.join(os.homedir(), '.openchrome', 'output');
 }
 
-function buildPreview(payload: string | Buffer, mimeType: string): string | null {
+function buildPreview(payload: string | Buffer): string | null {
   if (Buffer.isBuffer(payload)) {
     // Binary: no text preview
     return null;
@@ -136,7 +136,7 @@ export class HandleStore {
 
     const sizeBytes = Buffer.byteLength(serialized, 'utf8');
     const itemCount = Array.isArray(payload) ? payload.length : null;
-    const preview = buildPreview(serialized, 'application/json');
+    const preview = buildPreview(serialized);
 
     return {
       output_handle: handle,
@@ -171,7 +171,7 @@ export class HandleStore {
     const buf = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
     await writeFileAtomicSafe(filePath, buf);
 
-    const preview = buildPreview(payload, mimeType);
+    const preview = buildPreview(payload);
 
     return {
       output_handle: handle,
