@@ -312,7 +312,7 @@ const cachedHandler: ToolHandler = async (sessionId, args, context) => {
   const tabId = args.tabId as string | undefined;
   if (!tabId) return handler(sessionId, args, context);
   const sessionManager = getSessionManager();
-  const page = await sessionManager.getPage(sessionId, tabId).catch(() => null);
+  const page = await sessionManager.getPage(sessionId, tabId, undefined, 'find').catch(() => null);
   if (!page) return handler(sessionId, args, context);
   const { value } = await lookupOrSet<MCPResult>(
     page,

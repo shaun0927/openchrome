@@ -225,6 +225,17 @@ export interface MaybeErrorResult {
   isError?: boolean;
 }
 
+function tabIdsFromArgs(args: Record<string, unknown>): string[] {
+  const ids = new Set<string>();
+  if (typeof args.tabId === 'string' && args.tabId.length > 0) ids.add(args.tabId);
+  if (Array.isArray(args.tabIds)) {
+    for (const id of args.tabIds) {
+      if (typeof id === 'string' && id.length > 0) ids.add(id);
+    }
+  }
+  return Array.from(ids);
+}
+
 export function wrapMutatingHandler<R extends MaybeErrorResult>(
   handler: MutatingHandlerLike<R>,
   getPage: (sessionId: string, tabId?: string) => Promise<Page | null>,
@@ -232,7 +243,9 @@ export function wrapMutatingHandler<R extends MaybeErrorResult>(
   return async (sessionId, args, context) => {
     const result = await handler(sessionId, args, context);
     if (!result.isError) {
-      await markFrameDirtyForTab(sessionId, args.tabId as string | undefined, getPage);
+      for (const tabId of tabIdsFromArgs(args)) {
+        await markFrameDirtyForTab(sessionId, tabId, getPage);
+      }
     }
     return result;
   };
@@ -292,6 +305,10 @@ function attachEvictionSubscribersOnce(
             ? ((params as { frame?: { id?: string } }).frame?.id ?? mainFrameId(page))
             : mainFrameId(page);
         cache.evictFrame(fid, 'frame_navigated');
+        const mainId = mainFrameId(page);
+        if (fid !== mainId) {
+          cache.evictFrame(mainId, 'frame_navigated');
+        }
       };
       const handleFrameResized = (): void => {
         cache.evictFrame(mainFrameId(page), 'frame_resized');
@@ -305,6 +322,7 @@ function attachEvictionSubscribersOnce(
       // bounded across long-running sessions.
       const closePage = capable.once?.bind(capable);
       closePage?.('close', () => {
+        void session.detach?.().catch(() => undefined);
         disposeSnapshotCacheForTarget(targetId);
       });
     } catch {

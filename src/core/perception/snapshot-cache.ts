@@ -64,6 +64,7 @@ export interface SnapshotCacheStats {
   misses: number;
   evictions: number;
   entries: number;
+  evictionsByReason: Partial<Record<EvictReason, number>>;
 }
 
 export interface SnapshotCacheOptions {
@@ -121,6 +122,7 @@ export class SnapshotCache {
   private _hits = 0;
   private _misses = 0;
   private _evictions = 0;
+  private readonly _evictionsByReason = new Map<EvictReason, number>();
 
   constructor(opts: SnapshotCacheOptions = {}) {
     this.maxEntries = Math.max(1, opts.maxEntries ?? SNAPSHOT_CACHE_DEFAULT_MAX_ENTRIES);
@@ -228,8 +230,11 @@ export class SnapshotCache {
    * to `markFrameDirty` but kept separate so call sites stay readable.
    * The `reason` is captured in telemetry only.
    */
-  evictFrame(frameId: string, _reason: EvictReason): void {
+  evictFrame(frameId: string, reason: EvictReason): void {
+    const before = this._evictions;
     this.markFrameDirty(frameId);
+    const dropped = this._evictions - before;
+    this._evictionsByReason.set(reason, (this._evictionsByReason.get(reason) ?? 0) + dropped);
   }
 
   /** Drop every entry whose stored frame id matches. */
@@ -262,6 +267,7 @@ export class SnapshotCache {
       misses: this._misses,
       evictions: this._evictions,
       entries: this.entries.size,
+      evictionsByReason: Object.fromEntries(this._evictionsByReason),
     };
   }
 
