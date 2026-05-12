@@ -54,10 +54,21 @@ function request(port: number, body: unknown): Promise<HttpResult> {
 
 describe('HTTPTransport JSON-RPC batch limits', () => {
   let transport: HTTPTransport;
+  let previousAllowUnauthenticatedHttp: string | undefined;
+
+  beforeEach(() => {
+    previousAllowUnauthenticatedHttp = process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+    process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = 'true';
+  });
 
   afterEach(async () => {
     if (transport) {
       await transport.close();
+    }
+    if (previousAllowUnauthenticatedHttp === undefined) {
+      delete process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
+    } else {
+      process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = previousAllowUnauthenticatedHttp;
     }
   });
 

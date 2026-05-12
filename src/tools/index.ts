@@ -97,6 +97,16 @@ import { registerExtractDataTool } from './extract-data';
 // 2FA tools (#575)
 import { registerTotpGenerateTool } from './totp-generate';
 
+// Outcome Contracts (#784) — single-call assertion verifier
+import { registerOcAssertTool } from './oc-assert';
+
+// Outcome Contracts (#792) — evidence bundle capture
+import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
+
+// Skill memory tools (#785) — record + recall
+import { registerOcSkillRecordTool } from './oc-skill-record';
+import { registerOcSkillRecallTool } from './oc-skill-recall';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -197,6 +207,16 @@ export function registerAllTools(server: MCPServer): void {
 
   // 2FA tools (#575)
   registerTotpGenerateTool(server);
+
+  // Outcome Contracts (#784) — single-call assertion verifier
+  registerOcAssertTool(server);
+
+  // Outcome Contracts (#792) — evidence bundle capture
+  registerOcEvidenceBundleTool(server);
+
+  // Skill memory tools (#785) — record + recall
+  registerOcSkillRecordTool(server);
+  registerOcSkillRecallTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

@@ -1,13 +1,10 @@
 import {
   formatMCPServerConfigSnippet,
+  getClaudeManualServerConfig,
   getClaudeSetupCommand,
   getCodexServerConfig,
-  getClientLabel,
-  getOpenCodeServerConfig,
   getServeArgs,
-  formatOpenCodeMCPServerConfigSnippet,
   isSupportedMCPClient,
-  upsertOpenCodeMCPServerConfig,
   upsertMCPServerConfig,
 } from '../../cli/mcp-client-config';
 
@@ -24,17 +21,17 @@ describe('cli/mcp-client-config', () => {
     expect(getServeArgs({ autoLaunch: false })).toEqual(['serve']);
   });
 
-  test('getCodexServerConfig uses npm exec with argument separator', () => {
+  test('getCodexServerConfig uses the installed openchrome binary', () => {
     expect(getCodexServerConfig()).toEqual({
-      command: 'npm',
-      args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', 'serve', '--auto-launch'],
+      command: 'openchrome',
+      args: ['serve', '--auto-launch'],
     });
   });
 
-  test('getOpenCodeServerConfig uses OpenCode local MCP format', () => {
-    expect(getOpenCodeServerConfig()).toEqual({
-      type: 'local',
-      command: ['npx', '--prefer-online', '-y', 'openchrome-mcp@latest', 'serve', '--auto-launch'],
+  test('getClaudeManualServerConfig uses the installed openchrome binary', () => {
+    expect(getClaudeManualServerConfig()).toEqual({
+      command: 'openchrome',
+      args: ['serve', '--auto-launch'],
     });
   });
 
@@ -46,10 +43,7 @@ describe('cli/mcp-client-config', () => {
       '-s',
       'project',
       '--',
-      'npx',
-      '--prefer-online',
-      '-y',
-      'openchrome-mcp@latest',
+      'openchrome',
       'serve',
       '--auto-launch',
       '--dashboard',
@@ -77,36 +71,8 @@ describe('cli/mcp-client-config', () => {
           args: ['example.js'],
         },
         openchrome: {
-          command: 'npm',
-          args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', 'serve', '--auto-launch'],
-        },
-      },
-    });
-  });
-
-  test('upsertOpenCodeMCPServerConfig preserves sibling MCP servers', () => {
-    const updated = upsertOpenCodeMCPServerConfig(
-      {
-        mcp: {
-          existing: {
-            type: 'local',
-            command: ['node', 'example.js'],
-          },
-        },
-      },
-      'openchrome',
-      getOpenCodeServerConfig()
-    );
-
-    expect(updated).toEqual({
-      mcp: {
-        existing: {
-          type: 'local',
-          command: ['node', 'example.js'],
-        },
-        openchrome: {
-          type: 'local',
-          command: ['npx', '--prefer-online', '-y', 'openchrome-mcp@latest', 'serve', '--auto-launch'],
+          command: 'openchrome',
+          args: ['serve', '--auto-launch'],
         },
       },
     });
@@ -116,33 +82,29 @@ describe('cli/mcp-client-config', () => {
     expect(JSON.parse(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig()))).toEqual({
       mcpServers: {
         openchrome: {
-          command: 'npm',
-          args: ['exec', '--yes', '--prefer-online', 'openchrome-mcp@latest', '--', 'serve', '--auto-launch'],
+          command: 'openchrome',
+          args: ['serve', '--auto-launch'],
         },
       },
     });
   });
 
-  test('formatOpenCodeMCPServerConfigSnippet serializes an OpenCode config document', () => {
-    expect(JSON.parse(formatOpenCodeMCPServerConfigSnippet('openchrome', getOpenCodeServerConfig()))).toEqual({
-      $schema: 'https://opencode.ai/config.json',
-      mcp: {
-        openchrome: {
-          type: 'local',
-          command: ['npx', '--prefer-online', '-y', 'openchrome-mcp@latest', 'serve', '--auto-launch'],
-        },
-      },
-    });
-  });
+  test('generated configs do not use transient package runners', () => {
+    const serialized = [
+      JSON.stringify(getCodexServerConfig()),
+      JSON.stringify(getClaudeManualServerConfig()),
+      formatMCPServerConfigSnippet('openchrome', getCodexServerConfig()),
+      getClaudeSetupCommand('user').join(' '),
+    ].join('\n');
 
-  test('getClientLabel returns the OpenCode label', () => {
-    expect(getClientLabel('opencode')).toBe('OpenCode');
+    expect(serialized).not.toContain('npx');
+    expect(serialized).not.toContain('@latest');
+    expect(serialized).not.toContain('--prefer-online');
   });
 
   test('isSupportedMCPClient validates supported names', () => {
     expect(isSupportedMCPClient('claude')).toBe(true);
     expect(isSupportedMCPClient('codex')).toBe(true);
-    expect(isSupportedMCPClient('opencode')).toBe(true);
     expect(isSupportedMCPClient('cursor')).toBe(false);
   });
 });

@@ -32,6 +32,10 @@ describe('wrapInIIFE', () => {
     expect(wrapped).toContain("return 'hello'");
   });
 
+  test('top-level return remains valid inside generated IIFE', () => {
+    expect(wrapInIIFE('return document.title')).toBe('(async () => { return document.title\n})()');
+  });
+
   test('multi-line code with explicit return gets wrapped', () => {
     const code = 'const x = 5;\nreturn x;';
     const wrapped = wrapInIIFE(code);

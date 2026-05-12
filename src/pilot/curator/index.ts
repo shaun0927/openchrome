@@ -1,0 +1,100 @@
+/**
+ * Pilot curator barrel (#712 epic, Phase 4).
+ *
+ * The extractor turns successful, contract-verified runs into reusable
+ * SKILL.md candidates. The recall layer ranks stored skills for
+ * LLM-facing payloads. Curator passes (Pass 1 prune, Pass 3 promote)
+ * run as a background timer and keep the skill tree healthy.
+ *
+ * All exports are deterministic transforms (no LLM calls). LLM-augmented
+ * skill merge is out of scope per portability-harness P3/P4 and is
+ * tracked in a separate package (#776).
+ *
+ * Call sites that integrate with the contract runtime MUST gate on
+ * `isSkillCuratorEnabled()` from `src/harness/flags.ts` before
+ * invoking any export from this module.
+ */
+
+export {
+  computeSkillId,
+  defaultSkillRootDir,
+  listSkillsForDomain,
+  recordSuccessfulRun,
+} from './extractor';
+export type {
+  ExtractionInputs,
+  ExtractionResult,
+  ExtractorOptions,
+} from './extractor';
+
+export {
+  FrontmatterError,
+  parseSkillMd,
+  stringifySkillMd,
+  validateFrontmatter,
+} from './skill-md';
+
+export {
+  SKILL_RUN_LOG_MAX,
+  SKILL_SCHEMA_VERSION,
+} from './types';
+export type {
+  SkillAuthor,
+  SkillFile,
+  SkillFrontmatter,
+  SkillRecord,
+  SkillSidecar,
+  SkillStatus,
+} from './types';
+
+// Curator Pass 1: prune (demote + archive)
+export { runPrune } from './prune';
+export type {
+  PruneAction,
+  PruneActionKind,
+  PruneOptions,
+  PruneReport,
+  SkillRunStats,
+  SkillStatsResolver,
+} from './prune';
+
+// Curator Pass 3: promote / recall ranking recompute
+export { runPromote } from './promote';
+export type { PromoteOptions, PromoteReport } from './promote';
+
+// PID lock
+export { CuratorLock, defaultCuratorLockDir } from './lock';
+export type { CuratorLockOptions } from './lock';
+
+// Background runner
+export { startCuratorRunner } from './runner';
+export type { CuratorRunner, CuratorRunnerOptions } from './runner';
+
+// Recall ranking (read-only over SkillMemoryStore)
+export {
+  clusterSkills,
+  jaccard,
+  runMerge,
+  tokenize,
+} from './merge';
+export type {
+  ClusterCandidate,
+  MergeAction,
+  MergeActionKind,
+  MergeOutcome,
+  RunMergeOptions,
+} from './merge';
+
+export { STOP_WORDS } from './stop-words';
+
+export {
+  SkillRecallStore,
+  buildRecallPayload,
+  rankSkillsForRecall,
+} from './recall';
+export type {
+  RankSkillsInput,
+  RankSkillsOptions,
+  SkillRecallPayload,
+  SkillRecallResult,
+} from './recall';

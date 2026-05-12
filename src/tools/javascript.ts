@@ -61,6 +61,41 @@ export interface CDPSender {
   ): Promise<T>;
 }
 
+export const JAVASCRIPT_HELPER_INJECTION = `(() => {
+  const oc = globalThis.__openchrome || {};
+  const querySelectorAllDeep = function(selector, root) {
+    const start = root || document;
+    const results = [];
+    const visit = function(node) {
+      if (!node || typeof node.querySelectorAll !== 'function') return;
+      try {
+        const matched = node.querySelectorAll(selector);
+        for (let i = 0; i < matched.length; i++) results.push(matched[i]);
+      } catch (e) {
+        return;
+      }
+
+      if (node.shadowRoot) visit(node.shadowRoot);
+
+      let all = [];
+      try {
+        all = node.querySelectorAll('*');
+      } catch (e) {
+        return;
+      }
+      for (let i = 0; i < all.length; i++) {
+        if (all[i].shadowRoot) visit(all[i].shadowRoot);
+      }
+    };
+    visit(start);
+    return results;
+  };
+
+  oc.querySelectorAllDeep = querySelectorAllDeep;
+  globalThis.__openchrome = oc;
+  globalThis.__pierce = querySelectorAllDeep;
+})()`;
+
 export function wrapInIIFE(code: string): string {
   const trimmed = code.trim();
 
@@ -113,6 +148,10 @@ export function wrapInIIFE(code: string): string {
   return `(async () => { ${code}\n})()`;
 }
 
+export function buildJavascriptExpression(code: string): string {
+  return `${JAVASCRIPT_HELPER_INJECTION};\n${wrapInIIFE(code)}`;
+}
+
 export async function formatCDPResult(
   evalResult: CDPEvalResult['result'],
   cdpClient?: CDPSender,
@@ -134,6 +173,17 @@ export async function formatCDPResult(
 
   if (type === 'symbol') {
     return description || '[Symbol]';
+  }
+
+  if (type === 'object' && (subtype === 'promise' || className === 'Promise')) {
+    if (objectId) {
+      releaseObject(cdpClient, page, objectId);
+    }
+    return [
+      description || 'Promise',
+      'Diagnostic: CDP returned a Promise remote object even though Runtime.evaluate used awaitPromise: true.',
+      'Return or await the promise directly so javascript_tool can show the resolved value.',
+    ].join('\n');
   }
 
   // NodeList / HTMLCollection / DOMTokenList / Map / Set — non-serializable collections.
@@ -300,7 +350,7 @@ const handler: ToolHandler = async (
 
     const cdpResult = await withTimeout(
       cdpClient.send<CDPEvalResult>(page, 'Runtime.evaluate', {
-        expression: wrapInIIFE(code),
+        expression: buildJavascriptExpression(code),
         returnByValue: false,
         awaitPromise: true,
         userGesture: true,
@@ -316,8 +366,12 @@ const handler: ToolHandler = async (
         cdpResult.exceptionDetails.exception?.description ||
         cdpResult.exceptionDetails.text ||
         'Unknown error';
+      const diagnostic =
+        cdpResult.exceptionDetails.text && cdpResult.exceptionDetails.text !== errorMsg
+          ? `\nDiagnostic: ${cdpResult.exceptionDetails.text}`
+          : '';
       return {
-        content: [{ type: 'text', text: `JavaScript error: ${errorMsg}` }],
+        content: [{ type: 'text', text: `JavaScript error: ${errorMsg}${diagnostic}` }],
         isError: true,
       };
     }
