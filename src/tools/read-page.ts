@@ -80,10 +80,44 @@ const definition: MCPToolDefinition = {
         enum: ['none', 'dom'],
         description: 'AX mode only: use "dom" to explicitly fall back to DOM output if AX output exceeds the output budget. Default: none.',
       },
+      compact: {
+        type: 'boolean',
+        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false.',
+      },
     },
     required: ['tabId'],
   },
 };
+
+
+function compactAXLines(lines: string[]): string[] {
+  const keep = new Set<number>();
+  const stack: Array<{ indent: number; index: number }> = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+      stack.pop();
+    }
+
+    const actionableOrValuable =
+      line.includes('[ref_') ||
+      line.includes(' = "') ||
+      /\((focused|disabled|checked|selected|expanded)/.test(line);
+
+    if (actionableOrValuable) {
+      keep.add(i);
+      for (const ancestor of stack) {
+        keep.add(ancestor.index);
+      }
+    }
+
+    stack.push({ indent, index: i });
+  }
+
+  return lines.filter((_, index) => keep.has(index));
+}
 
 interface AXNode {
   nodeId: number;
@@ -141,6 +175,7 @@ const handler: ToolHandler = async (
       };
     }
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
+    const compactAX = args.compact === true;
     if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
       return {
         content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],
@@ -776,11 +811,31 @@ const handler: ToolHandler = async (
       formatNode(root, 0);
     }
 
-    const output = lines.join('\n');
+    const outputLines = compactAX ? compactAXLines(lines) : lines;
+    const output = outputLines.join('\n');
+    const outputCharCount = output.length;
     const includePaginationAx = args.includePagination !== false;
     const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
 
-    if (charCount > MAX_OUTPUT) {
+    const compression = args.compression as string | undefined;
+    if (compression === 'delta') {
+      const snapshotStore = SnapshotStore.getInstance();
+      const axCacheTabId = `${tabId}:ax${compactAX ? ':compact' : ''}`;
+      const previous = snapshotStore.get(sessionId, axCacheTabId);
+      if (previous) {
+        const delta = snapshotStore.computeDelta(previous, output, axPageStats.url);
+        snapshotStore.set(sessionId, axCacheTabId, output, axPageStats.url);
+        if (delta.isDelta) {
+          return {
+            content: [{ type: 'text', text: pageStatsLine + delta.content.replace('[DOM Delta', '[AX Delta') + axPaginationSection }],
+          };
+        }
+      } else {
+        snapshotStore.set(sessionId, axCacheTabId, output, axPageStats.url);
+      }
+    }
+
+    if (outputCharCount > MAX_OUTPUT) {
       // Large AX output should not trigger a second full DOM traversal unless
       // the caller explicitly opts into that fallback. Otherwise preserve AX
       // intent and return the bounded/truncated AX representation.
