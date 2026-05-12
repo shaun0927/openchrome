@@ -277,8 +277,9 @@ function attachEvictionSubscribersOnce(
   // Use the page object as the WeakSet key — one subscription per page
   // instance. Repeated calls (the normal case for every tool call) are
   // O(1) no-ops.
-  if (ATTACHED.has(page as unknown as object)) return;
-  ATTACHED.add(page as unknown as object);
+  const pageKey = page as unknown as object;
+  if (ATTACHED.has(pageKey)) return;
+  ATTACHED.add(pageKey);
 
   // Best-effort attach; if puppeteer's internals shift we still serve
   // cache hits, but eviction relies on explicit `markFrameDirty` calls
@@ -289,7 +290,10 @@ function attachEvictionSubscribersOnce(
     try {
       const capable = page as unknown as CDPCapablePage;
       const target = capable.target?.();
-      if (!target || typeof target.createCDPSession !== 'function') return;
+      if (!target || typeof target.createCDPSession !== 'function') {
+        ATTACHED.delete(pageKey);
+        return;
+      }
       const session = (await target.createCDPSession()) as CDPSessionLike;
 
       // Subscribe to relevant CDP domains. Errors enabling are non-fatal.
@@ -326,7 +330,12 @@ function attachEvictionSubscribersOnce(
         disposeSnapshotCacheForTarget(targetId);
       });
     } catch {
-      // best-effort
+      // Best-effort, but do not permanently suppress retries after a transient
+      // attach/listener failure. If this setup fails before listeners are
+      // wired, later cache lookups should be allowed to try again; otherwise a
+      // single CDP hiccup would leave SPA/page navigation invalidations disabled
+      // until TTL expiry.
+      ATTACHED.delete(pageKey);
     }
   })();
 }

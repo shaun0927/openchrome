@@ -20,6 +20,7 @@ import {
   type SnapshotCacheKey,
   type SnapshotKind,
 } from '../../../src/core/perception/snapshot-cache';
+import { getCacheForPage } from '../../../src/utils/snapshot-cache-helper';
 
 function makeKey(
   cache: SnapshotCache,
@@ -227,5 +228,46 @@ describe('SnapshotCache — destroy + stats', () => {
     expect(s.hits).toBeGreaterThanOrEqual(1);
     expect(s.evictions).toBeGreaterThanOrEqual(1);
     expect(s.entries).toBe(2);
+  });
+});
+
+describe('snapshot-cache helper — CDP subscriber retries', () => {
+  const oldEnv = process.env.OPENCHROME_SNAPSHOT_CACHE;
+
+  afterEach(() => {
+    if (oldEnv === undefined) {
+      delete process.env.OPENCHROME_SNAPSHOT_CACHE;
+    } else {
+      process.env.OPENCHROME_SNAPSHOT_CACHE = oldEnv;
+    }
+  });
+
+  test('transient createCDPSession failure does not permanently mark page attached', async () => {
+    process.env.OPENCHROME_SNAPSHOT_CACHE = '1';
+    let attempts = 0;
+    const page = {
+      target: () => ({
+        _targetId: 'target-retry',
+        createCDPSession: async () => {
+          attempts++;
+          if (attempts === 1) throw new Error('temporary attach failure');
+          return {
+            send: jest.fn().mockResolvedValue(undefined),
+            on: jest.fn(),
+            detach: jest.fn().mockResolvedValue(undefined),
+          };
+        },
+      }),
+      mainFrame: () => ({ _id: 'frame-retry' }),
+      viewport: () => ({ width: 1280, height: 720, deviceScaleFactor: 1 }),
+      once: jest.fn(),
+    };
+
+    expect(getCacheForPage(page as never)).not.toBeNull();
+    await Promise.resolve();
+    expect(getCacheForPage(page as never)).not.toBeNull();
+    await Promise.resolve();
+
+    expect(attempts).toBe(2);
   });
 });
