@@ -5,6 +5,8 @@
  * bypassing per-step agent LLM round-trips.
  */
 
+import type { BrowserTaskSignature, TaskSignatureStatus } from '../contracts/task-signature';
+
 /** A single step in a compiled plan */
 export interface CompiledStep {
   /** Execution order (1-based) */
@@ -110,6 +112,11 @@ export interface PlanRegistryData {
 }
 
 /** Result of plan execution */
+export interface PlanExecutionOptions {
+  /** Optional deterministic boundary for tool allow-list and loop/budget status. */
+  taskSignature?: BrowserTaskSignature;
+}
+
 export interface PlanExecutionResult {
   /** Whether the plan executed successfully */
   success: boolean;
@@ -125,4 +132,6 @@ export interface PlanExecutionResult {
   stepsExecuted: number;
   /** Total steps in plan */
   totalSteps: number;
+  /** Present only when execution was bound to a BrowserTaskSignature. */
+  taskSignature?: TaskSignatureStatus;
 }

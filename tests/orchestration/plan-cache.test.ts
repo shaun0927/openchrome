@@ -783,3 +783,61 @@ describeIntegration('Integration: PlanRegistry + PlanExecutor', () => {
     expect(after).toBeGreaterThan(before);
   });
 });
+
+describe('PlanExecutor task signatures', () => {
+  const signature = {
+    version: 1 as const,
+    id: 'fixture.plan.boundary',
+    description: 'Plan boundary fixture',
+    inputs: {},
+    allowedTools: ['mock_tool'],
+    success: { kind: 'dom_text' as const, contains: 'ok' },
+    loopGuards: [{ kind: 'max_same_tool' as const, limit: 2, window: 2 }],
+    budgets: { maxToolCalls: 5, maxWallMs: 30_000 },
+  };
+
+  function resolver(handlers: Record<string, ToolHandler>) {
+    return (toolName: string): ToolHandler | null => handlers[toolName] ?? null;
+  }
+
+  test('preflights disallowed tools without invoking handlers', async () => {
+    const handler = jest.fn(async () => makeMCPResult('ok'));
+    const executor = new PlanExecutor(resolver({ javascript_tool: handler }));
+    const plan = buildPlan({
+      id: 'disallowed-plan',
+      steps: [buildStep({ tool: 'javascript_tool' })],
+      successCriteria: {},
+    });
+
+    const result = await executor.execute(plan, 'session', {}, { taskSignature: signature });
+
+    expect(result.success).toBe(false);
+    expect(result.taskSignature?.status).toBe('failure');
+    expect(result.error).toMatch(/disallows tool/);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  test('stops signature-bound plans on loop guards while no-signature path is unchanged', async () => {
+    const handler = jest.fn(async () => makeMCPResult('ok'));
+    const executor = new PlanExecutor(resolver({ mock_tool: handler }));
+    const plan = buildPlan({
+      id: 'loop-plan',
+      steps: [
+        buildStep({ order: 1, tool: 'mock_tool' }),
+        buildStep({ order: 2, tool: 'mock_tool' }),
+      ],
+      successCriteria: {},
+    });
+
+    const unsigned = await executor.execute(plan, 'session', {});
+    expect(unsigned.success).toBe(true);
+    expect(unsigned.taskSignature).toBeUndefined();
+
+    const signed = await executor.execute(plan, 'session', {}, { taskSignature: signature });
+    expect(signed.success).toBe(false);
+    expect(signed.taskSignature).toEqual({
+      status: 'stop',
+      reasons: ['max_same_tool exceeded for mock_tool: 2/2'],
+    });
+  });
+});

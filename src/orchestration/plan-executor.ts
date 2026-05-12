@@ -10,8 +10,11 @@ import {
   CompiledPlan,
   CompiledStep,
   PlanErrorHandler,
+  PlanExecutionOptions,
   PlanExecutionResult,
 } from '../types/plan-cache';
+import { evaluateTaskSignature, preflightAllowedTools } from '../contracts/task-signature';
+import type { TaskSignatureToolCallSummary } from '../contracts/task-signature';
 import { withTimeout } from '../utils/with-timeout';
 
 /**
@@ -140,10 +143,35 @@ export class PlanExecutor {
   async execute(
     plan: CompiledPlan,
     sessionId: string,
-    runtimeParams: Record<string, unknown>
+    runtimeParams: Record<string, unknown>,
+    options: PlanExecutionOptions = {}
   ): Promise<PlanExecutionResult> {
     const startTime = Date.now();
     let stepsExecuted = 0;
+    const recentTools: TaskSignatureToolCallSummary[] = [];
+
+    if (options.taskSignature) {
+      const preflight = preflightAllowedTools(
+        options.taskSignature,
+        [
+          ...plan.steps.map((step) => step.tool),
+          ...plan.errorHandlers.flatMap((handler) =>
+            handler.steps.map((recoveryStep) => recoveryStep.tool),
+          ),
+        ],
+      );
+      if (preflight) {
+        return {
+          success: false,
+          planId: plan.id,
+          error: preflight.reasons.join('; '),
+          durationMs: Date.now() - startTime,
+          stepsExecuted,
+          totalSteps: plan.steps.length,
+          taskSignature: preflight,
+        };
+      }
+    }
 
     // 1. Build params map: plan defaults first, runtime overrides on top
     const params: Record<string, unknown> = {};
@@ -154,13 +182,14 @@ export class PlanExecutor {
     }
     Object.assign(params, runtimeParams);
 
-    const failure = (error: string): PlanExecutionResult => ({
+    const failure = (error: string, taskSignature?: PlanExecutionResult['taskSignature']): PlanExecutionResult => ({
       success: false,
       planId: plan.id,
       error,
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
+      ...(taskSignature ? { taskSignature } : {}),
     });
 
     // 2. Execute each step sequentially
@@ -187,6 +216,29 @@ export class PlanExecutor {
           stepLabel
         );
         stepsExecuted++;
+        recentTools.push({ tool: step.tool, progressed: !isEmptyResult(mcpResult) && !mcpResult.isError });
+        if (options.taskSignature) {
+          const taskStatus = await evaluateTaskSignature({
+            signature: options.taskSignature,
+            recentTools,
+            elapsedMs: Date.now() - startTime,
+            toolCount: stepsExecuted,
+          });
+          if (taskStatus.status === 'success') {
+            return {
+              success: true,
+              planId: plan.id,
+              data: params,
+              durationMs: Date.now() - startTime,
+              stepsExecuted,
+              totalSteps: plan.steps.length,
+              taskSignature: taskStatus,
+            };
+          }
+          if (taskStatus.status !== 'continue') {
+            return failure(`task signature ${taskStatus.status}: ${taskStatus.reasons.join('; ')}`, taskStatus);
+          }
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error(`[PlanExecutor] Step failed at ${stepLabel}: ${errMsg}`);
@@ -277,6 +329,14 @@ export class PlanExecutor {
         durationMs: Date.now() - startTime,
         stepsExecuted,
         totalSteps: plan.steps.length,
+        ...(options.taskSignature
+          ? { taskSignature: await evaluateTaskSignature({
+              signature: options.taskSignature,
+              recentTools,
+              elapsedMs: Date.now() - startTime,
+              toolCount: stepsExecuted,
+            }) }
+          : {}),
       };
     }
 
@@ -288,6 +348,14 @@ export class PlanExecutor {
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
+      ...(options.taskSignature
+        ? { taskSignature: await evaluateTaskSignature({
+            signature: options.taskSignature,
+            recentTools,
+            elapsedMs: Date.now() - startTime,
+            toolCount: stepsExecuted,
+          }) }
+        : {}),
     };
   }
 
