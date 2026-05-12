@@ -146,7 +146,7 @@ describe('console_capture get response — v1.11.0 baseline regression', () => {
       return;
     }
 
-    const baseline = fs.readFileSync(FIXTURE_PATH, 'utf8');
+    const baseline = fs.readFileSync(FIXTURE_PATH, 'utf8').replace(/\r\n/g, '\n');
     expect(responseJson).toBe(baseline);
   });
 
