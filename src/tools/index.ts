@@ -468,3 +468,5 @@ export function registerAllTools(
     `[Tools] Registered ${server.getToolNames().length} tools ` +
       `(categories: ${enabledCats}; skipped: ${skipped})`,
   );
+
+}

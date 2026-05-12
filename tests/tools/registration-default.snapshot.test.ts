@@ -2,9 +2,9 @@
 /**
  * Default-registration snapshot test (#847).
  *
- * Pins the v1.11.0 baseline tools/list payload: with NO category flags or env
+ * Pins the current baseline tools/list payload: with NO category flags or env
  * vars set, registerAllTools() must produce the exact same set of tool names
- * (and the same count) as v1.11.0 — categorization is a P2 zero-impact
+ * (and the same count) as the current default registration surface — categorization is a P2 zero-impact
  * refactor and any drift is a regression.
  *
  * Strategy:
@@ -59,7 +59,7 @@ import {
   setDisabledToolsSnapshot,
 } from '../../src/resources/tools-disabled';
 
-// ─── v1.11.0 baseline (sorted) ───────────────────────────────────────────────
+// ─── Default tool baseline (sorted) ─────────────────────────────────────────
 //
 // Sourced from src/tools/index.ts REGISTRATION_ENTRIES — every name appearing
 // in any `tools: [...]` array. Sorted alphabetically for stable diff output
@@ -92,14 +92,23 @@ const EXPECTED_DEFAULT_TOOLS: readonly string[] = [
   'memory',
   'navigate',
   'network',
+  'network_capture_full',
+  'network_capture_lite',
   'oc_assert',
   'oc_checkpoint',
   'oc_connection_health',
+  'oc_context_export',
+  'oc_context_import',
   'oc_copy_to_clipboard',
+  'oc_devtools_url',
+  'oc_doctor_report',
   'oc_evidence_bundle',
   'oc_get_connection_info',
   'oc_journal',
+  'oc_observe',
   'oc_open_host_settings',
+  'oc_performance_analyze',
+  'oc_performance_insights',
   'oc_profile_status',
   'oc_reap_orphans',
   'oc_recording_export',
@@ -140,7 +149,7 @@ const EXPECTED_DEFAULT_TOOLS: readonly string[] = [
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('registerAllTools — default selection (v1.11.0 parity)', () => {
+describe('registerAllTools — default selection (current parity)', () => {
   let server: MCPServer;
 
   beforeEach(() => {
@@ -150,13 +159,13 @@ describe('registerAllTools — default selection (v1.11.0 parity)', () => {
     server = new MCPServer();
   });
 
-  test('produces the v1.11.0 tool surface byte-for-byte', () => {
+  test('produces the current tool surface byte-for-byte', () => {
     registerAllTools(server);
     const actual = server.getToolNames().slice().sort();
     expect(actual).toEqual([...EXPECTED_DEFAULT_TOOLS]);
   });
 
-  test('default surface size is the v1.11.0 count', () => {
+  test('default surface size matches the current baseline count', () => {
     registerAllTools(server);
     expect(server.getToolNames().length).toBe(EXPECTED_DEFAULT_TOOLS.length);
   });
