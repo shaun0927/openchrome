@@ -47,6 +47,7 @@ import {
 } from './totp-store';
 import { registerAdminKeysCommand } from './admin-keys';
 import { registerContractCommand } from './contract-teach';
+import { registerPlaybookCommand } from './playbook/index';
 import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell } from './claude-cli';
 
 const program = new Command();
@@ -1300,5 +1301,8 @@ registerAdminKeysCommand(program);
 
 // Outcome contract authoring helpers (issue #705).
 registerContractCommand(program);
+
+// Declarative YAML/JSON scenario runner (issue #854).
+registerPlaybookCommand(program);
 
 program.parse();
