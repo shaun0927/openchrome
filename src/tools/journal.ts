@@ -6,6 +6,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getTaskJournal } from '../journal/task-journal';
+import type { OutputHandleEvent } from '../journal/task-journal';
 
 const definition: MCPToolDefinition = {
   name: 'oc_journal',
@@ -102,7 +103,13 @@ const handler: ToolHandler = async (
 
     // Apply filters
     if (args.tool) {
-      entries = entries.filter(e => e.tool === args.tool);
+      entries = entries.filter(e => {
+        if ('tool' in e) return e.tool === args.tool;
+        if ('event' in e && (e as OutputHandleEvent).event === 'output_handle_created') {
+          return (e as OutputHandleEvent).source_tool === args.tool;
+        }
+        return false;
+      });
     }
     if (since) {
       entries = entries.filter(e => e.ts >= since);
@@ -114,9 +121,14 @@ const handler: ToolHandler = async (
 
     const lines = entries.map(e => {
       const time = new Date(e.ts).toLocaleTimeString();
-      const dur = `${e.durationMs}ms`;
-      const milestone = e.milestone ? ' \u2605' : '';
-      return `${time} [${dur}] ${e.summary}${milestone}`;
+      if ('event' in e && (e as OutputHandleEvent).event === 'output_handle_created') {
+        const ev = e as OutputHandleEvent;
+        return `${time} [handle] output_handle_created: ${ev.handle} from ${ev.source_tool} (${ev.size_bytes} bytes, ${ev.mime_type})`;
+      }
+      const te = e as import('../journal/task-journal').JournalEntry;
+      const dur = `${te.durationMs}ms`;
+      const milestone = te.milestone ? ' \u2605' : '';
+      return `${time} [${dur}] ${te.summary}${milestone}`;
     });
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };

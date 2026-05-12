@@ -20,6 +20,16 @@ export interface JournalEntry {
   milestone?: boolean;           // True for significant actions
 }
 
+/** Event recorded when an output handle is created by a large-output tool (#887). */
+export interface OutputHandleEvent {
+  event: 'output_handle_created';
+  ts: number;                    // Unix ms timestamp
+  handle: string;                // e.g. "oh_ABCDEFGHIJKL"
+  source_tool: string;           // Tool that created the handle (e.g. "read_page")
+  size_bytes: number;
+  mime_type: string;
+}
+
 /** Tools whose entire args are redacted */
 const REDACT_TOOLS = new Set(['http_auth', 'cookies']);
 
@@ -88,10 +98,26 @@ export class TaskJournal {
   }
 
   /**
-   * Read recent entries from today and optionally yesterday.
+   * Record an output_handle_created event (#887).
+   * Written to the same daily JSONL file as tool-call entries.
    */
-  getRecent(count: number = 20): JournalEntry[] {
-    const entries: JournalEntry[] = [];
+  recordOutputHandle(event: Omit<OutputHandleEvent, 'ts'>): void {
+    try {
+      const filename = `journal-${this.dateString()}.jsonl`;
+      const filepath = path.join(this.dir, filename);
+      const entry: OutputHandleEvent = { ts: Date.now(), ...event };
+      fs.appendFileSync(filepath, JSON.stringify(entry) + '\n');
+    } catch (err) {
+      console.error('[TaskJournal] recordOutputHandle failed:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  /**
+   * Read recent entries from today and optionally yesterday.
+   * Includes both JournalEntry tool-call records and OutputHandleEvent records.
+   */
+  getRecent(count: number = 20): (JournalEntry | OutputHandleEvent)[] {
+    const entries: (JournalEntry | OutputHandleEvent)[] = [];
     const today = this.dateString();
     const yesterday = this.dateString(new Date(Date.now() - 86400000));
 
@@ -103,7 +129,7 @@ export class TaskJournal {
           const trimmed = line.trim();
           if (!trimmed) continue;
           try {
-            entries.push(JSON.parse(trimmed) as JournalEntry);
+            entries.push(JSON.parse(trimmed) as JournalEntry | OutputHandleEvent);
           } catch {
             // Skip malformed lines
           }
@@ -121,7 +147,7 @@ export class TaskJournal {
    */
   getMilestones(opts?: { since?: number; limit?: number }): JournalEntry[] {
     const entries = this.getRecent(500);
-    let milestones = entries.filter(e => e.milestone);
+    let milestones = (entries.filter(e => 'milestone' in e && e.milestone) as JournalEntry[]);
     if (opts?.since) {
       milestones = milestones.filter(e => e.ts > opts.since!);
     }
@@ -149,16 +175,21 @@ export class TaskJournal {
     let failed = 0;
 
     for (const e of entries) {
-      toolCounts[e.tool] = (toolCounts[e.tool] || 0) + 1;
-      if (e.ok) succeeded++; else failed++;
+      if ('tool' in e) {
+        // JournalEntry — tool-call record
+        toolCounts[e.tool] = (toolCounts[e.tool] || 0) + 1;
+        if (e.ok) succeeded++; else failed++;
+      }
     }
+
+    const toolEntries = entries.filter((e): e is JournalEntry => 'tool' in e);
 
     return {
       total: entries.length,
       succeeded,
       failed,
       toolCounts,
-      milestones: entries.filter(e => e.milestone),
+      milestones: toolEntries.filter(e => e.milestone),
       period: {
         start: entries[0]?.ts || Date.now(),
         end: entries[entries.length - 1]?.ts || Date.now(),
