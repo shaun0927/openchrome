@@ -22,4 +22,9 @@
  * curator}/ as the 1.11 cleanup PRs land.
  */
 
-export {};
+// Phase 3 (issue #790): contract runtime is the first pilot subdir to land.
+// Re-export as a namespace so `bootstrapPilot()` (in src/harness/flags.ts)
+// can resolve it without hard-coupling the harness to the runtime entry.
+// Keep this as a namespace export so adding sibling subdirs later does not
+// reorder the public surface and break consumer destructuring.
+export * as runtime from './runtime/index.js';
