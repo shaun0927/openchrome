@@ -107,6 +107,9 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// Doctor report tool (#898) — read cached `openchrome doctor` output
+import { registerOcDoctorReportTool } from './oc-doctor-report';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -217,6 +220,9 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+
+  // Doctor report tool (#898) — read cached `openchrome doctor` output
+  registerOcDoctorReportTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

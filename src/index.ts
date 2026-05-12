@@ -817,6 +817,38 @@ program
   });
 
 program
+  .command('doctor')
+  .description('Run holistic environment diagnostics (Node, Chrome, ports, disk, network)')
+  .option('--json', 'Emit DoctorReport as JSON to stdout')
+  .option('--check <id>', 'Run only this check (repeatable)', (val: string, prev: string[]) => [...prev, val], [] as string[])
+  .option('--remote', 'Enable opt-in remote network probe (HEAD update.googleapis.com)')
+  .option('--no-color', 'Disable colored output (also respected via NO_COLOR env var)')
+  .action(async (options: { json?: boolean; check: string[]; remote?: boolean; color?: boolean }) => {
+    const noColor = options.color === false || Boolean(process.env.NO_COLOR);
+
+    // Gate the remote check via env var so the check fn can read it
+    if (options.remote) {
+      process.env.OPENCHROME_DOCTOR_REMOTE_ENABLED = '1';
+    }
+
+    const { runDoctor, formatReport, writeDiagnosticsCache } = await import('./cli/doctor');
+    const report = await runDoctor({
+      checks: options.check.length > 0 ? options.check : undefined,
+      remote: Boolean(options.remote),
+    });
+
+    await writeDiagnosticsCache(report);
+
+    if (options.json) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    } else {
+      process.stdout.write(formatReport(report, noColor));
+    }
+
+    process.exit(report.exitCode);
+  });
+
+program
   .command('check')
   .description('Check Chrome connection status')
   .option('-p, --port <port>', 'Chrome remote debugging port', process.env.CHROME_PORT || '9222')
@@ -1037,6 +1069,12 @@ USAGE:
       }
     }
   }
+
+  # Diagnose environment issues (Node version, Chrome binary, port, disk, etc.)
+  openchrome doctor
+
+  # Machine-readable output
+  openchrome doctor --json
 `);
   });
 
