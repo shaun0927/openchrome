@@ -406,10 +406,18 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const instruction = args.instruction as string;
-  // Legacy text-summary verification fires whenever `verify` is not explicitly
-  // false (boolean true OR any of the new string enum values except 'none').
+  // Legacy text-summary verification fires when:
+  //   * args.verify is undefined  → pre-#827 default of "always summarize"
+  //   * args.verify is any value coercing to a non-'none' mode (true, the
+  //     legacy default; "ax-diff"; "screenshot"; "both")
+  // It is suppressed when args.verify is explicitly false or "none". Without
+  // the explicit undefined branch, `args.verify !== false` would also have
+  // accepted the string "none" (codex P2 bug); going through coerceVerifyMode
+  // closes that hole while preserving backwards compat for callers that
+  // omit the field entirely.
   const verifyMode = coerceVerifyMode(args.verify);
-  const verifyTextSummary = args.verify !== false; // preserves pre-#827 default
+  const verifyTextSummary =
+    args.verify === undefined ? true : verifyMode !== 'none';
   const timeoutMs = Math.min(Math.max((args.timeout as number) || 30000, 1000), 120000);
 
   if (!tabId) {

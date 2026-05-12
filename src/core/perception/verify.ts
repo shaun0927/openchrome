@@ -54,6 +54,8 @@ export interface VerifyReport {
 export interface AxNodeTuple {
   role: string;
   name: string;
+  /** Input/control value (textbox content, combobox selection, etc.). */
+  value?: string;
   state?: string;
   focused?: boolean;
   disabled?: boolean;
@@ -122,6 +124,7 @@ export function hashAxNodes(nodes: ReadonlyArray<AxNodeTuple>): string {
       [
         n.role || '',
         n.name || '',
+        n.value || '',
         n.state || '',
         n.focused === true ? '1' : '0',
         n.disabled === true ? '1' : '0',
@@ -141,23 +144,42 @@ export function summarizeAxDelta(
   after: ReadonlyArray<AxNodeTuple>,
 ): string {
   const key = (n: AxNodeTuple) => `${n.role}\x1f${n.name}`;
-  const beforeKeys = new Set(before.map(key));
-  const afterKeys = new Set(after.map(key));
+
+  // Use frequency maps (not Sets) so pages with repeated controls — e.g.
+  // multiple "button|Submit" nodes — count added/removed accurately. With
+  // a Set, adding one and keeping the others reads as 0 added.
+  const beforeCount = new Map<string, number>();
+  const afterCount = new Map<string, number>();
+  for (const n of before) beforeCount.set(key(n), (beforeCount.get(key(n)) ?? 0) + 1);
+  for (const n of after) afterCount.set(key(n), (afterCount.get(key(n)) ?? 0) + 1);
 
   let added = 0;
   let removed = 0;
-  for (const k of afterKeys) if (!beforeKeys.has(k)) added++;
-  for (const k of beforeKeys) if (!afterKeys.has(k)) removed++;
+  const allKeys = new Set<string>([...beforeCount.keys(), ...afterCount.keys()]);
+  for (const k of allKeys) {
+    const b = beforeCount.get(k) ?? 0;
+    const a = afterCount.get(k) ?? 0;
+    if (a > b) added += a - b;
+    else if (b > a) removed += b - a;
+  }
 
-  // "changed" = same (role,name) but a state/focused/disabled flag flipped.
-  // Build a lookup of before by key for intersection comparisons.
-  const beforeByKey = new Map<string, AxNodeTuple>();
-  for (const n of before) beforeByKey.set(key(n), n);
+  // "changed" = same (role,name) but a value/state/focused/disabled flag
+  // flipped on at least one matching node. We pair before-nodes to
+  // after-nodes greedily for keys present in both lists.
+  const beforeBuckets = new Map<string, AxNodeTuple[]>();
+  for (const n of before) {
+    const k = key(n);
+    const arr = beforeBuckets.get(k);
+    if (arr) arr.push(n);
+    else beforeBuckets.set(k, [n]);
+  }
   let changed = 0;
   for (const n of after) {
-    const b = beforeByKey.get(key(n));
-    if (!b) continue;
+    const bucket = beforeBuckets.get(key(n));
+    if (!bucket || bucket.length === 0) continue;
+    const b = bucket.shift()!;
     if (
+      (b.value || '') !== (n.value || '') ||
       (b.state || '') !== (n.state || '') ||
       (b.focused === true) !== (n.focused === true) ||
       (b.disabled === true) !== (n.disabled === true)
@@ -180,6 +202,7 @@ async function snapshotAx(page: any): Promise<AxNodeTuple[] | null> {
         nodes: Array<{
           role?: { value?: string };
           name?: { value?: string };
+          value?: { value?: unknown };
           properties?: Array<{ name: string; value: { value?: unknown } }>;
           ignored?: boolean;
         }>;
@@ -201,9 +224,16 @@ async function snapshotAx(page: any): Promise<AxNodeTuple[] | null> {
             if (v && v !== 'false') state += (state ? ' ' : '') + `${p.name}=${v}`;
           }
         }
+        // Capture the AX value property — text inputs, combobox selections,
+        // etc. Without this, typing into a textbox would not change the hash
+        // when role/name/state/focused/disabled all stay constant.
+        const rawValue = node.value?.value;
+        const value =
+          rawValue === undefined || rawValue === null ? undefined : String(rawValue);
         out.push({
           role,
           name: node.name?.value || '',
+          value,
           state: state || undefined,
           focused,
           disabled,
@@ -495,14 +525,30 @@ export async function runVerify<T>(
   }
 
   // ─── Cap total payload at VERIFY_TOTAL_BYTES_LIMIT ──────────────────────
-  const measure = (): number => {
+  // The size budget must account for the `total_bytes` field itself, which
+  // is part of the final payload returned to callers. Measuring without
+  // that field undercounts and lets the rendered VerifyReport spill over
+  // VERIFY_TOTAL_BYTES_LIMIT for callers right at the ceiling.
+  const measureWith = (totalBytesGuess: number): number => {
     return Buffer.byteLength(
-      JSON.stringify({ mode, ax_diff: axReport, screenshot: shotReport }),
+      JSON.stringify({
+        mode,
+        ax_diff: axReport,
+        screenshot: shotReport,
+        total_bytes: totalBytesGuess,
+      }),
       'utf8',
     );
   };
 
-  let total = measure();
+  // Two-step fixed-point: the JSON length of `total_bytes` itself grows
+  // with the number's digit count, so we iterate until stable (bounded).
+  let total = measureWith(0);
+  for (let i = 0; i < 4; i++) {
+    const next = measureWith(total);
+    if (next === total) break;
+    total = next;
+  }
   if (total > VERIFY_TOTAL_BYTES_LIMIT && shotReport && !shotReport.skipped) {
     // First drop the thumbs (they dominate the payload).
     shotReport = {
@@ -511,7 +557,12 @@ export async function runVerify<T>(
       after_thumb_png_b64: '',
       skipped: 'capture_failed',
     };
-    total = measure();
+    total = measureWith(0);
+    for (let i = 0; i < 4; i++) {
+      const next = measureWith(total);
+      if (next === total) break;
+      total = next;
+    }
   }
 
   const report: VerifyReport = {
