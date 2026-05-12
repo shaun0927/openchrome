@@ -225,7 +225,7 @@ describe('TabsCreateTool', () => {
 
       await handler(testSessionId, { url: 'https://google.com' });
 
-      // Now includes optional workerId parameter
+      // Now includes optional workerId + isolatedContext parameters (#848 / #946).
       expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'https://google.com', undefined, undefined, undefined);
     });
 
@@ -246,6 +246,7 @@ describe('TabsCreateTool', () => {
       await handler(testSessionId, { url: 'https://example.com' });
 
       // createTarget implicitly creates/uses session, now with optional workerId
+      // + isolatedContext parameters (#848 / #946).
       expect(mockSessionManager.createTarget).toHaveBeenCalledWith(testSessionId, 'https://example.com', undefined, undefined, undefined);
     });
   });
