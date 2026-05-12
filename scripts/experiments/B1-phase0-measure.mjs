@@ -103,21 +103,32 @@ function sleep(ms) {
 }
 
 /**
- * Check basic network reachability by attempting a HEAD request to example.com.
- * Returns true if reachable, false if not (or if fetch is unavailable).
+ * Check basic target reachability before spending time launching OpenChrome.
+ * Returns true if the target responds to HEAD/GET, false otherwise.
  */
-async function isNetworkReachable() {
+async function isTargetReachable(url) {
+  return fetchWithTimeout(url, 'HEAD')
+    .then((res) => res.status < 600)
+    .catch(async () => {
+      try {
+        const res = await fetchWithTimeout(url, 'GET');
+        return res.status < 600;
+      } catch {
+        return false;
+      }
+    });
+}
+
+async function fetchWithTimeout(url, method) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch('https://example.com/', {
-      method: 'HEAD',
+    return await fetch(url, {
+      method,
       signal: controller.signal,
     });
+  } finally {
     clearTimeout(timer);
-    return res.status < 600;
-  } catch {
-    return false;
   }
 }
 
@@ -270,6 +281,12 @@ async function measureOpenChrome(target) {
     });
   }
 
+  /** Send a JSON-RPC notification. Notifications do not have responses. */
+  function notify(method, params) {
+    const notification = JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n';
+    child.stdin.write(notification);
+  }
+
   function kill() {
     try { child.stdin.end(); } catch { /* ignore */ }
     try { child.kill('SIGTERM'); } catch { /* ignore */ }
@@ -282,6 +299,7 @@ async function measureOpenChrome(target) {
       capabilities: {},
       clientInfo: { name: 'B1-phase0-measure', version: '0.1.0' },
     }, 15_000);
+    notify('notifications/initialized', {});
 
     // Step 2: Navigate to the target URL. navigate's schema accepts only its
     // documented tool args; the RPC timeout controls this measurement call.
@@ -497,7 +515,8 @@ function buildBrowserMCPPlaceholder(target) {
     headingFound: null,
     screenshotPath: null,
     error: 'pending — fill in manually per instructions printed to stderr',
-    skipped: true,
+    skipped: false,
+    pendingManual: true,
     measuredAt: null,
   };
 }
@@ -517,10 +536,12 @@ function renderMarkdownTable(records) {
   for (const r of records) {
     const slot = r.slot ?? '?';
     const url = r.url ?? '?';
-    const http = r.skipped ? 'skipped' : (r.httpStatus !== null ? String(r.httpStatus) : 'n/a');
-    const challenge = r.skipped ? 'skipped' : (r.challengeFound ? `\`${r.challengeFound}\`` : 'none');
-    const heading = r.skipped ? 'skipped' : (r.headingFound === true ? 'yes' : r.headingFound === false ? 'no' : 'n/a');
-    const pass = r.skipped
+    const http = r.pendingManual ? 'pending' : r.skipped ? 'skipped' : (r.httpStatus !== null ? String(r.httpStatus) : 'n/a');
+    const challenge = r.pendingManual ? 'manual' : r.skipped ? 'skipped' : (r.challengeFound ? `\`${r.challengeFound}\`` : 'none');
+    const heading = r.pendingManual ? 'manual' : r.skipped ? 'skipped' : (r.headingFound === true ? 'yes' : r.headingFound === false ? 'no' : 'n/a');
+    const pass = r.pendingManual
+      ? 'pending (manual)'
+      : r.skipped
       ? 'skipped (no network)'
       : (r.pass === true ? 'PASS' : r.pass === false ? 'FAIL' : 'pending');
     lines.push(`| ${slot} | \`${url}\` | ${http} | ${challenge} | ${heading} | ${pass} |`);
@@ -550,13 +571,10 @@ async function main() {
     }
   } else {
     // openchrome arm
-    const networkOk = await isNetworkReachable();
-    if (!networkOk) {
-      console.error('[B1-measure] WARNING: Network appears unreachable. All targets will be skipped.');
-    }
-
     for (const target of ALL_SLOTS) {
-      if (!networkOk) {
+      const targetReachable = await isTargetReachable(target.url);
+      if (!targetReachable) {
+        console.error(`[B1-measure][${target.slot}] SKIP: target unreachable: ${target.url}`);
         const rec = {
           slot: target.slot,
           url: target.url,
