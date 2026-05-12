@@ -5,6 +5,11 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import {
+  OUTPUT_MODE_SCHEMA_PROPERTIES,
+  parseOutputMode,
+  resolveOutputMode,
+} from './_shared/output-mode';
 
 // Predefined network conditions
 const NETWORK_PRESETS: Record<
@@ -70,6 +75,7 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Latency in ms (preset=custom only)',
       },
+      ...OUTPUT_MODE_SCHEMA_PROPERTIES,
     },
     required: ['tabId', 'preset'],
   },
@@ -84,6 +90,7 @@ const handler: ToolHandler = async (
   const downloadKbps = args.downloadKbps as number | undefined;
   const uploadKbps = args.uploadKbps as number | undefined;
   const latencyMs = args.latencyMs as number | undefined;
+  const { mode, inlineLimit } = parseOutputMode(args);
 
   const sessionManager = getSessionManager();
 
@@ -177,57 +184,39 @@ const handler: ToolHandler = async (
     ]);
 
     if (preset === 'clear') {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              action: 'network_clear',
-              message: 'Network throttling cleared',
-            }),
-          },
-        ],
-      };
+      const clearPayload = { action: 'network_clear', message: 'Network throttling cleared' };
+      const clearInline = { content: [{ type: 'text' as const, text: JSON.stringify(clearPayload) }] };
+      return resolveOutputMode(mode, inlineLimit, clearInline, clearPayload, 'network');
     }
 
     if (preset === 'custom') {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              action: 'network_custom',
-              downloadKbps,
-              uploadKbps,
-              latencyMs,
-              message: `Custom network conditions applied: ${downloadKbps}Kbps down, ${uploadKbps}Kbps up, ${latencyMs}ms latency`,
-            }),
-          },
-        ],
+      const customPayload = {
+        action: 'network_custom',
+        downloadKbps,
+        uploadKbps,
+        latencyMs,
+        message: `Custom network conditions applied: ${downloadKbps}Kbps down, ${uploadKbps}Kbps up, ${latencyMs}ms latency`,
       };
+      const customInline = { content: [{ type: 'text' as const, text: JSON.stringify(customPayload) }] };
+      return resolveOutputMode(mode, inlineLimit, customInline, customPayload, 'network');
     }
 
     const downloadMbps = ((presetConfig.downloadThroughput * 8) / 1024 / 1024).toFixed(2);
     const uploadMbps = ((presetConfig.uploadThroughput * 8) / 1024 / 1024).toFixed(2);
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            action: 'network_throttle',
-            preset,
-            downloadMbps: Number(downloadMbps),
-            uploadMbps: Number(uploadMbps),
-            latencyMs: presetConfig.latency,
-            message:
-              preset === 'offline'
-                ? 'Network set to offline mode'
-                : `Network throttled to ${preset}: ${downloadMbps}Mbps down, ${uploadMbps}Mbps up, ${presetConfig.latency}ms latency`,
-          }),
-        },
-      ],
+    const throttlePayload = {
+      action: 'network_throttle',
+      preset,
+      downloadMbps: Number(downloadMbps),
+      uploadMbps: Number(uploadMbps),
+      latencyMs: presetConfig.latency,
+      message:
+        preset === 'offline'
+          ? 'Network set to offline mode'
+          : `Network throttled to ${preset}: ${downloadMbps}Mbps down, ${uploadMbps}Mbps up, ${presetConfig.latency}ms latency`,
     };
+    const throttleInline = { content: [{ type: 'text' as const, text: JSON.stringify(throttlePayload) }] };
+    return resolveOutputMode(mode, inlineLimit, throttleInline, throttlePayload, 'network');
   } catch (error) {
     return {
       content: [

@@ -17,6 +17,11 @@ import {
   buildMultipleItemExtractor,
 } from '../extraction';
 import type { ExtractionSchema, SchemaProperty } from '../extraction';
+import {
+  OUTPUT_MODE_SCHEMA_PROPERTIES,
+  parseOutputMode,
+  resolveOutputMode,
+} from './_shared/output-mode';
 
 const definition: MCPToolDefinition = {
   name: 'extract_data',
@@ -47,6 +52,7 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Extract array of items (for listings/tables). Default: false',
       },
+      ...OUTPUT_MODE_SCHEMA_PROPERTIES,
     },
     required: ['tabId', 'schema'],
   },
@@ -75,6 +81,7 @@ const handler: ToolHandler = async (
   const schema = args.schema as ExtractionSchema;
   const selector = args.selector as string | undefined;
   const multiple = (args.multiple as boolean) ?? false;
+  const { mode, inlineLimit } = parseOutputMode(args);
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
@@ -132,11 +139,13 @@ const handler: ToolHandler = async (
         selector: selector || 'auto', fieldCount: fieldNames.length, itemCount: validated.length,
       }));
 
-      return {
-        content: [{ type: 'text', text: JSON.stringify({
-          action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
-        }) }],
+      const multiplePayload = {
+        action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
       };
+      const multipleInlineResult = {
+        content: [{ type: 'text', text: JSON.stringify(multiplePayload) }],
+      };
+      return resolveOutputMode(mode, inlineLimit, multipleInlineResult, multiplePayload, 'extract_data');
     }
 
     // Single item — layered strategies
@@ -151,7 +160,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames);
+      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit);
     }
 
     // Strategy 2: Microdata
@@ -168,7 +177,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames);
+      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit);
     }
 
     // Strategy 4: CSS heuristic
@@ -178,7 +187,7 @@ const handler: ToolHandler = async (
     } catch { /* non-fatal */ }
 
     const { result, validation } = validateAndCoerce(merged, schema);
-    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames);
+    return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit);
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -187,7 +196,7 @@ const handler: ToolHandler = async (
 function buildResponse(
   data: Record<string, unknown>, errors: string[], url: string,
   strategies: string[], domain: string, fieldNames: string[]
-): MCPResult {
+): { inlineResult: MCPResult; payload: Record<string, unknown> } {
   const fieldsFound = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k]) => k);
   const fieldsMissing = fieldNames.filter(f => !fieldsFound.includes(f));
 
@@ -198,16 +207,25 @@ function buildResponse(
     }));
   }
 
-  const response: Record<string, unknown> = {
+  const payload: Record<string, unknown> = {
     action: 'extract_data', url, data, fieldsFound: fieldsFound.length, fieldsTotal: fieldNames.length, strategies,
   };
-  if (fieldsMissing.length > 0) response.fieldsMissing = fieldsMissing;
-  if (errors.length > 0) response.validationErrors = errors;
+  if (fieldsMissing.length > 0) payload.fieldsMissing = fieldsMissing;
+  if (errors.length > 0) payload.validationErrors = errors;
   if (fieldsFound.length === 0) {
-    response.message = 'No data extracted. Try: (1) read_page to verify content, (2) provide a CSS selector, (3) wait_for before extracting.';
+    payload.message = 'No data extracted. Try: (1) read_page to verify content, (2) provide a CSS selector, (3) wait_for before extracting.';
   }
 
-  return { content: [{ type: 'text', text: JSON.stringify(response) }] };
+  return { inlineResult: { content: [{ type: 'text', text: JSON.stringify(payload) }] }, payload };
+}
+
+async function buildResponseWithMode(
+  data: Record<string, unknown>, errors: string[], url: string,
+  strategies: string[], domain: string, fieldNames: string[],
+  mode: import('./_shared/output-mode').OutputMode, inlineLimit: number,
+): Promise<MCPResult> {
+  const { inlineResult, payload } = buildResponse(data, errors, url, strategies, domain, fieldNames);
+  return resolveOutputMode(mode, inlineLimit, inlineResult, payload, 'extract_data');
 }
 
 export function registerExtractDataTool(server: MCPServer): void {

@@ -20,6 +20,11 @@ import {
   type SemanticRuleSet,
 } from '../core/perception/semantic';
 import semanticRulesJson from '../core/perception/semantic-rules.json';
+import {
+  OUTPUT_MODE_SCHEMA_PROPERTIES,
+  parseOutputMode,
+  resolveOutputMode,
+} from './_shared/output-mode';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -80,6 +85,7 @@ const definition: MCPToolDefinition = {
         enum: ['none', 'dom'],
         description: 'AX mode only: use "dom" to explicitly fall back to DOM output if AX output exceeds the output budget. Default: none.',
       },
+      ...OUTPUT_MODE_SCHEMA_PROPERTIES,
     },
     required: ['tabId'],
   },
@@ -949,6 +955,23 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
   return { ...result, content: sanitizedContent };
 };
 
+/**
+ * Outer wrapper that applies output_mode after sanitization.
+ * P2: when output_mode='inline' (the default), the response is byte-identical
+ * to v1.11.0 — sanitizedHandler is called and its result returned directly.
+ */
+const outputModeHandler: ToolHandler = async (sessionId, args, context) => {
+  const result = await sanitizedHandler(sessionId, args, context);
+  if (result.isError) return result;
+
+  const { mode, inlineLimit } = parseOutputMode(args);
+  if (mode === 'inline') return result;
+
+  // Extract the text payload for handle storage
+  const text = result.content?.[0]?.type === 'text' ? result.content[0].text : '';
+  return resolveOutputMode(mode, inlineLimit, result, text, 'read_page');
+};
+
 export function registerReadPageTool(server: MCPServer): void {
-  server.registerTool('read_page', sanitizedHandler, definition);
+  server.registerTool('read_page', outputModeHandler, definition);
 }

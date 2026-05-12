@@ -25,6 +25,11 @@ import {
   type ConsoleEntry,
   type NetworkEntry,
 } from '../core/contracts/evidence-bundle';
+import {
+  OUTPUT_MODE_SCHEMA_PROPERTIES,
+  parseOutputMode,
+  resolveOutputMode,
+} from './_shared/output-mode';
 
 interface OcEvidenceBundleOutput {
   bundle_id: string;
@@ -96,6 +101,7 @@ const definition: MCPToolDefinition = {
           },
         },
       },
+      ...OUTPUT_MODE_SCHEMA_PROPERTIES,
     },
     required: [],
   },
@@ -133,6 +139,7 @@ const handler: ToolHandler = async (
     typeof args.network_window_ms === 'number' ? args.network_window_ms : undefined;
   const evidenceArg = args.evidence as { snapshot?: SnapshotInput } | undefined;
   const snapshot = buildSnapshot(evidenceArg?.snapshot);
+  const { mode, inlineLimit } = parseOutputMode(args);
 
   let result;
   try {
@@ -160,7 +167,8 @@ const handler: ToolHandler = async (
       'no evidence parts captured — supply `evidence.snapshot` with at least one of ' +
       "dom / screenshot_png_base64 / network / console, and select matching `include` parts.";
   }
-  return jsonResult(output);
+  const inlineResult = jsonResult(output);
+  return resolveOutputMode(mode, inlineLimit, inlineResult, output, 'oc_evidence_bundle');
 };
 
 function jsonResult(payload: OcEvidenceBundleOutput): MCPResult {

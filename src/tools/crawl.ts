@@ -28,6 +28,11 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
+import {
+  OUTPUT_MODE_SCHEMA_PROPERTIES,
+  parseOutputMode,
+  resolveOutputMode,
+} from './_shared/output-mode';
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
@@ -86,6 +91,7 @@ const definition: MCPToolDefinition = {
         description:
           'Fetch engine: "cdp" (default, opens a Chrome tab per page), "static" (Node fetch only, fails closed on insufficient pages), or "auto" (static first, fall back to CDP when static is insufficient).',
       },
+      ...OUTPUT_MODE_SCHEMA_PROPERTIES,
     },
     required: ['url'],
   },
@@ -426,6 +432,7 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
   context?: ToolContext,
 ): Promise<MCPResult> => {
+  const { mode, inlineLimit } = parseOutputMode(args);
   const url = args.url as string;
   if (!url) {
     return {
@@ -701,7 +708,13 @@ const handler: ToolHandler = async (
 
     const output = { summary, pages };
 
-    // Ensure output fits within limits
+    // For handle/auto modes, store the full payload without truncation.
+    if (mode !== 'inline') {
+      const inlineResult = { content: [{ type: 'text' as const, text: JSON.stringify(output) }] };
+      return resolveOutputMode(mode, inlineLimit, inlineResult, output, 'crawl');
+    }
+
+    // Inline mode: ensure output fits within limits (v1.11.0-identical behaviour).
     let outputJson = JSON.stringify(output, null, 2);
     if (outputJson.length > MAX_OUTPUT_CHARS) {
       // Truncate page contents progressively to fit
