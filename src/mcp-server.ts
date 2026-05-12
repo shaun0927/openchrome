@@ -55,6 +55,8 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import { isRunHarnessEnabled } from './run-harness/flags';
+import { extractRunId, getRunStore } from './run-harness/store';
 import {
   substituteSecrets,
   redactSecrets,
@@ -101,7 +103,7 @@ export function isConnectionError(error: unknown): boolean {
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
  *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
+const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish']);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
@@ -1247,6 +1249,20 @@ export class MCPServer {
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
     getDashboardState().recordToolStart(sessionId || 'default', toolName, toolArgs, callId);
     const toolStartTime = Date.now();
+    const runHarnessId = isRunHarnessEnabled() ? extractRunId(toolArgs) : undefined;
+    if (runHarnessId && !toolName.startsWith('oc_run_')) {
+      try {
+        getRunStore().appendToolStarted({
+          run_id: runHarnessId,
+          session_id: sessionId,
+          tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+          tool: toolName,
+          args: toolArgs,
+        });
+      } catch {
+        // best-effort run ledger; never alter tool behavior
+      }
+    }
 
     // Adaptive heartbeat: switch to heavy mode during tool execution
     try {
@@ -1606,6 +1622,22 @@ export class MCPServer {
         };
       }
 
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          getRunStore().appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+            tool: toolName,
+            args: toolArgs,
+            ok: !result.isError,
+            duration_ms: Date.now() - toolStartTime,
+          });
+        } catch {
+          // best-effort run ledger; never alter tool behavior
+        }
+      }
+
       // ─── Secrets redaction (#834) ─────────────────────────────────────
       // Last line of defense before the MCP envelope: replace any literal
       // secret value still present in the response (handler may have echoed
@@ -1760,6 +1792,23 @@ export class MCPServer {
           if (Array.isArray(errResult.content)) {
             errResult.content.push({ type: 'text', text: `\n${hintResult.hint}` });
           }
+        }
+      }
+
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          getRunStore().appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+            tool: toolName,
+            args: toolArgs,
+            ok: false,
+            duration_ms: Date.now() - toolStartTime,
+            message: displayMessage,
+          });
+        } catch {
+          // best-effort run ledger; never alter tool behavior
         }
       }
 
