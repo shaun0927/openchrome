@@ -198,6 +198,11 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       return Array.from(worker.targets);
     }),
 
+    // #848: the BrowserContext name owning a tab. The mock does not model named
+    // contexts, so every tab is reported as the reserved 'default' name —
+    // sufficient for handlers that just propagate the value into their output.
+    getTargetContextName: jest.fn().mockImplementation((_targetId: string) => 'default'),
+
     registerExternalTarget: jest.fn().mockImplementation((targetId: string, sessionId: string, workerId: string) => {
       const session = sessions.get(sessionId);
       if (!session) return;
