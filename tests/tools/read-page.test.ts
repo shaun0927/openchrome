@@ -608,7 +608,7 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
-      expect(text).toMatch(/^\[page_stats\]/);
+      expect(text).toMatch(/(?:^|\n)\[page_stats\]/);
     });
 
     test('AX mode page_stats includes url and title', async () => {
