@@ -486,9 +486,15 @@ export class SessionManager {
   }
 
   /**
-   * Delete a session and clean up all workers
+   * Delete a session and clean up all workers.
+   *
+   * @param sessionId session to delete
+   * @param reason lifecycle-bus reason for the destroy event (#857). Defaults
+   *   to `'close'` for user/API-initiated deletes; TTL cleanup passes `'ttl'`
+   *   and full-shutdown cleanup passes `'shutdown'` so consumers can
+   *   distinguish operator action from background cleanup.
    */
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteSession(sessionId: string, reason: SessionDestroyReason = 'close'): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       return;
@@ -532,7 +538,7 @@ export class SessionManager {
     // Remove session
     this.sessions.delete(sessionId);
     this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
-    this.emitLifecycle({ kind: 'session:destroy', sessionId, reason: 'close', ts: Date.now() });
+    this.emitLifecycle({ kind: 'session:destroy', sessionId, reason, ts: Date.now() });
 
     console.error(`[SessionManager] Deleted session ${sessionId}`);
   }
@@ -554,7 +560,10 @@ export class SessionManager {
         continue;
       }
       if (now - session.lastActivityAt > maxAgeMs) {
-        await this.deleteSession(sessionId);
+        // TTL-driven cleanup — #857 lifecycle bus distinguishes this from a
+        // user-initiated `deleteSession()` call so consumers (recorder,
+        // future journal) can attribute the destroy correctly.
+        await this.deleteSession(sessionId, 'ttl');
         deletedSessions.push(sessionId);
         this.totalSessionsCleaned++;
       }
@@ -584,7 +593,10 @@ export class SessionManager {
     const sessionIds = Array.from(this.sessions.keys());
 
     for (const sessionId of sessionIds) {
-      await this.deleteSession(sessionId);
+      // Full-process teardown — #857 lifecycle bus tags this as `shutdown`
+      // so consumers can correlate the burst of destroys with intentional
+      // server shutdown rather than TTL pressure or operator API calls.
+      await this.deleteSession(sessionId, 'shutdown');
       this.totalSessionsCleaned++;
     }
 
@@ -939,7 +951,22 @@ export class SessionManager {
         poolPage = await this.connectionPool.acquirePage();
         // Navigate the pre-warmed page to the target URL
         if (url) {
+          // #857: capture the from-URL BEFORE navigation so the lifecycle
+          // bus reports the transition the operator actually drove (pool
+          // pages typically start at 'about:blank' but a recycled page may
+          // carry its prior URL until smartGoto resolves).
+          const fromUrl = poolPage.url();
           await smartGoto(poolPage, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+          const navTargetId = getTargetId(poolPage.target());
+          this.emitLifecycle({
+            kind: 'target:navigate',
+            sessionId,
+            workerId: worker.id,
+            targetId: navTargetId,
+            fromUrl,
+            toUrl: url,
+            ts: Date.now(),
+          });
         }
         // Copy cookies from the worker's browser context if available
         // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)

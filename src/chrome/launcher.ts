@@ -541,6 +541,22 @@ export class ChromeLauncher {
         };
         // Attached to user-started Chrome — assume real profile
         this.profileState = { type: 'real', extensionsAvailable: true };
+        // Issue #857: announce chrome:launch for the attach path too. We do
+        // not own the PID and have no userDataDir at this stage, so emit the
+        // best-effort metadata we have. `lifecycleMode: 'attach'` lets
+        // consumers (recorder, journal) distinguish attach from spawn.
+        try {
+          getLifecycleBus().emit({
+            kind: 'chrome:launch',
+            pid: 0,
+            port,
+            userDataDir: '',
+            lifecycleMode: 'attach',
+            ts: Date.now(),
+          });
+        } catch {
+          // emit() is contractually no-throw; defence in depth only.
+        }
       }
       return this.instance;
     }
