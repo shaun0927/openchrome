@@ -103,18 +103,33 @@ export type ReplayActionStep =
   | { readonly kind: 'wait_for'; readonly selector: string; readonly timeout_ms?: number };
 
 export interface ReplayHandlerOpts {
-  /** Resolve the tab the replay should target. Required. */
-  resolveCurrentTab: () => Promise<CurrentTabInfo | null>;
-  /** Drive one recorded step in the browser. Required. */
+  /**
+   * Resolve the tab the replay should target. The MCP session id of the
+   * caller is passed so the resolver can scope its tab lookup to that
+   * session — otherwise concurrent agents would all share whatever tab the
+   * default session happens to have open (Codex P1 on PR #930).
+   */
+  resolveCurrentTab: (sessionId: string) => Promise<CurrentTabInfo | null>;
+  /**
+   * Drive one recorded step in the browser. The caller's session id is
+   * forwarded so the runner can fetch the target page from the correct
+   * session (Codex P1 follow-up on PR #930 — same scope as the resolver).
+   */
   runStep: (
     tab: CurrentTabInfo,
     step: ReplayActionStep,
     args: Record<string, unknown>,
+    sessionId: string,
   ) => Promise<ActionStepResult>;
-  /** Evaluate the skill's outcome contract. Required. */
+  /**
+   * Evaluate the skill's outcome contract. The caller's session id is
+   * forwarded so the assertion can run inside the same Chrome target the
+   * replay just acted on (also Codex P1 on PR #930).
+   */
   assertContract: (
     skill: SkillRecord,
     tab: CurrentTabInfo,
+    sessionId: string,
   ) => Promise<ContractAssertionVerdict>;
 }
 
@@ -233,10 +248,11 @@ export async function runReplay(
   skill: SkillRecord,
   args: Record<string, unknown>,
   opts: ReplayHandlerOpts,
+  sessionId: string,
 ): Promise<ReplayResult> {
   // Step 0: resolve the current tab. Without one we cannot enforce
   // the domain check, so refuse early.
-  const tab = await opts.resolveCurrentTab();
+  const tab = await opts.resolveCurrentTab(sessionId);
   if (!tab) {
     return { success: false, code: 'skill_no_active_tab', message: 'no active tab to replay against' };
   }
@@ -301,7 +317,7 @@ export async function runReplay(
   // Step 3: drive each step sequentially. We deliberately do not
   // parallelise — replay must preserve recorded order.
   for (let i = 0; i < steps.length; i++) {
-    const result = await opts.runStep(tab, steps[i], args);
+    const result = await opts.runStep(tab, steps[i], args, sessionId);
     if (!result.ok) {
       return {
         success: false,
@@ -314,7 +330,7 @@ export async function runReplay(
 
   // Step 4: post-condition. The contract runtime owns the verdict
   // shape — we just forward the structured outcome.
-  const verdict = await opts.assertContract(skill, tab);
+  const verdict = await opts.assertContract(skill, tab, sessionId);
   if (verdict.stale === true) {
     return {
       success: false,

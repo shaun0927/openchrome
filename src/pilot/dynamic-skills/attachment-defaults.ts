@@ -36,22 +36,26 @@ import type {
   ReplayActionStep,
 } from './replay.js';
 
-const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_WORKER_ID = 'default';
 
 /**
- * Default tab resolver. Walks the default session/default worker and
- * returns the first known target. Returns `null` when no tab has been
+ * Default tab resolver. Walks the caller's session (passed by the synth
+ * handler from the MCP request envelope) and returns the first known
+ * target on its default worker. Returns `null` when no tab has been
  * created yet (the replay handler then emits `skill_no_active_tab`).
+ *
+ * Codex P1 on PR #930: this previously used a hardcoded `"default"`
+ * session id, which meant every concurrent agent shared whatever tab
+ * the default session happened to have open. Now scoped per-session.
  */
-export async function defaultResolveCurrentTab(): Promise<CurrentTabInfo | null> {
+export async function defaultResolveCurrentTab(sessionId: string): Promise<CurrentTabInfo | null> {
   try {
     const sessionManager = getSessionManager();
-    const targetIds = sessionManager.getWorkerTargetIds(DEFAULT_SESSION_ID, DEFAULT_WORKER_ID);
+    const targetIds = sessionManager.getWorkerTargetIds(sessionId, DEFAULT_WORKER_ID);
     if (targetIds.length === 0) return null;
     const targetId = targetIds[0];
     const page = await sessionManager.getPage(
-      DEFAULT_SESSION_ID,
+      sessionId,
       targetId,
       DEFAULT_WORKER_ID,
       'dynamic-skills-replay',
@@ -82,11 +86,12 @@ export async function defaultRunStep(
   tab: CurrentTabInfo,
   step: ReplayActionStep,
   args: Record<string, unknown>,
+  sessionId: string,
 ): Promise<ActionStepResult> {
   let page: Page | null;
   try {
     page = await getSessionManager().getPage(
-      DEFAULT_SESSION_ID,
+      sessionId,
       tab.tabId,
       DEFAULT_WORKER_ID,
       'dynamic-skills-replay',
@@ -152,18 +157,70 @@ export async function defaultRunStep(
 }
 
 /**
- * Default contract assertion. The dynamic-skills pilot does not yet
- * own the contract-runtime integration; we return a benign pass so
- * replay relies on domain + step success as its post-condition. The
- * orchestrator/curator family will later inject a richer verifier via
- * the `assertContract` override.
+ * Default contract assertion. Evaluates `skill.contractId` as a JavaScript
+ * expression in the live page context via CDP `Runtime.evaluate` — the same
+ * approach used by `src/tools/oc-skill-replay.ts`. A successful boolean
+ * `true` result is treated as pass; everything else (timeout, throw,
+ * non-truthy value) is a fail with a structured reason.
  *
- * `_skill` / `_tab` are unused but kept in the signature so the type
- * matches `DynamicSkillsAttachment['assertContract']`.
+ * Codex P1 on PR #930: previously this returned `{ pass: true }`
+ * unconditionally, so replay reported "success" even though no contract
+ * had actually been verified. Real evaluation keeps the
+ * domain + step + contract three-axis post-condition the issue mandates.
+ *
+ * When the skill carries no `contractId`, we pass with an explicit
+ * `no_contract` reason — that case is genuinely unverifiable here and
+ * the orchestrator/curator may inject a richer verifier later.
  */
+const CONTRACT_EVAL_TIMEOUT_MS = 2_000;
+
 export async function defaultAssertContract(
-  _skill: SkillRecord,
-  _tab: CurrentTabInfo,
+  skill: SkillRecord,
+  tab: CurrentTabInfo,
+  sessionId: string,
 ): Promise<ContractAssertionVerdict> {
-  return { pass: true };
+  const expr = (skill.contractId ?? '').trim();
+  if (expr.length === 0) {
+    return { pass: true, reason: 'no_contract' };
+  }
+  try {
+    const sessionManager = getSessionManager();
+    const page = await sessionManager.getPage(
+      sessionId,
+      tab.tabId,
+      DEFAULT_WORKER_ID,
+      'dynamic-skills-assert',
+    );
+    if (!page) {
+      return { pass: false, reason: 'contract_eval_no_page' };
+    }
+    const cdpSession = await page.target().createCDPSession();
+    try {
+      const result = (await cdpSession.send('Runtime.evaluate', {
+        expression: expr,
+        returnByValue: true,
+        awaitPromise: true,
+        timeout: CONTRACT_EVAL_TIMEOUT_MS,
+      })) as { result?: { value?: unknown }; exceptionDetails?: { text?: string } };
+      if (result.exceptionDetails) {
+        return {
+          pass: false,
+          reason: `contract_eval_threw: ${result.exceptionDetails.text ?? 'unknown'}`,
+        };
+      }
+      const value = result?.result?.value;
+      if (value === true) return { pass: true };
+      return { pass: false, reason: `contract_eval_falsey: got ${JSON.stringify(value)}` };
+    } finally {
+      try {
+        await cdpSession.detach();
+      } catch {
+        /* detach is best-effort */
+      }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { pass: false, reason: `contract_eval_failed: ${message}` };
+  }
 }
+

@@ -78,16 +78,33 @@ import { synthesizeToolDefinition } from './synthesizer.js';
  * contract-runtime wiring.
  */
 export interface DynamicSkillsAttachment {
-  /** Resolve the tab the replay should target. */
-  resolveCurrentTab?: () => Promise<CurrentTabInfo | null>;
-  /** Drive one recorded step. */
+  /**
+   * Resolve the tab the replay should target for the calling MCP session.
+   * The session id is threaded through so concurrent agents don't share
+   * the default session's tab (Codex P1 on PR #930).
+   */
+  resolveCurrentTab?: (sessionId: string) => Promise<CurrentTabInfo | null>;
+  /**
+   * Drive one recorded step. The caller's MCP session id is forwarded so
+   * the runner can address the target's page in the right session
+   * (Codex P1 follow-up on PR #930).
+   */
   runStep?: (
     tab: CurrentTabInfo,
     step: ReplayActionStep,
     args: Record<string, unknown>,
+    sessionId: string,
   ) => Promise<ActionStepResult>;
-  /** Evaluate a skill's outcome contract. */
-  assertContract?: (skill: SkillRecord, tab: CurrentTabInfo) => Promise<ContractAssertionVerdict>;
+  /**
+   * Evaluate a skill's outcome contract against the same tab the replay
+   * just executed against. The session id lets the verifier reach the
+   * Chrome target via the SessionManager (Codex P1 on PR #930).
+   */
+  assertContract?: (
+    skill: SkillRecord,
+    tab: CurrentTabInfo,
+    sessionId: string,
+  ) => Promise<ContractAssertionVerdict>;
   /** Override the skill-memory root dir. */
   skillRootDir?: string;
   /** Audit emitter (defaults to `logAuditEntry`). */
@@ -171,7 +188,7 @@ function buildSynthesizedHandler(
     };
     let result;
     try {
-      result = await runReplay(skill, args, opts);
+      result = await runReplay(skill, args, opts, sessionId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       result = {

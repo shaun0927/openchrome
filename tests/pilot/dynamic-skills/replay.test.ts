@@ -66,7 +66,7 @@ describe('runReplay — happy path', () => {
         return { ok: true };
       },
     });
-    const out = await runReplay(makeSkill(), { username: 'demo' }, opts);
+    const out = await runReplay(makeSkill(), { username: 'demo' }, opts, "test-session");
     expect(out).toEqual({ success: true, contract_id: 'ctr_login_success' });
     expect(calls).toHaveLength(3);
     expect(calls[0]).toEqual({ kind: 'navigate', url: 'https://example.com/login' });
@@ -76,7 +76,7 @@ describe('runReplay — happy path', () => {
     const opts = makeOpts({
       assertContract: async () => ({ pass: true, evidenceHandle: 'ev-xyz' }),
     });
-    const out = await runReplay(makeSkill(), {}, opts);
+    const out = await runReplay(makeSkill(), {}, opts, "test-session");
     expect(out).toEqual({
       success: true,
       contract_id: 'ctr_login_success',
@@ -90,21 +90,21 @@ describe('runReplay — domain enforcement', () => {
     const opts = makeOpts({
       resolveCurrentTab: async () => tab('https://elsewhere.test/'),
     });
-    const out = await runReplay(makeSkill(), {}, opts);
+    const out = await runReplay(makeSkill(), {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) expect(out.code).toBe('skill_domain_mismatch');
   });
 
   test('refuses when tab URL cannot be parsed as a host', async () => {
     const opts = makeOpts({ resolveCurrentTab: async () => tab('not-a-url') });
-    const out = await runReplay(makeSkill(), {}, opts);
+    const out = await runReplay(makeSkill(), {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) expect(out.code).toBe('skill_domain_mismatch');
   });
 
   test('refuses when no active tab is available', async () => {
     const opts = makeOpts({ resolveCurrentTab: async () => null });
-    const out = await runReplay(makeSkill(), {}, opts);
+    const out = await runReplay(makeSkill(), {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) expect(out.code).toBe('skill_no_active_tab');
   });
@@ -115,7 +115,7 @@ describe('runReplay — contract enforcement', () => {
     const opts = makeOpts({
       assertContract: async () => ({ pass: false, reason: 'form did not submit', evidenceHandle: 'ev-1' }),
     });
-    const out = await runReplay(makeSkill(), {}, opts);
+    const out = await runReplay(makeSkill(), {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) {
       expect(out.code).toBe('skill_postcondition_failed');
@@ -128,7 +128,7 @@ describe('runReplay — contract enforcement', () => {
     const opts = makeOpts({
       assertContract: async () => ({ pass: false, stale: true, reason: 'form changed' }),
     });
-    const out = await runReplay(makeSkill(), {}, opts);
+    const out = await runReplay(makeSkill(), {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) {
       expect(out.code).toBe('skill_stale');
@@ -147,7 +147,7 @@ describe('runReplay — step failures', () => {
         return { ok: true };
       },
     });
-    const out = await runReplay(makeSkill(), {}, opts);
+    const out = await runReplay(makeSkill(), {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) {
       expect(out.code).toBe('skill_step_failed');
@@ -162,7 +162,7 @@ describe('runReplay — step failures', () => {
     const skill = makeSkill({
       steps: { actions: [{ kind: 'magic-step', payload: 42 }] },
     });
-    const out = await runReplay(skill, {}, opts);
+    const out = await runReplay(skill, {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) {
       expect(out.code).toBe('skill_unsupported_step');
@@ -173,7 +173,7 @@ describe('runReplay — step failures', () => {
   test('rejects skills with no actions array', async () => {
     const opts = makeOpts();
     const skill = makeSkill({ steps: { parameters: [] } });
-    const out = await runReplay(skill, {}, opts);
+    const out = await runReplay(skill, {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) expect(out.code).toBe('skill_invalid_steps');
   });
@@ -197,7 +197,7 @@ describe('runReplay — wait_for + array steps (#930 review)', () => {
         ],
       },
     });
-    const out = await runReplay(skill, {}, opts);
+    const out = await runReplay(skill, {}, opts, "test-session");
     expect(out).toEqual({ success: true, contract_id: 'ctr_login_success' });
     expect(calls).toHaveLength(2);
     expect(calls[1]).toEqual({ kind: 'wait_for', selector: '.logged-in', timeout_ms: 5000 });
@@ -214,7 +214,7 @@ describe('runReplay — wait_for + array steps (#930 review)', () => {
     const skill = makeSkill({
       steps: { parameters: [], actions: [{ kind: 'wait_for', selector: '#ready' }] },
     });
-    const out = await runReplay(skill, {}, opts);
+    const out = await runReplay(skill, {}, opts, "test-session");
     expect(out.success).toBe(true);
     expect(calls[0]).toEqual({ kind: 'wait_for', selector: '#ready', timeout_ms: undefined });
   });
@@ -235,7 +235,7 @@ describe('runReplay — wait_for + array steps (#930 review)', () => {
         { kind: 'click', selector: 'button[type=submit]' },
       ] as unknown as SkillRecord['steps'],
     });
-    const out = await runReplay(skill, { username: 'demo' }, opts);
+    const out = await runReplay(skill, { username: 'demo' }, opts, "test-session");
     expect(out).toEqual({ success: true, contract_id: 'ctr_login_success' });
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({ kind: 'fill', selector: '#user', valueParam: 'username' });
@@ -246,7 +246,7 @@ describe('runReplay — wait_for + array steps (#930 review)', () => {
     const skill = makeSkill({
       steps: { actions: [{ kind: 'wait_for', timeout_ms: 1000 }] },
     });
-    const out = await runReplay(skill, {}, opts);
+    const out = await runReplay(skill, {}, opts, "test-session");
     expect(out.success).toBe(false);
     if (!out.success) expect(out.code).toBe('skill_unsupported_step');
   });
