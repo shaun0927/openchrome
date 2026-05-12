@@ -11,7 +11,7 @@
  *   6. No duplicate tool names
  *
  * Usage:
- *   node scripts/lint-tool-schemas.mjs <tools-list.json> [--update-baseline]
+ *   node scripts/lint-tool-schemas.mjs <tools-list.json|-> [--update-baseline]
  *
  * The script reads violations from scripts/lint-tool-schemas.baseline.json
  * (an allowlist of known violations). Only violations NOT in the baseline cause
@@ -39,14 +39,14 @@ const updateBaseline = args.includes('--update-baseline');
 const inputFile = args.find((a) => !a.startsWith('--'));
 
 if (!inputFile) {
-  process.stderr.write('Usage: node scripts/lint-tool-schemas.mjs <tools-list.json> [--update-baseline]\n');
+  process.stderr.write('Usage: node scripts/lint-tool-schemas.mjs <tools-list.json|-> [--update-baseline]\n');
   process.exit(2);
 }
 
 // ── load tools list ────────────────────────────────────────────────────────
 let tools;
 try {
-  tools = JSON.parse(readFileSync(resolve(inputFile), 'utf8'));
+  tools = JSON.parse(readFileSync(inputFile === '-' ? 0 : resolve(inputFile), 'utf8'));
 } catch (err) {
   process.stderr.write(`Error reading tools list: ${err.message}\n`);
   process.exit(2);

@@ -50,8 +50,26 @@ function runLint(fixturePath: string, extraArgs: string[] = []): { exitCode: num
   };
 }
 
+function runLintFromStdin(tools: unknown[]): { exitCode: number; stdout: string; stderr: string } {
+  const result = spawnSync('node', [SCRIPT, '-'], {
+    encoding: 'utf8',
+    input: JSON.stringify(tools),
+    env: { ...process.env },
+  });
+  return {
+    exitCode: result.status ?? 1,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+  };
+}
+
 // ── Rule 1: description_length ─────────────────────────────────────────────
 describe('Rule 1 — description_length', () => {
+  it('accepts tools/list JSON from stdin for cross-platform npm scripts', () => {
+    const result = runLintFromStdin([{ ...VALID_TOOL }]);
+    expect(result.exitCode).toBe(0);
+  });
+
   it('passes when description is within 500 chars', () => {
     const tools = [{ ...VALID_TOOL, description: 'x'.repeat(500) }];
     const path = writeTempFixture(tools);
