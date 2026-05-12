@@ -13,6 +13,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
+import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
@@ -32,6 +33,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         enum: ['interactive', 'all', 'visible'],
         description: 'Element scope. Default: visible',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, append approximate returned size/token metrics to text output. Default: false.',
       },
     },
     required: ['tabId', 'query'],
@@ -100,6 +105,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const query = args.query as string;
   const scope = (args.scope as string) || 'visible';
+  const includeMetrics = args.include_metrics === true;
 
   const sessionManager = getSessionManager();
 
@@ -526,9 +532,15 @@ const handler: ToolHandler = async (
 
     // Footer with page context (always included)
     lines.push(`[Page] ${inspectResult.url} | "${inspectResult.title}"`);
+    const text = lines.join('\n');
 
     return {
-      content: [{ type: 'text', text: lines.join('\n') }],
+      content: [{
+        type: 'text',
+        text: includeMetrics
+          ? appendMetricsFooter(text, buildTextMetrics(text, { mode: `inspect:${scope}` }))
+          : text,
+      }],
     };
   } catch (error) {
     return {
