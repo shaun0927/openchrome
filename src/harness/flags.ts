@@ -65,6 +65,17 @@ export const isHandoffPersistEnabled = (): boolean => isFamilyEnabled('OPENCHROM
 export const isPerceptionVotingEnabled = (): boolean => isFamilyEnabled('OPENCHROME_PERCEPTION_VOTING');
 export const isSkillCuratorEnabled = (): boolean => isFamilyEnabled('OPENCHROME_SKILL_CURATOR');
 
+/**
+ * Pilot-tier skill replay (#856). Off-by-default even when `--pilot` is on:
+ * the operator must explicitly opt in via `OPENCHROME_SKILL_REPLAY=1`. This
+ * keeps the toolset diff identical to the 1.11 baseline unless the operator
+ * deliberately wires the new MCP tool in.
+ */
+export function isSkillReplayEnabled(): boolean {
+  if (!isPilotEnabled()) return false;
+  return isTruthy(process.env.OPENCHROME_SKILL_REPLAY);
+}
+
 const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['trace', isTraceEnabled],
   ['state_graph', isStateGraphEnabled],
@@ -72,6 +83,7 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['handoff_persist', isHandoffPersistEnabled],
   ['perception_voting', isPerceptionVotingEnabled],
   ['skill_curator', isSkillCuratorEnabled],
+  ['skill_replay', isSkillReplayEnabled],
 ];
 
 /**

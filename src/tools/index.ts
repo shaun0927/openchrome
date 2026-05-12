@@ -106,6 +106,8 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
+// Skill replay (#856) — pilot-tier, gated by --pilot + OPENCHROME_SKILL_REPLAY=1
+import { registerOcSkillReplayTool } from './oc-skill-replay';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -217,6 +219,9 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+  // Skill replay (#856) — registration is gated inside the registrar so the
+  // toolset diff is empty when --pilot or OPENCHROME_SKILL_REPLAY is off.
+  registerOcSkillReplayTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
