@@ -20,6 +20,12 @@ import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-class
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
 import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+  type ReturnAfterState,
+} from './_shared/return-after-state';
+import {
   formatNodeRefToken,
   formatUidEvictedError,
   getCurrentLoaderId,
@@ -104,6 +110,7 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
       ref: {
         type: 'string',
         description:
@@ -319,6 +326,7 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -819,7 +827,9 @@ const handler: ToolHandler = async (
           } catch { /* screenshot failed, non-fatal */ }
         }
 
-        return attachVerifyReport({ content: resultContent }, axVerifyReport);
+        const axResult = attachVerifyReport({ content: resultContent }, axVerifyReport);
+        await appendReturnAfterState(axResult, page, sessionId, tabId, returnAfterState, context);
+        return axResult;
       }
     } catch (axError) {
       throwIfAborted(context);
@@ -1147,7 +1157,9 @@ const handler: ToolHandler = async (
       responseContent.push(screenshotContent);
     }
 
-    return attachVerifyReport({ content: responseContent }, cssVerifyReport);
+    const cssResult = attachVerifyReport({ content: responseContent }, cssVerifyReport);
+    await appendReturnAfterState(cssResult, page, sessionId, tabId, returnAfterState, context);
+    return cssResult;
   } catch (error) {
     return {
       content: [
