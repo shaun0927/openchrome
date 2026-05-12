@@ -105,9 +105,12 @@ export class ScreenshotScheduler {
 
       const params: Record<string, unknown> = {
         format,
-        quality,
-        optimizeForSpeed: options.optimizeForSpeed ?? true,
       };
+
+      if (format === 'webp' || format === 'jpeg') {
+        params.quality = quality;
+        params.optimizeForSpeed = options.optimizeForSpeed ?? true;
+      }
 
       if (options.clip) {
         params.clip = options.clip;
