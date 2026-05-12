@@ -12,6 +12,7 @@
 
 import { TraceStorage } from '../trace';
 import type { TraceEvent } from '../trace';
+import { redactTraceEvent } from '../trace/redactor';
 
 const TRACE_SESSION_PREFIX = 'crawl-jobs-';
 const startedSessions = new Set<string>();
@@ -56,7 +57,11 @@ export async function emitCrawlTrace(
     }
     const seq = (seqCounters.get(traceSid) ?? 0) + 1;
     seqCounters.set(traceSid, seq);
-    const event: TraceEvent = { ts: Date.now(), seq, kind, body };
+    // Scrub credentials from the body before it lands on disk. The trace
+    // stream is read-only observability but the file is plain JSONL — any
+    // `?token=…` or Bearer header would otherwise be visible to anything
+    // that can read `~/.openchrome/trace/`.
+    const event: TraceEvent = redactTraceEvent({ ts: Date.now(), seq, kind, body });
     await storage.appendEvents(traceSid, [event]);
   } catch {
     // Best-effort: trace failures must not propagate into the tool result.

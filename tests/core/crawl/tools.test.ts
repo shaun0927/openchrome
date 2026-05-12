@@ -353,7 +353,7 @@ describe('legacy crawl snapshot — runner CrawledPage shape', () => {
     );
     const pages = body.pages as CrawledPage[];
     expect(pages.length).toBe(2);
-    const allowed = ['url', 'title', 'content', 'depth', 'links_found', 'error'];
+    const allowed = ['url', 'title', 'content', 'depth', 'links_found', 'error', 'truncated'];
     for (const p of pages) {
       expect(typeof p.url).toBe('string');
       expect(typeof p.title).toBe('string');

@@ -53,10 +53,19 @@ const handler: ToolHandler = async (
     return errorResult('url must use http or https scheme');
   }
 
+  // Clamp `max_pages` to [1, 10_000]. The legacy crawl tool accepted up to
+  // `Number.MAX_SAFE_INTEGER`, which combined with the (now-capped) per-page
+  // content size lets a caller fill the entire jobs directory. 10_000 pages
+  // at the 256 KiB content cap caps a single job at ~2.5 GiB on disk.
+  const rawMaxPages = args.max_pages != null ? Number(args.max_pages) : 20;
+  const clampedMaxPages = Number.isFinite(rawMaxPages)
+    ? Math.min(10_000, Math.max(1, Math.floor(rawMaxPages)))
+    : 20;
+
   const config: JobConfig = {
     url,
     max_depth: args.max_depth != null ? Number(args.max_depth) : 2,
-    max_pages: args.max_pages != null ? Number(args.max_pages) : 20,
+    max_pages: clampedMaxPages,
     scope: (args.scope as string) || `${parsed.origin}/**`,
     include_patterns: args.include_patterns as string[] | undefined,
     exclude_patterns: args.exclude_patterns as string[] | undefined,

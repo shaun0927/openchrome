@@ -9,7 +9,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
-import { loadJob, isExpired, type JobState } from '../core/crawl/job-store';
+import { assertValidJobId, loadJob, isExpired, type JobState } from '../core/crawl/job-store';
 import { advanceJob, defaultAdvance, type AdvanceOptions } from '../core/crawl/runner';
 import { emitCrawlTrace } from '../core/crawl/trace-emit';
 
@@ -70,6 +70,14 @@ const handler: ToolHandler = async (
   const jobId = args.jobId as string;
   if (!jobId || typeof jobId !== 'string') {
     return errorResult('jobId is required and must be a string');
+  }
+  // Validate BEFORE any disk access so a caller cannot use a malformed
+  // jobId (e.g. `../../../etc/passwd`) to make `loadJob` read attacker-
+  // chosen files. Mirrors the defence-in-depth in job-store.
+  try {
+    assertValidJobId(jobId);
+  } catch (err) {
+    return errorResult(err instanceof Error ? err.message : String(err));
   }
   const advance =
     args.advance != null && Number.isFinite(Number(args.advance))

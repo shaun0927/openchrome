@@ -7,7 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
-import { loadJob, setStatus } from '../core/crawl/job-store';
+import { assertValidJobId, loadJob, setStatus } from '../core/crawl/job-store';
 import { emitCrawlTrace } from '../core/crawl/trace-emit';
 
 const definition: MCPToolDefinition = {
@@ -32,6 +32,13 @@ const handler: ToolHandler = async (
   const jobId = args.jobId as string;
   if (!jobId || typeof jobId !== 'string') {
     return errorResult('jobId is required and must be a string');
+  }
+  // Validate BEFORE any disk access so a malformed jobId cannot drive
+  // `setStatus` to append to attacker-chosen paths.
+  try {
+    assertValidJobId(jobId);
+  } catch (err) {
+    return errorResult(err instanceof Error ? err.message : String(err));
   }
   try {
     // loadJob exists-check — surfaces a clear error rather than silently

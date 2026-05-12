@@ -26,6 +26,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { acquireLock } from '../../utils/atomic-file';
+import { redactValue } from '../trace/redactor';
 
 /** A page recorded in the job log (mirrors the legacy `crawl` tool shape). */
 export interface CrawledPage {
@@ -35,6 +36,12 @@ export interface CrawledPage {
   depth: number;
   links_found: number;
   error?: string;
+  /**
+   * Present and `true` when `content` was capped at `OC_CRAWL_PAGE_BYTES`
+   * (default 256 KiB). Absent when the page fit under the cap. Bounds the
+   * on-disk growth of a single job to a predictable size.
+   */
+  truncated?: boolean;
 }
 
 /** Public crawl configuration (mirrors legacy `crawl` tool args). */
@@ -102,11 +109,39 @@ export function jobsRootDir(): string {
   return path.join(os.homedir(), '.openchrome', 'jobs');
 }
 
+/**
+ * Crockford-base32 ULID: 26 chars, alphabet `0-9A-HJKMNP-TV-Z` (no I/L/O/U).
+ * Mirrors the format produced by `generateUlid()` below. We enforce the exact
+ * shape on every caller-supplied `jobId` so a malicious or buggy caller cannot
+ * cause `path.join(jobsRootDir(), ${jobId}.jsonl)` to escape the jobs root
+ * (path-traversal via `..`, absolute paths, NUL injection, …).
+ */
+const VALID_JOB_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/**
+ * Reject any jobId that is not a well-formed ULID. Throws a clear error
+ * otherwise. Defence-in-depth: tool handlers also validate at their entry
+ * points, but the store enforces the invariant at every fs call so internal
+ * misuse (e.g. a buggy refactor) cannot bypass it.
+ */
+export function assertValidJobId(jobId: string): void {
+  if (typeof jobId !== 'string' || jobId.length === 0) {
+    throw new Error('job-store: jobId must be a non-empty string');
+  }
+  if (!VALID_JOB_ID_RE.test(jobId)) {
+    throw new Error(
+      `job-store: jobId "${jobId}" is not a valid ULID (expected 26-char Crockford base32)`,
+    );
+  }
+}
+
 export function jobFilePath(jobId: string): string {
+  assertValidJobId(jobId);
   return path.join(jobsRootDir(), `${jobId}.jsonl`);
 }
 
 function lockFilePath(jobId: string): string {
+  assertValidJobId(jobId);
   return path.join(jobsRootDir(), `${jobId}.jsonl.lock`);
 }
 
@@ -149,6 +184,32 @@ function ensureRoot(): void {
 }
 
 /**
+ * Best-effort URL scrub: runs the credential-pattern walker over a string
+ * value so that tokens like `?token=...`, basic-auth `user:pass@`, JWTs in
+ * the path, etc. become `[REDACTED]` before they hit disk. The redactor
+ * returns the same value type, so a `string` in → `string` out.
+ */
+function scrubUrlString(value: string): string {
+  const out = redactValue(value);
+  return typeof out === 'string' ? out : value;
+}
+
+/**
+ * Defence-in-depth: even though the runner now scrubs `url`/`title`/`content`
+ * up front (see `runner.ts`), every event is run through the credential
+ * walker at the persistence boundary. This catches both:
+ *   - direct callers (tests, future tools) that forgot to redact, and
+ *   - secrets that slip into fields the runner doesn't explicitly handle
+ *     (e.g. an error `message` that quotes a Bearer token).
+ *
+ * The walker preserves shape (kind, t, depth, links_found, page.depth, …) —
+ * only string leaves get pattern-scrubbed.
+ */
+function scrubEvent(event: JobEvent): JobEvent {
+  return redactValue(event) as JobEvent;
+}
+
+/**
  * Create a new job file. Atomically writes the header record so a partial
  * write never produces a half-initialised job. Returns the freshly minted ULID.
  */
@@ -156,7 +217,12 @@ export async function createJob(config: JobConfig): Promise<string> {
   ensureRoot();
   const jobId = generateUlid();
   const file = jobFilePath(jobId);
-  const header: HeaderRecord = { kind: 'header', config, createdAt: Date.now() };
+  // Redact credentials from the start URL before persisting (e.g. a
+  // basic-auth `https://user:pass@host/` or a `?token=…` in a callback URL).
+  // The runner sees the original `config.url` only in memory; on disk we
+  // keep the scrubbed copy.
+  const safeConfig: JobConfig = { ...config, url: scrubUrlString(config.url) };
+  const header: HeaderRecord = { kind: 'header', config: safeConfig, createdAt: Date.now() };
   const line = JSON.stringify(header) + '\n';
   // Use atomic write for the header — the file is brand new so this is just
   // "create with content" plus rename, which prevents readers from seeing a
@@ -173,12 +239,14 @@ export async function createJob(config: JobConfig): Promise<string> {
  * `appendEvent` for those.
  */
 export function appendEventUnlocked(jobId: string, event: JobEvent): void {
+  assertValidJobId(jobId);
   ensureRoot();
   const file = jobFilePath(jobId);
   if (!fs.existsSync(file)) {
     throw new Error(`appendEvent: job ${jobId} does not exist`);
   }
-  fs.appendFileSync(file, JSON.stringify(event) + '\n', 'utf8');
+  const safe = scrubEvent(event);
+  fs.appendFileSync(file, JSON.stringify(safe) + '\n', 'utf8');
 }
 
 /**
@@ -188,6 +256,7 @@ export function appendEventUnlocked(jobId: string, event: JobEvent): void {
  * self-deadlock against the per-job lock.
  */
 export async function appendEvent(jobId: string, event: JobEvent): Promise<void> {
+  assertValidJobId(jobId);
   ensureRoot();
   const file = jobFilePath(jobId);
   if (!fs.existsSync(file)) {
@@ -195,7 +264,8 @@ export async function appendEvent(jobId: string, event: JobEvent): Promise<void>
   }
   const release = await acquireLock(lockFilePath(jobId));
   try {
-    fs.appendFileSync(file, JSON.stringify(event) + '\n', 'utf8');
+    const safe = scrubEvent(event);
+    fs.appendFileSync(file, JSON.stringify(safe) + '\n', 'utf8');
   } finally {
     await release();
   }
@@ -203,11 +273,13 @@ export async function appendEvent(jobId: string, event: JobEvent): Promise<void>
 
 /** Convenience: append a status event (acquires the lock). */
 export async function setStatus(jobId: string, status: JobStatus): Promise<void> {
+  assertValidJobId(jobId);
   await appendEvent(jobId, { kind: 'status', status, t: Date.now() });
 }
 
 /** Lock-free status append — for callers that already hold `withJobLock`. */
 export function setStatusUnlocked(jobId: string, status: JobStatus): void {
+  assertValidJobId(jobId);
   appendEventUnlocked(jobId, { kind: 'status', status, t: Date.now() });
 }
 
@@ -219,6 +291,7 @@ export function setStatusUnlocked(jobId: string, status: JobStatus): void {
  * the cancel-then-status flow from a stale runner.
  */
 export function loadJob(jobId: string): JobState {
+  assertValidJobId(jobId);
   const file = jobFilePath(jobId);
   if (!fs.existsSync(file)) {
     throw new Error(`loadJob: job ${jobId} does not exist`);
@@ -255,8 +328,14 @@ export function loadJob(jobId: string): JobState {
     let evt: JobEvent;
     try {
       evt = JSON.parse(lines[i]) as JobEvent;
-    } catch {
-      // Skip malformed event line — best-effort replay.
+    } catch (err) {
+      // Skip malformed event line — best-effort replay. Surface it on
+      // stderr (NEVER stdout — that channel carries MCP JSON-RPC) so an
+      // operator can find truncated lines, partial writes after a crash,
+      // or a corrupt log file.
+      console.error(
+        `[crawl/job-store] parse failure jobId=${jobId} lineIndex=${i}: ${err instanceof Error ? err.message : String(err)}`,
+      );
       continue;
     }
     applyEvent(state, evt);
@@ -323,6 +402,7 @@ export function isExpired(state: { createdAt: number }, now: number): boolean {
 
 /** Acquire the per-job lock and run `fn`. Exposed for callers that need atomicity across read + write (e.g. the runner). */
 export async function withJobLock<T>(jobId: string, fn: () => Promise<T>): Promise<T> {
+  assertValidJobId(jobId);
   ensureRoot();
   const release = await acquireLock(lockFilePath(jobId));
   try {
