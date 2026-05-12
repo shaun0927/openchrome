@@ -116,6 +116,8 @@ export class CDPClient {
   private lastCookieScanResult: CookieScanResult | null = null;
   /** Coalesces concurrent connect() calls — only one connectInternal() runs at a time. */
   private pendingConnect: Promise<void> | null = null;
+  /** Invalidates stale async connection attempts that resolve after a reconnect. */
+  private connectionGeneration = 0;
   /** Timestamp of last successful connection verification (heartbeat or active probe). */
   private lastVerifiedAt = 0;
 
@@ -653,11 +655,16 @@ export class CDPClient {
    * are both capped by the remaining budget so the total wall-clock time
    * stays within the caller's deadline.
    */
-  private async connectInternal(options?: { autoLaunch?: boolean; budget?: Budget }): Promise<void> {
+  private isCurrentConnectionGeneration(generation?: number): boolean {
+    return generation === undefined || generation === this.connectionGeneration;
+  }
+
+  private async connectInternal(options?: { autoLaunch?: boolean; budget?: Budget; generation?: number }): Promise<boolean> {
     this.disconnectRequested = false;
     const launcher = getChromeLauncher(this.port);
     const autoLaunch = options?.autoLaunch ?? this.autoLaunch;
     const budget = options?.budget;
+    const generation = options?.generation;
     const budgetDriven = !!budget && !isLegacyBudgetMode();
 
     // Retry loop: after macOS sleep/wake, Chrome's WebSocket listener may be in a
@@ -678,6 +685,9 @@ export class CDPClient {
 
       // Re-fetch instance on each attempt — Chrome may have regenerated its UUID
       const instance = await launcher.ensureChrome({ autoLaunch });
+      if (!this.isCurrentConnectionGeneration(generation)) {
+        return false;
+      }
 
       const wsTimeoutMs = budgetDriven
         ? Math.max(1, Math.min(DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS, budget!.remaining()))
@@ -685,7 +695,7 @@ export class CDPClient {
 
       try {
         let wsConnectTid: ReturnType<typeof setTimeout>;
-        this.browser = await Promise.race([
+        const connectedBrowser = await Promise.race([
           puppeteer.connect({
             browserWSEndpoint: instance.wsEndpoint,
             defaultViewport: null,
@@ -699,12 +709,27 @@ export class CDPClient {
           }),
         ]) as Browser;
 
+        if (!this.isCurrentConnectionGeneration(generation)) {
+          connectedBrowser.removeAllListeners('disconnected');
+          connectedBrowser.removeAllListeners('targetdestroyed');
+          connectedBrowser.removeAllListeners('targetchanged');
+          connectedBrowser.removeAllListeners('targetcreated');
+          connectedBrowser.disconnect().catch(() => {});
+          return false;
+        }
+
+        this.browser = connectedBrowser;
+
         if (attempt > 1) {
           const remainingStr = budgetDriven ? `, budget remaining=${budget!.remaining()}ms` : `/${maxConnectRetries}`;
           console.error(`[CDPClient] connectInternal succeeded on attempt ${attempt}${remainingStr}`);
         }
         break; // Success — exit retry loop
       } catch (err) {
+        if (!this.isCurrentConnectionGeneration(generation)) {
+          return false;
+        }
+
         // Clean up any partially-connected browser from this attempt to prevent
         // orphaned event listeners from firing handleDisconnect on an old browser.
         if (this.browser) {
@@ -846,6 +871,7 @@ export class CDPClient {
       type: 'connected',
       timestamp: Date.now(),
     });
+    return true;
   }
 
   /**
@@ -900,22 +926,31 @@ export class CDPClient {
     }
 
     this.connectionState = 'connecting';
-    this.pendingConnect = (async () => {
+    const generation = ++this.connectionGeneration;
+    const pendingConnect = (async () => {
       try {
-        await this.connectInternal({ budget });
+        const connected = await this.connectInternal({ budget, generation });
+        if (connected === false) {
+          return;
+        }
         this.lastVerifiedAt = Date.now();
         this.startHeartbeat();
         console.error('[CDPClient] Connected to Chrome');
       } catch (err) {
-        this.connectionState = 'disconnected';
+        if (this.isCurrentConnectionGeneration(generation)) {
+          this.connectionState = 'disconnected';
+        }
         throw err;
       }
     })();
+    this.pendingConnect = pendingConnect;
 
     try {
-      await this.pendingConnect;
+      await pendingConnect;
     } finally {
-      this.pendingConnect = null;
+      if (this.pendingConnect === pendingConnect) {
+        this.pendingConnect = null;
+      }
     }
   }
 
@@ -930,6 +965,7 @@ export class CDPClient {
    */
   async forceReconnect(options?: { budget?: Budget }): Promise<void> {
     const budget = options?.budget;
+    const generation = ++this.connectionGeneration;
     // Invalidate any in-flight connect() — we're replacing the connection entirely
     this.pendingConnect = null;
     this.stopHeartbeat();
@@ -965,7 +1001,10 @@ export class CDPClient {
     try {
       // Do NOT auto-launch Chrome on heartbeat-triggered reconnect.
       // If Chrome was closed, stay disconnected until the next tool call.
-      await this.connectInternal({ autoLaunch: false, budget });
+      const connected = await this.connectInternal({ autoLaunch: false, budget, generation });
+      if (connected === false) {
+        return;
+      }
       this.lastVerifiedAt = Date.now();
       this.consecutiveHeartbeatFailures = 0;
       this.startHeartbeat();
