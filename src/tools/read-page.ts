@@ -13,6 +13,13 @@ import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
+import {
+  buildSemanticView,
+  type SemanticAXNode,
+  type SemanticDomElement,
+  type SemanticRuleSet,
+} from '../core/perception/semantic';
+import semanticRulesJson from '../core/perception/semantic-rules.json';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -56,8 +63,8 @@ const definition: MCPToolDefinition = {
       },
       mode: {
         type: 'string',
-        enum: ['ax', 'dom', 'css'],
-        description: 'Output mode: dom (default), ax, or css',
+        enum: ['ax', 'dom', 'css', 'semantic'],
+        description: 'Output mode: dom (default), ax, css, or semantic',
       },
       includePagination: {
         type: 'boolean',
@@ -127,9 +134,9 @@ const handler: ToolHandler = async (
 
     // Mode dispatch
     const mode = (args.mode as string) || 'dom';
-    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
+    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic') {
       return {
-        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", or "semantic".` }],
         isError: true,
       };
     }
@@ -308,6 +315,115 @@ const handler: ToolHandler = async (
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
         content: [{ type: 'text', text: cssText + cssPaginationSection }],
+      };
+    }
+
+    // Semantic mode: rule-based NL summary of regions + actions.
+    // Pure deterministic transform; no LLM (P3), no new deps (P5).
+    if (mode === 'semantic') {
+      const semanticPageStats = await withTimeout(page.evaluate(() => ({
+        url: window.location.href,
+        title: document.title,
+      })), 15000, 'read_page', context);
+
+      const { nodes: semanticAxNodes } = await withTimeout(
+        cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
+        15000,
+        'Accessibility.getFullAXTree',
+        context,
+      );
+
+      // Clear previous refs for this target so refs in the semantic
+      // response do not alias older AX/DOM-mode refs.
+      refIdManager.clearTargetRefs(sessionId, tabId);
+
+      // Convert CDP AX nodes into the semantic input shape.
+      const semanticNodes: SemanticAXNode[] = semanticAxNodes.map((n) => ({
+        nodeId: n.nodeId,
+        backendDOMNodeId: n.backendDOMNodeId,
+        role: n.role?.value ?? 'unknown',
+        name: n.name?.value,
+        value: n.value?.value,
+        childIds: n.childIds ? [...n.childIds] : [],
+      }));
+
+      // Best-effort DOM snapshot for state extraction (microdata, classes).
+      // Pulled via page.evaluate so we do not require a CDP DOMSnapshot pass;
+      // if the eval fails, semantic still operates on the AX tree alone.
+      let semanticDomSnapshot: { elements: SemanticDomElement[]; byBackendNodeId: Record<number, number> } | undefined;
+      try {
+        semanticDomSnapshot = await withTimeout(page.evaluate(() => {
+          const elements: Array<{
+            backendDOMNodeId?: number;
+            tagName: string;
+            itemType?: string;
+            itemProp?: string;
+            classNames?: string;
+            attrs?: Record<string, string>;
+            text?: string;
+            childIds: number[];
+          }> = [];
+          const all = document.querySelectorAll('*');
+          for (let i = 0; i < all.length; i++) {
+            const el = all[i] as HTMLElement;
+            const itemType = el.getAttribute('itemtype') || undefined;
+            const itemProp = el.getAttribute('itemprop') || undefined;
+            const dataPrice = el.getAttribute('data-price');
+            const dataProductId = el.getAttribute('data-product-id');
+            const attrs: Record<string, string> = {};
+            if (dataPrice) attrs['data-price'] = dataPrice;
+            if (dataProductId) attrs['data-product-id'] = dataProductId;
+            const text = (el.textContent || '').slice(0, 200);
+            elements.push({
+              tagName: el.tagName.toLowerCase(),
+              itemType,
+              itemProp,
+              classNames: el.className || undefined,
+              attrs: Object.keys(attrs).length ? attrs : undefined,
+              text: text || undefined,
+              childIds: [],
+            });
+          }
+          return { elements, byBackendNodeId: {} };
+        }), 15000, 'read_page', context);
+      } catch {
+        semanticDomSnapshot = undefined;
+      }
+
+      const view = buildSemanticView(
+        {
+          url: semanticPageStats.url,
+          title: semanticPageStats.title,
+          axNodes: semanticNodes,
+          domSnapshot: semanticDomSnapshot,
+          allocateRef: (node) => {
+            if (node.backendDOMNodeId === undefined) return undefined;
+            const AX_ROLE_TO_TAG: Record<string, string> = {
+              button: 'button',
+              link: 'a',
+              textbox: 'input',
+              searchbox: 'input',
+              checkbox: 'input',
+              radio: 'input',
+              combobox: 'select',
+              listbox: 'select',
+            };
+            const tagName = AX_ROLE_TO_TAG[node.role];
+            return refIdManager.generateRef(
+              sessionId,
+              tabId,
+              node.backendDOMNodeId,
+              node.role,
+              node.name,
+              tagName,
+            );
+          },
+        },
+        semanticRulesJson as SemanticRuleSet,
+      );
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(view) }],
       };
     }
 

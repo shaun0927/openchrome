@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "description": "Deterministic rules for read_page mode='semantic' (issue #850).",
+  "listCollapseThreshold": 5,
+  "summaryMaxChars": 200,
+  "regionRoles": [
+    "article",
+    "group",
+    "listitem",
+    "form",
+    "navigation",
+    "region",
+    "main"
+  ],
+  "regionTags": [
+    "article",
+    "form",
+    "li",
+    "nav",
+    "section",
+    "main"
+  ],
+  "interactiveRoles": [
+    "button",
+    "link",
+    "textbox",
+    "searchbox",
+    "combobox",
+    "checkbox",
+    "radio",
+    "listbox",
+    "option"
+  ],
+  "verbMapping": {
+    "button": "click",
+    "link": "navigate-or-click",
+    "textbox": "fill",
+    "searchbox": "fill",
+    "combobox": "select",
+    "listbox": "select",
+    "option": "click",
+    "checkbox": "click",
+    "radio": "click"
+  },
+  "kindClassifiers": {
+    "product": {
+      "anyMicrodata": [
+        "http://schema.org/Product",
+        "https://schema.org/Product"
+      ],
+      "anyDomClass": ["price", "product-price"],
+      "anyDomAttr": ["data-price", "data-product-id"]
+    },
+    "form": {
+      "anyRole": ["form"],
+      "anyTag": ["form"],
+      "minFieldCount": 2
+    },
+    "navigation": {
+      "anyRole": ["navigation"],
+      "anyTag": ["nav"]
+    },
+    "article": {
+      "anyRole": ["article"],
+      "anyTag": ["article"],
+      "anyMicrodata": [
+        "http://schema.org/Article",
+        "https://schema.org/Article",
+        "http://schema.org/NewsArticle",
+        "https://schema.org/NewsArticle"
+      ]
+    },
+    "media": {
+      "anyTag": ["video", "audio", "figure"],
+      "anyRole": ["img"]
+    },
+    "list": {
+      "anyTag": ["ul", "ol"],
+      "anyRole": ["list"]
+    }
+  },
+  "labelTemplates": {
+    "product": "Product: {title}{price?, Price: {price}}",
+    "form": "Form: {heading}{fieldCount?, {fieldCount} fields}",
+    "navigation": "Navigation{heading?: {heading}}{linkCount?, {linkCount} links}",
+    "article": "Article: {heading}{byline?, by {byline}}",
+    "media": "Media: {heading}",
+    "list": "List: {item_count} items{sample?, e.g. {sample}}",
+    "generic": "Region: {heading?heading,summary}"
+  }
+}
