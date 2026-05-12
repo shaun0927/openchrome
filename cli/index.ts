@@ -346,6 +346,7 @@ program
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
   .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
+  .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; loads src/pilot/ modules when set')
   .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
   .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
   .option('--storage-dir <path>', 'Directory for storage state files (default: .openchrome/storage-state/)')
