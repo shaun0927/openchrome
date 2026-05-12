@@ -5,6 +5,8 @@ on:
     paths:
       - 'src/tools/**'
       - 'src/types/mcp.ts'
+      - 'src/pilot/handoff/tool.ts'
+      - 'src/pilot/handoff/definitions.ts'
       - 'scripts/gen-capability-map.ts'
       - 'docs/agent/capability-map.md'
 jobs:

@@ -15,9 +15,8 @@
  *
  * Pilot-only tools (oc_pilot_handoff_create, oc_pilot_handoff_redeem) are
  * registered by bootstrapPilot() via dynamic import — not by registerAllTools().
- * Their definitions are not exported from src/pilot/handoff/tool.ts, so we
- * inline their metadata here (sourced from the file; kept in sync by the CI
- * drift check which triggers re-generation on any change to src/pilot/**).
+ * Their definitions are exported from src/pilot/handoff/tool.ts and imported
+ * here so the generated preamble has a single source of truth.
  *
  * Implementation note:
  *   src/mcp-server.ts imports many heavy runtime modules (puppeteer-core,
@@ -117,43 +116,15 @@ function collectStandardTools(): ToolDefinition[] {
 
 /**
  * Pilot-only tools registered by bootstrapPilot(), not registerAllTools().
- * Their source definitions in src/pilot/handoff/tool.ts are private consts.
- * Metadata mirrored here; CI drift check covers the generated file.
+ * Import their exported definitions directly to avoid metadata drift.
  */
-const PILOT_TOOLS: ToolDefinition[] = [
-  {
-    name: 'oc_pilot_handoff_create',
-    category: 'pilot',
-    description:
-      'Pilot-tier: mint a single-use handoff token that lets another agent ' +
-      'inherit the named browser session. In-memory only; process restart ' +
-      'drops every active handoff. Gated by --pilot + handoff_persist family.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: { type: 'string' },
-        ttl_seconds: { type: 'number' },
-      },
-      required: ['session_id'],
-    },
-  },
-  {
-    name: 'oc_pilot_handoff_redeem',
-    category: 'pilot',
-    description:
-      'Pilot-tier: redeem a single-use handoff token previously minted by ' +
-      'oc_pilot_handoff_create. Consumes the record on success — subsequent ' +
-      'calls with the same token return unknown_token. Gated by --pilot + ' +
-      'handoff_persist family.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        token: { type: 'string' },
-      },
-      required: ['token'],
-    },
-  },
-];
+function collectPilotTools(): ToolDefinition[] {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { PILOT_HANDOFF_TOOL_DEFINITIONS } = require('../src/pilot/handoff/definitions') as {
+    PILOT_HANDOFF_TOOL_DEFINITIONS: readonly ToolDefinition[];
+  };
+  return [...PILOT_HANDOFF_TOOL_DEFINITIONS];
+}
 
 // ---------------------------------------------------------------------------
 // Markdown generation
@@ -192,8 +163,9 @@ const CATEGORY_ORDER: string[] = [
 ];
 
 function truncateDesc(desc: string, maxLen: number): string {
-  if (desc.length <= maxLen) return desc;
-  return desc.slice(0, maxLen - 1) + '…';
+  const oneLine = desc.replace(/\s+/g, ' ').trim();
+  if (oneLine.length <= maxLen) return oneLine;
+  return oneLine.slice(0, maxLen - 1) + '…';
 }
 
 function buildMarkdown(
@@ -254,7 +226,8 @@ const MAX_BYTES = 6144;
 
 function main(): void {
   const standardTools = collectStandardTools();
-  const allTools = [...standardTools, ...PILOT_TOOLS];
+  const pilotTools = collectPilotTools();
+  const allTools = [...standardTools, ...pilotTools];
 
   // Progressive fallback to stay within MAX_BYTES:
   // 1. Full output with params sub-lines

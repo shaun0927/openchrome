@@ -20,11 +20,31 @@
  */
 
 import { MCPServer } from '../../mcp-server.js';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../../types/mcp.js';
+import { MCPResult, ToolHandler } from '../../types/mcp.js';
 import { isHandoffPersistEnabled } from '../../harness/flags.js';
+import { logAuditEntry } from '../../security/audit-logger.js';
 import { HandoffManager } from './manager.js';
 import { renderHandoffBanner } from './banner.js';
-import { verifyHandoffToken, DEFAULT_TOKEN_TTL_MS } from './token.js';
+import { verifyHandoffToken } from './token.js';
+import { createDefinition, redeemDefinition } from './definitions.js';
+
+/**
+ * Best-effort wrapper around {@link logAuditEntry}. Audit emission is
+ * additive — a failing audit sink must never change the tool's verdict
+ * or leak through to the caller. Mirrors the contract-runtime emitter
+ * pattern in `src/pilot/runtime/runtime.ts`.
+ */
+function safeAudit(
+  tool: string,
+  sessionId: string,
+  args: Record<string, unknown>,
+): void {
+  try {
+    logAuditEntry(tool, sessionId, args, undefined, { status: 'success' });
+  } catch {
+    // best-effort — never let the audit pipeline change the verdict
+  }
+}
 
 /**
  * Process-wide handoff store. The singleton is intentional — pilot
@@ -76,58 +96,6 @@ interface RedeemOutput extends Record<string, unknown> {
   error_message?: string;
 }
 
-const createDefinition: MCPToolDefinition = {
-  name: 'oc_pilot_handoff_create',
-  category: 'pilot',
-  description:
-    'Pilot-tier: mint a single-use handoff token that lets another agent ' +
-    'inherit the named browser session. In-memory only; process restart ' +
-    'drops every active handoff. Gated by --pilot + handoff_persist family.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      session_id: {
-        type: 'string',
-        description: 'Browser session being transferred. Required.',
-      },
-      scope: {
-        type: 'string',
-        description:
-          'Caller-defined scope label (e.g. "checkout", "read-only"). ' +
-          'Surfaced back to the redeeming agent. Required.',
-      },
-      ttl_ms: {
-        type: 'number',
-        description:
-          'Optional explicit TTL in ms. Defaults to ' +
-          `${DEFAULT_TOKEN_TTL_MS}ms (5 min). Non-finite, zero, or negative ` +
-          'values fall back to the default.',
-      },
-    },
-    required: ['session_id', 'scope'],
-  },
-};
-
-const redeemDefinition: MCPToolDefinition = {
-  name: 'oc_pilot_handoff_redeem',
-  category: 'pilot',
-  description:
-    'Pilot-tier: redeem a single-use handoff token previously minted by ' +
-    'oc_pilot_handoff_create. Consumes the record on success — subsequent ' +
-    'calls with the same token return unknown_token. Gated by --pilot + ' +
-    'handoff_persist family.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      token: {
-        type: 'string',
-        description: 'Token returned by oc_pilot_handoff_create.',
-      },
-    },
-    required: ['token'],
-  },
-};
-
 const createHandler: ToolHandler = async (
   _sessionId: string,
   args: Record<string, unknown>,
@@ -167,6 +135,17 @@ const createHandler: ToolHandler = async (
     sessionId: sessionIdArg,
     scope: scopeArg,
     expiresAt: result.expiresAt,
+  });
+  // Semantic audit event for the user-observable banner surface. Distinct
+  // from the automatic `oc_pilot_handoff_create` audit entry emitted by
+  // the MCP request pipeline — that one records the tool call; this one
+  // records the operator-facing handoff banner that was just rendered.
+  // The raw token is intentionally omitted; the banner string itself
+  // never carries the token, so this matches that surface.
+  safeAudit('banner_injection', sessionIdArg, {
+    scope: scopeArg,
+    expires_at: result.expiresAt,
+    surface: 'handoff_create',
   });
   return jsonResult<CreateOutput>({
     ok: true,
@@ -224,6 +203,23 @@ const redeemHandler: ToolHandler = async (
     scope: redemption.scope,
     expiresAt: redemption.expiresAt,
     now: () => redemption.redeemedAt,
+  });
+  // Semantic audit events. `handoff_token_resume` marks the moment the
+  // single-use token actually transferred its scope to a redeeming
+  // agent; `banner_injection` marks the redemption-side banner surface.
+  // Both are additive to the automatic `oc_pilot_handoff_redeem` audit
+  // row the MCP request pipeline emits — that records the tool call,
+  // these record the lifecycle transitions inside it.
+  safeAudit('handoff_token_resume', redemption.sessionId, {
+    scope: redemption.scope,
+    expires_at: redemption.expiresAt,
+    created_at: redemption.createdAt,
+    redeemed_at: redemption.redeemedAt,
+  });
+  safeAudit('banner_injection', redemption.sessionId, {
+    scope: redemption.scope,
+    expires_at: redemption.expiresAt,
+    surface: 'handoff_redeem',
   });
   return jsonResult<RedeemOutput>({
     ok: true,
