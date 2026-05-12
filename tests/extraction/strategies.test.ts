@@ -85,3 +85,25 @@ test('JSON-LD ignores inherited enumerable properties when matching aliases', ()
     delete (Object.prototype as { headline?: string }).headline;
   }
 });
+
+
+test('JSON-LD own alias is not suppressed by inherited result fields', () => {
+  const plan = buildExtractionPlan({ headline: { type: 'string' } });
+  const script = buildJsonLdExtractor(plan.fields);
+  const documentMock = {
+    querySelectorAll: (selector: string) => selector === 'script[type="application/ld+json"]'
+      ? [{ textContent: JSON.stringify({ name: 'Own headline' }) }]
+      : [],
+  };
+
+  Object.defineProperty(Object.prototype, 'headline', {
+    configurable: true,
+    enumerable: true,
+    value: 'inherited headline',
+  });
+  try {
+    expect(runExtractor<Record<string, unknown>>(script, documentMock)).toEqual({ headline: 'Own headline' });
+  } finally {
+    delete (Object.prototype as { headline?: string }).headline;
+  }
+});
