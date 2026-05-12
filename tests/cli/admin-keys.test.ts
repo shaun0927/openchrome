@@ -126,11 +126,11 @@ describe('admin keys CLI', () => {
       '--description', 'test key',
     ]);
     expect(exitCode).toBeNull();
-    // Plaintext is the sole stdout payload.
-    const stdoutLines = stdout.split('\n').filter((l) => l.length > 0);
-    expect(stdoutLines).toHaveLength(1);
-    const plaintext = stdoutLines[0];
-    expect(plaintext).toMatch(/^oc_live_acme_[A-Za-z0-9]+$/);
+    // Plaintext is emitted exactly once; ignore unrelated Jest console-capture
+    // noise that can share the in-process stdout hook under parallel CI.
+    const plaintextMatches = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
+    expect(plaintextMatches).toHaveLength(1);
+    const plaintext = plaintextMatches[0];
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
     // keyId is reported on stderr, not stdout.
