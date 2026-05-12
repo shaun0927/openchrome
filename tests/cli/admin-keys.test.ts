@@ -141,9 +141,9 @@ describe('admin keys CLI', () => {
     expect(exitCode).toBeNull();
     // Plaintext is emitted exactly once even if unrelated Jest worker noise
     // is captured by the shared stdout hook on Windows CI.
-    const stdoutTokens = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
-    expect(stdoutTokens).toHaveLength(1);
-    const plaintext = stdoutTokens[0];
+    const plaintext = extractToken(stdout);
+    expect(plaintext).toMatch(/^oc_live_acme_[A-Za-z0-9]+$/);
+    expect(stdout.match(/oc_live_acme_[A-Za-z0-9]+/g)).toHaveLength(1);
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
     // keyId is reported on stderr, not stdout.
