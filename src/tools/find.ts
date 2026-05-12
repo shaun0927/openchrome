@@ -17,6 +17,7 @@ import { detectVisionHints, formatVisionHints } from '../vision/auto-detect';
 
 const definition: MCPToolDefinition = {
   name: 'find',
+  category: 'dom',
   description: 'Find elements by query. Returns up to 20 matches with refs.',
   inputSchema: {
     type: 'object',

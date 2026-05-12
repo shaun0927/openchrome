@@ -156,6 +156,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
 
 const definition: MCPToolDefinition = {
   name: 'console_capture',
+  category: 'observability',
   description: 'Capture browser console output (start, stop, get, clear).',
   inputSchema: {
     type: 'object',

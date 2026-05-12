@@ -14,6 +14,7 @@ import { formatAge } from '../utils/format-age';
 
 const definition: MCPToolDefinition = {
   name: 'oc_profile_status',
+  category: 'profile',
   description: 'Check browser profile type and capabilities.',
   inputSchema: {
     type: 'object',

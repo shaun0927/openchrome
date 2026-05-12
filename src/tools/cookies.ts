@@ -62,6 +62,7 @@ function formatCookiesCompact(cookies: any[]): string {
 
 const definition: MCPToolDefinition = {
   name: 'cookies',
+  category: 'storage',
   description: 'Manage browser cookies (get, set, delete, clear).',
   inputSchema: {
     type: 'object',

@@ -24,6 +24,7 @@ function getServerState(): ServerConnectionState {
 
 const getConnectionInfoDef: MCPToolDefinition = {
   name: 'oc_get_connection_info',
+  category: 'misc',
   description:
     'Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom). Returns the MCP server URL, bearer token, settings page URL, and step-by-step instructions.',
   inputSchema: {
@@ -65,6 +66,7 @@ const getConnectionInfoHandler: ToolHandler = async (
 
 const copyToClipboardDef: MCPToolDefinition = {
   name: 'oc_copy_to_clipboard',
+  category: 'misc',
   description: 'Copy text to the system clipboard. Useful for copying MCP server URLs or config snippets.',
   inputSchema: {
     type: 'object',
@@ -93,6 +95,7 @@ const copyToClipboardHandler: ToolHandler = async (
 
 const openHostSettingsDef: MCPToolDefinition = {
   name: 'oc_open_host_settings',
+  category: 'misc',
   description: 'Open the MCP connector settings page for a web AI host in the default browser.',
   inputSchema: {
     type: 'object',

@@ -14,6 +14,7 @@ import { formatCDPResult, CDPEvalResult } from './javascript';
 
 const definition: MCPToolDefinition = {
   name: 'batch_execute',
+  category: 'misc',
   description: 'Execute JS across multiple tabs in parallel.',
   inputSchema: {
     type: 'object',

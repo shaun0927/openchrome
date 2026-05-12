@@ -22,6 +22,7 @@ function isValidRecordingId(id: string): boolean {
 
 const startDefinition: MCPToolDefinition = {
   name: 'oc_recording_start',
+  category: 'recording',
   description:
     'Start a new session recording. All subsequent MCP tool calls will be recorded ' +
     'until oc_recording_stop is called. Errors if a recording is already active.',
@@ -82,6 +83,7 @@ const startHandler: ToolHandler = async (
 
 const stopDefinition: MCPToolDefinition = {
   name: 'oc_recording_stop',
+  category: 'recording',
   description:
     'Stop the active session recording and finalize it to disk. ' +
     'Returns a summary of the recording. Errors if no recording is active.',
@@ -136,6 +138,7 @@ const stopHandler: ToolHandler = async (
 
 const listDefinition: MCPToolDefinition = {
   name: 'oc_recording_list',
+  category: 'recording',
   description: 'List available session recordings, newest first.',
   inputSchema: {
     type: 'object',
@@ -202,6 +205,7 @@ const listHandler: ToolHandler = async (
 
 const exportDefinition: MCPToolDefinition = {
   name: 'oc_recording_export',
+  category: 'recording',
   description:
     'Export a recording as JSON or a self-contained HTML report. ' +
     'For HTML, saves to ~/.openchrome/recordings/{id}/report.html and returns the path.',

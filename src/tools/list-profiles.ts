@@ -13,6 +13,7 @@ import { getChromeLauncher } from '../chrome/launcher';
 
 const definition: MCPToolDefinition = {
   name: 'list_profiles',
+  category: 'profile',
   description: 'List available Chrome profiles with names and directory IDs.',
   inputSchema: {
     type: 'object',

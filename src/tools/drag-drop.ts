@@ -13,6 +13,7 @@ interface Position {
 
 const definition: MCPToolDefinition = {
   name: 'drag_drop',
+  category: 'interact',
   description: 'Drag and drop by selector or coordinates.',
   inputSchema: {
     type: 'object',

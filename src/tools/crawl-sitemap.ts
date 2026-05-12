@@ -22,6 +22,7 @@ import {
 
 const definition: MCPToolDefinition = {
   name: 'crawl_sitemap',
+  category: 'misc',
   description:
     'Crawl a website using its sitemap.xml. Auto-discovers sitemaps from robots.txt or well-known URLs (/sitemap.xml, /sitemap_index.xml). Supports sitemap index files and URL filtering.',
   inputSchema: {

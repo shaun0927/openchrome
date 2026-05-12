@@ -9,6 +9,7 @@ import { getTaskJournal } from '../journal/task-journal';
 
 const definition: MCPToolDefinition = {
   name: 'oc_journal',
+  category: 'lifecycle',
   description:
     'Query the tool call journal. Actions: ' +
     '"summary" (milestone-based overview for context restoration), ' +

@@ -22,6 +22,7 @@ import {
 
 const definition: MCPToolDefinition = {
   name: 'computer',
+  category: 'interact',
   description: 'Mouse, keyboard, and screenshot actions on a tab.',
   inputSchema: {
     type: 'object',

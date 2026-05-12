@@ -10,6 +10,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'page_content',
+  category: 'dom',
   description: 'Get HTML content from page or element.',
   inputSchema: {
     type: 'object',

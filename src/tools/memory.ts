@@ -15,6 +15,7 @@ import { getDomainMemory } from '../memory/domain-memory';
 
 const definition: MCPToolDefinition = {
   name: 'memory',
+  category: 'storage',
   description:
     'Manage domain knowledge. Actions: "record" (store), "query" (retrieve by domain), "validate" (adjust confidence). Key prefixes: "selector:", "tip:", "avoid:".',
   inputSchema: {

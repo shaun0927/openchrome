@@ -16,6 +16,7 @@ import { humanScroll } from '../stealth/human-behavior';
 
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',
+  category: 'interact',
   description: 'Scroll page via JS. Returns new scroll position.',
   inputSchema: {
     type: 'object',

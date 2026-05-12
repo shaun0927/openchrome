@@ -45,6 +45,7 @@ const NETWORK_PRESETS: Record<
 
 const definition: MCPToolDefinition = {
   name: 'network',
+  category: 'observability',
   description: 'Simulate network conditions.',
   inputSchema: {
     type: 'object',

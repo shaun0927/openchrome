@@ -63,6 +63,7 @@ interface SnapshotInput {
 
 const definition: MCPToolDefinition = {
   name: 'oc_assert',
+  category: 'evidence',
   description:
     'Evaluate a single Outcome Contract assertion against caller-supplied ' +
     'evidence (snapshot). Returns verdict pass/fail/inconclusive plus the ' +

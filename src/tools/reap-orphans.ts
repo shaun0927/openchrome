@@ -5,6 +5,7 @@ import { cleanOrphanedChromeProcesses } from '../utils/pid-manager';
 
 const definition: MCPToolDefinition = {
   name: 'oc_reap_orphans',
+  category: 'lifecycle',
   description: 'Manually sweep and terminate orphaned OpenChrome-managed Chrome processes. Never touches attach-mode or unmarked user Chrome.',
   inputSchema: {
     type: 'object',

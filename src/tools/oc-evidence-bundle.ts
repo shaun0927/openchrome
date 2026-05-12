@@ -54,6 +54,7 @@ const VALID_PARTS: readonly EvidenceBundlePart[] = [
 
 const definition: MCPToolDefinition = {
   name: 'oc_evidence_bundle',
+  category: 'evidence',
   description:
     'Capture a snapshot of the current page state (DOM, screenshot, network ' +
     'slice, console, perceptual hash) and write it to a bundle directory. ' +

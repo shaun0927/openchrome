@@ -20,6 +20,7 @@ const dnsResolve = promisify(dns.resolve);
 
 const workflowInitDefinition: MCPToolDefinition = {
   name: 'workflow_init',
+  category: 'misc',
   description: 'Initialize a workflow with multiple isolated workers for parallel browser ops.',
   inputSchema: {
     type: 'object',
@@ -213,6 +214,7 @@ const workflowInitHandler: ToolHandler = async (
 
 const workflowStatusDefinition: MCPToolDefinition = {
   name: 'workflow_status',
+  category: 'misc',
   description: 'Get current workflow status and worker states.',
   inputSchema: {
     type: 'object',
@@ -295,6 +297,7 @@ const workflowStatusHandler: ToolHandler = async (
 
 const workflowCollectDefinition: MCPToolDefinition = {
   name: 'workflow_collect',
+  category: 'misc',
   description: 'Collect and aggregate results from all workers after completion.',
   inputSchema: {
     type: 'object',
@@ -349,6 +352,7 @@ const workflowCollectHandler: ToolHandler = async (
 
 const workflowCleanupDefinition: MCPToolDefinition = {
   name: 'workflow_cleanup',
+  category: 'misc',
   description: 'Clean up workflow resources (workers, tabs, scratchpads).',
   inputSchema: {
     type: 'object',
@@ -396,6 +400,7 @@ const workflowCleanupHandler: ToolHandler = async (
 
 const workerUpdateDefinition: MCPToolDefinition = {
   name: 'worker_update',
+  category: 'misc',
   description: 'Report worker progress to the orchestration scratchpad.',
   inputSchema: {
     type: 'object',
@@ -485,6 +490,7 @@ const workerUpdateHandler: ToolHandler = async (
 
 const workerCompleteDefinition: MCPToolDefinition = {
   name: 'worker_complete',
+  category: 'misc',
   description: 'Mark a worker as complete with final results.',
   inputSchema: {
     type: 'object',
@@ -558,6 +564,7 @@ const workerCompleteHandler: ToolHandler = async (
 
 const workflowCollectPartialDefinition: MCPToolDefinition = {
   name: 'workflow_collect_partial',
+  category: 'misc',
   description: 'Collect results from completed workers without waiting for all to finish.',
   inputSchema: {
     type: 'object',
@@ -654,6 +661,7 @@ const workflowCollectPartialHandler: ToolHandler = async (
 
 const executePlanDefinition: MCPToolDefinition = {
   name: 'execute_plan',
+  category: 'misc',
   description: 'Execute a cached plan by ID, bypassing per-step LLM calls. Falls back gracefully on failure for manual retry.',
   inputSchema: {
     type: 'object',

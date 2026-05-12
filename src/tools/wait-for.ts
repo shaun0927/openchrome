@@ -9,6 +9,7 @@ import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'wait_for',
+  category: 'lifecycle',
   description: "Wait for a condition. Strongly prefer 'function', 'selector', or 'url_match' — they return as soon as the condition is true (1 round-trip). Use 'timeout' only as a last resort: it blocks for a fixed duration and returns no information, forcing you to poll with another tool afterwards.",
   inputSchema: {
     type: 'object',

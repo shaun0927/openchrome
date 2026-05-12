@@ -25,6 +25,7 @@ const LOCATION_PRESETS: Record<
 
 const definition: MCPToolDefinition = {
   name: 'geolocation',
+  category: 'profile',
   description: 'Set or clear geolocation override.',
   inputSchema: {
     type: 'object',

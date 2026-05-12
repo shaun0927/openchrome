@@ -16,6 +16,7 @@ import { trackVisionUsage } from '../vision/config';
 
 const definition: MCPToolDefinition = {
   name: 'vision_find',
+  category: 'dom',
   description: 'Find elements using vision-based screenshot analysis. Returns annotated screenshot with numbered elements.',
   inputSchema: {
     type: 'object',

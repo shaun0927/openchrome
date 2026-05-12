@@ -8,6 +8,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'http_auth',
+  category: 'profile',
   description: 'Set or clear HTTP auth credentials.',
   inputSchema: {
     type: 'object',

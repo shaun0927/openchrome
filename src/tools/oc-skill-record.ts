@@ -26,6 +26,7 @@ interface OcSkillRecordOutput {
 
 const definition: MCPToolDefinition = {
   name: 'oc_skill_record',
+  category: 'evidence',
   description:
     'Record a skill (domain, name, steps, contract_id) into the JSON skill ' +
     'memory store. Idempotent on (domain, name) — re-recording preserves the ' +

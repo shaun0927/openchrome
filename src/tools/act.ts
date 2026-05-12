@@ -38,6 +38,7 @@ interface StepResult {
 
 const definition: MCPToolDefinition = {
   name: 'act',
+  category: 'interact',
   description: 'Execute multi-step browser actions from natural language instruction.',
   inputSchema: {
     type: 'object',

@@ -9,6 +9,7 @@ import { getCDPClient } from '../cdp/client';
 
 const definition: MCPToolDefinition = {
   name: 'oc_connection_health',
+  category: 'lifecycle',
   description:
     'Get CDP connection health metrics including heartbeat mode, reconnect count, ping latency, connection state, and live reconnection progress. Use this to monitor connection stability during long-running sessions.',
   inputSchema: {

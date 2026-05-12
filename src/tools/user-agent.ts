@@ -32,6 +32,7 @@ const USER_AGENT_PRESETS: Record<string, string> = {
 
 const definition: MCPToolDefinition = {
   name: 'user_agent',
+  category: 'profile',
   description: 'Set or reset browser user agent.',
   inputSchema: {
     type: 'object',

@@ -8,6 +8,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 
 const definition: MCPToolDefinition = {
   name: 'oc_totp_generate',
+  category: 'misc',
   description:
     'Generate a current TOTP 2FA code for a domain. Requires TOTP secret to be configured.',
   inputSchema: {

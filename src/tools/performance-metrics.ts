@@ -9,6 +9,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'performance_metrics',
+  category: 'observability',
   description: 'Get page performance metrics.',
   inputSchema: {
     type: 'object',

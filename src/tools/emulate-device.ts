@@ -83,6 +83,7 @@ const DEVICE_PRESETS: Record<string, DevicePreset> = {
 
 const definition: MCPToolDefinition = {
   name: 'emulate_device',
+  category: 'profile',
   description: 'Emulate device viewport and UA via preset or custom.',
   inputSchema: {
     type: 'object',

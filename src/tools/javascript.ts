@@ -10,6 +10,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
+  category: 'js',
   description: 'Execute JavaScript in page context. Supports await.',
   inputSchema: {
     type: 'object',

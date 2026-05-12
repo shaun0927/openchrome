@@ -10,6 +10,7 @@ import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 
 const definition: MCPToolDefinition = {
   name: 'page_reload',
+  category: 'lifecycle',
   description: 'Reload the current page.',
   inputSchema: {
     type: 'object',

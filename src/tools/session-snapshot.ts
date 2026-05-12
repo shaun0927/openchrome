@@ -42,6 +42,7 @@ export interface SessionSnapshot {
 
 const definition: MCPToolDefinition = {
   name: 'oc_session_snapshot',
+  category: 'lifecycle',
   description:
     'Save browser state snapshot for context recovery after compaction. ' +
     'Captures open tabs, worker state, and your task memo. ' +

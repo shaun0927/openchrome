@@ -29,6 +29,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
+  category: 'dom',
   description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.',
   inputSchema: {
     type: 'object',

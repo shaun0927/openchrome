@@ -59,6 +59,7 @@ export interface UploadPathValidationResult {
 
 const definition: MCPToolDefinition = {
   name: 'file_upload',
+  category: 'forms',
   description: 'Upload files to a file input element on the page.',
   inputSchema: {
     type: 'object',

@@ -34,6 +34,7 @@ export const CHECKPOINT_FILE = 'current-checkpoint.json';
 
 const definition: MCPToolDefinition = {
   name: 'oc_checkpoint',
+  category: 'lifecycle',
   description:
     'Save or load an automation checkpoint for long-running session continuity. ' +
     'Use "save" to persist current task state, "load" to restore after context compaction, ' +

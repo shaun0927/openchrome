@@ -174,6 +174,7 @@ function matchesPattern(url: string, pattern: string): boolean {
 
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
+  category: 'observability',
   description: 'Intercept network requests (log, block, modify).',
   inputSchema: {
     type: 'object',

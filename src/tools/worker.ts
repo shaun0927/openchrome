@@ -10,6 +10,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'worker',
+  category: 'misc',
   description:
     'Manage workers. Actions: "create" (isolated context), "list" (show all), "delete" (remove and close tabs).',
   inputSchema: {

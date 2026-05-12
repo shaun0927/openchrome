@@ -9,6 +9,7 @@ import { safeTitle } from '../utils/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_context',
+  category: 'tabs',
   description: 'Get session tab IDs grouped by worker.',
   inputSchema: {
     type: 'object',

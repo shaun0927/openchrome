@@ -10,6 +10,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'storage',
+  category: 'storage',
   description: 'Manage browser localStorage and sessionStorage.',
   inputSchema: {
     type: 'object',

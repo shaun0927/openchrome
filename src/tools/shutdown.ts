@@ -18,6 +18,7 @@ import { shutdownHeadedFallback } from '../chrome/headed-fallback';
 
 const definition: MCPToolDefinition = {
   name: 'oc_stop',
+  category: 'lifecycle',
   description: 'Shut down OpenChrome and close Chrome. Auto-relaunched on next tool call.',
   inputSchema: {
     type: 'object',

@@ -20,6 +20,7 @@ import type { ExtractionSchema, SchemaProperty } from '../extraction';
 
 const definition: MCPToolDefinition = {
   name: 'extract_data',
+  category: 'misc',
   description:
     'Extract structured data from page using a JSON Schema. ' +
     'Automatically tries JSON-LD, Microdata, OpenGraph, and CSS heuristics. ' +

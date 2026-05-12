@@ -53,6 +53,7 @@ interface TabAnalysis {
 
 const definition: MCPToolDefinition = {
   name: 'oc_session_resume',
+  category: 'lifecycle',
   description:
     'Restore working context after context compaction. ' +
     'Reads the last oc_session_snapshot, checks which tabs are still alive, ' +

@@ -16,6 +16,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'batch_paginate',
+  category: 'misc',
   description: 'Extract content from paginated viewers in one call.',
   inputSchema: {
     type: 'object',

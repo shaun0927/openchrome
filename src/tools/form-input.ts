@@ -10,6 +10,7 @@ import { withDomDelta } from '../utils/dom-delta';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
+  category: 'forms',
   description: 'Set form element value by ref.',
   inputSchema: {
     type: 'object',

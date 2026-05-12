@@ -16,6 +16,7 @@ import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-d
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
+  category: 'observability',
   description: 'Extract focused page state by query.',
   inputSchema: {
     type: 'object',

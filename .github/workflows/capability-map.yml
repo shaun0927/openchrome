@@ -1,0 +1,26 @@
+name: capability-map
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'src/tools/**'
+      - 'src/types/mcp.ts'
+      - 'scripts/gen-capability-map.ts'
+      - 'docs/agent/capability-map.md'
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit
+      - run: npm run gen:capability-map
+      - name: Verify no drift
+        run: |
+          if ! git diff --exit-code docs/agent/capability-map.md; then
+            echo "::error::capability-map drift — run 'npm run gen:capability-map' and commit the result"
+            exit 1
+          fi

@@ -44,6 +44,31 @@ export interface MCPError {
   data?: unknown;
 }
 
+/**
+ * Allowed category values for MCPToolDefinition.category.
+ * Used by scripts/gen-capability-map.ts to group tools in the generated
+ * docs/agent/capability-map.md preamble.
+ *
+ * Values: navigation | dom | interact | forms | js | tabs | storage |
+ *         profile | lifecycle | observability | evidence | recording |
+ *         pilot | misc
+ */
+export type ToolCategory =
+  | 'navigation'
+  | 'dom'
+  | 'interact'
+  | 'forms'
+  | 'js'
+  | 'tabs'
+  | 'storage'
+  | 'profile'
+  | 'lifecycle'
+  | 'observability'
+  | 'evidence'
+  | 'recording'
+  | 'pilot'
+  | 'misc';
+
 export interface MCPToolDefinition {
   name: string;
   description: string;
@@ -52,6 +77,11 @@ export interface MCPToolDefinition {
     properties: Record<string, unknown>;
     required?: string[];
   };
+  /**
+   * Optional grouping category for the LLM capability-map preamble.
+   * Defaults to "misc" when absent. See ToolCategory for allowed values.
+   */
+  category?: ToolCategory;
 }
 
 /**

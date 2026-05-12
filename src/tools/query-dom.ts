@@ -31,6 +31,7 @@ interface CSSElementInfo {
 
 const definition: MCPToolDefinition = {
   name: 'query_dom',
+  category: 'dom',
   description:
     'Query DOM elements via CSS selector or XPath. Returns tag, attributes, text, position. CSS results include a ref field for use in subsequent calls.',
   inputSchema: {

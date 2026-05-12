@@ -11,6 +11,7 @@ import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'page_pdf',
+  category: 'observability',
   description: 'Generate PDF from page. Saves to path or returns base64.',
   inputSchema: {
     type: 'object',

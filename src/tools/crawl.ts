@@ -24,6 +24,7 @@ import {
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
+  category: 'misc',
   description:
     'Recursively crawl a website via BFS. Opens each page in a new tab, extracts text content and discovers links, then follows them up to max_depth. Respects robots.txt and scope constraints.',
   inputSchema: {

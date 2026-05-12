@@ -410,6 +410,7 @@ async function headedNavigateDirect(
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
+  category: 'navigation',
   description: 'Navigate to URL or go forward/back. Omit tabId for new tab.',
   inputSchema: {
     type: 'object',

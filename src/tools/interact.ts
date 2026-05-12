@@ -22,6 +22,7 @@ import { humanMouseMove } from '../stealth/human-behavior';
 
 const definition: MCPToolDefinition = {
   name: 'interact',
+  category: 'interact',
   description: 'Find element, act, wait, return state summary.',
   inputSchema: {
     type: 'object',

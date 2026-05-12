@@ -24,6 +24,7 @@ const DEFAULT_LIMIT = 20;
 
 const definition: MCPToolDefinition = {
   name: 'oc_skill_recall',
+  category: 'evidence',
   description:
     'Retrieve skills from the JSON skill memory store for a given domain. ' +
     'Returns a recency-sorted list (last_used_at desc). Optionally filter by ' +

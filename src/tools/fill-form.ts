@@ -19,6 +19,7 @@ import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
+  category: 'forms',
   description: 'Fill form fields and optionally submit.',
   inputSchema: {
     type: 'object',
