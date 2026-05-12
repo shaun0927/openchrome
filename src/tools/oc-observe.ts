@@ -55,9 +55,9 @@ export interface ObservableNode {
 export interface ObserveResponse {
   url: string;
   loaderId: string;
-  capturedAt: number;
-  scope: ObserveScope;
-  totalConsidered: number;
+  capturedAt?: number;
+  scope?: ObserveScope;
+  totalConsidered?: number;
   nodes: ObservableNode[];
 }
 
@@ -566,11 +566,13 @@ const handler: ToolHandler = async (
     const response: ObserveResponse = {
       url: pageStats.url,
       loaderId,
-      capturedAt: Date.now(),
-      scope,
-      totalConsidered,
       nodes,
     };
+    if (!actionFilter) {
+      response.capturedAt = Date.now();
+      response.scope = scope;
+      response.totalConsidered = totalConsidered;
+    }
 
     return {
       content: [{ type: 'text', text: JSON.stringify(response) }],
