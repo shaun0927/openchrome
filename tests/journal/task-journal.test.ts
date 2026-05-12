@@ -502,3 +502,92 @@ describe('TaskJournal', () => {
     });
   });
 });
+
+describe('TaskJournal failure summaries', () => {
+  let dir: string;
+  let journal: TaskJournal;
+
+  beforeEach(() => {
+    dir = makeTmpDir();
+    journal = new TaskJournal({ dir });
+  });
+
+  afterEach(() => {
+    cleanupDir(dir);
+  });
+
+  it('classifies representative failure classes deterministically', () => {
+    const cases: Array<[string, string, string]> = [
+      ['interact', 'Element ref_12 is stale and no longer available', 'stale_ref'],
+      ['navigate', 'Login page detected after authRedirect', 'auth_redirect'],
+      ['navigate', 'Cloudflare CAPTCHA / Access Denied', 'captcha_or_waf'],
+      ['wait_for', 'Navigation timeout after 100ms', 'timeout'],
+      ['navigate', 'net::ERR_CONNECTION_RESET network error', 'network_error'],
+      ['extract_data', 'empty result: no matches for selector', 'empty_result'],
+      ['oc_assert', 'contract assertion verdict fail', 'contract_failed'],
+      ['interact', 'not making progress; repeated same action', 'non_progress_loop'],
+    ];
+
+    for (const [tool, message, expected] of cases) {
+      const entry = journal.createEntry(tool, 'sess', {}, 10, false, message);
+      expect(entry.failureClass).toBe(expected);
+      expect(entry.errorFingerprint).toBeTruthy();
+    }
+  });
+
+  it('summarizes failure classes, repeated fingerprints, progress, and recovery hints', () => {
+    journal.record(journal.createEntry('navigate', 'sess', { url: 'https://example.com' }, 10, true));
+    journal.record(journal.createEntry('interact', 'sess', { ref: 'ref_1' }, 10, false, 'Element ref_1 is stale'));
+    journal.record(journal.createEntry('interact', 'sess', { ref: 'ref_2' }, 10, false, 'Element ref_2 is stale'));
+    journal.record(journal.createEntry('wait_for', 'sess', {}, 10, false, 'Timed out waiting for text'));
+
+    const summary = journal.getSummary();
+    expect(summary.failureClasses.stale_ref).toBe(2);
+    expect(summary.failureClasses.timeout).toBe(1);
+    expect(summary.lastProgressTool?.tool).toBe('navigate');
+    expect(summary.recentNonProgressTools.map((item) => item.failureClass)).toEqual([
+      'stale_ref',
+      'stale_ref',
+      'timeout',
+    ]);
+    expect(summary.repeatedErrorFingerprints[0]).toMatchObject({
+      count: 2,
+      failureClass: 'stale_ref',
+    });
+    expect(summary.candidateRecoveryHints.join('\n')).toContain('read_page');
+  });
+
+  it('redacts sensitive data from result summaries before persistence', () => {
+    const entry = journal.createEntry(
+      'navigate',
+      'sess',
+      { url: 'https://example.com' },
+      10,
+      false,
+      'request failed token=abc123 password=hunter2 Authorization: Bearer secret-token',
+    );
+
+    expect(entry.resultSummary).toContain('token=[REDACTED]');
+    expect(entry.resultSummary).toContain('password=[REDACTED]');
+    expect(entry.resultSummary).toContain('Bearer [REDACTED]');
+    expect(entry.resultSummary).not.toContain('hunter2');
+    expect(entry.resultSummary).not.toContain('secret-token');
+  });
+
+  it('derives classes for older entries without stored failureClass fields', () => {
+    const oldEntry: JournalEntry = {
+      ts: Date.now(),
+      tool: 'oc_assert',
+      sessionId: 'sess',
+      args: {},
+      durationMs: 10,
+      ok: false,
+      summary: '✗ oc_assert',
+      resultSummary: 'failed_assertions contained missing text',
+    };
+    journal.record(oldEntry);
+
+    const summary = journal.getSummary();
+    expect(summary.failureClasses.contract_failed).toBe(1);
+  });
+});

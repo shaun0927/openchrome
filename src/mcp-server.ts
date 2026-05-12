@@ -304,6 +304,19 @@ export interface MCPServerOptions {
   initialToolTier?: ToolTier;
 }
 
+
+function summarizeMcpResultForJournal(result: MCPResult): string | undefined {
+  const content = result.content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map((part) => (part && part.type === 'text' ? part.text : ''))
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text ? text.slice(0, 500) : undefined;
+}
+
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
   private resources: Map<string, MCPResourceDefinition> = new Map();
@@ -1753,7 +1766,14 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, true);
+        const entry = journal.createEntry(
+          toolName,
+          sessionId,
+          toolArgs,
+          Date.now() - toolStartTime,
+          !(result as MCPResult).isError,
+          summarizeMcpResultForJournal(result as MCPResult),
+        );
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -1936,7 +1956,14 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, false);
+        const entry = journal.createEntry(
+          toolName,
+          sessionId,
+          toolArgs,
+          Date.now() - toolStartTime,
+          false,
+          message,
+        );
         journal.record(entry);
       } catch {
         // Best-effort journal recording
