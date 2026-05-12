@@ -18,6 +18,7 @@ export interface DOMSerializerOptions {
   // light (default): sibling dedup threshold=4, container collapse enabled
   // aggressive: sibling dedup threshold=3
   includeUserAgentShadowDOM?: boolean;  // default: false
+  planningProfile?: 'default' | 'stable';
 }
 
 export interface PageStats {
@@ -177,6 +178,24 @@ function getDirectTextContent(node: DOMNode): string {
 /**
  * Format a single element node as a line
  */
+function isVolatileStableAttr(name: string, value: string): boolean {
+  if (name === 'id') {
+    return /(?:^|[-_])(uuid|random|nonce|session|generated|ember|react-aria)[-_]?[a-z0-9]*$/i.test(value)
+      || /[0-9a-f]{12,}/i.test(value);
+  }
+  if (name === 'class') {
+    return false;
+  }
+  return false;
+}
+
+function isDecorativeMedia(tagName: string, attrMap: Map<string, string>, interactive: boolean): boolean {
+  if (interactive) return false;
+  if (!['img', 'picture', 'source', 'video', 'canvas'].includes(tagName)) return false;
+  if (attrMap.get('alt') || attrMap.get('aria-label') || attrMap.get('role') || attrMap.get('data-testid')) return false;
+  return true;
+}
+
 function formatElement(
   node: DOMNode,
   attrMap: Map<string, string>,
@@ -184,6 +203,7 @@ function formatElement(
   textContent: string,
   interactive: boolean,
   hints?: string,
+  planningProfile: 'default' | 'stable' = 'default',
 ): string {
   const tagName = node.localName || node.nodeName.toLowerCase();
 
@@ -191,6 +211,7 @@ function formatElement(
   const attrParts: string[] = [];
   for (const [k, v] of attrMap) {
     if (KEEP_ATTRS.has(k)) {
+      if (planningProfile === 'stable' && isVolatileStableAttr(k, v)) continue;
       attrParts.push(`${k}="${escapeAttributeValue(v)}"`);
     }
   }
@@ -312,6 +333,7 @@ interface SerializeContext {
   interactiveOnly: boolean;
   compression: 'none' | 'light' | 'aggressive';
   includeUserAgentShadowDOM: boolean;
+  planningProfile: 'default' | 'stable';
   nodesVisited: number;
   maxNodes: number;
   customInteractiveHints: Map<string, string>;
@@ -400,6 +422,8 @@ function serializeNode(
   const customHints = ctx.customInteractiveHints.get(path);
   const interactive = isInteractive(tagName, attrMap, customHints);
 
+  if (ctx.planningProfile === 'stable' && isDecorativeMedia(tagName, attrMap, interactive)) return;
+
   const indent = '  '.repeat(depth);
 
   // Container chain collapse (only in non-'none' compression mode, non-interactive containers)
@@ -418,7 +442,7 @@ function serializeNode(
       const leafHints = ctx.customInteractiveHints.get(leafPath);
       const leafInteractive = isInteractive(leafTag, leafAttrMap, leafHints);
       const leafText = getDirectTextContent(leaf);
-      const leafLine = formatElement(leaf, leafAttrMap, '', leafText, leafInteractive, leafHints);
+      const leafLine = formatElement(leaf, leafAttrMap, '', leafText, leafInteractive, leafHints, ctx.planningProfile);
       const fullLine = `${indent}${chainPrefix}${leafLine}\n`;
 
       if (ctx.totalChars + fullLine.length > ctx.maxOutputChars) {
@@ -448,7 +472,7 @@ function serializeNode(
 
   if (!ctx.interactiveOnly || interactive) {
     const textContent = getDirectTextContent(node);
-    const line = formatElement(node, attrMap, indent, textContent, interactive, customHints);
+    const line = formatElement(node, attrMap, indent, textContent, interactive, customHints, ctx.planningProfile);
     const lineWithNewline = line + '\n';
 
     if (ctx.totalChars + lineWithNewline.length > ctx.maxOutputChars) {
@@ -704,6 +728,7 @@ export async function serializeDOM(
   const interactiveOnly = (options?.interactiveOnly ?? false) || options?.filter === 'interactive';
   const compression = options?.compression ?? 'light';  // default to 'light'
   const includeUserAgentShadowDOM = options?.includeUserAgentShadowDOM ?? false;
+  const planningProfile = options?.planningProfile ?? 'default';
 
   // Get page stats via page.evaluate
   const pageStats = await withTimeout(
@@ -764,6 +789,7 @@ export async function serializeDOM(
     interactiveOnly,
     compression,
     includeUserAgentShadowDOM,
+    planningProfile,
     nodesVisited: 0,
     maxNodes: DEFAULT_MAX_SERIALIZER_NODES,
     customInteractiveHints,
@@ -774,6 +800,10 @@ export async function serializeDOM(
   if (includePageStats) {
     const statsLine = `[page_stats] url: ${pageStats.url} | title: ${pageStats.title} | scroll: ${pageStats.scrollX},${pageStats.scrollY} | viewport: ${pageStats.viewportWidth}x${pageStats.viewportHeight} | docSize: ${pageStats.scrollWidth}x${pageStats.scrollHeight}\n\n`;
     appendBoundedLine(ctx, statsLine);
+  }
+
+  if (includePageStats && planningProfile === 'stable' && !ctx.truncated) {
+    appendBoundedLine(ctx, '[planning_profile] stable\n\n');
   }
 
   // Serialize from root
