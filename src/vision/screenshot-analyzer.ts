@@ -725,7 +725,19 @@ async function analyzeTiledScreenshot(
 
       // Capture the annotated tile screenshot. Use viewport-local coords for the overlay,
       // but number labels are offset so they align with the unified map indices.
-      const overlayElems = rawList.map(el => ({ x: el.x, y: el.y, width: el.width, height: el.height }));
+      // P1 codex fix: build overlay from `translated` (the same set that lands
+      // in the unified map, post-dedup and post-truncation) rather than
+      // `rawList`. Otherwise number labels are drawn for elements that were
+      // dropped from the map, and tile-screenshot indices no longer match
+      // `elementMap` — downstream clicks would target the wrong element.
+      // `translated[i].y` is in document space, so subtract `docOffsetY` to
+      // recover the viewport-local Y used by the overlay renderer.
+      const overlayElems = translated.map(el => ({
+        x: el.x,
+        y: el.y - docOffsetY,
+        width: el.width,
+        height: el.height,
+      }));
       const numberOffset = unifiedElements.length;
       const captured = await captureAnnotatedScreenshot(
         page,
