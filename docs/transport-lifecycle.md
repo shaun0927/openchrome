@@ -99,14 +99,11 @@ openchrome serve --auto-launch
 
 **After (Streamable HTTP daemon):**
 ```bash
-# Start the HTTP daemon on port 3100 (default)
-openchrome serve --auto-launch --http
+# Start the HTTP daemon on port 3100 (default) with bearer-token authentication
+OPENCHROME_AUTH_TOKEN="$(openssl rand -hex 32)" openchrome serve --auto-launch --http
 
-# Or specify a custom port and bind address
-OPENCHROME_HTTP_HOST=0.0.0.0 openchrome serve --auto-launch --http 4000
-
-# With bearer-token authentication (recommended for non-loopback)
-OPENCHROME_AUTH_TOKEN="$(openssl rand -hex 32)" openchrome serve --auto-launch --http 4000
+# Or specify a custom port and non-loopback bind address
+OPENCHROME_AUTH_TOKEN="$(openssl rand -hex 32)" OPENCHROME_HTTP_HOST=0.0.0.0 openchrome serve --auto-launch --http 4000
 ```
 
 Configure your MCP client to connect over Streamable HTTP:
@@ -122,7 +119,7 @@ Configure your MCP client to connect over Streamable HTTP:
 }
 ```
 
-For unauthenticated loopback-only development:
+For unauthenticated loopback-only development, explicitly opt in and keep the bind address on loopback. Non-loopback HTTP binds require authentication.
 ```bash
 OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1 openchrome serve --auto-launch --http
 ```
