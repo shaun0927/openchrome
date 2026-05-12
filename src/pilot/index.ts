@@ -31,3 +31,8 @@ export * as runtime from './runtime/index.js';
 
 // Phase 3 (issue #793): pilot-tier handoff token + manager.
 export * as handoff from './handoff/index.js';
+
+// Phase 4 (issue #713): verified skill extractor — deterministic transform,
+// no LLM calls. Gate call sites on `isSkillCuratorEnabled()` from
+// `src/harness/flags.ts` before invoking any export from this namespace.
+export * as curator from './curator/index.js';
