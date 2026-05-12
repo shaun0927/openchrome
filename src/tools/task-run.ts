@@ -10,6 +10,7 @@ import {
   TaskRunTransitionError,
   UpdateTaskRunInput,
 } from '../core/task-run';
+import { bulkProgressStore } from './bulk-progress';
 
 const store = new TaskRunStore();
 
@@ -69,6 +70,7 @@ const startDefinition: MCPToolDefinition = {
       success_criteria: { type: 'array', items: { type: 'string' }, description: 'Optional concrete success criteria.' },
       session_id: { type: 'string', description: 'Optional OpenChrome session id to associate.' },
       workflow_id: { type: 'string', description: 'Optional workflow id to associate.' },
+      bulk_contract_id: { type: 'string', description: 'Optional active bulk progress contract id.' },
       ledger_task_ids: { type: 'array', items: { type: 'string' }, description: 'Optional #855 async ledger task ids to link when available.' },
     },
     required: ['goal'],
@@ -91,6 +93,7 @@ const updateDefinition: MCPToolDefinition = {
       last_evidence: evidenceSchema,
       ledger_task_ids: { type: 'array', items: { type: 'string' } },
       workflow_id: { type: 'string' },
+      bulk_contract_id: { type: 'string' },
     },
     required: ['run_id'],
   },
@@ -139,6 +142,9 @@ const completeDefinition: MCPToolDefinition = {
       completed_items: { type: 'array', items: { type: 'string' } },
       failed_items: failedItemsSchema,
       last_evidence: evidenceSchema,
+      bulk_contract_id: { type: 'string', description: 'Override the TaskRun active bulk progress contract for this completion attempt.' },
+      force: { type: 'boolean', description: 'Allow completion despite an incomplete bulk contract only when force_reason is supplied.' },
+      force_reason: { type: 'string' },
     },
     required: ['run_id'],
   },
@@ -217,6 +223,38 @@ const needsHelpHandler: ToolHandler = async (_sessionId, args) => {
 const completeHandler: ToolHandler = async (_sessionId, args) => {
   try {
     const runId = String(args.run_id || '');
+    const current = await store.get(runId);
+    const contractId = typeof args.bulk_contract_id === 'string' && args.bulk_contract_id.trim()
+      ? args.bulk_contract_id
+      : current.bulk_contract_id;
+    if (contractId) {
+      const guard = await bulkProgressStore.check(contractId);
+      const forced = args.force === true && typeof args.force_reason === 'string' && args.force_reason.trim().length > 0;
+      if (guard.allowed === false && forced === false) {
+        const value = {
+          error: {
+            code: 'bulk_completion_guard_failed',
+            message: guard.reason || 'Bulk progress contract does not allow completion.',
+          },
+          completion_guard: guard,
+          _hint: 'Hint: Bulk progress is incomplete. Continue from the cursor and record remaining completed or failed items before calling oc_task_run_complete again.',
+          _hintMeta: {
+            severity: 'warning',
+            rule: 'bulk-progress-premature-completion',
+            fireCount: 1,
+            suggestion: {
+              tool: 'oc_bulk_progress_update',
+              reason: guard.suggested_next_action || 'Record remaining item progress before completion.',
+            },
+          },
+        };
+        return {
+          isError: true,
+          structuredContent: value,
+          content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+        };
+      }
+    }
     const meta = await store.complete(runId, args as CompleteInput);
     return jsonResult({ task_run: meta });
   } catch (error) {

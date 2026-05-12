@@ -26,6 +26,7 @@ export interface TaskRunMeta {
   success_criteria?: string[];
   session_id?: string;
   workflow_id?: string;
+  bulk_contract_id?: string;
   ledger_task_ids: string[];
   progress_summary?: string;
   completed_items?: string[];

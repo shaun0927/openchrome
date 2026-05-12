@@ -34,6 +34,7 @@ export interface StartTaskRunInput {
   success_criteria?: string[];
   session_id?: string;
   workflow_id?: string;
+  bulk_contract_id?: string;
   ledger_task_ids?: string[];
 }
 
@@ -47,6 +48,7 @@ export interface UpdateTaskRunInput {
   last_evidence?: EvidencePointer[];
   ledger_task_ids?: string[];
   workflow_id?: string;
+  bulk_contract_id?: string;
 }
 
 export interface NeedsHelpInput {
@@ -91,6 +93,7 @@ export class TaskRunStore {
       success_criteria: sanitizeStringArray(input.success_criteria, MAX_CRITERIA, MAX_CRITERION_CHARS),
       session_id: optionalString(input.session_id),
       workflow_id: optionalString(input.workflow_id),
+      bulk_contract_id: optionalString(input.bulk_contract_id),
       ledger_task_ids: uniqueStrings(input.ledger_task_ids),
       created_at: ts,
       updated_at: ts,
@@ -151,6 +154,7 @@ export class TaskRunStore {
       ...current,
       status: nextStatus,
       workflow_id: optionalString(input.workflow_id) || current.workflow_id,
+      bulk_contract_id: optionalString(input.bulk_contract_id) || current.bulk_contract_id,
       ledger_task_ids: uniqueStrings([...(current.ledger_task_ids || []), ...(input.ledger_task_ids || [])]),
       progress_summary: input.progress_summary !== undefined
         ? limit(scrub(input.progress_summary), MAX_SUMMARY_CHARS)

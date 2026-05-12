@@ -15,6 +15,10 @@ const UID_EVICTED_PREFIX = /^\s*uid_evicted\b/i;
 
 const patterns: Array<{ test: RegExp; hint: string }> = [
   {
+    test: /bulk_completion_guard_failed|Bulk progress incomplete/i,
+    hint: 'Hint: Bulk progress is incomplete. Use oc_bulk_progress_update to record remaining completed or failed items, then retry oc_task_run_complete.',
+  },
+  {
     test: /ref\b.+not found|invalid ref|stale ref/i,
     hint: 'Hint: Refs expire after page changes. Use read_page or find for fresh refs.',
   },

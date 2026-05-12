@@ -149,10 +149,10 @@ import { registerHandoffTools } from './handoff';
 import { registerOcNormalizeActionTool } from './oc-normalize-action';
 import { isRunHarnessEnabled } from '../run-harness/flags';
 import { registerRunHarnessTools } from '../run-harness/tools';
-// Goal-level TaskRun lifecycle (#1039)
-import { registerTaskRunTools } from './task-run';
 // Read-only progress diagnostics (#1060).
 import { registerOcProgressStatusTool } from './oc-progress-status';
+// Bulk progress contracts (#1041) — opt-in guard for repetitive tasks.
+import { registerBulkProgressTools } from './bulk-progress';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -360,9 +360,8 @@ export function registerAllTools(server: MCPServer): void {
   if (isRunHarnessEnabled()) {
     registerRunHarnessTools(server);
   }
-
-  // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
-  registerTaskRunTools(server);
+  // Bulk progress contracts (#1041) — opt-in guard for repetitive tasks.
+  registerBulkProgressTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
