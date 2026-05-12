@@ -19,6 +19,7 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
+import { dispatchCoordinateClick } from '../cdp/input';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
 
 /**
@@ -34,7 +35,7 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find element by natural language, perform click/hover/double_click, wait for DOM to settle, and return state summary.\n\nWhen to use: Clicking or hovering an element described in plain language in a single call.\nWhen NOT to use: Use computer for coordinate-based clicks, or act for multi-step sequences.',
+  description: 'Find element by natural language, perform click/hover/double_click, wait for DOM to settle, and return state summary.\n\nWhen to use: Clicking or hovering an element described in plain language in a single call. For Shadow DOM / canvas / cross-origin iframes, take a screenshot to get pixel coordinates and call with mode:"coordinate" and the coordinate block.\nWhen NOT to use: Use computer for general coordinate-based clicks (outside the Shadow DOM / canvas / iframe fallback), or act for multi-step sequences.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -44,7 +45,28 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Element to act on (natural language)',
+        description: 'Element to act on (natural language). Required when mode is "ref" (default).',
+      },
+      mode: {
+        type: 'string',
+        enum: ['ref', 'coordinate'],
+        default: 'ref',
+        description: 'Dispatch mode. "ref" (default) resolves the element by query; "coordinate" sends a CDP mouse event directly to pixel coordinates.',
+      },
+      coordinate: {
+        type: 'object',
+        description: 'Pixel coordinates for coordinate mode. Required when mode is "coordinate".',
+        properties: {
+          x: { type: 'integer', minimum: 0 },
+          y: { type: 'integer', minimum: 0 },
+          button: { type: 'string', enum: ['left', 'right', 'middle'], default: 'left' },
+          clickCount: { type: 'integer', minimum: 1, maximum: 3, default: 1 },
+          modifiers: {
+            type: 'array',
+            items: { type: 'string', enum: ['alt', 'ctrl', 'meta', 'shift'] },
+          },
+        },
+        required: ['x', 'y'],
       },
       action: {
         type: 'string',
@@ -70,7 +92,7 @@ const definition: MCPToolDefinition = {
         description: 'Poll interval in ms. Default: 200',
       },
     },
-    required: ['tabId', 'query'],
+    required: ['tabId'],
   },
 };
 
@@ -81,7 +103,9 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   throwIfAborted(context);
   const tabId = args.tabId as string;
+  const mode = (args.mode as string) || 'ref';
   const query = args.query as string;
+  const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
   const returnFormat = (args.returnFormat as string) || 'both';
@@ -99,9 +123,117 @@ const handler: ToolHandler = async (
     };
   }
 
+  // ─── Mode: coordinate ───
+  if (mode === 'coordinate') {
+    if (query) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
+        isError: true,
+      };
+    }
+    if (!coordinateArg) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" block is required when mode is "coordinate".' }],
+        isError: true,
+      };
+    }
+    const cx = coordinateArg.x as number;
+    const cy = coordinateArg.y as number;
+    if (typeof cx !== 'number' || typeof cy !== 'number') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: coordinate.x and coordinate.y must be integers.' }],
+        isError: true,
+      };
+    }
+
+    try {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+      if (!page) {
+        return {
+          content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.` }],
+          isError: true,
+        };
+      }
+
+      // Viewport clamping
+      const viewport = page.viewport() ?? await page.evaluate(() => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      })).catch(() => null);
+
+      if (viewport && (cx > viewport.width || cy > viewport.height || cx < 0 || cy < 0)) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'OOB_COORDINATE',
+              message: `Coordinates (${cx}, ${cy}) are outside viewport bounds.`,
+              viewport: { width: viewport.width, height: viewport.height },
+            }),
+          }],
+          isError: true,
+        };
+      }
+
+      const cdpClient = sessionManager.getCDPClient();
+      const isStealth = sessionManager.isStealthTarget(tabId);
+
+      const { delta } = await withDomDelta(page, async () => {
+        if (isStealth) await humanMouseMove(page, cx, cy);
+        await dispatchCoordinateClick(cdpClient, page, {
+          x: cx,
+          y: cy,
+          button: (coordinateArg.button as 'left' | 'right' | 'middle') ?? 'left',
+          clickCount: (coordinateArg.clickCount as number) ?? 1,
+          modifiers: (coordinateArg.modifiers as Array<'alt' | 'ctrl' | 'meta' | 'shift'>) ?? [],
+        });
+      }, { settleMs: Math.max(150, waitAfter) });
+
+      const lines: string[] = [`Clicked coordinate (${cx}, ${cy}) via CDP`];
+      if (delta) lines.push('', '[DOM Delta]', delta);
+
+      const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+        { type: 'text' as const, text: lines.join('\n') },
+      ];
+
+      if (verify) {
+        try {
+          const screenshotBuf = await withTimeout(
+            page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
+            DEFAULT_SCREENSHOT_TIMEOUT_MS,
+            'verify-screenshot',
+            context
+          ) as string;
+          resultContent.push({ type: 'image' as const, data: screenshotBuf, mimeType: 'image/webp' });
+        } catch { /* screenshot failed, non-fatal */ }
+      }
+
+      return { content: resultContent };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Mode: ref (default) ───
+  if (mode !== 'ref') {
+    return {
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: mode must be "ref" or "coordinate".' }],
+      isError: true,
+    };
+  }
+  if (coordinateArg) {
+    return {
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" instead.' }],
+      isError: true,
+    };
+  }
+
   if (!query) {
     return {
-      content: [{ type: 'text', text: 'Error: query is required' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" is required when mode is "ref".' }],
       isError: true,
     };
   }
