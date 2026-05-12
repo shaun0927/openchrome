@@ -385,7 +385,36 @@ const handler: ToolHandler = async (
 
     switch (action) {
       case 'enable': {
+        // Determine active preset: per-call arg takes precedence over env var.
+        const activePreset = (presetArg as BandwidthPreset | undefined) ??
+          (ENV_PRESET && SUPPORTED_PRESETS.includes(ENV_PRESET as BandwidthPreset)
+            ? (ENV_PRESET as BandwidthPreset)
+            : undefined);
+
         if (state.enabled) {
+          // Re-enable with an explicit `preset` arg replaces the previously
+          // injected preset rules in-place. The listener already references
+          // state.rules, so updates take effect immediately on the next request.
+          // Calls without `preset` keep current behaviour (no-op + already_enabled).
+          if (presetArg !== undefined) {
+            state.rules = state.rules.filter((r) => !r.id.startsWith('preset-'));
+            if (activePreset) {
+              state.rules.unshift(...presetToRules(activePreset));
+            }
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    action: 'enable',
+                    status: 'preset_updated',
+                    preset: activePreset ?? null,
+                    rulesCount: state.rules.length,
+                  }),
+                },
+              ],
+            };
+          }
           return {
             content: [
               {
@@ -399,12 +428,6 @@ const handler: ToolHandler = async (
             ],
           };
         }
-
-        // Determine active preset: per-call arg takes precedence over env var.
-        const activePreset = (presetArg as BandwidthPreset | undefined) ??
-          (ENV_PRESET && SUPPORTED_PRESETS.includes(ENV_PRESET as BandwidthPreset)
-            ? (ENV_PRESET as BandwidthPreset)
-            : undefined);
 
         // Inject preset rules at the front; user rules (added via addRule) come after.
         // Always clear old injected preset rules first so re-enabling without a preset
