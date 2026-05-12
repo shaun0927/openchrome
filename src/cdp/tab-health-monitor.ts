@@ -6,11 +6,20 @@
  * Idle-adaptive (issue #649 Part A): when the server is idle, each tab's
  * probe cadence relaxes from 60 s to 300 s (5× reduction). Each tab runs on
  * its own `setTimeout` chain so local scheduling stays independent.
+ *
+ * Console buffer pressure (issue #897): emits `console_buffer_pressure` when
+ * retainedBytes > 0.9 * maxBytes for >= 30 seconds (sustained high-watermark).
  */
 
 import { EventEmitter } from 'events';
 import { Page } from 'puppeteer-core';
 import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+import { captureStates } from '../tools/console-capture';
+
+/** Fraction of maxBytes that triggers the pressure event. */
+const PRESSURE_RATIO = 0.9;
+/** Sustained duration before emitting the pressure event (ms). */
+const PRESSURE_SUSTAIN_MS = 30_000;
 
 /** Idle cadence. 300 s is 5× slower than the default 60 s active rate. */
 const IDLE_PROBE_INTERVAL_MS = 300_000;
@@ -54,6 +63,15 @@ export class TabHealthMonitor extends EventEmitter {
   private readonly evictionThreshold: number;
   private readonly idleState: IdleState;
 
+  /**
+   * Per-tab timestamp (ms) when retainedBytes first exceeded the pressure
+   * threshold. Null means not currently in a high-water-mark state.
+   * Reset once pressure drops below the threshold.
+   */
+  private readonly pressureOnsetAt: Map<string, number> = new Map();
+  /** Tracks whether we have already fired the one-shot event per onset. */
+  private readonly pressureFired: Map<string, boolean> = new Map();
+
   constructor(opts?: TabHealthMonitorOptions) {
     super();
     this.probeIntervalMs = opts?.probeIntervalMs ?? 60000;
@@ -95,6 +113,8 @@ export class TabHealthMonitor extends EventEmitter {
       this.tabs.delete(targetId);
     }
     this.health.delete(targetId);
+    this.pressureOnsetAt.delete(targetId);
+    this.pressureFired.delete(targetId);
   }
 
   /**
@@ -155,6 +175,7 @@ export class TabHealthMonitor extends EventEmitter {
       info.consecutiveFailures = 0;
       info.lastHealthyAt = now;
       this.emit('tab-healthy', { targetId });
+      this.checkBufferPressure(targetId, now);
     } catch (error) {
       info.consecutiveFailures++;
 
@@ -173,6 +194,47 @@ export class TabHealthMonitor extends EventEmitter {
         console.error(`[TabHealthMonitor] Tab ${targetId} probe failed (strike ${info.consecutiveFailures}/${this.unhealthyThreshold}):`,
           error instanceof Error ? error.message : String(error));
       }
+    }
+  }
+
+  /**
+   * Check console buffer byte pressure for the given tab.
+   * Emits `console_buffer_pressure` (one-shot, debounced) when
+   * retainedBytes > 0.9 * maxBytes for >= PRESSURE_SUSTAIN_MS.
+   * Resets the onset clock once pressure drops below the threshold.
+   */
+  private checkBufferPressure(targetId: string, now: number): void {
+    const captureState = captureStates.get(targetId);
+    if (!captureState) return;
+
+    const bufStats = captureState.logs.stats();
+    const threshold = PRESSURE_RATIO * captureState.maxBytes;
+    const underPressure = bufStats.retainedBytes > threshold;
+
+    if (underPressure) {
+      if (!this.pressureOnsetAt.has(targetId)) {
+        // First probe above threshold — record onset time.
+        this.pressureOnsetAt.set(targetId, now);
+        this.pressureFired.set(targetId, false);
+      }
+
+      const onset = this.pressureOnsetAt.get(targetId)!;
+      const alreadyFired = this.pressureFired.get(targetId) ?? false;
+
+      if (!alreadyFired && now - onset >= PRESSURE_SUSTAIN_MS) {
+        this.pressureFired.set(targetId, true);
+        console.error(`[TabHealthMonitor] Tab ${targetId} console buffer pressure: ${bufStats.retainedBytes} / ${captureState.maxBytes} bytes`);
+        this.emit('console_buffer_pressure', {
+          targetId,
+          retainedBytes: bufStats.retainedBytes,
+          maxBytes: captureState.maxBytes,
+          sustainedMs: now - onset,
+        });
+      }
+    } else {
+      // Pressure dropped — reset so a future high-water-mark fires again.
+      this.pressureOnsetAt.delete(targetId);
+      this.pressureFired.delete(targetId);
     }
   }
 

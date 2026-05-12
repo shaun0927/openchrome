@@ -10,7 +10,7 @@ import { withTimeout } from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
-  description: 'Execute JavaScript in page context. Supports await.',
+  description: 'Execute JavaScript in page context. Supports await, async IIFE, and shadow-DOM helpers via __pierce.\n\nWhen to use: Custom DOM queries, data extraction, or triggering JS APIs not reachable via other tools.\nWhen NOT to use: Use interact or act for UI interactions, or extract_data for structured schema-based extraction.',
   inputSchema: {
     type: 'object',
     properties: {

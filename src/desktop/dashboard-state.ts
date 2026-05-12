@@ -86,10 +86,27 @@ class PerSessionRingBuffer {
   }
 }
 
+/**
+ * Process-lifetime monotonic count, keyed by (sessionId, toolName, result).
+ * Backs the Prometheus `openchrome_tool_calls_total` counter (#839, P2):
+ * the dashboard ring buffer is bounded so counts derived from it can shrink
+ * as old entries age out, which violates Prometheus counter monotonicity.
+ * Tenant resolution happens at scrape time via `sessionManager.getSession`,
+ * which matches the filter applied by `handleToolCalls` (#839, P1).
+ */
+export interface ToolCallCounterRow {
+  sessionId: string;
+  toolName: string;
+  result: 'success' | 'error';
+  count: number;
+}
+
 export class DashboardState {
   private calls = new PerSessionRingBuffer(MAX_CALLS_PER_SESSION);
   private activeCalls = new Map<string, DashboardToolCall>();
   private startTime = Date.now();
+  /** Monotonic counts keyed as `${sessionId}${toolName}${result}`. */
+  private toolCallTotals = new Map<string, number>();
 
   /**
    * Record the start of a tool call. Returns the call ID for later completion.
@@ -122,6 +139,31 @@ export class DashboardState {
       call.error = error;
     }
     this.activeCalls.delete(callId);
+
+    // Increment the monotonic Prometheus counter. `aborted` is folded into
+    // `error` to match the dashboard's two-bucket exposition.
+    // Use  (Unit Separator) as the field delimiter: it cannot appear
+    // in session UUIDs or tool-name identifiers, so the key is unambiguously
+    // parseable in getToolCallTotals.
+    const bucket: 'success' | 'error' = status === 'success' ? 'success' : 'error';
+    const key = `${call.sessionId}${call.toolName}${bucket}`;
+    this.toolCallTotals.set(key, (this.toolCallTotals.get(key) ?? 0) + 1);
+  }
+
+  /**
+   * Snapshot of every (sessionId, toolName, result) cell ever observed in
+   * this process. Counts only increase; aging out of the ring buffer does
+   * not decrement these values.
+   */
+  getToolCallTotals(): ToolCallCounterRow[] {
+    const rows: ToolCallCounterRow[] = [];
+    for (const [key, count] of this.toolCallTotals) {
+      const [sessionId, toolName, result] = key.split('\u001f');
+      if (sessionId === undefined || toolName === undefined) continue;
+      if (result !== 'success' && result !== 'error') continue;
+      rows.push({ sessionId, toolName, result, count });
+    }
+    return rows;
   }
 
   /**

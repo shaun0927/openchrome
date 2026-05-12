@@ -4,6 +4,7 @@ import { extractMainContent, toMarkdown } from '../../../src/core/extract/html-t
 import { sanitizeContent } from '../../../src/security/content-sanitizer';
 
 const FIXTURES = path.join(__dirname, 'fixtures');
+const normalizeFixtureText = (text: string) => text.replace(/\r\n/g, '\n');
 
 describe('extractMainContent', () => {
   it('removes script/style/noscript/iframe/svg', () => {
@@ -161,7 +162,7 @@ describe('toMarkdown', () => {
 describe('html-to-markdown integration on fixture', () => {
   it('produces the committed expected.clean.md byte-identical', () => {
     const html = fs.readFileSync(path.join(FIXTURES, 'wikipedia.html'), 'utf8');
-    const expected = fs.readFileSync(path.join(FIXTURES, 'wikipedia.expected.clean.md'), 'utf8');
+    const expected = normalizeFixtureText(fs.readFileSync(path.join(FIXTURES, 'wikipedia.expected.clean.md'), 'utf8'));
     const { html: cleaned } = extractMainContent(html, { onlyMainContent: true });
     const md = toMarkdown(cleaned, { includeLinks: true });
     expect(md).toBe(expected);
