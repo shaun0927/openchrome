@@ -239,13 +239,13 @@ export class Dashboard extends EventEmitter {
         // shows current data; subsequent ticks update via refreshLedgers.
         this.currentView = 'tasks';
         this.selectedIndex = 0;
-        void this.refreshLedgers();
+        this.scheduleLedgerRefresh();
         break;
       case 'k':
         // Skills ledger view (#865).
         this.currentView = 'skills';
         this.selectedIndex = 0;
-        void this.refreshLedgers();
+        this.scheduleLedgerRefresh();
         break;
     }
   }
@@ -287,10 +287,11 @@ export class Dashboard extends EventEmitter {
       return;
     }
 
-    if (this.ledgerRefreshInFlight) {
-      return;
-    }
+    this.scheduleLedgerRefresh();
+  }
 
+  private scheduleLedgerRefresh(): void {
+    if (this.ledgerRefreshInFlight) return;
     this.ledgerRefreshInFlight = this.refreshLedgers()
       .catch(() => {
         // refreshLedgers/readers are expected to convert IO failures into

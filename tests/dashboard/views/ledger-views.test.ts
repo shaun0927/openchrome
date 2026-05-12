@@ -199,4 +199,29 @@ describe('Dashboard ledger refresh ticks', () => {
     dashboard.refreshTick();
     expect(dashboard.refreshLedgers).toHaveBeenCalledTimes(2);
   });
+
+  test('entry refresh and timer refresh share one in-flight guard', async () => {
+    let resolveRefresh!: () => void;
+    const dashboard = new Dashboard({ enabled: false }) as unknown as {
+      currentView: string;
+      handleMainViewKey: (key: string) => void;
+      refreshTick: () => void;
+      refreshLedgers: jest.Mock<Promise<void>, []>;
+    };
+    dashboard.currentView = 'activity';
+    dashboard.refreshLedgers = jest.fn(() => new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    dashboard.handleMainViewKey('j');
+    dashboard.refreshTick();
+    expect(dashboard.refreshLedgers).toHaveBeenCalledTimes(1);
+
+    resolveRefresh();
+    await dashboard.refreshLedgers.mock.results[0].value;
+    await Promise.resolve();
+
+    dashboard.refreshTick();
+    expect(dashboard.refreshLedgers).toHaveBeenCalledTimes(2);
+  });
 });
