@@ -62,4 +62,10 @@ describe('failure classifier', () => {
 
     expect(result.category).toBe('STALE_REF');
   });
+
+  it('does not classify navigation context churn as connection loss', () => {
+    expect(categories('Execution context was destroyed, most likely because of a navigation')).not.toContain('CONNECTION_LOST');
+    expect(categories('Cannot find context with specified id')).not.toContain('CONNECTION_LOST');
+  });
+
 });
