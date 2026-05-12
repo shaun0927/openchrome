@@ -451,7 +451,7 @@ const handler: ToolHandler = async (
           let matchedRule: InterceptRule | null = null;
 
           // Two-pass rule evaluation: first pass finds the selected match,
-          // second lets later explicit allow/modify rules override a block.
+          // second lets explicit allow rules override block/modify conflicts.
           for (const rule of state!.rules) {
             if (matchesPattern(url, rule.pattern)) {
               // Check resource type filter
@@ -467,7 +467,9 @@ const handler: ToolHandler = async (
           }
 
           if (matched && matchedRule?.action === 'block') {
-            // Look for a later explicit override that also matches.
+            // Look for explicit overrides that also match. Allow wins over
+            // modify regardless of their relative order in the override pass.
+            let modifyOverride: InterceptRule | null = null;
             for (const rule of state!.rules) {
               if (rule === matchedRule) continue;
               if (rule.action !== 'allow' && rule.action !== 'modify') continue;
@@ -475,8 +477,16 @@ const handler: ToolHandler = async (
               if (rule.resourceTypes && rule.resourceTypes.length > 0) {
                 if (!rule.resourceTypes.includes(resourceType)) continue;
               }
-              matchedRule = rule;
-              break;
+              if (rule.action === 'allow') {
+                matchedRule = rule;
+                break;
+              }
+              if (!modifyOverride) {
+                modifyOverride = rule;
+              }
+            }
+            if (matchedRule.action === 'block' && modifyOverride) {
+              matchedRule = modifyOverride;
             }
           }
 

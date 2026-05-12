@@ -379,6 +379,41 @@ describe('allow-wins composition', () => {
     expect(request.respond).not.toHaveBeenCalled();
   });
 
+  test('explicit allow rule overrides preset block when modify rule matches first', async () => {
+    const handler = await loadHandler();
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+      preset: 'optimize-bandwidth',
+    });
+    await addRule(handler, {
+      pattern: '*://cdn.example.com/keep.png',
+      resourceTypes: ['image'],
+      action: 'modify',
+      modifyOptions: {
+        status: 204,
+        headers: { 'content-type': 'image/png' },
+        body: '',
+      },
+    });
+    await addRule(handler, {
+      pattern: '*://cdn.example.com/keep.png',
+      resourceTypes: ['image'],
+      action: 'allow',
+    });
+
+    const request = createMockRequest({
+      url: 'https://cdn.example.com/keep.png',
+      resourceType: 'image',
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.continue).toHaveBeenCalled();
+    expect(request.respond).not.toHaveBeenCalled();
+    expect(request.abort).not.toHaveBeenCalled();
+  });
+
   test('modify rule overriding preset block executes response modification', async () => {
     const handler = await loadHandler();
 
