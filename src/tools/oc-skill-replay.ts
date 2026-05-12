@@ -139,13 +139,23 @@ const handler: ToolHandler = async (
 
   const snapshotReader: FrozenSnapshotReader = {
     async readUrlOrigin(skill: SkillRecord): Promise<string | null> {
-      // The current frozen-snapshot file format does not split out origin
-      // as a top-level field; the snapshot reader here is a no-op until
-      // the snapshot serialiser surfaces `url_origin`. Returning null
-      // disables the precondition gate — by design, per the issue ("the
-      // gate fires only when both origins are known and differ").
-      void skill;
-      return null;
+      // The frozen snapshot is an opaque JSON blob written by oc_skill_record
+      // (see src/tools/oc-skill-record.ts). When that blob includes a
+      // `url_origin` field, the precondition gate uses it to refuse
+      // cross-origin replay (Codex review on #928 P1: returning null
+      // unconditionally disables the gate and lets a skill recorded on one
+      // site execute its CDP steps on another).
+      if (!skill.frozenSnapshotPath) return null;
+      try {
+        const snapshot = store.readFrozenSnapshot(skill.frozenSnapshotPath);
+        const origin = snapshot?.url_origin;
+        return typeof origin === 'string' && origin.length > 0 ? origin : null;
+      } catch {
+        // Fail closed: if we can't read the snapshot but a path was promised,
+        // the gate at runReplay()'s origin-check stage will surface
+        // origin_check_failed via its own fail-closed branch.
+        return null;
+      }
     },
   };
 
