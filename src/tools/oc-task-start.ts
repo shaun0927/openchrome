@@ -72,7 +72,26 @@ const definition: MCPToolDefinition = {
 interface StartHandlerOpts {
   /** Resolver injected at registration time so tests can stub the registry. */
   resolveTool: (toolName: string) => ToolHandler | null;
+  /**
+   * Invoke the selected tool through the normal MCP tool-call pipeline.
+   * Production uses MCPServer.invokeRegisteredToolForTask so background tasks
+   * keep the same wrappers as direct calls (notably secret substitution).
+   */
+  invokeTool?: (
+    sessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<MCPResult>;
 }
+
+const TASK_LEDGER_TOOLS = new Set([
+  'oc_task_start',
+  'oc_task_get',
+  'oc_task_list',
+  'oc_task_wait',
+  'oc_task_cancel',
+]);
 
 function makeHandler(opts: StartHandlerOpts): ToolHandler {
   return async (
@@ -84,6 +103,9 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
     const args = (params.args ?? {}) as Record<string, unknown>;
     if (!kind) {
       return errorResult('oc_task_start: kind is required');
+    }
+    if (TASK_LEDGER_TOOLS.has(kind)) {
+      return errorResult(`oc_task_start: refusing to schedule task-ledger tool ${JSON.stringify(kind)}`);
     }
     const inner = opts.resolveTool(kind);
     if (!inner) {
@@ -114,9 +136,12 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
       pid: process.pid,
       invoke: async (signal) => {
         const merged: Record<string, unknown> = { ...args };
-        // Tools that participate in cooperative cancel can read the
-        // signal off the ToolContext. The runner's poll already covers
-        // tools that don't.
+        if (opts.invokeTool) {
+          return await opts.invokeTool(sessionId, kind, merged, signal);
+        }
+        // Test seam fallback: direct handler invocation remains available for
+        // focused unit tests, while production registration always supplies
+        // invokeTool above so background tasks use the MCP pipeline.
         return await inner(sessionId, merged, {
           startTime: Date.now(),
           deadlineMs: Number.MAX_SAFE_INTEGER,
@@ -151,6 +176,8 @@ function errorResult(message: string): MCPResult {
 export function registerOcTaskStartTool(server: MCPServer): void {
   const handler = makeHandler({
     resolveTool: (name) => server.getToolHandler(name),
+    invokeTool: (sessionId, toolName, args, signal) =>
+      server.invokeRegisteredToolForTask(sessionId, toolName, args, signal),
   });
   server.registerTool(definition.name, handler, definition);
 }

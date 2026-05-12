@@ -1978,6 +1978,27 @@ export class MCPServer {
   }
 
   /**
+   * Invoke a registered tool through the normal MCP tool-call pipeline for
+   * internal background dispatchers. This preserves the same wrappers as a
+   * client tools/call (secret substitution, scope/rate gates when present,
+   * session setup, activity/journal/metrics, timeouts, and reconnect retry)
+   * instead of calling the raw handler directly.
+   */
+  async invokeRegisteredToolForTask(
+    sessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<MCPResult> {
+    return this.handleToolsCall(
+      { name: toolName, arguments: { ...args, sessionId } },
+      undefined,
+      undefined,
+      signal,
+    );
+  }
+
+  /**
    * Get a tool handler by name (for internal server-side plan execution).
    * Returns null if the tool is not registered.
    */

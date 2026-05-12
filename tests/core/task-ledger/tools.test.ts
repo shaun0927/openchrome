@@ -77,4 +77,19 @@ describe('oc_task_start handler — happy path', () => {
     const out = await handler('sess-1', { args: {} });
     expect(out.isError).toBe(true);
   });
+
+  test('rejects recursive task-ledger tool scheduling', async () => {
+    const innerTool = jest.fn<Promise<MCPResult>, Parameters<ToolHandler>>(async () => ({
+      content: [{ type: 'text', text: 'should not run' }],
+    }));
+    const handler = __test__.makeHandler({
+      resolveTool: (name) => (name === 'oc_task_start' ? innerTool : null),
+    });
+
+    const out = await handler('sess-1', { kind: 'oc_task_start', args: { kind: 'oc_task_start', args: {} } });
+
+    expect(out.isError).toBe(true);
+    expect(out.content?.[0]?.text).toContain('refusing to schedule');
+    expect(innerTool).not.toHaveBeenCalled();
+  });
 });
