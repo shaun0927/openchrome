@@ -563,7 +563,7 @@ async function markCursorInteractiveElements(page: Page): Promise<void> {
           const tabIndex = el.getAttribute('tabindex');
           const hasTabIndex = tabIndex !== null && tabIndex !== '-1';
           const editable = el.getAttribute('contenteditable');
-          const isEditable = editable === '' || editable === 'true';
+          const isEditable = el.isContentEditable || editable === '' || editable === 'true' || editable === 'plaintext-only';
 
           if (!hasCursorPointer && !hasOnClick && !hasTabIndex && !isEditable) continue;
           if (hasCursorPointer && !hasOnClick && !hasTabIndex && !isEditable) {
