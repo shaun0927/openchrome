@@ -587,8 +587,13 @@ describe('ReadPageTool', () => {
       const handler = await getReadPageHandler();
       mockSessionManager.mockCDPClient.send.mockRejectedValueOnce(new Error('CDP error'));
 
+      // Use AX mode to exercise the top-level CDP error path. DOM mode now
+      // fails closed with its own dedicated message ("Read page DOM
+      // serialization error: …") covered by other tests, so steering this
+      // case through AX keeps the original assertion meaningful.
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);

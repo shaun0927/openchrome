@@ -126,7 +126,9 @@ const handler: ToolHandler = async (
     const cdpClient = sessionManager.getCDPClient();
 
     // Mode dispatch
-    const mode = (args.mode as string) || 'dom';
+    const requestedMode = args.mode as string | undefined;
+    const mode = requestedMode || 'dom';
+    const isExplicitDomMode = requestedMode === 'dom';
     if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
       return {
         content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
@@ -360,15 +362,17 @@ const handler: ToolHandler = async (
           content: [{ type: 'text', text: outputText + domPaginationSection }],
         };
       } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Read page DOM serialization error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        if (isExplicitDomMode) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Read page DOM serialization error: ${error instanceof Error ? error.message : String(error)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
       }
     }
 
