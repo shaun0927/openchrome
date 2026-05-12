@@ -93,6 +93,9 @@ const CONTAINER_TAGS = new Set([
 ]);
 
 const INTERACTIVE_HINT_ATTR = 'data-oc-interactive-hints';
+const INTERACTIVE_HINT_OWNED_ATTR = `${INTERACTIVE_HINT_ATTR}-owned`;
+const INTERACTIVE_HINT_SCAN_MAX_MS = 100;
+const INTERACTIVE_HINT_SCAN_MAX_ELEMENTS = 2500;
 
 /**
  * Parse flat attributes array into a map
@@ -536,22 +539,39 @@ function serializeNode(
 }
 
 async function markCursorInteractiveElements(page: Page): Promise<void> {
-  // Await the browser-side scan directly. page.evaluate cannot be aborted by
-  // racing its promise with a timeout; doing so could let background marker
-  // mutations continue after serializeDOM has already run cleanup.
-  await page.evaluate((hintAttr: string) => {
+  // Bound the browser-side scan from inside the evaluated function. Racing
+  // page.evaluate with a timeout does not abort the in-page work and can leave
+  // marker mutations running after cleanup; an in-page deadline/node cap exits
+  // cooperatively without orphaning background DOM changes.
+  await page.evaluate((hintAttr: string, ownedAttr: string, maxMs: number, maxElements: number) => {
       const interactiveRoles = new Set([
         'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'listbox',
         'menu', 'menuitem', 'tab', 'switch', 'slider',
       ]);
       const interactiveTags = new Set(['a', 'button', 'input', 'select', 'textarea', 'details', 'summary']);
       const roots: Array<Document | ShadowRoot> = [document];
+      const now = () => (typeof performance !== 'undefined' && typeof performance.now === 'function')
+        ? performance.now()
+        : Date.now();
+      const deadline = now() + maxMs;
+      let inspected = 0;
+      let budgetExceeded = false;
 
       for (let i = 0; i < roots.length; i++) {
         const root = roots[i];
-        const all = Array.from(root.querySelectorAll('*')) as HTMLElement[];
-        for (const el of all) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let current = walker.nextNode();
+        while (current) {
+          inspected += 1;
+          if (inspected > maxElements || now() > deadline) {
+            budgetExceeded = true;
+            break;
+          }
+
+          const el = current as HTMLElement;
           if (el.shadowRoot) roots.push(el.shadowRoot);
+          current = walker.nextNode();
+
           if (el.closest('[hidden], [aria-hidden="true"]')) continue;
 
           const tag = el.tagName.toLowerCase();
@@ -592,30 +612,31 @@ async function markCursorInteractiveElements(page: Page): Promise<void> {
 
           if (!el.hasAttribute(hintAttr)) {
             el.setAttribute(hintAttr, hints.join(', '));
-            el.setAttribute(`${hintAttr}-owned`, 'true');
+            el.setAttribute(ownedAttr, 'true');
           }
         }
+        if (budgetExceeded) break;
       }
-    }, INTERACTIVE_HINT_ATTR);
+    }, INTERACTIVE_HINT_ATTR, INTERACTIVE_HINT_OWNED_ATTR, INTERACTIVE_HINT_SCAN_MAX_MS, INTERACTIVE_HINT_SCAN_MAX_ELEMENTS);
 }
 
 async function clearCursorInteractiveMarkers(page: Page): Promise<void> {
   try {
     await withTimeout(
-      page.evaluate((hintAttr: string) => {
+      page.evaluate((hintAttr: string, ownedAttr: string) => {
         const roots: Array<Document | ShadowRoot> = [document];
         for (let i = 0; i < roots.length; i++) {
           const root = roots[i];
           const all = Array.from(root.querySelectorAll('*')) as HTMLElement[];
           for (const el of all) {
             if (el.shadowRoot) roots.push(el.shadowRoot);
-            if (el.getAttribute(`${hintAttr}-owned`) === 'true') {
+            if (el.getAttribute(ownedAttr) === 'true') {
               el.removeAttribute(hintAttr);
-              el.removeAttribute(`${hintAttr}-owned`);
+              el.removeAttribute(ownedAttr);
             }
           }
         }
-      }, INTERACTIVE_HINT_ATTR),
+      }, INTERACTIVE_HINT_ATTR, INTERACTIVE_HINT_OWNED_ATTR),
       5000,
       'serializeDOM:clearCursorInteractiveMarkers',
     );
