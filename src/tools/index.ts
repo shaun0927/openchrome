@@ -70,6 +70,7 @@ import { registerListProfilesTool } from './list-profiles';
 import { registerSessionSnapshotTool } from './session-snapshot';
 import { registerSessionResumeTool } from './session-resume';
 import { registerJournalTool } from './journal';
+import { registerOcReflectTool } from './oc-reflect';
 
 // Self-healing tools (#347)
 import { registerConnectionHealthTool } from './connection-health';
@@ -206,6 +207,7 @@ export function registerAllTools(server: MCPServer): void {
   registerSessionSnapshotTool(server);
   registerSessionResumeTool(server);
   registerJournalTool(server);
+  registerOcReflectTool(server);
 
   // Self-healing tools (#347)
   registerConnectionHealthTool(server);
