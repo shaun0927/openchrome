@@ -18,7 +18,7 @@ import {
   DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
 } from '../config/defaults';
 import { ClientDisconnectError } from '../errors/abort';
-import { MCPTransport } from './index';
+import { MCPTransport, TransportMessageContext } from './index';
 import { renderPrometheusMetrics, type PrometheusMetric } from './prometheus';
 import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
@@ -185,7 +185,7 @@ export interface HTTPTransportOptions {
 export class HTTPTransport implements MCPTransport {
   private server: http.Server | null = null;
   private messageHandler:
-    | ((msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>)
+    | ((msg: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) => Promise<MCPResponse | null>)
     | null = null;
   private port: number;
   private host: string;
@@ -338,7 +338,7 @@ export class HTTPTransport implements MCPTransport {
   }
 
   onMessage(
-    handler: (msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>,
+    handler: (msg: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) => Promise<MCPResponse | null>,
   ): void {
     this.messageHandler = handler;
   }
@@ -356,6 +356,20 @@ export class HTTPTransport implements MCPTransport {
         // Connection may have been closed
       }
     }
+  }
+
+  sendToSession(sessionId: string, response: MCPResponse): boolean {
+    let sent = false;
+    for (const conn of this.sseConnections) {
+      if (conn.sessionId !== sessionId) continue;
+      try {
+        conn.res.write(`data: ${JSON.stringify(response)}\n\n`);
+        sent = true;
+      } catch {
+        // Connection may have been closed
+      }
+    }
+    return sent;
   }
 
   start(): void {
@@ -1170,6 +1184,7 @@ export class HTTPTransport implements MCPTransport {
               ? principal.tenantId
               : tenantId,
             keyId: principal?.mode === 'api-key' ? principal.keyId : undefined,
+            mcpSessionId: sessionId,
           },
           () => this.processBatch(parsed, sessionId, tenantId, signal, principal),
         );
@@ -1223,8 +1238,9 @@ export class HTTPTransport implements MCPTransport {
               ? principal.tenantId
               : tenantId,
             keyId: principal?.mode === 'api-key' ? principal.keyId : undefined,
+            mcpSessionId: sessionId,
           },
-          () => this.messageHandler!(msg, signal),
+          () => this.messageHandler!(msg, signal, { mcpSessionId: sessionId, tenantId }),
         );
 
         if (sessionId) {
@@ -1408,7 +1424,7 @@ export class HTTPTransport implements MCPTransport {
           (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
         }
 
-        return await handler(record, signal);
+        return await handler(record, signal, { mcpSessionId: sessionId, tenantId });
       } catch (error) {
         const id = record !== null
           ? ((record.id as string | number | undefined) ?? 0)
