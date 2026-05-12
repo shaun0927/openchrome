@@ -40,6 +40,13 @@ export interface HintRule {
   name: string;
   priority: number;
   maxSeverity?: HintSeverity;
+  /**
+   * When true, this rule duplicates guidance already embedded in a tool
+   * description's "When to use / When NOT to use" block. If the client has
+   * consumed tools/list (i.e. descriptions have been delivered), the rule
+   * is suppressed to avoid redundant output.
+   */
+  redundant_with_description?: boolean;
   match(ctx: HintContext): string | null;
 }
 
@@ -78,6 +85,8 @@ export class HintEngine {
   private learner: PatternLearner;
   private progressTracker: ProgressTracker;
   private logFilePath: string | null = null;
+  /** Session IDs for which tools/list has been served — suppresses rules tagged redundant_with_description */
+  private toolsListServedSessions: Set<string> = new Set();
   private hintEscalation: Map<string, number> = new Map(); // ruleName -> session fire count
   private missCounts: Map<string, number> = new Map(); // ruleName -> consecutive miss count
 
@@ -133,6 +142,23 @@ export class HintEngine {
   }
 
   /**
+   * Signal that tools/list has been served to a client this session.
+   * Rules tagged `redundant_with_description: true` will be suppressed
+   * thereafter to avoid duplicating guidance already embedded in tool
+   * descriptions.
+   */
+  markToolsListServed(sessionId = 'default'): void {
+    this.toolsListServedSessions.add(sessionId);
+  }
+
+  /**
+   * Whether tools/list has been served for a session. Exposed for tests.
+   */
+  hasServedToolsList(sessionId = 'default'): boolean {
+    return this.toolsListServedSessions.has(sessionId);
+  }
+
+  /**
    * Evaluate rules and return the first matching structured hint, or null.
    * Also feeds the learner for adaptive pattern detection.
    *
@@ -143,6 +169,7 @@ export class HintEngine {
    */
   getHint(toolName: string, result: Record<string, unknown>, isError: boolean, sessionId?: string): HintResult | null {
     const resultText = this.extractText(result);
+    const hintSessionId = sessionId ?? 'default';
     const recentCalls = this.activityTracker.getRecentCalls(5, sessionId);
 
     // Priority 50: Progress tracking (highest priority, runs before all rules)
@@ -198,6 +225,12 @@ export class HintEngine {
     let matchedMaxSeverity: HintSeverity | undefined;
 
     for (const rule of this.rules) {
+      // Suppress rules whose guidance is duplicated by an embedded tool
+      // description "When to use / When NOT to use" block, once the client
+      // has consumed tools/list.
+      if (rule.redundant_with_description && this.hasServedToolsList(hintSessionId)) {
+        continue;
+      }
       const h = rule.match(ctx);
       if (h) {
         matchedRule = rule.name;
