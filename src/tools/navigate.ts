@@ -11,6 +11,7 @@ import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { isDynamicSkillsEnabled } from '../harness/flags';
 import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { handleCaptcha } from '../captcha/handler';
 import { getSolverRegistry } from '../captcha/solver-registry';
@@ -988,6 +989,79 @@ const handler: ToolHandler = async (
   }
 };
 
+/**
+ * Wrap the core navigate handler so a successful navigation also emits
+ * `domain_entered` on the dynamic-skills event bus. The wrapper is a
+ * no-op when `isDynamicSkillsEnabled()` returns false, so the core
+ * navigate response path is byte-identical to v1.11.0 unless the
+ * operator explicitly opts in (portability-harness P2).
+ */
+const wrappedHandler: ToolHandler = async (sessionId, args, context) => {
+  const result = await handler(sessionId, args, context);
+  if (result.isError !== true && isDynamicSkillsEnabled()) {
+    // Best-effort: parse the response payload to recover the final
+    // URL. We do not throw on parse failure — the navigate response
+    // is already on its way back to the client.
+    try {
+      const text = Array.isArray(result.content) && result.content[0]?.text;
+      if (typeof text === 'string') {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        const finalUrl = typeof parsed.url === 'string' ? parsed.url : undefined;
+        // Suppress emission on auth-redirect responses (the user has
+        // not actually landed on the target domain yet) and on
+        // history navigations (back/forward — same-domain by
+        // construction, no new synthesis surface to gain).
+        const isAuthRedirect = parsed.authRedirect === true;
+        const action = typeof parsed.action === 'string' ? parsed.action : undefined;
+        if (finalUrl && !isAuthRedirect && action !== 'back' && action !== 'forward') {
+          await emitDomainEnteredIfActive(sessionId, finalUrl);
+        }
+      }
+    } catch (err) {
+      console.error(
+        `[navigate] dynamic-skills emit wrapper parse failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return result;
+};
+
 export function registerNavigateTool(server: MCPServer): void {
-  server.registerTool('navigate', handler, definition, { timeoutRecoverable: true });
+  server.registerTool('navigate', wrappedHandler, definition, { timeoutRecoverable: true });
 }
+
+/**
+ * Emit `domain_entered` on the dynamic-skills event bus when the
+ * dynamic-skills pilot family is active. The lazy `require()` keeps
+ * the pilot tree out of the core navigate path when the flag is off
+ * (P2: zero-impact-when-off). Errors in the synthesis hook must never
+ * fail the navigate response.
+ */
+async function emitDomainEnteredIfActive(sessionId: string, url: string): Promise<void> {
+  if (!isDynamicSkillsEnabled()) return;
+  try {
+    // Use dynamic import so the pilot module is not loaded under
+    // `--pilot` unless the dynamic-skills env var is also set. The
+    // built output of TypeScript-compiled `import()` resolves at call
+    // time, not module-load time.
+    const events = await import('../pilot/dynamic-skills/events.js');
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.length === 0) return;
+    events.dynamicSkillEvents.emit('domain_entered', {
+      domain: host,
+      url,
+      sessionId,
+    });
+  } catch (err) {
+    console.error(
+      `[navigate] dynamic-skills event emit failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+// The emitDomainEnteredIfActive helper is invoked by callers after a
+// successful navigation; see registerNavigateTool() and the in-handler
+// success paths below. The export is here for the pilot dynamic-skills
+// integration tests to exercise the hook without driving the full
+// browser stack.
+export { emitDomainEnteredIfActive as _emitDomainEnteredForTesting };

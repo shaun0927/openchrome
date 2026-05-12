@@ -266,6 +266,27 @@ program
     const server = getMCPServer();
     registerAllTools(server);
 
+    // Pilot dynamic-skills (#889): lazy attach. The flag check inside
+    // `attachDynamicSkillsToServer` short-circuits when
+    // `OPENCHROME_DYNAMIC_SKILLS` is unset, so the pilot module is
+    // imported but does nothing — preserving P2 zero-impact-when-off.
+    // The dynamic import keeps the pilot tree out of the eager
+    // dependency graph when `--pilot` itself is not set.
+    {
+      const { isDynamicSkillsEnabled } = await import('./harness/flags.js');
+      if (isDynamicSkillsEnabled()) {
+        try {
+          const mod = await import('./pilot/dynamic-skills/index.js');
+          mod.attachDynamicSkillsToServer(server);
+          console.error('[openchrome] Pilot family: dynamic_skills attached');
+        } catch (err) {
+          console.error(
+            `[openchrome] Pilot family dynamic_skills attach failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+
     // Write PID file for zombie process detection
     writePidFile(port);
 
