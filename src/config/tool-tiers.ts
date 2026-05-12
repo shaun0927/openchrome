@@ -44,6 +44,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   validate_page: 1,           // src/tools/validate-page.ts — composite page-health check (#token-efficiency)
   oc_reap_orphans: 1,         // src/tools/reap-orphans.ts — manual lifecycle recovery sweep
   oc_assert: 1,               // src/tools/oc-assert.ts — Outcome Contracts single-call verifier (#784)
+  oc_evidence_bundle: 1,      // src/tools/oc-evidence-bundle.ts — Outcome Contracts evidence bundle capture (#792)
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
