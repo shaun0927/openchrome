@@ -33,6 +33,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Lint tier boundary (core must not import pilot)
+        run: npm run lint:tier
+
       - name: Run tests
         run: npx jest --config jest.ci.config.js
         env:
