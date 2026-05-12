@@ -350,9 +350,11 @@ const handler: ToolHandler = async (
       // Best-effort DOM snapshot for state extraction (microdata, classes).
       // Pulled via page.evaluate so we do not require a CDP DOMSnapshot pass;
       // if the eval fails, semantic still operates on the AX tree alone.
-      let semanticDomSnapshot: { elements: SemanticDomElement[]; byBackendNodeId: Record<number, number> } | undefined;
+      // Cap mirrors the CSS-mode walk to bound work on large pages.
+      const SEMANTIC_DOM_MAX_ELEMENTS = 2000;
+      let semanticDomSnapshot: { elements: SemanticDomElement[] } | undefined;
       try {
-        semanticDomSnapshot = await withTimeout(page.evaluate(() => {
+        const snap = await withTimeout(page.evaluate((maxElements: number) => {
           const elements: Array<{
             backendDOMNodeId?: number;
             tagName: string;
@@ -361,10 +363,11 @@ const handler: ToolHandler = async (
             classNames?: string;
             attrs?: Record<string, string>;
             text?: string;
-            childIds: number[];
           }> = [];
           const all = document.querySelectorAll('*');
-          for (let i = 0; i < all.length; i++) {
+          const totalCount = all.length;
+          const limit = Math.min(totalCount, maxElements);
+          for (let i = 0; i < limit; i++) {
             const el = all[i] as HTMLElement;
             const itemType = el.getAttribute('itemtype') || undefined;
             const itemProp = el.getAttribute('itemprop') || undefined;
@@ -381,11 +384,17 @@ const handler: ToolHandler = async (
               classNames: el.className || undefined,
               attrs: Object.keys(attrs).length ? attrs : undefined,
               text: text || undefined,
-              childIds: [],
             });
           }
-          return { elements, byBackendNodeId: {} };
-        }), 15000, 'read_page', context);
+          return { elements, totalCount };
+        }, SEMANTIC_DOM_MAX_ELEMENTS), 15000, 'read_page', context);
+        if (snap.totalCount > SEMANTIC_DOM_MAX_ELEMENTS) {
+          // NEVER use console.log — corrupts MCP JSON-RPC on stdout.
+          console.error(
+            `[read_page semantic] DOM truncated: ${snap.totalCount} elements -> cap ${SEMANTIC_DOM_MAX_ELEMENTS}`,
+          );
+        }
+        semanticDomSnapshot = { elements: snap.elements };
       } catch {
         semanticDomSnapshot = undefined;
       }

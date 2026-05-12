@@ -83,7 +83,7 @@
     "product": "Product: {title}{price?, Price: {price}}",
     "form": "Form: {heading}{fieldCount?, {fieldCount} fields}",
     "navigation": "Navigation{heading?: {heading}}{linkCount?, {linkCount} links}",
-    "article": "Article: {heading}{byline?, by {byline}}",
+    "article": "Article: {heading}",
     "media": "Media: {heading}",
     "list": "List: {item_count} items{sample?, e.g. {sample}}",
     "generic": "Region: {heading?heading,summary}"

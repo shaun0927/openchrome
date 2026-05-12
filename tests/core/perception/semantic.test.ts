@@ -32,14 +32,7 @@ function build({ axNodes, domElements, refStart = 0 }: BuildArgs) {
     return `ref_${counter}`;
   };
   const domSnapshot: SemanticDomSnapshot | undefined = domElements
-    ? {
-        elements: domElements,
-        byBackendNodeId: Object.fromEntries(
-          domElements
-            .map((el, idx) => [el.backendDOMNodeId, idx])
-            .filter(([k]) => k !== undefined) as [number, number][]
-        ),
-      }
+    ? { elements: domElements }
     : undefined;
   return buildSemanticView(
     {
@@ -73,11 +66,11 @@ describe('buildSemanticView — product kind classifier', () => {
       { nodeId: 6, backendDOMNodeId: 14, role: 'button', name: 'Add to Cart', childIds: [] },
     ];
     const domElements: SemanticDomElement[] = [
-      { backendDOMNodeId: 10, tagName: 'article', itemType: 'https://schema.org/Product', childIds: [] },
-      { backendDOMNodeId: 11, tagName: 'h1', itemProp: 'name', text: 'Premium Wireless Headphones', childIds: [] },
-      { backendDOMNodeId: 12, tagName: 'p', itemProp: 'description', text: 'Studio-grade noise cancelling headphones.', childIds: [] },
-      { backendDOMNodeId: 13, tagName: 'div', itemProp: 'price', classNames: 'price', attrs: { 'data-price': '99.99' }, text: '$99.99', childIds: [] },
-      { backendDOMNodeId: 14, tagName: 'button', text: 'Add to Cart', childIds: [] },
+      { backendDOMNodeId: 10, tagName: 'article', itemType: 'https://schema.org/Product' },
+      { backendDOMNodeId: 11, tagName: 'h1', itemProp: 'name', text: 'Premium Wireless Headphones' },
+      { backendDOMNodeId: 12, tagName: 'p', itemProp: 'description', text: 'Studio-grade noise cancelling headphones.' },
+      { backendDOMNodeId: 13, tagName: 'div', itemProp: 'price', classNames: 'price', attrs: { 'data-price': '99.99' }, text: '$99.99' },
+      { backendDOMNodeId: 14, tagName: 'button', text: 'Add to Cart' },
     ];
     const view = build({ axNodes, domElements });
 
@@ -86,6 +79,11 @@ describe('buildSemanticView — product kind classifier', () => {
     expect(product).toBeDefined();
     expect(product!.state.name).toBe('Premium Wireless Headphones');
     expect(product!.state.price).toBe('99.99');
+    // Label template references `{title}`; itemprop="name" must alias
+    // to `state.title` so the rendered label includes the product name
+    // rather than rendering as bare "Product:".
+    expect(product!.state.title).toBe('Premium Wireless Headphones');
+    expect(product!.label).toMatch(/Product: Premium Wireless Headphones/);
 
     const addToCart = product!.actions.find((a) => /add to cart/i.test(a.target));
     expect(addToCart).toBeDefined();
@@ -105,7 +103,7 @@ describe('buildSemanticView — form kind classifier', () => {
       { nodeId: 6, backendDOMNodeId: 24, role: 'button', name: 'Create account', childIds: [] },
     ];
     const domElements: SemanticDomElement[] = [
-      { backendDOMNodeId: 20, tagName: 'form', childIds: [] },
+      { backendDOMNodeId: 20, tagName: 'form' },
     ];
     const view = build({ axNodes, domElements });
     const form = view.regions.find((r) => r.kind === 'form');
@@ -154,8 +152,8 @@ describe('buildSemanticView — media kind classifier', () => {
       { nodeId: 3, backendDOMNodeId: 41, role: 'img', name: 'Hero', childIds: [] },
     ];
     const domElements: SemanticDomElement[] = [
-      { backendDOMNodeId: 40, tagName: 'figure', childIds: [] },
-      { backendDOMNodeId: 41, tagName: 'img', childIds: [] },
+      { backendDOMNodeId: 40, tagName: 'figure' },
+      { backendDOMNodeId: 41, tagName: 'img' },
     ];
     const view = build({ axNodes, domElements });
     const media = view.regions.find((r) => r.kind === 'media');

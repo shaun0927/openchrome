@@ -53,14 +53,11 @@ export interface SemanticDomElement {
   attrs?: Record<string, string>;
   /** Trimmed inline text content (first 200 chars). */
   text?: string;
-  childIds: number[];
 }
 
 export interface SemanticDomSnapshot {
   /** All elements keyed by a stable id. Roots have no parent. */
   elements: SemanticDomElement[];
-  /** Optional indexes into `elements` for O(1) lookup by backend node id. */
-  byBackendNodeId?: Record<number, number>;
 }
 
 export interface SemanticRuleSet {
@@ -182,16 +179,9 @@ export function buildSemanticView(
   // DOM lookup helper. Falls back to undefined when domSnapshot is absent.
   const domByBackendId = new Map<number, SemanticDomElement>();
   if (domSnapshot) {
-    if (domSnapshot.byBackendNodeId) {
-      for (const [k, idx] of Object.entries(domSnapshot.byBackendNodeId)) {
-        const el = domSnapshot.elements[idx];
-        if (el) domByBackendId.set(Number(k), el);
-      }
-    } else {
-      for (const el of domSnapshot.elements) {
-        if (el.backendDOMNodeId !== undefined) {
-          domByBackendId.set(el.backendDOMNodeId, el);
-        }
+    for (const el of domSnapshot.elements) {
+      if (el.backendDOMNodeId !== undefined) {
+        domByBackendId.set(el.backendDOMNodeId, el);
       }
     }
   }
@@ -326,6 +316,15 @@ export function buildSemanticView(
       allocateRef
     );
     for (const r of refEntries) refs[r.ref_id] = r;
+
+    // Kind-specific state finalization for template placeholders.
+    if (kind === 'form') {
+      const fieldCount = actions.filter((a) => a.verb === 'fill' || a.verb === 'select').length;
+      if (fieldCount > 0) state.fieldCount = String(fieldCount);
+    } else if (kind === 'navigation') {
+      const linkCount = actions.filter((a) => a.verb === 'navigate' || a.verb === 'click').length;
+      if (linkCount > 0) state.linkCount = String(linkCount);
+    }
 
     const digest = computeChildRoleDigest(node, axByNodeId, ruleSet);
     const label = renderLabel(kind, state, ruleSet);
@@ -480,6 +479,10 @@ function extractState(
     }
   }
   // Microdata-driven state (schema.org/Product, Article, ...).
+  // Schema.org property names that should also populate the generic
+  // `state.title` slot used by label templates (e.g., Product label
+  // references `{title}` but schema.org/Product uses itemprop="name").
+  const TITLE_ALIASES = new Set(['name', 'headline']);
   for (const id of effectiveNodeIds) {
     const n = axByNodeId.get(id);
     if (!n) continue;
@@ -492,22 +495,23 @@ function extractState(
       if (state[dom.itemProp] === undefined) {
         state[dom.itemProp] = truncate(dom.text, ruleSet.summaryMaxChars);
       }
+      // Alias canonical title fields so label templates that reference
+      // `{title}` render correctly without requiring callers to know
+      // the underlying schema.org property name.
+      if (TITLE_ALIASES.has(dom.itemProp) && state.title === undefined) {
+        state.title = truncate(dom.text, ruleSet.summaryMaxChars);
+      }
     }
   }
 
-  // First heading text.
+  // First heading text. Falls back to the region root's accessible name
+  // when no descendant heading is present.
   for (const id of effectiveNodeIds) {
     const n = axByNodeId.get(id);
     if (!n) continue;
-    if (
-      n.role === 'heading' ||
-      n.role === 'banner-title' ||
-      (n.role === 'StaticText' && id === rootNode.nodeId)
-    ) {
-      if (n.name && state.heading === undefined) {
-        state.heading = truncate(n.name, ruleSet.summaryMaxChars);
-        break;
-      }
+    if (n.role === 'heading' && n.name && state.heading === undefined) {
+      state.heading = truncate(n.name, ruleSet.summaryMaxChars);
+      break;
     }
   }
   if (state.heading === undefined && rootNode.name) {
