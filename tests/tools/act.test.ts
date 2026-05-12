@@ -250,6 +250,59 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('Could not find');
     });
 
+
+    test('failed target returns structured recovery hints with bounded near matches', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      (page!.evaluate as jest.Mock).mockResolvedValue([
+        { label: 'Continue to checkout', text: 'Continue to checkout', role: 'button', tag: 'button', candidate: 'Continue to checkout button', visible: true },
+        { label: 'Cart', text: 'Cart', role: 'link', tag: 'a', candidate: 'Cart link', visible: true },
+      ]);
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction: 'click checkout',
+        verify: false,
+      }) as any;
+
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(result.content[0].text);
+      expect(payload.success).toBe(false);
+      expect(payload.failedStep).toMatchObject({ action: 'click', target: 'checkout', outcome: 'ELEMENT_NOT_FOUND' });
+      expect(payload.recovery.reason).toBe('target_not_found');
+      expect(payload.recovery.suggestedNextCalls.length).toBeGreaterThanOrEqual(1);
+      expect(payload.recovery.suggestedNextCalls.length).toBeLessThanOrEqual(3);
+      expect(payload.recovery.suggestedNextCalls).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tool: 'read_page', arguments: expect.objectContaining({ tabId: testTargetId }) }),
+        expect.objectContaining({ tool: 'query_dom', arguments: expect.objectContaining({ tabId: testTargetId }) }),
+      ]));
+      expect(payload.recovery.nearMatches.length).toBeGreaterThanOrEqual(1);
+      expect(payload.recovery.nearMatches.length).toBeLessThanOrEqual(5);
+      expect(payload.recovery.nearMatches[0].label).toBe('Continue to checkout');
+      expect(payload.text).toContain('Could not find');
+    });
+
+    test('recovery near matches do not include password field values', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      (page!.evaluate as jest.Mock).mockResolvedValue([
+        { label: 'Password', text: '', role: 'textbox', tag: 'input', candidate: 'Password textbox input', visible: true, value: 'super-secret-fixture-password' },
+      ]);
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction: 'click password',
+        verify: false,
+      }) as any;
+
+      const serialized = result.content[0].text;
+      expect(serialized).not.toContain('super-secret-fixture-password');
+      const payload = JSON.parse(serialized);
+      expect(payload.recovery.nearMatches[0]).not.toHaveProperty('value');
+    });
+
     test('navigate step calls page.goto', async () => {
       const page = await mockSessionManager.getPage(testSessionId, testTargetId);
       (page!.evaluate as jest.Mock).mockResolvedValue({ url: 'https://target.com', title: 'Target' });
