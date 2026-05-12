@@ -68,6 +68,8 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   crawl: 2,
   crawl_sitemap: 2,
   vision_find: 2,
+  oc_context_export: 2,
+  oc_context_import: 2,
 
   // Session recording tools (#572) — opt-in, not needed for every session
   oc_recording_start: 2,
