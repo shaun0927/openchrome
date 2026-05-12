@@ -29,6 +29,7 @@
  */
 
 import { createHandoffToken, type CreateHandoffTokenArgs, type HandoffTokenResult } from './token.js';
+import type { PersistenceAdapter } from './persistence.js';
 
 export interface HandoffPayload {
   /** Session being transferred. */
@@ -70,6 +71,14 @@ export interface HandoffManagerOptions {
   now?: () => number;
   /** Test hook: replaceable token minter. */
   mintToken?: (args: CreateHandoffTokenArgs) => HandoffTokenResult;
+  /**
+   * Optional at-rest persistence adapter (issue #794). When provided,
+   * `register` writes the serialised record, `redeem` falls back to it on
+   * an in-memory miss, and `revoke` deletes from both stores. Backward-
+   * compatible: omitting this option preserves the existing in-memory-only
+   * behaviour.
+   */
+  persistence?: PersistenceAdapter;
 }
 
 const DEFAULT_PRUNE_INTERVAL_MS = 60 * 1000;
@@ -92,11 +101,13 @@ export class HandoffManager {
   private readonly byToken = new Map<string, string>();
   private readonly now: () => number;
   private readonly mintToken: (args: CreateHandoffTokenArgs) => HandoffTokenResult;
+  private readonly persistence: PersistenceAdapter | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
 
   constructor(opts: HandoffManagerOptions = {}) {
     this.now = opts.now ?? Date.now;
     this.mintToken = opts.mintToken ?? createHandoffToken;
+    this.persistence = opts.persistence;
     const interval = opts.pruneIntervalMs ?? DEFAULT_PRUNE_INTERVAL_MS;
     if (interval > 0) {
       this.timer = setInterval(() => {
@@ -132,6 +143,11 @@ export class HandoffManager {
     if (prior) {
       this.byToken.delete(prior.token);
       this.bySession.delete(prior.sessionId);
+      if (this.persistence) {
+        this.persistence.delete(prior.token).catch((err: unknown) => {
+          console.error('[HandoffManager] persistence.delete failed on rotate:', err);
+        });
+      }
     }
     const result = this.mintToken({
       sessionId: payload.sessionId,
@@ -148,6 +164,11 @@ export class HandoffManager {
     };
     this.bySession.set(record.sessionId, record);
     this.byToken.set(record.token, record.sessionId);
+    if (this.persistence) {
+      this.persistence.put(result.token, JSON.stringify(record)).catch((err: unknown) => {
+        console.error('[HandoffManager] persistence.put failed:', err);
+      });
+    }
     return { token: result.token, expiresAt: result.expiresAt };
   }
 
@@ -156,6 +177,11 @@ export class HandoffManager {
    * Returns null when the token is unknown, expired, or already redeemed.
    * Expired records are also removed as a side effect so subsequent calls
    * with the same (now-stale) token return null without lingering state.
+   *
+   * When a persistence adapter is configured, an in-memory miss falls back
+   * to the persisted store. This is synchronous-first: the caller receives
+   * the in-memory result immediately; the persistence fallback path uses
+   * {@link redeemAsync} instead.
    */
   redeem(token: string): HandoffRedemption | null {
     if (typeof token !== 'string' || token.length === 0) return null;
@@ -171,11 +197,21 @@ export class HandoffManager {
     if (now >= record.expiresAt) {
       this.byToken.delete(token);
       this.bySession.delete(sessionId);
+      if (this.persistence) {
+        this.persistence.delete(token).catch((err: unknown) => {
+          console.error('[HandoffManager] persistence.delete on expiry failed:', err);
+        });
+      }
       return null;
     }
     // Consume on success. Single-use: subsequent redeem(token) returns null.
     this.byToken.delete(token);
     this.bySession.delete(sessionId);
+    if (this.persistence) {
+      this.persistence.delete(token).catch((err: unknown) => {
+        console.error('[HandoffManager] persistence.delete on redeem failed:', err);
+      });
+    }
     return {
       sessionId: record.sessionId,
       scope: record.scope,
@@ -186,7 +222,63 @@ export class HandoffManager {
   }
 
   /**
-   * Operator-initiated revoke. Returns true iff a record was removed.
+   * Async variant of {@link redeem} that also checks the persistence layer
+   * when the token is absent from the in-memory index. Use this when the
+   * manager may have been restarted with a stable key
+   * (`FileBackedKeyEncryptedPersistence`) and callers need to recover tokens
+   * that were registered in a previous process.
+   */
+  async redeemAsync(token: string): Promise<HandoffRedemption | null> {
+    // Fast path: in-memory hit.
+    const inMemory = this.redeem(token);
+    if (inMemory !== null) return inMemory;
+
+    if (!this.persistence) return null;
+
+    // Fallback: attempt to load from the persistence layer.
+    let raw: string | null;
+    try {
+      raw = await this.persistence.get(token);
+    } catch (err) {
+      console.error('[HandoffManager] persistence.get failed:', err);
+      return null;
+    }
+    if (raw === null) return null;
+
+    let record: HandoffRecord;
+    try {
+      record = JSON.parse(raw) as HandoffRecord;
+    } catch {
+      return null;
+    }
+
+    const now = this.now();
+    if (now >= record.expiresAt) {
+      await this.persistence.delete(token).catch((err: unknown) => {
+        console.error('[HandoffManager] persistence.delete on expired recovery failed:', err);
+      });
+      return null;
+    }
+
+    // Consume: remove from persistence so it cannot be redeemed again.
+    await this.persistence.delete(token).catch((err: unknown) => {
+      console.error('[HandoffManager] persistence.delete on redeemAsync failed:', err);
+    });
+
+    return {
+      sessionId: record.sessionId,
+      scope: record.scope,
+      expiresAt: record.expiresAt,
+      createdAt: record.createdAt,
+      redeemedAt: now,
+    };
+  }
+
+  /**
+   * Operator-initiated revoke. Returns true iff a record was removed from
+   * the in-memory store. Also schedules a best-effort delete from the
+   * persistence layer (if configured) — the return value reflects only the
+   * in-memory outcome.
    * Idempotent — calling revoke on an unknown token returns false rather
    * than throwing.
    */
@@ -196,6 +288,11 @@ export class HandoffManager {
     if (sessionId === undefined) return false;
     this.byToken.delete(token);
     this.bySession.delete(sessionId);
+    if (this.persistence) {
+      this.persistence.delete(token).catch((err: unknown) => {
+        console.error('[HandoffManager] persistence.delete on revoke failed:', err);
+      });
+    }
     return true;
   }
 

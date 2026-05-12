@@ -32,3 +32,10 @@ export type {
 } from './manager.js';
 
 export { registerOcPilotHandoffTool } from './tool.js';
+
+export {
+  EphemeralEncryptedPersistence,
+  FileBackedKeyEncryptedPersistence,
+  autoSelectHandoffPersistence,
+} from './persistence.js';
+export type { PersistenceAdapter, AutoSelectOptions } from './persistence.js';
