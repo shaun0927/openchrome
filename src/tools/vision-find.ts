@@ -40,6 +40,23 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Only show interactive elements (buttons, links, inputs). Default: true',
       },
+      occlusionFilter: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, drops elements whose center is covered by another element via elementFromPoint. Defaults to false to preserve today\'s output; set to true for stricter accuracy.',
+      },
+      iframes: {
+        type: 'string',
+        enum: ['none', 'same-origin', 'all'],
+        default: 'none',
+        description: 'Frame traversal mode. "all" still respects same-origin policy; cross-origin frames are listed in iframes.skipped.',
+      },
+      mode: {
+        type: 'string',
+        enum: ['viewport', 'tiled'],
+        default: 'viewport',
+        description: 'viewport: today\'s single-shot capture. tiled: full document scrolled in viewport-tall steps; returns per-tile screenshots and a unified element map.',
+      },
     },
     required: ['tabId'],
   },
@@ -85,28 +102,48 @@ const handler: ToolHandler = async (
     const showGrid = args.showGrid === true;
     const showBoundingBoxes = args.showBoundingBoxes !== false;
     const interactiveOnly = args.interactiveOnly !== false;
+    const occlusionFilter = args.occlusionFilter === true;
+    const iframesArg = args.iframes;
+    const iframes: 'none' | 'same-origin' | 'all' =
+      iframesArg === 'same-origin' || iframesArg === 'all' ? iframesArg : 'none';
+    const modeArg = args.mode;
+    const mode: 'viewport' | 'tiled' = modeArg === 'tiled' ? 'tiled' : 'viewport';
 
     const result = await analyzeScreenshot(page, {
       showGrid,
       showBoundingBoxes,
       interactiveOnly,
+      occlusionFilter,
+      iframes,
+      mode,
     });
 
     trackVisionUsage(result.annotationTimeMs);
     const textMap = formatElementMapAsText(result.elementMap);
     console.error(`[vision_find] Analyzed tab ${tabId}: ${result.elementCount} elements in ${result.annotationTimeMs}ms`);
 
+    // P1 codex fix: when mode='tiled' was requested, emit every captured tile
+    // as a separate image block. Previously the response only carried
+    // `result.screenshot` (the first tile), so callers explicitly opting into
+    // tiled mode could not access the additional tile screenshots and the
+    // feature was effectively unusable for downstream vision workflows.
+    const tiles = mode === 'tiled' ? (result.tiling?.tiles ?? []) : [];
+    const tileNote =
+      mode === 'tiled' && tiles.length > 0
+        ? `\n\nTiled mode: ${tiles.length} tile screenshot(s) attached below in document-Y order.`
+        : '';
+    const imageBlocks =
+      tiles.length > 0
+        ? tiles.map((t) => ({ type: 'image' as const, data: t.imageBase64, mimeType: t.mimeType }))
+        : [{ type: 'image' as const, data: result.screenshot, mimeType: result.mimeType }];
+
     return {
       content: [
         {
           type: 'text',
-          text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)\n\n${textMap}`,
+          text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)${tileNote}\n\n${textMap}`,
         },
-        {
-          type: 'image',
-          data: result.screenshot,
-          mimeType: result.mimeType,
-        },
+        ...imageBlocks,
       ],
     };
   } catch (error) {
