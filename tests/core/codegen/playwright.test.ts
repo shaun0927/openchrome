@@ -92,4 +92,13 @@ describe('formatPlaywright', () => {
     }
     expect(syntaxErrors).toEqual([]);
   });
+
+  it('preserves target selection for tabs_close instead of closing every page', () => {
+    const snippet = formatPlaywright('tabs_close', { tabIds: ['target-a', 'target-b'] })!;
+    expect(snippet).toContain('new Set<string>(["target-a","target-b"])');
+    expect(snippet).toContain("Target.getTargetInfo");
+    expect(snippet).toContain('targetIds.has(info.targetInfo.targetId)');
+    expect(snippet).not.toContain('for (const p of context.pages()) { await p.close(); }');
+  });
+
 });

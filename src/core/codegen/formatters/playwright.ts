@@ -181,10 +181,12 @@ function formatTabsClose(args: Record<string, unknown>): string {
   }
   return [
     `  {`,
-    `    const targetIds: string[] = ${JSON.stringify(ids)};`,
-    `    // Playwright Page does not expose CDP targetId directly; close every open page as a best-effort.`,
-    `    if (targetIds.length > 0) {`,
-    `      for (const p of context.pages()) { await p.close(); }`,
+    `    const targetIds = new Set<string>(${JSON.stringify(ids)});`,
+    `    for (const p of context.pages()) {`,
+    `      const session = await context.newCDPSession(p);`,
+    `      const info = await session.send('Target.getTargetInfo');`,
+    `      await session.detach();`,
+    `      if (targetIds.has(info.targetInfo.targetId)) await p.close();`,
     `    }`,
     `  }`,
   ].join('\n');
