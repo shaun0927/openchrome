@@ -116,6 +116,11 @@ describe('Snapshot Refs (#831)', () => {
     return getHandler('interact', registerInteractTool as unknown as Parameters<typeof getHandler>[1]);
   };
 
+  const getFillFormHandler = async () => {
+    const { registerFillFormTool } = await import('../../src/tools/fill-form');
+    return getHandler('fill_form', registerFillFormTool as unknown as Parameters<typeof getHandler>[1]);
+  };
+
   const getFindHandler = async () => {
     // Reset + register doMocks BEFORE the find.ts import so a `jest.doMock`
     // declared in the test for screenshot-analyzer is honored on first
@@ -251,6 +256,33 @@ describe('Snapshot Refs (#831)', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('STALE_REF');
       expect(result.error?.code).toBe('STALE_REF');
+    });
+  });
+
+
+
+  // ─── fill_form ref fast-path ─────────────────────────────────────────
+
+  describe('fill_form with ref fast-path', () => {
+    test('ref CDP failure → structured STALE_REF error', async () => {
+      const handler = await getFillFormHandler();
+      const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 4242, 'textbox', 'Email');
+
+      mockSessionManager.mockCDPClient.send.mockRejectedValueOnce(new Error('No node with given id'));
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        refs: { [refId]: 'alice@example.com' },
+      }) as {
+        content: Array<{ type: string; text: string }>;
+        error?: { code: string; ref_id: string };
+        isError?: boolean;
+      };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('STALE_REF');
+      expect(result.error?.code).toBe('STALE_REF');
+      expect(result.error?.ref_id).toBe(refId);
     });
   });
 

@@ -213,16 +213,18 @@ async function buildPostActionResponse(input: PostActionInput): Promise<MCPResul
     }), 10000, 'interact', context).catch(() => ({
       url: '', title: '', scrollX: 0, scrollY: 0,
       activeInfo: 'unknown', panels: [] as string[], headings: [] as string[],
-    }));
+    }))) as StateSummary;
 
     lines.push(
       `[State Summary] url: ${stateSummary.url} | scroll: ${stateSummary.scrollX},${stateSummary.scrollY} | active: ${stateSummary.activeInfo}`
     );
-    if (stateSummary.headings.length > 0) {
-      lines.push(`[Headings] ${stateSummary.headings.map((h: string) => `"${h}"`).join(' | ')}`);
+    const headings = Array.isArray(stateSummary.headings) ? stateSummary.headings : [];
+    const panels = Array.isArray(stateSummary.panels) ? stateSummary.panels : [];
+    if (headings.length > 0) {
+      lines.push(`[Headings] ${headings.map((h: string) => `"${h}"`).join(' | ')}`);
     }
-    if (stateSummary.panels.length > 0) {
-      const panelParts = stateSummary.panels.map((p: string, i: number) => `Panel ${i + 1}: "${p}"`);
+    if (panels.length > 0) {
+      const panelParts = panels.map((p: string, i: number) => `Panel ${i + 1}: "${p}"`);
       lines.push(`[Visible] ${panelParts.join(' | ')}`);
     }
   }
