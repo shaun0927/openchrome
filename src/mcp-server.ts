@@ -2458,10 +2458,15 @@ export class MCPServer {
       const recent = this.activityTracker.getRecentCalls(3, sessionId);
       const current = recent.find((call) => call.id === callId);
       const previous = recent.find((call) => call.id !== callId);
+      const previousTrajectory = this.recoveryLedger
+        .readRecent(1, sessionId)
+        .find((node) => node.toolName !== toolName);
+      const previousFailed =
+        previous?.result === 'error' || previousTrajectory?.resultStatus === 'no_progress';
       const recovered =
         resultStatus === 'success' &&
         previous !== undefined &&
-        previous.result === 'error' &&
+        previousFailed &&
         previous.toolName !== toolName;
 
       this.recoveryLedger.record({
