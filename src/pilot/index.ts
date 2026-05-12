@@ -36,3 +36,8 @@ export * as handoff from './handoff/index.js';
 // Gated by isPerceptionVotingEnabled() inside orchestrator.runVote().
 // LLM-backed voter HTTP wrappers ship in openchrome-perception-voters (#775).
 export * as voting from './voting/index.js';
+
+// Phase 4 (issue #713): verified skill extractor — deterministic transform,
+// no LLM calls. Gate call sites on `isSkillCuratorEnabled()` from
+// `src/harness/flags.ts` before invoking any export from this namespace.
+export * as curator from './curator/index.js';
