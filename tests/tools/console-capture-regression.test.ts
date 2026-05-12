@@ -146,7 +146,11 @@ describe('console_capture get response — v1.11.0 baseline regression', () => {
       return;
     }
 
-    const baseline = fs.readFileSync(FIXTURE_PATH, 'utf8');
+    // GitHub's Windows checkout may materialize text fixtures with CRLF,
+    // while JSON.stringify always emits LF. Normalize only line endings so
+    // this shape guard remains byte-stable across POSIX checkouts and does
+    // not fail the Windows matrix for checkout policy alone.
+    const baseline = fs.readFileSync(FIXTURE_PATH, 'utf8').replace(/\r\n/g, '\n');
     expect(responseJson).toBe(baseline);
   });
 
