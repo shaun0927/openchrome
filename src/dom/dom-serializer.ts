@@ -536,8 +536,10 @@ function serializeNode(
 }
 
 async function markCursorInteractiveElements(page: Page): Promise<void> {
-  await withTimeout(
-    page.evaluate((hintAttr: string) => {
+  // Await the browser-side scan directly. page.evaluate cannot be aborted by
+  // racing its promise with a timeout; doing so could let background marker
+  // mutations continue after serializeDOM has already run cleanup.
+  await page.evaluate((hintAttr: string) => {
       const interactiveRoles = new Set([
         'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'listbox',
         'menu', 'menuitem', 'tab', 'switch', 'slider',
@@ -594,10 +596,7 @@ async function markCursorInteractiveElements(page: Page): Promise<void> {
           }
         }
       }
-    }, INTERACTIVE_HINT_ATTR),
-    5000,
-    'serializeDOM:markCursorInteractiveElements',
-  );
+    }, INTERACTIVE_HINT_ATTR);
 }
 
 async function clearCursorInteractiveMarkers(page: Page): Promise<void> {
