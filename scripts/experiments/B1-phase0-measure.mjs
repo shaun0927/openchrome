@@ -156,6 +156,14 @@ function toolError(resp) {
   return null;
 }
 
+function appendError(result, message) {
+  result.error = result.error ? `${result.error}; ${message}` : message;
+}
+
+function firstTextContent(resp) {
+  return resp?.result?.content?.find((item) => typeof item?.text === 'string')?.text ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // OpenChrome arm — automated measurement via dist/index.js
 // ---------------------------------------------------------------------------
@@ -298,12 +306,38 @@ async function measureOpenChrome(target) {
     }
 
     // Extract HTTP status from navigate result if a future tool version exposes
-    // it. Current navigate responses do not include status, so a successful
-    // navigate is treated as HTTP 200 for this Phase 0 operational check.
+    // it. Missing status remains unknown; a successful navigate alone is not
+    // enough to satisfy the Phase 0 HTTP 200 criterion.
     const navStatus = navResult?.httpStatus ?? navResult?.status;
     if (Number.isInteger(navStatus)) result.httpStatus = navStatus;
-    // Default: assume 200 if navigate succeeded without error.
-    if (result.httpStatus === null) result.httpStatus = 200;
+
+    if (result.httpStatus === null) {
+      const statusResp = await rpc('tools/call', {
+        name: 'javascript_tool',
+        arguments: {
+          tabId,
+          code: `
+            (function() {
+              var nav = performance.getEntriesByType('navigation')[0];
+              return nav && Number.isInteger(nav.responseStatus) ? nav.responseStatus : null;
+            })()
+          `,
+        },
+      }, 15_000);
+
+      const statusError = toolError(statusResp);
+      if (statusError) {
+        appendError(result, `HTTP status unknown: ${JSON.stringify(statusError)}`);
+      } else {
+        const statusText = firstTextContent(statusResp);
+        const status = statusText === null ? NaN : Number.parseInt(statusText.trim(), 10);
+        if (Number.isInteger(status)) {
+          result.httpStatus = status;
+        } else {
+          appendError(result, 'HTTP status unknown: navigate and performance timing did not expose a status');
+        }
+      }
+    }
 
     // Step 3: Wait a moment for the page to settle (challenge interstitials
     // sometimes appear after a brief delay).
@@ -327,7 +361,11 @@ async function measureOpenChrome(target) {
       arguments: { tabId, code: checkScript },
     }, 15_000);
 
-    if (!toolError(checkResp)) {
+    const checkError = toolError(checkResp);
+    if (checkError) {
+      result.challengeFound = 'unknown (javascript_tool error)';
+      appendError(result, `challenge detection failed: ${JSON.stringify(checkError)}`);
+    } else {
       const checkContent = checkResp.result?.content;
       if (Array.isArray(checkContent)) {
         for (const item of checkContent) {
