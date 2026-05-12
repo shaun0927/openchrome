@@ -224,6 +224,35 @@ describe('DOM Serializer', () => {
     expect(line).not.toContain('data-custom');
   });
 
+  test('escapes quotes and special characters in kept attribute values', async () => {
+    const docWithSpecialAttrs = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 301, nodeType: 1, nodeName: 'INPUT', localName: 'input',
+          attributes: [
+            'value', 'Tom & "Jerry" <Cartoon> > Show',
+            'placeholder', 'Use "quotes" & <angle> brackets',
+          ],
+          children: [],
+        }],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(docWithSpecialAttrs);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+    const line = result.content.split('\n').find(l => l.includes('<input '));
+
+    expect(line).toBeDefined();
+    expect(line).toContain('value="Tom &amp; &quot;Jerry&quot; &lt;Cartoon&gt; &gt; Show"');
+    expect(line).toContain('placeholder="Use &quot;quotes&quot; &amp; &lt;angle&gt; brackets"');
+    expect(line).not.toContain('Tom & "Jerry" <Cartoon> > Show');
+  });
+
   // 5. Text content
   test('includes direct text content from text node children', async () => {
     const docWithButton = {

@@ -359,8 +359,16 @@ const handler: ToolHandler = async (
         return {
           content: [{ type: 'text', text: outputText + domPaginationSection }],
         };
-      } catch {
-        // DOM serialization failed — fall through to AX mode as fallback
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Read page DOM serialization error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        };
       }
     }
 

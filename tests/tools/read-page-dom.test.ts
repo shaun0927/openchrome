@@ -290,6 +290,32 @@ describe('ReadPageTool - DOM Mode', () => {
       // Should contain docSize in page_stats header
       expect(text).toContain('docSize: 1920x3000');
     });
+
+    test('explicit mode=dom returns an error when DOM serialization fails instead of falling back to AX', async () => {
+      mockSessionManager.mockCDPClient.send.mockImplementation(async (_page: unknown, method: string) => {
+        if (method === 'DOM.getDocument') {
+          throw new Error('DOM unavailable');
+        }
+        if (method === 'Accessibility.getFullAXTree') {
+          return sampleAccessibilityTree;
+        }
+        return {};
+      });
+
+      const handler = await getReadPageHandler();
+      const result = await handler(testSessionId, { tabId: testTargetId, mode: 'dom' }) as any;
+      const text = result.content[0].text;
+
+      expect(result.isError).toBe(true);
+      expect(text).toContain('Read page DOM serialization error: DOM unavailable');
+      expect(text).not.toContain('ref_');
+      expect(mockRefIdManager.generateRef).not.toHaveBeenCalled();
+      expect(mockSessionManager.mockCDPClient.send).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        expect.anything()
+      );
+    });
   });
 
   describe('Backward Compatibility', () => {
