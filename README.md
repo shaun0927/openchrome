@@ -682,6 +682,12 @@ OpenChrome supports per-tenant API keys, JWT/OAuth, a legacy shared token, and a
 
 ---
 
+## Research recipes
+
+Composable multi-source research workflows over the MCP surface — host-LLM driven, no server-side model calls. See **[docs/recipes/](docs/recipes/README.md)** for runnable patterns (news digest, docs changelog diff, competitive feature matrix).
+
+---
+
 ## Under the Hood: 8-Layer Reliability
 
 OpenChrome has **49 distinct reliability mechanisms** across 8 defense layers — ensuring no single failure can hang the MCP server.
