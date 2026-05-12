@@ -100,6 +100,9 @@ import { registerTotpGenerateTool } from './totp-generate';
 // Outcome Contracts (#784) — single-call assertion verifier
 import { registerOcAssertTool } from './oc-assert';
 
+// Outcome Contracts (#792) — evidence bundle capture
+import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
+
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
   registerNavigateTool(server);
@@ -203,6 +206,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Outcome Contracts (#784) — single-call assertion verifier
   registerOcAssertTool(server);
+
+  // Outcome Contracts (#792) — evidence bundle capture
+  registerOcEvidenceBundleTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
