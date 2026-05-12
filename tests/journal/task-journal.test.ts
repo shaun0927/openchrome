@@ -237,7 +237,7 @@ describe('TaskJournal', () => {
       const entry = journal.createEntry('navigate', 'sess-1', { url: 'https://example.com' }, 100, true);
       journal.record(entry);
 
-      const recent = journal.getRecent(10);
+      const recent = journal.getRecent(10) as JournalEntry[];
       expect(recent).toHaveLength(1);
       expect(recent[0].tool).toBe('navigate');
       expect(recent[0].sessionId).toBe('sess-1');
@@ -267,7 +267,7 @@ describe('TaskJournal', () => {
         journal.record(journal.createEntry('navigate', 'sess', { url }, 10, true));
       }
 
-      const recent = journal.getRecent(2);
+      const recent = journal.getRecent(2) as JournalEntry[];
       expect(recent).toHaveLength(2);
       // Should be the last 2
       expect(recent[0].args.url).toBe('https://b.com');
