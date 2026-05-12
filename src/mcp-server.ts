@@ -61,6 +61,8 @@ import {
   MissingSecretError,
   getSecretStore,
 } from './core/secrets';
+import { currentRequestContext } from './observability/request-id';
+import type { TransportMessageContext } from './transports';
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -288,6 +290,33 @@ export class MCPServer {
    */
   private rateLimiterSweepTimer: NodeJS.Timeout | null = null;
 
+  /**
+   * Pending server→client request resolvers, keyed by JSON-RPC id string
+   * (#960). Populated by `requestFromClient`; drained by the response fork
+   * at the top of `handleMessage` and by `rejectAllPendingS2cRequests` on
+   * connection close.
+   */
+  private pendingClientRequests: Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (err: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+      signal?: AbortSignal;
+      signalListener?: () => void;
+      mcpSessionId?: string;
+    }
+  > = new Map();
+  /** Monotonic counter — prefixed `oc-s2c-` cannot collide with client ids. */
+  private nextS2cRequestId = 1;
+  /**
+   * Capabilities the client declared in `initialize` (#960). Downstream
+   * features (roots #880, sampling #876, elicitation #877) check this cache
+   * before issuing a server→client request and fall back when absent.
+   */
+  private clientCapabilities: { roots?: object; sampling?: object; elicitation?: object } = {};
+  private clientCapabilitiesBySession: Map<string, { roots?: object; sampling?: object; elicitation?: object }> = new Map();
+
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
     this.options = options;
@@ -435,6 +464,131 @@ export class MCPServer {
   }
 
   /**
+   * Server→client request/response primitive (#960).
+   *
+   * Allocates a unique request id (prefixed `oc-s2c-` so it cannot collide
+   * with client-allocated ids), serializes the request via the existing
+   * `sendResponse` path, and registers a one-shot resolver. The transport
+   * delivers the JSON-RPC envelope; the response is matched back to the
+   * resolver in `handleMessage` (response fork) before the regular
+   * client-request validation runs.
+   *
+   * Failure modes (rejection):
+   *   - `timeoutMs` elapses → `Error('s2c_timeout:<method>')`.
+   *   - `signal` fires → `Error('s2c_aborted')`.
+   *   - Connection closes (`close()` / transport teardown) →
+   *     `Error('s2c_aborted:connection_closed')`.
+   *   - Client returns a JSON-RPC `error` → `Error(error.message)`.
+   *
+   * Concurrent in-flight requests are independent — no head-of-line blocking.
+   */
+  protected async requestFromClient<T = unknown>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<T> {
+    const id = `oc-s2c-${this.nextS2cRequestId++}`;
+    const timeoutMs = options?.timeoutMs ?? 30_000;
+    const mcpSessionId = currentRequestContext()?.mcpSessionId;
+    return new Promise<T>((resolve, reject) => {
+      const cleanup = (): void => {
+        const entry = this.pendingClientRequests.get(id);
+        if (!entry) return;
+        if (entry.timer) clearTimeout(entry.timer);
+        if (entry.signal && entry.signalListener) {
+          entry.signal.removeEventListener('abort', entry.signalListener);
+        }
+        this.pendingClientRequests.delete(id);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`s2c_timeout:${method}`));
+      }, timeoutMs);
+
+      let signalListener: (() => void) | undefined;
+      if (options?.signal) {
+        if (options.signal.aborted) {
+          clearTimeout(timer);
+          reject(new Error('s2c_aborted'));
+          return;
+        }
+        signalListener = (): void => {
+          cleanup();
+          reject(new Error('s2c_aborted'));
+        };
+        options.signal.addEventListener('abort', signalListener, { once: true });
+      }
+
+      this.pendingClientRequests.set(id, {
+        resolve: (value: unknown) => {
+          cleanup();
+          resolve(value as T);
+        },
+        reject: (err: Error) => {
+          cleanup();
+          reject(err);
+        },
+        timer,
+        signal: options?.signal,
+        signalListener,
+        mcpSessionId,
+      });
+
+      const request = {
+        jsonrpc: '2.0' as const,
+        id,
+        method,
+        ...(params ? { params } : {}),
+      };
+      try {
+        const transport = this.transport;
+        if (mcpSessionId && transport && typeof transport.sendToSession === 'function') {
+          const sent = transport.sendToSession(mcpSessionId, request as unknown as MCPResponse);
+          if (!sent) {
+            cleanup();
+            reject(new Error('s2c_aborted:connection_closed'));
+            return;
+          }
+        } else {
+          this.sendResponse(request as unknown as MCPResponse);
+        }
+      } catch (sendErr) {
+        cleanup();
+        reject(sendErr instanceof Error ? sendErr : new Error(String(sendErr)));
+      }
+    });
+  }
+
+  /**
+   * Reject every pending server→client request. Called when the transport
+   * tears down (HTTP DELETE / stdio EOF) so callers don't hang forever.
+   */
+  private rejectAllPendingS2cRequests(reason: string): void {
+    for (const [id, entry] of this.pendingClientRequests) {
+      // Use entry.reject which also clears the timer / signal listener.
+      try {
+        entry.reject(new Error(reason));
+      } catch {
+        // best-effort
+      }
+      this.pendingClientRequests.delete(id);
+    }
+  }
+
+  private rejectPendingS2cRequestsForSession(sessionId: string, reason: string): void {
+    for (const [id, entry] of this.pendingClientRequests) {
+      if (entry.mcpSessionId !== sessionId) continue;
+      try {
+        entry.reject(new Error(reason));
+      } catch {
+        // best-effort
+      }
+      this.pendingClientRequests.delete(id);
+    }
+  }
+
+  /**
    * Build a coalescing progress-reporter for a single tools/call invocation.
    *
    * Returns `undefined` when the client did not supply `_meta.progressToken`,
@@ -549,6 +703,8 @@ export class MCPServer {
         // someone else's binding. sessionTenants is instead reclaimed by
         // (a) the MCP `sessions/delete` handler and (b) the periodic
         // `sweepSessionTenants()` tick scheduled in start().
+        this.rejectPendingS2cRequestsForSession(sessionId, 's2c_aborted:connection_closed');
+        this.clientCapabilitiesBySession.delete(sessionId);
       },
     );
   }
@@ -586,12 +742,47 @@ export class MCPServer {
   async handleMessage(
     parsed: Record<string, unknown>,
     signal?: AbortSignal,
+    transportContext?: TransportMessageContext,
   ): Promise<MCPResponse | null> {
     // Record activity — every inbound MCP request flows through this method
     // (stdio and HTTP transports both route here; see start()). By wiring at
     // the single dispatch point we guarantee acceptance criterion 8 (issue
     // #649) without having to touch every registerTool() call site.
     getIdleState().notifyActive();
+
+    // #960 — Server→client response fork. If this message has an id and
+    // (result | error) but no method, it is a response to a request the server
+    // sent earlier via `requestFromClient`. Route it to the pending resolver
+    // and short-circuit BEFORE the regular client-request validation (which
+    // would otherwise reject the response as "missing method field").
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      parsed.jsonrpc === '2.0' &&
+      parsed.id !== undefined &&
+      parsed.id !== null &&
+      typeof parsed.method !== 'string' &&
+      ('result' in parsed || 'error' in parsed)
+    ) {
+      const idKey = String(parsed.id);
+      const entry = this.pendingClientRequests.get(idKey);
+      if (entry) {
+        if (entry.mcpSessionId && transportContext?.mcpSessionId !== entry.mcpSessionId) {
+          console.error(`[MCPServer] dropping client response for id=${idKey} from non-owner session`);
+          return null;
+        }
+        if ('error' in parsed) {
+          const err = parsed.error as { message?: string; code?: number };
+          entry.reject(new Error(err?.message ?? `s2c_error_code:${err?.code ?? 'unknown'}`));
+        } else {
+          entry.resolve(parsed.result);
+        }
+      } else {
+        // Stray response (e.g. client echoed a stale id) — log and drop.
+        console.error(`[MCPServer] dropping stray client response for id=${idKey}`);
+      }
+      return null;
+    }
 
     // Validate JSON-RPC 2.0 envelope
     if (
@@ -715,8 +906,8 @@ export class MCPServer {
     }
 
     // Wire the transport message handler to MCPServer protocol logic
-    this.transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal) =>
-      this.handleMessage(parsed, signal),
+    this.transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) =>
+      this.handleMessage(parsed, signal, context),
     );
 
     this.transport.start();
@@ -815,6 +1006,24 @@ export class MCPServer {
    * Handle initialize request
    */
   private async handleInitialize(params?: Record<string, unknown>): Promise<MCPResult> {
+    // #960 — capture client capabilities for downstream consumers (roots,
+    // sampling, elicitation). Downstream issues check
+    // `this.clientCapabilities.<feature>` before issuing the server→client
+    // request and fall back to a heuristic / error path when absent.
+    const caps = params?.capabilities as { roots?: object; sampling?: object; elicitation?: object } | undefined;
+    if (caps && typeof caps === 'object') {
+      const captured = {
+        ...(caps.roots !== undefined ? { roots: caps.roots } : {}),
+        ...(caps.sampling !== undefined ? { sampling: caps.sampling } : {}),
+        ...(caps.elicitation !== undefined ? { elicitation: caps.elicitation } : {}),
+      };
+      this.clientCapabilities = captured;
+      const mcpSessionId = currentRequestContext()?.mcpSessionId;
+      if (mcpSessionId) {
+        this.clientCapabilitiesBySession.set(mcpSessionId, captured);
+      }
+    }
+
     // Detect client identity for progressive disclosure decisions
     const clientInfo = params?.clientInfo as { name?: string; version?: string } | undefined;
     const rawName = clientInfo?.name ?? '';
@@ -2095,6 +2304,11 @@ export class MCPServer {
   }
 
   private async _stopInternal(): Promise<void> {
+    // #960 — reject every in-flight server→client request before the
+    // transport tears down so callers don't hang forever on Promises that
+    // can never resolve.
+    this.rejectAllPendingS2cRequests('s2c_aborted:connection_closed');
+
     // Stop dashboard
     if (this.dashboard) {
       this.dashboard.stop();
@@ -2124,13 +2338,20 @@ export class MCPServer {
     // Base 5s for session/CDP cleanup + 6s per Chrome instance (5s kill + 1s buffer)
     const timeoutMs = Math.max(5000, 5000 + poolInstanceCount * 6000);
 
+    let cleanupTimeout: ReturnType<typeof setTimeout> | null = null;
     await Promise.race([
       this.cleanup(),
-      new Promise<void>((resolve) => setTimeout(() => {
+      new Promise<void>((resolve) => {
+        cleanupTimeout = setTimeout(() => {
         console.error(`[MCPServer] Cleanup timed out after ${timeoutMs / 1000}s, forcing exit`);
         resolve();
-      }, timeoutMs)),
+        }, timeoutMs);
+        cleanupTimeout.unref?.();
+      }),
     ]);
+    if (cleanupTimeout) {
+      clearTimeout(cleanupTimeout);
+    }
   }
 
   /**
