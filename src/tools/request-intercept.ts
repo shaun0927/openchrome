@@ -6,13 +6,48 @@ import { HTTPRequest } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { getMetricsCollector } from '../metrics/collector';
+
+// --- Bandwidth preset table ---
+// Exported so tests can import directly without going through the tool handler.
+export type BandwidthPreset = 'optimize-bandwidth' | 'optimize-bandwidth-light';
+
+/**
+ * Maps each preset name to the CDP ResourceType strings it blocks.
+ * CDP ResourceType values are PascalCase (Image, Media, Font, Stylesheet).
+ */
+export const PRESET_RESOURCE_TYPES: Record<BandwidthPreset, string[]> = {
+  'optimize-bandwidth': ['Image', 'Media', 'Font', 'Stylesheet'],
+  'optimize-bandwidth-light': ['Image', 'Media', 'Font'],
+};
+
+export const SUPPORTED_PRESETS: BandwidthPreset[] = [
+  'optimize-bandwidth',
+  'optimize-bandwidth-light',
+];
+
+/**
+ * Expand a preset name into InterceptRule entries (block rules, one per resource type).
+ * Rules use pattern '*' (match any URL) filtered to the resource type.
+ */
+function presetToRules(preset: BandwidthPreset): InterceptRule[] {
+  return PRESET_RESOURCE_TYPES[preset].map((rt) => ({
+    id: `preset-${preset}-${rt.toLowerCase()}`,
+    pattern: '*',
+    resourceTypes: [rt.toLowerCase()], // Puppeteer resourceType() returns lowercase
+    action: 'block' as const,
+  }));
+}
+
+// Read env once at module load — applied per-enable when set.
+const ENV_PRESET = (process.env.OPENCHROME_OPTIMIZE_BANDWIDTH ?? '').trim() as BandwidthPreset | '';
 
 // Intercept rule definition
 interface InterceptRule {
   id: string;
   pattern: string;
   resourceTypes?: string[];
-  action: 'block' | 'modify' | 'log';
+  action: 'block' | 'modify' | 'log' | 'allow';
   modifyOptions?: {
     headers?: Record<string, string>;
     body?: string;
@@ -53,6 +88,13 @@ const KEEP_HEADERS = new Set([
 
 // Resource types considered static assets (eligible for grouping)
 const ASSET_TYPES = new Set(['image', 'font', 'stylesheet', 'media']);
+
+const STATIC_ASSET_RESPONSE_BYTE_ESTIMATES: Record<string, number> = {
+  image: 100 * 1024,
+  media: 1024 * 1024,
+  font: 30 * 1024,
+  stylesheet: 20 * 1024,
+};
 
 interface AssetGroup {
   domain: string;
@@ -172,9 +214,19 @@ function matchesPattern(url: string, pattern: string): boolean {
   }
 }
 
+function estimatedStaticAssetResponseBytes(resourceType: string): number {
+  return STATIC_ASSET_RESPONSE_BYTE_ESTIMATES[resourceType.toLowerCase()] ?? 0;
+}
+
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
-  description: 'Intercept network requests (log, block, modify).',
+  description:
+    'Intercept network requests (log, block, modify). ' +
+    'Pass preset="optimize-bandwidth" to block Image, Media, Font, and Stylesheet resources in one call ' +
+    '(70-90 % bandwidth reduction on typical content pages). ' +
+    'Pass preset="optimize-bandwidth-light" to block Image, Media, and Font only (keeps CSS for layout-sensitive pages). ' +
+    'User-supplied block/allow/modify rules are applied after preset rules; explicit allow rules always win. ' +
+    'Set env OPENCHROME_OPTIMIZE_BANDWIDTH=<preset> to auto-apply to every new target.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -186,6 +238,13 @@ const definition: MCPToolDefinition = {
         type: 'string',
         enum: ['enable', 'disable', 'addRule', 'removeRule', 'listRules', 'getLogs', 'clearLogs'],
         description: 'Action to perform',
+      },
+      preset: {
+        type: 'string',
+        enum: ['optimize-bandwidth', 'optimize-bandwidth-light'],
+        description:
+          'Bandwidth preset: "optimize-bandwidth" blocks Image/Media/Font/Stylesheet; ' +
+          '"optimize-bandwidth-light" blocks Image/Media/Font only.',
       },
       rule: {
         type: 'object',
@@ -202,7 +261,7 @@ const definition: MCPToolDefinition = {
           },
           action: {
             type: 'string',
-            enum: ['block', 'modify', 'log'],
+            enum: ['block', 'modify', 'log', 'allow'],
             description: 'Rule action',
           },
           modifyOptions: {
@@ -261,11 +320,27 @@ const handler: ToolHandler = async (
   const ruleArg = args.rule as {
     pattern?: string;
     resourceTypes?: string[];
-    action?: 'block' | 'modify' | 'log';
+    action?: 'block' | 'modify' | 'log' | 'allow';
     modifyOptions?: { status?: number; headers?: Record<string, string>; body?: string };
   } | undefined;
   const ruleId = args.ruleId as string | undefined;
   const limit = args.limit as number | undefined;
+  const presetArg = args.preset as string | undefined;
+
+  // Validate preset before any other work
+  if (presetArg !== undefined) {
+    if (!SUPPORTED_PRESETS.includes(presetArg as BandwidthPreset)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ error: 'unknown_preset', supported: SUPPORTED_PRESETS }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
 
@@ -310,7 +385,36 @@ const handler: ToolHandler = async (
 
     switch (action) {
       case 'enable': {
+        // Determine active preset: per-call arg takes precedence over env var.
+        const activePreset = (presetArg as BandwidthPreset | undefined) ??
+          (ENV_PRESET && SUPPORTED_PRESETS.includes(ENV_PRESET as BandwidthPreset)
+            ? (ENV_PRESET as BandwidthPreset)
+            : undefined);
+
         if (state.enabled) {
+          // Re-enable with an explicit `preset` arg replaces the previously
+          // injected preset rules in-place. The listener already references
+          // state.rules, so updates take effect immediately on the next request.
+          // Calls without `preset` keep current behaviour (no-op + already_enabled).
+          if (presetArg !== undefined) {
+            state.rules = state.rules.filter((r) => !r.id.startsWith('preset-'));
+            if (activePreset) {
+              state.rules.unshift(...presetToRules(activePreset));
+            }
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    action: 'enable',
+                    status: 'preset_updated',
+                    preset: activePreset ?? null,
+                    rulesCount: state.rules.length,
+                  }),
+                },
+              ],
+            };
+          }
           return {
             content: [
               {
@@ -325,7 +429,18 @@ const handler: ToolHandler = async (
           };
         }
 
+        // Inject preset rules at the front; user rules (added via addRule) come after.
+        // Always clear old injected preset rules first so re-enabling without a preset
+        // leaves only the user's rules active.
+        state.rules = state.rules.filter(r => !r.id.startsWith('preset-'));
+        if (activePreset) {
+          const presetRules = presetToRules(activePreset);
+          state.rules.unshift(...presetRules);
+        }
+
         await page.setRequestInterception(true);
+
+        const metrics = getMetricsCollector();
 
         // Create request listener
         state.listener = async (request: HTTPRequest) => {
@@ -335,7 +450,8 @@ const handler: ToolHandler = async (
           let matched = false;
           let matchedRule: InterceptRule | null = null;
 
-          // Check rules in order
+          // Two-pass rule evaluation: first pass finds the selected match,
+          // second lets explicit allow rules override block/modify conflicts.
           for (const rule of state!.rules) {
             if (matchesPattern(url, rule.pattern)) {
               // Check resource type filter
@@ -344,11 +460,48 @@ const handler: ToolHandler = async (
                   continue;
                 }
               }
-
               matched = true;
               matchedRule = rule;
               break;
             }
+          }
+
+          if (matched && (matchedRule?.action === 'block' || matchedRule?.action === 'modify')) {
+            const matchedBlockFromPreset = matchedRule.action === 'block' && matchedRule.id.startsWith('preset-');
+            // Look for explicit overrides that also match. Allow wins over
+            // block/modify conflicts, even when a modify rule is the first
+            // match. User-authored modify rules may override injected preset
+            // blocks, but not earlier user-authored blocks; that preserves the
+            // pre-preset first-match semantics for custom rule sets.
+            let modifyOverride: InterceptRule | null = null;
+            for (const rule of state!.rules) {
+              if (rule === matchedRule) continue;
+              if (rule.action !== 'allow' && rule.action !== 'modify') continue;
+              if (!matchesPattern(url, rule.pattern)) continue;
+              if (rule.resourceTypes && rule.resourceTypes.length > 0) {
+                if (!rule.resourceTypes.includes(resourceType)) continue;
+              }
+              if (rule.action === 'allow') {
+                matchedRule = rule;
+                break;
+              }
+              if (matchedBlockFromPreset && !modifyOverride) {
+                modifyOverride = rule;
+              }
+            }
+            if (matchedRule.action === 'block' && modifyOverride) {
+              matchedRule = modifyOverride;
+            }
+          }
+
+          const rtLabel = resourceType.toLowerCase();
+          const estimatedResponseBytes = estimatedStaticAssetResponseBytes(resourceType);
+          if (estimatedResponseBytes > 0) {
+            metrics.inc(
+              'openchrome_intercept_estimated_response_bytes_total',
+              { resource_type: rtLabel, estimate_source: 'resource_type' },
+              estimatedResponseBytes,
+            );
           }
 
           // Log request if any log rules exist or matched
@@ -374,6 +527,13 @@ const handler: ToolHandler = async (
           if (matchedRule) {
             try {
               if (matchedRule.action === 'block') {
+                if (estimatedResponseBytes > 0) {
+                  metrics.inc(
+                    'openchrome_intercept_estimated_blocked_response_bytes_total',
+                    { resource_type: rtLabel, estimate_source: 'resource_type' },
+                    estimatedResponseBytes,
+                  );
+                }
                 await request.abort('blockedbyclient');
                 return;
               }
@@ -409,6 +569,7 @@ const handler: ToolHandler = async (
               text: JSON.stringify({
                 action: 'enable',
                 status: 'enabled',
+                preset: activePreset ?? null,
                 rulesCount: state.rules.length,
                 message: 'Request interception enabled',
               }),
