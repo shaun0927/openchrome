@@ -138,6 +138,8 @@ import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 import { registerOcContextTools } from './oc-context';
 import { isRunHarnessEnabled } from '../run-harness/flags';
 import { registerRunHarnessTools } from '../run-harness/tools';
+// Goal-level TaskRun lifecycle (#1039)
+import { registerTaskRunTools } from './task-run';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -314,6 +316,9 @@ export function registerAllTools(server: MCPServer): void {
   if (isRunHarnessEnabled()) {
     registerRunHarnessTools(server);
   }
+
+  // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
+  registerTaskRunTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
