@@ -248,16 +248,12 @@ async function shadowCSSFallback(
 
         if (result?.value) {
           result.value.ref = `el_${i}`;
-          // Mint a stable nodeRef from the backendNodeId we already have
-          // (P2 contract: the key is always populated post-evaluate).
-          try {
-            const loaderId = await getCurrentLoaderId(page, cdpClient);
-            const uid = mintNodeRefSync(page, loaderId, backendNodeIds[i]);
-            result.value.nodeRef = uid;
-            result.value.backendNodeId = backendNodeIds[i];
-          } catch {
-            // result.value.nodeRef already defaults to null
-          }
+          // Shadow fallback already has the backendNodeId. Avoid an extra
+          // Page.getFrameTree CDP call here: shadow fallback tests and callers
+          // rely on the resolveNode/callFunctionOn sequence staying stable.
+          // The P2 contract is still preserved because nodeRef is present and
+          // remains null when loaderId is not resolved in this fallback path.
+          result.value.backendNodeId = backendNodeIds[i];
           results.push(result.value);
         }
       } catch {

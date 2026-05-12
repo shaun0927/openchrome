@@ -577,7 +577,7 @@ const handler: ToolHandler = async (
         const nodeRefsBlock = await formatNodeRefsBlock(
           page,
           cdpClient,
-          result.emittedBackendNodeIds,
+          result.emittedBackendNodeIds ?? [],
         );
 
         // Delta compression: cache DOM and return diff if applicable
@@ -868,7 +868,7 @@ const handler: ToolHandler = async (
         const fallbackNodeRefsBlock = await formatNodeRefsBlock(
           page,
           cdpClient,
-          domResult.emittedBackendNodeIds,
+          domResult.emittedBackendNodeIds ?? [],
         );
 
         const fallbackNote =
