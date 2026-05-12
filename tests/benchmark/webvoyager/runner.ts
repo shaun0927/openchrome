@@ -92,12 +92,36 @@ async function loadBaseline(): Promise<Baseline> {
   return JSON.parse(raw) as Baseline;
 }
 
-function gitSha(): string {
+/**
+ * Read the current git SHA via `git rev-parse --short HEAD` and validate
+ * the output. The SHA is interpolated into report file paths
+ * (`reports/<sha>.json`), so a malicious worktree state or hostile env
+ * could in principle produce a string that escapes the reports directory.
+ * We pin the result to the canonical short/long SHA shape and fall back
+ * to the literal `'unknown'` otherwise.
+ *
+ * Exported for unit-testing of both the happy and validation-failure paths.
+ */
+export function gitSha(
+  exec: (cmd: string, opts: { encoding: 'utf8' }) => string = execSync as unknown as (
+    cmd: string,
+    opts: { encoding: 'utf8' },
+  ) => string,
+): string {
+  let raw: string;
   try {
-    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+    raw = exec('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
   } catch {
     return 'unknown';
   }
+  if (!/^[0-9a-f]{7,40}$/.test(raw)) {
+    console.error(
+      `[webvoyager] unexpected git rev-parse output ${JSON.stringify(raw)}; ` +
+        `falling back to 'unknown'`,
+    );
+    return 'unknown';
+  }
+  return raw;
 }
 
 async function evaluateContract(
@@ -244,14 +268,24 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   const pendingCount = taskReports.filter((r) => r.result === 'pending').length;
 
   const sha = gitSha();
+  const required = new Set(baseline.transcripts_required);
+  const requiredCount = required.size;
+  const totalCount = taskReports.length;
+  // Format the score so readers cannot mistake "3/3 = 100%" for full
+  // suite coverage when 7 of 10 tasks are still pending transcript
+  // recording. Includes passed / required / total / pending in the same
+  // string so the JSON and the runner stdout speak the same language.
+  const scoreLine =
+    `${passCount} passed / ${requiredCount} required / ${totalCount} total ` +
+    `(${pendingCount} pending)`;
   const benchReport: BenchReport = {
     git_sha: sha,
     adapter: opts.adapter,
-    total_tasks: taskReports.length,
+    total_tasks: totalCount,
     pass_count: passCount,
     fail_count: failCount,
     pending_count: pendingCount,
-    contract_eval_score: `${passCount} / ${taskReports.length - pendingCount}`,
+    contract_eval_score: scoreLine,
     timestamp: new Date().toISOString(),
     tasks: taskReports,
   };
@@ -268,7 +302,6 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   // Gate against baseline: every task in `transcripts_required` MUST pass.
   // Pending tasks (no transcript yet) are allowed; this prevents 0/10 from
   // looking "green" but lets us bootstrap the suite honestly.
-  const required = new Set(baseline.transcripts_required);
   const requiredFailures = taskReports.filter(
     (r) => required.has(r.name) && r.result !== 'passed',
   );

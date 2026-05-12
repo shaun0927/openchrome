@@ -12,14 +12,16 @@
  * runs `npm run bench:webvoyager:real`, they install the optional dev-dep
  * separately (documented in the runbook).
  *
- * The adapter enforces:
- *   - per-turn `max_tokens` (passed to the Messages API)
- *   - `max_tool_iterations` (tracked in the loop; abort with BUDGET_EXCEEDED)
- *   - `max_usd_per_task` (rough estimate from response.usage tokens; abort)
+ * v1 stub — does NOT yet enforce the budget caps. The function throws
+ * before any API call, surfacing the recording-workflow instructions to
+ * the caller. The cap values themselves are defined in `budget.ts` and
+ * will be threaded through `max_tokens` / `max_tool_iterations` /
+ * `max_usd_per_task` once the real Messages-API tool-use loop lands in
+ * the follow-up PR that records the remaining 7 transcripts.
  *
- * Cost estimation uses public pricing for `claude-sonnet-4-5` at the time
- * of v1.11 release (input $3/Mtok, output $15/Mtok). Override via the
- * `pricing` argument if you point the adapter at a different model.
+ * Cost estimation will use public pricing for `claude-sonnet-4-5` at the
+ * time of v1.11 release (input $3/Mtok, output $15/Mtok). Override via
+ * the `pricing` argument if you point the adapter at a different model.
  */
 
 import type { EvalContext } from '../../../../src/contracts/eval-context';

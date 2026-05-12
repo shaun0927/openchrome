@@ -61,6 +61,30 @@ sweep should land at ~$1 in practice.
 `pending: true` tasks are skipped by the mock runner. The follow-up PR
 records the remaining 7 transcripts and flips the flag.
 
+## Current coverage
+
+**3 of 10 transcripts are frozen** in this PR; the remaining **7 are
+pending** and recorded in a follow-up issue. Frozen / pending split:
+
+- **Frozen** (must pass in mock mode): `task-01-example-com-title`,
+  `task-04-rfc-9110-section-9-title`, `task-10-tc39-ecma262-strict-mode`.
+- **Pending** (skipped by the mock runner, counted as `pending` in the
+  report): task-02, task-03, task-05, task-06, task-07, task-08, task-09.
+
+### Partial-gate semantics
+
+The baseline gate is intentionally *partial* during the bootstrap phase:
+the runner exits zero when every task listed in
+`baseline.transcripts_required` passes, even if other tasks are still
+`pending`. This lets the harness ship green at 3/10 frozen without
+pretending we've verified the full ten-task contract. The runner refuses
+to exit zero if **every** task is pending (that would be a 0/0 "green"
+report), and the printed score string is formatted
+`<passed> passed / <required> required / <total> total (<pending> pending)`
+so a reader cannot mistake "3/3 = 100%" for full-suite coverage. The
+follow-up PR that records the remaining transcripts will flip them out
+of `pending` and grow `transcripts_required` to all ten.
+
 ## Baseline gate
 
 `baseline.json` lists `transcripts_required` — every task in that list

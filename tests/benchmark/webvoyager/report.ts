@@ -18,6 +18,14 @@ export function renderMarkdown(report: BenchReport): string {
     `- contract_eval_score: **${report.contract_eval_score}** ` +
       `(pass=${report.pass_count}, fail=${report.fail_count}, pending=${report.pending_count}, total=${report.total_tasks})`,
   );
+  // Explicit pending count restated in the header so PR reviewers reading
+  // only the rendered Markdown see right away that some tasks haven't been
+  // verified yet (transcripts not recorded). The gate intentionally lets
+  // pending tasks pass through; this line keeps the report honest.
+  lines.push(
+    `- pending tasks: **${report.pending_count}** of ${report.total_tasks} ` +
+      `(no frozen transcript yet — skipped by mock runner)`,
+  );
   lines.push('');
   lines.push('## Per-task results');
   lines.push('');

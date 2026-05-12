@@ -51,8 +51,17 @@ export interface TranscriptFinalState {
   has_open_dialog: boolean;
 }
 
+/**
+ * Per-step tool-call entry. v1 records only the tool name and the kind of
+ * response we got back — enough for the mock adapter to compute
+ * `tool_calls` count and `response_bytes`, but deliberately not enough to
+ * detect argument drift. Argument-digest validation is tracked separately
+ * in #943 (it requires a deterministic JSON serializer and a real-adapter
+ * recorder; both land in the follow-up PR that records the remaining 7
+ * transcripts).
+ */
 export type TranscriptEntry =
-  | { kind: 'tool_call'; tool: string; args_digest_sha256: string; response_kind: string }
+  | { kind: 'tool_call'; tool: string; response_kind: string }
   | TranscriptFinalState;
 
 export interface TaskRunReport {
