@@ -18,6 +18,12 @@ import { MCPTransport, createTransport } from './transports/index';
 import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
+import {
+  skillGraphResourceTemplate,
+  SKILL_GRAPH_RESOURCE_PREFIX,
+  parseDomainFromUri,
+  readSkillGraphResource,
+} from './resources/skill-graph';
 import { HintEngine } from './hints';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
@@ -200,6 +206,7 @@ export class MCPServer {
 
     // Register built-in resources
     this.registerResource(usageGuideResource);
+    this.registerResource(skillGraphResourceTemplate);
 
     // Initialize dashboard if enabled
     if (options.dashboard) {
@@ -697,6 +704,25 @@ export class MCPServer {
     const uri = params.uri as string;
     if (!uri) {
       throw new Error('Missing resource uri');
+    }
+
+    // Skill-graph resources use a URI prefix with a variable domain segment.
+    // Handle them before the exact-match lookup.
+    if (uri.startsWith(SKILL_GRAPH_RESOURCE_PREFIX)) {
+      const domain = parseDomainFromUri(uri);
+      if (!domain) {
+        throw new Error(`Invalid skill-graph resource URI: ${uri}`);
+      }
+      const content = readSkillGraphResource(domain);
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: skillGraphResourceTemplate.mimeType,
+            text: content,
+          },
+        ],
+      };
     }
 
     const resource = this.resources.get(uri);
