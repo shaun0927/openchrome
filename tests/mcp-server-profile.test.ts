@@ -72,6 +72,7 @@ describe('MCPServer _profile injection', () => {
       name: toolName,
       description: 'Test',
       inputSchema: { type: 'object' as const, properties: {} },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     };
     server.registerTool(toolName, handler, definition);
     const req: MCPRequest = {
@@ -125,6 +126,7 @@ describe('MCPServer _profile injection', () => {
       name: 'test_tool',
       description: 'Test',
       inputSchema: { type: 'object' as const, properties: {} },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     };
     server.registerTool('test_tool', handler, definition);
 

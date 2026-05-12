@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -94,6 +95,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.interact,
 };
 
 const handler: ToolHandler = async (

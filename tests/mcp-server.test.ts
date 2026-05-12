@@ -156,6 +156,7 @@ describe('MCPServer', () => {
         name: 'test_tool',
         description: 'A test tool',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
 
       server.registerTool('test_tool', handler, definition);
@@ -169,6 +170,7 @@ describe('MCPServer', () => {
         name: 'my_tool',
         description: 'My tool',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('my_tool', handler, definition);
 
@@ -196,6 +198,7 @@ describe('MCPServer', () => {
         name: 'my_tool',
         description: 'Test tool',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('my_tool', handler, definition);
 
@@ -224,6 +227,7 @@ describe('MCPServer', () => {
         name: 'my_tool',
         description: 'Test tool',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('my_tool', handler, definition);
 
@@ -283,6 +287,7 @@ describe('MCPServer', () => {
         name: 'failing_tool',
         description: 'A failing tool',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('failing_tool', handler, definition);
 
@@ -311,6 +316,7 @@ describe('MCPServer', () => {
         name: 'my_tool',
         description: 'Test',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('my_tool', handler, definition);
 
@@ -342,6 +348,7 @@ describe('MCPServer', () => {
         name: 'oc_reap_orphans',
         description: 'Test recovery tool',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('oc_reap_orphans', handler, definition);
 
@@ -525,11 +532,13 @@ describe('MCPServer', () => {
         name: 'tool1',
         description: '',
         inputSchema: { type: 'object' as const, properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       const definition2: MCPToolDefinition = {
         name: 'tool2',
         description: '',
         inputSchema: { type: 'object' as const, properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('tool1', jest.fn(), definition1);
       server.registerTool('tool2', jest.fn(), definition2);
@@ -561,6 +570,7 @@ describe('MCPServer', () => {
         name: 'retry_tool',
         description: 'Test retry',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('retry_tool', handler, definition);
 
@@ -588,6 +598,7 @@ describe('MCPServer', () => {
         name: 'fail_tool',
         description: 'Always fails',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('fail_tool', handler, definition);
 
@@ -616,6 +627,7 @@ describe('MCPServer', () => {
         name: 'normal_error_tool',
         description: 'Normal error',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('normal_error_tool', handler, definition);
 
@@ -658,6 +670,7 @@ describe('MCPServer', () => {
           name: toolName,
           description: 'Test',
           inputSchema: { type: 'object' as const, properties: {}, required: [] },
+          annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
         };
         server.registerTool(toolName, handler, definition);
 
@@ -685,6 +698,7 @@ describe('MCPServer', () => {
         name: 'reconnect_test_tool',
         description: 'Test reconnection',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('reconnect_test_tool', handler, definition);
 

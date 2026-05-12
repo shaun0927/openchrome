@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getActionRecorder } from '../recording/action-recorder';
 import { getRecordingStore } from '../recording/recording-store';
 import { RecordingAction, RecordingMetadata } from '../recording/types';
@@ -38,6 +39,7 @@ const startDefinition: MCPToolDefinition = {
       },
     },
   },
+  annotations: TOOL_ANNOTATIONS.oc_recording_start,
 };
 
 const startHandler: ToolHandler = async (
@@ -89,6 +91,7 @@ const stopDefinition: MCPToolDefinition = {
     type: 'object',
     properties: {},
   },
+  annotations: TOOL_ANNOTATIONS.oc_recording_stop,
 };
 
 const stopHandler: ToolHandler = async (
@@ -146,6 +149,7 @@ const listDefinition: MCPToolDefinition = {
       },
     },
   },
+  annotations: TOOL_ANNOTATIONS.oc_recording_list,
 };
 
 const listHandler: ToolHandler = async (
@@ -220,6 +224,7 @@ const exportDefinition: MCPToolDefinition = {
     },
     required: ['recordingId'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_recording_export,
 };
 
 const exportHandler: ToolHandler = async (

@@ -11,6 +11,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getDomainMemory } from '../memory/domain-memory';
 import { findLiteralSecret } from '../core/secrets';
 
@@ -50,6 +51,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['action'],
   },
+  annotations: TOOL_ANNOTATIONS.memory,
 };
 
 // ---------------------------------------------------------------------------

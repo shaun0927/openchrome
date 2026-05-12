@@ -6,6 +6,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
@@ -60,6 +61,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'fields'],
   },
+  annotations: TOOL_ANNOTATIONS.fill_form,
 };
 
 
