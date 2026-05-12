@@ -28,6 +28,17 @@ export interface MCPResponse {
 export interface MCPResult {
   [key: string]: unknown;
   content?: MCPContent[];
+  /**
+   * Typed structured result alongside `content[]` (MCP spec
+   * `structuredContent`). When the tool declares an `outputSchema`, the
+   * returned object MUST validate against it. For backward compatibility
+   * with clients that only read `content[]`, tools should populate BOTH:
+   * `content[0].text` contains `JSON.stringify(structuredContent)` (or a
+   * human-readable variant), and `structuredContent` carries the typed
+   * object. `JSON.parse(content[0].text)` deep-equals `structuredContent`
+   * is the wire-format invariant enforced per-tool by unit tests.
+   */
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
@@ -44,14 +55,30 @@ export interface MCPError {
   data?: unknown;
 }
 
+/**
+ * JSON-Schema-Draft-7 shape used for both `inputSchema` and the optional
+ * `outputSchema` on `MCPToolDefinition`. The runtime validator only inspects
+ * `type === 'object'` schemas — list/scalar top-level shapes are intentionally
+ * not allowed at the tool boundary.
+ */
+export interface MCPObjectSchema {
+  type: 'object';
+  properties: Record<string, unknown>;
+  required?: string[];
+}
+
 export interface MCPToolDefinition {
   name: string;
   description: string;
-  inputSchema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required?: string[];
-  };
+  inputSchema: MCPObjectSchema;
+  /**
+   * Optional MCP-spec `outputSchema`. When declared, callers can validate the
+   * tool's `structuredContent` result against this schema. Tools that opt in
+   * MUST populate `MCPResult.structuredContent` AND maintain the wire-format
+   * invariant: `JSON.parse(content[0].text)` deep-equals `structuredContent`.
+   * Tools without `outputSchema` continue to return free-form `content[]`.
+   */
+  outputSchema?: MCPObjectSchema;
 }
 
 /**
@@ -63,6 +90,23 @@ export interface MCPToolDefinition {
  * HTTP request lifecycle so that tool calls abort when the client disconnects
  * (see issue #8 — B-2: Tool-call AbortSignal propagation).
  */
+/**
+ * Progress update emitted by a tool handler.
+ *
+ * Mirrors the MCP-spec `notifications/progress` payload (less the
+ * `progressToken`, which is injected by the dispatcher). Long-running tools
+ * use this to report incremental status without changing their final
+ * response shape.
+ */
+export interface ToolProgress {
+  /** Monotonic non-decreasing progress value. Often a count (e.g. pages done) or a percentage. */
+  progress: number;
+  /** Total expected at completion, if known. Combined with `progress` clients can render a percentage. */
+  total?: number;
+  /** Short human-readable substep (≤ 120 chars recommended). */
+  message?: string;
+}
+
 export interface ToolContext {
   /** When the tool handler started executing */
   startTime: number;
@@ -70,6 +114,20 @@ export interface ToolContext {
   deadlineMs: number;
   /** AbortSignal that fires when the originating HTTP request is closed. */
   signal?: AbortSignal;
+  /**
+   * Emit a progress update for the in-flight tool call.
+   *
+   * Populated by the dispatcher only when the client passed
+   * `params._meta.progressToken` on `tools/call` — absent otherwise. Tools
+   * MUST tolerate `reportProgress === undefined` (no-op semantically).
+   *
+   * Implementations coalesce updates per-token to at most one notification
+   * per 100 ms; callers can fire freely. Updates are best-effort —
+   * notification failures are swallowed so they cannot break the parent
+   * tool call. Cancellation is independent: callers MUST still check
+   * `throwIfAborted(ctx)` separately.
+   */
+  reportProgress?: (update: ToolProgress) => void;
 }
 
 /** Returns the number of milliseconds remaining before the tool deadline. */

@@ -34,6 +34,8 @@ import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';
 import { getBrowserStateManager } from './browser-state';
 import { getListenerErrorStats, installUnhandledRejectionSafetyNet } from './utils/safe-listener';
+import { setComponent, resetReadinessMachine } from './watchdog/readiness';
+import { wireChromeReadiness } from './watchdog/chrome-readiness';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -96,7 +98,8 @@ program
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean }) => {
+  .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; secrets?: string }) => {
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -124,6 +127,21 @@ program
     // returns null in that case.
     logActiveFlags();
     await bootstrapPilot();
+
+    // Secrets masking (#834): load dotenv into the process-wide secret store.
+    // Default behavior (no --secrets) is unchanged — the empty store is a no-op.
+    if (options.secrets) {
+      try {
+        const { loadSecretsFromFile, setSecretStore } = await import('./core/secrets');
+        const store = loadSecretsFromFile(options.secrets);
+        setSecretStore(store);
+        console.error(`[openchrome] Loaded ${store.size} secret(s) from ${options.secrets}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[openchrome] Error: failed to load --secrets: ${msg}`);
+        process.exit(2);
+      }
+    }
 
     console.error(`[openchrome] Chrome debugging port: ${port}`);
     console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
@@ -263,8 +281,25 @@ program
       process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
     }
 
+    // Reset readiness machine so a fresh serve action starts from scratch.
+    resetReadinessMachine();
+
     const server = getMCPServer();
     registerAllTools(server);
+
+    // Dev-only hook: artificial delay for the tools component transition.
+    // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
+    const isDevHooks = process.env.NODE_ENV !== 'production' && process.env.OPENCHROME_DEV_HOOKS === '1';
+    if (isDevHooks && process.env.OPENCHROME_FAKE_SLOW_TOOLS) {
+      const delayMs = parseInt(process.env.OPENCHROME_FAKE_SLOW_TOOLS, 10);
+      if (delayMs > 0) {
+        setTimeout(() => setComponent('tools', 'ok'), delayMs);
+      } else {
+        setComponent('tools', 'ok');
+      }
+    } else {
+      setComponent('tools', 'ok');
+    }
 
     // Write PID file for zombie process detection
     writePidFile(port);
@@ -478,6 +513,12 @@ program
     const cdpClient = getCDPClient();
     const sessionManager = getSessionManager();
 
+    // Readiness: wire chrome component via CDPClient connection events, then
+    // proactively connect so daemon /ready probes can become ready before the
+    // first MCP tool call.
+    const chromeReadiness = wireChromeReadiness(cdpClient);
+    chromeReadiness.initializeStartupConnection();
+
     // Wire session manager into HTTP transport for dashboard API endpoints
     if (httpTransport) {
       httpTransport.setSessionManager(sessionManager);
@@ -520,7 +561,7 @@ program
     });
     processWatchdog.on('chrome-relaunched', () => {
       console.error('[SelfHealing] Chrome relaunched by watchdog, triggering reconnect...');
-      cdpClient.forceReconnect().catch((err: unknown) => {
+      chromeReadiness.handleChromeRelaunched().catch((err: unknown) => {
         console.error('[SelfHealing] Post-relaunch reconnect failed:', err);
       });
     });
@@ -533,7 +574,13 @@ program
         console.error(`[SelfHealing] ChromeProcessMonitor restarted (new pid=${newPid})`);
       }
     });
+    // Readiness: flip chrome to failing when watchdog detects Chrome died
+    processWatchdog.on('chrome-died', () => {
+      setComponent('chrome', 'failing');
+    });
     processWatchdog.start();
+    // Readiness: watchdogs component is ok once the first tick has been scheduled
+    setComponent('watchdogs', 'ok');
     console.error('[SelfHealing] ChromeProcessWatchdog started');
 
     // Tab Health Monitor (Layer 1)

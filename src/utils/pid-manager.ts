@@ -4,6 +4,7 @@ import * as path from "path";
 import { listMarkers, deleteMarkerFile, verifyChromePidIdentity, OwnershipMarker } from "../chrome/ownership-marker";
 import { listAllTokens } from "./session-resume-token";
 import { getLifecycleBus } from "../core/lifecycle";
+import { cleanupAllStaleSessionsSync as cleanupNetworkBodiesSync } from "../core/network-capture/body-store";
 
 const LOG_PREFIX = "[openchrome:pid]";
 
@@ -220,6 +221,18 @@ export function cleanOrphanedChromeProcesses(basePorts: number[]): number {
   // Also walk ownership markers (#661 Phase 5) to catch Chromes that bound to
   // a port we don't know about, or whose PID file was lost.
   killed += reapOrphanMarkers();
+
+  // Purge any stale network-capture body directories left by previous
+  // SIGKILL'd processes (#896). Bodies persist on disk for the duration of an
+  // active full-mode capture and are normally cleaned on `stop`; a hard kill
+  // leaves them behind. We piggyback on the same startup hook that already
+  // walks PIDs/markers so the cleanup runs exactly once per openchrome start.
+  try {
+    cleanupNetworkBodiesSync();
+  } catch (err) {
+    console.error(`${LOG_PREFIX} cleanupNetworkBodiesSync failed:`, err);
+  }
+
   return killed;
 }
 
