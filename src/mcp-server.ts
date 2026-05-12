@@ -11,6 +11,7 @@ import {
   MCPToolDefinition,
   ToolHandler,
   ToolContext,
+  ToolProgress,
   ToolRegistry,
   MCPErrorCodes,
 } from './types/mcp';
@@ -319,6 +320,94 @@ export class MCPServer {
       ...(params ? { params } : {}),
     };
     this.sendResponse(notification as unknown as MCPResponse);
+  }
+
+  /**
+   * Build a coalescing progress-reporter for a single tools/call invocation.
+   *
+   * Returns `undefined` when the client did not supply `_meta.progressToken`,
+   * giving downstream tools a cheap no-op semantic (`ctx.reportProgress?.(...)`).
+   *
+   * Coalescing window: 100 ms per progressToken. Updates within the window
+   * are dropped except for the most recent one, which is delivered when the
+   * window expires. The final update (highest progress) is always
+   * delivered when `flush()` is called at the end of the tool call.
+   *
+   * Notification emission is best-effort — exceptions in the transport
+   * layer are swallowed so a wedged SSE socket cannot break the parent
+   * tool call. Monotonic non-decreasing `progress` is enforced (out-of-order
+   * updates with lower progress are ignored).
+   */
+  private createProgressReporter(
+    progressToken: string | number | null | undefined,
+  ): { reporter?: (update: ToolProgress) => void; flush: () => void } {
+    if (progressToken === undefined || progressToken === null) {
+      return { reporter: undefined, flush: () => undefined };
+    }
+    const COALESCE_MS = 100;
+    let lastEmittedAt = 0;
+    let pending: ToolProgress | null = null;
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+    let highestProgress = -Infinity;
+
+    const send = (update: ToolProgress): void => {
+      try {
+        this.sendNotification('notifications/progress', {
+          progressToken,
+          progress: update.progress,
+          ...(update.total !== undefined ? { total: update.total } : {}),
+          ...(update.message !== undefined ? { message: update.message } : {}),
+        });
+        lastEmittedAt = Date.now();
+      } catch (err) {
+        // Best-effort: a wedged transport must not break the parent tool call.
+        console.error('[MCPServer] progress notification emit failed:', err);
+      }
+    };
+
+    const reporter = (update: ToolProgress): void => {
+      // Enforce monotonic non-decreasing `progress`.
+      if (update.progress < highestProgress) return;
+      highestProgress = update.progress;
+      const now = Date.now();
+      const elapsed = now - lastEmittedAt;
+      if (elapsed >= COALESCE_MS) {
+        // Emit immediately and clear any pending coalesced update.
+        if (pendingTimer) {
+          clearTimeout(pendingTimer);
+          pendingTimer = null;
+          pending = null;
+        }
+        send(update);
+      } else {
+        // Buffer; schedule a single trailing emission.
+        pending = update;
+        if (!pendingTimer) {
+          pendingTimer = setTimeout(() => {
+            pendingTimer = null;
+            if (pending) {
+              const p = pending;
+              pending = null;
+              send(p);
+            }
+          }, COALESCE_MS - elapsed);
+        }
+      }
+    };
+
+    const flush = (): void => {
+      if (pendingTimer) {
+        clearTimeout(pendingTimer);
+        pendingTimer = null;
+      }
+      if (pending) {
+        const p = pending;
+        pending = null;
+        send(p);
+      }
+    };
+
+    return { reporter, flush };
   }
 
   /**
@@ -1076,12 +1165,25 @@ export class MCPServer {
         eventLoopMonitor.beginHeavyOperation();
       }
 
+      // MCP progress-notifications wiring (#869). When the client passed
+      // `_meta.progressToken` on tools/call, build a per-call coalescing
+      // reporter and thread it through every ToolContext invocation site
+      // (initial, post-reconnect retry, swallowed-error retry). flushProgress
+      // runs in the outer finally so a trailing coalesced update is always
+      // delivered before tools/call returns.
+      const progressToken = (
+        params as { _meta?: { progressToken?: string | number | null } } | undefined
+      )?._meta?.progressToken ?? undefined;
+      const { reporter: reportProgress, flush: flushProgress } =
+        this.createProgressReporter(progressToken);
+
       let result: MCPResult;
       try {
         const toolContext: ToolContext = {
           startTime: Date.now(),
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
           signal,
+          reportProgress,
         };
         let tid: ReturnType<typeof setTimeout>;
         result = await Promise.race([
@@ -1117,6 +1219,8 @@ export class MCPServer {
             const retryToolContext: ToolContext = {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+              signal,
+              reportProgress,
             };
             let tid2: ReturnType<typeof setTimeout>;
             result = await Promise.race([
@@ -1139,6 +1243,9 @@ export class MCPServer {
         if (isHeavyTool && eventLoopMonitor) {
           eventLoopMonitor.endHeavyOperation();
         }
+        // Deliver any trailing coalesced progress update (#869). Safe to call
+        // when no progressToken was supplied — flush is a no-op then.
+        flushProgress();
       }
 
       // Check if the handler returned a connection error as MCPResult instead of throwing.
@@ -1155,6 +1262,8 @@ export class MCPServer {
             const swallowedRetryContext: ToolContext = {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+              signal,
+              reportProgress,
             };
             result = await Promise.resolve(tool.handler(sessionId, toolArgs, swallowedRetryContext));
             console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);

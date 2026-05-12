@@ -551,6 +551,14 @@ const handler: ToolHandler = async (
           pages.push(result);
         }
       }
+
+      // #869 — emit progress per batch (after pages are pushed so `progress`
+      // is monotonic). No-op when the client did not supply a progressToken.
+      context?.reportProgress?.({
+        progress: pages.length,
+        total: urlsToVisit.length,
+        message: batch[batch.length - 1] ?? undefined,
+      });
     }
 
     // -----------------------------------------------------------------------
