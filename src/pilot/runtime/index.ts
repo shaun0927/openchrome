@@ -6,8 +6,8 @@
  *
  * Import-safety guarantee: this module must NOT throw on load even if
  * other pilot subdirectories (executor, handoff, voting, curator) are
- * missing. We only re-export from `./runtime.js` and `./types.js` so the
- * surface stays self-contained.
+ * missing. We only re-export from `./runtime.js`, `./types.js`, and
+ * `./before-irreversible.js` so the surface stays self-contained.
  */
 
 export {
@@ -15,6 +15,13 @@ export {
   LogAuditEntryEmitter,
   runWithContract,
 } from './runtime.js';
+
+export {
+  defaultBeforeIrreversibleHook,
+  getBeforeIrreversibleHook,
+  registerBeforeIrreversibleHook,
+  resetBeforeIrreversibleHookForTests,
+} from './before-irreversible.js';
 
 export {
   canonicalJson,
@@ -32,3 +39,9 @@ export type {
   TransactionRecord,
   Verdict,
 } from './types.js';
+
+export type {
+  BeforeIrreversibleDecision,
+  BeforeIrreversibleHook,
+  BeforeIrreversibleHookInput,
+} from './before-irreversible.js';
