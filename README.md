@@ -401,13 +401,13 @@ read_page tabId="tab1" mode="dom"
 
 [page_stats] url: https://example.com | title: Example | scroll: 0,0 | viewport: 1920x1080
 
-[142]<input type="search" placeholder="Search..." aria-label="Search"/> ★
-[156]<button type="submit"/>Search ★
-[289]<a href="/home"/>Home ★
+# [142]<input type="search" placeholder="Search..." aria-label="Search"/> ★
+$ [156]<button type="submit"/>Search ★
+@ [289]<a href="/home"/>Home ★
 [352]<h1/>Welcome to Example
 ```
 
-DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` IDs which are cleared on each AX-mode `read_page` call.
+DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` IDs which are cleared on each AX-mode `read_page` call. A compact marker before an identifier describes the action affordance: `#` text input, `@` link, `$` button/control, `%` visual target. The marker is display metadata only; pass the identifier itself (`142`, `node_142`, or `ref_N`) to action tools.
 
 ### JavaScript and Shadow DOM
 
