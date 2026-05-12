@@ -374,6 +374,33 @@ describe('DOM Serializer', () => {
     expect(result.content).toContain('[801]');      // button
   });
 
+  test('renders affordance markers outside backendNodeId tokens', async () => {
+    const affordanceDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [
+          { nodeId: 3, backendNodeId: 810, nodeType: 1, nodeName: 'INPUT', localName: 'input', attributes: ['type', 'search'], children: [] },
+          { nodeId: 4, backendNodeId: 811, nodeType: 1, nodeName: 'A', localName: 'a', attributes: ['href', '/docs'], children: [] },
+          { nodeId: 5, backendNodeId: 812, nodeType: 1, nodeName: 'BUTTON', localName: 'button', attributes: [], children: [] },
+          { nodeId: 6, backendNodeId: 813, nodeType: 1, nodeName: 'IMG', localName: 'img', attributes: ['alt', 'Logo'], children: [] },
+        ],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(affordanceDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+
+    expect(result.content).toContain('# [810]<input');
+    expect(result.content).toContain('@ [811]<a');
+    expect(result.content).toContain('$ [812]<button');
+    expect(result.content).toContain('% [813]<img');
+    expect(result.content).not.toContain('[#810]');
+  });
+
   test('includes role-based interactive elements', async () => {
     const roleDoc = {
       nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
