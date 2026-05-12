@@ -118,6 +118,12 @@ export function jobsRootDir(): string {
  */
 const VALID_JOB_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
+// Runtime-only map for sensitive original start URLs. The persisted header stores
+// a redacted URL so secrets never hit disk; same-process advances can still
+// fetch signed/basic-auth start URLs via this map. After a restart, only the
+// redacted URL remains available, which is the safe recovery fallback.
+const ORIGINAL_START_URLS = new Map<string, string>();
+
 /**
  * Reject any jobId that is not a well-formed ULID. Throws a clear error
  * otherwise. Defence-in-depth: tool handlers also validate at their entry
@@ -222,6 +228,7 @@ export async function createJob(config: JobConfig): Promise<string> {
   // The runner sees the original `config.url` only in memory; on disk we
   // keep the scrubbed copy.
   const safeConfig: JobConfig = { ...config, url: scrubUrlString(config.url) };
+  ORIGINAL_START_URLS.set(jobId, config.url);
   const header: HeaderRecord = { kind: 'header', config: safeConfig, createdAt: Date.now() };
   const line = JSON.stringify(header) + '\n';
   // Use atomic write for the header — the file is brand new so this is just
@@ -238,6 +245,11 @@ export async function createJob(config: JobConfig): Promise<string> {
  * callers that bypass `withJobLock` risk interleaved writes; use
  * `appendEvent` for those.
  */
+export function getOriginalStartUrl(jobId: string): string | undefined {
+  assertValidJobId(jobId);
+  return ORIGINAL_START_URLS.get(jobId);
+}
+
 export function appendEventUnlocked(jobId: string, event: JobEvent): void {
   assertValidJobId(jobId);
   ensureRoot();
@@ -355,9 +367,10 @@ function applyEvent(state: JobState, evt: JobEvent): void {
       return;
     case 'fetched': {
       state.visited.add(evt.url);
-      // Drop the URL from the queue if it's there (first occurrence only).
-      const idx = state.queue.findIndex((q) => q.url === evt.url);
-      if (idx >= 0) state.queue.splice(idx, 1);
+      // Drop all queued duplicates for the URL. Duplicate links may be
+      // discovered from multiple parents; leaving stale duplicate queue entries
+      // can keep a job running even after every unique URL has been visited.
+      state.queue = state.queue.filter((q) => q.url !== evt.url);
       state.pages.push(evt.page);
       if (state.startedAt === undefined) state.startedAt = evt.t;
       return;

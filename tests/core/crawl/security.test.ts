@@ -286,6 +286,16 @@ describe('crawl_start clamps max_pages to [1, 10_000] (finding 3)', () => {
     const state = loadJob(res.jobId as string);
     expect(state.config.max_pages).toBe(1);
   });
+
+  test('negative max_depth is clamped to 0', async () => {
+    mkTmpRoot();
+    bootTools();
+    const res = parseResult(
+      await crawlStart!('s', { url: 'http://example.test/', max_depth: -5 }),
+    );
+    const state = loadJob(res.jobId as string);
+    expect(state.config.max_depth).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -336,5 +346,53 @@ describe('crawl_cancel is observed mid-advance (finding 5)', () => {
     // fetches.
     const post = parseResult(await crawlStatus!('s', { jobId, advance: 5 }));
     expect(post.status).toBe('cancelled');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Follow-up review regressions — robots, signed start URL, duplicate queue
+// ---------------------------------------------------------------------------
+
+describe('crawl review follow-ups', () => {
+  test('same-process jobs fetch the original signed start URL while persisting a redacted header', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer([{ name: 'signed', links: [] }]);
+    bootTools();
+    const spy: SpyState = { calls: [] };
+    _setAdvanceOptionsForTests({ fetcher: makeSpyFetcher(spy) });
+
+    const signedUrl = `${server.url('signed')}?token=secret123`;
+    const startBody = parseResult(
+      await crawlStart!('s', { url: signedUrl, max_pages: 1, max_depth: 0 }),
+    );
+    await crawlStatus!('s', { jobId: startBody.jobId, advance: 1 });
+
+    expect(spy.calls[0]?.url).toBe(signedUrl);
+    const raw = fs.readFileSync(jobFilePath(startBody.jobId as string), 'utf8');
+    expect(raw).not.toContain('secret123');
+    expect(raw.split('\n')[0]).toContain('token=[REDACTED]');
+  });
+
+  test('respect_robots blocks disallowed pages before the fetcher runs', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer({
+      '/robots.txt': { contentType: 'text/plain', body: 'User-agent: *\nDisallow: /blocked\n' },
+      '/blocked': { body: '<html><body>blocked</body></html>' },
+    });
+    bootTools();
+    const spy: SpyState = { calls: [] };
+    _setAdvanceOptionsForTests({ fetcher: makeSpyFetcher(spy) });
+
+    const startBody = parseResult(
+      await crawlStart!('s', { url: `${server.origin}/blocked`, max_pages: 1, max_depth: 0 }),
+    );
+    const body = parseResult(
+      await crawlStatus!('s', { jobId: startBody.jobId, advance: 1, includePages: true }),
+    );
+
+    expect(spy.calls).toHaveLength(0);
+    const pages = body.pages as Array<{ error?: string }>;
+    expect(pages[0]?.error).toBe('Blocked by robots.txt');
   });
 });

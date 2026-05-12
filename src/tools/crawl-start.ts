@@ -62,9 +62,14 @@ const handler: ToolHandler = async (
     ? Math.min(10_000, Math.max(1, Math.floor(rawMaxPages)))
     : 20;
 
+  const rawMaxDepth = args.max_depth != null ? Number(args.max_depth) : 2;
+  const clampedMaxDepth = Number.isFinite(rawMaxDepth)
+    ? Math.max(0, Math.floor(rawMaxDepth))
+    : 2;
+
   const config: JobConfig = {
     url,
-    max_depth: args.max_depth != null ? Number(args.max_depth) : 2,
+    max_depth: clampedMaxDepth,
     max_pages: clampedMaxPages,
     scope: (args.scope as string) || `${parsed.origin}/**`,
     include_patterns: args.include_patterns as string[] | undefined,

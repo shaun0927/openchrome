@@ -17,8 +17,12 @@ import {
   normalizeUrl,
   matchesScope,
   passesFilters,
+  parseRobotsTxt,
+  isAllowedByRobots,
   CrawlTracker,
+  type RobotsRules,
 } from '../../utils/crawl-utils';
+import { staticFetch } from '../../utils/static-fetch';
 import {
   fetchOnePage as defaultFetchOnePage,
   type FetchOnePageOptions,
@@ -27,6 +31,7 @@ import {
 
 import {
   appendEventUnlocked,
+  getOriginalStartUrl,
   isExpired,
   loadJob,
   setStatusUnlocked,
@@ -105,6 +110,41 @@ export interface AdvanceOptions {
   fetcher?: PageFetcher;
 }
 
+async function fetchRobotsRulesForUrl(
+  pageUrl: string,
+  cache: Map<string, RobotsRules | null>,
+  context?: ToolContext,
+): Promise<RobotsRules | null> {
+  let parsed: URL;
+  try {
+    parsed = new URL(pageUrl);
+  } catch {
+    return null;
+  }
+  const cached = cache.get(parsed.origin);
+  if (cached !== undefined) return cached;
+  try {
+    const { html, status } = await staticFetch(`${parsed.origin}/robots.txt`, {
+      signal: context?.signal,
+    });
+    const rules = status >= 200 && status < 300 ? parseRobotsTxt(html) : null;
+    cache.set(parsed.origin, rules);
+    return rules;
+  } catch {
+    cache.set(parsed.origin, null);
+    return null;
+  }
+}
+
+function robotsPathFor(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return '/';
+  }
+}
+
 /**
  * Advance the job by up to `advance` pages.
  *
@@ -167,7 +207,8 @@ export async function advanceJob(
     // Seed the queue with the start URL on the first non-zero advance.
     const fresh = loadJob(jobId);
     if (fresh.pages.length === 0 && fresh.queue.length === 0) {
-      const seed: QueueEntry = { url: normalizeUrl(fresh.config.url), depth: 0 };
+      const startUrl = getOriginalStartUrl(jobId) ?? fresh.config.url;
+      const seed: QueueEntry = { url: normalizeUrl(startUrl), depth: 0 };
       appendEventUnlocked(jobId, { kind: 'enqueue', urls: [seed], t: Date.now() });
     }
     // Promote to running. Status events are deduplicated by the replay
@@ -192,6 +233,8 @@ export async function advanceJob(
   const excludePatterns = state.config.exclude_patterns;
   const outputFormat = state.config.output_format;
   const delayMs = state.config.delay_ms;
+  const respectRobots = state.config.respect_robots;
+  const robotsCache = new Map<string, RobotsRules | null>();
 
   let fetched = 0;
   const byteCap = pageContentByteCap();
@@ -217,13 +260,44 @@ export async function advanceJob(
       for (const v of fresh.visited) tracker.visit(v);
       for (const q of fresh.queue) tracker.enqueue([q]);
 
+      if (fresh.pages.length >= maxPages) return 'break';
+
       const next = tracker.dequeue();
       if (!next) return 'break';
       if (next.depth > maxDepth) return 'continue';
 
+      const originalStartUrl = getOriginalStartUrl(jobId);
+      const fetchUrl = next.depth === 0 && originalStartUrl ? originalStartUrl : next.url;
+      tracker.visit(next.url);
+
+      if (respectRobots) {
+        const rules = await fetchRobotsRulesForUrl(fetchUrl, robotsCache, context);
+        if (rules && !isAllowedByRobots(robotsPathFor(fetchUrl), rules)) {
+          const safeUrl = scrubString(next.url);
+          const message = 'Blocked by robots.txt';
+          appendEventUnlocked(jobId, { kind: 'error', url: safeUrl, message, t: Date.now() });
+          appendEventUnlocked(jobId, {
+            kind: 'fetched',
+            url: safeUrl,
+            depth: next.depth,
+            page: {
+              url: safeUrl,
+              title: '',
+              content: '',
+              depth: next.depth,
+              links_found: 0,
+              error: message,
+            },
+            t: Date.now(),
+          });
+          fetched++;
+          return 'continue';
+        }
+      }
+
       let result: FetchOnePageResult;
       try {
-        result = await fetcher(sessionId, next.url, next.depth, { outputFormat }, context);
+        result = await fetcher(sessionId, fetchUrl, next.depth, { outputFormat }, context);
       } catch (err) {
         const rawMessage = err instanceof Error ? err.message : String(err);
         // Scrub the error message: a fetch failure can quote a URL with

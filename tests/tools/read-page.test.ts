@@ -535,7 +535,9 @@ describe('ReadPageTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid mode "html"');
-      expect(result.content[0].text).toContain('Must be "ax", "dom", or "css"');
+      // Updated for #934 to reflect the new `semantic` mode listed in the
+      // diagnostic message alongside ax/dom/css.
+      expect(result.content[0].text).toContain('Must be "ax", "dom", "css", or "semantic"');
     });
   });
 

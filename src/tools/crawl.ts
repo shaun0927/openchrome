@@ -21,11 +21,18 @@ import {
   CrawlTracker,
   RobotsRules,
 } from '../utils/crawl-utils';
+import {
+  staticFetch,
+  isStaticSufficient,
+  extractBodyText,
+  StaticFetchError,
+  StaticReason,
+} from '../utils/static-fetch';
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
   description:
-    'Recursively crawl a website via BFS. Opens each page in a new tab, extracts text content and discovers links, then follows them up to max_depth. Respects robots.txt and scope constraints.',
+    'Recursively crawl a website via BFS. Opens pages in new tabs, extracts text and links, follows them up to max_depth. Respects robots.txt and scope constraints.\n\nWhen to use: Extracting content from multiple pages of a site when the URL structure is not known in advance.\nWhen NOT to use: Use crawl_sitemap when the site has a sitemap.xml, or navigate for a single page.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -73,6 +80,12 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Max parallel tab fetches. Default: 3',
       },
+      engine: {
+        type: 'string',
+        enum: ['auto', 'static', 'cdp'],
+        description:
+          'Fetch engine: "cdp" (default, opens a Chrome tab per page), "static" (Node fetch only, fails closed on insufficient pages), or "auto" (static first, fall back to CDP when static is insufficient).',
+      },
     },
     required: ['url'],
   },
@@ -114,7 +127,11 @@ interface CrawledPage {
   depth: number;
   links_found: number;
   error?: string;
+  engine_used?: 'static' | 'cdp';
+  static_reason?: StaticReason;
 }
+
+type EngineMode = 'auto' | 'static' | 'cdp';
 
 interface CrawlSummary {
   total_pages: number;
@@ -130,51 +147,28 @@ interface CrawlSummary {
 // ---------------------------------------------------------------------------
 
 async function fetchRobotsTxt(
-  sessionId: string,
+  _sessionId: string,
   origin: string,
   context?: ToolContext,
 ): Promise<RobotsRules | null> {
-  const sessionManager = getSessionManager();
   const robotsUrl = `${origin}/robots.txt`;
-  let targetId: string | null = null;
-
   try {
-    const { targetId: tid, page } = await sessionManager.createTarget(sessionId, robotsUrl);
-    targetId = tid;
-
-    // Wait for page load with a short timeout
-    await withTimeout(
-      page.waitForNavigation({ waitUntil: 'domcontentloaded' }).catch(() => {}),
-      10000,
-      'crawl.robots.waitForNavigation',
-      context,
-    );
-
-    const bodyText = await withTimeout(
-      page.evaluate(() => document.body?.innerText || ''),
-      5000,
-      'crawl.robots.evaluate',
-      context,
-    );
-
-    await sessionManager.closeTarget(sessionId, tid);
-    targetId = null;
-
-    // If the response looks like robots.txt (has User-agent or Disallow), parse it
-    if (bodyText && (bodyText.toLowerCase().includes('user-agent') || bodyText.toLowerCase().includes('disallow'))) {
+    const { html: bodyText, status } = await staticFetch(robotsUrl, {
+      signal: context?.signal,
+    });
+    if (status < 200 || status >= 300) return null;
+    if (
+      bodyText &&
+      (bodyText.toLowerCase().includes('user-agent') ||
+        bodyText.toLowerCase().includes('disallow'))
+    ) {
       return parseRobotsTxt(bodyText);
     }
-
     return null;
   } catch (err) {
-    console.error(`[crawl] Failed to fetch robots.txt from ${origin}: ${err instanceof Error ? err.message : String(err)}`);
-    if (targetId) {
-      try {
-        await sessionManager.closeTarget(sessionId, targetId);
-      } catch {
-        // ignore cleanup errors
-      }
-    }
+    console.error(
+      `[crawl] Failed to fetch robots.txt from ${origin}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }
@@ -183,30 +177,117 @@ async function fetchRobotsTxt(
 // Single page fetch
 // ---------------------------------------------------------------------------
 
-/**
- * Options for `fetchOnePage` — kept open so future call sites (e.g. the
- * resumable runner in `src/core/crawl/runner.ts`) can pass extra config
- * without changing the shape that the legacy `crawl` tool relies on.
- */
+// ---------------------------------------------------------------------------
+// Static engine — Node fetch path. Returns null + reason on insufficiency so
+// the caller (auto mode) can fall back to CDP.
+// ---------------------------------------------------------------------------
+
+function buildMarkdownFromHtml(html: string): { title: string; content: string } {
+  const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+  const title = titleMatch ? titleMatch[1].trim() : '';
+  const { text } = extractBodyText(html);
+  return { title, content: text };
+}
+
+function extractLinksFromHtml(html: string, baseUrl: string): string[] {
+  const links: string[] = [];
+  const re = /<a\s[^>]*href\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const href = m[1];
+    if (!href) continue;
+    if (
+      href.startsWith('javascript:') ||
+      href.startsWith('mailto:') ||
+      href.startsWith('tel:')
+    ) {
+      continue;
+    }
+    try {
+      const resolved = new URL(href, baseUrl).toString();
+      if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
+        links.push(resolved);
+      }
+    } catch {
+      // skip malformed
+    }
+  }
+  return links;
+}
+
+async function fetchPageStatic(
+  url: string,
+  depth: number,
+  outputFormat: string,
+  context?: ToolContext,
+): Promise<
+  | { ok: true; page: CrawledPage & { _links?: string[] } }
+  | { ok: false; reason: StaticReason; error?: string }
+> {
+  try {
+    const { html, status, contentType, finalUrl } = await staticFetch(url, {
+      signal: context?.signal,
+    });
+    const sufficiency = isStaticSufficient(html, status, contentType);
+    if (!sufficiency.ok) {
+      return { ok: false, reason: sufficiency.reason };
+    }
+
+    const links = extractLinksFromHtml(html, finalUrl);
+
+    let title = '';
+    let content = '';
+    if (outputFormat === 'structured') {
+      const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+      title = titleMatch ? titleMatch[1].trim() : '';
+      const bodyMatch = html.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i);
+      content = bodyMatch ? bodyMatch[1] : html;
+    } else {
+      const built = buildMarkdownFromHtml(html);
+      title = built.title;
+      content = built.content;
+    }
+
+    if (content.length > MAX_OUTPUT_CHARS) {
+      content = content.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
+    }
+
+    return {
+      ok: true,
+      page: {
+        url,
+        title,
+        content,
+        depth,
+        links_found: links.length,
+        ...(links.length > 0 ? { _links: links } : {}),
+      },
+    };
+  } catch (err) {
+    const reason: StaticReason =
+      err instanceof StaticFetchError ? err.reason : 'fetch-error';
+    return {
+      ok: false,
+      reason,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+
+/** Options for `fetchOnePage`, shared by legacy crawl and host-driven crawl jobs. */
 export interface FetchOnePageOptions {
   outputFormat: string;
 }
 
-/**
- * Result returned by `fetchOnePage`. Mirrors the legacy `CrawledPage` and
- * additionally carries the transient `_links` array used by both the legacy
- * crawl BFS and the resumable runner to enqueue new URLs.
- */
+/** Single-page crawl result plus transient links for BFS/job queue expansion. */
 export interface FetchOnePageResult extends CrawledPage {
   _links?: string[];
 }
 
 /**
- * Fetch a single page in a fresh tab and extract content + outbound links.
- *
- * Exported so the resumable crawl runner (issue #886) can reuse the exact
- * same single-page fetch as the legacy `crawl` tool. External behavior of
- * `crawl` is unchanged — this is a pure extract-method refactor.
+ * Fetch a single page with the same CDP extraction path used by legacy `crawl`.
+ * The async crawl runner imports this instead of duplicating browser behavior.
  */
 export async function fetchOnePage(
   sessionId: string,
@@ -215,7 +296,7 @@ export async function fetchOnePage(
   opts: FetchOnePageOptions,
   context?: ToolContext,
 ): Promise<FetchOnePageResult> {
-  return fetchPage(sessionId, url, depth, opts.outputFormat, context);
+  return fetchPage(sessionId, url, depth, opts.outputFormat, context) as Promise<FetchOnePageResult>;
 }
 
 async function fetchPage(
@@ -405,6 +486,18 @@ const handler: ToolHandler = async (
   const delayMs = args.delay_ms != null ? Number(args.delay_ms) : 1000;
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 
+  const engineArg = args.engine as string | undefined;
+  let engine: EngineMode = 'cdp';
+  if (engineArg === 'static' || engineArg === 'auto' || engineArg === 'cdp') {
+    engine = engineArg;
+  } else if (engineArg !== undefined) {
+    return {
+      content: [{ type: 'text', text: `Error: engine must be one of "auto", "static", "cdp"` }],
+      isError: true,
+    };
+  }
+  const engineExplicit = engineArg !== undefined;
+
   const startTime = Date.now();
   const tracker = new CrawlTracker();
   const pages: CrawledPage[] = [];
@@ -518,11 +611,64 @@ const handler: ToolHandler = async (
             // Mark as visited
             tracker.visit(item.url);
 
-            const result = await fetchPage(sessionId, item.url, item.depth, outputFormat, context);
+            let result: CrawledPage & { _links?: string[] };
+            let staticReason: StaticReason | undefined;
+            let engineUsed: 'static' | 'cdp' | undefined;
+
+            if (engine === 'static' || engine === 'auto') {
+              const staticResult = await fetchPageStatic(
+                item.url,
+                item.depth,
+                outputFormat,
+                context,
+              );
+              if (staticResult.ok) {
+                result = staticResult.page;
+                engineUsed = 'static';
+              } else if (engine === 'static') {
+                result = {
+                  url: item.url,
+                  title: '',
+                  content: '',
+                  depth: item.depth,
+                  links_found: 0,
+                  error: `static-insufficient: ${staticResult.reason}`,
+                };
+                engineUsed = 'static';
+                staticReason = staticResult.reason;
+              } else {
+                // auto: fall through to CDP
+                result = await fetchPage(
+                  sessionId,
+                  item.url,
+                  item.depth,
+                  outputFormat,
+                  context,
+                );
+                engineUsed = 'cdp';
+                staticReason = staticResult.reason;
+              }
+            } else {
+              result = await fetchPage(
+                sessionId,
+                item.url,
+                item.depth,
+                outputFormat,
+                context,
+              );
+              if (engineExplicit) engineUsed = 'cdp';
+            }
 
             // Extract discovered links (stored transiently)
-            const links = ((result as CrawledPage & { _links?: string[] })._links || []);
-            delete (result as CrawledPage & { _links?: string[] })._links;
+            const links = result._links || [];
+            delete result._links;
+
+            if (engineExplicit && engineUsed) {
+              result.engine_used = engineUsed;
+            }
+            if (staticReason) {
+              result.static_reason = staticReason;
+            }
 
             // Apply delay between fetches
             if (delayMs > 0) {
@@ -538,6 +684,13 @@ const handler: ToolHandler = async (
       for (const { page, links, depth } of batchResults) {
         pages.push(page);
         if (depth > maxDepthReached) maxDepthReached = depth;
+
+        // #869 — emit progress per page (no-op when no progressToken supplied).
+        context?.reportProgress?.({
+          progress: pages.length,
+          total: maxPages,
+          message: page.url,
+        });
 
         // Enqueue discovered links for next depth level
         if (depth < maxDepth && !page.error) {
