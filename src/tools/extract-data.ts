@@ -142,7 +142,7 @@ const handler: ToolHandler = async (
       const multiplePayload = {
         action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
       };
-      const multipleInlineResult = {
+      const multipleInlineResult: MCPResult = {
         content: [{ type: 'text', text: JSON.stringify(multiplePayload) }],
       };
       return resolveOutputMode(mode, inlineLimit, multipleInlineResult, multiplePayload, 'extract_data');
