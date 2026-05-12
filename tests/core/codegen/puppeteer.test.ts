@@ -21,8 +21,8 @@ interface ToolCase {
 
 const NINE_TOOL_CASES: ToolCase[] = [
   { tool: 'navigate', args: { url: 'https://example.com/forms.html' } },
-  { tool: 'interact', args: { action: 'click', selector: 'button[type=submit]' } },
-  { tool: 'form_input', args: { selector: 'input[name=q]', value: 'hello world' } },
+  { tool: 'interact', args: { action: 'click', query: 'Submit' } },
+  { tool: 'form_input', args: { ref: '1234', value: 'hello world' } },
   {
     tool: 'fill_form',
     args: {
@@ -60,7 +60,7 @@ describe('formatPuppeteer', () => {
 
   it('preserves secret placeholders verbatim (string literals via JSON.stringify)', () => {
     const snippet = formatPuppeteer('form_input', {
-      selector: '#password',
+      ref: 'ref_1',
       value: '${SECRET:TEST_PW}',
     });
     expect(snippet).toContain('${SECRET:TEST_PW}');
@@ -100,4 +100,26 @@ describe('formatPuppeteer', () => {
     }
     expect(syntaxErrors).toEqual([]);
   });
+
+  it('uses schema-compliant interact query arguments', () => {
+    const snippet = formatPuppeteer('interact', { action: 'double_click', query: 'Buy now' })!;
+    expect(snippet).toContain('Buy now');
+    expect(snippet).not.toContain('undefined');
+  });
+
+  it('does not emit undefined selectors for ref-based form_input calls', () => {
+    const snippet = formatPuppeteer('form_input', { ref: 'ref_7', value: 'hello' })!;
+    expect(snippet).toContain('ref_7');
+    expect(snippet).toContain('hello');
+    expect(snippet).not.toContain('undefined');
+  });
+
+  it('preserves target selection for tabs_close instead of closing every page', () => {
+    const snippet = formatPuppeteer('tabs_close', { tabIds: ['target-a', 'target-b'] })!;
+    expect(snippet).toContain('new Set<string>(["target-a","target-b"])');
+    expect(snippet).toContain('Target.getTargetInfo');
+    expect(snippet).toContain('targetIds.has(info.targetInfo.targetId)');
+    expect(snippet).not.toContain('if (targetIds.length > 0) { await p.close(); }');
+  });
+
 });

@@ -84,33 +84,39 @@ function formatNavigate(args: Record<string, unknown>): string {
 
 function formatInteract(args: Record<string, unknown>): string {
   const action = (args.action as string | undefined) ?? 'click';
-  const selector = args.selector as string | undefined;
-  const text = args.text as string | undefined;
-
-  if (action === 'click') {
-    return `  await page.click(${jsLiteral(selector)});`;
-  }
-  if (action === 'type' || action === 'fill') {
-    return `  await page.fill(${jsLiteral(selector)}, ${jsLiteral(text ?? '')});`;
-  }
-  if (action === 'hover') {
-    return `  await page.hover(${jsLiteral(selector)});`;
-  }
-  if (action === 'focus') {
-    return `  await page.focus(${jsLiteral(selector)});`;
-  }
+  const query = (args.query ?? args.text ?? args.selector) as string | undefined;
+  if (!query) return '  // interact: no query supplied; original call captured in mcp-replay JSONL';
+  const locator = `text=${query}`;
+  if (action === 'hover') return `  await page.locator(${jsLiteral(locator)}).first().hover();`;
+  if (action === 'double_click') return `  await page.locator(${jsLiteral(locator)}).first().dblclick();`;
+  if (action === 'click') return `  await page.locator(${jsLiteral(locator)}).first().click();`;
   return [
-    `  // interact action="${action}" — replayed as click for fallback compatibility`,
-    `  await page.click(${jsLiteral(selector)});`,
+    `  // interact action=${jsLiteral(action)} is not directly mapped; replaying as text click`,
+    `  await page.locator(${jsLiteral(locator)}).first().click();`,
   ].join('\n');
 }
 
 function formatFormInput(args: Record<string, unknown>): string {
-  const selector = args.selector as string | undefined;
+  const ref = args.ref as string | undefined;
   const value = args.value as string | undefined;
-  return `  await page.fill(${jsLiteral(selector)}, ${jsLiteral(value ?? '')});`;
+  const numericBackendId = ref && /^\d+$/.test(ref) ? Number(ref) : null;
+  if (numericBackendId !== null) {
+    return [
+      `  {`,
+      `    const session = await context.newCDPSession(page);`,
+      `    const { object } = await session.send('DOM.resolveNode', { backendNodeId: ${numericBackendId} });`,
+      `    await session.send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: 'function(){ this.focus(); }' });`,
+      `    await page.keyboard.type(${jsLiteral(value ?? '')});`,
+      `    await session.detach();`,
+      `  }`,
+    ].join('\n');
+  }
+  return [
+    `  // form_input used snapshot ref ${jsLiteral(ref)}; ref_N is session-local and not replayable as a CSS selector.`,
+    `  // Ensure the intended field is focused before this generated fallback.`,
+    `  await page.keyboard.type(${jsLiteral(value ?? '')});`,
+  ].join('\n');
 }
-
 function formatFillForm(args: Record<string, unknown>): string {
   const fields = (args.fields ?? args.values) as
     | Array<{ selector?: string; value?: string }>

@@ -106,42 +106,44 @@ function formatNavigate(args: Record<string, unknown>): string {
 
 function formatInteract(args: Record<string, unknown>): string {
   const action = (args.action as string | undefined) ?? 'click';
-  const selector = args.selector as string | undefined;
-  const text = args.text as string | undefined;
+  const query = (args.query ?? args.text ?? args.selector) as string | undefined;
+  const clickCount = action === 'double_click' ? 2 : 1;
 
-  if (action === 'click') {
-    return `  await page.click(${jsLiteral(selector)});`;
-  }
-  if (action === 'type' || action === 'fill') {
-    return [
-      `  await page.click(${jsLiteral(selector)});`,
-      `  await page.keyboard.type(${jsLiteral(text ?? '')});`,
-    ].join('\n');
-  }
+  if (!query) return '  // interact: no query supplied; original call captured in mcp-replay JSONL';
+  const textSelector = `::-p-text(${query})`;
   if (action === 'hover') {
-    return `  await page.hover(${jsLiteral(selector)});`;
+    return `  await page.hover(${jsLiteral(textSelector)});`;
   }
-  if (action === 'focus') {
-    return `  await page.focus(${jsLiteral(selector)});`;
+  if (action === 'click' || action === 'double_click') {
+    return `  await page.click(${jsLiteral(textSelector)}, { clickCount: ${clickCount} });`;
   }
-  // Catch-all: emit a comment + a click attempt so the file still parses.
   return [
-    `  // interact action="${action}" — replayed as click for fallback compatibility`,
-    `  await page.click(${jsLiteral(selector)});`,
+    `  // interact action=${jsLiteral(action)} is not directly mapped; replaying as text click`,
+    `  await page.click(${jsLiteral(textSelector)});`,
   ].join('\n');
 }
 
 function formatFormInput(args: Record<string, unknown>): string {
-  const selector = args.selector as string | undefined;
+  const ref = args.ref as string | undefined;
   const value = args.value as string | undefined;
-  // form_input semantics: type into the focused element after focusing the selector.
-  // We use page.type which clears and types in one call for inputs/textareas.
+  const numericBackendId = ref && /^\d+$/.test(ref) ? Number(ref) : null;
+  if (numericBackendId !== null) {
+    return [
+      `  {`,
+      `    const client = await page.target().createCDPSession();`,
+      `    const { object } = await client.send('DOM.resolveNode', { backendNodeId: ${numericBackendId} });`,
+      `    await client.send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: 'function(){ this.focus(); }' });`,
+      `    await page.keyboard.type(${jsLiteral(value ?? '')});`,
+      `    await client.detach();`,
+      `  }`,
+    ].join('\n');
+  }
   return [
-    `  await page.click(${jsLiteral(selector)}, { clickCount: 3 });`,
-    `  await page.type(${jsLiteral(selector)}, ${jsLiteral(value ?? '')});`,
+    `  // form_input used snapshot ref ${jsLiteral(ref)}; ref_N is session-local and not replayable as a CSS selector.`,
+    `  // Ensure the intended field is focused before this generated fallback.`,
+    `  await page.keyboard.type(${jsLiteral(value ?? '')});`,
   ].join('\n');
 }
-
 function formatFillForm(args: Record<string, unknown>): string {
   const fields = (args.fields ?? args.values) as
     | Array<{ selector?: string; value?: string }>
@@ -226,11 +228,13 @@ function formatTabsClose(args: Record<string, unknown>): string {
   }
   return [
     `  {`,
-    `    const targetIds: string[] = ${JSON.stringify(ids)};`,
+    `    const targetIds = new Set<string>(${JSON.stringify(ids)});`,
     `    const pages = await browser.pages();`,
     `    for (const p of pages) {`,
-    `      // Puppeteer does not expose CDP targetId on Page; close every page by URL match as a best-effort.`,
-    `      if (targetIds.length > 0) { await p.close(); }`,
+    `      const client = await p.target().createCDPSession();`,
+    `      const info = await client.send('Target.getTargetInfo');`,
+    `      await client.detach();`,
+    `      if (targetIds.has(info.targetInfo.targetId)) await p.close();`,
     `    }`,
     `  }`,
   ].join('\n');
