@@ -29,6 +29,7 @@ import {
 } from '../core/perception/node-ref';
 import { dispatchCoordinateClick } from '../cdp/input';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import { guardIrreversibleBrowserAction } from '../harness/irreversible-action';
 
 /**
  * Inject the structured {@link VerifyReport} onto an MCPResult under
@@ -742,18 +743,28 @@ const handler: ToolHandler = async (
         // Perform action with DOM delta — wrapped in runVerify so the per-action
         // verify report (AX-hash + pHash) is captured around the actual click.
         const isStealth = sessionManager.isStealthTarget(tabId);
-        const { verify: axVerifyReport, result: axActionResult } = await runVerify(
-          page,
-          verifyMode,
-          async () =>
-            withDomDelta(page, async () => {
-              // Stealth: use Bézier curve mouse path to avoid bot detection
-              if (isStealth) await humanMouseMove(page, axX, axY);
-              if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
-              else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
-              else await page.mouse.click(axX, axY);
-            }, { settleMs: Math.max(150, waitAfter) }),
+        const axGuard = await guardIrreversibleBrowserAction(
+          {
+            toolName: 'interact',
+            action,
+            labelText: `${query} ${ax.role} ${ax.name}`,
+            pageUrl: page.url(),
+          },
+          () => runVerify(
+            page,
+            verifyMode,
+            async () =>
+              withDomDelta(page, async () => {
+                // Stealth: use Bézier curve mouse path to avoid bot detection
+                if (isStealth) await humanMouseMove(page, axX, axY);
+                if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
+                else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
+                else await page.mouse.click(axX, axY);
+              }, { settleMs: Math.max(150, waitAfter) }),
+          ),
         );
+        if (axGuard.blocked) return axGuard.blocked;
+        const { verify: axVerifyReport, result: axActionResult } = axGuard.value!;
         const axDelta = axActionResult.delta;
 
         // Invalidate AX cache after interaction
@@ -932,26 +943,36 @@ const handler: ToolHandler = async (
     // Perform the action with DOM delta capture, wrapped in runVerify so the
     // structured verify report (AX-hash + pHash) covers the actual click.
     const isStealthCSS = sessionManager.isStealthTarget(tabId);
-    const { result: cssDomResult, verify: cssVerifyReport } = await runVerify(
-      page,
-      verifyMode,
-      async () =>
-        withDomDelta(
-          page,
-          async () => {
-            // Stealth: use Bézier curve mouse path to avoid bot detection
-            if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
-            if (action === 'double_click') {
-              await page.mouse.click(finalX, finalY, { clickCount: 2 });
-            } else if (action === 'hover') {
-              if (!isStealthCSS) await page.mouse.move(finalX, finalY);
-            } else {
-              await page.mouse.click(finalX, finalY);
-            }
-          },
-          { settleMs: Math.max(150, waitAfter) }
-        ),
+    const cssGuard = await guardIrreversibleBrowserAction(
+      {
+        toolName: 'interact',
+        action,
+        labelText: `${query} ${bestMatch.role} ${bestMatch.name} ${bestMatch.textContent ?? ''}`,
+        pageUrl: page.url(),
+      },
+      () => runVerify(
+        page,
+        verifyMode,
+        async () =>
+          withDomDelta(
+            page,
+            async () => {
+              // Stealth: use Bézier curve mouse path to avoid bot detection
+              if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
+              if (action === 'double_click') {
+                await page.mouse.click(finalX, finalY, { clickCount: 2 });
+              } else if (action === 'hover') {
+                if (!isStealthCSS) await page.mouse.move(finalX, finalY);
+              } else {
+                await page.mouse.click(finalX, finalY);
+              }
+            },
+            { settleMs: Math.max(150, waitAfter) }
+          ),
+      ),
     );
+    if (cssGuard.blocked) return cssGuard.blocked;
+    const { result: cssDomResult, verify: cssVerifyReport } = cssGuard.value!;
     const { delta } = cssDomResult;
 
     // Generate ref for the interacted element
