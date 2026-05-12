@@ -172,6 +172,40 @@ describe('crawl engine=static', () => {
     expect(mockSessionManager.createTarget).not.toHaveBeenCalled();
   });
 
+
+  test('include_metrics adds summary and per-page token estimates without changing default', async () => {
+    const handler = await loadHandler('crawl');
+    const withMetrics = await handler('s-metrics', {
+      url: `${server.origin}/index.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      include_metrics: true,
+    });
+    const parsedWithMetrics = parseResult(withMetrics);
+    const summaryMetrics = parsedWithMetrics.summary.metrics as Record<string, number>;
+    expect(summaryMetrics.returned_chars).toBeGreaterThan(0);
+    expect(summaryMetrics.estimated_tokens).toBeGreaterThan(0);
+    expect(parsedWithMetrics.pages[0].metrics).toMatchObject({
+      mode: 'markdown',
+      truncated: false,
+    });
+
+    const withoutMetrics = await handler('s-metrics-default', {
+      url: `${server.origin}/index.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+    });
+    const parsedWithoutMetrics = parseResult(withoutMetrics);
+    expect(parsedWithoutMetrics.summary.metrics).toBeUndefined();
+    expect(parsedWithoutMetrics.pages[0].metrics).toBeUndefined();
+  });
+
   test('respect_robots:true does not open a Chrome tab for robots.txt', async () => {
     const handler = await loadHandler('crawl');
     await handler('s2', {
