@@ -103,6 +103,183 @@ const definition: MCPToolDefinition = {
   },
 };
 
+/**
+ * Shared post-action response builder.
+ *
+ * Both the ref fast-path and the AX/CSS resolution paths funnel through this
+ * helper so that `verify`, `returnFormat`, state-summary, and DOM-delta
+ * output behave identically regardless of which path produced the action.
+ *
+ * #948 codex P1: this was previously inlined in the AX/CSS branches only, so
+ * the ref path silently dropped `verify=true` screenshots and
+ * `returnFormat='state_summary' | 'both'` summaries.
+ */
+type PostActionInput = {
+  page: any;
+  context: ToolContext | undefined;
+  headerLine: string;
+  delta: string | null | undefined;
+  returnFormat: string;
+  verify: boolean | undefined;
+  extraTopLevel?: Record<string, unknown>;
+};
+
+async function buildPostActionResponse(input: PostActionInput): Promise<MCPResult> {
+  const { page, context, headerLine, delta, returnFormat, verify, extraTopLevel } = input;
+
+  const lines: string[] = [headerLine];
+
+  if ((returnFormat === 'dom_delta' || returnFormat === 'both') && delta) {
+    lines.push(delta);
+  }
+
+  if (returnFormat === 'state_summary' || returnFormat === 'both') {
+    type StateSummary = {
+      url: string;
+      title: string;
+      scrollX: number;
+      scrollY: number;
+      activeInfo: string;
+      panels: string[];
+      headings: string[];
+    };
+    const stateSummary = (await withTimeout(page.evaluate(() => {
+      const url = window.location.href;
+      const title = document.title;
+      const scrollX = Math.round(window.scrollX);
+      const scrollY = Math.round(window.scrollY);
+
+      const active = document.activeElement;
+      let activeInfo = 'none';
+      if (active && active !== document.body) {
+        const inputEl = active as HTMLInputElement;
+        const role =
+          active.getAttribute('role') ||
+          (active.tagName === 'BUTTON'
+            ? 'button'
+            : active.tagName === 'INPUT'
+              ? inputEl.type || 'textbox'
+              : active.tagName.toLowerCase());
+        const name =
+          active.getAttribute('aria-label') ||
+          active.getAttribute('title') ||
+          active.textContent?.trim().slice(0, 40) ||
+          '';
+        activeInfo = `${role}${name ? ` "${name}"` : ''}`;
+      }
+
+      const panels: string[] = [];
+      const panelSelectors = [
+        '[role="tabpanel"]',
+        '[role="dialog"]',
+        '[role="main"]',
+        'main',
+        '.panel',
+        '[class*="panel"]',
+        '[class*="content"]',
+      ];
+      for (const sel of panelSelectors) {
+        if (panels.length >= 3) break;
+        try {
+          const els = document.querySelectorAll(sel);
+          for (const el of els) {
+            if (panels.length >= 3) break;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden') continue;
+            const text = el.textContent?.trim().slice(0, 80) || '';
+            if (text.length > 10) {
+              panels.push(text);
+            }
+          }
+        } catch {
+          // skip bad selectors
+        }
+      }
+
+      const headings: string[] = [];
+      for (const hEl of document.querySelectorAll('h1, h2, h3, [role="heading"]')) {
+        const rect = hEl.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        const style = window.getComputedStyle(hEl);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        const text = hEl.textContent?.trim().slice(0, 60) || '';
+        if (text) headings.push(text);
+        if (headings.length >= 3) break;
+      }
+
+      return { url, title, scrollX, scrollY, activeInfo, panels, headings };
+    }), 10000, 'interact', context).catch(() => ({
+      url: '', title: '', scrollX: 0, scrollY: 0,
+      activeInfo: 'unknown', panels: [] as string[], headings: [] as string[],
+    }));
+
+    lines.push(
+      `[State Summary] url: ${stateSummary.url} | scroll: ${stateSummary.scrollX},${stateSummary.scrollY} | active: ${stateSummary.activeInfo}`
+    );
+    if (stateSummary.headings.length > 0) {
+      lines.push(`[Headings] ${stateSummary.headings.map((h: string) => `"${h}"`).join(' | ')}`);
+    }
+    if (stateSummary.panels.length > 0) {
+      const panelParts = stateSummary.panels.map((p: string, i: number) => `Panel ${i + 1}: "${p}"`);
+      lines.push(`[Visible] ${panelParts.join(' | ')}`);
+    }
+  }
+
+  // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG.
+  let screenshotContent: { type: 'image'; data: string; mimeType: string } | null = null;
+  if (verify) {
+    try {
+      const screenshotResult = await Promise.race([
+        (async () => {
+          const cdpSession = await (page as any).target().createCDPSession();
+          try {
+            const { data } = await cdpSession.send('Page.captureScreenshot', {
+              format: 'webp',
+              quality: 60,
+              optimizeForSpeed: true,
+            });
+            return { data: data as string, mimeType: 'image/webp' };
+          } finally {
+            await cdpSession.detach().catch(() => {});
+          }
+        })(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
+      ]);
+
+      if (screenshotResult) {
+        screenshotContent = { type: 'image' as const, ...screenshotResult };
+      } else {
+        throw new Error('CDP screenshot timed out');
+      }
+    } catch {
+      try {
+        let fallbackTimer: NodeJS.Timeout;
+        const screenshot = await Promise.race([
+          page.screenshot({ encoding: 'base64', type: 'png', fullPage: false }).finally(() => clearTimeout(fallbackTimer)),
+          new Promise<never>((_, reject) => {
+            fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
+          }),
+        ]);
+        screenshotContent = { type: 'image' as const, data: screenshot as unknown as string, mimeType: 'image/png' };
+      } catch {
+        // Screenshot failure is non-fatal
+      }
+    }
+  }
+
+  const responseContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+    { type: 'text', text: lines.join('\n') },
+  ];
+  if (screenshotContent) responseContent.push(screenshotContent);
+
+  return {
+    content: responseContent,
+    ...(extraTopLevel || {}),
+  } as MCPResult;
+}
+
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
@@ -266,6 +443,12 @@ const handler: ToolHandler = async (
     // When the caller provides an explicit `ref`, skip discovery entirely.
     // A fresh ref → click via cached backendDOMNodeId.
     // A stale/missing ref → STALE_REF (no silent coordinate fallback).
+    //
+    // Codex P1 (PR #948): the ref path now joins the same response-construction
+    // path as the AX/CSS paths so that callers requesting `verify: true` or
+    // `returnFormat: 'state_summary' | 'both'` still receive the screenshot /
+    // state-summary output. Previously the ref path returned early, dropping
+    // verify and returnFormat handling.
     if (ref) {
       const entry = refIdManager.getRef(sessionId, tabId, ref);
       if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
@@ -335,13 +518,17 @@ const handler: ToolHandler = async (
         const refLabel = `${entry.role}${entry.name ? ` "${entry.name}"` : ''}`;
         const refLine = formatOutcomeLine(refOutcome, refVerb, refLabel, `[${ref}]`, '[via ref]');
 
-        const refLines: string[] = [refLine];
-        if (refDelta) refLines.push('', '[DOM Delta]', refDelta);
-
-        return {
-          content: [{ type: 'text', text: refLines.join('\n') }],
-          via: 'ref',
-        };
+        // Build response using the same shared post-action handler as the
+        // AX/CSS paths — preserves `verify` and `returnFormat` behavior.
+        return await buildPostActionResponse({
+          page,
+          context,
+          headerLine: refLine,
+          delta: refDelta,
+          returnFormat,
+          verify,
+          extraTopLevel: { via: 'ref' },
+        });
       } catch (refErr) {
         throwIfAborted(context);
         console.error(`[interact] ref fast-path failed for ${ref}: ${refErr instanceof Error ? refErr.message : String(refErr)}`);

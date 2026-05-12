@@ -116,34 +116,45 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get all form fields on the page, with optional polling for SPAs
+    // Get all form fields on the page, with optional polling for SPAs.
+    //
+    // Codex P2 (PR #948): when every input is supplied as a `ref`
+    // (i.e. `fields` is empty), skip AX/CSS pre-discovery entirely. Discovery
+    // is only needed for label/name-based resolution; refs already carry a
+    // backendDOMNodeId. If even one `fields` entry exists, fall back to the
+    // discovery loop so the legacy path keeps working.
     const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
     const startTime = Date.now();
 
     const cdpClient = sessionManager.getCDPClient();
 
+    const refsOnly =
+      Object.keys(refsArg).length > 0 && Object.keys(fields).length === 0;
+
     let formFields: FormField[] = [];
-    do {
-      try {
-        formFields = await discoverFormFields(page, cdpClient, {
-          timeout: 10000,
-          toolName: 'fill_form',
-        });
-      } catch {
-        // CDP evaluate timed out — retry if budget remains
-        if (maxWait > 0 && Date.now() - startTime < maxWait) {
+    if (!refsOnly) {
+      do {
+        try {
+          formFields = await discoverFormFields(page, cdpClient, {
+            timeout: 10000,
+            toolName: 'fill_form',
+          });
+        } catch {
+          // CDP evaluate timed out — retry if budget remains
+          if (maxWait > 0 && Date.now() - startTime < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+            continue;
+          }
+          break;
+        }
+
+        if (formFields.length === 0 && maxWait > 0 && Date.now() - startTime < maxWait) {
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           continue;
         }
         break;
-      }
-
-      if (formFields.length === 0 && maxWait > 0 && Date.now() - startTime < maxWait) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        continue;
-      }
-      break;
-    } while (Date.now() - startTime < maxWait);
+      } while (Date.now() - startTime < maxWait);
+    }
 
     const filledFields: string[] = [];
     const errors: string[] = [];
