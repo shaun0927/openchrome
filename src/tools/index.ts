@@ -109,6 +109,8 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// Doctor report tool (#898) — read cached `openchrome doctor` output
+import { registerOcDoctorReportTool } from './oc-doctor-report';
 // Performance insights two-step API (#846)
 // TODO(#844): use isCoreFeatureEnabled() helper once #844 lands
 import { registerOcPerformanceInsightsTool } from './oc-performance-insights';
@@ -245,6 +247,8 @@ export function registerAllTools(server: MCPServer): void {
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
 
+  // Doctor report tool (#898) — read cached `openchrome doctor` output
+  registerOcDoctorReportTool(server);
   // Performance insights two-step API (#846).
   // TODO(#844): use isCoreFeatureEnabled() helper once #844 lands.
   // Off-switch: when OPENCHROME_PERF_INSIGHTS=0 the two tools are NOT
