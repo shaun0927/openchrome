@@ -48,6 +48,7 @@ export class Dashboard extends EventEmitter {
   private currentView: ViewMode = 'activity';
   private selectedIndex: number = 0;
   private refreshTimer: NodeJS.Timeout | null = null;
+  private ledgerRefreshInFlight: Promise<void> | null = null;
   private spinnerFrame: number = 0;
   private startTime: number = Date.now();
   private isRunning: boolean = false;
@@ -139,7 +140,7 @@ export class Dashboard extends EventEmitter {
 
     // Start refresh timer
     this.refreshTimer = setInterval(() => {
-      this.refresh();
+      this.refreshTick();
     }, this.config.refreshInterval);
     this.refreshTimer.unref();
 
@@ -272,6 +273,32 @@ export class Dashboard extends EventEmitter {
       this.skillsViewData = await readSkillsSnapshot();
     }
     this.refresh();
+  }
+
+  /**
+   * Timer-driven refresh path. Ledger views re-read their backing snapshots on
+   * each dashboard tick so task status/skill rows stay live while the user
+   * remains on the read-only view. Guard async reads to avoid overlapping disk
+   * walks when the refresh interval is shorter than filesystem latency.
+   */
+  private refreshTick(): void {
+    if (this.currentView !== 'tasks' && this.currentView !== 'skills') {
+      this.refresh();
+      return;
+    }
+
+    if (this.ledgerRefreshInFlight) {
+      return;
+    }
+
+    this.ledgerRefreshInFlight = this.refreshLedgers()
+      .catch(() => {
+        // refreshLedgers/readers are expected to convert IO failures into
+        // view data, but keep the timer resilient if a future reader throws.
+      })
+      .finally(() => {
+        this.ledgerRefreshInFlight = null;
+      });
   }
 
   private handleSessionsViewKey(key: string, _event: KeyEvent): void {
