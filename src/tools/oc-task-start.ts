@@ -18,36 +18,23 @@ import {
   ToolHandler,
 } from '../types/mcp';
 import {
-  TaskStore,
   computeTaskId,
-  defaultTaskRootDir,
   summariseArgs,
   runTask,
+  getTaskStore,
+  setTaskStoreForTests,
+  normalizeTaskPolicy,
+  normalizeTaskPhase,
+  initialCounters,
 } from '../core/task-ledger';
-import type { TaskMeta } from '../core/task-ledger';
+import type { TaskMeta, TaskKind } from '../core/task-ledger';
 
-let storeSingleton: TaskStore | undefined;
-
-/**
- * Resolve the process-wide TaskStore. Tests can clobber this via
- * `setTaskStoreForTests` so each test runs against a fresh temp root.
- */
-export function getTaskStore(): TaskStore {
-  if (!storeSingleton) {
-    storeSingleton = new TaskStore({ rootDir: defaultTaskRootDir() });
-  }
-  return storeSingleton;
-}
-
-/** Test seam — override the process-wide store with a custom instance. */
-export function setTaskStoreForTests(store: TaskStore | undefined): void {
-  storeSingleton = store;
-}
+export { getTaskStore, setTaskStoreForTests };
 
 const definition: MCPToolDefinition = {
   name: 'oc_task_start',
   description:
-    'Launch a long-running tool as a background task. Returns a task_id ' +
+    'Create a task-level browser harness envelope, or launch a long-running tool as a background task. Returns a task_id ' +
     'that can be polled with oc_task_get / oc_task_list / oc_task_wait, ' +
     'or aborted with oc_task_cancel. The result is persisted to disk and ' +
     'survives MCP-session loss.',
@@ -57,15 +44,28 @@ const definition: MCPToolDefinition = {
       kind: {
         type: 'string',
         description:
-          'Name of the underlying MCP tool to run. Canonical values: ' +
-          'crawl, crawl_sitemap, recording, oc_evidence_bundle, oc_session_snapshot.',
+          'Optional name of the underlying MCP tool to run in the background. ' +
+          'Omit kind to create a task envelope for host-driven browser tool calls.',
       },
       args: {
         type: 'object',
-        description: 'Arguments forwarded to the underlying tool.',
+        description: 'Arguments forwarded to the underlying tool when kind is set.',
+      },
+      objective: {
+        type: 'string',
+        description: 'Host-declared objective for task-level browser harness tracking.',
+      },
+      phase: {
+        type: 'string',
+        enum: ['explore', 'act', 'verify', 'recover', 'done'],
+        description: 'Initial host-declared task phase. Default: explore.',
+      },
+      policy: {
+        type: 'object',
+        description: 'Deterministic budget policy: maxToolCalls, maxObservationStreak, maxConsecutiveSameTool, maxFailureStreak, maxSameUrlNavigations, maxWallMs, allowedDomains, checkpointEveryCalls.',
       },
     },
-    required: ['kind', 'args'],
+    required: [],
   },
 };
 
@@ -80,13 +80,14 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
     params: Record<string, unknown>,
     _ctx?: ToolContext,
   ): Promise<MCPResult> => {
-    const kind = String(params.kind ?? '');
+    const rawKind = params.kind;
+    const kind = typeof rawKind === 'string' && rawKind.length > 0 ? rawKind : 'browser_task';
     const args = (params.args ?? {}) as Record<string, unknown>;
-    if (!kind) {
-      return errorResult('oc_task_start: kind is required');
-    }
-    const inner = opts.resolveTool(kind);
-    if (!inner) {
+    const objective = typeof params.objective === 'string' ? params.objective : undefined;
+    const phase = normalizeTaskPhase(params.phase);
+    const policy = normalizeTaskPolicy(params.policy);
+    const inner = kind === 'browser_task' ? null : opts.resolveTool(kind);
+    if (kind !== 'browser_task' && !inner) {
       return errorResult(`oc_task_start: tool ${JSON.stringify(kind)} is not registered`);
     }
 
@@ -99,16 +100,36 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
     });
 
     const createdAt = Date.now();
-    const taskId = computeTaskId(kind, args, createdAt);
+    const idSeed = kind === 'browser_task' ? { objective: objective ?? '', phase, policy } : args;
+    const taskId = computeTaskId(kind as TaskKind, idSeed, createdAt);
     const meta: TaskMeta = {
       task_id: taskId,
       kind,
-      status: 'PENDING',
+      status: kind === 'browser_task' ? 'RUNNING' : 'PENDING',
       pid: process.pid,
       created_at: createdAt,
-      args_summary: summariseArgs(args),
+      started_at: kind === 'browser_task' ? createdAt : undefined,
+      args_summary: summariseArgs(kind === 'browser_task' ? idSeed : args),
+      objective,
+      phase,
+      policy,
+      counters: initialCounters(),
+      budget_status: 'ok',
+      recent_events: [],
+      last_activity_at: createdAt,
     };
     await store.create(meta);
+
+    if (kind === 'browser_task') {
+      store.appendEvent(taskId, { ts: createdAt, kind: 'started', data: { objective, phase } });
+      return {
+        content: [{ type: 'text', text: `task_id=${taskId} status=RUNNING kind=browser_task phase=${phase}` }],
+        task_id: taskId,
+        status: 'RUNNING',
+        kind,
+        meta,
+      };
+    }
 
     // Spawn the runner in the background. We deliberately don't await
     // it — `oc_task_start` returns as soon as the PENDING row is on
@@ -121,7 +142,7 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
         // Tools that participate in cooperative cancel can read the
         // signal off the ToolContext. The runner's poll already covers
         // tools that don't.
-        return await inner(sessionId, merged, {
+        return await inner!(sessionId, merged, {
           startTime: Date.now(),
           deadlineMs: Number.MAX_SAFE_INTEGER,
           signal,
@@ -141,6 +162,7 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
       task_id: taskId,
       status: 'PENDING',
       kind,
+      meta,
     };
   };
 }

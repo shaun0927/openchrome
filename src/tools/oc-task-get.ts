@@ -16,9 +16,14 @@ const definition: MCPToolDefinition = {
     type: 'object',
     properties: {
       task_id: { type: 'string' },
+      taskId: { type: 'string', description: 'Alias for task_id.' },
       include_result: {
         type: 'boolean',
         description: 'When true, also returns the persisted result.json contents.',
+      },
+      includeDigest: {
+        type: 'boolean',
+        description: 'Reserved for #1036; currently returns the same task envelope summary fields.',
       },
     },
     required: ['task_id'],
@@ -29,7 +34,7 @@ const handler: ToolHandler = async (
   _sessionId: string,
   params: Record<string, unknown>,
 ): Promise<MCPResult> => {
-  const taskId = String(params.task_id ?? '');
+  const taskId = String(params.task_id ?? params.taskId ?? '');
   if (!taskId) {
     return { isError: true, content: [{ type: 'text', text: 'oc_task_get: task_id is required' }] };
   }
@@ -51,6 +56,13 @@ const handler: ToolHandler = async (
       },
     ],
     meta,
+    counters: meta.counters,
+    budget_status: meta.budget_status,
+    budget_exceeded: meta.budget_exceeded,
+    recommended_next: meta.recommended_next,
+    recent_events: meta.recent_events ?? [],
+    phase: meta.phase,
+    objective: meta.objective,
     ...(includeResult ? { result } : {}),
   };
 };

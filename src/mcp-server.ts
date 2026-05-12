@@ -53,6 +53,7 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -984,6 +985,8 @@ export class MCPServer {
       // CDPClient may not be initialized — proceed with normal flow
     }
 
+    const taskEnvelopeId = toolName.startsWith('oc_task_') ? undefined : extractTaskId(toolArgs);
+
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
     getDashboardState().recordToolStart(sessionId || 'default', toolName, toolArgs, callId);
@@ -1327,6 +1330,15 @@ export class MCPServer {
         };
       }
 
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: result.isError !== true,
+      });
+
       return result;
     } catch (error) {
       const message = formatError(error);
@@ -1477,6 +1489,15 @@ export class MCPServer {
           }
         }
       }
+
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: false,
+      });
 
       return errResult;
     }

@@ -113,6 +113,8 @@ import { registerOcTaskListTool } from './oc-task-list';
 import { registerOcTaskGetTool } from './oc-task-get';
 import { registerOcTaskCancelTool } from './oc-task-cancel';
 import { registerOcTaskWaitTool } from './oc-task-wait';
+import { registerOcTaskUpdateTool } from './oc-task-update';
+import { registerOcTaskFinishTool } from './oc-task-finish';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -231,6 +233,8 @@ export function registerAllTools(server: MCPServer): void {
   registerOcTaskGetTool(server);
   registerOcTaskCancelTool(server);
   registerOcTaskWaitTool(server);
+  registerOcTaskUpdateTool(server);
+  registerOcTaskFinishTool(server);
 
   // Reap any RUNNING task whose owner pid is no longer alive. Runs
   // once at server start (issue #855 invariant #2) so a crash on a

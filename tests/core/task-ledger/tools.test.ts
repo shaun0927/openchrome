@@ -66,15 +66,34 @@ describe('oc_task_start handler — happy path', () => {
     expect(result.url).toBe('https://example.com');
   });
 
+
+
+  test('creates a host-driven browser_task envelope when kind is omitted', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const out = await handler('sess-1', {
+      objective: 'exercise budgets',
+      phase: 'explore',
+      policy: { maxObservationStreak: 3 },
+    });
+    expect(out.task_id).toMatch(/^[0-9a-f]{16}$/);
+    expect(out.status).toBe('RUNNING');
+    const meta = getTaskStore().readMetaSync(out.task_id as string);
+    expect(meta?.kind).toBe('browser_task');
+    expect(meta?.objective).toBe('exercise budgets');
+    expect(meta?.policy?.maxObservationStreak).toBe(3);
+    expect(meta?.budget_status).toBe('ok');
+  });
+
   test('returns isError when tool name is not registered', async () => {
     const handler = __test__.makeHandler({ resolveTool: () => null });
     const out = await handler('sess-1', { kind: 'nope', args: {} });
     expect(out.isError).toBe(true);
   });
 
-  test('returns isError when kind is missing', async () => {
+  test('omitted kind starts an envelope instead of launching an inner tool', async () => {
     const handler = __test__.makeHandler({ resolveTool: () => null });
     const out = await handler('sess-1', { args: {} });
-    expect(out.isError).toBe(true);
+    expect(out.isError).not.toBe(true);
+    expect(out.kind).toBe('browser_task');
   });
 });
