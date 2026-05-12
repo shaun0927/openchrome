@@ -162,6 +162,14 @@ export class ActionRecorder {
       throw new Error('No active recording. Call start() first.');
     }
 
+    // Drain any in-flight writes BEFORE flipping `_isRecording = false`.
+    // Otherwise recordAction()/appendContractResult() tasks still sitting on
+    // the queue would see `_isRecording === false` when their turn comes and
+    // silently no-op, losing recorded actions on a busy stop() (Codex P1).
+    await this._writeChain;
+
+    // After the chain has drained, take a final snapshot — actionCount may
+    // have grown while we were waiting.
     const metadata: RecordingMetadata = {
       ...this._activeMetadata,
       stoppedAt: new Date().toISOString(),
