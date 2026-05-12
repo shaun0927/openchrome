@@ -2338,13 +2338,20 @@ export class MCPServer {
     // Base 5s for session/CDP cleanup + 6s per Chrome instance (5s kill + 1s buffer)
     const timeoutMs = Math.max(5000, 5000 + poolInstanceCount * 6000);
 
+    let cleanupTimeout: ReturnType<typeof setTimeout> | null = null;
     await Promise.race([
       this.cleanup(),
-      new Promise<void>((resolve) => setTimeout(() => {
+      new Promise<void>((resolve) => {
+        cleanupTimeout = setTimeout(() => {
         console.error(`[MCPServer] Cleanup timed out after ${timeoutMs / 1000}s, forcing exit`);
         resolve();
-      }, timeoutMs)),
+        }, timeoutMs);
+        cleanupTimeout.unref?.();
+      }),
     ]);
+    if (cleanupTimeout) {
+      clearTimeout(cleanupTimeout);
+    }
   }
 
   /**
