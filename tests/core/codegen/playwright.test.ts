@@ -115,4 +115,11 @@ describe('formatPlaywright', () => {
     expect(snippet).not.toContain('undefined');
   });
 
+  it('carries tabs_create forward as the active page handle', () => {
+    expect(PLAYWRIGHT_FILE_HEADER).toContain('let page =');
+    const snippet = formatPlaywright('tabs_create', { url: 'https://example.com/new' })!;
+    expect(snippet).toContain('const newPage = await context.newPage()');
+    expect(snippet).toContain('page = newPage');
+  });
+
 });

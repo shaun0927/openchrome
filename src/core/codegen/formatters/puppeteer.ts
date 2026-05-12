@@ -41,7 +41,7 @@ export const PUPPETEER_FILE_HEADER = [
   'async function main(): Promise<void> {',
   '  const browser = await puppeteer.connect({ browserURL: process.env.CHROME_URL ?? "http://localhost:9222" });',
   '  const pages = await browser.pages();',
-  '  const page = pages[0] ?? (await browser.newPage());',
+  '  let page = pages[0] ?? (await browser.newPage());',
   '',
 ].join('\n');
 
@@ -215,6 +215,7 @@ function formatTabsCreate(args: Record<string, unknown>): string {
     `  {`,
     `    const newPage = await browser.newPage();`,
     `    await newPage.goto(${jsLiteral(url)}, { waitUntil: "domcontentloaded" });`,
+    `    page = newPage;`,
     `  }`,
   ].join('\n');
 }

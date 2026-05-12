@@ -122,4 +122,11 @@ describe('formatPuppeteer', () => {
     expect(snippet).not.toContain('if (targetIds.length > 0) { await p.close(); }');
   });
 
+  it('carries tabs_create forward as the active page handle', () => {
+    expect(PUPPETEER_FILE_HEADER).toContain('let page =');
+    const snippet = formatPuppeteer('tabs_create', { url: 'https://example.com/new' })!;
+    expect(snippet).toContain('const newPage = await browser.newPage()');
+    expect(snippet).toContain('page = newPage');
+  });
+
 });

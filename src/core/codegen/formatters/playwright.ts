@@ -30,7 +30,7 @@ export const PLAYWRIGHT_FILE_HEADER = [
   '  const browser = await chromium.connectOverCDP(process.env.CHROME_URL ?? "http://localhost:9222");',
   '  const context = browser.contexts()[0] ?? (await browser.newContext());',
   '  const pages = context.pages();',
-  '  const page = pages[0] ?? (await context.newPage());',
+  '  let page = pages[0] ?? (await context.newPage());',
   '',
 ].join('\n');
 
@@ -174,6 +174,7 @@ function formatTabsCreate(args: Record<string, unknown>): string {
     `  {`,
     `    const newPage = await context.newPage();`,
     `    await newPage.goto(${jsLiteral(url)}, { waitUntil: "domcontentloaded" });`,
+    `    page = newPage;`,
     `  }`,
   ].join('\n');
 }
