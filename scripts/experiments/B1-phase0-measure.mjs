@@ -11,14 +11,15 @@
  *
  * Arms:
  *   --arm=openchrome  (default) Automated: launches OpenChrome, navigates each
- *                     target, captures screenshot + evaluates pass/fail.
+ *                     target, captures page_screenshot PNG evidence +
+ *                     evaluates pass/fail.
  *   --arm=browsermcp  Manual: prints step-by-step instructions for a reviewer
  *                     who has BrowserMCP's extension loaded in Chrome.
  *
  * Output:
  *   - Diagnostics to stderr (safe for MCP hosts — not an MCP server).
  *   - Markdown results table fragment to stdout.
- *   - Screenshots to docs/experiments/B1-phase0-evidence/<slot>-<arm>.png
+ *   - PNG screenshots to docs/experiments/B1-phase0-evidence/<slot>-<arm>.png
  *   - JSON records to docs/experiments/B1-phase0-evidence/<slot>-<arm>.json
  *
  * The script completes cleanly when the network is unreachable — rows are
@@ -127,6 +128,34 @@ function writeRecord(slot, record) {
   console.error(`[B1-measure] Wrote record: ${outPath}`);
 }
 
+/**
+ * Parse the first text content item from an MCP tool result as JSON.
+ *
+ * OpenChrome tools return structured data as JSON inside result.content[0].text.
+ * Keep this strict enough to catch contract drift, while still allowing callers
+ * to decide whether absent/invalid JSON is fatal for a specific step.
+ */
+function parseToolTextJson(resp, toolName) {
+  const firstText = resp?.result?.content?.find((item) => typeof item?.text === 'string')?.text;
+  if (!firstText) return null;
+
+  try {
+    return JSON.parse(firstText);
+  } catch (err) {
+    console.error(`[B1-measure] ${toolName} returned non-JSON text: ${err.message}`);
+    return null;
+  }
+}
+
+function toolError(resp) {
+  if (resp?.error) return resp.error;
+  if (resp?.result?.isError) {
+    const text = resp.result.content?.find((item) => typeof item?.text === 'string')?.text;
+    return text || 'tool returned isError=true';
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // OpenChrome arm — automated measurement via dist/index.js
 // ---------------------------------------------------------------------------
@@ -137,7 +166,7 @@ const DIST_ENTRY = path.join(REPO_ROOT, 'dist', 'index.js');
  * Measure a single target via the OpenChrome MCP server.
  *
  * We spawn OpenChrome in stdio MCP mode, send the minimal JSON-RPC sequence
- * (initialize → navigate → evaluate checks → screenshot), then kill the child.
+ * (initialize → navigate → evaluate checks → page_screenshot), then kill the child.
  *
  * @param {{slot: string, url: string}} target
  * @returns {Promise<{slot: string, url: string, pass: boolean, httpStatus: number|null, challengeFound: string|null, headingFound: boolean, screenshotPath: string|null, error: string|null, skipped: boolean}>}
@@ -246,31 +275,33 @@ async function measureOpenChrome(target) {
       clientInfo: { name: 'B1-phase0-measure', version: '0.1.0' },
     }, 15_000);
 
-    // Step 2: Navigate to the target URL.
-    // We use tools/call → navigate with a generous timeout.
+    // Step 2: Navigate to the target URL. navigate's schema accepts only its
+    // documented tool args; the RPC timeout controls this measurement call.
     const navigateResp = await rpc('tools/call', {
       name: 'navigate',
-      arguments: { url, waitUntil: 'networkidle2', timeout: 30000 },
+      arguments: { url },
     }, 45_000);
 
-    if (navigateResp.error) {
-      result.error = `navigate failed: ${JSON.stringify(navigateResp.error)}`;
+    const navigateError = toolError(navigateResp);
+    if (navigateError) {
+      result.error = `navigate failed: ${JSON.stringify(navigateError)}`;
       kill();
       return result;
     }
 
-    // Extract HTTP status from navigate result if available.
-    const navContent = navigateResp.result?.content;
-    if (Array.isArray(navContent)) {
-      for (const item of navContent) {
-        const text = typeof item.text === 'string' ? item.text : '';
-        const statusMatch = text.match(/\b(status|HTTP)\D{0,10}?(\d{3})\b/i);
-        if (statusMatch) {
-          result.httpStatus = parseInt(statusMatch[2], 10);
-          break;
-        }
-      }
+    const navResult = parseToolTextJson(navigateResp, 'navigate');
+    const tabId = typeof navResult?.tabId === 'string' ? navResult.tabId : null;
+    if (!tabId) {
+      result.error = `navigate did not return tabId in result.content[0].text JSON`;
+      kill();
+      return result;
     }
+
+    // Extract HTTP status from navigate result if a future tool version exposes
+    // it. Current navigate responses do not include status, so a successful
+    // navigate is treated as HTTP 200 for this Phase 0 operational check.
+    const navStatus = navResult?.httpStatus ?? navResult?.status;
+    if (Number.isInteger(navStatus)) result.httpStatus = navStatus;
     // Default: assume 200 if navigate succeeded without error.
     if (result.httpStatus === null) result.httpStatus = 200;
 
@@ -293,10 +324,10 @@ async function measureOpenChrome(target) {
 
     const checkResp = await rpc('tools/call', {
       name: 'javascript_tool',
-      arguments: { script: checkScript },
+      arguments: { tabId, code: checkScript },
     }, 15_000);
 
-    if (!checkResp.error) {
+    if (!toolError(checkResp)) {
       const checkContent = checkResp.result?.content;
       if (Array.isArray(checkContent)) {
         for (const item of checkContent) {
@@ -318,10 +349,10 @@ async function measureOpenChrome(target) {
 
     const headingResp = await rpc('tools/call', {
       name: 'javascript_tool',
-      arguments: { script: headingScript },
+      arguments: { tabId, code: headingScript },
     }, 15_000);
 
-    if (!headingResp.error) {
+    if (!toolError(headingResp)) {
       const headingContent = headingResp.result?.content;
       if (Array.isArray(headingContent)) {
         for (const item of headingContent) {
@@ -334,25 +365,26 @@ async function measureOpenChrome(target) {
       }
     }
 
-    // Step 6: Screenshot for evidence.
+    // Step 6: PNG screenshot for evidence.
     const screenshotResp = await rpc('tools/call', {
-      name: 'oc_session_snapshot',
-      arguments: {},
+      name: 'page_screenshot',
+      arguments: {
+        tabId,
+        path: screenshotPath,
+        format: 'png',
+        fullPage: false,
+      },
     }, 20_000);
 
-    if (!screenshotResp.error) {
-      const ssContent = screenshotResp.result?.content;
-      if (Array.isArray(ssContent)) {
-        for (const item of ssContent) {
-          if (item.type === 'image' && item.data) {
-            const buf = Buffer.from(item.data, 'base64');
-            fs.writeFileSync(screenshotPath, buf);
-            result.screenshotPath = screenshotPath;
-            console.error(`[B1-measure][${slot}] Screenshot saved: ${screenshotPath}`);
-            break;
-          }
-        }
+    if (!toolError(screenshotResp)) {
+      const ssResult = parseToolTextJson(screenshotResp, 'page_screenshot');
+      const savedPath = typeof ssResult?.path === 'string' ? ssResult.path : screenshotPath;
+      if (fs.existsSync(savedPath)) {
+        result.screenshotPath = savedPath;
+        console.error(`[B1-measure][${slot}] Screenshot saved: ${savedPath}`);
       }
+    } else {
+      console.error(`[B1-measure][${slot}] Screenshot skipped: ${JSON.stringify(toolError(screenshotResp))}`);
     }
 
     // Evaluate pass/fail.

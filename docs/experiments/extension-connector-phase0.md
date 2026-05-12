@@ -93,7 +93,10 @@ Verdict: `<pending — fill from measurement>`
    extension (no fork) in a profile-isolated Chrome.
 4. Both arms measured on the same machine in the same session to control for
    network conditions.
-5. Screenshots captured per target stored in `docs/experiments/B1-phase0-evidence/`.
+5. PNG screenshots captured per target stored in
+   `docs/experiments/B1-phase0-evidence/`. The OpenChrome arm captures these
+   with the `page_screenshot` tool after parsing `tabId` from the `navigate`
+   tool's structured JSON result.
 6. Pass/fail evaluated objectively per the operational definition above — no
    human judgement in the verdict.
 
