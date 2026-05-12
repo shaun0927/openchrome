@@ -11,6 +11,8 @@ import { CDPSession } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '../core/console-buffer/ring-buffer';
+import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
 
 // Console log entry structure
 interface ConsoleLogEntry {
@@ -23,6 +25,7 @@ interface ConsoleLogEntry {
     columnNumber?: number;
   };
   args?: string[];
+  truncatedFrom?: number;
 }
 
 // CDP event payload types
@@ -60,13 +63,14 @@ interface CDPExceptionThrownEvent {
 
 // Capture state for each tab
 interface CaptureState {
-  logs: ConsoleLogEntry[];
+  logs: ConsoleRingBuffer<ConsoleLogEntry>;
   cdpSession: CDPSession;
   consoleHandler: (event: CDPConsoleAPICalledEvent) => void;
   exceptionHandler: (event: CDPExceptionThrownEvent) => void;
   startedAt: number;
   filter?: string[];
   maxLogs: number;
+  maxBytes: number;
 }
 
 // Module-level state storage
@@ -85,6 +89,7 @@ interface DedupedLogEntry {
     columnNumber?: number;
   };
   args?: string[];
+  truncatedFrom?: number;
 }
 
 /**
@@ -108,6 +113,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
         lastTimestamp: current.timestamp,
         location: current.location,
         args: current.args,
+        ...(current.truncatedFrom !== undefined && { truncatedFrom: current.truncatedFrom }),
       });
       i++;
       continue;
@@ -146,6 +152,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
           lastTimestamp: entry.timestamp,
           location: entry.location,
           args: entry.args,
+          ...(entry.truncatedFrom !== undefined && { truncatedFrom: entry.truncatedFrom }),
         });
       }
     }
@@ -182,6 +189,10 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Max logs to store. Default: 1000',
       },
+      maxBytes: {
+        type: 'number',
+        description: 'Max total bytes of logs to store. Default: 4194304 (4 MiB)',
+      },
     },
     required: ['tabId', 'action'],
   },
@@ -214,6 +225,16 @@ const setupCleanupListener = (() => {
   };
 })();
 
+/** Build a placeholder entry for an oversized log entry. */
+function makeOversizedPlaceholder(originalSizeBytes: number): ConsoleLogEntry {
+  return {
+    type: 'log',
+    text: '[entry exceeded maxBytes — truncated]',
+    timestamp: Date.now(),
+    truncatedFrom: originalSizeBytes,
+  };
+}
+
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>
@@ -222,7 +243,9 @@ const handler: ToolHandler = async (
   const action = args.action as string;
   const filter = args.filter as string[] | undefined;
   const limit = args.limit as number | undefined;
-  const maxLogs = (args.maxLogs as number | undefined) ?? 1000;
+  // maxLogs is a backward-compatible alias for maxLines
+  const maxLogs = (args.maxLogs as number | undefined) ?? DEFAULT_MAX_LINES;
+  const maxBytes = (args.maxBytes as number | undefined) ?? DEFAULT_MAX_BYTES;
 
   const sessionManager = getSessionManager();
 
@@ -277,14 +300,20 @@ const handler: ToolHandler = async (
         const cdpSession = await page.createCDPSession();
         await cdpSession.send('Runtime.enable');
 
+        const ringBuffer = createConsoleRingBuffer<ConsoleLogEntry>(
+          { maxLines: maxLogs, maxBytes },
+          makeOversizedPlaceholder,
+        );
+
         const state: CaptureState = {
-          logs: [],
+          logs: ringBuffer,
           cdpSession,
           consoleHandler: () => {},
           exceptionHandler: () => {},
           startedAt: Date.now(),
           filter,
           maxLogs,
+          maxBytes,
         };
 
         // Map CDP console types to Puppeteer-style types
@@ -329,12 +358,8 @@ const handler: ToolHandler = async (
             }),
           };
 
-          state.logs.push(entry);
-
-          // Trim if exceeds max
-          if (state.logs.length > state.maxLogs) {
-            state.logs = state.logs.slice(-state.maxLogs);
-          }
+          const sizeBytes = JSON.stringify(entry).length;
+          state.logs.push(entry, sizeBytes);
         };
 
         // Capture unhandled promise rejections
@@ -368,11 +393,8 @@ const handler: ToolHandler = async (
                 : undefined,
           };
 
-          state.logs.push(entry);
-
-          if (state.logs.length > state.maxLogs) {
-            state.logs = state.logs.slice(-state.maxLogs);
-          }
+          const sizeBytes = JSON.stringify(entry).length;
+          state.logs.push(entry, sizeBytes);
         };
 
         cdpSession.on('Runtime.consoleAPICalled', state.consoleHandler as any);
@@ -417,7 +439,7 @@ const handler: ToolHandler = async (
         state.cdpSession.off('Runtime.exceptionThrown', state.exceptionHandler as any);
         await state.cdpSession.send('Runtime.disable').catch(() => {});
         await state.cdpSession.detach().catch(() => {});
-        const logCount = state.logs.length;
+        const logCount = state.logs.stats().retained;
         const duration = Date.now() - state.startedAt;
         captureStates.delete(tabId);
 
@@ -455,24 +477,27 @@ const handler: ToolHandler = async (
           };
         }
 
-        let logs = state.logs;
-        if (limit && limit > 0) {
-          logs = logs.slice(-limit);
-        }
+        const logs: ConsoleLogEntry[] = (limit && limit > 0)
+          ? state.logs.tail(limit)
+          : state.logs.drain();
 
         // Deduplicate consecutive identical log messages
         const deduplicatedLogs = deduplicateLogs(logs);
 
+        const bufStats = state.logs.stats();
+
         // Calculate stats
         const stats = {
-          total: state.logs.length,
+          total: bufStats.retained,
           returned: deduplicatedLogs.length,
           beforeDedup: logs.length,
           byType: {} as Record<string, number>,
         };
-        for (const log of state.logs) {
+        for (const log of state.logs.drain()) {
           stats.byType[log.type] = (stats.byType[log.type] || 0) + 1;
         }
+
+        const bufferStats: ConsoleRingBufferStats = bufStats;
 
         return {
           content: [
@@ -484,6 +509,7 @@ const handler: ToolHandler = async (
                 logs: deduplicatedLogs,
                 stats,
                 durationMs: Date.now() - state.startedAt,
+                bufferStats,
               }),
             },
           ],
@@ -507,8 +533,8 @@ const handler: ToolHandler = async (
           };
         }
 
-        const clearedCount = state.logs.length;
-        state.logs = [];
+        const clearedCount = state.logs.stats().retained;
+        state.logs.clear();
 
         return {
           content: [
@@ -552,3 +578,7 @@ const handler: ToolHandler = async (
 export function registerConsoleCaptureTool(server: MCPServer): void {
   server.registerTool('console_capture', handler, definition);
 }
+
+// Export captureStates for watchdog integration (read-only access to stats).
+export { captureStates };
+export type { CaptureState };
