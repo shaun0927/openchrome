@@ -894,9 +894,20 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
       return value.map((v) => sanitizeStringsDeep(v, notes));
     }
     if (value && typeof value === 'object') {
+      // P1 codex fix: object KEYS can be attacker-controlled too
+      // (`buildSemanticView` lifts `itemprop` strings into `state` keys),
+      // so sanitize keys as well as values. Previous version only walked
+      // values, which reopened a prompt-injection vector via keys.
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        out[k] = sanitizeStringsDeep(v, notes);
+        const sk = sanitizeContent(k);
+        if (sk.sanitizationNote && sk.sanitizationNote.length > 0) {
+          notes.push(sk.sanitizationNote.trim());
+        }
+        // Reserve `_sanitization` for our own metadata channel: if a
+        // sanitized key collides, prefix it to keep the metadata intact.
+        const keyOut = sk.text === '_sanitization' ? '_sanitization_input' : sk.text;
+        out[keyOut] = sanitizeStringsDeep(v, notes);
       }
       return out;
     }
