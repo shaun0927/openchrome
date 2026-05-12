@@ -174,16 +174,13 @@ export async function defaultRunStep(
  *                                     pass iff the expression resolves to
  *                                     boolean `true`. This is the explicit
  *                                     opt-in for inline checks.
- *   • any other identifier    → pass with reason
+ *   • any other identifier    → fail with reason
  *                               `contract_runtime_not_wired` — the
  *                               orchestrator/curator family will later
  *                               inject a richer verifier via the
- *                               `assertContract` override. We never
- *                               silently fail here, because that would
- *                               break replay for every normally-recorded
- *                               skill, but we DO surface the reason so
- *                               callers can tell pass-by-default apart
- *                               from a real green verdict.
+ *                               `assertContract` override. We fail closed
+ *                               rather than report a false-positive success
+ *                               for normal recorded contract identifiers.
  *
  * Together this matches the "no false positives, no false negatives"
  * contract codex asked for: only explicit JS expressions are graded;
@@ -202,8 +199,9 @@ export async function defaultAssertContract(
     return { pass: true, reason: 'no_contract' };
   }
   if (!contractId.startsWith(JS_EXPR_PREFIX)) {
-    // Bare identifier — no inline verifier; defer to a real contract runtime.
-    return { pass: true, reason: 'contract_runtime_not_wired' };
+    // Bare identifier — no inline verifier. Fail closed instead of treating an
+    // unevaluated recorded contract as success.
+    return { pass: false, reason: 'contract_runtime_not_wired' };
   }
   const expr = contractId.slice(JS_EXPR_PREFIX.length).trim();
   if (expr.length === 0) {
@@ -249,4 +247,3 @@ export async function defaultAssertContract(
     return { pass: false, reason: `contract_eval_failed: ${message}` };
   }
 }
-
