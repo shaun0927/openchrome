@@ -266,6 +266,14 @@ export function getMetricsCollector(): MetricsCollector {
       'openchrome_session_init_budget_exhausted_total',
       'Session-init operations that ran out of budget, labeled by exhausting stage (A-3)',
     );
+    instance.registerCounter(
+      'openchrome_intercept_observed_bytes_total',
+      'Total bytes observed for intercepted requests, labeled by resource_type',
+    );
+    instance.registerCounter(
+      'openchrome_intercept_blocked_bytes_total',
+      'Total bytes blocked via Fetch.failRequest, labeled by resource_type',
+    );
   }
   return instance;
 }
