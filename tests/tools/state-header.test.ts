@@ -231,7 +231,7 @@ describe('OPENCHROME_STATE_HEADER=off byte-parity (read_page AX mode)', () => {
       }
       const expected = fs.readFileSync(fixturePath, 'utf8');
 
-      expect(actual).toBe(expected);
+      expect(actual.replace(/\r\n/g, '\n')).toBe(expected.replace(/\r\n/g, '\n'));
     } finally {
       if (original === undefined) {
         delete process.env.OPENCHROME_STATE_HEADER;

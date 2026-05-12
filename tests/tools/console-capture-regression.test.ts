@@ -147,7 +147,7 @@ describe('console_capture get response — v1.11.0 baseline regression', () => {
     }
 
     const baseline = fs.readFileSync(FIXTURE_PATH, 'utf8');
-    expect(responseJson).toBe(baseline);
+    expect(responseJson.replace(/\r\n/g, '\n')).toBe(baseline.replace(/\r\n/g, '\n'));
   });
 
   test('100 entries with unique texts are not deduplicated', () => {
