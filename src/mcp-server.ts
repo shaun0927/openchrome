@@ -180,7 +180,7 @@ export function isConnectionError(error: unknown): boolean {
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
  *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish']);
+const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish', 'oc_progress_status']);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
@@ -199,6 +199,7 @@ const STATE_STABLE_HIGH_FREQ_TOOLS = new Set([
   'wait_for',
   'page_content',
   'tabs_context',
+  'oc_progress_status',
 ]);
 
 /**
