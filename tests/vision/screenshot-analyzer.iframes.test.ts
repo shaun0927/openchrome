@@ -236,4 +236,52 @@ describe('analyzeScreenshot — iframe traversal', () => {
       expect(child.evaluate).not.toHaveBeenCalled();
     });
   });
+
+  // ── nested iframes (regression for codex P1 on #932) ──────────────────────
+
+  describe('nested same-origin iframes (depth 2)', () => {
+    it('uses immediate iframe box only — does not double-count outer iframe offset', async () => {
+      // P1 regression: puppeteer-core's ElementHandle.boundingBox() returns the
+      // host <iframe>'s rect in MAIN-FRAME coordinates. For a frame at depth 2
+      // the inner iframe's box already includes the outer iframe's offset, so
+      // summing both ancestors double-counts the outer offset.
+      //
+      // Layout (all in main-frame coords):
+      //   outer <iframe> at (100, 200), size 800x600
+      //   inner <iframe> at (150, 250), size 400x300  (inner sits 50px right / 50px
+      //     below the outer's top-left in main-frame coords; puppeteer reports
+      //     this as (150, 250) — NOT (50, 50) relative to its parent doc)
+      //   button inside inner iframe at local (10, 20), size 80x30
+      //
+      // Correct top-frame translation: (10+150, 20+250) = (160, 270)
+      // Buggy (double-counted) translation: (10+150+100, 20+250+200) = (260, 470)
+      const innerElements = [
+        { role: 'button', name: 'Deep', x: 10, y: 20, width: 80, height: 30 },
+      ];
+
+      const topUrl = 'https://example.com/';
+      const topFrame = createTopFrame(topUrl, []);
+
+      // outer iframe — main-frame coords (100, 200)
+      const outerBox = { x: 100, y: 200, width: 800, height: 600 };
+      const outer = createChildFrame('about:srcdoc', topFrame, outerBox, []);
+
+      // inner iframe — main-frame coords (150, 250) per puppeteer semantics
+      const innerBox = { x: 150, y: 250, width: 400, height: 300 };
+      const inner = createChildFrame('about:srcdoc', outer, innerBox, innerElements);
+
+      (topFrame as any).childFrames = () => [outer];
+      (outer as any).childFrames = () => [inner];
+
+      const page = createMockPage(topFrame, [topFrame, outer, inner]);
+      const result = await analyzeScreenshot(page as any, { iframes: 'same-origin' });
+
+      expect(result.iframes!.traversed.length).toBeGreaterThanOrEqual(2);
+      // Find the deep button.
+      const deep = Object.values(result.elementMap).find(e => e.name === 'Deep');
+      expect(deep).toBeDefined();
+      expect(deep!.x).toBe(160); // 10 + 150 (immediate iframe in main-frame coords)
+      expect(deep!.y).toBe(270); // 20 + 250
+    });
+  });
 });

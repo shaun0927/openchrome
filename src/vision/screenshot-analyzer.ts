@@ -293,8 +293,15 @@ function classifyFrameOrigin(frame: Frame, topOrigin: string): { origin: string;
 }
 
 /**
- * Compute the cumulative top-frame offset of a frame by walking up the parent chain
- * and accumulating each ancestor `<iframe>` element's bounding box top-left.
+ * Compute the top-frame offset of a frame from its immediate `<iframe>` host
+ * element's bounding box.
+ *
+ * P1-fix (codex review on #932): Puppeteer's `ElementHandle.boundingBox()` already
+ * returns coordinates **relative to the main frame** (see puppeteer docs:
+ * "boundingBox(): Promise<BoundingBox|null> — top-left position relative to the main frame").
+ * Walking up parent frames and summing each ancestor iframe's box double-counts the
+ * outer iframe offsets for any frame at depth > 1. The correct offset for any frame
+ * is the main-frame-relative box of its own host `<iframe>` element.
  *
  * Primary path: `frame.frameElement()` (puppeteer-core ≥ 22).
  * Fallback: `parentFrame.childFrames().indexOf(frame)` → index into `parent.$$('iframe,frame')`.
@@ -302,60 +309,54 @@ function classifyFrameOrigin(frame: Frame, topOrigin: string): { origin: string;
  * Returns null if the offset cannot be determined (e.g. cross-origin parent, missing element).
  */
 async function computeFrameOffset(frame: Frame): Promise<{ x: number; y: number } | null> {
-  let accX = 0;
-  let accY = 0;
-  let current: Frame | null = frame;
+  const parent = frame.parentFrame();
+  if (!parent) {
+    // Top-level frame — no offset.
+    return { x: 0, y: 0 };
+  }
 
-  while (current) {
-    const parent = current.parentFrame();
-    if (!parent) break;
+  let box: { x: number; y: number; width: number; height: number } | null = null;
 
-    let box: { x: number; y: number; width: number; height: number } | null = null;
+  // Primary: frame.frameElement() returns the host <iframe>; its boundingBox
+  // is already in main-frame coordinates per puppeteer-core semantics.
+  try {
+    const handle = await frame.frameElement();
+    if (handle) {
+      try {
+        box = await handle.boundingBox();
+      } finally {
+        await handle.dispose().catch(() => {});
+      }
+    }
+  } catch {
+    // Fall through to indexed fallback.
+  }
 
-    // Primary: frame.frameElement()
+  // Fallback: index into parent's iframe/frame elements.
+  if (!box) {
     try {
-      const handle = await current.frameElement();
-      if (handle) {
+      const siblings = parent.childFrames();
+      const idx = siblings.indexOf(frame);
+      if (idx >= 0) {
+        const elementHandles = await parent.$$('iframe,frame');
         try {
-          box = await handle.boundingBox();
+          if (idx < elementHandles.length) {
+            box = await elementHandles[idx].boundingBox();
+          }
         } finally {
-          await handle.dispose().catch(() => {});
+          await Promise.all(elementHandles.map(h => h.dispose().catch(() => {})));
         }
       }
     } catch {
-      // Fall through to indexed fallback.
+      // Both paths failed — cannot translate coordinates.
     }
-
-    // Fallback: index into parent's iframe/frame elements.
-    if (!box) {
-      try {
-        const siblings = parent.childFrames();
-        const idx = siblings.indexOf(current);
-        if (idx >= 0) {
-          const elementHandles = await parent.$$('iframe,frame');
-          try {
-            if (idx < elementHandles.length) {
-              box = await elementHandles[idx].boundingBox();
-            }
-          } finally {
-            await Promise.all(elementHandles.map(h => h.dispose().catch(() => {})));
-          }
-        }
-      } catch {
-        // Both paths failed — cannot translate coordinates.
-      }
-    }
-
-    if (!box) {
-      return null;
-    }
-
-    accX += box.x;
-    accY += box.y;
-    current = parent;
   }
 
-  return { x: accX, y: accY };
+  if (!box) {
+    return null;
+  }
+
+  return { x: box.x, y: box.y };
 }
 
 /**
@@ -679,16 +680,26 @@ async function analyzeTiledScreenshot(
       await page.evaluate((y: number) => window.scrollTo(0, y), tileTop);
       await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
 
+      // P1-fix (codex review on #932): `window.scrollTo(0, tileTop)` is clamped at
+      // `documentElement.scrollHeight - innerHeight`. When the document height is not
+      // an exact multiple of viewport height, the last tile's real scroll position is
+      // less than `tileTop`. Translating with `tileTop` would inflate doc-space Y for
+      // every element in that tile. Read the actual `window.scrollY` after the scroll
+      // and use it as the document-space offset for both coord translation and the
+      // tile record itself.
+      const actualScrollY = await page.evaluate(() => window.scrollY);
+      const docOffsetY = typeof actualScrollY === 'number' ? actualScrollY : tileTop;
+
       const result = await collectInteractiveElements(page, opts.interactiveOnly, opts.occlusionFilter);
       const rawList = Array.isArray(result) ? result : result.elements;
       const dropped = Array.isArray(result) ? 0 : result.occludedDropped;
       occludedDropped += dropped;
 
-      // Translate to document space (y += tileTop). Dedup on identity tuple, keeping
+      // Translate to document space (y += docOffsetY). Dedup on identity tuple, keeping
       // the first occurrence (smallest tileTop where the element appeared).
       const translated: RawElement[] = [];
       for (const el of rawList) {
-        const docY = el.y + tileTop;
+        const docY = el.y + docOffsetY;
         const key = `${el.x}|${docY}|${el.width}|${el.height}|${el.role}|${el.name}`;
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
