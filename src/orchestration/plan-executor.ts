@@ -10,8 +10,11 @@ import {
   CompiledPlan,
   CompiledStep,
   PlanErrorHandler,
+  PlanExecutionOptions,
   PlanExecutionResult,
+  PlanRecoveryAttempt,
 } from '../types/plan-cache';
+import { rankRecoveryCandidates } from '../recovery';
 import { withTimeout } from '../utils/with-timeout';
 
 /**
@@ -140,10 +143,12 @@ export class PlanExecutor {
   async execute(
     plan: CompiledPlan,
     sessionId: string,
-    runtimeParams: Record<string, unknown>
+    runtimeParams: Record<string, unknown>,
+    options: PlanExecutionOptions = {}
   ): Promise<PlanExecutionResult> {
     const startTime = Date.now();
     let stepsExecuted = 0;
+    const recoveryAttempts: PlanRecoveryAttempt[] = [];
 
     // 1. Build params map: plan defaults first, runtime overrides on top
     const params: Record<string, unknown> = {};
@@ -154,7 +159,18 @@ export class PlanExecutor {
     }
     Object.assign(params, runtimeParams);
 
-    const failure = (error: string): PlanExecutionResult => ({
+    const withRecovery = <T extends PlanExecutionResult>(result: T): T => {
+      if (options.boundedRecovery?.enabled) {
+        result.recovery = {
+          enabled: true,
+          attempts: recoveryAttempts,
+          exhausted: countExecutedRecoveryAttempts(recoveryAttempts) >= (options.boundedRecovery.maxToolCalls ?? 2),
+        };
+      }
+      return result;
+    };
+
+    const failure = (error: string): PlanExecutionResult => withRecovery({
       success: false,
       planId: plan.id,
       error,
@@ -207,6 +223,10 @@ export class PlanExecutor {
           continue;
         }
 
+        const bounded = await this.tryBoundedRecovery(step, errMsg, sessionId, params, options, recoveryAttempts);
+        stepsExecuted += bounded.stepsExecuted;
+        if (bounded.recovered) continue;
+
         return failure(`Step ${step.order} (${step.tool}) failed: ${errMsg}`);
       }
 
@@ -229,6 +249,10 @@ export class PlanExecutor {
           continue;
         }
 
+        const bounded = await this.tryBoundedRecovery(step, errMsg, sessionId, params, options, recoveryAttempts);
+        stepsExecuted += bounded.stepsExecuted;
+        if (bounded.recovered) continue;
+
         return failure(`Step ${step.order} (${step.tool}) returned error: ${errMsg}`);
       }
 
@@ -247,6 +271,9 @@ export class PlanExecutor {
           Object.assign(params, recovered.params);
           continue;
         }
+        const bounded = await this.tryBoundedRecovery(step, 'empty result', sessionId, params, options, recoveryAttempts);
+        stepsExecuted += bounded.stepsExecuted;
+        if (bounded.recovered) continue;
         // No handler for empty — treat as non-fatal, just skip storing
       }
 
@@ -270,25 +297,99 @@ export class PlanExecutor {
     const criteriaError = validateSuccessCriteria(plan.successCriteria, params);
     if (criteriaError) {
       console.error(`[PlanExecutor] Success criteria failed for plan=${plan.id}: ${criteriaError}`);
-      return {
+      return withRecovery({
         success: false,
         planId: plan.id,
         error: `Success criteria not met: ${criteriaError}`,
         durationMs: Date.now() - startTime,
         stepsExecuted,
         totalSteps: plan.steps.length,
-      };
+      });
     }
 
     // 4. Return success with all collected params as data
-    return {
+    return withRecovery({
       success: true,
       planId: plan.id,
       data: params,
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
-    };
+    });
+  }
+
+  private async tryBoundedRecovery(
+    failedStep: CompiledStep,
+    errorText: string,
+    sessionId: string,
+    params: Record<string, unknown>,
+    options: PlanExecutionOptions,
+    recoveryAttempts: PlanRecoveryAttempt[],
+  ): Promise<{ recovered: boolean; stepsExecuted: number }> {
+    const config = options.boundedRecovery;
+    if (!config?.enabled) return { recovered: false, stepsExecuted: 0 };
+
+    const maxToolCalls = Math.max(0, config.maxToolCalls ?? 2);
+    if (countExecutedRecoveryAttempts(recoveryAttempts) >= maxToolCalls) {
+      return { recovered: false, stepsExecuted: 0 };
+    }
+
+    const candidates = rankRecoveryCandidates({
+      toolName: failedStep.tool,
+      resultText: errorText,
+      isError: true,
+      recentCalls: [{ toolName: failedStep.tool, result: 'error', error: errorText }],
+      maxCandidates: config.maxCandidates ?? 3,
+    });
+
+    let executed = 0;
+    for (const candidate of candidates) {
+      if (countExecutedRecoveryAttempts(recoveryAttempts) >= maxToolCalls) break;
+      if (candidate.risk !== 'read_only' || candidate.blockedReason) {
+        recoveryAttempts.push({
+          tool: candidate.tool,
+          status: 'blocked',
+          reason: candidate.blockedReason ?? `risk ${candidate.risk} is not allowed for bounded recovery`,
+        });
+        continue;
+      }
+
+      const handler = this.toolResolver(candidate.tool);
+      if (!handler) {
+        recoveryAttempts.push({ tool: candidate.tool, status: 'failed', reason: 'tool handler not found' });
+        continue;
+      }
+
+      const args = buildSafeRecoveryArgs(candidate.tool, params);
+      if (!args) {
+        recoveryAttempts.push({ tool: candidate.tool, status: 'blocked', reason: 'no safe argument template available' });
+        continue;
+      }
+
+      try {
+        const result = await withTimeout(
+          handler(sessionId, args),
+          config.perCandidateTimeoutMs ?? 5000,
+          `bounded recovery tool=${candidate.tool} for step=${failedStep.order}`,
+        );
+        executed++;
+        if (!result.isError && !isEmptyResult(result)) {
+          recoveryAttempts.push({ tool: candidate.tool, status: 'success', reason: candidate.reason });
+          return { recovered: true, stepsExecuted: executed };
+        }
+        recoveryAttempts.push({ tool: candidate.tool, status: 'failed', reason: 'candidate returned empty or error result' });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        recoveryAttempts.push({
+          tool: candidate.tool,
+          status: /timed out/i.test(message) ? 'timeout' : 'failed',
+          reason: candidate.reason,
+          error: message,
+        });
+      }
+    }
+
+    return { recovered: false, stepsExecuted: executed };
   }
 
   /**
@@ -363,5 +464,20 @@ export class PlanExecutor {
     }
 
     return { stepsExecuted, params };
+  }
+}
+
+function countExecutedRecoveryAttempts(attempts: PlanRecoveryAttempt[]): number {
+  return attempts.filter((attempt) => attempt.status !== 'blocked').length;
+}
+
+function buildSafeRecoveryArgs(tool: string, params: Record<string, unknown>): Record<string, unknown> | null {
+  const tabId = typeof params.tabId === 'string' ? params.tabId : undefined;
+  switch (tool) {
+    case 'read_page':
+    case 'tabs_context':
+      return tabId ? { tabId } : {};
+    default:
+      return null;
   }
 }
