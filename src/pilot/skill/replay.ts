@@ -305,14 +305,31 @@ export async function runReplay(args: RunReplayArgs): Promise<SkillReplayResult>
 
   // ── Precondition gate (invariant #2) ───────────────────────────────
   let snapshotOrigin: string | null = null;
+  let snapshotReadError: string | null = null;
   try {
     snapshotOrigin = await args.snapshotReader.readUrlOrigin(skill);
   } catch (e) {
-    // A snapshot read failure does NOT trigger PRECONDITION_FAIL on its
-    // own — the precondition gate fires only when both origins are
-    // known and differ. Log and treat as no-snapshot.
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[skill-replay] snapshot read failed: ${msg}`);
+    // Fail closed: when the skill promises a frozen snapshot path but the
+    // reader threw, we cannot verify the cross-origin precondition. Record
+    // the error so the gate below can short-circuit to STEP_FAIL instead of
+    // silently treating the read failure as "no origin recorded" (Codex P1
+    // on PR #928 — fail-open hole).
+    snapshotReadError = e instanceof Error ? e.message : String(e);
+    console.error(`[skill-replay] snapshot read failed: ${snapshotReadError}`);
+  }
+  if (snapshotReadError !== null && skill.frozenSnapshotPath) {
+    const stepsTotal = Array.isArray(skill.steps) ? skill.steps.length : 0;
+    const err = `origin_check_failed: snapshot read failed (${snapshotReadError})`;
+    return finish(
+      'STEP_FAIL',
+      {
+        contract_id: contractId,
+        steps_total: stepsTotal,
+        steps_executed: 0,
+        step_failures: [{ index: -1, error: err }],
+      },
+      err,
+    );
   }
   if (snapshotOrigin !== null) {
     let activeUrl: string | null = null;

@@ -146,16 +146,13 @@ const handler: ToolHandler = async (
       // unconditionally disables the gate and lets a skill recorded on one
       // site execute its CDP steps on another).
       if (!skill.frozenSnapshotPath) return null;
-      try {
-        const snapshot = store.readFrozenSnapshot(skill.frozenSnapshotPath);
-        const origin = snapshot?.url_origin;
-        return typeof origin === 'string' && origin.length > 0 ? origin : null;
-      } catch {
-        // Fail closed: if we can't read the snapshot but a path was promised,
-        // the gate at runReplay()'s origin-check stage will surface
-        // origin_check_failed via its own fail-closed branch.
-        return null;
-      }
+      // Let read errors propagate. The engine's origin-check stage
+      // (src/pilot/skill/replay.ts) fails closed with origin_check_failed
+      // when a snapshot read throws AND the skill promised a snapshot path,
+      // so swallowing here would re-open the fail-open hole (Codex P1).
+      const snapshot = store.readFrozenSnapshot(skill.frozenSnapshotPath);
+      const origin = snapshot?.url_origin;
+      return typeof origin === 'string' && origin.length > 0 ? origin : null;
     },
   };
 
