@@ -44,6 +44,7 @@ import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
 import { isClientDisconnect } from './errors/abort';
+import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
 import { isAllowed, requiredScope } from './auth/scope-policy';
 import type { Principal } from './auth/api-key-types';
 import { PRINCIPAL_SYM } from './middleware/auth';
@@ -341,6 +342,14 @@ export class MCPServer {
       this.rateLimiter = new SessionRateLimiter(rateLimitRpm);
       console.error(`[MCPServer] Rate limiter: ${rateLimitRpm} requests/min per session`);
     }
+
+    // Wire the structured-logging sender (#870). After this point, calls to
+    // `log.info / log.warning / log.error / log.debug` from anywhere in the
+    // codebase will emit `notifications/message` to connected clients (at or
+    // above the active level) AND mirror error-level events to stderr.
+    setLogSender((level: LogLevel, logger: string, data: Record<string, unknown>) => {
+      this.sendNotification('notifications/message', { level, logger, data });
+    });
   }
 
   /**
@@ -684,6 +693,20 @@ export class MCPServer {
           result = await this.handleSessionsDelete(params, principal);
           break;
 
+        case 'logging/setLevel':
+          // #870 — accept the client's level threshold for notifications/message.
+          // Process-wide today; per-session level is a follow-up (acceptable for
+          // stdio's one-client-per-process model).
+          {
+            const level = (params as { level?: unknown } | undefined)?.level;
+            const err = logLevelSetErrorOrNull(level);
+            if (err) {
+              return this.errorResponse(id, err.code, err.message);
+            }
+            result = {};
+          }
+          break;
+
         default:
           return this.errorResponse(id, MCPErrorCodes.METHOD_NOT_FOUND, `Unknown method: ${method}`);
       }
@@ -736,6 +759,11 @@ export class MCPServer {
       capabilities: {
         tools: { listChanged: this.clientSupportsListChanged },
         resources: {},
+        // #870 — advertise structured-logging support. Empty object per MCP
+        // spec means "supported, no sub-capabilities yet". Clients drive the
+        // level via `logging/setLevel`; events flow as
+        // `notifications/message`.
+        logging: {},
       },
       serverInfo: {
         name: 'openchrome',
