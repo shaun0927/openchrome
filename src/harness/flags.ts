@@ -58,12 +58,37 @@ function isFamilyEnabled(envVar: string): boolean {
   return isTruthy(raw);
 }
 
+/**
+ * Per-family activation that **defaults to off** even when `--pilot` is set.
+ * Reserved for pilot capabilities that mutate the MCP tool surface or emit
+ * proactive notifications outside the request/response lifetime. Operators
+ * must opt in explicitly via the env var.
+ */
+function isFamilyEnabledOptIn(envVar: string): boolean {
+  if (!isPilotEnabled()) return false;
+  return isTruthy(process.env[envVar]);
+}
+
 export const isTraceEnabled = (): boolean => isFamilyEnabled('OPENCHROME_TRACE');
 export const isStateGraphEnabled = (): boolean => isFamilyEnabled('OPENCHROME_STATE_GRAPH');
 export const isContractRuntimeEnabled = (): boolean => isFamilyEnabled('OPENCHROME_CONTRACT_RUNTIME');
 export const isHandoffPersistEnabled = (): boolean => isFamilyEnabled('OPENCHROME_HANDOFF_PERSIST');
 export const isPerceptionVotingEnabled = (): boolean => isFamilyEnabled('OPENCHROME_PERCEPTION_VOTING');
 export const isSkillCuratorEnabled = (): boolean => isFamilyEnabled('OPENCHROME_SKILL_CURATOR');
+
+/**
+ * Dynamic skill → MCP tool synthesis (issue #889, apify-mcp adoption C).
+ *
+ * Deviation from the other families above: this one defaults **off** even
+ * when `--pilot` is set. Synthesizing tools is the most invasive pilot
+ * capability to date — it mutates the MCP tool surface mid-session and
+ * emits proactive `notifications/tools/list_changed` frames outside any
+ * tool's request lifetime. Operators must opt in explicitly with
+ * `OPENCHROME_DYNAMIC_SKILLS=1` per the portability-harness contract P2
+ * (zero-impact-when-off) requirement.
+ */
+export const isDynamicSkillsEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_DYNAMIC_SKILLS');
 
 const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['trace', isTraceEnabled],
@@ -72,6 +97,7 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['handoff_persist', isHandoffPersistEnabled],
   ['perception_voting', isPerceptionVotingEnabled],
   ['skill_curator', isSkillCuratorEnabled],
+  ['dynamic_skills', isDynamicSkillsEnabled],
 ];
 
 /**
