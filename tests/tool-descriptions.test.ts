@@ -91,10 +91,19 @@ function evaluateStringExpression(expr: string): string {
         .replace(/\\\\/g, '\\'));
       remaining = remaining.slice(i + 1);
     } else if (remaining.startsWith('`')) {
-      const end = remaining.indexOf('`', 1);
-      if (end === -1) break;
-      parts.push(remaining.slice(1, end));
-      remaining = remaining.slice(end + 1);
+      let i = 1;
+      while (i < remaining.length) {
+        if (remaining[i] === '\\') { i += 2; continue; }
+        if (remaining[i] === '`') break;
+        i++;
+      }
+      const literal = remaining.slice(1, i);
+      parts.push(literal
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\`/g, '`')
+        .replace(/\\\\/g, '\\'));
+      remaining = remaining.slice(i + 1);
     } else if (remaining.startsWith('+')) {
       remaining = remaining.slice(1);
     } else {
@@ -134,5 +143,18 @@ describe('Tool description guidance (issue #841)', () => {
     const names = SHORTLIST.map(s => s.toolName).sort();
     const unique = Array.from(new Set(names));
     expect(unique).toHaveLength(14);
+  });
+
+  test('form_input description preserves multiple-field fill_form guidance', () => {
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'src/tools/form-input.ts'), 'utf8');
+    const description = extractDescription(source, 'form_input');
+
+    expect(description).toMatch(/When NOT to use:/);
+    expect(description).toMatch(/fill_form\(\{fields:\{\.\.\.\}\}\)/);
+    expect(description).toMatch(/multiple fields/);
+  });
+
+  test('string evaluator handles escaped backticks inside template literals', () => {
+    expect(evaluateStringExpression('`Use \\`literal\\` ticks`')).toBe('Use `literal` ticks');
   });
 });
