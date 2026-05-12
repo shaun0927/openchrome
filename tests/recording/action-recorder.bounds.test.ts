@@ -417,3 +417,114 @@ describe('getActiveActionRecorder()', () => {
     unregisterSessionRecorder('sess-reg-test'); // cleanup
   });
 });
+
+// ── concurrency — append-only contract rows ──────────────────────────────────
+
+describe('ActionRecorder — concurrent appendContractResult + recordAction', () => {
+  let dir: string;
+  let store: RecordingStore;
+  let recorder: ActionRecorder;
+
+  beforeEach(() => {
+    dir = makeTmpDir();
+    store = new RecordingStore(dir);
+    recorder = new ActionRecorder(store, { captureScreenshots: false });
+  });
+
+  afterEach(() => {
+    cleanupDir(dir);
+  });
+
+  it('does not drop a concurrent action when a contract result is appended', async () => {
+    await recorder.start('sess-concurrent');
+    const id = recorder.activeRecordingId!;
+
+    // Seed one action so appendContractResult() has a target.
+    await recorder.recordAction('navigate', { url: 'https://example.com' }, 100, true);
+
+    // Race a contract-result append against a fresh recordAction(). Pre-fix
+    // (read-modify-write) one of these writes would clobber the other.
+    await Promise.all([
+      recorder.appendContractResult({
+        assertion: { kind: 'url', pattern: 'example.com' },
+        verdict: 'pass',
+      }),
+      recorder.recordAction('read_page', {}, 50, true),
+    ]);
+
+    const actions = store.readActions(id);
+    // Both source actions must survive.
+    expect(actions).toHaveLength(2);
+    expect(actions[0].seq).toBe(1);
+    expect(actions[1].seq).toBe(2);
+    // The contract result must land on its declared actionIndex (seq=1).
+    expect(actions[0].contractResults).toHaveLength(1);
+    expect(actions[0].contractResults![0].verdict).toBe('pass');
+    expect(actions[1].contractResults).toBeUndefined();
+  });
+
+  it('survives a flurry of interleaved contract + action appends without loss', async () => {
+    await recorder.start('sess-flurry');
+    const id = recorder.activeRecordingId!;
+
+    await recorder.recordAction('navigate', { url: 'https://example.com' }, 100, true);
+
+    const ops: Promise<void>[] = [];
+    for (let i = 0; i < 10; i++) {
+      ops.push(
+        recorder.appendContractResult({
+          assertion: { kind: 'url', pattern: `p${i}` },
+          verdict: 'pass',
+        }),
+      );
+      ops.push(recorder.recordAction(`tool_${i}`, {}, 10, true));
+    }
+    await Promise.all(ops);
+
+    const actions = store.readActions(id);
+    // 1 seeded + 10 concurrent recordAction() calls = 11.
+    expect(actions).toHaveLength(11);
+    // No seq gaps.
+    expect(actions.map(a => a.seq).sort((x, y) => x - y)).toEqual(
+      Array.from({ length: 11 }, (_, i) => i + 1),
+    );
+  });
+});
+
+// ── byte-length cap — UTF-8 accuracy ─────────────────────────────────────────
+
+describe('ActionRecorder — contractResults byte-length cap (UTF-8)', () => {
+  let dir: string;
+  let store: RecordingStore;
+  let recorder: ActionRecorder;
+
+  beforeEach(() => {
+    dir = makeTmpDir();
+    store = new RecordingStore(dir);
+    recorder = new ActionRecorder(store, { captureScreenshots: false });
+  });
+
+  afterEach(() => {
+    cleanupDir(dir);
+  });
+
+  it('measures size in UTF-8 bytes (non-ASCII no longer underestimated)', async () => {
+    await recorder.start('sess-utf8');
+    const id = recorder.activeRecordingId!;
+
+    // Each "あ" is 1 UTF-16 code unit but 3 UTF-8 bytes. 1500 chars → ~4500 bytes,
+    // which exceeds the 4 KB cap by UTF-8 byte count but NOT by .length.
+    const bigEntry: ContractResultEntry = {
+      assertion: { kind: 'dom_text', selector: 'body', contains: 'あ'.repeat(1500) },
+      verdict: 'pass',
+    };
+    await recorder.recordAction('navigate', {}, 100, true, { contractResults: [bigEntry] });
+
+    const actions = store.readActions(id);
+    const cr = actions[0].contractResults as unknown as Array<{ truncated: boolean; originalBytes: number }>;
+    expect(cr).toHaveLength(1);
+    expect(cr[0].truncated).toBe(true);
+    // originalBytes must reflect UTF-8 byte size, well above 4096.
+    expect(cr[0].originalBytes).toBeGreaterThan(4096);
+  });
+});

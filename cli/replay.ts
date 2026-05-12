@@ -224,11 +224,11 @@ export function registerReplayCommand(program: Command): void {
         if (options.out) {
           const dest = path.resolve(options.out);
           try {
-            // Write atomically using a temp file + rename
+            // Write atomically using a temp file + rename (async I/O)
             const tmp = dest + '.tmp';
-            const content = fs.readFileSync(reportPath);
-            fs.writeFileSync(tmp, content);
-            fs.renameSync(tmp, dest);
+            const content = await fs.promises.readFile(reportPath);
+            await fs.promises.writeFile(tmp, content);
+            await fs.promises.rename(tmp, dest);
             process.stdout.write(dest + '\n');
           } catch (ioErr) {
             process.stderr.write(

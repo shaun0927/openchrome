@@ -6,8 +6,6 @@
  */
 
 import { randomBytes } from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
 import { RecordingStore, getRecordingStore } from './recording-store';
 import {
   RecordingAction,
@@ -83,10 +81,29 @@ export class ActionRecorder {
   private _activeRecordingId: string | null = null;
   private _activeMetadata: RecordingMetadata | null = null;
   private _seq = 0;
+  /**
+   * Promise-chain mutex serializing every write to this recorder. Without this,
+   * two concurrent recordAction() calls each read _seq before either has
+   * incremented it, producing duplicate seq values (observed in concurrent
+   * tests). appendContractResult() rides the same chain so contract rows can
+   * never interleave with an in-flight recordAction().
+   */
+  private _writeChain: Promise<void> = Promise.resolve();
 
   constructor(store?: RecordingStore, configOverrides?: Partial<RecordingConfig>) {
     this.store = store ?? getRecordingStore();
     this.config = { ...DEFAULT_RECORDING_CONFIG, ...configOverrides };
+  }
+
+  /** Queue `op` behind any in-flight writes. Errors are isolated per-task. */
+  private enqueueWrite<T>(op: () => Promise<T>): Promise<T> {
+    const next = this._writeChain.then(op, op);
+    // Keep the chain alive even if op rejects, so later writes still serialize.
+    this._writeChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   }
 
   /** Whether a recording is currently active */
@@ -176,68 +193,75 @@ export class ActionRecorder {
     }
 
     const id = this._activeRecordingId;
+    const sanitizedArgs = this.sanitizeArgs(args);
 
-    try {
-      const seq = this._seq + 1;
-      const action: RecordingAction = {
-        seq,
-        ts: Date.now(),
-        tool,
-        args: this.sanitizeArgs(args),
-        durationMs,
-        ok,
-        summary: opts?.summary ?? `${ok ? '✓' : '✗'} ${tool}`,
-        url: opts?.url,
-        tabId: opts?.tabId ?? (args['tabId'] as string | undefined),
-        error: opts?.error,
-        ...applyContractResultsBounds(opts?.contractResults),
-        ...applyVerifyField(opts?.verify),
-        ...applyNetworkBounds(opts?.network),
-        ...applyConsoleBounds(opts?.console),
-      };
+    // Serialize every write so concurrent callers can't share the same _seq.
+    return this.enqueueWrite(async () => {
+      if (!this._isRecording || this._activeRecordingId !== id || !this._activeMetadata) {
+        return;
+      }
+      try {
+        const seq = this._seq + 1;
+        const action: RecordingAction = {
+          seq,
+          ts: Date.now(),
+          tool,
+          args: sanitizedArgs,
+          durationMs,
+          ok,
+          summary: opts?.summary ?? `${ok ? '✓' : '✗'} ${tool}`,
+          url: opts?.url,
+          tabId: opts?.tabId ?? (args['tabId'] as string | undefined),
+          error: opts?.error,
+          ...applyContractResultsBounds(opts?.contractResults),
+          ...applyVerifyField(opts?.verify),
+          ...applyNetworkBounds(opts?.network),
+          ...applyConsoleBounds(opts?.console),
+        };
 
-      await this.store.appendAction(id, action);
+        await this.store.appendAction(id, action);
 
-      // Only advance seq and actionCount after successful write
-      this._seq = seq;
-      this._activeMetadata.actionCount = seq;
-    } catch (err) {
-      console.error('[ActionRecorder] Failed to record action:', err instanceof Error ? err.message : err);
-    }
+        // Only advance seq and actionCount after successful write
+        this._seq = seq;
+        this._activeMetadata.actionCount = seq;
+      } catch (err) {
+        console.error('[ActionRecorder] Failed to record action:', err instanceof Error ? err.message : err);
+      }
+    });
   }
 
   /**
    * Append a contract result to the most recently recorded action.
    * No-op if not recording or no actions have been recorded yet.
    * This is the hook used by oc_assert.
+   *
+   * Uses an append-only sidecar row (`{kind:"contract_result",actionIndex,…}`)
+   * rather than rewriting actions.jsonl in place. This removes the race window
+   * where a concurrent recordAction() append could be clobbered by a contract
+   * annotation that was based on an older snapshot.
    */
   async appendContractResult(entry: ContractResultEntry): Promise<void> {
-    if (!this._isRecording || !this._activeRecordingId || this._seq === 0) {
+    if (!this._isRecording || !this._activeRecordingId) {
       return;
     }
+    const recordingIdAtCall = this._activeRecordingId;
 
-    const id = this._activeRecordingId;
-    try {
-      // Read all actions, mutate the last one, and rewrite the JSONL
-      const actions = this.store.readActions(id);
-      if (actions.length === 0) return;
-
-      const last = actions[actions.length - 1];
-      const existing = last.contractResults ?? [];
-      existing.push(entry);
-
-      // Apply bounds check
-      const bounded = applyContractResultsBounds(existing)?.contractResults ?? existing;
-      last.contractResults = bounded;
-
-      // Rewrite the JSONL file
-      const lines = actions.map(a => JSON.stringify(a)).join('\n') + '\n';
-      const recDir = this.store.getRecordingDir(id);
-      const filePath = path.join(recDir, 'actions.jsonl');
-      await fs.promises.writeFile(filePath, lines, 'utf-8');
-    } catch (err) {
-      console.error('[ActionRecorder] Failed to append contract result:', err instanceof Error ? err.message : err);
-    }
+    // Serialize so we read _seq AFTER any in-flight recordAction() completes —
+    // otherwise the contract row could reference an action index that doesn't
+    // exist yet on disk, or, worse, point at the wrong action when the in-flight
+    // write resolves first.
+    return this.enqueueWrite(async () => {
+      if (!this._isRecording || this._activeRecordingId !== recordingIdAtCall || this._seq === 0) {
+        return;
+      }
+      const id = this._activeRecordingId;
+      const actionIndex = this._seq;
+      try {
+        await this.store.appendContractResultRow(id, actionIndex, entry);
+      } catch (err) {
+        console.error('[ActionRecorder] Failed to append contract result:', err instanceof Error ? err.message : err);
+      }
+    });
   }
 
   /**
@@ -315,15 +339,19 @@ const ARRAY_FIELD_MAX_ENTRIES = 20;
 /**
  * Enforce the 4 KB cap on contractResults.
  * Returns a partial RecordingAction fragment (may be empty if undefined input).
+ *
+ * Size is measured in UTF-8 bytes (via Buffer.byteLength) — `json.length`
+ * counts UTF-16 code units and would underestimate non-ASCII payloads.
  */
 function applyContractResultsBounds(
   entries: ContractResultEntry[] | undefined,
 ): Pick<RecordingAction, 'contractResults'> {
   if (!entries || entries.length === 0) return {};
   const json = JSON.stringify(entries);
-  if (json.length > CONTRACT_RESULTS_MAX_BYTES) {
+  const bytes = Buffer.byteLength(json, 'utf8');
+  if (bytes > CONTRACT_RESULTS_MAX_BYTES) {
     return {
-      contractResults: [{ truncated: true, originalBytes: json.length } as unknown as ContractResultEntry],
+      contractResults: [{ truncated: true, originalBytes: bytes } as unknown as ContractResultEntry],
     };
   }
   return { contractResults: entries };
