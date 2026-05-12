@@ -528,7 +528,7 @@ const handler: ToolHandler = async (
           headerLine: refLine,
           delta: refDelta,
           returnFormat,
-          verify,
+          verify: verifyMode === 'screenshot' || verifyMode === 'both',
           extraTopLevel: { via: 'ref' },
         });
       } catch (refErr) {
