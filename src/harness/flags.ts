@@ -78,17 +78,20 @@ export const isSkillCuratorEnabled = (): boolean => isFamilyEnabled('OPENCHROME_
 
 /**
  * Dynamic skill → MCP tool synthesis (issue #889, apify-mcp adoption C).
- *
- * Deviation from the other families above: this one defaults **off** even
- * when `--pilot` is set. Synthesizing tools is the most invasive pilot
- * capability to date — it mutates the MCP tool surface mid-session and
- * emits proactive `notifications/tools/list_changed` frames outside any
- * tool's request lifetime. Operators must opt in explicitly with
- * `OPENCHROME_DYNAMIC_SKILLS=1` per the portability-harness contract P2
- * (zero-impact-when-off) requirement.
+ * Defaults off even when `--pilot` is set because it mutates the MCP tool
+ * surface mid-session and emits proactive list_changed notifications.
  */
 export const isDynamicSkillsEnabled = (): boolean =>
   isFamilyEnabledOptIn('OPENCHROME_DYNAMIC_SKILLS');
+
+/**
+ * Proxy hook family (issue #874). Also explicit opt-in on top of --pilot.
+ */
+export function isProxyHookEnabled(): boolean {
+  if (!isPilotEnabled()) return false;
+  return isTruthy(process.env.OPENCHROME_PROXY_HOOK);
+}
+
 
 const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['trace', isTraceEnabled],
@@ -98,6 +101,7 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['perception_voting', isPerceptionVotingEnabled],
   ['skill_curator', isSkillCuratorEnabled],
   ['dynamic_skills', isDynamicSkillsEnabled],
+  ['proxy_hook', isProxyHookEnabled]
 ];
 
 /**

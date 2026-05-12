@@ -17,6 +17,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { SkillMemoryStore } from '../core/skill-memory';
+import { redactSecrets } from '../core/secrets';
 import { isDynamicSkillsEnabled } from '../harness/flags';
 
 interface OcSkillRecordOutput {
@@ -82,9 +83,17 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const domain = args.domain as string | undefined;
   const name = args.name as string | undefined;
-  const steps = args.steps as unknown[] | undefined;
+  const rawSteps = args.steps as unknown[] | undefined;
   const contractId = args.contract_id as string | undefined;
-  const frozenSnapshot = args.frozen_snapshot as Record<string, unknown> | undefined;
+  const rawFrozenSnapshot = args.frozen_snapshot as Record<string, unknown> | undefined;
+
+  // Secrets redaction (#834): step payloads and frozen snapshots are
+  // persisted to disk where they may be promoted across sessions by the
+  // skill curator. Strip literal secret values BEFORE write so a recorded
+  // step contains `${SECRET:NAME}` placeholders only.
+  const steps = rawSteps !== undefined ? redactSecrets(rawSteps) : undefined;
+  const frozenSnapshot =
+    rawFrozenSnapshot !== undefined ? redactSecrets(rawFrozenSnapshot) : undefined;
 
   if (typeof domain !== 'string' || domain.length === 0) {
     return jsonResult({

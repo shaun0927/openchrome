@@ -27,6 +27,7 @@
 import type { Page } from 'puppeteer-core';
 
 import { getSessionManager } from '../../session-manager.js';
+import { assertDomainAllowed } from '../../security/domain-guard.js';
 import type { SkillRecord } from '../../core/skill-memory/index.js';
 
 import type {
@@ -110,6 +111,7 @@ export async function defaultRunStep(
   try {
     switch (step.kind) {
       case 'navigate':
+        assertDomainAllowed(step.url);
         await page.goto(step.url, { waitUntil: 'load' });
         return { ok: true };
       case 'fill': {

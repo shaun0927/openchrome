@@ -215,9 +215,8 @@ function extractActions(steps: unknown): Record<string, unknown>[] | null {
   if (!Array.isArray(actions)) return null;
   const filtered: Record<string, unknown>[] = [];
   for (const entry of actions) {
-    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-      filtered.push(entry as Record<string, unknown>);
-    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    filtered.push(entry as Record<string, unknown>);
   }
   return filtered;
 }
