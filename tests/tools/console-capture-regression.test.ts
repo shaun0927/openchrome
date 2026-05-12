@@ -132,7 +132,7 @@ const FIXTURE_PATH = path.join(
 );
 
 describe('console_capture get response — v1.11.0 baseline regression', () => {
-  test('response shape (excluding bufferStats) matches baseline fixture byte-for-byte', () => {
+  test('response shape (excluding bufferStats) matches baseline fixture', () => {
     const frozenLogs = buildFrozenLogs();
     const response = buildGetResponse(frozenLogs);
     const responseJson = JSON.stringify(response, null, 2);
@@ -146,7 +146,8 @@ describe('console_capture get response — v1.11.0 baseline regression', () => {
       return;
     }
 
-    const baseline = fs.readFileSync(FIXTURE_PATH, 'utf8');
+    const normalizeLineEndings = (value: string) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const baseline = normalizeLineEndings(fs.readFileSync(FIXTURE_PATH, 'utf8'));
     expect(responseJson).toBe(baseline);
   });
 
