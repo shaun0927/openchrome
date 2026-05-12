@@ -412,17 +412,29 @@ export async function runReplay(args: RunReplayArgs): Promise<SkillReplayResult>
       );
     }
     try {
+      // Arm the frame-navigation waiter BEFORE dispatching the CDP step.
+      // page.waitForNavigation() (under the cdp adapter) attaches its listener
+      // synchronously when called, but the navigation it's waiting for may
+      // start during the very next tick after our send() resolves. If we
+      // attached the waiter after the send, a fast click/submit could navigate
+      // before the listener was installed and the wait would time out even
+      // though the step succeeded (Codex P1 on PR #928 fixup).
+      const navWait =
+        narrowed.awaitFrameNavigated && args.cdp.awaitFrameNavigated
+          ? args.cdp.awaitFrameNavigated(stepTimeoutMs)
+          : null;
+      // Swallow the pending rejection until we explicitly await it below; this
+      // is only needed to silence "unhandled rejection" reports during the
+      // send() phase. The real rejection still surfaces from the awaited
+      // withTimeout() call.
+      if (navWait) navWait.catch(() => {});
       await withTimeout(
         args.cdp.send(narrowed.method, narrowed.params),
         stepTimeoutMs,
         `cdp ${narrowed.method}`,
       );
-      if (narrowed.awaitFrameNavigated && args.cdp.awaitFrameNavigated) {
-        await withTimeout(
-          args.cdp.awaitFrameNavigated(stepTimeoutMs),
-          stepTimeoutMs,
-          'Page.frameNavigated',
-        );
+      if (navWait) {
+        await withTimeout(navWait, stepTimeoutMs, 'Page.frameNavigated');
       }
       stepsExecuted++;
     } catch (e) {
