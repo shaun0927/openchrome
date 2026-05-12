@@ -164,7 +164,7 @@ describe('ActTool', () => {
       const result = await handler(testSessionId, { tabId: testTargetId }) as any;
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('instruction is required');
+      expect(result.content[0].text).toContain('instruction or steps is required');
     });
 
     test('returns error when instruction is empty string', async () => {
@@ -172,7 +172,7 @@ describe('ActTool', () => {
       const result = await handler(testSessionId, { tabId: testTargetId, instruction: '   ' }) as any;
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('instruction is required');
+      expect(result.content[0].text).toContain('instruction or steps is required');
     });
 
 
@@ -251,6 +251,41 @@ describe('ActTool', () => {
       expect(result.isError).toBeFalsy();
       expect(result.content[0].text).toContain('[act] Executed 1/1 steps');
       expect(result.content[0].text).toContain('\u2713'); // checkmark
+    });
+
+
+    test('executes structured steps without requiring natural-language instruction', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
+        backendDOMNodeId: 150,
+        role: 'button',
+        name: 'Login',
+        matchLevel: 1,
+        rect: { x: 50, y: 50, width: 80, height: 30 },
+        properties: {},
+        source: 'ax',
+      }]);
+      mockSessionManager.mockCDPClient.send.mockResolvedValue({ model: { content: [10, 20, 90, 20, 90, 50, 10, 50] } });
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        steps: [{ action: 'click', target: 'login' }],
+        verify: false,
+      }) as any;
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('[act] Executed 1/1 steps ✓ [structured]');
+    });
+
+    test('rejects empty structured steps', async () => {
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        steps: [],
+      }) as any;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('steps must be a non-empty array');
     });
 
     test('reports ELEMENT_NOT_FOUND when AX resolves nothing', async () => {
