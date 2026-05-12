@@ -130,6 +130,8 @@ import { registerOcObserveTool } from './oc-observe';
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
+// Output handles (#887) — 2-stage fetch for large-output tools
+import { registerOcOutputFetchTool } from './oc-output-fetch';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -287,6 +289,9 @@ export function registerAllTools(server: MCPServer): void {
   registerOcDevToolsUrlTool(server);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
   registerOcContextTools(server);
+
+  // Output handles (#887) — 2-stage fetch for large-output tools
+  registerOcOutputFetchTool(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
