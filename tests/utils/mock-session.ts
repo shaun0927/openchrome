@@ -276,6 +276,8 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       return targetToWorker.get(targetId)?.workerId;
     }),
 
+    getTargetContextName: jest.fn().mockImplementation((_targetId: string) => 'default'),
+
     isTargetValid: jest.fn().mockImplementation(async (targetId: string) => {
       const page = pages.get(targetId);
       return page !== null && page !== undefined;
