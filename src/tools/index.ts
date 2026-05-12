@@ -113,6 +113,19 @@ import { registerOcPerformanceInsightsTool } from './oc-performance-insights';
 import { registerOcPerformanceAnalyzeTool } from './oc-performance-analyze';
 import { getSessionManager } from '../session-manager';
 import { getPerfTraceStore } from '../core/performance/insights/trace-store';
+// Pilot-tier: user-supplied proxy hook (#874).
+// Registration is gated at runtime by `isProxyHookEnabled()` so the tool is
+// absent from `tools/list` unless BOTH `--pilot` AND `OPENCHROME_PROXY_HOOK=1`
+// are set. The pilot module is loaded via `require()` only when the gate is
+// open — this preserves P2 (no module from `src/pilot/**` is loaded into the
+// process when `--pilot` is unset) while keeping `registerAllTools()` sync.
+import { isProxyHookEnabled } from '../harness/flags';
+// oc_observe (#866) — deterministic actionable-element enumeration
+import { registerOcObserveTool } from './oc-observe';
+// DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
+import { registerOcDevToolsUrlTool } from './oc-devtools-url';
+// Portable context envelope (#873) — export/import surface
+import { registerOcContextTools } from './oc-context';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -248,6 +261,21 @@ export function registerAllTools(server: MCPServer): void {
       }
     });
   }
+  // Pilot-tier: user-supplied proxy hook (#874). Loaded lazily so v1.11
+  // behaviour is byte-identical when the family is off — no code from
+  // `src/pilot/**` is reached unless both `--pilot` and
+  // `OPENCHROME_PROXY_HOOK=1` are set.
+  if (isProxyHookEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcProxyHookTool } = require('../pilot/proxy/hook') as typeof import('../pilot/proxy/hook');
+    registerOcProxyHookTool(server);
+  }
+  // oc_observe (#866) — deterministic actionable-element enumeration
+  registerOcObserveTool(server);
+  // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
+  registerOcDevToolsUrlTool(server);
+  // Portable context envelope (#873) — oc_context_export / oc_context_import
+  registerOcContextTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

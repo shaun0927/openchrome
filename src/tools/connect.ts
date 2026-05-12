@@ -1,6 +1,7 @@
 /**
  * Connect tools — expose web AI host connection info via MCP protocol.
  * Part of #523: Desktop App Web host connection guide.
+ * Part of #860: DevTools URL exposure via devtools field + oc_devtools_url tool.
  */
 
 import { MCPServer } from '../mcp-server';
@@ -9,6 +10,9 @@ import { generateConnectionInfo, generateAllConnectionInfo, getHostIds } from '.
 import { copyToClipboard } from '../connect/clipboard';
 import { openInBrowser } from '../connect/open-url';
 import type { WebAIHostId, ServerConnectionState } from '../connect/types';
+import { getChromePool } from '../chrome/pool';
+import { getDevToolsInstanceInfo } from '../chrome/devtools-info';
+import { getGlobalConfig } from '../config/global';
 
 function getServerState(): ServerConnectionState {
   const httpPort = process.env.OPENCHROME_HTTP_PORT || '3100';
@@ -22,10 +26,48 @@ function getServerState(): ServerConnectionState {
   };
 }
 
+/**
+ * Returns true when DevTools URL exposure is enabled (default: on).
+ * Gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'.
+ */
+export function isDevToolsExposureEnabled(): boolean {
+  return process.env.OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0';
+}
+
+/**
+ * Collect DevTools instance info from all active Chrome pool instances.
+ * Also queries the default single-instance port when the pool has no entries.
+ * Returns undefined if unreachable or exposure is disabled.
+ */
+export async function collectDevToolsInfo(): Promise<
+  { instances: Awaited<ReturnType<typeof getDevToolsInstanceInfo> & {}>[] } | undefined
+> {
+  if (!isDevToolsExposureEnabled()) {
+    return undefined;
+  }
+
+  // Collect ports: prefer pool instances; fall back to default port
+  const pool = getChromePool();
+  const poolInstances = pool.getInstances();
+  const ports: number[] =
+    poolInstances.size > 0
+      ? Array.from(poolInstances.values()).map((inst) => inst.port)
+      : [getGlobalConfig().port];
+
+  const results = await Promise.all(ports.map((p) => getDevToolsInstanceInfo(p)));
+  const reachable = results.filter((r) => r !== null) as NonNullable<typeof results[number]>[];
+
+  if (reachable.length === 0) {
+    return undefined;
+  }
+
+  return { instances: reachable };
+}
+
 const getConnectionInfoDef: MCPToolDefinition = {
   name: 'oc_get_connection_info',
   description:
-    'Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom). Returns the MCP server URL, bearer token, settings page URL, and step-by-step instructions.',
+    'Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom). Returns the MCP server URL, bearer token, settings page URL, step-by-step instructions, and (when Chrome is reachable) a devtools block with live DevTools inspector URLs for all open pages.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -46,9 +88,16 @@ const getConnectionInfoHandler: ToolHandler = async (
   const hostArg = args.host as string;
   const state = getServerState();
 
+  // Fetch devtools info in parallel with host-info generation
+  const devToolsPromise = collectDevToolsInfo();
+
   if (hostArg === 'all') {
-    const all = generateAllConnectionInfo(state);
-    return { content: [{ type: 'text', text: JSON.stringify(all, null, 2) }] };
+    const [all, devtools] = await Promise.all([
+      Promise.resolve(generateAllConnectionInfo(state)),
+      devToolsPromise,
+    ]);
+    const response = devtools ? { ...all, devtools } : all;
+    return { content: [{ type: 'text', text: JSON.stringify(response, null, 2) }] };
   }
 
   const validHosts = getHostIds();
@@ -59,8 +108,12 @@ const getConnectionInfoHandler: ToolHandler = async (
     };
   }
 
-  const info = generateConnectionInfo(hostArg as WebAIHostId, state);
-  return { content: [{ type: 'text', text: JSON.stringify(info, null, 2) }] };
+  const [info, devtools] = await Promise.all([
+    Promise.resolve(generateConnectionInfo(hostArg as WebAIHostId, state)),
+    devToolsPromise,
+  ]);
+  const response = devtools ? { ...info, devtools } : info;
+  return { content: [{ type: 'text', text: JSON.stringify(response, null, 2) }] };
 };
 
 const copyToClipboardDef: MCPToolDefinition = {

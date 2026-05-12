@@ -21,9 +21,7 @@ import type { ExtractionSchema, SchemaProperty } from '../extraction';
 const definition: MCPToolDefinition = {
   name: 'extract_data',
   description:
-    'Extract structured data from page using a JSON Schema. ' +
-    'Automatically tries JSON-LD, Microdata, OpenGraph, and CSS heuristics. ' +
-    'Use multiple:true for listings (products, search results, articles).',
+    'Extract structured data from page using a JSON Schema. Tries JSON-LD, Microdata, OpenGraph, and CSS heuristics. Use multiple:true for listings.\n\nWhen to use: Extracting typed structured data (products, articles, prices) from a page into a schema.\nWhen NOT to use: Use javascript_tool for ad-hoc extraction, or read_page to read raw page content.',
   inputSchema: {
     type: 'object',
     properties: {
