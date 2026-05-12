@@ -82,6 +82,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_connection_health: 1,  // src/tools/connection-health.ts
   oc_checkpoint: 1,         // src/tools/checkpoint.ts
   list_profiles: 1,         // src/tools/list-profiles.ts
+  oc_devtools_url: 1,       // src/tools/oc-devtools-url.ts (#860) — gated by env
 
   // Tier 3: Orchestration only
   workflow_init: 3,
