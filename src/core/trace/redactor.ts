@@ -1,0 +1,205 @@
+/**
+ * Credential redactor for captured trace events.
+ *
+ * The audit-log redactor at `src/observability/redaction.ts` operates on
+ * tool-call args (a structured object the harness controls). Trace events,
+ * by contrast, contain CDP payloads and network bodies sourced from the
+ * remote page — they need a different class of scrubbing focused on raw
+ * text patterns (`Authorization` headers, JWT-like tokens, `password=` URL
+ * params, AWS access keys, …).
+ *
+ * Rules:
+ *   • Header fields whose name matches a sensitive list (case-insensitive)
+ *     have their value replaced with `[REDACTED]`.
+ *   • String values everywhere in the event tree are scanned and any match
+ *     of a credential pattern is replaced with `[REDACTED]`.
+ *   • Object keys whose name matches the sensitive list have their value
+ *     replaced with `[REDACTED]`, regardless of value shape.
+ *
+ * The original input is never mutated. Output is a JSON-clone.
+ */
+
+export const REDACTED = '[REDACTED]';
+
+const SENSITIVE_KEY_NAMES = [
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'token',
+  'authorization',
+  'auth',
+  'api_key',
+  'apikey',
+  'access_key',
+  'refresh_token',
+  'id_token',
+  'session_token',
+  'cookie',
+  'set-cookie',
+  'credit_card',
+  'creditcard',
+  'card_number',
+  'ssn',
+  'social_security',
+  'private_key',
+];
+
+/** Header name set used when scrubbing CDP request/response headers. */
+const SENSITIVE_HEADER_NAMES = new Set(
+  ['authorization', 'cookie', 'set-cookie', 'proxy-authorization', 'x-api-key'].map((s) =>
+    s.toLowerCase(),
+  ),
+);
+
+/** Patterns scanned in every string-typed value across the event tree. */
+const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
+  // JWT — three base64url segments separated by dots
+  { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g },
+  // AWS Access Key ID
+  { name: 'aws_access_key', re: /\bAKIA[0-9A-Z]{16}\b/g },
+  // Authorization Bearer / Basic / Token (only the credential portion).
+  // HTTP scheme tokens are case-insensitive (`bearer` is just as valid as
+  // `Bearer`), so match without case sensitivity to catch lowercase forms
+  // that show up in raw network/body captures. The match's first capture
+  // group preserves the original-case scheme name so the replacement
+  // (`<scheme> [REDACTED]`) reads naturally for the operator.
+  { name: 'auth_scheme', re: /\b(Bearer|Basic|Token)\s+[A-Za-z0-9+/=._-]{8,}/gi },
+  // Generic high-entropy token: 32+ hex chars
+  { name: 'hex_token', re: /\b[a-fA-F0-9]{32,}\b/g },
+  // SSN (US): 3-2-4 digits
+  { name: 'ssn', re: /\b\d{3}-\d{2}-\d{4}\b/g },
+  // URL-encoded credential params: `password=...`, `token=...`, `secret=...`
+  {
+    name: 'url_credential_param',
+    re: /\b(password|passwd|pwd|secret|token|api_key|apikey|access_key|refresh_token|id_token|session_token|credit_card|ssn)=([^\s&;"'<>]+)/gi,
+  },
+];
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return SENSITIVE_KEY_NAMES.some((s) => lower.includes(s));
+}
+
+/**
+ * Scrub a single string. Replaces matched credential substrings with
+ * `[REDACTED]`. URL-credential params keep the param name and replace only
+ * the value: `password=hunter2` → `password=[REDACTED]`.
+ */
+export function scrubString(value: string): string {
+  let out = value;
+  for (const { name, re } of CREDENTIAL_PATTERNS) {
+    if (name === 'url_credential_param') {
+      out = out.replace(re, (_m, p1: string) => `${p1}=${REDACTED}`);
+    } else if (name === 'auth_scheme') {
+      out = out.replace(re, (_m, p1: string) => `${p1} ${REDACTED}`);
+    } else {
+      out = out.replace(re, REDACTED);
+    }
+  }
+  return out;
+}
+
+/**
+ * Redact an HTTP-header bag (record or array-of-`{name, value}`). Sensitive
+ * header values are replaced wholesale; non-sensitive headers still pass
+ * through `scrubString` so an `X-Custom: Bearer abc` slips through to the
+ * pattern scrub.
+ */
+function redactHeaders(headers: unknown): unknown {
+  if (!headers) return headers;
+
+  if (Array.isArray(headers)) {
+    return headers.map((h) => {
+      if (h && typeof h === 'object') {
+        const entry = h as Record<string, unknown>;
+        const name = typeof entry.name === 'string' ? entry.name : '';
+        const value = typeof entry.value === 'string' ? entry.value : entry.value;
+        if (name && SENSITIVE_HEADER_NAMES.has(name.toLowerCase())) {
+          return { ...entry, value: REDACTED };
+        }
+        return {
+          ...entry,
+          value: typeof value === 'string' ? scrubString(value) : value,
+        };
+      }
+      return h;
+    });
+  }
+
+  if (typeof headers === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
+      if (SENSITIVE_HEADER_NAMES.has(k.toLowerCase())) {
+        out[k] = REDACTED;
+      } else if (typeof v === 'string') {
+        out[k] = scrubString(v);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
+
+  return headers;
+}
+
+/**
+ * Recursive walker: scrubs string values, redacts sensitive keys, recurses
+ * into arrays/objects. `headers` keys get the dedicated header treatment.
+ *
+ * `siblingName` carries a `{name, value}` form-field shape's `name` field
+ * down so the `value` sibling can be redacted when `name` is sensitive.
+ * This mirrors how CDP `Page.javascriptDialogOpening` and parsed form-data
+ * events arrive in the wire protocol.
+ */
+function walk(value: unknown, siblingName?: string): unknown {
+  if (typeof value === 'string') {
+    if (siblingName && isSensitiveKey(siblingName)) return REDACTED;
+    return scrubString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => walk(v));
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    // Detect form-field shape: an object with both `name` (string) and `value`
+    // keys is treated as a key-value pair where `name` controls `value`.
+    const formFieldName =
+      typeof obj.name === 'string' && 'value' in obj ? (obj.name as string) : undefined;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const keyLower = k.toLowerCase();
+      if (keyLower === 'headers' || keyLower === 'response_headers' || keyLower === 'request_headers') {
+        out[k] = redactHeaders(v);
+        continue;
+      }
+      if (isSensitiveKey(k)) {
+        out[k] = REDACTED;
+        continue;
+      }
+      // Form-field sibling rule: when this object is a {name, value} pair
+      // and name is sensitive, redact value wholesale.
+      if (k === 'value' && formFieldName && isSensitiveKey(formFieldName)) {
+        out[k] = REDACTED;
+        continue;
+      }
+      out[k] = walk(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Top-level entry: redact a captured trace event's `body`. The wrapper
+ * envelope (`ts`, `seq`, `kind`) is preserved as-is.
+ */
+export function redactTraceEvent<T extends { body: unknown }>(event: T): T {
+  return { ...event, body: walk(event.body) } as T;
+}
+
+/** Convenience for tests: redact an arbitrary value tree. */
+export function redactValue(value: unknown): unknown {
+  return walk(value);
+}
