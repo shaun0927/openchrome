@@ -35,7 +35,7 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find an element by natural language and click/hover/double_click; returns state summary after DOM settles. Pass intent="..." (≤120 chars) to label this action in audit logs.\n\nWhen to use: clicking/hovering an element you can describe in plain language. For Shadow DOM / canvas / cross-origin iframes, screenshot first and call with mode:"coordinate".\nWhen NOT to use: computer for plain-DOM coordinate clicks, or act for multi-step sequences.',
+  description: 'Find an element, click/hover/double_click, and return state. Optional intent labels the audit log.\n\nWhen to use: act on an element you can describe. For Shadow DOM / canvas / cross-origin iframes, screenshot first and call with mode:"coordinate".\nWhen NOT to use: computer for plain-DOM coordinate clicks, or act for multi-step sequences.',
   inputSchema: {
     type: 'object',
     properties: {
