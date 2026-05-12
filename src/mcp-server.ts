@@ -61,6 +61,8 @@ import {
   MissingSecretError,
   getSecretStore,
 } from './core/secrets';
+import { currentRequestContext } from './observability/request-id';
+import type { TransportMessageContext } from './transports';
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -302,6 +304,7 @@ export class MCPServer {
       timer: ReturnType<typeof setTimeout>;
       signal?: AbortSignal;
       signalListener?: () => void;
+      mcpSessionId?: string;
     }
   > = new Map();
   /** Monotonic counter — prefixed `oc-s2c-` cannot collide with client ids. */
@@ -312,6 +315,7 @@ export class MCPServer {
    * before issuing a server→client request and fall back when absent.
    */
   private clientCapabilities: { roots?: object; sampling?: object; elicitation?: object } = {};
+  private clientCapabilitiesBySession: Map<string, { roots?: object; sampling?: object; elicitation?: object }> = new Map();
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
@@ -485,6 +489,7 @@ export class MCPServer {
   ): Promise<T> {
     const id = `oc-s2c-${this.nextS2cRequestId++}`;
     const timeoutMs = options?.timeoutMs ?? 30_000;
+    const mcpSessionId = currentRequestContext()?.mcpSessionId;
     return new Promise<T>((resolve, reject) => {
       const cleanup = (): void => {
         const entry = this.pendingClientRequests.get(id);
@@ -527,6 +532,7 @@ export class MCPServer {
         timer,
         signal: options?.signal,
         signalListener,
+        mcpSessionId,
       });
 
       const request = {
@@ -536,7 +542,17 @@ export class MCPServer {
         ...(params ? { params } : {}),
       };
       try {
-        this.sendResponse(request as unknown as MCPResponse);
+        const transport = this.transport;
+        if (mcpSessionId && transport && typeof transport.sendToSession === 'function') {
+          const sent = transport.sendToSession(mcpSessionId, request as unknown as MCPResponse);
+          if (!sent) {
+            cleanup();
+            reject(new Error('s2c_aborted:connection_closed'));
+            return;
+          }
+        } else {
+          this.sendResponse(request as unknown as MCPResponse);
+        }
       } catch (sendErr) {
         cleanup();
         reject(sendErr instanceof Error ? sendErr : new Error(String(sendErr)));
@@ -551,6 +567,18 @@ export class MCPServer {
   private rejectAllPendingS2cRequests(reason: string): void {
     for (const [id, entry] of this.pendingClientRequests) {
       // Use entry.reject which also clears the timer / signal listener.
+      try {
+        entry.reject(new Error(reason));
+      } catch {
+        // best-effort
+      }
+      this.pendingClientRequests.delete(id);
+    }
+  }
+
+  private rejectPendingS2cRequestsForSession(sessionId: string, reason: string): void {
+    for (const [id, entry] of this.pendingClientRequests) {
+      if (entry.mcpSessionId !== sessionId) continue;
       try {
         entry.reject(new Error(reason));
       } catch {
@@ -675,6 +703,8 @@ export class MCPServer {
         // someone else's binding. sessionTenants is instead reclaimed by
         // (a) the MCP `sessions/delete` handler and (b) the periodic
         // `sweepSessionTenants()` tick scheduled in start().
+        this.rejectPendingS2cRequestsForSession(sessionId, 's2c_aborted:connection_closed');
+        this.clientCapabilitiesBySession.delete(sessionId);
       },
     );
   }
@@ -712,6 +742,7 @@ export class MCPServer {
   async handleMessage(
     parsed: Record<string, unknown>,
     signal?: AbortSignal,
+    transportContext?: TransportMessageContext,
   ): Promise<MCPResponse | null> {
     // Record activity — every inbound MCP request flows through this method
     // (stdio and HTTP transports both route here; see start()). By wiring at
@@ -736,6 +767,10 @@ export class MCPServer {
       const idKey = String(parsed.id);
       const entry = this.pendingClientRequests.get(idKey);
       if (entry) {
+        if (entry.mcpSessionId && transportContext?.mcpSessionId !== entry.mcpSessionId) {
+          console.error(`[MCPServer] dropping client response for id=${idKey} from non-owner session`);
+          return null;
+        }
         if ('error' in parsed) {
           const err = parsed.error as { message?: string; code?: number };
           entry.reject(new Error(err?.message ?? `s2c_error_code:${err?.code ?? 'unknown'}`));
@@ -871,8 +906,8 @@ export class MCPServer {
     }
 
     // Wire the transport message handler to MCPServer protocol logic
-    this.transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal) =>
-      this.handleMessage(parsed, signal),
+    this.transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) =>
+      this.handleMessage(parsed, signal, context),
     );
 
     this.transport.start();
@@ -977,11 +1012,16 @@ export class MCPServer {
     // request and fall back to a heuristic / error path when absent.
     const caps = params?.capabilities as { roots?: object; sampling?: object; elicitation?: object } | undefined;
     if (caps && typeof caps === 'object') {
-      this.clientCapabilities = {
+      const captured = {
         ...(caps.roots !== undefined ? { roots: caps.roots } : {}),
         ...(caps.sampling !== undefined ? { sampling: caps.sampling } : {}),
         ...(caps.elicitation !== undefined ? { elicitation: caps.elicitation } : {}),
       };
+      this.clientCapabilities = captured;
+      const mcpSessionId = currentRequestContext()?.mcpSessionId;
+      if (mcpSessionId) {
+        this.clientCapabilitiesBySession.set(mcpSessionId, captured);
+      }
     }
 
     // Detect client identity for progressive disclosure decisions

@@ -13,11 +13,19 @@
 
 import { MCPServer } from '../../src/mcp-server';
 import type { MCPResponse } from '../../src/types/mcp';
+import { runWithRequestContext } from '../../src/observability/request-id';
 
 class CapturingTransport {
   public sent: Array<Record<string, unknown>> = [];
+  public sentBySession: Array<{ sessionId: string; response: Record<string, unknown> }> = [];
+  public liveSessions = new Set<string>();
   send(response: MCPResponse): void {
     this.sent.push(response as unknown as Record<string, unknown>);
+  }
+  sendToSession(sessionId: string, response: MCPResponse): boolean {
+    if (!this.liveSessions.has(sessionId)) return false;
+    this.sentBySession.push({ sessionId, response: response as unknown as Record<string, unknown> });
+    return true;
   }
   onMessage(): void {
     /* no-op */
@@ -55,12 +63,13 @@ async function injectResponse(
   id: string | number,
   result?: unknown,
   error?: { code: number; message: string },
+  context?: { mcpSessionId?: string },
 ): Promise<void> {
   const msg: Record<string, unknown> = { jsonrpc: '2.0', id };
   if (error) msg.error = error;
   else msg.result = result;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (server as any).handleMessage(msg);
+  await (server as any).handleMessage(msg, undefined, context);
 }
 
 function lastSentId(transport: CapturingTransport): string {
@@ -154,6 +163,48 @@ describe('requestFromClient round-trip (#960)', () => {
     await expect(p1).rejects.toThrow(/connection_closed/);
     await expect(p2).rejects.toThrow(/connection_closed/);
   });
+
+  test('HTTP-context requests are sent only to the owning MCP session', async () => {
+    const { server, transport } = makeServer();
+    transport.liveSessions.add('session-a');
+
+    const p = runWithRequestContext(
+      { requestId: 'req-a', mcpSessionId: 'session-a' },
+      () => request<{ ok: boolean }>(server, 'roots/list'),
+    );
+
+    expect(transport.sent).toHaveLength(0);
+    expect(transport.sentBySession).toHaveLength(1);
+    expect(transport.sentBySession[0].sessionId).toBe('session-a');
+
+    const sentId = String(transport.sentBySession[0].response.id);
+    await injectResponse(server, sentId, { ok: false }, undefined, { mcpSessionId: 'session-b' });
+    await injectResponse(server, sentId, { ok: true }, undefined, { mcpSessionId: 'session-a' });
+    await expect(p).resolves.toEqual({ ok: true });
+  });
+
+  test('HTTP session delete rejects only matching in-flight requests', async () => {
+    const { server, transport } = makeServer();
+    transport.liveSessions.add('session-a');
+    transport.liveSessions.add('session-b');
+
+    const pA = runWithRequestContext(
+      { requestId: 'req-a', mcpSessionId: 'session-a' },
+      () => request(server, 'roots/list', undefined, { timeoutMs: 30_000 }),
+    );
+    const pB = runWithRequestContext(
+      { requestId: 'req-b', mcpSessionId: 'session-b' },
+      () => request(server, 'roots/list', undefined, { timeoutMs: 30_000 }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (server as any).rejectPendingS2cRequestsForSession('session-a', 's2c_aborted:connection_closed');
+    await expect(pA).rejects.toThrow(/connection_closed/);
+
+    const sentB = transport.sentBySession.find((entry) => entry.sessionId === 'session-b')!;
+    await injectResponse(server, String(sentB.response.id), { still: 'open' }, undefined, { mcpSessionId: 'session-b' });
+    await expect(pB).resolves.toEqual({ still: 'open' });
+  });
 });
 
 describe('clientCapabilities cache (#960)', () => {
@@ -174,6 +225,33 @@ describe('clientCapabilities cache (#960)', () => {
     expect(caps.sampling).toEqual({});
     expect(caps.elicitation).toEqual({});
     expect(caps.roots).toEqual({ listChanged: true });
+  });
+
+  test('initialize capabilities are isolated by MCP session when present', async () => {
+    const { server } = makeServer();
+    await runWithRequestContext(
+      { requestId: 'req-a', mcpSessionId: 'session-a' },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      () => (server as any).handleInitialize({
+        protocolVersion: '2024-11-05',
+        capabilities: { roots: { listChanged: true } },
+        clientInfo: { name: 'smoke-a', version: '0' },
+      }),
+    );
+    await runWithRequestContext(
+      { requestId: 'req-b', mcpSessionId: 'session-b' },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      () => (server as any).handleInitialize({
+        protocolVersion: '2024-11-05',
+        capabilities: { sampling: {} },
+        clientInfo: { name: 'smoke-b', version: '0' },
+      }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bySession = (server as any).clientCapabilitiesBySession;
+    expect(bySession.get('session-a')).toEqual({ roots: { listChanged: true } });
+    expect(bySession.get('session-b')).toEqual({ sampling: {} });
   });
 
   test('absent capabilities leave the cache empty', async () => {
