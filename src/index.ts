@@ -10,6 +10,11 @@
 import { Command } from 'commander';
 import { getMCPServer, setMCPServerOptions } from './mcp-server';
 import { registerAllTools } from './tools';
+import {
+  CategorySelection,
+  parseCategoryCsv,
+  categoryHelpText,
+} from './tools/_shared/category';
 import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { resolveHeadlessMode } from './config/headless-resolver';
@@ -101,7 +106,10 @@ program
   .option('--auto-connect [userDataDir]', 'Attach to a Chrome you started yourself by reading <userDataDir>/DevToolsActivePort (#849). When omitted, uses the platform-default Chrome user-data dir. Also: OPENCHROME_AUTO_CONNECT=<dir> env var. Implies --launch-mode=attach.')
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string }) => {
+  .option('--slim', `Register only the slim-mode tool categories (chrome-devtools-mcp parity). Always-on categories (reliability, observe) are kept. Also: OPENCHROME_SLIM=1 env var.\n${categoryHelpText()}`)
+  .option('--enable-categories <csv>', 'Comma-separated allow-list of tool categories to register. Mutually exclusive with --slim (slim wins). Also: OPENCHROME_ENABLE_CATEGORIES env var.')
+  .option('--disable-categories <csv>', 'Comma-separated deny-list of tool categories to skip. Always-on categories cannot be disabled. Also: OPENCHROME_DISABLE_CATEGORIES env var.')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; slim?: boolean; enableCategories?: string; disableCategories?: string }) => {
     let port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -382,7 +390,49 @@ program
     resetReadinessMachine();
 
     const server = getMCPServer();
-    registerAllTools(server);
+
+    // Tool category selection (#847). Flags win over env vars; env vars exist
+    // so MCP host configs that cannot pass argv (Claude Desktop config blocks)
+    // can still trim the surface. CSV parse errors are fatal — a typo in
+    // --enable-categories should not silently degrade to "all tools".
+    let categorySelection: CategorySelection;
+    try {
+      const slim =
+        options.slim === true || process.env.OPENCHROME_SLIM === '1';
+      const enabledCsv =
+        options.enableCategories ??
+        process.env.OPENCHROME_ENABLE_CATEGORIES ??
+        '';
+      const disabledCsv =
+        options.disableCategories ??
+        process.env.OPENCHROME_DISABLE_CATEGORIES ??
+        '';
+      categorySelection = {
+        slim,
+        enabled:
+          enabledCsv.length > 0
+            ? parseCategoryCsv(
+                enabledCsv,
+                options.enableCategories
+                  ? '--enable-categories'
+                  : 'OPENCHROME_ENABLE_CATEGORIES',
+              )
+            : undefined,
+        disabled:
+          disabledCsv.length > 0
+            ? parseCategoryCsv(
+                disabledCsv,
+                options.disableCategories
+                  ? '--disable-categories'
+                  : 'OPENCHROME_DISABLE_CATEGORIES',
+              )
+            : undefined,
+      };
+    } catch (err) {
+      console.error(`[openchrome] ${(err as Error).message}`);
+      process.exit(2);
+    }
+    registerAllTools(server, categorySelection);
 
     // Dev-only hook: artificial delay for the tools component transition.
     // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).

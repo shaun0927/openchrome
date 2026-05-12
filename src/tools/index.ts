@@ -1,8 +1,28 @@
 /**
- * Tool Registry - Registers all MCP tools
+ * Tool Registry — Registers all MCP tools, gated by category selection (#847).
+ *
+ * Each register*Tool entry below is paired with the MCP-visible name(s) it
+ * adds and the category that gates it. The pair is consulted before invoking
+ * the registrar, so disabled categories never touch `server.registerTool()` —
+ * the disabled name does not appear in `tools/list` or in any cached tool
+ * manifest, exactly matching chrome-devtools-mcp `--slim` semantics.
+ *
+ * Default behavior (no category flags) is byte-identical to v1.11.0; pinned
+ * by `tests/tools/registration-default.snapshot.test.ts`.
  */
 
 import { MCPServer } from '../mcp-server';
+import {
+  CategorySelection,
+  resolveEnabledCategories,
+  TOOL_TO_CATEGORY,
+  ToolCategory,
+} from './_shared/category';
+import {
+  buildDisabledHint,
+  setDisabledToolsSnapshot,
+  DisabledToolEntry,
+} from '../resources/tools-disabled';
 import { registerNavigateTool } from './navigate';
 import { registerComputerTool } from './computer';
 import { registerReadPageTool } from './read-page';
@@ -131,162 +151,278 @@ import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
 
-export function registerAllTools(server: MCPServer): void {
+/**
+ * One entry per registrar invocation. `tools` is the list of MCP-visible
+ * names that calling `register()` will produce; the entry is invoked iff at
+ * least one of those names belongs to an enabled category.
+ *
+ * Granularity intentionally matches the original `registerAllTools` body —
+ * we don't fan out multi-tool registrars (e.g. orchestration, recording,
+ * connect) into per-tool entries because the registrar is a unit of code
+ * cost, not a unit of selection. Per-tool selection is achieved by the fact
+ * that EVERY tool produced by the registrar shares the same category in the
+ * canonical map; the lint script enforces total coverage.
+ */
+interface RegistrationEntry {
+  /** MCP names produced by `register`. Must all be present in TOOL_TO_CATEGORY. */
+  tools: readonly string[];
+  register: (server: MCPServer) => void;
+}
+
+const REGISTRATION_ENTRIES: readonly RegistrationEntry[] = [
   // Core browser tools
-  registerNavigateTool(server);
-  registerComputerTool(server);
-  registerReadPageTool(server);
-  registerFindTool(server);
-  registerFormInputTool(server);
-  registerJavascriptTool(server);
-  registerNetworkTool(server);
+  { tools: ['navigate'], register: registerNavigateTool },
+  { tools: ['computer'], register: registerComputerTool },
+  { tools: ['read_page'], register: registerReadPageTool },
+  { tools: ['find'], register: registerFindTool },
+  { tools: ['form_input'], register: registerFormInputTool },
+  { tools: ['javascript_tool'], register: registerJavascriptTool },
+  { tools: ['network'], register: registerNetworkTool },
 
   // Phase 1: Page and content tools
-  registerPageReloadTool(server);
-  registerCookiesTool(server);
-  registerQueryDomTool(server);
-  registerPageContentTool(server);
-  registerWaitForTool(server);
-  registerStorageTool(server);
+  { tools: ['page_reload'], register: registerPageReloadTool },
+  { tools: ['cookies'], register: registerCookiesTool },
+  { tools: ['query_dom'], register: registerQueryDomTool },
+  { tools: ['page_content'], register: registerPageContentTool },
+  { tools: ['wait_for'], register: registerWaitForTool },
+  { tools: ['storage'], register: registerStorageTool },
 
   // Phase 2: Device emulation and settings
-  registerUserAgentTool(server);
-  registerGeolocationTool(server);
-  registerEmulateDeviceTool(server);
-  registerPagePdfTool(server);
-  registerPageScreenshotTool(server);
-  registerConsoleCaptureTool(server);
-  registerPerformanceMetricsTool(server);
-  registerRequestInterceptTool(server);
+  { tools: ['user_agent'], register: registerUserAgentTool },
+  { tools: ['geolocation'], register: registerGeolocationTool },
+  { tools: ['emulate_device'], register: registerEmulateDeviceTool },
+  { tools: ['page_pdf'], register: registerPagePdfTool },
+  { tools: ['page_screenshot'], register: registerPageScreenshotTool },
+  { tools: ['console_capture'], register: registerConsoleCaptureTool },
+  { tools: ['performance_metrics'], register: registerPerformanceMetricsTool },
+  { tools: ['request_intercept'], register: registerRequestInterceptTool },
 
   // Passive network capture (#896) — lite=headers-only, full=bodies-with-cap.
   // Coexists with request_intercept (which owns setRequestInterception(true)).
-  registerNetworkCaptureLiteTool(server);
-  registerNetworkCaptureFullTool(server);
+  { tools: ['network_capture_lite'], register: registerNetworkCaptureLiteTool },
+  { tools: ['network_capture_full'], register: registerNetworkCaptureFullTool },
 
   // Phase 3: Advanced tools
-  registerFileUploadTool(server);
-  registerHttpAuthTool(server);
-  registerDragDropTool(server);
+  { tools: ['file_upload'], register: registerFileUploadTool },
+  { tools: ['http_auth'], register: registerHttpAuthTool },
+  { tools: ['drag_drop'], register: registerDragDropTool },
 
-  // UX improvement composite tools (reduce tool call count)
-  registerFillFormTool(server);
+  // UX improvement composite tools
+  { tools: ['fill_form'], register: registerFillFormTool },
 
   // Tab management
-  registerTabsContextTool(server);
-  registerTabsCreateTool(server);
-  registerTabsCloseTool(server);
+  { tools: ['tabs_context'], register: registerTabsContextTool },
+  { tools: ['tabs_create'], register: registerTabsCreateTool },
+  { tools: ['tabs_close'], register: registerTabsCloseTool },
 
-  // Worker management (parallel browser operations)
-  registerWorkerTool(server);
+  // Worker management
+  { tools: ['worker'], register: registerWorkerTool },
 
-  // Orchestration tools (Chrome-Sisyphus workflow management)
-  registerOrchestrationTools(server);
+  // Orchestration tools (multi-tool registrar)
+  {
+    tools: [
+      'workflow_init',
+      'workflow_status',
+      'workflow_collect',
+      'workflow_collect_partial',
+      'workflow_cleanup',
+      'worker_update',
+      'worker_complete',
+      'execute_plan',
+    ],
+    register: registerOrchestrationTools,
+  },
 
-  // Performance tools (P0 - eliminate agent spawn overhead & screenshot bottleneck)
-  registerBatchExecuteTool(server);
-  registerLightweightScrollTool(server);
-  registerBatchPaginateTool(server);
+  // Performance tools
+  { tools: ['batch_execute'], register: registerBatchExecuteTool },
+  { tools: ['lightweight_scroll'], register: registerLightweightScrollTool },
+  { tools: ['batch_paginate'], register: registerBatchPaginateTool },
 
-  // Smart Tools (reduce LLM wandering — response enrichment + composite tools)
-  registerInteractTool(server);
-  registerInspectTool(server);
+  // Smart Tools
+  { tools: ['interact'], register: registerInteractTool },
+  { tools: ['inspect'], register: registerInspectTool },
 
-  // Vision tools (vision-based element discovery #577)
-  registerVisionFindTool(server);
+  // Vision tools
+  { tools: ['vision_find'], register: registerVisionFindTool },
 
-  // Memory tools (domain knowledge persistence)
-  registerMemoryTools(server);
+  // Memory tools
+  { tools: ['memory'], register: registerMemoryTools },
 
   // Lifecycle tools
-  registerShutdownTool(server);
-  registerReapOrphansTool(server);
-  registerProfileStatusTool(server);
-  registerListProfilesTool(server);
+  { tools: ['oc_stop'], register: registerShutdownTool },
+  { tools: ['oc_reap_orphans'], register: registerReapOrphansTool },
+  { tools: ['oc_profile_status'], register: registerProfileStatusTool },
+  { tools: ['list_profiles'], register: registerListProfilesTool },
 
-  // AI Agent Continuity tools (#355, #356)
-  registerSessionSnapshotTool(server);
-  registerSessionResumeTool(server);
-  registerJournalTool(server);
+  // AI Agent Continuity tools
+  { tools: ['oc_session_snapshot'], register: registerSessionSnapshotTool },
+  { tools: ['oc_session_resume'], register: registerSessionResumeTool },
+  { tools: ['oc_journal'], register: registerJournalTool },
 
-  // Self-healing tools (#347)
-  registerConnectionHealthTool(server);
+  // Self-healing tools
+  { tools: ['oc_connection_health'], register: registerConnectionHealthTool },
 
-  // AI Agent Continuity tools (#347 Phase 4)
-  registerCheckpointTool(server);
+  // AI Agent Continuity (#347 Phase 4)
+  { tools: ['oc_checkpoint'], register: registerCheckpointTool },
 
-  // Web AI host connection tools (#523)
-  registerConnectTools(server);
+  // Web AI host connection tools (multi-tool registrar)
+  {
+    tools: [
+      'oc_get_connection_info',
+      'oc_copy_to_clipboard',
+      'oc_open_host_settings',
+    ],
+    register: registerConnectTools,
+  },
 
-  // Session recording tools (#572)
-  registerRecordingTools(server);
+  // Session recording tools (multi-tool registrar)
+  {
+    tools: [
+      'oc_recording_start',
+      'oc_recording_stop',
+      'oc_recording_list',
+      'oc_recording_export',
+    ],
+    register: registerRecordingTools,
+  },
 
-  // Crawl tools (#576)
-  registerCrawlTool(server);
-  registerCrawlSitemapTool(server);
+  // Crawl tools
+  { tools: ['crawl'], register: registerCrawlTool },
+  { tools: ['crawl_sitemap'], register: registerCrawlSitemapTool },
 
-  // Natural language action API (#578)
-  registerActTool(server);
+  // Natural language action API
+  { tools: ['act'], register: registerActTool },
 
-  // Composite page-health check (#token-efficiency)
-  registerValidatePageTool(server);
+  // Composite page-health check
+  { tools: ['validate_page'], register: registerValidatePageTool },
 
-  // Structured extraction (#571)
-  registerExtractDataTool(server);
+  // Structured extraction
+  { tools: ['extract_data'], register: registerExtractDataTool },
 
-  // 2FA tools (#575)
-  registerTotpGenerateTool(server);
+  // 2FA tools
+  { tools: ['oc_totp_generate'], register: registerTotpGenerateTool },
 
-  // Outcome Contracts (#784) — single-call assertion verifier
-  registerOcAssertTool(server);
+  // Outcome Contracts
+  { tools: ['oc_assert'], register: registerOcAssertTool },
+  { tools: ['oc_evidence_bundle'], register: registerOcEvidenceBundleTool },
 
-  // Outcome Contracts (#792) — evidence bundle capture
-  registerOcEvidenceBundleTool(server);
+  // Skill memory tools
+  { tools: ['oc_skill_record'], register: registerOcSkillRecordTool },
+  { tools: ['oc_skill_recall'], register: registerOcSkillRecallTool },
 
-  // Skill memory tools (#785) — record + recall
-  registerOcSkillRecordTool(server);
-  registerOcSkillRecallTool(server);
+  // Doctor report tool (#898)
+  { tools: ['oc_doctor_report'], register: registerOcDoctorReportTool },
 
-  // Doctor report tool (#898) — read cached `openchrome doctor` output
-  registerOcDoctorReportTool(server);
-  // Performance insights two-step API (#846).
-  // TODO(#844): use isCoreFeatureEnabled() helper once #844 lands.
-  // Off-switch: when OPENCHROME_PERF_INSIGHTS=0 the two tools are NOT
-  // registered, preserving v1.10.4 tools/list parity (P2). Default on.
-  if (process.env.OPENCHROME_PERF_INSIGHTS !== '0') {
-    registerOcPerformanceInsightsTool(server);
-    registerOcPerformanceAnalyzeTool(server);
-    // Wire session-scoped trace eviction once. The store keeps an
-    // in-memory map of session_id -> trace_ids; on session deletion we
-    // delete every trace file owned by that session.
-    const sm = getSessionManager();
-    const store = getPerfTraceStore();
-    sm.addEventListener((event) => {
-      if (event.type === 'session:deleted' && event.sessionId) {
-        const removed = store.evictSession(event.sessionId);
-        if (removed > 0) {
-          console.error(
-            `[PerfInsights] Evicted ${removed} trace handle(s) for session ${event.sessionId}`,
-          );
+  // Performance insights two-step API (#846)
+  {
+    tools: ['oc_performance_insights', 'oc_performance_analyze'],
+    register: (server) => {
+      if (process.env.OPENCHROME_PERF_INSIGHTS === '0') return;
+      registerOcPerformanceInsightsTool(server);
+      registerOcPerformanceAnalyzeTool(server);
+      const sm = getSessionManager();
+      const store = getPerfTraceStore();
+      sm.addEventListener((event) => {
+        if (event.type === 'session:deleted' && event.sessionId) {
+          const removed = store.evictSession(event.sessionId);
+          if (removed > 0) {
+            console.error(
+              `[PerfInsights] Evicted ${removed} trace handle(s) for session ${event.sessionId}`,
+            );
+          }
         }
-      }
-    });
-  }
-  // Pilot-tier: user-supplied proxy hook (#874). Loaded lazily so v1.11
-  // behaviour is byte-identical when the family is off — no code from
-  // `src/pilot/**` is reached unless both `--pilot` and
-  // `OPENCHROME_PROXY_HOOK=1` are set.
-  if (isProxyHookEnabled()) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { registerOcProxyHookTool } = require('../pilot/proxy/hook') as typeof import('../pilot/proxy/hook');
-    registerOcProxyHookTool(server);
-  }
-  // oc_observe (#866) — deterministic actionable-element enumeration
-  registerOcObserveTool(server);
-  // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
-  registerOcDevToolsUrlTool(server);
-  // Portable context envelope (#873) — oc_context_export / oc_context_import
-  registerOcContextTools(server);
+      });
+    },
+  },
 
-  console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
-}
+  // Pilot-tier: user-supplied proxy hook (#874).
+  {
+    tools: ['oc_proxy_hook'],
+    register: (server) => {
+      if (!isProxyHookEnabled()) return;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { registerOcProxyHookTool } = require('../pilot/proxy/hook') as typeof import('../pilot/proxy/hook');
+      registerOcProxyHookTool(server);
+    },
+  },
+
+  // Deterministic observation / DevTools / portable context
+  { tools: ['oc_observe'], register: registerOcObserveTool },
+  { tools: ['oc_devtools_url'], register: registerOcDevToolsUrlTool },
+  { tools: ['oc_context_export', 'oc_context_import'], register: registerOcContextTools },
+];
+
+/**
+ * Register all tools, gated by the supplied category selection.
+ *
+ * Selection sources are resolved by the CLI layer (src/cli.ts) and
+ * collapsed into a single `CategorySelection` here — this function knows
+ * nothing about flags or env vars, so it is trivially testable.
+ *
+ * Default behavior (`selection` undefined or all fields unset) is the full
+ * surface, byte-identical to v1.11.0 — pinned by snapshot tests.
+ */
+export function registerAllTools(
+  server: MCPServer,
+  selection: CategorySelection = {},
+): void {
+  const enabled = resolveEnabledCategories(selection);
+  const disabledEntries: DisabledToolEntry[] = [];
+
+  for (const entry of REGISTRATION_ENTRIES) {
+    // A registrar is invoked iff EVERY tool it produces belongs to an
+    // enabled category. Multi-tool registrars whose names span categories
+    // would normally be a smell — but TOOL_TO_CATEGORY is verified by the
+    // lint script + snapshot test to assign one canonical category per
+    // name, so in practice every multi-tool registrar in this file shares
+    // a single category among its outputs (orchestration → workflow,
+    // recording → capture, connect → host).
+    let allEnabled = true;
+    for (const name of entry.tools) {
+      const cat = TOOL_TO_CATEGORY[name];
+      if (cat === undefined) {
+        // Misconfiguration — fail loud at startup so a missing category
+        // assignment never silently slips into production. Mirrors the
+        // CI lint check (scripts/lint-tool-categories.mjs).
+        throw new Error(
+          `[Tools] Tool "${name}" has no category in TOOL_TO_CATEGORY. ` +
+            `Add it to src/tools/_shared/category.ts.`,
+        );
+      }
+      if (!enabled.has(cat)) {
+        allEnabled = false;
+      }
+    }
+
+    if (allEnabled) {
+      entry.register(server);
+    } else {
+      // Record every individual tool the registrar would have produced as
+      // disabled, with its own category-specific restart hint. We surface
+      // ALL skipped names here, even ones whose category happens to be
+      // enabled (in case a future multi-tool registrar bundles tools across
+      // categories) — an operator can then read the resource and see
+      // exactly what's missing and why.
+      for (const name of entry.tools) {
+        const cat = TOOL_TO_CATEGORY[name] as ToolCategory;
+        disabledEntries.push({
+          name,
+          category: cat,
+          hint: buildDisabledHint(cat),
+        });
+      }
+    }
+  }
+
+  // Publish the disabled-tools snapshot to the sidecar resource so agents
+  // can introspect what was dropped. Empty list when no flags are set —
+  // that is the load-bearing default and forms part of the v1.11.0 parity
+  // contract.
+  setDisabledToolsSnapshot(disabledEntries);
+
+  const enabledCats = Array.from(enabled).join(', ');
+  const skipped = disabledEntries.length;
+  console.error(
+    `[Tools] Registered ${server.getToolNames().length} tools ` +
+      `(categories: ${enabledCats}; skipped: ${skipped})`,
+  );

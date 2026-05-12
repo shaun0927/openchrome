@@ -25,7 +25,8 @@
     "lint:tier": "depcruise --config .dependency-cruiser.cjs src",
     "clean": "rimraf dist",
     "prepare": "npm run build",
-    "lint:changed": "node scripts/lint-changed-src.js"
+    "lint:changed": "node scripts/lint-changed-src.js",
+    "lint:categories": "node scripts/lint-tool-categories.mjs"
   },
   "keywords": [
     "openchrome",

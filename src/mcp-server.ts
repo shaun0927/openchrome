@@ -25,6 +25,11 @@ import {
   parseDomainFromUri,
   readSkillGraphResource,
 } from './resources/skill-graph';
+import {
+  disabledToolsResource,
+  DISABLED_TOOLS_RESOURCE_URI,
+  getDisabledToolsContent,
+} from './resources/tools-disabled';
 import { HintEngine } from './hints';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
@@ -312,6 +317,9 @@ export class MCPServer {
     // Register built-in resources
     this.registerResource(usageGuideResource);
     this.registerResource(skillGraphResourceTemplate);
+    // Sidecar discovery surface for tools filtered out by category selection
+    // (#847). The snapshot is populated by registerAllTools() at startup.
+    this.registerResource(disabledToolsResource);
 
     // Initialize dashboard if enabled
     if (options.dashboard) {
@@ -963,6 +971,8 @@ export class MCPServer {
     let content: string;
     if (uri === 'openchrome://usage-guide') {
       content = getUsageGuideContent();
+    } else if (uri === DISABLED_TOOLS_RESOURCE_URI) {
+      content = getDisabledToolsContent();
     } else {
       throw new Error(`No content handler for resource: ${uri}`);
     }
