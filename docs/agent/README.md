@@ -19,7 +19,7 @@ const capabilityMap = fs.readFileSync(
 const client = new Anthropic();
 
 const response = await client.messages.create({
-  model: 'claude-opus-4-5',
+  model: 'claude-sonnet-4-5',
   max_tokens: 4096,
   system: `You are a browser-automation agent with access to the openchrome MCP server.\n\n${capabilityMap}`,
   messages: [{ role: 'user', content: 'Navigate to https://example.com and return the page title.' }],

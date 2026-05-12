@@ -29,7 +29,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as Module from 'module';
 
 // ---------------------------------------------------------------------------
 // Minimal MCPToolDefinition type (mirrors src/types/mcp.ts).
