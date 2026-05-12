@@ -13,8 +13,6 @@ import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
-import { lookupOrSet, isSnapshotCacheEnabled } from '../utils/snapshot-cache-helper';
-import { paramsHashFromArgs, READ_PAGE_PARAMS } from '../core/perception/params-hash';
 import {
   buildSemanticView,
   type SemanticAXNode,
@@ -954,52 +952,15 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
 /**
  * Snapshot-cache wrapper (#879).
  *
- * Wraps the sanitized handler with a `(kind, frameId, docEpoch, viewport,
- * paramsHash)`-keyed cache. Successful results are cached; errors and
- * the delta-compression branch skip caching entirely. The cache itself
- * lives in `src/core/perception/snapshot-cache.ts` and stays pure JS —
- * CDP eviction is wired host-side via the helper module.
+ * read_page stays uncached for now. AX/semantic responses embed ephemeral
+ * ref_* ids owned by RefIdManager, and DOM/CSS outputs include scroll-sensitive
+ * page stats/content. Until cache identity can include scroll state and ref
+ * mappings can be replayed or made stable, returning cached read_page payloads
+ * risks stale refs or stale post-scroll snapshots. Keep the wrapper as a
+ * behavior-preserving seam so the feature can be re-enabled safely later.
  */
 const cachedHandler: ToolHandler = async (sessionId, args, context) => {
-  // Kill-switch short-circuit FIRST so the wrapper introduces zero extra
-  // `getPage` calls when the cache is disabled (the 1.12 default). This
-  // preserves the call-count contract that pre-existing tests rely on.
-  if (!isSnapshotCacheEnabled()) return sanitizedHandler(sessionId, args, context);
-
-  const tabId = args.tabId as string | undefined;
-  const mode = (args.mode as string) || 'dom';
-  const compression = args.compression as string | undefined;
-
-  // Cache only deterministic snapshots that do not mint ephemeral refs.
-  // AX mode mutates RefIdManager state (clear + generate refs); serving a
-  // cached AX payload would replay stale ref_* identifiers without restoring
-  // that side effect, so callers could receive refs that follow-up tools no
-  // longer recognize. Keep AX uncached until the cache can replay/refreeze
-  // ref mappings together with the payload.
-  const cacheKind =
-    mode === 'dom' ? 'read_page.dom' :
-    mode === 'css' ? 'read_page.css' :
-    null;
-  if (!tabId || compression === 'delta' || cacheKind === null) {
-    return sanitizedHandler(sessionId, args, context);
-  }
-
-  const sessionManager = getSessionManager();
-  const page = await sessionManager.getPage(sessionId, tabId).catch(() => null);
-  if (!page) return sanitizedHandler(sessionId, args, context);
-
-  const { value } = await lookupOrSet<MCPResult>(
-    page,
-    {
-      kind: cacheKind,
-      paramsHash: paramsHashFromArgs(args, READ_PAGE_PARAMS),
-    },
-    () => sanitizedHandler(sessionId, args, context),
-    // Never cache error results — a transient failure would otherwise pin
-    // until the next mutation or TTL eviction.
-    (v) => !v.isError,
-  );
-  return value;
+  return sanitizedHandler(sessionId, args, context);
 };
 
 export function registerReadPageTool(server: MCPServer): void {

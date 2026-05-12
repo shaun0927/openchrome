@@ -5,8 +5,6 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { lookupOrSet, isSnapshotCacheEnabled } from '../utils/snapshot-cache-helper';
-import { paramsHashFromArgs, FIND_PARAMS } from '../core/perception/params-hash';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
@@ -298,32 +296,16 @@ const handler: ToolHandler = async (
 };
 
 /**
- * Snapshot-cache wrapper (#879). See `src/tools/read-page.ts` for the
- * shared rationale.
+ * Snapshot-cache wrapper (#879).
  *
- * The kill-switch check runs FIRST so the wrapper introduces zero extra
- * `getPage` calls when the cache is disabled (the 1.12 default). This
- * preserves the call-count contract that pre-existing tests rely on —
- * specifically tests that use `mockResolvedValueOnce(...)` on the
- * session-manager mock and assume the inner handler is the only consumer.
+ * find remains uncached because successful responses contain ephemeral ref
+ * tokens minted by RefIdManager. A cache hit would return the old tokens
+ * without replaying ref registration, and a preceding read_page/semantic call
+ * can clear those refs. Keep this seam behavior-preserving until refs become
+ * stable or cache hits can regenerate equivalent refs.
  */
 const cachedHandler: ToolHandler = async (sessionId, args, context) => {
-  if (!isSnapshotCacheEnabled()) return handler(sessionId, args, context);
-  const tabId = args.tabId as string | undefined;
-  if (!tabId) return handler(sessionId, args, context);
-  const sessionManager = getSessionManager();
-  const page = await sessionManager.getPage(sessionId, tabId, undefined, 'find').catch(() => null);
-  if (!page) return handler(sessionId, args, context);
-  const { value } = await lookupOrSet<MCPResult>(
-    page,
-    {
-      kind: 'find',
-      paramsHash: paramsHashFromArgs(args, FIND_PARAMS),
-    },
-    () => handler(sessionId, args, context),
-    (v) => !v.isError,
-  );
-  return value;
+  return handler(sessionId, args, context);
 };
 
 export function registerFindTool(server: MCPServer): void {
