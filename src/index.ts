@@ -96,7 +96,19 @@ program
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean }) => {
+  .option('--introspect-tools-list', 'Print tools/list as compact JSON to stdout and exit (no Chrome/CDP startup). Used by lint-tool-schemas.mjs.')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; introspectToolsList?: boolean }) => {
+    // --introspect-tools-list: print tools/list JSON and exit, NO Chrome/CDP/transport startup.
+    if (options.introspectToolsList) {
+      const { MCPServer } = await import('./mcp-server');
+      const { registerAllTools } = await import('./tools');
+      const server = new MCPServer(undefined, { initialToolTier: 3 });
+      registerAllTools(server);
+      const manifest = server.getToolManifest();
+      process.stdout.write(JSON.stringify(manifest.tools) + '\n');
+      process.exit(0);
+    }
+
     const port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 

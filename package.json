@@ -21,6 +21,7 @@
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
     "lint:tier": "depcruise --config .dependency-cruiser.cjs src",
+    "lint:tool-schemas": "node dist/index.js serve --introspect-tools-list > /tmp/oc-tools-list.json && node scripts/lint-tool-schemas.mjs /tmp/oc-tools-list.json",
     "clean": "rimraf dist",
     "prepare": "npm run build",
     "lint:changed": "node scripts/lint-changed-src.js"
