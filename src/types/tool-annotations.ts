@@ -85,6 +85,11 @@ export const TOOL_ANNOTATIONS = {
   workflow_collect: READ_ONLY,
   workflow_collect_partial: READ_ONLY,
   wait_for: READ_ONLY,
+  oc_doctor_report: READ_ONLY,
+  oc_devtools_url: READ_ONLY,
+  oc_context_export: READ_ONLY,
+  oc_observe: READ_ONLY,
+  oc_performance_analyze: READ_ONLY,
 
   // ── Network egress (navigation, crawling) ───────────────────────────────
   //
@@ -103,6 +108,7 @@ export const TOOL_ANNOTATIONS = {
   crawl_sitemap: OPEN_WORLD,
   validate_page: OPEN_WORLD,
   batch_paginate: OPEN_WORLD,
+  oc_performance_insights: OPEN_WORLD,
 
   // ── Network-modifying / blocking / arbitrary-execution ──────────────────
   //
@@ -125,6 +131,7 @@ export const TOOL_ANNOTATIONS = {
   javascript_tool: OPEN_WORLD_DESTRUCTIVE,
   batch_execute: OPEN_WORLD_DESTRUCTIVE,
   act: OPEN_WORLD_DESTRUCTIVE,
+  oc_proxy_hook: OPEN_WORLD_DESTRUCTIVE,
 
   // ── Destructive (deletes / terminates / blocks) ─────────────────────────
   cookies: DESTRUCTIVE,
@@ -168,6 +175,9 @@ export const TOOL_ANNOTATIONS = {
   worker_update: MUTATES,
   workflow_init: MUTATES,
   execute_plan: MUTATES,
+  network_capture_lite: MUTATES,
+  network_capture_full: MUTATES,
+  oc_context_import: MUTATES,
 
   // ── Pilot tier (loaded only under --pilot) ──────────────────────────────
   oc_pilot_handoff_create: MUTATES,

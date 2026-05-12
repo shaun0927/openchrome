@@ -13,6 +13,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getChromePool } from '../chrome/pool';
 import { fetchJsonList } from '../chrome/devtools-info';
@@ -28,6 +29,7 @@ const definition: MCPToolDefinition = {
     'Get the Chrome DevTools inspector URL for the current worker\'s active page. ' +
     'Returns a URL you can paste into any local browser to attach live DevTools to the running page. ' +
     'Use targetId to select a specific open tab, or workerId to select a specific worker\'s current page.',
+  annotations: TOOL_ANNOTATIONS.oc_devtools_url,
   inputSchema: {
     type: 'object',
     properties: {

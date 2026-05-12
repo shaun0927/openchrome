@@ -87,6 +87,7 @@ describe('TOOL_ANNOTATIONS table', () => {
 
     const toolsDir = path.join(__dirname, '..', '..', 'src', 'tools');
     const pilotHandoffDir = path.join(__dirname, '..', '..', 'src', 'pilot', 'handoff');
+    const pilotProxyDir = path.join(__dirname, '..', '..', 'src', 'pilot', 'proxy');
     const mcpServerFile = path.join(__dirname, '..', '..', 'src', 'mcp-server.ts');
 
     const referencedNames = new Set<string>();
@@ -104,6 +105,7 @@ describe('TOOL_ANNOTATIONS table', () => {
 
     await collectFromDir(toolsDir);
     await collectFromDir(pilotHandoffDir);
+    await collectFromDir(pilotProxyDir);
     // The `expand_tools` virtual tool is referenced inline in mcp-server.ts.
     const serverSrc = await fs.readFile(mcpServerFile, 'utf8');
     const serverMatches = serverSrc.match(/TOOL_ANNOTATIONS\.([a-zA-Z_][a-zA-Z0-9_]*)/g) || [];

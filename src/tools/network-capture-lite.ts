@@ -11,11 +11,13 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { createNetworkCaptureHandler, NETWORK_CAPTURE_INPUT_SCHEMA } from './network-capture-shared';
 
 const definition: MCPToolDefinition = {
   name: 'network_capture_lite',
   description: 'Capture network request metadata + headers (no bodies). Cheap passive recorder. Actions: start, stop, getLogs, clear.',
+  annotations: TOOL_ANNOTATIONS.network_capture_lite,
   inputSchema: NETWORK_CAPTURE_INPUT_SCHEMA,
 };
 

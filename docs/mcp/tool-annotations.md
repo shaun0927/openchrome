@@ -58,6 +58,11 @@ Categories below are documentation-only — the runtime source is
 | `workflow_collect`         | Collect previously-completed results                 |
 | `workflow_collect_partial` | Collect partial in-progress results                  |
 | `wait_for`                 | Pure wait on observable state                        |
+| `oc_doctor_report`        | Cached doctor report read                            |
+| `oc_devtools_url`         | DevTools URL metadata read                           |
+| `oc_context_export`       | Portable context envelope export                     |
+| `oc_observe`              | Deterministic actionable-element enumeration         |
+| `oc_performance_analyze`  | Analyze an existing performance trace                |
 
 ### Network egress — `{ readOnly:F, destructive:F, idempotent:F, openWorld:T }`
 
@@ -68,7 +73,8 @@ Categories below are documentation-only — the runtime source is
 | `crawl`          | Visits N pages from a seed                                                                                       |
 | `crawl_sitemap`  | Visits N pages from a sitemap                                                                                    |
 | `validate_page`  | Calls `smartGoto`, may create a new tab, waits on live page state — open-world, mutating, non-idempotent         |
-| `batch_paginate` | Presses keys / clicks / scrolls; `url` strategy creates tabs and navigates to generated URLs — worst-case egress |
+| `batch_paginate`          | Presses keys / clicks / scrolls; `url` strategy creates tabs and navigates to generated URLs — worst-case egress |
+| `oc_performance_insights` | Captures performance data and may reload/navigate to a URL                                                       |
 
 ### Network egress + destructive — `{ readOnly:F, destructive:T, idempotent:F, openWorld:T }`
 
@@ -81,6 +87,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | `javascript_tool`   | Arbitrary JS via `Runtime.evaluate` — worst case includes `document.cookie = ''`, `window.close()`, `fetch()` to any origin, or invoking a sibling destructive tool            |
 | `batch_execute`     | Batch dispatcher that can invoke arbitrary tools and evaluate arbitrary JS expressions — worst case is its worst sub-call                                                      |
 | `act`               | NL action router — click can trigger irreversible browser-side mutations (Delete-account, payment confirmation, etc.)                                                          |
+| `oc_proxy_hook`     | Pilot proxy hook can alter network/proxy behavior and affect external requests                                                                                                 |
 
 ### Destructive — `{ readOnly:F, destructive:T, idempotent:F, openWorld:F }`
 
@@ -131,6 +138,9 @@ These tools combine network egress with destructive worst-case capability. They 
 | `worker_update`         | Worker state update                                              |
 | `workflow_init`         | Initializes workflow state                                       |
 | `execute_plan`          | Workflow plan execution                                          |
+| `network_capture_lite`  | Starts/stops passive network capture state                         |
+| `network_capture_full`  | Starts/stops passive network capture with body retention options    |
+| `oc_context_import`     | Imports cookies/storage/auth context into a tab                     |
 
 ### Virtual / runtime-only
 

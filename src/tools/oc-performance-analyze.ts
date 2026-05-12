@@ -13,6 +13,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import {
   INSIGHT_NAMES,
   evaluateInsights,
@@ -27,6 +28,7 @@ const definition: MCPToolDefinition = {
     'oc_performance_insights. Returns Markdown details and an evidence ' +
     'list. Unknown insight names return ' +
     "{ error: 'unknown_insight', supported: [...] } without crashing.",
+  annotations: TOOL_ANNOTATIONS.oc_performance_analyze,
   inputSchema: {
     type: 'object',
     properties: {
