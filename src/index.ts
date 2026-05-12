@@ -35,6 +35,7 @@ import { getChromeLauncher } from './chrome/launcher';
 import { getBrowserStateManager } from './browser-state';
 import { getListenerErrorStats, installUnhandledRejectionSafetyNet } from './utils/safe-listener';
 import { setComponent, resetReadinessMachine } from './watchdog/readiness';
+import { wireChromeReadiness } from './watchdog/chrome-readiness';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -496,25 +497,11 @@ program
     const cdpClient = getCDPClient();
     const sessionManager = getSessionManager();
 
-    // Readiness: wire chrome component via CDPClient connection events.
-    // Dev-only OPENCHROME_FAKE_SLOW_START delays the chrome→ok transition.
-    const _isDevHooks = process.env.NODE_ENV !== 'production' && process.env.OPENCHROME_DEV_HOOKS === '1';
-    cdpClient.addConnectionListener((event) => {
-      if (event.type === 'connected' || event.type === 'reconnected') {
-        if (_isDevHooks && process.env.OPENCHROME_FAKE_SLOW_START) {
-          const delayMs = parseInt(process.env.OPENCHROME_FAKE_SLOW_START, 10);
-          if (delayMs > 0) {
-            setTimeout(() => setComponent('chrome', 'ok'), delayMs);
-          } else {
-            setComponent('chrome', 'ok');
-          }
-        } else {
-          setComponent('chrome', 'ok');
-        }
-      } else if (event.type === 'disconnected' || event.type === 'reconnect_failed') {
-        setComponent('chrome', 'failing');
-      }
-    });
+    // Readiness: wire chrome component via CDPClient connection events, then
+    // proactively connect so daemon /ready probes can become ready before the
+    // first MCP tool call.
+    const chromeReadiness = wireChromeReadiness(cdpClient);
+    chromeReadiness.initializeStartupConnection();
 
     // Wire session manager into HTTP transport for dashboard API endpoints
     if (httpTransport) {
@@ -558,7 +545,7 @@ program
     });
     processWatchdog.on('chrome-relaunched', () => {
       console.error('[SelfHealing] Chrome relaunched by watchdog, triggering reconnect...');
-      cdpClient.forceReconnect().catch((err: unknown) => {
+      chromeReadiness.handleChromeRelaunched().catch((err: unknown) => {
         console.error('[SelfHealing] Post-relaunch reconnect failed:', err);
       });
     });
@@ -570,10 +557,6 @@ program
         chromeProcessMonitor.start(newPid);
         console.error(`[SelfHealing] ChromeProcessMonitor restarted (new pid=${newPid})`);
       }
-    });
-    // Readiness: flip chrome back to ok after watchdog confirms relaunch
-    processWatchdog.on('chrome-relaunched', () => {
-      setComponent('chrome', 'ok');
     });
     // Readiness: flip chrome to failing when watchdog detects Chrome died
     processWatchdog.on('chrome-died', () => {
