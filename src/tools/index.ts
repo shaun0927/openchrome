@@ -107,6 +107,12 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// Performance insights two-step API (#846)
+// TODO(#844): use isCoreFeatureEnabled() helper once #844 lands
+import { registerOcPerformanceInsightsTool } from './oc-performance-insights';
+import { registerOcPerformanceAnalyzeTool } from './oc-performance-analyze';
+import { getSessionManager } from '../session-manager';
+import { getPerfTraceStore } from '../core/performance/insights/trace-store';
 // Pilot-tier: user-supplied proxy hook (#874).
 // Registration is gated at runtime by `isProxyHookEnabled()` so the tool is
 // absent from `tools/list` unless BOTH `--pilot` AND `OPENCHROME_PROXY_HOOK=1`
@@ -232,6 +238,29 @@ export function registerAllTools(server: MCPServer): void {
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
 
+  // Performance insights two-step API (#846).
+  // TODO(#844): use isCoreFeatureEnabled() helper once #844 lands.
+  // Off-switch: when OPENCHROME_PERF_INSIGHTS=0 the two tools are NOT
+  // registered, preserving v1.10.4 tools/list parity (P2). Default on.
+  if (process.env.OPENCHROME_PERF_INSIGHTS !== '0') {
+    registerOcPerformanceInsightsTool(server);
+    registerOcPerformanceAnalyzeTool(server);
+    // Wire session-scoped trace eviction once. The store keeps an
+    // in-memory map of session_id -> trace_ids; on session deletion we
+    // delete every trace file owned by that session.
+    const sm = getSessionManager();
+    const store = getPerfTraceStore();
+    sm.addEventListener((event) => {
+      if (event.type === 'session:deleted' && event.sessionId) {
+        const removed = store.evictSession(event.sessionId);
+        if (removed > 0) {
+          console.error(
+            `[PerfInsights] Evicted ${removed} trace handle(s) for session ${event.sessionId}`,
+          );
+        }
+      }
+    });
+  }
   // Pilot-tier: user-supplied proxy hook (#874). Loaded lazily so v1.11
   // behaviour is byte-identical when the family is off — no code from
   // `src/pilot/**` is reached unless both `--pilot` and
