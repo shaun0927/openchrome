@@ -19,11 +19,18 @@ import {
   CrawlTracker,
   urlGlobToRegex,
 } from '../utils/crawl-utils';
+import {
+  staticFetch,
+  isStaticSufficient,
+  extractBodyText,
+  StaticFetchError,
+  StaticReason,
+} from '../utils/static-fetch';
 
 const definition: MCPToolDefinition = {
   name: 'crawl_sitemap',
   description:
-    'Crawl a website using its sitemap.xml. Auto-discovers sitemaps from robots.txt or well-known URLs (/sitemap.xml, /sitemap_index.xml). Supports sitemap index files and URL filtering.',
+    'Crawl a website using its sitemap.xml. Auto-discovers sitemaps from robots.txt or /sitemap.xml. Supports sitemap index files and URL filtering.\n\nWhen to use: Extracting content from many pages of a site that publishes a sitemap.xml.\nWhen NOT to use: Use crawl for BFS discovery when no sitemap exists, or navigate for a single page.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -51,6 +58,12 @@ const definition: MCPToolDefinition = {
       concurrency: {
         type: 'number',
         description: 'Max concurrent page fetches. Default: 3',
+      },
+      engine: {
+        type: 'string',
+        enum: ['auto', 'static', 'cdp'],
+        description:
+          'Fetch engine: "cdp" (default, opens a Chrome tab per page), "static" (Node fetch only, fails closed on insufficient pages), or "auto" (static first, fall back to CDP when static is insufficient).',
       },
     },
     required: ['url'],
@@ -92,7 +105,11 @@ interface CrawledPage {
   content: string;
   links_found: number;
   error?: string;
+  engine_used?: 'static' | 'cdp';
+  static_reason?: StaticReason;
 }
+
+type EngineMode = 'auto' | 'static' | 'cdp';
 
 interface CrawlSitemapSummary {
   total_pages: number;
@@ -103,51 +120,23 @@ interface CrawlSitemapSummary {
 }
 
 // ---------------------------------------------------------------------------
-// Fetch raw text from a URL via browser target
+// Fetch raw text from a URL via static fetch (robots.txt / sitemap XML are
+// plain text — no Chrome tab needed).
 // ---------------------------------------------------------------------------
 
 async function fetchRawText(
-  sessionId: string,
+  _sessionId: string,
   url: string,
   context?: ToolContext,
 ): Promise<string | null> {
-  const sessionManager = getSessionManager();
-  let targetId: string | null = null;
-
   try {
-    const { targetId: tid, page } = await sessionManager.createTarget(sessionId, url);
-    targetId = tid;
-
-    const bodyText = await withTimeout(
-      page.evaluate(() => {
-        // For XML documents (sitemaps), Chrome XSLT-renders the content.
-        // Use XMLSerializer to get the raw XML source.
-        if (document.contentType && document.contentType.includes('xml')) {
-          return new XMLSerializer().serializeToString(document);
-        }
-        // For HTML documents (robots.txt served as HTML, error pages), use innerText
-        return document.body?.innerText || '';
-      }),
-      5000,
-      'crawl_sitemap.fetchRawText.evaluate',
-      context,
-    );
-
-    await sessionManager.closeTarget(sessionId, tid);
-    targetId = null;
-
-    return bodyText || null;
+    const { html, status } = await staticFetch(url, { signal: context?.signal });
+    if (status < 200 || status >= 300) return null;
+    return html || null;
   } catch (err) {
     console.error(
       `[crawl_sitemap] Failed to fetch ${url}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    if (targetId) {
-      try {
-        await sessionManager.closeTarget(sessionId, targetId);
-      } catch {
-        // ignore cleanup errors
-      }
-    }
     return null;
   }
 }
@@ -254,6 +243,98 @@ async function resolveSitemapPageUrls(
   }
 
   return pageUrls;
+}
+
+// ---------------------------------------------------------------------------
+// Static engine — Node fetch path. Returns null + reason on insufficiency so
+// the caller (auto mode) can fall back to CDP.
+// ---------------------------------------------------------------------------
+
+function staticBuildContent(html: string): { title: string; content: string } {
+  const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+  const title = titleMatch ? titleMatch[1].trim() : '';
+  const { text } = extractBodyText(html);
+  return { title, content: text };
+}
+
+function staticCountLinks(html: string, baseUrl: string): number {
+  const re = /<a\s[^>]*href\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let count = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const href = m[1];
+    if (!href) continue;
+    if (
+      href.startsWith('javascript:') ||
+      href.startsWith('mailto:') ||
+      href.startsWith('tel:')
+    ) {
+      continue;
+    }
+    try {
+      const resolved = new URL(href, baseUrl).toString();
+      if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
+        count++;
+      }
+    } catch {
+      // skip malformed
+    }
+  }
+  return count;
+}
+
+async function fetchPageStatic(
+  url: string,
+  outputFormat: string,
+  context?: ToolContext,
+): Promise<
+  | { ok: true; page: CrawledPage }
+  | { ok: false; reason: StaticReason; error?: string }
+> {
+  try {
+    const { html, status, contentType, finalUrl } = await staticFetch(url, {
+      signal: context?.signal,
+    });
+    const sufficiency = isStaticSufficient(html, status, contentType);
+    if (!sufficiency.ok) {
+      return { ok: false, reason: sufficiency.reason };
+    }
+
+    let title = '';
+    let content = '';
+    if (outputFormat === 'structured') {
+      const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+      title = titleMatch ? titleMatch[1].trim() : '';
+      const bodyMatch = html.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i);
+      content = bodyMatch ? bodyMatch[1] : html;
+    } else {
+      const built = staticBuildContent(html);
+      title = built.title;
+      content = built.content;
+    }
+
+    if (content.length > MAX_OUTPUT_CHARS) {
+      content = content.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
+    }
+
+    return {
+      ok: true,
+      page: {
+        url,
+        title,
+        content,
+        links_found: staticCountLinks(html, finalUrl),
+      },
+    };
+  } catch (err) {
+    const reason: StaticReason =
+      err instanceof StaticFetchError ? err.reason : 'fetch-error';
+    return {
+      ok: false,
+      reason,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +505,18 @@ const handler: ToolHandler = async (
   const outputFormat = (args.output_format as string) || 'markdown';
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 
+  const engineArg = args.engine as string | undefined;
+  let engine: EngineMode = 'cdp';
+  if (engineArg === 'static' || engineArg === 'auto' || engineArg === 'cdp') {
+    engine = engineArg;
+  } else if (engineArg !== undefined) {
+    return {
+      content: [{ type: 'text', text: `Error: engine must be one of "auto", "static", "cdp"` }],
+      isError: true,
+    };
+  }
+  const engineExplicit = engineArg !== undefined;
+
   const startTime = Date.now();
   const tracker = new CrawlTracker();
   const pages: CrawledPage[] = [];
@@ -541,7 +634,43 @@ const handler: ToolHandler = async (
             }
             tracker.visit(pageUrl);
 
-            return fetchPage(sessionId, pageUrl, outputFormat, context);
+            let page: CrawledPage;
+            let staticReason: StaticReason | undefined;
+            let engineUsed: 'static' | 'cdp' | undefined;
+
+            if (engine === 'static' || engine === 'auto') {
+              const staticResult = await fetchPageStatic(pageUrl, outputFormat, context);
+              if (staticResult.ok) {
+                page = staticResult.page;
+                engineUsed = 'static';
+              } else if (engine === 'static') {
+                page = {
+                  url: pageUrl,
+                  title: '',
+                  content: '',
+                  links_found: 0,
+                  error: `static-insufficient: ${staticResult.reason}`,
+                };
+                engineUsed = 'static';
+                staticReason = staticResult.reason;
+              } else {
+                page = await fetchPage(sessionId, pageUrl, outputFormat, context);
+                engineUsed = 'cdp';
+                staticReason = staticResult.reason;
+              }
+            } else {
+              page = await fetchPage(sessionId, pageUrl, outputFormat, context);
+              if (engineExplicit) engineUsed = 'cdp';
+            }
+
+            if (engineExplicit && engineUsed) {
+              page.engine_used = engineUsed;
+            }
+            if (staticReason) {
+              page.static_reason = staticReason;
+            }
+
+            return page;
           }),
         ),
       );
@@ -551,6 +680,14 @@ const handler: ToolHandler = async (
           pages.push(result);
         }
       }
+
+      // #869 — emit progress per batch (after pages are pushed so `progress`
+      // is monotonic). No-op when the client did not supply a progressToken.
+      context?.reportProgress?.({
+        progress: pages.length,
+        total: urlsToVisit.length,
+        message: batch[batch.length - 1] ?? undefined,
+      });
     }
 
     // -----------------------------------------------------------------------

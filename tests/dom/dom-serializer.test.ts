@@ -470,6 +470,22 @@ describe('DOM Serializer', () => {
     expect(result.content).toContain('[Output truncated at 500 chars. Use depth parameter to limit scope.]');
   });
 
+  test('bounds page_stats header with huge URL and title', async () => {
+    const page = createMockPageForDOM({
+      url: `https://example.com/${'u'.repeat(1000)}`,
+      title: 't'.repeat(1000),
+    });
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { maxOutputChars: 120 });
+
+    expect(result.truncated).toBe(true);
+    expect(result.content.length).toBeLessThanOrEqual(120);
+    expect(result.content).toBe('\n\n[Output truncated at 120 chars. Use depth parameter to limit scope.]');
+    expect(result.content).not.toContain('u'.repeat(100));
+    expect(result.content).not.toContain('t'.repeat(100));
+  });
+
   test('sets truncated to false when output fits', async () => {
     const page = createMockPageForDOM();
     const cdpClient = createMockCDPClientForDOM(simpleDoc);
