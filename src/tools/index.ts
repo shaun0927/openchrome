@@ -107,6 +107,8 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
+// oc_observe (#866) — deterministic actionable-element enumeration
+import { registerOcObserveTool } from './oc-observe';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
@@ -223,6 +225,8 @@ export function registerAllTools(server: MCPServer): void {
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
 
+  // oc_observe (#866) — deterministic actionable-element enumeration
+  registerOcObserveTool(server);
   // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
   registerOcDevToolsUrlTool(server);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
