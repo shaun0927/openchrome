@@ -9,6 +9,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
+import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -16,6 +17,18 @@ import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-d
 
 interface CSSElementInfo {
   ref: string;
+  /**
+   * Stable backend-node uid (#844). P2 contract: this field is always
+   * present in the response shape. Value is `null` when
+   * OPENCHROME_NODE_REF=0 OR when the element could not be resolved to a
+   * backendNodeId in time.
+   */
+  nodeRef: string | null;
+  /**
+   * CDP backendNodeId of the element when available. Present alongside
+   * `nodeRef` for one minor-version transition (#844 acceptance criteria).
+   */
+  backendNodeId?: number;
   tagName: string;
   id: string | null;
   className: string;
@@ -80,6 +93,36 @@ interface QueryDomDiagnostics {
   totalElements: number;
   framework: string | null;
   closestMatch: string | null;
+}
+
+/**
+ * Resolve the backendNodeId for a puppeteer ElementHandle via CDP, then
+ * mint a stable nodeRef. Returns `{ nodeRef, backendNodeId }` with
+ * `nodeRef=null` (and `backendNodeId` omitted) when resolution fails or
+ * when the feature flag is off. Designed for the post-evaluate enrichment
+ * pass — never throws.
+ */
+async function resolveNodeRefForHandle(
+  page: import('puppeteer-core').Page,
+  cdpClient: { send: (page: import('puppeteer-core').Page, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+  loaderId: string | null,
+  handle: import('puppeteer-core').ElementHandle<Element>,
+): Promise<{ nodeRef: string | null; backendNodeId?: number }> {
+  try {
+    const remoteObject = (handle as unknown as { remoteObject?: () => { objectId?: string } }).remoteObject?.();
+    const objectId = remoteObject?.objectId;
+    if (!objectId) return { nodeRef: null };
+    const { node } = (await cdpClient.send(page, 'DOM.describeNode', {
+      objectId,
+    })) as { node?: { backendNodeId?: number } };
+    const backendNodeId = node?.backendNodeId;
+    if (!backendNodeId || backendNodeId <= 0) return { nodeRef: null };
+    if (!loaderId) return { nodeRef: null, backendNodeId };
+    const uid = mintNodeRefSync(page, loaderId, backendNodeId);
+    return { nodeRef: uid, backendNodeId };
+  } catch {
+    return { nodeRef: null };
+  }
 }
 
 async function gatherDiagnostics(
@@ -187,6 +230,9 @@ async function shadowCSSFallback(
               for (var j = 0; j < el.attributes.length; j++) { attributes[el.attributes[j].name] = el.attributes[j].value; }
               return {
                 ref: '',
+                // nodeRef is filled in post-evaluate; P2 contract requires
+                // the key to always be present in the response shape.
+                nodeRef: null,
                 tagName: el.tagName.toLowerCase(),
                 id: el.id || null,
                 className: typeof el.className === 'string' ? el.className : '',
@@ -202,6 +248,16 @@ async function shadowCSSFallback(
 
         if (result?.value) {
           result.value.ref = `el_${i}`;
+          // Mint a stable nodeRef from the backendNodeId we already have
+          // (P2 contract: the key is always populated post-evaluate).
+          try {
+            const loaderId = await getCurrentLoaderId(page, cdpClient);
+            const uid = mintNodeRefSync(page, loaderId, backendNodeIds[i]);
+            result.value.nodeRef = uid;
+            result.value.backendNodeId = backendNodeIds[i];
+          } catch {
+            // result.value.nodeRef already defaults to null
+          }
           results.push(result.value);
         }
       } catch {
@@ -321,6 +377,9 @@ async function handleCSS(
 
           return {
             ref: `el_${index}`,
+            // nodeRef is populated post-evaluate via CDP enrichment below
+            // (P2 contract: field is always present in the response shape).
+            nodeRef: null as string | null,
             tagName: el.tagName.toLowerCase(),
             id: el.id || null,
             className: el.className,
@@ -343,6 +402,27 @@ async function handleCSS(
       ), 2000, 'query_dom'
       , context);
       elementInfos.push(info);
+    }
+
+    // Post-evaluate enrichment: mint a stable nodeRef per element (#844).
+    // We do this outside the in-page evaluate because backendNodeId is only
+    // observable via CDP, not via DOM-level APIs. Failures degrade to
+    // nodeRef=null without affecting the rest of the response.
+    {
+      const cdpClient = sessionManager.getCDPClient();
+      let loaderId: string | null = null;
+      try {
+        loaderId = await getCurrentLoaderId(page, cdpClient);
+      } catch {
+        loaderId = null;
+      }
+      for (let i = 0; i < limitedElements.length && i < elementInfos.length; i++) {
+        const { nodeRef, backendNodeId } = await resolveNodeRefForHandle(
+          page, cdpClient, loaderId, limitedElements[i],
+        );
+        elementInfos[i].nodeRef = nodeRef;
+        if (backendNodeId !== undefined) elementInfos[i].backendNodeId = backendNodeId;
+      }
     }
 
     const result: Record<string, unknown> = {
@@ -422,6 +502,8 @@ async function handleCSS(
 
       return {
         ref: 'el_0',
+        // nodeRef populated post-evaluate via CDP (P2 contract).
+        nodeRef: null as string | null,
         tagName: el.tagName.toLowerCase(),
         id: el.id || null,
         className: el.className,
@@ -439,6 +521,19 @@ async function handleCSS(
             : null,
       };
     }, element), 15000, 'query_dom', context);
+
+    // Post-evaluate nodeRef enrichment (#844)
+    try {
+      const cdpClient2 = sessionManager.getCDPClient();
+      const loaderId2 = await getCurrentLoaderId(page, cdpClient2).catch(() => null);
+      const { nodeRef, backendNodeId } = await resolveNodeRefForHandle(
+        page, cdpClient2, loaderId2, element,
+      );
+      info.nodeRef = nodeRef;
+      if (backendNodeId !== undefined) info.backendNodeId = backendNodeId;
+    } catch {
+      // info.nodeRef already defaults to null
+    }
 
     return {
       content: [
