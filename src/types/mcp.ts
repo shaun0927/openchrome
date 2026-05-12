@@ -28,6 +28,17 @@ export interface MCPResponse {
 export interface MCPResult {
   [key: string]: unknown;
   content?: MCPContent[];
+  /**
+   * Typed structured result alongside `content[]` (MCP spec
+   * `structuredContent`). When the tool declares an `outputSchema`, the
+   * returned object MUST validate against it. For backward compatibility
+   * with clients that only read `content[]`, tools should populate BOTH:
+   * `content[0].text` contains `JSON.stringify(structuredContent)` (or a
+   * human-readable variant), and `structuredContent` carries the typed
+   * object. `JSON.parse(content[0].text)` deep-equals `structuredContent`
+   * is the wire-format invariant enforced per-tool by unit tests.
+   */
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
@@ -44,14 +55,30 @@ export interface MCPError {
   data?: unknown;
 }
 
+/**
+ * JSON-Schema-Draft-7 shape used for both `inputSchema` and the optional
+ * `outputSchema` on `MCPToolDefinition`. The runtime validator only inspects
+ * `type === 'object'` schemas — list/scalar top-level shapes are intentionally
+ * not allowed at the tool boundary.
+ */
+export interface MCPObjectSchema {
+  type: 'object';
+  properties: Record<string, unknown>;
+  required?: string[];
+}
+
 export interface MCPToolDefinition {
   name: string;
   description: string;
-  inputSchema: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required?: string[];
-  };
+  inputSchema: MCPObjectSchema;
+  /**
+   * Optional MCP-spec `outputSchema`. When declared, callers can validate the
+   * tool's `structuredContent` result against this schema. Tools that opt in
+   * MUST populate `MCPResult.structuredContent` AND maintain the wire-format
+   * invariant: `JSON.parse(content[0].text)` deep-equals `structuredContent`.
+   * Tools without `outputSchema` continue to return free-form `content[]`.
+   */
+  outputSchema?: MCPObjectSchema;
 }
 
 /**

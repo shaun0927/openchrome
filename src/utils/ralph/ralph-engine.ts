@@ -15,6 +15,7 @@
 
 import type { Page } from 'puppeteer-core';
 import type { CDPClient } from '../../cdp/client';
+import { dispatchCoordinateClick } from '../../cdp/input';
 import { withDomDelta } from '../dom-delta';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS, AXResolvedElement } from '../ax-element-resolver';
 import { discoverElements, cleanupTags, DISCOVERY_TAG, getTaggedElementRect } from '../element-discovery';
@@ -156,12 +157,7 @@ const strategyCDPCoord: StrategyFn = async (ctx) => {
   const x = Math.round(ax.rect.x), y = Math.round(ax.rect.y);
 
   const { delta } = await withDomDelta(ctx.page, async () => {
-    await ctx.cdpClient.send(ctx.page, 'Input.dispatchMouseEvent', {
-      type: 'mousePressed', x, y, button: 'left', clickCount: 1,
-    });
-    await ctx.cdpClient.send(ctx.page, 'Input.dispatchMouseEvent', {
-      type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
-    });
+    await dispatchCoordinateClick(ctx.cdpClient, ctx.page, { x, y, button: 'left', clickCount: 1 });
   }, { settleMs: Math.max(150, ctx.waitAfter) });
 
   invalidateAXCache(getTargetId(ctx.page.target()));

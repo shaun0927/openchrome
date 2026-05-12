@@ -9,7 +9,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
-import { lookupOrSet } from '../utils/snapshot-cache-helper';
+import { lookupOrSet, isSnapshotCacheEnabled } from '../utils/snapshot-cache-helper';
 import { paramsHashFromArgs, QUERY_DOM_PARAMS } from '../core/perception/params-hash';
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ interface CSSElementInfo {
 const definition: MCPToolDefinition = {
   name: 'query_dom',
   description:
-    'Query DOM elements via CSS selector or XPath. Returns tag, attributes, text, position. CSS results include a ref field for use in subsequent calls.',
+    'Query DOM elements via CSS selector or XPath. Returns tag, attributes, text, position. CSS results include a ref field for use in subsequent calls.\n\nWhen to use: Precise element lookup by CSS selector or XPath when you know the exact selector.\nWhen NOT to use: Use find for natural-language element search or read_page for full DOM structure.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -765,8 +765,12 @@ const handler: ToolHandler = async (
 /**
  * Snapshot-cache wrapper (#879). See `src/tools/read-page.ts` for the
  * shared rationale.
+ *
+ * Kill-switch short-circuit runs FIRST so the wrapper introduces zero
+ * extra `getPage` calls when the cache is disabled (the 1.12 default).
  */
 const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  if (!isSnapshotCacheEnabled()) return handler(sessionId, args, context);
   const tabId = args.tabId as string | undefined;
   if (!tabId) return handler(sessionId, args, context);
   const sessionManager = getSessionManager();

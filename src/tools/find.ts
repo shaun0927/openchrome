@@ -5,7 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { lookupOrSet } from '../utils/snapshot-cache-helper';
+import { lookupOrSet, isSnapshotCacheEnabled } from '../utils/snapshot-cache-helper';
 import { paramsHashFromArgs, FIND_PARAMS } from '../core/perception/params-hash';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
@@ -19,7 +19,7 @@ import { detectVisionHints, formatVisionHints } from '../vision/auto-detect';
 
 const definition: MCPToolDefinition = {
   name: 'find',
-  description: 'Find elements by query. Returns up to 20 matches with refs.',
+  description: 'Find elements by query. Returns up to 20 matches with refs.\n\nWhen to use: Locating elements by natural language when exact selectors are unknown.\nWhen NOT to use: Use query_dom when you have a CSS selector or XPath, or interact to find-and-click in one step.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -300,8 +300,15 @@ const handler: ToolHandler = async (
 /**
  * Snapshot-cache wrapper (#879). See `src/tools/read-page.ts` for the
  * shared rationale.
+ *
+ * The kill-switch check runs FIRST so the wrapper introduces zero extra
+ * `getPage` calls when the cache is disabled (the 1.12 default). This
+ * preserves the call-count contract that pre-existing tests rely on —
+ * specifically tests that use `mockResolvedValueOnce(...)` on the
+ * session-manager mock and assume the inner handler is the only consumer.
  */
 const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  if (!isSnapshotCacheEnabled()) return handler(sessionId, args, context);
   const tabId = args.tabId as string | undefined;
   if (!tabId) return handler(sessionId, args, context);
   const sessionManager = getSessionManager();

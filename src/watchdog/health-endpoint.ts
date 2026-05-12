@@ -2,10 +2,12 @@
  * Health Endpoint — optional HTTP health check server.
  * Runs on a separate port from the MCP server for external monitoring.
  * Part of #347 Layer 4: Application Watchdog.
+ * /ready probe added in #862.
  */
 
 import * as http from 'http';
 import { getMetricsCollector } from '../metrics/collector';
+import { ReadinessMachine, getReadinessMachine } from './readiness';
 
 export interface HealthData {
   status: 'ok' | 'degraded' | 'error';
@@ -58,12 +60,19 @@ export class HealthEndpoint {
   private readonly port: number;
   private readonly bindAddress: string;
   private readonly provider: HealthDataProvider;
+  private readonly readiness: ReadinessMachine;
 
   // 9090 avoids conflict with Node.js inspector (9229), Chrome DevTools (9222)
-  constructor(provider: HealthDataProvider, port = 9090, bindAddress = '127.0.0.1') {
+  constructor(
+    provider: HealthDataProvider,
+    port = 9090,
+    bindAddress = '127.0.0.1',
+    readiness?: ReadinessMachine,
+  ) {
     this.port = port;
     this.bindAddress = bindAddress;
     this.provider = provider;
+    this.readiness = readiness ?? getReadinessMachine();
   }
 
   /**
@@ -83,6 +92,17 @@ export class HealthEndpoint {
             console.error('[HealthEndpoint] Provider error:', error);
             res.writeHead(503, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ status: 'error', error: 'Internal health check failure' }));
+          }
+        } else if (req.url === '/ready' && req.method === 'GET') {
+          try {
+            const status = this.readiness.getReadiness();
+            const statusCode = status.ready ? 200 : 503;
+            res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(status));
+          } catch (error) {
+            console.error('[HealthEndpoint] Readiness check error:', error);
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ready: false, error: 'Internal readiness check failure' }));
           }
         } else if (req.url === '/metrics' && req.method === 'GET') {
           try {
@@ -123,6 +143,7 @@ export class HealthEndpoint {
       this.server.listen(this.port, this.bindAddress, () => {
         const activePort = this.getPort();
         console.error(`[HealthEndpoint] Health check: http://${this.bindAddress}:${activePort}/health`);
+        console.error(`[HealthEndpoint] Readiness probe: http://${this.bindAddress}:${activePort}/ready`);
         console.error(`[HealthEndpoint] Prometheus metrics: http://${this.bindAddress}:${activePort}/metrics`);
         resolve();
       });

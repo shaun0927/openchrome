@@ -17,6 +17,7 @@ import { normalizeQuery } from '../utils/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -56,6 +57,7 @@ const definition: MCPToolDefinition = {
         enum: ['auto', 'off'],
         description: 'After submit, run a generic login-failure detector that flips success → failure when the password form is still mounted. Default: "auto". Set "off" to restore pre-#658 behavior.',
       },
+      verify: VERIFY_FIELD_SCHEMA,
     },
     required: ['tabId', 'fields'],
   },
@@ -75,6 +77,7 @@ const handler: ToolHandler = async (
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 300, 50), 2000);
   const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
+  const verifyMode = coerceVerifyMode(args.verify);
 
   const sessionManager = getSessionManager();
 
@@ -133,7 +136,12 @@ const handler: ToolHandler = async (
     const filledFields: string[] = [];
     const errors: string[] = [];
 
-    const { delta, result: formResult } = await withDomDelta(page, async () => {
+    // Wrap the mutating sequence in runVerify so the structured AX-hash + pHash
+    // report (issue #827) brackets the actual page mutations. When verifyMode
+    // is 'none' this returns `verify: undefined` and the result is byte-identical
+    // to develop.
+    const { result: withDomResult, verify: fillVerifyReport } = await runVerify(page, verifyMode, async () =>
+      withDomDelta(page, async () => {
       let submitted = false;
       // Match and fill each requested field
       for (const [fieldKey, fieldValue] of Object.entries(fields)) {
@@ -466,7 +474,9 @@ const handler: ToolHandler = async (
         }
       }
       return { submitted, loginResult, submitErrored };
-    }, { settleMs: 200 });
+    }, { settleMs: 200 }),
+    );
+    const { delta, result: formResult } = withDomResult;
 
     // Build compact result message
     const resultParts: string[] = [];
@@ -532,6 +542,7 @@ const handler: ToolHandler = async (
         : submitFailed
           ? { _meta: { errorReason: 'submit_failed' } }
           : {}),
+      ...(fillVerifyReport ? { verify: fillVerifyReport } : {}),
     } as MCPResult;
   } catch (error) {
     return {

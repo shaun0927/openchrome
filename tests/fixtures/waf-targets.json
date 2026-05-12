@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "description": "Phase 0 measurement spike target set for issue #892 (BrowserMCP adoption B-1). Five fixed URLs used to evaluate WAF bypass hypothesis. C1/C2 are sanity controls; T1/T2/T3 are falsification targets.",
+  "controls": [
+    {
+      "slot": "C1",
+      "url": "https://example.com/",
+      "layer": "Control — must succeed under both arms",
+      "role": "control"
+    },
+    {
+      "slot": "C2",
+      "url": "https://news.ycombinator.com/",
+      "layer": "Control — must succeed under both arms",
+      "role": "control"
+    }
+  ],
+  "targets": [
+    {
+      "slot": "T1",
+      "url": "https://nowsecure.nl/",
+      "layer": "Cloudflare bot test (well-known public canary)",
+      "role": "target"
+    },
+    {
+      "slot": "T2",
+      "url": "https://www.amazon.com/dp/B07XJ8C8F5",
+      "layer": "Anti-bot retail (PerimeterX-class)",
+      "role": "target"
+    },
+    {
+      "slot": "T3",
+      "url": "https://www.zillow.com/homes/Seattle-WA_rb/",
+      "layer": "DataDome-class real-estate listings",
+      "role": "target"
+    }
+  ],
+  "challenge_selectors": {
+    "description": "CSS selectors for challenge-interstitial detection. A page FAILS if any of these are present in the post-load DOM.",
+    "cloudflare": [
+      "#challenge-running",
+      "[data-testid=\"challenge-error-text\"]"
+    ],
+    "perimeterx": [
+      "[id^=\"px-captcha\"]"
+    ],
+    "datadome": [
+      "[class*=\"dd-captcha\"]",
+      "iframe[src*=\"captcha-delivery\"]"
+    ]
+  },
+  "operational_pass_definition": "A target is loaded successfully iff ALL of: (1) top-level navigation reaches HTTP 200, (2) no element matching any challenge_selector is present in the post-load DOM, (3) document.querySelector('h1, h2, [role=heading]') exists and has textContent.length > 0."
+}
