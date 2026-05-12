@@ -97,6 +97,12 @@ const INTERACTIVE_HINT_OWNED_ATTR = `${INTERACTIVE_HINT_ATTR}-owned`;
 const INTERACTIVE_HINT_SCAN_MAX_MS = 100;
 const INTERACTIVE_HINT_SCAN_MAX_ELEMENTS = 2500;
 
+interface CursorInteractiveScanResult {
+  completed: boolean;
+  inspected: number;
+  marked: number;
+}
+
 /**
  * Parse flat attributes array into a map
  */
@@ -538,12 +544,12 @@ function serializeNode(
   }
 }
 
-async function markCursorInteractiveElements(page: Page): Promise<void> {
+async function markCursorInteractiveElements(page: Page): Promise<CursorInteractiveScanResult> {
   // Bound the browser-side scan from inside the evaluated function. Racing
   // page.evaluate with a timeout does not abort the in-page work and can leave
   // marker mutations running after cleanup; an in-page deadline/node cap exits
   // cooperatively without orphaning background DOM changes.
-  await page.evaluate((hintAttr: string, ownedAttr: string, maxMs: number, maxElements: number) => {
+  return await page.evaluate((hintAttr: string, ownedAttr: string, maxMs: number, maxElements: number) => {
       const interactiveRoles = new Set([
         'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'listbox',
         'menu', 'menuitem', 'tab', 'switch', 'slider',
@@ -556,6 +562,7 @@ async function markCursorInteractiveElements(page: Page): Promise<void> {
       const deadline = now() + maxMs;
       let inspected = 0;
       let budgetExceeded = false;
+      let marked = 0;
 
       for (let i = 0; i < roots.length; i++) {
         const root = roots[i];
@@ -613,10 +620,13 @@ async function markCursorInteractiveElements(page: Page): Promise<void> {
           if (!el.hasAttribute(hintAttr)) {
             el.setAttribute(hintAttr, hints.join(', '));
             el.setAttribute(ownedAttr, 'true');
+            marked += 1;
           }
         }
         if (budgetExceeded) break;
       }
+
+      return { completed: !budgetExceeded, inspected, marked };
     }, INTERACTIVE_HINT_ATTR, INTERACTIVE_HINT_OWNED_ATTR, INTERACTIVE_HINT_SCAN_MAX_MS, INTERACTIVE_HINT_SCAN_MAX_ELEMENTS);
 }
 
@@ -689,11 +699,17 @@ export async function serializeDOM(
 
   if (interactiveOnly) {
     try {
-      await markCursorInteractiveElements(page);
+      const scanResult = await markCursorInteractiveElements(page);
+      if (!scanResult.completed) {
+        await clearCursorInteractiveMarkers(page);
+      }
     } catch {
       // Cursor/onclick hint discovery is opportunistic. Large or hostile pages
       // should still serialize using native tags and ARIA roles if this pre-scan
-      // times out or throws.
+      // times out or throws. If the scan threw after setting any owned markers,
+      // clear them before taking the CDP snapshot so reads degrade without
+      // partial custom hints.
+      await clearCursorInteractiveMarkers(page);
     }
   }
 
