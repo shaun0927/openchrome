@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Renderer } from '../../../src/dashboard/renderer.js';
+import { Dashboard } from '../../../src/dashboard/index.js';
 import { TasksView, readRecoverySnapshot, type TasksViewData } from '../../../src/dashboard/views/tasks-view.js';
 import { SkillsView, type SkillsViewData } from '../../../src/dashboard/views/skills-view.js';
 import type { TaskMeta } from '../../../src/core/task-ledger/index.js';
@@ -275,3 +276,75 @@ async function tree(root: string): Promise<string[]> {
   await walk(root);
   return out.sort();
 }
+
+describe('Dashboard ledger refresh ticks', () => {
+  test('timer path refreshes ledgers while staying on tasks or skills view', async () => {
+    const dashboard = new Dashboard({ enabled: false }) as unknown as {
+      currentView: string;
+      refreshTick: () => void;
+      refreshLedgers: jest.Mock<Promise<void>, []>;
+      refresh: jest.Mock<void, []>;
+    };
+    dashboard.refreshLedgers = jest.fn().mockResolvedValue(undefined);
+    dashboard.refresh = jest.fn();
+
+    dashboard.currentView = 'tasks';
+    dashboard.refreshTick();
+    await dashboard.refreshLedgers.mock.results[0].value;
+    expect(dashboard.refreshLedgers).toHaveBeenCalledTimes(1);
+    expect(dashboard.refresh).not.toHaveBeenCalled();
+
+    dashboard.currentView = 'activity';
+    dashboard.refreshTick();
+    expect(dashboard.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  test('timer path avoids overlapping ledger snapshot reads', async () => {
+    let resolveRefresh!: () => void;
+    const dashboard = new Dashboard({ enabled: false }) as unknown as {
+      currentView: string;
+      refreshTick: () => void;
+      refreshLedgers: jest.Mock<Promise<void>, []>;
+    };
+    dashboard.currentView = 'skills';
+    dashboard.refreshLedgers = jest.fn(() => new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    dashboard.refreshTick();
+    dashboard.refreshTick();
+    expect(dashboard.refreshLedgers).toHaveBeenCalledTimes(1);
+
+    resolveRefresh();
+    await dashboard.refreshLedgers.mock.results[0].value;
+    await Promise.resolve();
+
+    dashboard.refreshTick();
+    expect(dashboard.refreshLedgers).toHaveBeenCalledTimes(2);
+  });
+
+  test('entry refresh and timer refresh share one in-flight guard', async () => {
+    let resolveRefresh!: () => void;
+    const dashboard = new Dashboard({ enabled: false }) as unknown as {
+      currentView: string;
+      handleMainViewKey: (key: string) => void;
+      refreshTick: () => void;
+      refreshLedgers: jest.Mock<Promise<void>, []>;
+    };
+    dashboard.currentView = 'activity';
+    dashboard.refreshLedgers = jest.fn(() => new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    dashboard.handleMainViewKey('j');
+    dashboard.refreshTick();
+    expect(dashboard.refreshLedgers).toHaveBeenCalledTimes(1);
+
+    resolveRefresh();
+    await dashboard.refreshLedgers.mock.results[0].value;
+    await Promise.resolve();
+
+    dashboard.refreshTick();
+    expect(dashboard.refreshLedgers).toHaveBeenCalledTimes(2);
+  });
+});
