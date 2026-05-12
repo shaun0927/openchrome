@@ -38,12 +38,6 @@ describe('check: home-writable', () => {
     const err = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
     mockMkdirSync.mockImplementation(() => { throw err; });
 
-    jest.resetModules();
-    jest.mock('fs', () => ({
-      ...jest.requireActual('fs'),
-      mkdirSync: jest.fn(() => { throw err; }),
-      accessSync: jest.fn(),
-    }));
 
     const { checkHomeWritable } = await import('../../../../src/cli/doctor/checks/home-writable');
     const result = await checkHomeWritable();

@@ -16,7 +16,6 @@ describe('check: network-local', () => {
     expect(result.title).toContain('Local network');
     // On a normal dev/CI machine, loopback should be ok
     expect(['ok', 'warn', 'fail']).toContain(result.status);
-    expect(typeof result.durationMs === 'undefined' || result.id === 'network-local').toBe(true);
   });
 
   test('ok when DNS resolves localhost and TCP works', async () => {

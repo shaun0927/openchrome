@@ -35,7 +35,7 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find element by natural language, perform click/hover/double_click, wait for DOM to settle, and return state summary.\n\nWhen to use: Clicking or hovering an element described in plain language in a single call. For Shadow DOM / canvas / cross-origin iframes, take a screenshot to get pixel coordinates and call with mode:"coordinate" and the coordinate block.\nWhen NOT to use: Use computer for general coordinate-based clicks (outside the Shadow DOM / canvas / iframe fallback), or act for multi-step sequences.',
+  description: 'Find element by natural language; click/hover/double_click it; wait for DOM settle; return state.\n\nWhen to use: One described element action, with coordinate fallback for Shadow DOM/canvas/iframes.\nWhen NOT to use: Use act for multi-step flows; computer for general coordinate clicks.',
   inputSchema: {
     type: 'object',
     properties: {

@@ -225,7 +225,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       targetToWorker.set(targetId, { sessionId, workerId: worker.id });
       pages.set(targetId, page);
 
-      return { targetId, page, workerId: worker.id };
+      return { targetId, page, workerId: worker.id, contextName: 'default', isolated: false };
     }),
 
     getPage: jest.fn().mockImplementation(async (sessionId: string, targetId: string, workerId?: string) => {
@@ -275,6 +275,8 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     getTargetWorkerId: jest.fn().mockImplementation((targetId: string) => {
       return targetToWorker.get(targetId)?.workerId;
     }),
+
+    getTargetContextName: jest.fn().mockImplementation((_targetId: string) => 'default'),
 
     isTargetValid: jest.fn().mockImplementation(async (targetId: string) => {
       const page = pages.get(targetId);

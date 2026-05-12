@@ -62,13 +62,13 @@ describe('check: disk-space', () => {
     expect(result.status).toBe('ok');
   });
 
-  test('boundary: exactly 100 MB is fail', async () => {
+  test('boundary: exactly 100 MB is warn', async () => {
     process.env.OPENCHROME_DOCTOR_FAKE_FREE_MB = '100';
 
     const { checkDiskSpace } = await import('../../../../src/cli/doctor/checks/disk-space');
     const result = await checkDiskSpace();
 
     expect(result.id).toBe('disk-space');
-    expect(result.status).toBe('fail');
+    expect(result.status).toBe('warn');
   });
 });

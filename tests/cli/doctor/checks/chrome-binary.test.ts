@@ -25,7 +25,6 @@ describe('check: chrome-binary', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.resetModules();
     process.env = { ...originalEnv };
     delete process.env.CHROME_PATH;
   });
@@ -37,7 +36,7 @@ describe('check: chrome-binary', () => {
   test('ok when Chrome found and returns valid version', async () => {
     process.env.CHROME_PATH = '/usr/bin/chrome';
     mockExistsSync.mockReturnValue(true);
-    mockExecFileSync.mockReturnValue('Google Chrome 120.0.0.0' as unknown as Buffer);
+    mockExecFileSync.mockReturnValue('Google Chrome 120.0.0.0');
 
     const { checkChromeBinary } = await import('../../../../src/cli/doctor/checks/chrome-binary');
     const result = await checkChromeBinary();
@@ -62,7 +61,7 @@ describe('check: chrome-binary', () => {
   test('fail when Chrome version is too old', async () => {
     process.env.CHROME_PATH = '/usr/bin/chrome';
     mockExistsSync.mockReturnValue(true);
-    mockExecFileSync.mockReturnValue('Google Chrome 50.0.0.0' as unknown as Buffer);
+    mockExecFileSync.mockReturnValue('Google Chrome 50.0.0.0');
 
     const { checkChromeBinary } = await import('../../../../src/cli/doctor/checks/chrome-binary');
     const result = await checkChromeBinary();
