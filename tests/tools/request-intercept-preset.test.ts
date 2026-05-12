@@ -64,6 +64,10 @@ function createMockRequest(options: {
   };
 }
 
+function metricCalls(name: string) {
+  return mockInc.mock.calls.filter(([metricName]) => metricName === name);
+}
+
 async function addRule(
   handler: (sessionId: string, args: Record<string, unknown>) => Promise<unknown>,
   rule: {
@@ -444,6 +448,74 @@ describe('allow-wins composition', () => {
     expect(request.continue).toHaveBeenCalled();
     expect(request.abort).not.toHaveBeenCalled();
     expect(request.respond).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Estimated bandwidth metrics for preset-blocked assets
+// ---------------------------------------------------------------------------
+describe('preset bandwidth metrics', () => {
+  test('blocked preset image increments non-zero estimated response bytes without request Content-Length', async () => {
+    const handler = await loadHandler();
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+      preset: 'optimize-bandwidth',
+    });
+
+    const request = createMockRequest({
+      url: 'https://cdn.example.com/hero.png',
+      resourceType: 'image',
+      headers: {},
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.abort).toHaveBeenCalledWith('blockedbyclient');
+
+    const blockedCalls = metricCalls('openchrome_intercept_estimated_blocked_response_bytes_total');
+    expect(blockedCalls).toHaveLength(1);
+    expect(blockedCalls[0]).toEqual([
+      'openchrome_intercept_estimated_blocked_response_bytes_total',
+      { resource_type: 'image', estimate_source: 'resource_type' },
+      expect.any(Number),
+    ]);
+    expect(blockedCalls[0][2]).toBeGreaterThan(0);
+
+    expect(metricCalls('openchrome_intercept_blocked_bytes_total')).toHaveLength(0);
+    expect(metricCalls('openchrome_intercept_observed_bytes_total')).toHaveLength(0);
+  });
+
+  test('blocked preset stylesheet uses deterministic estimate instead of request Content-Length', async () => {
+    const handler = await loadHandler();
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+      preset: 'optimize-bandwidth',
+    });
+
+    const request = createMockRequest({
+      url: 'https://static.example.com/app.css',
+      resourceType: 'stylesheet',
+      headers: { 'content-length': '0' },
+    });
+    await (await getRequestListener())(request);
+
+    expect(request.abort).toHaveBeenCalledWith('blockedbyclient');
+
+    const observedCalls = metricCalls('openchrome_intercept_estimated_response_bytes_total');
+    const blockedCalls = metricCalls('openchrome_intercept_estimated_blocked_response_bytes_total');
+    expect(observedCalls[0]).toEqual([
+      'openchrome_intercept_estimated_response_bytes_total',
+      { resource_type: 'stylesheet', estimate_source: 'resource_type' },
+      20 * 1024,
+    ]);
+    expect(blockedCalls[0]).toEqual([
+      'openchrome_intercept_estimated_blocked_response_bytes_total',
+      { resource_type: 'stylesheet', estimate_source: 'resource_type' },
+      20 * 1024,
+    ]);
   });
 });
 

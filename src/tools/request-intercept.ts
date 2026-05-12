@@ -89,6 +89,13 @@ const KEEP_HEADERS = new Set([
 // Resource types considered static assets (eligible for grouping)
 const ASSET_TYPES = new Set(['image', 'font', 'stylesheet', 'media']);
 
+const STATIC_ASSET_RESPONSE_BYTE_ESTIMATES: Record<string, number> = {
+  image: 100 * 1024,
+  media: 1024 * 1024,
+  font: 30 * 1024,
+  stylesheet: 20 * 1024,
+};
+
 interface AssetGroup {
   domain: string;
   type: string;
@@ -205,6 +212,10 @@ function matchesPattern(url: string, pattern: string): boolean {
   } catch {
     return url.includes(pattern);
   }
+}
+
+function estimatedStaticAssetResponseBytes(resourceType: string): number {
+  return STATIC_ASSET_RESPONSE_BYTE_ESTIMATES[resourceType.toLowerCase()] ?? 0;
 }
 
 const definition: MCPToolDefinition = {
@@ -446,12 +457,15 @@ const handler: ToolHandler = async (
             }
           }
 
-          // Increment observed-bytes counter for every intercepted request.
-          // Best-effort: read Content-Length from request headers (available at request phase).
-          const clHeader = request.headers()['content-length'];
-          const observedBytes = clHeader ? parseInt(clHeader, 10) : 0;
           const rtLabel = resourceType.toLowerCase();
-          metrics.inc('openchrome_intercept_observed_bytes_total', { resource_type: rtLabel }, observedBytes);
+          const estimatedResponseBytes = estimatedStaticAssetResponseBytes(resourceType);
+          if (estimatedResponseBytes > 0) {
+            metrics.inc(
+              'openchrome_intercept_estimated_response_bytes_total',
+              { resource_type: rtLabel, estimate_source: 'resource_type' },
+              estimatedResponseBytes,
+            );
+          }
 
           // Log request if any log rules exist or matched
           const shouldLog = matched || state!.rules.some(r => r.action === 'log');
@@ -476,8 +490,13 @@ const handler: ToolHandler = async (
           if (matchedRule) {
             try {
               if (matchedRule.action === 'block') {
-                // Increment blocked-bytes counter before aborting.
-                metrics.inc('openchrome_intercept_blocked_bytes_total', { resource_type: rtLabel }, observedBytes);
+                if (estimatedResponseBytes > 0) {
+                  metrics.inc(
+                    'openchrome_intercept_estimated_blocked_response_bytes_total',
+                    { resource_type: rtLabel, estimate_source: 'resource_type' },
+                    estimatedResponseBytes,
+                  );
+                }
                 await request.abort('blockedbyclient');
                 return;
               }
