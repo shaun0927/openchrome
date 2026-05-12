@@ -1960,7 +1960,10 @@ let mcpServerInstance: MCPServer | null = null;
 let mcpServerOptions: MCPServerOptions = {};
 
 export function setMCPServerOptions(options: Partial<MCPServerOptions>): void {
-  mcpServerOptions = { ...mcpServerOptions, ...options };
+  // Replace (not merge) — keeps the pre-#829 reset semantics callers rely on:
+  // `setMCPServerOptions({})` must clear previously set flags so that a fresh
+  // singleton picks up defaults, not a stale partial mix.
+  mcpServerOptions = { ...options };
 }
 
 export function getMCPServer(): MCPServer {

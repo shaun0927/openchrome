@@ -217,144 +217,151 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
 };
 
 /**
- * Thin proxy around MCPServer that injects the capability field from
+ * Build a proxy around MCPServer that injects the capability field from
  * TOOL_CAPABILITY_MAP into every MCPToolDefinition at registerTool() time.
  *
- * This keeps capability metadata in one authoritative location (this file)
- * without requiring every individual tool file to know about capability groups.
+ * Uses a real ES Proxy so every other method/property on the underlying
+ * MCPServer is forwarded automatically. The previous implementation listed
+ * methods explicitly and required `as unknown as MCPServer` casts at every
+ * call site, which would TypeError at runtime if a register* function ever
+ * reached for an un-listed method.
+ *
+ * Keeping capability metadata in one authoritative location (this file)
+ * means individual tool files do not need to know about capability groups.
  */
-class CapabilityInjectingServer {
-  constructor(private readonly server: MCPServer) {}
-
-  registerTool(
-    name: string,
-    handler: ToolHandler,
-    definition: MCPToolDefinition,
-    options?: { timeoutRecoverable?: boolean },
-  ): void {
-    const capability: ToolCapability = TOOL_CAPABILITY_MAP[name] ?? 'core';
-    this.server.registerTool(name, handler, { ...definition, capability }, options);
-  }
-
-  // Proxy all other MCPServer methods used by individual register* functions
-  getToolNames(): string[] {
-    return this.server.getToolNames();
-  }
+function makeCapabilityInjectingProxy(server: MCPServer): MCPServer {
+  return new Proxy(server, {
+    get(target, prop, receiver) {
+      if (prop === 'registerTool') {
+        return (
+          name: string,
+          handler: ToolHandler,
+          definition: MCPToolDefinition,
+          options?: { timeoutRecoverable?: boolean },
+        ): void => {
+          const capability: ToolCapability = TOOL_CAPABILITY_MAP[name] ?? 'core';
+          target.registerTool(name, handler, { ...definition, capability }, options);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 export function registerAllTools(server: MCPServer): void {
-  // Wrap the real server so every registerTool() call gets a capability tag
-  const proxy = new CapabilityInjectingServer(server);
+  // Wrap the real server so every registerTool() call gets a capability tag.
+  const proxy = makeCapabilityInjectingProxy(server);
 
   // Core browser tools
-  registerNavigateTool(proxy as unknown as MCPServer);
-  registerComputerTool(proxy as unknown as MCPServer);
-  registerReadPageTool(proxy as unknown as MCPServer);
-  registerFindTool(proxy as unknown as MCPServer);
-  registerFormInputTool(proxy as unknown as MCPServer);
-  registerJavascriptTool(proxy as unknown as MCPServer);
-  registerNetworkTool(proxy as unknown as MCPServer);
+  registerNavigateTool(proxy);
+  registerComputerTool(proxy);
+  registerReadPageTool(proxy);
+  registerFindTool(proxy);
+  registerFormInputTool(proxy);
+  registerJavascriptTool(proxy);
+  registerNetworkTool(proxy);
 
   // Phase 1: Page and content tools
-  registerPageReloadTool(proxy as unknown as MCPServer);
-  registerCookiesTool(proxy as unknown as MCPServer);
-  registerQueryDomTool(proxy as unknown as MCPServer);
-  registerPageContentTool(proxy as unknown as MCPServer);
-  registerWaitForTool(proxy as unknown as MCPServer);
-  registerStorageTool(proxy as unknown as MCPServer);
+  registerPageReloadTool(proxy);
+  registerCookiesTool(proxy);
+  registerQueryDomTool(proxy);
+  registerPageContentTool(proxy);
+  registerWaitForTool(proxy);
+  registerStorageTool(proxy);
 
   // Phase 2: Device emulation and settings
-  registerUserAgentTool(proxy as unknown as MCPServer);
-  registerGeolocationTool(proxy as unknown as MCPServer);
-  registerEmulateDeviceTool(proxy as unknown as MCPServer);
-  registerPagePdfTool(proxy as unknown as MCPServer);
-  registerPageScreenshotTool(proxy as unknown as MCPServer);
-  registerConsoleCaptureTool(proxy as unknown as MCPServer);
-  registerPerformanceMetricsTool(proxy as unknown as MCPServer);
-  registerRequestInterceptTool(proxy as unknown as MCPServer);
+  registerUserAgentTool(proxy);
+  registerGeolocationTool(proxy);
+  registerEmulateDeviceTool(proxy);
+  registerPagePdfTool(proxy);
+  registerPageScreenshotTool(proxy);
+  registerConsoleCaptureTool(proxy);
+  registerPerformanceMetricsTool(proxy);
+  registerRequestInterceptTool(proxy);
 
   // Phase 3: Advanced tools
-  registerFileUploadTool(proxy as unknown as MCPServer);
-  registerHttpAuthTool(proxy as unknown as MCPServer);
-  registerDragDropTool(proxy as unknown as MCPServer);
+  registerFileUploadTool(proxy);
+  registerHttpAuthTool(proxy);
+  registerDragDropTool(proxy);
 
   // UX improvement composite tools (reduce tool call count)
-  registerFillFormTool(proxy as unknown as MCPServer);
+  registerFillFormTool(proxy);
 
   // Tab management
-  registerTabsContextTool(proxy as unknown as MCPServer);
-  registerTabsCreateTool(proxy as unknown as MCPServer);
-  registerTabsCloseTool(proxy as unknown as MCPServer);
+  registerTabsContextTool(proxy);
+  registerTabsCreateTool(proxy);
+  registerTabsCloseTool(proxy);
 
   // Worker management (parallel browser operations)
-  registerWorkerTool(proxy as unknown as MCPServer);
+  registerWorkerTool(proxy);
 
   // Orchestration tools (Chrome-Sisyphus workflow management)
-  registerOrchestrationTools(proxy as unknown as MCPServer);
+  registerOrchestrationTools(proxy);
 
   // Performance tools (P0 - eliminate agent spawn overhead & screenshot bottleneck)
-  registerBatchExecuteTool(proxy as unknown as MCPServer);
-  registerLightweightScrollTool(proxy as unknown as MCPServer);
-  registerBatchPaginateTool(proxy as unknown as MCPServer);
+  registerBatchExecuteTool(proxy);
+  registerLightweightScrollTool(proxy);
+  registerBatchPaginateTool(proxy);
 
   // Smart Tools (reduce LLM wandering — response enrichment + composite tools)
-  registerInteractTool(proxy as unknown as MCPServer);
-  registerInspectTool(proxy as unknown as MCPServer);
+  registerInteractTool(proxy);
+  registerInspectTool(proxy);
 
   // Vision tools (vision-based element discovery #577)
-  registerVisionFindTool(proxy as unknown as MCPServer);
+  registerVisionFindTool(proxy);
 
   // Memory tools (domain knowledge persistence)
-  registerMemoryTools(proxy as unknown as MCPServer);
+  registerMemoryTools(proxy);
 
   // Lifecycle tools
-  registerShutdownTool(proxy as unknown as MCPServer);
-  registerReapOrphansTool(proxy as unknown as MCPServer);
-  registerProfileStatusTool(proxy as unknown as MCPServer);
-  registerListProfilesTool(proxy as unknown as MCPServer);
+  registerShutdownTool(proxy);
+  registerReapOrphansTool(proxy);
+  registerProfileStatusTool(proxy);
+  registerListProfilesTool(proxy);
 
   // AI Agent Continuity tools (#355, #356)
-  registerSessionSnapshotTool(proxy as unknown as MCPServer);
-  registerSessionResumeTool(proxy as unknown as MCPServer);
-  registerJournalTool(proxy as unknown as MCPServer);
+  registerSessionSnapshotTool(proxy);
+  registerSessionResumeTool(proxy);
+  registerJournalTool(proxy);
 
   // Self-healing tools (#347)
-  registerConnectionHealthTool(proxy as unknown as MCPServer);
+  registerConnectionHealthTool(proxy);
 
   // AI Agent Continuity tools (#347 Phase 4)
-  registerCheckpointTool(proxy as unknown as MCPServer);
+  registerCheckpointTool(proxy);
 
   // Web AI host connection tools (#523)
-  registerConnectTools(proxy as unknown as MCPServer);
+  registerConnectTools(proxy);
 
   // Session recording tools (#572)
-  registerRecordingTools(proxy as unknown as MCPServer);
+  registerRecordingTools(proxy);
 
   // Crawl tools (#576)
-  registerCrawlTool(proxy as unknown as MCPServer);
-  registerCrawlSitemapTool(proxy as unknown as MCPServer);
+  registerCrawlTool(proxy);
+  registerCrawlSitemapTool(proxy);
 
   // Natural language action API (#578)
-  registerActTool(proxy as unknown as MCPServer);
+  registerActTool(proxy);
 
   // Composite page-health check (#token-efficiency)
-  registerValidatePageTool(proxy as unknown as MCPServer);
+  registerValidatePageTool(proxy);
 
   // Structured extraction (#571)
-  registerExtractDataTool(proxy as unknown as MCPServer);
+  registerExtractDataTool(proxy);
 
   // 2FA tools (#575)
-  registerTotpGenerateTool(proxy as unknown as MCPServer);
+  registerTotpGenerateTool(proxy);
 
   // Outcome Contracts (#784) — single-call assertion verifier
-  registerOcAssertTool(proxy as unknown as MCPServer);
+  registerOcAssertTool(proxy);
 
   // Outcome Contracts (#792) — evidence bundle capture
-  registerOcEvidenceBundleTool(proxy as unknown as MCPServer);
+  registerOcEvidenceBundleTool(proxy);
 
   // Skill memory tools (#785) — record + recall
-  registerOcSkillRecordTool(proxy as unknown as MCPServer);
-  registerOcSkillRecallTool(proxy as unknown as MCPServer);
+  registerOcSkillRecordTool(proxy);
+  registerOcSkillRecallTool(proxy);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

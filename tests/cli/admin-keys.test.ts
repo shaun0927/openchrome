@@ -191,7 +191,17 @@ describe('admin keys CLI', () => {
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
     expect(listed.exitCode).toBeNull();
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; tenantId: string }>;
+    // Robust JSON extraction: jest's default reporter can leak buffered
+    // console output to stdout while parseAsync runs (observed flaky on
+    // macos-latest, node 20). Locate the first '[' that starts a JSON value
+    // and slice to the matching ']' — the admin-keys --json command emits a
+    // single top-level array, no nested arrays in its output schema.
+    const jsonStart = listed.stdout.indexOf('[');
+    const jsonEnd = listed.stdout.lastIndexOf(']');
+    expect(jsonStart).toBeGreaterThanOrEqual(0);
+    expect(jsonEnd).toBeGreaterThan(jsonStart);
+    const jsonText = listed.stdout.slice(jsonStart, jsonEnd + 1);
+    const parsed = JSON.parse(jsonText) as Array<{ keyId: string; tenantId: string }>;
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].tenantId).toBe('acme');

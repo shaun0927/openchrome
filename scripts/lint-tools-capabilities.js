@@ -71,13 +71,11 @@ function collectRegisteredToolNames() {
   for (const file of files) {
     const src = fs.readFileSync(path.join(toolsDir, file), 'utf8');
 
-    // Pattern 1
+    // Pattern 1: direct `name: 'value'` inside a registerTool() definition.
     literalRe.lastIndex = 0;
     let m;
-    const hasLiteral = new Set();
     while ((m = literalRe.exec(src)) !== null) {
       names.add(m[1]);
-      hasLiteral.add(m[1]);
     }
 
     // Pattern 2: if file uses .registerTool(varExpr.name, ...) scan for name: 'value'
