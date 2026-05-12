@@ -23,6 +23,8 @@ import { assertDomainAllowed } from './security/domain-guard';
 import { getTargetId } from './utils/puppeteer-helpers';
 import { safeTitle } from './utils/safe-title';
 import { getMetricsCollector } from './metrics/collector';
+import { getLifecycleBus } from './core/lifecycle';
+import type { LifecycleEvent, SessionDestroyReason } from './core/lifecycle';
 import { getTenantManager, isStrictTenantIsolationEnabled } from './tenant/registry';
 import type { TenantManager } from './tenant/manager';
 import { DEFAULT_TENANT_ID, type TenantId } from './tenant/types';
@@ -432,6 +434,7 @@ export class SessionManager {
     this.sessions.set(id, session);
     this.totalSessionsCreated++;
     this.emitEvent({ type: 'session:created', sessionId: id, timestamp: Date.now() });
+    this.emitLifecycle({ kind: 'session:create', sessionId: id, tenantId: String(tenantId), ts: Date.now() });
 
     console.error(`[SessionManager] Created session ${id} with default worker (tenant=${tenantId})`);
     return session;
@@ -529,6 +532,7 @@ export class SessionManager {
     // Remove session
     this.sessions.delete(sessionId);
     this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
+    this.emitLifecycle({ kind: 'session:destroy', sessionId, reason: 'close', ts: Date.now() });
 
     console.error(`[SessionManager] Deleted session ${sessionId}`);
   }
@@ -714,6 +718,7 @@ export class SessionManager {
       workerId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'worker:create', sessionId, workerId, ts: Date.now() });
 
     console.error(`[SessionManager] Created worker ${workerId} in session ${sessionId}`);
     return worker;
@@ -805,6 +810,7 @@ export class SessionManager {
       workerId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'worker:destroy', sessionId, workerId, ts: Date.now() });
   }
 
   /**
@@ -1011,6 +1017,7 @@ export class SessionManager {
       targetId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'target:create', sessionId, workerId: worker.id, targetId, url: url ?? '', ts: Date.now() });
 
     this.touchSession(sessionId);
 
@@ -1094,6 +1101,7 @@ export class SessionManager {
       targetId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'target:create', sessionId, workerId: worker.id, targetId, url: url ?? '', ts: Date.now() });
 
     this.touchSession(sessionId);
 
@@ -1127,6 +1135,7 @@ export class SessionManager {
       targetId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'target:create', sessionId, workerId, targetId, url: '', ts: Date.now() });
 
     this.touchSession(sessionId);
   }
@@ -1353,6 +1362,7 @@ export class SessionManager {
       targetId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'target:create', sessionId, workerId, targetId, url: '', ts: Date.now() });
 
     this.touchSession(sessionId);
     console.error(`[SessionManager] Registered external target ${targetId} in worker ${workerId} of session ${sessionId}`);
@@ -1415,6 +1425,7 @@ export class SessionManager {
         targetId,
         timestamp: Date.now(),
       });
+      this.emitLifecycle({ kind: 'target:close', sessionId, workerId: ownerInfo.workerId, targetId, ts: Date.now() });
 
       return true;
     } catch (error) {
@@ -1502,6 +1513,7 @@ export class SessionManager {
           targetId,
           timestamp: Date.now(),
         });
+        this.emitLifecycle({ kind: 'target:close', sessionId: ownerInfo.sessionId, workerId: ownerInfo.workerId, targetId, ts: Date.now() });
       }
     }
   }
@@ -1785,6 +1797,22 @@ export class SessionManager {
       } catch (e) {
         console.error('Session event listener error:', e);
       }
+    }
+  }
+
+  /**
+   * Mirror a session-manager transition onto the process-wide lifecycle bus
+   * (issue #857). Each existing `emitEvent` call site that maps to a
+   * lifecycle event also invokes this helper, so legacy `SessionEvent`
+   * subscribers stay intact while new consumers (trace recorder, future
+   * journal) attach via the bus only. Never throws — `getLifecycleBus().emit`
+   * is contractually no-throw, but we defend in depth.
+   */
+  private emitLifecycle(event: LifecycleEvent): void {
+    try {
+      getLifecycleBus().emit(event);
+    } catch {
+      /* bus emit is no-throw; defence in depth */
     }
   }
 

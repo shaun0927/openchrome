@@ -17,6 +17,8 @@ import type { ProfileType } from './profile-manager';
 import { writeMarker, removeMarker } from './ownership-marker';
 import { registerManagedChrome, unregisterManagedChrome } from '../utils/sync-shutdown';
 import { classifyExit, ExitClassification, quiesceMs } from './exit-classifier';
+import { getLifecycleBus } from '../core/lifecycle';
+import type { ChromeExitReason } from '../core/lifecycle';
 import {
   resolveLaunchMode,
   AttachConsentRequiredError,
@@ -836,6 +838,29 @@ export class ChromeLauncher {
       console.error(
         `[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal}, uptime: ${uptimeMs}ms, class: ${classification})`,
       );
+      // Issue #857: announce chrome:exit on the lifecycle bus so the trace
+      // recorder, watchdog short-circuit, and future journal consumers
+      // observe a single authoritative transition. Reason is derived from
+      // the existing classifier — we add NO new state, just expose what
+      // the launcher already computes.
+      try {
+        const reason: ChromeExitReason = this._intentionalStop
+          ? 'sigterm'
+          : classification === 'crash'
+            ? 'crash'
+            : classification === 'clean'
+              ? 'idle'
+              : 'unknown';
+        getLifecycleBus().emit({
+          kind: 'chrome:exit',
+          pid: chromeProcess.pid ?? 0,
+          reason,
+          classification,
+          ts: Date.now(),
+        });
+      } catch {
+        // emit() is contractually no-throw; this catch is defence in depth.
+      }
       // Symmetric cleanup: unregister + remove marker so a failed-launch Chrome
       // (e.g. waitForDebugPort timeout) does not leave stale state behind.
       if (chromeProcess.pid) {
@@ -920,6 +945,21 @@ export class ChromeLauncher {
     this._quiesceUntil = 0;
     this._chromeStartedAt = Date.now();
     console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
+    // Issue #857: announce chrome:launch once the wsEndpoint is resolved.
+    // This is the same instant existing consumers (CDPClient) consider the
+    // browser ready — we do not gate on anything new.
+    try {
+      getLifecycleBus().emit({
+        kind: 'chrome:launch',
+        pid: chromeProcess.pid ?? 0,
+        port,
+        userDataDir,
+        lifecycleMode: 'isolated',
+        ts: Date.now(),
+      });
+    } catch {
+      // emit() is contractually no-throw; defence in depth only.
+    }
     return this.instance;
   }
 
