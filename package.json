@@ -9,10 +9,8 @@
       "require": "./dist/index.js"
     },
     "./server": {
+      "import": "./dist/core/server.js",
       "require": "./dist/core/server.js"
-    },
-    "./lifecycle": {
-      "require": "./dist/core/lifecycle/index.js"
     }
   },
   "bin": {
