@@ -439,6 +439,41 @@ describe('DOM Serializer', () => {
     expect(result.content).not.toContain('[902]');  // plain div
   });
 
+  test('includes cursor/onClick hints for custom interactive elements without leaking marker attrs', async () => {
+    const customDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [
+          {
+            nodeId: 3, backendNodeId: 910, nodeType: 1, nodeName: 'DIV', localName: 'div',
+            attributes: ['data-oc-interactive-hints', 'cursor:pointer, onclick', 'class', 'card'],
+            children: [{
+              nodeId: 4, backendNodeId: 4, nodeType: 3, nodeName: '#text', localName: '',
+              nodeValue: 'Open settings',
+            }],
+          },
+          {
+            nodeId: 5, backendNodeId: 911, nodeType: 1, nodeName: 'DIV', localName: 'div',
+            attributes: ['class', 'plain'],
+            children: [],
+          },
+        ],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(customDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, interactiveOnly: true });
+
+    expect(result.content).toContain('[910]<div class="card"/>Open settings ★ [cursor:pointer, onclick]');
+    expect(result.content).not.toContain('[911]');
+    expect(result.content).not.toContain('data-oc-interactive-hints');
+  });
+
+
   // 8. Output truncation
   test('truncates output at maxOutputChars', async () => {
     // Build a large DOM with many nodes

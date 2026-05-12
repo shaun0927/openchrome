@@ -92,6 +92,8 @@ const CONTAINER_TAGS = new Set([
   'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span',
 ]);
 
+const INTERACTIVE_HINT_ATTR = 'data-oc-interactive-hints';
+
 /**
  * Parse flat attributes array into a map
  */
@@ -116,6 +118,7 @@ function escapeAttributeValue(value: string): string {
  * Check if a node is interactive
  */
 function isInteractive(tagName: string, attrMap: Map<string, string>): boolean {
+  if (attrMap.has(INTERACTIVE_HINT_ATTR)) return true;
   if (INTERACTIVE_TAGS.has(tagName)) return true;
   const role = attrMap.get('role');
   if (role && INTERACTIVE_ROLES.has(role)) return true;
@@ -176,7 +179,10 @@ function formatElement(
   }
   const attrStr = attrParts.length > 0 ? ' ' + attrParts.join(' ') : '';
 
-  const interactiveMarker = interactive ? ' ★' : '';
+  const hints = attrMap.get(INTERACTIVE_HINT_ATTR);
+  const interactiveMarker = interactive
+    ? ` ★${hints ? ` [${hints}]` : ''}`
+    : '';
   const line = `${indent}[${node.backendNodeId}]<${tagName}${attrStr}/>${textContent}${interactiveMarker}`;
   return line;
 }
@@ -529,6 +535,90 @@ function serializeNode(
   }
 }
 
+async function markCursorInteractiveElements(page: Page): Promise<void> {
+  await withTimeout(
+    page.evaluate((hintAttr: string) => {
+      const interactiveRoles = new Set([
+        'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'listbox',
+        'menu', 'menuitem', 'tab', 'switch', 'slider',
+      ]);
+      const interactiveTags = new Set(['a', 'button', 'input', 'select', 'textarea', 'details', 'summary']);
+      const roots: Array<Document | ShadowRoot> = [document];
+
+      for (let i = 0; i < roots.length; i++) {
+        const root = roots[i];
+        const all = Array.from(root.querySelectorAll('*')) as HTMLElement[];
+        for (const el of all) {
+          if (el.shadowRoot) roots.push(el.shadowRoot);
+          if (el.closest('[hidden], [aria-hidden="true"]')) continue;
+
+          const tag = el.tagName.toLowerCase();
+          if (interactiveTags.has(tag)) continue;
+          const role = el.getAttribute('role');
+          if (role && interactiveRoles.has(role.toLowerCase())) continue;
+
+          const style = getComputedStyle(el);
+          const hasCursorPointer = style.cursor === 'pointer';
+          const hasOnClick = el.hasAttribute('onclick') || typeof el.onclick === 'function';
+          const tabIndex = el.getAttribute('tabindex');
+          const hasTabIndex = tabIndex !== null && tabIndex !== '-1';
+          const editable = el.getAttribute('contenteditable');
+          const isEditable = editable === '' || editable === 'true';
+
+          if (!hasCursorPointer && !hasOnClick && !hasTabIndex && !isEditable) continue;
+          if (hasCursorPointer && !hasOnClick && !hasTabIndex && !isEditable) {
+            const parent = el.parentElement;
+            if (parent && getComputedStyle(parent).cursor === 'pointer') continue;
+          }
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) continue;
+
+          const hints: string[] = [];
+          if (hasCursorPointer) hints.push('cursor:pointer');
+          if (hasOnClick) hints.push('onclick');
+          if (hasTabIndex) hints.push('tabindex');
+          if (isEditable) hints.push('contenteditable');
+
+          const hiddenInput = el.querySelector('input[type="radio"], input[type="checkbox"]') as HTMLInputElement | null;
+          if (hiddenInput) {
+            const inputStyle = getComputedStyle(hiddenInput);
+            const hidden = inputStyle.display === 'none' || inputStyle.visibility === 'hidden' || hiddenInput.hidden;
+            if (hidden) {
+              hints.push(`${hiddenInput.type}:${hiddenInput.indeterminate ? 'mixed' : String(hiddenInput.checked)}`);
+            }
+          }
+
+          el.setAttribute(hintAttr, hints.join(', '));
+        }
+      }
+    }, INTERACTIVE_HINT_ATTR),
+    5000,
+    'serializeDOM:markCursorInteractiveElements',
+  );
+}
+
+async function clearCursorInteractiveMarkers(page: Page): Promise<void> {
+  try {
+    await withTimeout(
+      page.evaluate((hintAttr: string) => {
+        const roots: Array<Document | ShadowRoot> = [document];
+        for (let i = 0; i < roots.length; i++) {
+          const root = roots[i];
+          const all = Array.from(root.querySelectorAll('*')) as HTMLElement[];
+          for (const el of all) {
+            if (el.shadowRoot) roots.push(el.shadowRoot);
+            if (el.hasAttribute(hintAttr)) el.removeAttribute(hintAttr);
+          }
+        }
+      }, INTERACTIVE_HINT_ATTR),
+      5000,
+      'serializeDOM:clearCursorInteractiveMarkers',
+    );
+  } catch {
+    // Best-effort cleanup only; a failed cleanup must not break read_page.
+  }
+}
+
 /**
  * Serialize a page's DOM into a compact text representation
  */
@@ -571,6 +661,10 @@ export async function serializeDOM(
     'serializeDOM:pageStats',
   ) as PageStats;
 
+  if (interactiveOnly) {
+    await markCursorInteractiveElements(page);
+  }
+
   // Get DOM tree via CDP. Always pierce at the CDP layer so shadowRoots are
   // present; ctx.pierceIframes below controls whether iframe contentDocument
   // subtrees are emitted. When callers request bounded output depth, avoid
@@ -583,11 +677,18 @@ export async function serializeDOM(
   // fall back to an unbounded CDP fetch in that case so iframe body content
   // within maxDepth is not silently dropped.
   const documentDepth = maxDepth >= 0 && !pierceIframes ? maxDepth + 1 : -1;
-  const { root } = await cdpClient.send<{ root: DOMNode }>(
-    page,
-    'DOM.getDocument',
-    { depth: documentDepth, pierce: true },
-  );
+  let root: DOMNode;
+  try {
+    ({ root } = await cdpClient.send<{ root: DOMNode }>(
+      page,
+      'DOM.getDocument',
+      { depth: documentDepth, pierce: true },
+    ));
+  } finally {
+    if (interactiveOnly) {
+      await clearCursorInteractiveMarkers(page);
+    }
+  }
 
   const ctx: SerializeContext = {
     lines: [],
