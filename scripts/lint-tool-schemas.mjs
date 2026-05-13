@@ -33,6 +33,14 @@ const TOOL_NAME_RE = /^[a-z][a-z0-9_]{2,63}$/;
 
 const BASELINE_PATH = resolve(__dirname, 'lint-tool-schemas.baseline.json');
 
+async function readStdin() {
+  let data = '';
+  process.stdin.setEncoding('utf8');
+  for await (const chunk of process.stdin) data += chunk;
+  return data;
+}
+
+
 // ── parse CLI args ─────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const updateBaseline = args.includes('--update-baseline');
@@ -46,7 +54,7 @@ if (!inputFile) {
 // ── load tools list ────────────────────────────────────────────────────────
 let tools;
 try {
-  tools = JSON.parse(readFileSync(inputFile === '-' ? 0 : resolve(inputFile), 'utf8'));
+  tools = JSON.parse(inputFile === '-' ? await readStdin() : readFileSync(resolve(inputFile), 'utf8'));
 } catch (err) {
   process.stderr.write(`Error reading tools list: ${err.message}\n`);
   process.exit(2);
