@@ -168,6 +168,20 @@ function compactAXLines(lines: string[]): string[] {
   return lines.filter((_, index) => keep.has(index));
 }
 
+interface ReadPageDiagnostics {
+  mode: string;
+  requestedMode?: string;
+  pageStatsMs?: number;
+  domGetDocumentMs?: number;
+  axGetFullTreeMs?: number;
+  formatMs?: number;
+  paginationMs?: number;
+  sanitizeMs?: number;
+  deltaMs?: number;
+}
+
+type ReadPageDiagnosticTimingKey = Exclude<keyof ReadPageDiagnostics, 'mode' | 'requestedMode'>;
+
 
 interface AXNode {
   nodeId: number;
@@ -230,7 +244,10 @@ const handler: ToolHandler = async (
       };
     }
     const diagnosticsEnabled = args.diagnostics === true;
-    const diagnostics: ReadPageDiagnostics = { mode };
+    const diagnostics: ReadPageDiagnostics = {
+      mode,
+      ...(requestedMode !== undefined && requestedMode !== mode ? { requestedMode } : {}),
+    };
     const mark = () => Date.now();
     const measure = async <T>(key: ReadPageDiagnosticTimingKey, fn: () => Promise<T>): Promise<T> => {
       const start = mark();
@@ -1007,6 +1024,10 @@ const handler: ToolHandler = async (
           '\n\n[AX tree exceeded output limit (' + charCount + ' chars). ' +
           'Switched to DOM mode because fallback: "dom" was requested. ' +
           'Use mode: "ax" with smaller depth / ref_id to scope specific subtrees for AX format.]';
+
+        // Update diagnostics to reflect the effective output mode (DOM), not the requested one (AX).
+        diagnostics.requestedMode = diagnostics.requestedMode ?? diagnostics.mode;
+        diagnostics.mode = 'dom';
 
         return withDiagnostics({
           content: [
