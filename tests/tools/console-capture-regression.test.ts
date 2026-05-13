@@ -131,6 +131,7 @@ const FIXTURE_PATH = path.join(
   __dirname,
   '../../tests/fixtures/console-capture/baseline-v1.11.0.json',
 );
+const normalizeFixtureText = (text: string) => text.replace(/\r\n/g, '\n');
 
 describe('console_capture get response — v1.11.0 baseline regression', () => {
   test('response shape (excluding bufferStats) matches baseline fixture', () => {
@@ -146,6 +147,7 @@ describe('console_capture get response — v1.11.0 baseline regression', () => {
       expect(true).toBe(true);
       return;
     }
+
 
     // GitHub's Windows checkout may materialize text fixtures with CRLF,
     // while JSON.stringify always emits LF. Normalize only line endings so
