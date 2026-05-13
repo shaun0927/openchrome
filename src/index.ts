@@ -114,9 +114,9 @@ program
       const server = new MCPServer(undefined, { initialToolTier: 3 });
       registerAllTools(server);
       const manifest = server.getToolManifest();
-      const output = Buffer.from(JSON.stringify(manifest.tools) + '\n', 'utf8');
+      const output = JSON.stringify(manifest.tools) + '\n';
       for (let offset = 0; offset < output.length; offset += 16_384) {
-        const chunk = output.subarray(offset, Math.min(offset + 16_384, output.length));
+        const chunk = output.slice(offset, offset + 16_384);
         if (!process.stdout.write(chunk)) {
           await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
         }
@@ -452,27 +452,6 @@ program
     const server = getMCPServer();
     await registerAllTools(server);
 
-// Pilot dynamic-skills (#889): lazy attach only when explicitly enabled.
-    {
-      const { isDynamicSkillsEnabled } = await import('./harness/flags.js');
-      if (isDynamicSkillsEnabled()) {
-        try {
-          const mod = await import('./pilot/dynamic-skills/index.js');
-          const defaults = await import('./pilot/dynamic-skills/attachment-defaults.js');
-          mod.attachDynamicSkillsToServer(server, {
-            resolveCurrentTab: defaults.defaultResolveCurrentTab,
-            runStep: defaults.defaultRunStep,
-            assertContract: defaults.defaultAssertContract,
-          });
-          console.error('[openchrome] Pilot family: dynamic_skills attached');
-        } catch (err) {
-          console.error(
-            `[openchrome] Pilot family dynamic_skills attach failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-    }
-
     // Dev-only hook: artificial delay for the tools component transition.
     // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
     const isDevHooks = process.env.NODE_ENV !== 'production' && process.env.OPENCHROME_DEV_HOOKS === '1';
@@ -486,7 +465,6 @@ program
     } else {
       setComponent('tools', 'ok');
     }
-
 
     // Write PID file for zombie process detection
     writePidFile(port);
