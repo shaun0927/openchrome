@@ -2,6 +2,8 @@
  * MCP Protocol Types - Ported from extension
  */
 
+import type { Principal } from '../auth/api-key-types';
+
 export interface MCPRequest {
   jsonrpc: '2.0';
   id: number | string;
@@ -107,6 +109,7 @@ export interface ToolProgress {
   message?: string;
 }
 
+
 export interface ToolContext {
   /** When the tool handler started executing */
   startTime: number;
@@ -114,6 +117,8 @@ export interface ToolContext {
   deadlineMs: number;
   /** AbortSignal that fires when the originating HTTP request is closed. */
   signal?: AbortSignal;
+  /** Transport-authenticated caller principal. Not forgeable via tool args. */
+  principal?: Principal;
   /**
    * Emit a progress update for the in-flight tool call.
    *

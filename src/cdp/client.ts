@@ -585,6 +585,9 @@ export class CDPClient {
       try {
         const connected = await this.connectInternal({ autoLaunch: false, generation });
         if (connected === false) {
+          this.reconnecting = false;
+          this.reconnectingAttempt = 0;
+          this.reconnectNextRetryAt = 0;
           return;
         }
         console.error('[CDPClient] Reconnection successful');
@@ -844,7 +847,7 @@ export class CDPClient {
       // Register in the same worker as opener and inherit the opener's
       // named-context mapping (#848 Codex P1) so popups count toward the
       // same context's tab total instead of slipping into the default.
-      sessionManager.registerExternalTarget(targetId, ownerInfo.sessionId, ownerInfo.workerId, {
+      await sessionManager.registerExternalTarget(targetId, ownerInfo.sessionId, ownerInfo.workerId, {
         inheritContextFromTargetId: openerTargetId,
       });
 
