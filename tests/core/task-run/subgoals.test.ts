@@ -83,6 +83,45 @@ describe('bounded subgoal decomposition', () => {
     if (!malformedSubgoal.ok) expect(malformedSubgoal.errors.join('\n')).toContain('allowed_domains must be an array');
   });
 
+
+  test('decomposition keyword matching uses word boundaries', () => {
+    expect(shouldDecomposeTask({ objective: 'scan candy page', optIn: true })).toBe(false);
+    expect(shouldDecomposeTask({ objective: 'scan page and report result', optIn: true })).toBe(true);
+  });
+
+  test('builder clones global stops and never emits empty allowed tool lists', () => {
+    const first = buildConservativeSubgoalPlan({ objective: 'x', allowedTools: ['interact'] });
+    first.global_stop_conditions.push('mutated');
+    const second = buildConservativeSubgoalPlan({ objective: 'x', allowedTools: ['interact'] });
+
+    expect(second.global_stop_conditions).not.toContain('mutated');
+    expect(first.subgoals.every((subgoal) => subgoal.allowed_tools.length > 0)).toBe(true);
+  });
+
+  test('schema rejects non-string allowed domains without throwing', () => {
+    const result = validateSubgoalPlan({
+      objective: 'x',
+      global_stop_conditions: ['auth handoff required', 'captcha or bot check', 'destructive confirmation required'],
+      subgoals: [{
+        id: 'bad-domain-item',
+        goal: 'read site',
+        success_criteria: 'content visible',
+        allowed_tools: ['read_page'],
+        stop_condition: 'content visible',
+        allowed_domains: ['localhost', { host: 'evil.test' }],
+      }],
+    }, { allowedDomains: ['localhost'] });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join('\n')).toContain('allowed_domains must contain only strings');
+  });
+
+  test('auth stop matcher does not treat generic required text as authentication', () => {
+    const subgoal = buildConservativeSubgoalPlan({ objective: 'x' }).subgoals[0];
+    expect(evaluateSubgoalStop({ subgoal, evidenceText: 'required field is missing' })).toMatchObject({ status: 'pending' });
+    expect(evaluateSubgoalStop({ subgoal, evidenceText: 'sign in to continue' })).toMatchObject({ status: 'stopped', next_safe_action: 'ask_user' });
+  });
+
   test('stop-condition handling halts on auth, captcha, and destructive confirmation', () => {
     const subgoal = buildConservativeSubgoalPlan({ objective: 'x' }).subgoals[0];
     expect(evaluateSubgoalStop({ subgoal, evidenceText: 'Login required' })).toMatchObject({ status: 'stopped', next_safe_action: 'ask_user' });

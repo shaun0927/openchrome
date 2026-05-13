@@ -27,7 +27,7 @@ export function shouldDecomposeTask(input: { objective: string; optIn?: boolean;
   if (!input.optIn) return false;
   if (input.force) return true;
   const words = input.objective.trim().split(/\s+/).filter(Boolean);
-  return words.length >= 8 || /then|and|after|download|report|invoice|multi[- ]?step/i.test(input.objective);
+  return words.length >= 8 || /\b(?:then|and|after|download|report|invoice|multi[- ]?step)\b/i.test(input.objective);
 }
 
 export function validateSubgoalPlan(plan: unknown, opts: { allowedDomains?: string[] } = {}): { ok: true; value: BrowserSubgoalPlan } | { ok: false; errors: string[] } {
@@ -42,7 +42,7 @@ export function validateSubgoalPlan(plan: unknown, opts: { allowedDomains?: stri
 
   const seen = new Set<string>();
   for (const stop of REQUIRED_GLOBAL_STOPS) {
-    if (!globalStopConditions?.some(item => String(item).toLowerCase().includes(stop.split(' ')[0]))) {
+    if (!globalStopConditions?.some(item => typeof item === 'string' && item.toLowerCase().includes(stop.split(' ')[0]))) {
       errors.push(`global_stop_conditions must include ${stop}`);
     }
   }
@@ -65,9 +65,11 @@ export function validateSubgoalPlan(plan: unknown, opts: { allowedDomains?: stri
     }
     if (subgoal.allowed_domains !== undefined && !Array.isArray(subgoal.allowed_domains)) {
       errors.push(`${prefix}.allowed_domains must be an array`);
+    } else if (Array.isArray(subgoal.allowed_domains) && !subgoal.allowed_domains.every((domain: unknown) => typeof domain === 'string')) {
+      errors.push(`${prefix}.allowed_domains must contain only strings`);
     }
     if (opts.allowedDomains && Array.isArray(subgoal.allowed_domains)) {
-      const outside = subgoal.allowed_domains.filter((domain: string) => !opts.allowedDomains!.includes(domain));
+      const outside = subgoal.allowed_domains.filter((domain: unknown): domain is string => typeof domain === 'string' && !opts.allowedDomains!.includes(domain));
       if (outside.length > 0) errors.push(`${prefix}.allowed_domains outside allowed scope: ${outside.join(', ')}`);
     }
   }
@@ -85,13 +87,13 @@ export function buildConservativeSubgoalPlan(input: {
   const allowed_domains = input.allowedDomains?.length ? input.allowedDomains : undefined;
   return {
     objective: input.objective,
-    global_stop_conditions: REQUIRED_GLOBAL_STOPS,
+    global_stop_conditions: [...REQUIRED_GLOBAL_STOPS],
     subgoals: [
       {
         id: 'scope-and-state',
         goal: 'Verify the task is on an allowed domain and the page is reachable',
         success_criteria: 'Current page URL is in scope and page state can be read',
-        allowed_tools: allowedTools.filter(tool => ['navigate', 'read_page', 'find'].includes(tool)),
+        allowed_tools: pickStageTools(allowedTools, ['navigate', 'read_page', 'find']),
         stop_condition: 'out-of-domain, auth handoff required, captcha or bot check, or page reachable',
         allowed_domains,
       },
@@ -99,7 +101,7 @@ export function buildConservativeSubgoalPlan(input: {
         id: 'locate-target',
         goal: 'Locate the requested target or next required control without mutating external state',
         success_criteria: 'A specific visible target/control is identified with evidence',
-        allowed_tools: allowedTools.filter(tool => ['read_page', 'find', 'oc_assert'].includes(tool)),
+        allowed_tools: pickStageTools(allowedTools, ['read_page', 'find', 'oc_assert']),
         stop_condition: 'target found, target absent, auth handoff required, captcha or bot check, or destructive confirmation required',
         allowed_domains,
       },
@@ -107,7 +109,7 @@ export function buildConservativeSubgoalPlan(input: {
         id: 'verify-outcome',
         goal: 'Verify the final requested outcome using explicit evidence before reporting completion',
         success_criteria: 'Outcome contract or success evidence is present and no global stop condition is active',
-        allowed_tools: allowedTools.filter(tool => ['read_page', 'find', 'oc_assert'].includes(tool)),
+        allowed_tools: pickStageTools(allowedTools, ['read_page', 'find', 'oc_assert']),
         stop_condition: 'success evidence present, missing evidence, auth handoff required, captcha or bot check, or destructive confirmation required',
         allowed_domains,
       },
@@ -115,10 +117,16 @@ export function buildConservativeSubgoalPlan(input: {
   };
 }
 
+
+function pickStageTools(allowedTools: string[], stageTools: string[]): string[] {
+  const filtered = allowedTools.filter((tool) => stageTools.includes(tool));
+  return filtered.length > 0 ? filtered : [stageTools[0]];
+}
+
 export function evaluateSubgoalStop(input: { subgoal: BrowserSubgoal; evidenceText: string; passed?: boolean }): SubgoalExecutionState {
   const text = input.evidenceText.toLowerCase();
   if (/captcha|bot check/.test(text)) return stopped(input.subgoal.id, 'captcha or bot check detected', 'ask_user');
-  if (/login|required|unauthorized|forbidden|auth/.test(text)) return stopped(input.subgoal.id, 'auth handoff required', 'ask_user');
+  if (/\b(?:login|unauthorized|forbidden|auth|authentication|authorization|sign[ -]?in)\b/.test(text)) return stopped(input.subgoal.id, 'auth handoff required', 'ask_user');
   if (/destructive|confirm|delete|payment|purchase|place order/.test(text)) return stopped(input.subgoal.id, 'destructive confirmation required', 'request_policy_confirmation');
   if (input.passed === true) return { subgoalId: input.subgoal.id, status: 'passed', reason: 'success criteria satisfied', next_safe_action: 'continue' };
   if (input.passed === false) return { subgoalId: input.subgoal.id, status: 'failed', reason: 'success criteria not satisfied', next_safe_action: 'stop_or_replan' };
