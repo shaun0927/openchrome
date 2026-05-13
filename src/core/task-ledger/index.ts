@@ -20,6 +20,16 @@ export {
   assertSafeTaskId,
 } from './store';
 export type { TaskStoreOptions } from './store';
+export type {
+  BuildTaskEvidenceDigestOptions,
+  TaskEvidenceCategory,
+  TaskEvidenceDigest,
+  TaskEvidenceDigestEvent,
+} from './digest';
+export {
+  buildTaskEvidenceDigest,
+  digestFromParts,
+} from './digest';
 export type { RunInput, RunOutcome } from './runner';
 export {
   runTask,

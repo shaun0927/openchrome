@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager, REF_TTL_MS } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
@@ -16,6 +16,7 @@ import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
 
 /**
  * Build the `[node_refs]` block that surfaces the #844 backend-node uid
@@ -207,6 +208,16 @@ interface AXNode {
   value?: { value: string };
   childIds?: number[];
   properties?: Array<{ name: string; value: { value: unknown } }>;
+}
+
+
+function createReadPageSnapshotMetadata(tabId: string, url: string, capturedAt = Date.now()): SnapshotRefMetadata {
+  return {
+    snapshotId: `snap_${capturedAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    capturedAt,
+    url,
+    tabId,
+  };
 }
 
 const handler: ToolHandler = async (
@@ -873,7 +884,11 @@ const handler: ToolHandler = async (
       frame_id?: string;
       created_at: number;
       stale_after_ms: number;
+      snapshot_id: string;
+      snapshot_captured_at: number;
+      snapshot_url: string;
     }> = {};
+    const snapshotMetadata = createReadPageSnapshotMetadata(tabId, axPageStats.url);
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
@@ -925,7 +940,9 @@ const handler: ToolHandler = async (
           node.backendDOMNodeId,
           role,
           name,
-          tagName
+          tagName,
+          undefined,
+          { snapshot: snapshotMetadata }
         );
 
         // #831: record the structured ref entry for the response `refs` map.
@@ -940,6 +957,9 @@ const handler: ToolHandler = async (
           ...(entry?.frameId ? { frame_id: entry.frameId } : {}),
           created_at: entry?.createdAt ?? Date.now(),
           stale_after_ms: entry?.staleAfterMs ?? REF_TTL_MS,
+          snapshot_id: snapshotMetadata.snapshotId,
+          snapshot_captured_at: snapshotMetadata.capturedAt,
+          snapshot_url: snapshotMetadata.url,
         };
       }
 
@@ -1051,6 +1071,7 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
+          snapshot: snapshotMetadata,
         });
       }
 
@@ -1103,6 +1124,7 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
+          snapshot: snapshotMetadata,
         });
       }
     }
@@ -1110,6 +1132,7 @@ const handler: ToolHandler = async (
     return withDiagnostics({
       content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
       refs: refsMap,
+      snapshot: snapshotMetadata,
     });
   } catch (error) {
     return {
@@ -1236,7 +1259,55 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
  * behavior-preserving seam so the feature can be re-enabled safely later.
  */
 const cachedHandler: ToolHandler = async (sessionId, args, context) => {
-  return sanitizedHandler(sessionId, args, context);
+  const result = await sanitizedHandler(sessionId, args, context);
+  if (!isStateHeaderEnabled() || result.isError || !result.content) return result;
+
+  const tabId = typeof args.tabId === 'string' ? args.tabId : '';
+  if (!tabId) return result;
+
+  let page: Awaited<ReturnType<ReturnType<typeof getSessionManager>['getPage']>> | null = null;
+  try {
+    page = await getSessionManager().getPage(sessionId, tabId);
+  } catch {
+    page = null;
+  }
+  if (!page) return result;
+
+  let url = '';
+  let title = '';
+  try {
+    url = page.url() || '';
+  } catch {
+    url = '';
+  }
+  try {
+    title = await page.title();
+  } catch {
+    title = '';
+  }
+
+  const requestedMode = typeof args.mode === 'string' ? args.mode : 'dom';
+  const mode = ['ax', 'dom', 'css', 'semantic', 'markdown'].includes(requestedMode)
+    ? requestedMode
+    : 'dom';
+  const headerMode = mode === 'markdown' ? 'html' : mode;
+  const header = { url, title, mode: headerMode as 'ax' | 'dom' | 'css' | 'html', capturedAt: Date.now(), tabId };
+
+  return {
+    ...result,
+    content: result.content.map((block) => {
+      if (block.type !== 'text' || typeof block.text !== 'string') return block;
+      if (mode === 'semantic') {
+        try {
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          return { ...block, text: JSON.stringify(mergeHeaderJson(header, parsed)) };
+        } catch {
+          return { ...block, text: prependHeaderText(header, block.text) };
+        }
+      }
+      return { ...block, text: prependHeaderText(header, block.text) };
+    }),
+  };
 };
 
 export function registerReadPageTool(server: MCPServer): void {

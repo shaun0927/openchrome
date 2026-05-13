@@ -64,6 +64,7 @@ export const TOOL_ANNOTATIONS = {
   // ── Pure reads ──────────────────────────────────────────────────────────
   inspect: READ_ONLY,
   query_dom: READ_ONLY,
+  oc_query: READ_ONLY,
   find: READ_ONLY,
   read_page: READ_ONLY,
   page_content: READ_ONLY,
@@ -77,6 +78,7 @@ export const TOOL_ANNOTATIONS = {
   oc_profile_status: READ_ONLY,
   oc_get_connection_info: READ_ONLY,
   oc_connection_health: READ_ONLY,
+  oc_policy: READ_ONLY,
   oc_skill_recall: READ_ONLY,
   vision_find: READ_ONLY,
   oc_assert: READ_ONLY,

@@ -10,6 +10,8 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { getExistingChromeLauncher } from '../chrome/launcher';
+import { getGlobalConfig } from '../config/global';
 import { writeFileAtomicSafe } from '../utils/atomic-file';
 import { safeTitle } from '../utils/safe-title';
 
@@ -21,6 +23,27 @@ export interface SnapshotTab {
   sessionId: string;
   url: string;
   title: string;
+  /** Last observed activity for the owning OpenChrome session. */
+  lastActivityAt?: number;
+  /** Last observed activity for the owning worker/context. */
+  workerLastActivityAt?: number;
+  /** Chrome profile directory when this tab belongs to a profile-scoped worker. */
+  profileDirectory?: string;
+}
+
+export interface SessionLifecycleMetadata {
+  capturedAt: number;
+  recoverySource: 'oc_session_snapshot';
+  profile: {
+    type: string;
+    userDataDir?: string;
+    profileDirectory?: string;
+    cookieCopiedAt?: number;
+  };
+  storageState: {
+    enabled: boolean;
+    dir?: string;
+  };
 }
 
 export interface SnapshotMemo {
@@ -38,6 +61,8 @@ export interface SessionSnapshot {
   tabs: SnapshotTab[];
   memo: SnapshotMemo;
   label?: string;
+  /** Session/profile/storage-state identity captured for long-running recovery. */
+  lifecycle?: SessionLifecycleMetadata;
 }
 
 // ─── Tool Definition ───────────────────────────────────────────────────────
@@ -137,6 +162,11 @@ export async function collectTabs(): Promise<SnapshotTab[]> {
             sessionId,
             url,
             title,
+            lastActivityAt: sessionInfo.lastActivityAt,
+            workerLastActivityAt: workerInfo.lastActivityAt,
+            ...((workerInfo as { profileDirectory?: string }).profileDirectory && {
+              profileDirectory: (workerInfo as { profileDirectory?: string }).profileDirectory,
+            }),
           });
         }
       }
@@ -147,6 +177,45 @@ export async function collectTabs(): Promise<SnapshotTab[]> {
   }
 
   return tabs;
+}
+
+export function collectLifecycleMetadata(): SessionLifecycleMetadata {
+  const config = getGlobalConfig();
+  let profile: SessionLifecycleMetadata['profile'] = { type: 'unknown' };
+
+  try {
+    const launcher = getExistingChromeLauncher(config.port);
+    if (!launcher) {
+      return {
+        capturedAt: Date.now(),
+        recoverySource: 'oc_session_snapshot',
+        profile,
+        storageState: {
+          enabled: process.env.OC_PERSIST_STORAGE !== '0',
+          ...(process.env.OC_STORAGE_DIR && { dir: process.env.OC_STORAGE_DIR }),
+        },
+      };
+    }
+    const state = launcher.getProfileState();
+    profile = {
+      type: state.type,
+      ...(state.userDataDir && { userDataDir: state.userDataDir }),
+      ...(state.profileDirectory && { profileDirectory: state.profileDirectory }),
+      ...(state.cookieCopiedAt && { cookieCopiedAt: state.cookieCopiedAt }),
+    };
+  } catch {
+    // Profile state is best-effort: snapshots must still work before Chrome launches.
+  }
+
+  return {
+    capturedAt: Date.now(),
+    recoverySource: 'oc_session_snapshot',
+    profile,
+    storageState: {
+      enabled: process.env.OC_PERSIST_STORAGE !== '0',
+      ...(process.env.OC_STORAGE_DIR && { dir: process.env.OC_STORAGE_DIR }),
+    },
+  };
 }
 
 // ─── File Management ───────────────────────────────────────────────────────
@@ -226,6 +295,7 @@ const handler: ToolHandler = async (
     timestamp: Date.now(),
     tabs,
     memo,
+    lifecycle: collectLifecycleMetadata(),
     label: (args.label as string) || undefined,
   };
 

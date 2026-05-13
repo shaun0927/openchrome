@@ -6,11 +6,9 @@
  * an `EvalContext` over that frozen state, and lets the existing contract
  * evaluator decide pass/fail.
  *
- * `replay_drift` is emitted when the transcript is malformed or its tool
- * sequence diverges from what the runner expects — today that means a
- * missing/invalid final-state entry. Once the real adapter starts emitting
- * per-step tool-call traces, this will compare expected vs. actual call
- * digests and surface drift the same way.
+ * `replay_drift` is emitted when the transcript is malformed, lacks a usable
+ * final-state entry, or a per-step tool-call argument digest does not match
+ * the recorded argument object.
  *
  * The mock adapter is intentionally I/O-light: file reads only, no network.
  */
@@ -20,7 +18,8 @@ import path from 'node:path';
 
 import type { EvalContext, NetworkLogEntry } from '../../../../src/contracts/eval-context';
 import type { NetworkSinceMarker } from '../../../../src/contracts/types';
-import type { TranscriptEntry, TranscriptFinalState } from '../types';
+import { validateToolCallDigests } from '../transcript-digest';
+import type { TranscriptEntry, TranscriptFinalState, TranscriptToolCall } from '../types';
 
 export interface MockAdapterRunResult {
   context: EvalContext;
@@ -74,7 +73,18 @@ export async function runMockTask(taskName: string): Promise<MockAdapterRunResul
     }
   }
 
-  const toolCalls = entries.filter((e) => e.kind === 'tool_call').length;
+  const toolCallEntries = entries.filter((e): e is TranscriptToolCall => e.kind === 'tool_call');
+  const digestDrift = validateToolCallDigests(toolCallEntries);
+  if (digestDrift) {
+    return {
+      context: emptyContext(),
+      tool_calls: toolCallEntries.length,
+      response_bytes: raw.length,
+      drift: `replay_drift ${JSON.stringify(digestDrift)}`,
+    };
+  }
+
+  const toolCalls = toolCallEntries.length;
   const final = entries.find((e): e is TranscriptFinalState => e.kind === 'final_state');
   if (!final) {
     return {

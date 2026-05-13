@@ -28,6 +28,8 @@ export interface WorkerInfo {
   targetCount: number;
   createdAt: number;
   lastActivityAt: number;
+  /** Chrome profile directory when the worker is backed by a profile-scoped browser. */
+  profileDirectory?: string;
 }
 
 export interface WorkerCreateOptions {
