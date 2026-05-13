@@ -99,7 +99,30 @@ async function startTransport(transport: InstanceType<typeof HTTPTransport>): Pr
     return { jsonrpc: '2.0', id: msg.id, result: { ok: true } };
   });
   transport.start();
-  await new Promise((r) => setTimeout(r, 100));
+  // Wait for the underlying http server to actually accept connections so
+  // the first request doesn't race with bind() and trip ECONNREFUSED. We
+  // poll instead of just sleeping because the previous 100 ms fixed wait
+  // intermittently lost the race on slower ubuntu-18 / macos-22 runners.
+  await waitForListening(activePort);
+}
+
+async function waitForListening(port: number, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = net.connect({ host: '127.0.0.1', port });
+        socket.once('connect', () => { socket.destroy(); resolve(); });
+        socket.once('error', reject);
+      });
+      return;
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+  throw new Error(`HTTP transport never started listening on 127.0.0.1:${port} within ${timeoutMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
 describe('HTTP Bearer Token Auth', () => {
