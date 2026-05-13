@@ -36,6 +36,14 @@ import { applyContentFilter, ContentFilterMetrics, parseContentFilterType, Conte
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
 import { AdaptiveCrawlDispatcher, DispatcherMode, parseAdaptiveDispatcherOptions } from '../core/crawl/dispatcher';
+import {
+  canReadCache,
+  canWriteCache,
+  CrawlContentCache,
+  CrawlCacheMetadata,
+  parseCrawlCacheMode,
+  parseCrawlCacheScope,
+} from '../core/crawl/content-cache';
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
@@ -147,6 +155,20 @@ const definition: MCPToolDefinition = {
         type: 'object',
         description: 'dispatcher=adaptive options: min_concurrency, max_concurrency, memory_pressure_mb, origin_backoff_ms, rate_limit_statuses.',
       },
+      cache_mode: {
+        type: 'string',
+        enum: ['disabled', 'enabled', 'read_only', 'write_only', 'bypass'],
+        description: 'Opt-in crawl content cache mode. Default: disabled.',
+      },
+      cache_ttl_ms: {
+        type: 'number',
+        description: 'Maximum age for enabled/read_only cache hits. Negative or omitted means no TTL expiry.',
+      },
+      cache_scope: {
+        type: 'string',
+        enum: ['public', 'session'],
+        description: 'Cache namespace/safety scope. Default: public; session adds a session fingerprint to the key.',
+      },
     },
     required: ['url'],
   },
@@ -196,6 +218,7 @@ interface CrawledPage {
   static_reason?: StaticReason;
   score?: number;
   score_reasons?: string[];
+  cache?: CrawlCacheMetadata;
 }
 
 type EngineMode = 'auto' | 'static' | 'cdp';
@@ -207,6 +230,7 @@ interface CrawlQueueItem {
   order: number;
   score?: number;
   score_reasons?: string[];
+  cache?: CrawlCacheMetadata;
 }
 
 interface CrawlSummary {
@@ -652,6 +676,18 @@ const handler: ToolHandler = async (
   const includePatterns = args.include_patterns as string[] | undefined;
   const excludePatterns = args.exclude_patterns as string[] | undefined;
   const outputFormat = (args.output_format as string) || 'markdown';
+  let cacheMode;
+  let cacheScope;
+  try {
+    cacheMode = parseCrawlCacheMode(args.cache_mode);
+    cacheScope = parseCrawlCacheScope(args.cache_scope);
+  } catch (err) {
+    return {
+      content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+      isError: true,
+    };
+  }
+  const cacheTtlMs = typeof args.cache_ttl_ms === 'number' ? args.cache_ttl_ms : undefined;
   const cleanOpts = {
     onlyMainContent: args.onlyMainContent !== false,
     includeLinks: args.includeLinks !== false,
@@ -762,6 +798,7 @@ const handler: ToolHandler = async (
   const adaptiveDispatcher = dispatcherMode === 'adaptive'
     ? new AdaptiveCrawlDispatcher(concurrency, parseAdaptiveDispatcherOptions(args.dispatcher_options, concurrency))
     : null;
+  const crawlCache = new CrawlContentCache<CrawledPage & { _links?: string[] }>();
 
   const startTime = Date.now();
   const tracker = new CrawlTracker();
@@ -858,8 +895,44 @@ const handler: ToolHandler = async (
         batch.map((item) =>
           limiter(async () => {
             const runFetch = async () => {
-            // Check robots.txt before fetching
+            const cacheKey = crawlCache.key({
+              url: item.url,
+              outputFormat,
+              engine,
+              cacheScope,
+              sessionFingerprint: sessionId,
+              dimensions: {
+                onlyMainContent: cleanOpts.onlyMainContent,
+                includeLinks: cleanOpts.includeLinks,
+                query: args.query,
+                url_score: args.url_score,
+              },
+            });
+
+            // Check robots.txt before fetching or serving cached content.
             const allowed = await isRobotsAllowed(item.url);
+            if (allowed && canReadCache(cacheMode)) {
+              const cached = crawlCache.read(cacheKey, cacheTtlMs);
+              if (cached && !cached.stale) {
+                tracker.visit(item.url);
+                return {
+                  page: {
+                    ...cached.entry.page,
+                    depth: item.depth,
+                    cache: crawlCache.metadata('hit', {
+                      key: cacheKey,
+                      scope: cacheScope,
+                      hit: true,
+                      createdAt: cached.entry.createdAt,
+                      content_length: cached.entry.contentLength,
+                    }),
+                  },
+                  links: cached.entry.links,
+                  depth: item.depth,
+                };
+              }
+            }
+
             if (!allowed) {
               console.error(`[crawl] Blocked by robots.txt: ${item.url}`);
               return {
@@ -944,6 +1017,40 @@ const handler: ToolHandler = async (
             if (strategy === 'best_first') {
               result.score = item.score ?? 0;
               result.score_reasons = item.score_reasons ?? [];
+            }
+
+            if (cacheMode !== 'disabled') {
+              const cacheStatus = cacheMode === 'write_only'
+                ? 'write_only'
+                : cacheMode === 'bypass'
+                  ? 'bypass'
+                  : 'miss';
+              let cacheMeta = crawlCache.metadata(cacheStatus, {
+                key: cacheKey,
+                scope: cacheScope,
+                hit: false,
+                write: 'disabled',
+              });
+              if (canWriteCache(cacheMode) && !result.error) {
+                const written = crawlCache.write({
+                  key: cacheKey,
+                  sourceUrl: item.url,
+                  finalUrl: result.url,
+                  page: { ...result, _links: links },
+                  links,
+                  cacheScope,
+                });
+                cacheMeta = crawlCache.metadata(cacheStatus, {
+                  key: cacheKey,
+                  scope: cacheScope,
+                  hit: false,
+                  write: written.stored ? 'stored' : 'skipped',
+                  write_skipped_reason: written.reason,
+                  createdAt: written.entry?.createdAt,
+                  content_length: result.content.length,
+                });
+              }
+              result.cache = cacheMeta;
             }
 
             // Apply delay between fetches
