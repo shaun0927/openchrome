@@ -585,6 +585,12 @@ export class CDPClient {
       try {
         const connected = await this.connectInternal({ autoLaunch: false, generation });
         if (connected === false) {
+          this.reconnecting = false;
+          this.reconnectingAttempt = 0;
+          this.reconnectNextRetryAt = 0;
+          if (this.connectionState === 'reconnecting') {
+            this.connectionState = 'disconnected';
+          }
           return;
         }
         console.error('[CDPClient] Reconnection successful');
