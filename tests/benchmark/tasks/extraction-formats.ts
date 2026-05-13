@@ -31,6 +31,10 @@ export interface ExtractionFormatsReport {
 const FIXTURE_DIR = path.join(__dirname, '..', 'fixtures', 'extraction');
 const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'extraction-formats.json');
 
+export interface ExtractionWorkingDocument {
+  html: string;
+}
+
 function checksum(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -82,6 +86,19 @@ function measure<T>(fn: () => T): { value: T; wallTimeMs: number } {
   return { value, wallTimeMs: Number(end - start) / 1_000_000 };
 }
 
+export function measureExtractionTransform<T>(
+  sourceHtml: string,
+  fn: (document: ExtractionWorkingDocument) => T,
+): { value: T; wallTimeMs: number; contentMutated: boolean } {
+  const before = checksum(sourceHtml);
+  const document: ExtractionWorkingDocument = { html: sourceHtml };
+  const measured = measure(() => fn(document));
+  return {
+    ...measured,
+    contentMutated: checksum(document.html) !== before,
+  };
+}
+
 export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}): ExtractionFormatsReport {
   const fixtureNames = fs.readdirSync(FIXTURE_DIR).filter(f => f.endsWith('.html')).sort();
   const entries: ExtractionFormatEntry[] = [];
@@ -89,9 +106,8 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
   for (const fixture of fixtureNames) {
     const fixturePath = path.join(FIXTURE_DIR, fixture);
     const html = fs.readFileSync(fixturePath, 'utf8');
-    const before = checksum(html);
 
-    const dom = measure(() => stripNoise(html));
+    const dom = measureExtractionTransform(html, document => stripNoise(document.html));
     entries.push({
       fixture,
       mode: 'dom_compact_static',
@@ -103,10 +119,10 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
       fieldsTotal: 0,
       fallbackUsed: false,
       recipeUsed: false,
-      contentMutated: checksum(html) !== before,
+      contentMutated: dom.contentMutated,
     });
 
-    const extracted = measure(() => deterministicExtract(html));
+    const extracted = measureExtractionTransform(html, document => deterministicExtract(document.html));
     entries.push({
       fixture,
       mode: 'extract_data_deterministic_static',
@@ -118,10 +134,10 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
       fieldsTotal: extracted.value.fieldsTotal,
       fallbackUsed: false,
       recipeUsed: false,
-      contentMutated: checksum(html) !== before,
+      contentMutated: extracted.contentMutated,
     });
 
-    const readable = measure(() => textOnly(html));
+    const readable = measureExtractionTransform(html, document => textOnly(document.html));
     entries.push({
       fixture,
       mode: 'readable_text_static',
@@ -133,7 +149,7 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
       fieldsTotal: 0,
       fallbackUsed: false,
       recipeUsed: false,
-      contentMutated: checksum(html) !== before,
+      contentMutated: readable.contentMutated,
     });
 
     for (const mode of ['markdown_clean_openchrome', 'recipe_auto_openchrome', 'llm_fallback_mock']) {

@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { runExtractionFormatsBenchmark } from './extraction-formats';
+import { measureExtractionTransform, runExtractionFormatsBenchmark } from './extraction-formats';
 
 describe('extraction format benchmark', () => {
   test('writes fixture-based extraction report without mutating content', () => {
@@ -15,5 +15,16 @@ describe('extraction format benchmark', () => {
     expect(fs.existsSync(out)).toBe(true);
     const parsed = JSON.parse(fs.readFileSync(out, 'utf8'));
     expect(parsed.summary.fixtures).toBe(report.summary.fixtures);
+  });
+
+  test('mutation guard checks the working document state', () => {
+    const clean = measureExtractionTransform('<main>Stable</main>', document => document.html.toUpperCase());
+    const mutated = measureExtractionTransform('<main>Stable</main>', document => {
+      document.html = '<main>Changed</main>';
+      return document.html;
+    });
+
+    expect(clean.contentMutated).toBe(false);
+    expect(mutated.contentMutated).toBe(true);
   });
 });
