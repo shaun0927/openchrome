@@ -1,0 +1,75 @@
+Usage: openchrome serve [options]
+
+Start the MCP server
+
+Options:
+  -p, --port <port>                   Chrome remote debugging port (default:
+                                      "9222")
+  --auto-launch                       Auto-launch Chrome if not running
+                                      (default: false)
+  --user-data-dir <dir>               Chrome user data directory (default: real
+                                      Chrome profile on macOS)
+  --profile-directory <name>          Chrome profile directory name (e.g.,
+                                      "Profile 1", "Default")
+  --chrome-binary <path>              Path to Chrome binary (e.g.,
+                                      chrome-headless-shell)
+  --headless-shell                    Use chrome-headless-shell if available
+                                      (default: false)
+  --headless                          Run Chrome headless (default: headed).
+                                      Also: OPENCHROME_HEADLESS=1 env var.
+  --visible                           [deprecated] Show Chrome window. Headed
+                                      is the default since #657; this flag is
+                                      now a no-op alias and will be removed in
+                                      a future release.
+  --window-size <width,height>        Headed Chrome window size, e.g. 1280,900.
+                                      Also: OPENCHROME_WINDOW_SIZE.
+  --window-position <x,y>             Headed Chrome window position, e.g. 0,0.
+                                      Also: OPENCHROME_WINDOW_POSITION.
+  --window-bounds <x,y,width,height>  Headed Chrome window bounds. Overrides
+                                      size/position. Also:
+                                      OPENCHROME_WINDOW_BOUNDS.
+  --start-maximized                   Start headed Chrome maximized when no
+                                      explicit size, position, or bounds are
+                                      set. Also: OPENCHROME_START_MAXIMIZED=1.
+  --restart-chrome                    Quit running Chrome to reuse real profile
+                                      (default: uses temp profile)
+  --hybrid                            Enable hybrid mode (Lightpanda + Chrome
+                                      routing)
+  --lp-port <port>                    Lightpanda debugging port (default: 9223)
+                                      (default: "9223")
+  --blocked-domains <domains>         Comma-separated list of blocked domains
+                                      (e.g., "*.bank.com,mail.google.com")
+  --audit-log                         Enable security audit logging (default:
+                                      false)
+  --no-sanitize-content               Disable content sanitization for prompt
+                                      injection defense (default: enabled)
+  --all-tools                         Expose all tools from startup (bypass
+                                      progressive disclosure)
+  --server-mode                       Server/headless mode: auto-launch
+                                      headless Chrome, skip cookie bridge
+  --http [port]                       Use Streamable HTTP transport instead of
+                                      stdio (default port: 3100)
+  --http-host <host>                  Bind address for HTTP transport (default:
+                                      127.0.0.1, use 0.0.0.0 for external
+                                      access)
+  --auth-token <token>                Bearer token for HTTP transport
+                                      authentication (also:
+                                      OPENCHROME_AUTH_TOKEN env var)
+  --allow-unauthenticated-http        Explicitly allow unauthenticated
+                                      loopback-only HTTP development mode
+                                      (also:
+                                      OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1)
+  --transport <mode>                  Transport mode: stdio, http, or both
+                                      (default: stdio)
+  --idle-timeout <duration>           Self-exit (code 0) after idle window with
+                                      zero sessions. Format:
+                                      <number>(ms|s|m|h), e.g. 30m, 90s, 500ms.
+                                      Bare numbers are rejected. Also:
+                                      OPENCHROME_IDLE_TIMEOUT_MS env var
+                                      (integer ms). Default: disabled.
+  --pilot                             Enable experimental pilot tier (see
+                                      docs/roadmap/portability-harness-contract.md).
+                                      Off by default; lazy-loads src/pilot/
+                                      modules when set. Also:
+                                      OPENCHROME_PILOT=1 env var.
+  -h, --help                          display help for command

@@ -8,6 +8,35 @@ import { Page } from 'puppeteer-core';
 /** TTL for ref staleness warning (30 seconds) */
 export const REF_TTL_MS = 30_000;
 
+/**
+ * Structured stale-ref error (#831). Returned to MCP clients when a tool is
+ * called with an explicit `ref` argument that is expired, missing, or no
+ * longer valid (e.g., after navigation cleared the per-target ref table).
+ * No silent coordinate fallback — callers must call `read_page(mode='ax')`
+ * to obtain a fresh ref.
+ */
+export const STALE_REF_HINT =
+  "call read_page (mode='ax') to get fresh refs";
+
+export interface StaleRefError {
+  code: 'STALE_REF';
+  ref_id: string;
+  hint: string;
+}
+
+export function makeStaleRefError(refId: string): StaleRefError {
+  return { code: 'STALE_REF', ref_id: refId, hint: STALE_REF_HINT };
+}
+
+/**
+ * Format a STALE_REF error as a structured-but-readable text string
+ * suitable for the MCPResult `content` channel. The exact phrase
+ * "STALE_REF" is preserved so callers can detect it programmatically.
+ */
+export function formatStaleRefError(refId: string): string {
+  return `STALE_REF: ref_id="${refId}" — ${STALE_REF_HINT}`;
+}
+
 export interface RefEntry {
   refId: string;
   backendDOMNodeId: number;
@@ -16,6 +45,16 @@ export interface RefEntry {
   tagName?: string;
   textContent?: string;
   createdAt: number;
+  /**
+   * TTL (ms) after which this ref becomes stale. Default: REF_TTL_MS.
+   * Issue #831 — formalizes ref lifecycle on the read_page snapshot contract.
+   */
+  staleAfterMs: number;
+  /**
+   * Optional frame identifier for cross-frame disambiguation (#831).
+   * Refs resolve via backendDOMNodeId; frameId is metadata for clients.
+   */
+  frameId?: string;
 }
 
 export class RefIdManager {
@@ -23,7 +62,11 @@ export class RefIdManager {
   private counters: Map<string, Map<string, number>> = new Map();
 
   /**
-   * Generate a new ref ID for an element
+   * Generate a new ref ID for an element.
+   *
+   * `options.staleAfterMs` lets callers override the default TTL for the ref
+   * (defaults to REF_TTL_MS). `options.frameId` records the owning frame for
+   * cross-frame disambiguation. Both fields are additive (#831).
    */
   generateRef(
     sessionId: string,
@@ -32,7 +75,8 @@ export class RefIdManager {
     role: string,
     name?: string,
     tagName?: string,
-    textContent?: string
+    textContent?: string,
+    options?: { staleAfterMs?: number; frameId?: string }
   ): string {
     let sessionRefs = this.refs.get(sessionId);
     if (!sessionRefs) {
@@ -65,6 +109,8 @@ export class RefIdManager {
       tagName,
       textContent,
       createdAt: Date.now(),
+      staleAfterMs: options?.staleAfterMs ?? REF_TTL_MS,
+      frameId: options?.frameId,
     };
 
     targetRefs.set(refId, entry);
@@ -113,12 +159,15 @@ export class RefIdManager {
   }
 
   /**
-   * Check if a ref entry is stale (older than REF_TTL_MS)
+   * Check if a ref entry is stale (older than its per-entry staleAfterMs).
+   *
+   * Returns true when the ref is missing OR past its TTL — callers treat
+   * both conditions identically as STALE_REF (#831).
    */
   isRefStale(sessionId: string, targetId: string, refId: string): boolean {
     const entry = this.getRef(sessionId, targetId, refId);
     if (!entry) return true;
-    return Date.now() - entry.createdAt > REF_TTL_MS;
+    return Date.now() - entry.createdAt > entry.staleAfterMs;
   }
 
   /**
@@ -131,12 +180,13 @@ export class RefIdManager {
     targetId: string,
     refId: string,
     currentNodeName: string,
-    currentTextContent?: string
+    currentTextContent?: string,
+    currentName?: string
   ): { valid: boolean; reason?: string; stale?: boolean } {
     const entry = this.getRef(sessionId, targetId, refId);
     if (!entry) return { valid: false, reason: 'Ref not found' };
 
-    const isStale = Date.now() - entry.createdAt > REF_TTL_MS;
+    const isStale = Date.now() - entry.createdAt > entry.staleAfterMs;
 
     // Validate tagName if stored (case-insensitive)
     if (entry.tagName && currentNodeName) {
@@ -158,6 +208,19 @@ export class RefIdManager {
           valid: false,
           stale: true,
           reason: `Element text changed: expected "${storedPrefix}...", found "${currentPrefix}..."`,
+        };
+      }
+    }
+
+    // Validate accessible/name-like fingerprint if stored and available.
+    if (entry.name && currentName) {
+      const storedPrefix = entry.name.slice(0, 30).trim();
+      const currentPrefix = currentName.slice(0, 30).trim();
+      if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
+        return {
+          valid: false,
+          stale: true,
+          reason: `Element name changed: expected "${storedPrefix}...", found "${currentPrefix}..."`,
         };
       }
     }
@@ -337,7 +400,9 @@ export class RefIdManager {
 
       if (!node?.backendNodeId) return null;
 
-      // Register a new ref for the re-located element
+      // Register a new ref for the re-located element. Preserve the original
+      // ref's staleAfterMs + frameId so the relocated ref has equivalent
+      // lifecycle semantics (#831).
       const newRef = this.generateRef(
         sessionId,
         tabId,
@@ -345,7 +410,8 @@ export class RefIdManager {
         entry.role,
         entry.name,
         entry.tagName,
-        entry.textContent
+        entry.textContent,
+        { staleAfterMs: entry.staleAfterMs, frameId: entry.frameId }
       );
 
       return { backendNodeId: node.backendNodeId, newRef };

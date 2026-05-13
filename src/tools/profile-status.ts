@@ -10,6 +10,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getChromeLauncher } from '../chrome/launcher';
 import { getChromePool } from '../chrome/pool';
+import { getGlobalConfig } from '../config/global';
 import { formatAge } from '../utils/format-age';
 
 const definition: MCPToolDefinition = {
@@ -28,7 +29,7 @@ const handler: ToolHandler = async (
   _args: Record<string, unknown>
 ): Promise<MCPResult> => {
   try {
-    const launcher = getChromeLauncher();
+    const launcher = getChromeLauncher(getGlobalConfig().port);
     const state = launcher.getProfileState();
 
     const capabilities = {

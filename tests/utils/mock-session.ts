@@ -201,7 +201,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     // #946: real SessionManager returns the BrowserContext name for tabs
     // created with isolatedContext, or undefined for the default context.
     // Tests don't exercise the named-context path, so always return undefined.
-    getTargetContextName: jest.fn().mockReturnValue(undefined),
+    getTargetContextName: jest.fn().mockImplementation((_targetId: string) => 'default'),
 
     registerExternalTarget: jest.fn().mockImplementation((targetId: string, sessionId: string, workerId: string) => {
       const session = sessions.get(sessionId);
@@ -280,6 +280,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     getTargetWorkerId: jest.fn().mockImplementation((targetId: string) => {
       return targetToWorker.get(targetId)?.workerId;
     }),
+
 
     isTargetValid: jest.fn().mockImplementation(async (targetId: string) => {
       const page = pages.get(targetId);
@@ -455,7 +456,7 @@ export function createMockRefIdManager() {
       return Date.now() - entry.createdAt > 30_000;
     }),
 
-    validateRef: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string, currentNodeName: string, currentTextContent?: string) => {
+    validateRef: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string, currentNodeName: string, currentTextContent?: string, currentName?: string) => {
       const entry = refs.get(sessionId)?.get(targetId)?.get(refId);
       if (!entry) return { valid: false, reason: 'Ref not found' };
 
@@ -470,6 +471,14 @@ export function createMockRefIdManager() {
         const currentPrefix = currentTextContent.slice(0, 30).trim();
         if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
           return { valid: false, stale: true, reason: `Element text changed` };
+        }
+      }
+
+      if (entry.name && currentName) {
+        const storedPrefix = entry.name.slice(0, 30).trim();
+        const currentPrefix = currentName.slice(0, 30).trim();
+        if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
+          return { valid: false, stale: true, reason: `Element name changed` };
         }
       }
 
