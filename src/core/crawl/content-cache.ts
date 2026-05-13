@@ -164,7 +164,9 @@ export function canWriteCache(mode: CrawlCacheMode): boolean {
 }
 
 export function defaultCrawlCacheRootDir(): string {
-  return process.env.OPENCHROME_CRAWL_CACHE_DIR || path.join(process.env.OPENCHROME_HOME || os.homedir(), '.openchrome', 'cache', 'crawl');
+  if (process.env.OPENCHROME_CRAWL_CACHE_DIR) return process.env.OPENCHROME_CRAWL_CACHE_DIR;
+  if (process.env.OPENCHROME_HOME) return path.join(process.env.OPENCHROME_HOME, 'cache', 'crawl');
+  return path.join(os.homedir(), '.openchrome', 'cache', 'crawl');
 }
 
 function publicWriteSkipReason(page: { url: string; title: string; content: string }, scope: CrawlCacheScope): string | undefined {

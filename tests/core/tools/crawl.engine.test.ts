@@ -496,6 +496,45 @@ describe('crawl cache modes', () => {
     expect(server.hitCount('/cache.html')).toBe(before + 1);
   });
 
+
+  test('enabled cache still enforces robots.txt before serving a hit', async () => {
+    const handler = await loadHandler('crawl');
+    server.setRoute('/robots.txt', {
+      status: 200,
+      contentType: 'text/plain',
+      body: 'User-agent: *\nDisallow:\n',
+    });
+    parseResult(await handler('cache-robots', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: true,
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+
+    server.setRoute('/robots.txt', {
+      status: 200,
+      contentType: 'text/plain',
+      body: 'User-agent: *\nDisallow: /cache.html\n',
+    });
+    const blocked = parseResult(await handler('cache-robots', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: true,
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+
+    expect(blocked.pages[0]).toMatchObject({ error: 'Blocked by robots.txt' });
+    expect(blocked.pages[0].cache).toBeUndefined();
+  });
+
   test('read_only does not create entries on miss and write_only never serves hits', async () => {
     const handler = await loadHandler('crawl');
     const before = server.hitCount('/cache.html');

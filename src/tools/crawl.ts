@@ -858,7 +858,9 @@ const handler: ToolHandler = async (
               },
             });
 
-            if (canReadCache(cacheMode)) {
+            // Check robots.txt before fetching or serving cached content.
+            const allowed = await isRobotsAllowed(item.url);
+            if (allowed && canReadCache(cacheMode)) {
               const cached = crawlCache.read(cacheKey, cacheTtlMs);
               if (cached && !cached.stale) {
                 tracker.visit(item.url);
@@ -880,8 +882,6 @@ const handler: ToolHandler = async (
               }
             }
 
-            // Check robots.txt before fetching
-            const allowed = await isRobotsAllowed(item.url);
             if (!allowed) {
               console.error(`[crawl] Blocked by robots.txt: ${item.url}`);
               return {
