@@ -1,8 +1,10 @@
 import type { MCPToolDefinition } from '../../types/mcp';
+import { TOOL_ANNOTATIONS } from '../../types/tool-annotations';
 
 export const createDefinition: MCPToolDefinition = {
   name: 'oc_pilot_handoff_create',
   category: 'pilot',
+  annotations: TOOL_ANNOTATIONS.oc_pilot_handoff_create,
   description:
     'Pilot-tier: mint a single-use handoff token that lets another agent ' +
     'inherit the named browser session. In-memory only; process restart ' +
@@ -34,6 +36,7 @@ export const createDefinition: MCPToolDefinition = {
 export const redeemDefinition: MCPToolDefinition = {
   name: 'oc_pilot_handoff_redeem',
   category: 'pilot',
+  annotations: TOOL_ANNOTATIONS.oc_pilot_handoff_redeem,
   description:
     'Pilot-tier: redeem a single-use handoff token previously minted by ' +
     'oc_pilot_handoff_create. Consumes the record on success — subsequent ' +

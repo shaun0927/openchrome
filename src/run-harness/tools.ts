@@ -1,5 +1,6 @@
 import type { MCPServer } from '../mcp-server';
 import type { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getRunStore } from './store';
 import { RUN_STATUSES, TERMINAL_RUN_STATUSES, type RunRecord, type RunStatus } from './types';
 
@@ -21,12 +22,14 @@ const startDefinition: MCPToolDefinition = {
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_run_start,
 };
 
 const statusDefinition: MCPToolDefinition = {
   name: 'oc_run_status',
   description: 'Return the current status and summary for an opt-in OpenChrome run ledger.',
   inputSchema: { type: 'object', properties: { run_id: runIdProperty }, required: ['run_id'] },
+  annotations: TOOL_ANNOTATIONS.oc_run_status,
 };
 
 const eventsDefinition: MCPToolDefinition = {
@@ -40,6 +43,7 @@ const eventsDefinition: MCPToolDefinition = {
     },
     required: ['run_id'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_run_events,
 };
 
 const finishDefinition: MCPToolDefinition = {
@@ -55,6 +59,7 @@ const finishDefinition: MCPToolDefinition = {
     },
     required: ['run_id', 'status'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_run_finish,
 };
 
 const startHandler: ToolHandler = async (_sessionId, args): Promise<MCPResult> => {
