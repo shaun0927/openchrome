@@ -21,12 +21,12 @@ export const NETWORK_CAPTURE_INPUT_SCHEMA = {
   properties: {
     tabId: {
       type: 'string',
-      description: 'Tab (target) ID',
+      description: 'REQUIRED Tab (target) ID',
     },
     action: {
       type: 'string',
       enum: ['start', 'stop', 'getLogs', 'clear'],
-      description: 'Action to perform',
+      description: 'REQUIRED Action to perform',
     },
     options: {
       type: 'object',
