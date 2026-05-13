@@ -1,11 +1,13 @@
 /** Pilot MCP tool for local credential vault management. */
 import { MCPServer } from '../../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../../types/mcp';
+import { TOOL_ANNOTATIONS } from '../../types/tool-annotations';
 import { getCredentialVaultStore, VaultError } from '../credentials/store';
 
 const definition: MCPToolDefinition = {
   name: 'oc_credentials',
   description: 'Pilot credential vault. Stores values server-side and resolves vault://name references without echoing plaintext.',
+  annotations: TOOL_ANNOTATIONS.oc_credentials,
   inputSchema: {
     type: 'object',
     properties: {

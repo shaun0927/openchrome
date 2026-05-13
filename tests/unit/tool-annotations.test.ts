@@ -88,6 +88,7 @@ describe('TOOL_ANNOTATIONS table', () => {
     const toolsDir = path.join(__dirname, '..', '..', 'src', 'tools');
     const pilotHandoffDir = path.join(__dirname, '..', '..', 'src', 'pilot', 'handoff');
     const pilotProxyDir = path.join(__dirname, '..', '..', 'src', 'pilot', 'proxy');
+    const pilotToolsDir = path.join(__dirname, '..', '..', 'src', 'pilot', 'tools');
     const runHarnessDir = path.join(__dirname, '..', '..', 'src', 'run-harness');
     const mcpServerFile = path.join(__dirname, '..', '..', 'src', 'mcp-server.ts');
 
@@ -107,6 +108,7 @@ describe('TOOL_ANNOTATIONS table', () => {
     await collectFromDir(toolsDir);
     await collectFromDir(pilotHandoffDir);
     await collectFromDir(pilotProxyDir);
+    await collectFromDir(pilotToolsDir);
     await collectFromDir(runHarnessDir);
     // The `expand_tools` virtual tool is referenced inline in mcp-server.ts.
     const serverSrc = await fs.readFile(mcpServerFile, 'utf8');

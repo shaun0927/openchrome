@@ -284,6 +284,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_totp_generate: 'totp',
 
   // pilot — experimental pilot-tier tools
+  oc_credentials: 'pilot',
   oc_pilot_handoff_create: 'pilot',
   oc_pilot_handoff_redeem: 'pilot',
   oc_proxy_hook: 'pilot',
