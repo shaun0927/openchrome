@@ -574,6 +574,20 @@ describe('TaskJournal failure summaries', () => {
     expect(entry.resultSummary).not.toContain('secret-token');
   });
 
+  it('does not classify benign ok summaries that mention broad failure words', () => {
+    const entry: JournalEntry = {
+      ts: Date.now(),
+      tool: 'navigate',
+      sessionId: 'sess',
+      args: {},
+      durationMs: 10,
+      ok: true,
+      summary: '✓ navigate to https://example.com/timeout-guide',
+      resultSummary: 'page explains timeout handling but loaded successfully',
+    };
+    expect(journal.classifyFailure(entry)).toBeNull();
+  });
+
   it('classifies known non-progress signals even when the tool result was ok', () => {
     for (const [tool, resultSummary, expected] of [
       ['validate_page', 'auth_redirect_required', 'auth_redirect'],

@@ -323,7 +323,7 @@ export class TaskJournal {
   classifyFailure(entry: JournalEntry): JournalFailureClass | null {
     const text =
       `${entry.tool} ${entry.summary} ${entry.resultSummary ?? ""}`.toLowerCase();
-    if (entry.ok && !hasNonProgressSignal(text)) return null;
+    if (entry.ok && !hasOkNonProgressSignal(text)) return null;
 
     if (
       /(stale|no longer available|target .*not found|tab .*not found|ref_\d+|backendnodeid)/i.test(
@@ -473,10 +473,8 @@ function emptyFailureClassCounts(): Record<JournalFailureClass, number> {
   };
 }
 
-function hasNonProgressSignal(text: string): boolean {
-  return /(authredirect|auth_redirect_required|login page detected|captcha|waf|stale|timed out|timeout|empty result|not making progress|stuck|stalling|contract.*fail|assertion.*fail|auth_redirect_required|failed_assertions|inconclusive)/i.test(
-    text,
-  );
+function hasOkNonProgressSignal(text: string): boolean {
+  return /(auth_redirect_required|failed_assertions|inconclusive|contract_failed|assertion_failed)/i.test(text);
 }
 
 function buildCandidateRecoveryHints(
