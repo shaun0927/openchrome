@@ -81,6 +81,12 @@ export const extractDataHandler: ToolHandler = async (
   args: Record<string, unknown>,
   _context?: ToolContext
 ): Promise<MCPResult> => {
+  // Mode validation (#989): validate before any browser/session interaction.
+  const modeResult = parseExtractionMode(args.mode);
+  if (!modeResult.ok) {
+    return { content: [{ type: 'text', text: `Error: ${modeResult.error}` }], isError: true };
+  }
+
   const tabId = args.tabId as string;
   const schema = args.schema as ExtractionSchema;
   const selector = args.selector as string | undefined;
