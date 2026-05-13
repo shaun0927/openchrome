@@ -36,7 +36,8 @@
     "lint:tool-schemas": "node dist/index.js serve --introspect-tools-list | node scripts/lint-tool-schemas.mjs -",
     "clean": "rimraf dist",
     "prepare": "npm run build",
-    "lint:changed": "node scripts/lint-changed-src.js"
+    "lint:changed": "node scripts/lint-changed-src.js",
+    "harness:parallel-smoke": "ts-node tests/harness/parallel-smoke.ts"
   },
   "keywords": [
     "openchrome",
