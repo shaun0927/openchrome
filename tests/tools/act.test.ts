@@ -445,6 +445,26 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('%password%');
     });
 
+    test('redacts overlapping variable values and verification URL/title', async () => {
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      (page!.evaluate as jest.Mock).mockResolvedValue({
+        url: 'https://example.com/callback?token=abc123',
+        title: 'session abc123',
+      });
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction: 'navigate to https://example.com/callback?token=%long%',
+        variables: { short: 'abc', long: 'abc123' },
+      }) as any;
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).not.toContain('abc123');
+      expect(result.content[0].text).not.toContain('%short%123');
+      expect(result.content[0].text).toContain('%long%');
+    });
+
     test('type with target finds element first', async () => {
       (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
         backendDOMNodeId: 400,

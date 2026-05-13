@@ -14,7 +14,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-export type RedactionMode = 'redact' | 'hash' | 'truncate' | 'redactIfSensitiveName';
+export type RedactionMode = 'redact' | 'hash' | 'truncate' | 'redactIfSensitiveName' | 'redactScalar';
 
 export interface RedactionRule {
   /** Dot-path into args; `[*]` matches any array index. */
@@ -37,6 +37,7 @@ const VALID_REDACTION_MODES = new Set<RedactionMode>([
   'hash',
   'truncate',
   'redactIfSensitiveName',
+  'redactScalar',
 ]);
 
 /**
@@ -82,6 +83,7 @@ export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
       { path: 'value', mode: 'redact' },
     ],
     act: [
+      { path: 'variables', mode: 'redactScalar' },
       { path: 'variables[*]', mode: 'redact' },
     ],
     type: [
@@ -194,6 +196,8 @@ function applyMode(value: unknown, mode: RedactionMode, opts: { maxBytes?: numbe
       if (text.length <= max) return text;
       return { preview: text.slice(0, max), hash: sha256(text), truncated: true };
     }
+    case 'redactScalar':
+      return value && typeof value === 'object' ? value : REDACTED;
     case 'redactIfSensitiveName': {
       // Check the containing field name first (for rules like {path: 'password'})
       if (opts.name && isSensitiveName(opts.name, opts.sensitiveNames)) {

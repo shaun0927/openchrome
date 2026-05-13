@@ -66,8 +66,14 @@ import type { TransportMessageContext } from './transports';
 
 
 function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
-  if (toolName !== 'act' || !args.variables || typeof args.variables !== 'object' || Array.isArray(args.variables)) {
+  if (toolName !== 'act' || !('variables' in args)) {
     return args;
+  }
+  if (!args.variables || typeof args.variables !== 'object') {
+    return { ...args, variables: '[VARIABLE]' };
+  }
+  if (Array.isArray(args.variables)) {
+    return { ...args, variables: args.variables.map(() => '[VARIABLE]') };
   }
   const redactedVariables: Record<string, string> = {};
   for (const key of Object.keys(args.variables as Record<string, unknown>)) {

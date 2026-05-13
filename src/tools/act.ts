@@ -60,8 +60,10 @@ function substituteActionVariables(action: ParsedAction, variables: Record<strin
 
 function redactVariableValues(text: string, variables: Record<string, string>): string {
   let redacted = text;
-  for (const [name, value] of Object.entries(variables)) {
-    if (!value) continue;
+  const replacements = Object.entries(variables)
+    .filter(([, value]) => value.length > 0)
+    .sort((a, b) => b[1].length - a[1].length);
+  for (const [name, value] of replacements) {
     redacted = redacted.split(value).join(`%${name}%`);
   }
   return redacted;
@@ -671,7 +673,7 @@ const handler: ToolHandler = async (
         url: window.location.href,
         title: document.title,
       })), 3000, 'verify', context).catch(() => ({ url: '', title: '' })) as { url: string; title: string };
-      lines.push('', `[Verification] url: ${state.url} | title: ${state.title}`);
+      lines.push('', redactVariableValues(`[Verification] url: ${state.url} | title: ${state.title}`, variables));
     } catch { /* non-fatal */ }
   }
 
