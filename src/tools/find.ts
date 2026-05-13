@@ -307,6 +307,19 @@ const handler: ToolHandler = async (
   }
 };
 
+/**
+ * Snapshot-cache wrapper (#879).
+ *
+ * find remains uncached because successful responses contain ephemeral ref
+ * tokens minted by RefIdManager. A cache hit would return the old tokens
+ * without replaying ref registration, and a preceding read_page/semantic call
+ * can clear those refs. Keep this seam behavior-preserving until refs become
+ * stable or cache hits can regenerate equivalent refs.
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  return handler(sessionId, args, context);
+};
+
 export function registerFindTool(server: MCPServer): void {
-  server.registerTool('find', handler, definition);
+  server.registerTool('find', cachedHandler, definition);
 }
