@@ -27,6 +27,15 @@ interface AccessibilityNode {
   interactive?: boolean;
 }
 
+const AX_DEFAULT_DEPTH = 8;
+const AX_INTERACTIVE_MAX_DEPTH = 5;
+
+function resolveDepth(depth: number | undefined, filter: 'interactive' | 'all'): number {
+  const defaultDepth = filter === 'interactive' ? AX_INTERACTIVE_MAX_DEPTH : AX_DEFAULT_DEPTH;
+  const resolvedDepth = depth ?? defaultDepth;
+  return filter === 'interactive' ? Math.min(resolvedDepth, AX_INTERACTIVE_MAX_DEPTH) : resolvedDepth;
+}
+
 export function createReadPageTool(sessionManager: SessionManager) {
   const MAX_OUTPUT_LENGTH = 50000;
   const refIdManager = getRefIdManager();
@@ -40,7 +49,8 @@ export function createReadPageTool(sessionManager: SessionManager) {
       filter?: 'interactive' | 'all';
     }
   ): Promise<string> {
-    const { depth = 15, refId, filter = 'all' } = options;
+    const { refId, filter = 'all' } = options;
+    const depth = resolveDepth(options.depth, filter);
 
     // Clear existing refs for this tab to start fresh
     // This ensures refs are consistent within a single read_page call
@@ -215,9 +225,9 @@ export function createReadPageTool(sessionManager: SessionManager) {
   return {
     handler: async (sessionId: string, params: Record<string, unknown>): Promise<MCPResult> => {
       const tabId = params.tabId as number;
-      const depth = (params.depth as number) ?? 15;
       const refId = params.ref_id as string | undefined;
-      const filter = params.filter as 'interactive' | 'all' | undefined;
+      const filter = (params.filter as 'interactive' | 'all' | undefined) ?? 'all';
+      const depth = resolveDepth(params.depth as number | undefined, filter);
 
       if (!sessionId) {
         return {
@@ -282,7 +292,7 @@ export function createReadPageTool(sessionManager: SessionManager) {
           },
           depth: {
             type: 'number',
-            description: 'Maximum depth of the tree to traverse (default: 15)',
+            description: 'Maximum depth of the tree to traverse (default: 8; capped at 5 when filter="interactive")',
           },
           ref_id: {
             type: 'string',

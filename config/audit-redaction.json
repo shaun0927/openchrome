@@ -35,6 +35,10 @@
     "form_input": [
       { "path": "value", "mode": "redact" }
     ],
+    "act": [
+      { "path": "variables", "mode": "redactScalar" },
+      { "path": "variables[*]", "mode": "redact" }
+    ],
     "type": [
       { "path": "text", "mode": "truncate", "maxBytes": 200 }
     ],

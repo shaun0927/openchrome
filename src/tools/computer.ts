@@ -7,19 +7,37 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
+import { detectPagination, type PaginationInfo } from '../utils/pagination-detector';
 import {
   getBase64EncodedByteLength,
   resolveViewportDimensions,
   validateCaptureArea,
   validateInlineImagePayload,
 } from '../utils/screenshot-guards';
+
+function formatPaginationGuidance(pagination: PaginationInfo): string {
+  const detail = pagination.type === 'none'
+    ? ''
+    : ` detected (${pagination.type}${pagination.currentPage !== undefined ? ` page ${pagination.currentPage}` : ''}${pagination.totalPages !== undefined ? ` of ${pagination.totalPages}` : ''})`;
+  return `[Pagination Detected] Pagination${detail}. Use batch_paginate to collect pages/items; avoid manual next/scroll loops.`;
+}
+
+async function getPaginationGuidance(page: import('puppeteer-core').Page, tabId: string): Promise<string | null> {
+  try {
+    const pagination = await detectPagination(page, tabId);
+    if (pagination.type === 'none' || !pagination.hasNext) return null;
+    return formatPaginationGuidance(pagination);
+  } catch {
+    return null;
+  }
+}
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -279,6 +297,11 @@ const handler: ToolHandler = async (
           const content: MCPContent[] = [
             { type: 'image', data: screenshot.data, mimeType: screenshot.mimeType },
           ];
+
+          const paginationGuidance = await getPaginationGuidance(page, tabId);
+          if (paginationGuidance) {
+            content.push({ type: 'text', text: paginationGuidance });
+          }
 
           // annotated mode: append note about repeated screenshot
           if (effectiveMode === 'annotated') {
@@ -771,6 +794,20 @@ async function resolveRefToCoordinates(
 ): Promise<{ coord: [number, number]; error?: never } | { coord?: never; error: MCPResult }> {
   const refIdManager = getRefIdManager();
   let backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+  const isRefIdFormat = /^ref_\d+$/.test(ref);
+
+  if (isRefIdFormat) {
+    const entry = refIdManager.getRef(sessionId, tabId, ref);
+    if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
+      return {
+        error: {
+          content: [{ type: 'text', text: formatStaleRefError(ref) }],
+          isError: true,
+          error: makeStaleRefError(ref),
+        },
+      };
+    }
+  }
 
   if (backendNodeId === undefined) {
     return {
@@ -786,17 +823,44 @@ async function resolveRefToCoordinates(
     // Validate ref identity before clicking (only for ref_N refs with stored fingerprint)
     const refEntry = refIdManager.getRef(sessionId, tabId, ref);
     if (refEntry && refEntry.tagName) {
+      let nodeLocalName: string | undefined;
+      let nodeTextContent: string | undefined;
+      let nodeName: string | undefined;
       try {
         const { node } = await cdpClient.send<{
-          node: { localName: string };
-        }>(page, 'DOM.describeNode', { backendNodeId });
+          node: {
+            localName: string;
+            nodeValue?: string;
+            attributes?: string[];
+            children?: Array<{ nodeType?: number; nodeValue?: string }>;
+          };
+        }>(page, 'DOM.describeNode', { backendNodeId, depth: 1 });
+        nodeLocalName = node?.localName;
+        nodeTextContent = getDescribeNodeTextContent(node);
+        nodeName = getDescribeNodeName(node);
+      } catch {
+        // If validation CDP calls fail, proceed with the click
+      }
 
+      if (nodeLocalName !== undefined) {
         const validation = refIdManager.validateRef(
           sessionId, tabId, ref,
-          node.localName
+          nodeLocalName,
+          nodeTextContent,
+          nodeName,
         );
 
         if (!validation.valid && validation.stale) {
+          if (isRefIdFormat) {
+            return {
+              error: {
+                content: [{ type: 'text', text: formatStaleRefError(ref) }],
+                isError: true,
+                error: makeStaleRefError(ref),
+              },
+            };
+          }
+
           // Attempt transparent recovery: re-find the element using stored metadata
           const relocated = await refIdManager.tryRelocateRef(
             sessionId, tabId, ref, page, cdpClient
@@ -817,8 +881,6 @@ async function resolveRefToCoordinates(
             };
           }
         }
-      } catch {
-        // If validation CDP calls fail, proceed with the click
       }
     }
 
@@ -849,6 +911,34 @@ async function resolveRefToCoordinates(
       },
     };
   }
+}
+
+function getDescribeNodeAttributes(node?: { attributes?: string[] }): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const raw = node?.attributes || [];
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    attrs[raw[i]] = raw[i + 1];
+  }
+  return attrs;
+}
+
+function getDescribeNodeName(node?: { attributes?: string[] }): string | undefined {
+  const attrs = getDescribeNodeAttributes(node);
+  return attrs['aria-label'] || attrs.title || attrs.placeholder || attrs.alt || attrs.name || undefined;
+}
+
+function getDescribeNodeTextContent(node?: {
+  nodeValue?: string;
+  children?: Array<{ nodeType?: number; nodeValue?: string }>;
+}): string | undefined {
+  const ownValue = node?.nodeValue?.trim();
+  if (ownValue) return ownValue;
+  const childText = (node?.children || [])
+    .filter((child) => child.nodeType === 3 && child.nodeValue)
+    .map((child) => child.nodeValue)
+    .join('')
+    .trim();
+  return childText || undefined;
 }
 
 /**
