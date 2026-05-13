@@ -39,7 +39,7 @@ function extractToken(stdout: string): string {
 }
 
 function extractJsonArray(stdout: string): string {
-  const start = stdout.indexOf('[{');
+  const start = stdout.search(/\[\s*(?:\{|])/);
   const end = stdout.lastIndexOf(']');
   if (start === -1 || end === -1 || end < start) {
     throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
