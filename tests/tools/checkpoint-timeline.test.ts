@@ -152,6 +152,43 @@ describe('oc_checkpoint timeline (#1025)', () => {
     expect(loaded.taskDescription).toBe('timeline fallback');
   });
 
+
+  test('load by checkpoint id rejects schema-invalid timeline files', async () => {
+    const handler = await loadHandler();
+    const timelineDir = path.join(tmpDir, 'timeline');
+    fs.mkdirSync(timelineDir, { recursive: true });
+    fs.writeFileSync(path.join(timelineDir, 'cp_bad.json'), JSON.stringify({
+      version: 1,
+      timestamp: Date.now(),
+      checkpointId: 'cp_bad',
+      taskDescription: 'bad',
+      completedSteps: 'not-an-array',
+      pendingSteps: [],
+      currentUrl: null,
+      tabStates: [],
+      extractedData: {},
+    }));
+
+    const loaded = await handler('sess-1', { action: 'load', checkpointId: 'cp_bad' });
+    expect(loaded.content?.[0]?.text).toContain('No checkpoint found for checkpointId "cp_bad"');
+  });
+
+  test('legacy delete removes current checkpoint and its timeline entry', async () => {
+    const handler = await loadHandler();
+    const saved = readJson(await handler('sess-1', {
+      action: 'save',
+      taskDescription: 'delete me',
+      completedSteps: ['done'],
+      pendingSteps: [],
+    }));
+
+    const deleted = await handler('sess-1', { action: 'delete' });
+    expect(deleted.content?.[0]?.text).toBe('Checkpoint deleted.');
+    expect(fs.existsSync(path.join(tmpDir, 'current-checkpoint.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, 'timeline', `${saved.checkpointId}.json`))).toBe(false);
+    expect(readJson(await handler('sess-1', { action: 'list' })).checkpoints).toEqual([]);
+  });
+
   test('retention prunes old timeline artifacts only', async () => {
     process.env.OPENCHROME_CHECKPOINT_TIMELINE_MAX = '2';
     const handler = await loadHandler();

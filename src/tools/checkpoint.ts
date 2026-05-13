@@ -288,15 +288,16 @@ async function collectTabStates(): Promise<Array<{ tabId: string; url: string; t
 // ─── Handler ───────────────────────────────────────────────────────────────
 
 export async function readCurrentCheckpoint(): Promise<AutomationCheckpoint | null> {
-  const result = await readFileSafe<AutomationCheckpoint>(getCurrentCheckpointPath());
-  return result.success && result.data ? result.data : null;
+  const result = await readFileSafe<unknown>(getCurrentCheckpointPath());
+  return result.success && isAutomationCheckpoint(result.data) ? result.data : null;
 }
 
 export async function readCheckpointById(checkpointId: string): Promise<AutomationCheckpoint | null> {
   const safeId = sanitizeCheckpointId(checkpointId);
   if (!safeId) return null;
-  const result = await readFileSafe<AutomationCheckpoint>(timelinePathFor(safeId));
-  return result.success && result.data ? result.data : null;
+  const result = await readFileSafe<unknown>(timelinePathFor(safeId));
+  if (!result.success || !isAutomationCheckpoint(result.data)) return null;
+  return result.data.checkpointId === safeId ? result.data : null;
 }
 
 const handler: ToolHandler = async (
@@ -450,19 +451,27 @@ const handler: ToolHandler = async (
       return { content: [{ type: 'text', text: `Checkpoint ${safeId} deleted.` }] };
     }
 
+    const current = await readCurrentCheckpoint();
+    const fallbackTimeline = current?.checkpointId ? null : (await readTimelineEntries()).checkpoints[0] ?? null;
+    const timelineId = current?.checkpointId ?? fallbackTimeline?.checkpointId;
+    let deleted = false;
+
     try {
       await fs.promises.unlink(getCurrentCheckpointPath());
-      return {
-        content: [{ type: 'text', text: 'Checkpoint deleted.' }],
-      };
+      deleted = true;
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-        return {
-          content: [{ type: 'text', text: 'No checkpoint to delete.' }],
-        };
-      }
-      throw error;
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
     }
+
+    if (timelineId) {
+      await fs.promises.unlink(timelinePathFor(timelineId)).then(() => { deleted = true; }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+    }
+
+    return {
+      content: [{ type: 'text', text: deleted ? 'Checkpoint deleted.' : 'No checkpoint to delete.' }],
+    };
   }
 
   return {
