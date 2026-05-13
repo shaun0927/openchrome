@@ -308,6 +308,19 @@ export class SkillMemoryStore {
         // keeps the previously-recorded value.
         frozenSnapshotPath: skill.frozenSnapshotPath ?? existing?.frozenSnapshotPath ?? null,
       };
+      // Preserve replay-outcome fields across idempotent re-record. The
+      // recorder owns `steps`/`contractId`; the replay path owns the
+      // replay-outcome fields. Mixing them would let a re-record erase
+      // the demote-on-fail signal that drives `oc_skill_recall` ranking (#856).
+      if (existing?.lastReplayPassedAt !== undefined) {
+        next.lastReplayPassedAt = existing.lastReplayPassedAt;
+      }
+      if (existing?.lastReplayFailedAt !== undefined) {
+        next.lastReplayFailedAt = existing.lastReplayFailedAt;
+      }
+      if (existing?.lastReplayError !== undefined) {
+        next.lastReplayError = existing.lastReplayError;
+      }
       file.skills[skillId] = next;
       await this.writeFile(file);
       return { skill_id: skillId, stored_at: Date.now() };
@@ -344,6 +357,74 @@ export class SkillMemoryStore {
       rows = rows.slice(0, filter.limit);
     }
     return rows;
+  }
+
+  /**
+   * Persist the outcome of a deterministic skill replay (#856). Exactly
+   * one of `passedAt` / `failedAt` must be supplied. On a passing replay
+   * the prior `lastReplayError` is cleared so callers can rely on the
+   * field being absent once a skill is healthy again.
+   *
+   * Throws when `skillId` is not known to this domain — replay is
+   * expected to be called only against skills that were previously
+   * recorded via `record()`. Atomicity matches `markUsed()`:
+   * `acquireLock` + `writeFileAtomicSafe`.
+   */
+  async recordReplayResult(
+    skillId: string,
+    args: { passedAt?: number; failedAt?: number; error?: string },
+  ): Promise<void> {
+    if (typeof skillId !== 'string' || skillId.length === 0) {
+      throw new Error('SkillMemoryStore.recordReplayResult: skill_id must be a non-empty string');
+    }
+    const passedAt = args.passedAt;
+    const failedAt = args.failedAt;
+    if (passedAt === undefined && failedAt === undefined) {
+      throw new Error(
+        'SkillMemoryStore.recordReplayResult: exactly one of passedAt / failedAt must be supplied',
+      );
+    }
+    if (passedAt !== undefined && failedAt !== undefined) {
+      throw new Error(
+        'SkillMemoryStore.recordReplayResult: passedAt and failedAt are mutually exclusive',
+      );
+    }
+    if (passedAt !== undefined && !Number.isFinite(passedAt)) {
+      throw new Error('SkillMemoryStore.recordReplayResult: passedAt must be a finite number');
+    }
+    if (failedAt !== undefined && !Number.isFinite(failedAt)) {
+      throw new Error('SkillMemoryStore.recordReplayResult: failedAt must be a finite number');
+    }
+    this.ensureDomainDir();
+    const release = await acquireLock(this.lockFile());
+    try {
+      const file = this.readFileSync();
+      const existing = file.skills[skillId];
+      if (!existing) {
+        throw new Error(`SkillMemoryStore.recordReplayResult: unknown skill_id=${skillId}`);
+      }
+      const next: SkillRecord = { ...existing };
+      if (passedAt !== undefined) {
+        next.lastReplayPassedAt = passedAt;
+        // A passing replay supersedes any stored error — keep the field
+        // shape clean so consumers can rely on its absence.
+        delete next.lastReplayError;
+      } else if (failedAt !== undefined) {
+        next.lastReplayFailedAt = failedAt;
+        if (typeof args.error === 'string' && args.error.length > 0) {
+          // Bound the persisted error so a runaway stack trace cannot
+          // bloat the on-disk JSON.
+          next.lastReplayError =
+            args.error.length > 2048 ? args.error.slice(0, 2048) : args.error;
+        } else {
+          delete next.lastReplayError;
+        }
+      }
+      file.skills[skillId] = next;
+      await this.writeFile(file);
+    } finally {
+      await release();
+    }
   }
 
   /**

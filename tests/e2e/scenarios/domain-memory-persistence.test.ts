@@ -26,6 +26,22 @@ async function waitForSave(ms = 100): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForNonEmptyFile(file: string, timeoutMs = 2_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = 0;
+  while (Date.now() < deadline) {
+    try {
+      const stat = await fsPromises.stat(file);
+      lastSize = stat.size;
+      if (stat.size > 0) return stat.size;
+    } catch {
+      // file not written yet
+    }
+    await waitForSave(50);
+  }
+  return lastSize;
+}
+
 // Helper: read raw store file
 async function readStoreFile(): Promise<{ version: number; entries: unknown[]; updatedAt: number }> {
   const data = await fsPromises.readFile(STORE_FILE, 'utf-8');
