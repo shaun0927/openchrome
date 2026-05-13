@@ -986,9 +986,22 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     if (modeForMetrics === 'semantic') {
       try {
         const payload = JSON.parse(text) as Record<string, unknown>;
-        for (let i = 0; i < 3; i++) {
-          payload['_metrics'] = buildTextMetrics(JSON.stringify(payload), { mode: modeForMetrics });
+        let rendered = JSON.stringify(payload);
+        for (let i = 0; i < 20; i++) {
+          const metrics = buildTextMetrics(rendered, { mode: modeForMetrics });
+          payload['_metrics'] = metrics;
+          const next = JSON.stringify(payload);
+          const finalMetrics = buildTextMetrics(next, { mode: modeForMetrics });
+          if (
+            metrics.returned_chars === finalMetrics.returned_chars &&
+            metrics.estimated_tokens === finalMetrics.estimated_tokens
+          ) {
+            return next;
+          }
+          rendered = next;
         }
+        // Extremely unlikely digit-boundary fallback: return the closest fixed point
+        // instead of dropping metrics. The bounded loop prevents pathological hangs.
         return JSON.stringify(payload);
       } catch {
         // Fall through to footer metrics for non-JSON semantic error/fallback text.
