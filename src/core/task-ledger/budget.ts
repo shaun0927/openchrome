@@ -108,7 +108,7 @@ export function applyToolCallToTask(meta: TaskMeta, call: RecordedToolCall): Tas
     counters.sameUrlNavigations[navUrl] = (counters.sameUrlNavigations[navUrl] ?? 0) + 1;
   }
 
-  const decision = evaluateBudget(meta, counters, policy);
+  const decision = evaluateBudget(meta, counters, policy, call);
   const recentEvent: TaskRecentEvent = {
     ts: call.ts,
     tool: call.tool,
@@ -135,6 +135,7 @@ function evaluateBudget(
   meta: TaskMeta,
   counters: TaskCounters,
   policy: TaskEnvelopePolicy,
+  call: RecordedToolCall,
 ): TaskBudgetDecision {
   const exceeded: string[] = [];
   const warnings: string[] = [];
@@ -144,6 +145,8 @@ function evaluateBudget(
   checkLimit('maxObservationStreak', counters.observationStreak, policy.maxObservationStreak, exceeded, warnings);
   checkLimit('maxFailureStreak', counters.failureStreak, policy.maxFailureStreak, exceeded, warnings);
   checkSameUrlNavigationLimit(counters.sameUrlNavigations, policy.maxSameUrlNavigations, exceeded, warnings);
+  checkAllowedDomain(extractUrl(call.args), policy.allowedDomains, exceeded);
+  checkCheckpointCadence(counters.toolCalls, policy.checkpointEveryCalls, warnings);
   if (policy.maxWallMs) {
     checkLimit('maxWallMs', Date.now() - meta.created_at, policy.maxWallMs, exceeded, warnings);
   }
@@ -179,6 +182,35 @@ function checkSameUrlNavigationLimit(
   if (atWarning) warnings.push('maxSameUrlNavigations');
 }
 
+function checkAllowedDomain(
+  url: string | undefined,
+  allowedDomains: string[] | undefined,
+  exceeded: string[],
+): void {
+  if (!url || !allowedDomains || allowedDomains.length === 0) return;
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    exceeded.push('allowedDomains');
+    return;
+  }
+  const allowed = allowedDomains.some((domain) => {
+    const normalized = domain.trim().toLowerCase().replace(/^\./, '');
+    return normalized.length > 0 && (host === normalized || host.endsWith(`.${normalized}`));
+  });
+  if (!allowed) exceeded.push('allowedDomains');
+}
+
+function checkCheckpointCadence(
+  toolCalls: number,
+  checkpointEveryCalls: number | undefined,
+  warnings: string[],
+): void {
+  if (!checkpointEveryCalls || toolCalls === 0) return;
+  if (toolCalls % checkpointEveryCalls === 0) warnings.push('checkpointEveryCalls');
+}
+
 function checkLimit(
   key: string,
   value: number,
@@ -198,6 +230,7 @@ function extractUrl(args: Record<string, unknown>): string | undefined {
   const value = args.url ?? args.href;
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
+
 
 function summarizeCall(call: RecordedToolCall, decision: TaskBudgetDecision): string {
   const status = call.ok ? 'ok' : 'error';

@@ -83,6 +83,30 @@ describe('task envelope budget evaluation', () => {
     expect(meta.budget_status).toBe('exceeded');
     expect(meta.budget_exceeded).toContain('maxSameUrlNavigations');
   });
+
+  test('allowed domain policy rejects out-of-scope browser URLs', () => {
+    let meta = makeMeta({ policy: normalizeTaskPolicy({ allowedDomains: ['example.com'] }) });
+
+    meta = applyToolCallToTask(meta, call('navigate', { url: 'https://docs.example.com/start' }));
+    expect(meta.budget_status).toBe('ok');
+
+    meta = applyToolCallToTask(meta, call('navigate', { url: 'https://evil.test/phish' }));
+    expect(meta.budget_status).toBe('exceeded');
+    expect(meta.budget_exceeded).toContain('allowedDomains');
+    expect(meta.recommended_next).toBe('change_strategy_or_verify');
+  });
+
+  test('checkpoint cadence policy requests a warning at configured call intervals', () => {
+    let meta = makeMeta({ policy: normalizeTaskPolicy({ checkpointEveryCalls: 2 }) });
+
+    meta = applyToolCallToTask(meta, call('read_page'));
+    expect(meta.budget_status).toBe('ok');
+
+    meta = applyToolCallToTask(meta, call('read_page'));
+    expect(meta.budget_status).toBe('warning');
+    expect(meta.recommended_next).toBe('checkpoint_or_verify');
+    expect(meta.recent_events?.at(-1)?.summary).toContain('budget_warning=checkpointEveryCalls');
+  });
 });
 
 describe('task envelope store integration', () => {
