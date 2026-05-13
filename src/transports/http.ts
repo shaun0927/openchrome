@@ -196,6 +196,7 @@ export class HTTPTransport implements MCPTransport {
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
+  private sessionCloseHandler: ((sessionId: string) => void) | null = null;
   private sessionManager: SessionManager | null = null;
   private readonly serverStartTime: number = Date.now();
   private sseKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -328,6 +329,10 @@ export class HTTPTransport implements MCPTransport {
    */
   onSessionDelete(handler: (sessionId: string) => void): void {
     this.sessionDeleteHandler = handler;
+  }
+
+  onSessionClose(handler: (sessionId: string) => void): void {
+    this.sessionCloseHandler = handler;
   }
 
   /**
@@ -1319,6 +1324,9 @@ export class HTTPTransport implements MCPTransport {
       if (idx !== -1) {
         this.sseConnections.splice(idx, 1);
       }
+      if (this.sessionCloseHandler) {
+        this.sessionCloseHandler(sessionId);
+      }
       console.error(`[HTTPTransport] SSE client disconnected (session: ${sessionId})`);
     });
   }
@@ -1336,6 +1344,9 @@ export class HTTPTransport implements MCPTransport {
       // Notify session-delete listeners (e.g. rate-limiter cleanup)
       if (this.sessionDeleteHandler) {
         this.sessionDeleteHandler(sessionId);
+      }
+      if (this.sessionCloseHandler) {
+        this.sessionCloseHandler(sessionId);
       }
 
       // Close any SSE connections for this session
