@@ -294,6 +294,13 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_task_cancel: 'core',
   oc_task_get: 'core',
   oc_task_list: 'core',
+  oc_task_run_checkpoint: 'core',
+  oc_task_run_complete: 'core',
+  oc_task_run_get: 'core',
+  oc_task_run_list: 'core',
+  oc_task_run_needs_help: 'core',
+  oc_task_run_start: 'core',
+  oc_task_run_update: 'core',
   oc_task_start: 'core',
   oc_task_wait: 'core',
 };
