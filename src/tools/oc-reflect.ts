@@ -17,7 +17,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['create', 'get', 'list'], description: 'Reflection action' },
+      action: { type: 'string', enum: ['create', 'get', 'list'], description: 'REQUIRED Reflection action: create, get, or list.' },
       id: { type: 'string', description: '(get) Reflection id' },
       scope: { type: 'object', description: '(create/list) domain, taskFingerprint, optional contractId/urlPattern' },
       trigger: { type: 'string', description: '(create) stuck, plan_failed, contract_failed, workflow_partial, or timeout' },

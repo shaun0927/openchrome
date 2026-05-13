@@ -110,8 +110,13 @@ program
       const server = new MCPServer(undefined, { initialToolTier: 3 });
       registerAllTools(server);
       const manifest = server.getToolManifest();
-      process.stdout.write(JSON.stringify(manifest.tools) + '\n');
-      process.exit(0);
+      await new Promise<void>((resolve, reject) => {
+        process.stdout.write(JSON.stringify(manifest.tools) + '\n', (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      return;
     }
 
     let port = parseInt(options.port, 10);
