@@ -205,6 +205,9 @@
       "name": "oc_task_cancel"
     },
     {
+      "name": "oc_task_finish"
+    },
+    {
       "name": "oc_task_get"
     },
     {
@@ -233,6 +236,9 @@
     },
     {
       "name": "oc_task_start"
+    },
+    {
+      "name": "oc_task_update"
     },
     {
       "name": "oc_task_wait"

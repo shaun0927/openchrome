@@ -298,6 +298,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_run_start: 'core',
   oc_run_status: 'core',
   oc_task_cancel: 'core',
+  oc_task_finish: 'core',
   oc_task_get: 'core',
   oc_task_list: 'core',
   oc_task_run_checkpoint: 'core',
@@ -308,6 +309,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_task_run_start: 'core',
   oc_task_run_update: 'core',
   oc_task_start: 'core',
+  oc_task_update: 'core',
   oc_task_wait: 'core',
 };
 
