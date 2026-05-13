@@ -1450,6 +1450,16 @@ export class SessionManager {
     const worker = session.workers.get(workerId);
     if (!worker) return;
 
+    // Enforce per-worker tab limit for externally-created targets too
+    // (popups, headed fallback pages, and other out-of-band registrations).
+    if (worker.targets.size >= this.config.maxTargetsPerWorker) {
+      const oldestTargetId = worker.targets.values().next().value;
+      if (oldestTargetId) {
+        console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), evicting oldest external tab ${oldestTargetId}`);
+        this.evictTarget(oldestTargetId, 'target_limit');
+      }
+    }
+
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId });

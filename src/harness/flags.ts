@@ -87,6 +87,17 @@ function isFamilyEnabled(envVar: string): boolean {
   return isTruthy(raw);
 }
 
+/**
+ * Per-family activation that **defaults to off** even when `--pilot` is set.
+ * Reserved for pilot capabilities that mutate the MCP tool surface or emit
+ * proactive notifications outside the request/response lifetime. Operators
+ * must opt in explicitly via the env var.
+ */
+function isFamilyEnabledOptIn(envVar: string): boolean {
+  if (!isPilotEnabled()) return false;
+  return isTruthy(process.env[envVar]);
+}
+
 export const isTraceEnabled = (): boolean => isFamilyEnabled('OPENCHROME_TRACE');
 export const isStateGraphEnabled = (): boolean => isFamilyEnabled('OPENCHROME_STATE_GRAPH');
 export const isContractRuntimeEnabled = (): boolean => isFamilyEnabled('OPENCHROME_CONTRACT_RUNTIME');
@@ -103,13 +114,19 @@ export function isAutoRecallEnabled(): boolean {
 }
 
 /**
+ * Dynamic skill → MCP tool synthesis (issue #889, apify-mcp adoption C).
+ * Defaults off even when `--pilot` is set because it mutates the MCP tool
+ * surface mid-session and emits proactive list_changed notifications.
+ */
+export const isDynamicSkillsEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_DYNAMIC_SKILLS');
+
+/**
  * Pilot-tier skill replay (#856). Off-by-default even when `--pilot` is on:
  * the operator must explicitly opt in via `OPENCHROME_SKILL_REPLAY=1`.
  */
-export function isSkillReplayEnabled(): boolean {
-  if (!isPilotEnabled()) return false;
-  return isTruthy(process.env.OPENCHROME_SKILL_REPLAY);
-}
+export const isSkillReplayEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_SKILL_REPLAY');
 
 /**
  * Proxy hook family (issue #874). Explicit opt-in on top of --pilot.
@@ -127,6 +144,7 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['handoff_persist', isHandoffPersistEnabled],
   ['perception_voting', isPerceptionVotingEnabled],
   ['skill_curator', isSkillCuratorEnabled],
+  ['dynamic_skills', isDynamicSkillsEnabled],
   ['skill_replay', isSkillReplayEnabled],
   ['proxy_hook', isProxyHookEnabled]
 ];
