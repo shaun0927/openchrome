@@ -118,7 +118,19 @@ describe('benchmark matrix', () => {
     const result = await task.run(adapter);
 
     expect(result.success).toBe(true);
-    expect(adapter.callTool).toHaveBeenNthCalledWith(1, 'tabs_create', { url: 'about:blank' });
+    expect(adapter.callTool).toHaveBeenNthCalledWith(1, 'tabs_create', { url: expect.any(String) });
     expect(adapter.callTool).toHaveBeenNthCalledWith(2, 'read_page', { tabId: 'real-tab-1', mode: 'dom' });
+  });
+
+  test('action scenarios use resolvable text targets instead of synthetic refs', () => {
+    const actionSteps = createBenchmarkMatrix()
+      .filter((scenario) => scenario.category === 'action' || scenario.category === 'agent-loop')
+      .flatMap((scenario) => scenario.steps)
+      .filter((step) => step.tool === 'act');
+
+    expect(actionSteps.length).toBeGreaterThan(0);
+    for (const step of actionSteps) {
+      expect(String(step.args.instruction)).not.toMatch(/ref_\\d+/);
+    }
   });
 });

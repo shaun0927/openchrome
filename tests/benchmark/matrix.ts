@@ -64,6 +64,12 @@ function tabPlaceholders(scenario: BenchmarkMatrixScenario): string[] {
   ));
 }
 
+function setupUrlForScenario(scenario: BenchmarkMatrixScenario): string {
+  if (scenario.category !== 'action' && scenario.category !== 'agent-loop') return 'about:blank';
+  const html = '<!doctype html><html><body><label>Email <input aria-label="Email"></label><button>Submit</button></body></html>';
+  return `data:text/html,${encodeURIComponent(html)}`;
+}
+
 export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
   return [
     {
@@ -104,8 +110,8 @@ export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
       category: 'action',
       description: 'Click/fill action latency in a simple action loop',
       steps: [
-        { tool: 'act', args: { tabId: 'tab1', instruction: 'click ref_1' } },
-        { tool: 'act', args: { tabId: 'tab1', instruction: 'type benchmark into ref_2' } },
+        { tool: 'act', args: { tabId: 'tab1', instruction: 'click Submit' } },
+        { tool: 'act', args: { tabId: 'tab1', instruction: 'type benchmark into Email' } },
       ],
     },
     {
@@ -120,7 +126,7 @@ export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
       description: 'Representative read_page -> action -> read_page(delta) loop',
       steps: [
         { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom' } },
-        { tool: 'act', args: { tabId: 'tab1', instruction: 'click ref_1' } },
+        { tool: 'act', args: { tabId: 'tab1', instruction: 'click Submit' } },
         { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom', compression: 'delta' } },
       ],
     },
@@ -157,7 +163,7 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
       try {
         const tabIds = new Map<string, string>();
         for (const placeholder of tabPlaceholders(scenario)) {
-          const args = { url: 'about:blank' };
+          const args = { url: setupUrlForScenario(scenario) };
           const result = await adapter.callTool('tabs_create', args);
           if (result.isError) {
             const text = result.content?.find((item) => typeof item.text === 'string')?.text;
