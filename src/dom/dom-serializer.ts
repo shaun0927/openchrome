@@ -18,6 +18,7 @@ export interface DOMSerializerOptions {
   // light (default): sibling dedup threshold=4, container collapse enabled
   // aggressive: sibling dedup threshold=3
   includeUserAgentShadowDOM?: boolean;  // default: false
+  planningProfile?: 'default' | 'stable';
 }
 
 export interface PageStats {
@@ -137,6 +138,33 @@ function escapeAttributeValue(value: string): string {
   });
 }
 
+const ID_REFERENCE_ATTRS = new Set([
+  'for',
+  'aria-labelledby',
+  'aria-describedby',
+  'aria-activedescendant',
+  'aria-controls',
+  'aria-owns',
+  'aria-flowto',
+  'aria-details',
+]);
+
+function collectReferencedIds(node: DOMNode, referencedIds: Set<string>): void {
+  if (node.nodeType === NODE_TYPE_ELEMENT) {
+    const attrMap = parseAttributes(node.attributes);
+    for (const attr of ID_REFERENCE_ATTRS) {
+      const value = attrMap.get(attr);
+      if (!value) continue;
+      for (const id of value.split(/\s+/).filter(Boolean)) {
+        referencedIds.add(id);
+      }
+    }
+  }
+
+  for (const child of node.children || []) collectReferencedIds(child, referencedIds);
+  if (node.contentDocument) collectReferencedIds(node.contentDocument, referencedIds);
+  for (const shadowRoot of node.shadowRoots || []) collectReferencedIds(shadowRoot, referencedIds);
+}
 /**
  * Check if a node is interactive
  */
@@ -188,6 +216,54 @@ function getDirectTextContent(node: DOMNode): string {
 /**
  * Format a single element node as a line
  */
+function isVolatileStableAttr(name: string, value: string): boolean {
+  if (name === 'id') {
+    const hasRandomKeyword = /(?:^|[-_])(uuid|random|nonce|session|generated|ember|react-aria)[-_]?[a-z0-9]*$/i.test(value);
+    const hasUuidShape = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i.test(value);
+    const longHex = value.match(/[0-9a-f]{16,}/i)?.[0];
+    const hasMixedLongHex = !!longHex && /[a-f]/i.test(longHex) && /\d/.test(longHex);
+    return hasRandomKeyword || hasUuidShape || hasMixedLongHex;
+  }
+  if (name === 'class') {
+    return false;
+  }
+  return false;
+}
+
+function hasMeaningfulStableDescendant(node: DOMNode): boolean {
+  for (const child of node.children || []) {
+    if (child.nodeType !== NODE_TYPE_ELEMENT) continue;
+    const childTag = child.localName || child.nodeName.toLowerCase();
+    const childAttrs = parseAttributes(child.attributes);
+    if (!isDecorativeMedia(childTag, childAttrs, isInteractive(childTag, childAttrs))) return true;
+    if (hasMeaningfulStableDescendant(child)) return true;
+  }
+  return false;
+}
+
+function isDecorativeMedia(tagName: string, attrMap: Map<string, string>, interactive: boolean): boolean {
+  if (interactive) return false;
+  if (!['img', 'picture', 'source', 'video', 'canvas'].includes(tagName)) return false;
+  if (
+    attrMap.has('alt') ||
+    attrMap.has('title') ||
+    attrMap.has('aria-label') ||
+    attrMap.has('role') ||
+    attrMap.has('data-testid') ||
+    attrMap.has('controls') ||
+    attrMap.has('tabindex')
+  ) return false;
+  return true;
+}
+
+function isDecorativeMediaNode(node: DOMNode): boolean {
+  if (node.nodeType !== NODE_TYPE_ELEMENT) return false;
+  const tagName = node.localName || node.nodeName.toLowerCase();
+  const attrMap = parseAttributes(node.attributes);
+  return isDecorativeMedia(tagName, attrMap, isInteractive(tagName, attrMap))
+    && !hasMeaningfulStableDescendant(node);
+}
+
 function formatElement(
   node: DOMNode,
   attrMap: Map<string, string>,
@@ -195,13 +271,20 @@ function formatElement(
   textContent: string,
   interactive: boolean,
   hints?: string,
+  planningProfile: 'default' | 'stable' = 'default',
+  referencedIds: Set<string> = new Set(),
 ): string {
   const tagName = node.localName || node.nodeName.toLowerCase();
 
   // Build attribute string with only kept attrs
   const attrParts: string[] = [];
   for (const [k, v] of attrMap) {
-    if (KEEP_ATTRS.has(k)) {
+    if (KEEP_ATTRS.has(k) || (planningProfile === 'stable' && k === 'controls')) {
+      if (
+        planningProfile === 'stable'
+        && isVolatileStableAttr(k, v)
+        && !(k === 'id' && referencedIds.has(v))
+      ) continue;
       attrParts.push(`${k}="${escapeAttributeValue(v)}"`);
     }
   }
@@ -323,6 +406,8 @@ interface SerializeContext {
   interactiveOnly: boolean;
   compression: 'none' | 'light' | 'aggressive';
   includeUserAgentShadowDOM: boolean;
+  planningProfile: 'default' | 'stable';
+  referencedIds: Set<string>;
   nodesVisited: number;
   maxNodes: number;
   customInteractiveHints: Map<string, string>;
@@ -411,6 +496,23 @@ function serializeNode(
   const customHints = ctx.customInteractiveHints.get(path);
   const interactive = isInteractive(tagName, attrMap, customHints);
 
+  if (ctx.planningProfile === 'stable' && isDecorativeMedia(tagName, attrMap, interactive)) {
+    const fallbackText = getDirectTextContent(node);
+    const indent = '  '.repeat(depth);
+    if (fallbackText) {
+      const line = formatElement(node, attrMap, indent, fallbackText, interactive, customHints, ctx.planningProfile, ctx.referencedIds);
+      if (!appendBoundedLine(ctx, line + '\n')) return;
+      ctx.emittedBackendNodeIds.add(node.backendNodeId);
+    }
+    // Omit decorative media wrappers without fallback text, but still inspect
+    // descendants so meaningful labels inside <picture> survive.
+    for (const child of node.children || []) {
+      serializeNode(child, depth + 1, ctx);
+      if (ctx.truncated) return;
+    }
+    return;
+  }
+
   const indent = '  '.repeat(depth);
 
   // Container chain collapse (only in non-'none' compression mode, non-interactive containers)
@@ -429,7 +531,7 @@ function serializeNode(
       const leafHints = ctx.customInteractiveHints.get(leafPath);
       const leafInteractive = isInteractive(leafTag, leafAttrMap, leafHints);
       const leafText = getDirectTextContent(leaf);
-      const leafLine = formatElement(leaf, leafAttrMap, '', leafText, leafInteractive, leafHints);
+      const leafLine = formatElement(leaf, leafAttrMap, '', leafText, leafInteractive, leafHints, ctx.planningProfile, ctx.referencedIds);
       const fullLine = `${indent}${chainPrefix}${leafLine}\n`;
 
       if (ctx.totalChars + fullLine.length > ctx.maxOutputChars) {
@@ -459,7 +561,7 @@ function serializeNode(
 
   if (!ctx.interactiveOnly || interactive) {
     const textContent = getDirectTextContent(node);
-    const line = formatElement(node, attrMap, indent, textContent, interactive, customHints);
+    const line = formatElement(node, attrMap, indent, textContent, interactive, customHints, ctx.planningProfile, ctx.referencedIds);
     const lineWithNewline = line + '\n';
 
     if (ctx.totalChars + lineWithNewline.length > ctx.maxOutputChars) {
@@ -529,6 +631,13 @@ function serializeNode(
 
     for (const group of groups) {
       if (ctx.truncated) return;
+
+      if (ctx.planningProfile === 'stable' && group.nodes.every(isDecorativeMediaNode)) {
+        // A purely decorative media run contributes no planning signal. Skip it
+        // as a group instead of visiting every omitted leaf and exhausting the
+        // serializer node budget on ad/image-heavy pages.
+        continue;
+      }
 
       // Skip dedup for groups containing interactive elements to avoid
       // hiding clickable buttons/links/inputs from the LLM
@@ -715,6 +824,7 @@ export async function serializeDOM(
   const interactiveOnly = (options?.interactiveOnly ?? false) || options?.filter === 'interactive';
   const compression = options?.compression ?? 'light';  // default to 'light'
   const includeUserAgentShadowDOM = options?.includeUserAgentShadowDOM ?? false;
+  const planningProfile = options?.planningProfile ?? 'default';
 
   // Get page stats via page.evaluate
   const pageStats = await withTimeout(
@@ -765,6 +875,11 @@ export async function serializeDOM(
     { depth: documentDepth, pierce: true },
   );
 
+  const referencedIds = new Set<string>();
+  if (planningProfile === 'stable') {
+    collectReferencedIds(root, referencedIds);
+  }
+
   const ctx: SerializeContext = {
     lines: [],
     totalChars: 0,
@@ -775,6 +890,8 @@ export async function serializeDOM(
     interactiveOnly,
     compression,
     includeUserAgentShadowDOM,
+    planningProfile,
+    referencedIds,
     nodesVisited: 0,
     maxNodes: DEFAULT_MAX_SERIALIZER_NODES,
     customInteractiveHints,
@@ -785,6 +902,10 @@ export async function serializeDOM(
   if (includePageStats) {
     const statsLine = `[page_stats] url: ${pageStats.url} | title: ${pageStats.title} | scroll: ${pageStats.scrollX},${pageStats.scrollY} | viewport: ${pageStats.viewportWidth}x${pageStats.viewportHeight} | docSize: ${pageStats.scrollWidth}x${pageStats.scrollHeight}\n\n`;
     appendBoundedLine(ctx, statsLine);
+  }
+
+  if (includePageStats && planningProfile === 'stable' && !ctx.truncated) {
+    appendBoundedLine(ctx, '[planning_profile] stable\n\n');
   }
 
   // Serialize from root

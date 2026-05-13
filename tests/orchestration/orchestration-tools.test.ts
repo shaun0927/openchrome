@@ -13,6 +13,7 @@ import { OrchestrationStateManager } from '../../src/orchestration/state-manager
 import { WorkflowEngine } from '../../src/orchestration/workflow-engine';
 import { createMockSessionManager } from '../mocks/orchestration-fixtures';
 import { getResultText, parseResultJSON, isErrorResult } from '../utils/test-helpers';
+import { TaskDriftLedgerStore, setTaskDriftLedger } from '../../src/harness/task-ledger';
 
 // Mock the session manager module
 jest.mock('../../src/session-manager', () => ({
@@ -88,6 +89,7 @@ describe('Orchestration MCP Tools', () => {
   beforeEach(async () => {
     // Create tool handlers map
     toolHandlers = new Map();
+    setTaskDriftLedger(new TaskDriftLedgerStore());
 
     // Create mock server that captures tool registrations
     mockServer = {
@@ -236,6 +238,25 @@ describe('Orchestration MCP Tools', () => {
 
       const data = parseResultJSON<{ status: string }>(result);
       expect(data.status).toBe('NO_WORKFLOW');
+    });
+
+    test('should include compact task ledger only when requested', async () => {
+      const store = new TaskDriftLedgerStore();
+      setTaskDriftLedger(store);
+      store.updateFromToolResult({
+        sessionId: testSessionId,
+        tabId: 'tab-1',
+        toolName: 'interact',
+        args: { tabId: 'tab-1', action: 'click', target: 'Checkout' },
+        resultText: 'element not found',
+        isError: true,
+      });
+
+      const defaultResult = parseResultJSON<{ taskLedger?: unknown }>(await callStatus());
+      expect(defaultResult.taskLedger).toBeUndefined();
+
+      const debugResult = parseResultJSON<{ taskLedger: unknown[] }>(await callStatus({ includeLedger: true }));
+      expect(debugResult.taskLedger).toHaveLength(1);
     });
 
     test('should return current workflow status', async () => {

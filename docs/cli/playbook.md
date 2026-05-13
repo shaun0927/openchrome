@@ -89,11 +89,13 @@ steps:
 
 All non-`assert` verbs forward their YAML args object directly to the MCP tool unchanged.
 
+After a successful tool result that returns `tabId`, the runner reuses that tab for later same-tab browser verbs (`interact`, `act`, `fill_form`, `wait_for`, `page_screenshot`, `read_page`, `javascript_tool`) when the step does not set `tabId` explicitly. This keeps fixture playbooks runnable without hard-coding ephemeral tab IDs while preserving explicit `tabId` overrides.
+
 ---
 
 ## Assertions
 
-`assert` steps expand to `oc_assert` with the YAML node forwarded verbatim as the `assertion` field. The step passes iff the server returns `verdict === "pass"`. Any other verdict (`"fail"`, `"inconclusive"`) counts as a failure for exit-code purposes.
+`assert` steps expand to `oc_assert`. A compact assertion DSL is wrapped as `contract`; an explicit `{ contract, evidence }` object is forwarded unchanged. The step passes iff the server returns `verdict === "pass"`. Any other verdict (`"fail"`, `"inconclusive"`) counts as a failure for exit-code purposes.
 
 ### dom_text
 
@@ -106,7 +108,7 @@ All non-`assert` verbs forward their YAML args object directly to the MCP tool u
 
 Expands to:
 ```json
-{ "assertion": { "kind": "dom_text", "selector": "h1", "pattern": "Example" } }
+{ "contract": { "kind": "dom_text", "selector": "h1", "pattern": "Example" } }
 ```
 
 ### url
@@ -127,7 +129,7 @@ Expands to:
       - { kind: url, pattern: "example\\.com" }
 ```
 
-The playbook layer does **not** parse the assertion DSL — the YAML subtree is forwarded verbatim.
+The playbook layer does **not** evaluate the assertion DSL. Compact `assert:` YAML is wrapped as `contract` for `oc_assert`; explicit `contract`/`evidence` payloads are forwarded unchanged.
 
 ---
 
