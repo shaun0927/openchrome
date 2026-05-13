@@ -8,6 +8,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
+import { captureElementReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
@@ -32,6 +33,11 @@ const definition: MCPToolDefinition = {
         description: 'Human-readable label for this action in audit logs (≤120 chars)',
         maxLength: 120,
       },
+      capture_artifact: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, stage a replay artifact step for oc_skill_record. Default false is a strict no-op.',
+      },
     },
     required: ['ref', 'value', 'tabId'],
   },
@@ -47,6 +53,7 @@ const handler: ToolHandler = async (
   const ref = args.ref as string;
   const value = args.value;
   const intent = args.intent as string | undefined;
+  const captureArtifact = shouldCaptureReplayArtifact(args.capture_artifact);
 
   // Validate intent when provided — use typeof guard for null-safety
   if (typeof intent === 'string') {
@@ -428,6 +435,15 @@ const handler: ToolHandler = async (
     const response = result.result.value;
 
     if (response.success) {
+      if (captureArtifact) {
+        await captureElementReplayStep({
+          cdpClient,
+          page,
+          objectId: object.objectId,
+          kind: elInfo.tagName === 'select' ? 'select' : 'fill',
+          args: { value: String(value) },
+        });
+      }
       return {
         content: [{ type: 'text', text: (response.message || 'Value set successfully') + delta }],
       };
