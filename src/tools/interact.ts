@@ -127,7 +127,31 @@ const definition: MCPToolDefinition = {
 async function validateLocatorCandidate(
   page: any,
   candidate: LocatorFallbackCandidate,
+  resolveBackendNodeId?: (ref: string) => number | undefined,
+  cdpClient?: { send: (page: any, method: string, params?: Record<string, unknown>) => Promise<unknown> },
 ): Promise<ValidatedLocatorFallbackCandidate | null> {
+  const backendNodeId = candidate.backendNodeId ?? (candidate.ref ? resolveBackendNodeId?.(candidate.ref) : undefined);
+  if (typeof backendNodeId === 'number' && cdpClient) {
+    try {
+      await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
+      const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId }) as { model?: { content?: number[] } };
+      const content = boxModel.model?.content;
+      if (!content || content.length < 8) return null;
+      const [x1, y1,, , x2,, , y2] = content;
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      if (width <= 0 || height <= 0) return null;
+      return {
+        ...candidate,
+        selector: candidate.selector ?? candidate.ref ?? `backendNodeId:${backendNodeId}`,
+        backendNodeId,
+        rect: { x: (x1 + x2) / 2, y: (y1 + y2) / 2, width, height },
+      };
+    } catch {
+      return null;
+    }
+  }
+
   if (!candidate.selector) return null;
   const rect = await page.evaluate((selector: string) => {
     const el = document.querySelector(selector) as HTMLElement | null;
@@ -172,9 +196,15 @@ const handler: ToolHandler = async (
   const runLocatorFallbackForPage = async (page: any, trigger: LocatorFallbackTrigger): Promise<MCPResult | null> => {
     if (!locatorFallbackEnabled || !query) return null;
     const pageInfo = await page.evaluate(() => ({ url: window.location.href, title: document.title })).catch(() => ({ url: '', title: '' }));
+    const cdpClient = sessionManager.getCDPClient();
     const resolved = await resolveLocatorFallback(
       { trigger, query, action, tabId, sessionId, pageUrl: pageInfo.url, pageTitle: pageInfo.title, maxCandidates: 5 },
-      (candidate) => validateLocatorCandidate(page, candidate),
+      (candidate) => validateLocatorCandidate(
+        page,
+        candidate,
+        (ref) => refIdManager.getBackendDOMNodeId(sessionId, tabId, ref),
+        cdpClient,
+      ),
       { minConfidence: locatorMinConfidence, provider: getLocatorFallbackProvider() },
     );
     if (!resolved.accepted) {

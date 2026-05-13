@@ -60,12 +60,14 @@ export function setLocatorFallbackProviderForTests(next: LocatorFallbackProvider
 
 export function isLocatorFallbackEnabled(value: unknown): boolean {
   if (typeof value === 'boolean') return value;
+  const env = process.env.OPENCHROME_LOCATOR_FALLBACK;
+  const envEnabled = env === '1' || env === 'true' || env === 'yes';
   if (value && typeof value === 'object') {
     const enabled = (value as Record<string, unknown>).enabled;
-    return enabled === true;
+    if (enabled === false) return false;
+    return enabled === true || envEnabled;
   }
-  const env = process.env.OPENCHROME_LOCATOR_FALLBACK;
-  return env === '1' || env === 'true' || env === 'yes';
+  return envEnabled;
 }
 
 export function locatorFallbackThreshold(value: unknown): number {

@@ -18,6 +18,8 @@ describe('locator fallback extension point', () => {
     expect(isLocatorFallbackEnabled({ enabled: true })).toBe(true);
     process.env.OPENCHROME_LOCATOR_FALLBACK = '1';
     expect(isLocatorFallbackEnabled(undefined)).toBe(true);
+    expect(isLocatorFallbackEnabled({ minConfidence: 0.8 })).toBe(true);
+    expect(isLocatorFallbackEnabled({ enabled: false, minConfidence: 0.8 })).toBe(false);
   });
 
   test('maps stale, missing, ambiguous, and label mismatch triggers', () => {
@@ -51,6 +53,35 @@ describe('locator fallback extension point', () => {
 
     expect(result.accepted?.selector).toBe('#submit');
     expect(result.rejected[0].reason).toContain('validation');
+  });
+
+  test('passes backendNodeId and ref-only candidates to validation', async () => {
+    const provider: LocatorFallbackProvider = {
+      name: 'fake-ai',
+      async locate() {
+        return {
+          provider: 'fake-ai',
+          candidates: [
+            { provider: 'fake-ai', backendNodeId: 42, confidence: 0.9, reason: 'node match' },
+            { provider: 'fake-ai', ref: 'ref_1', confidence: 0.8, reason: 'ref match' },
+          ],
+        };
+      },
+    };
+    const validate = jest.fn(async candidate => (
+      candidate.backendNodeId === 42
+        ? { ...candidate, selector: 'backendNodeId:42', rect: { x: 10, y: 20, width: 50, height: 20 } }
+        : null
+    ));
+
+    const result = await resolveLocatorFallback(
+      { trigger: 'STALE_REF', query: 'Submit', tabId: 'tab-1', sessionId: 'sess-1' },
+      validate,
+      { provider, minConfidence: 0.7 },
+    );
+
+    expect(validate).toHaveBeenCalledWith(expect.objectContaining({ backendNodeId: 42 }));
+    expect(result.accepted?.backendNodeId).toBe(42);
   });
 
   test('no-op provider fails gracefully without validated candidates', async () => {
