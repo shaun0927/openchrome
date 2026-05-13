@@ -29,6 +29,7 @@ import {
 } from './resources/skill-graph';
 import { HintEngine } from './hints';
 import { buildAutomationInsight, formatAutomationFallback, shouldInjectAutomationFallback } from './hints/result-guidance';
+import { getTaskDriftLedger } from './harness/task-ledger';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
@@ -459,6 +460,9 @@ export class MCPServer {
       this.sessionManager.addEventListener((event) => {
         if (event.type === 'session:deleted') {
           this.sessionTenants.delete(event.sessionId);
+          getTaskDriftLedger().cleanupSession(event.sessionId);
+        } else if ((event.type === 'session:target-closed' || event.type === 'session:target-removed') && event.sessionId && event.targetId) {
+          getTaskDriftLedger().cleanupTab(event.sessionId, event.targetId);
         }
       });
     }
