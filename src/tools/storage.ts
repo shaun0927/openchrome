@@ -36,6 +36,11 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Value to store (string)',
       },
+      dryRun: {
+        type: 'boolean',
+        description:
+          'Preview-only mode for destructive actions (remove, clear). When true, returns counts and a sample of keys that would be deleted without mutating any state. Default: false.',
+      },
     },
     required: ['tabId', 'storageType', 'action'],
   },
@@ -50,6 +55,7 @@ const handler: ToolHandler = async (
   const action = args.action as string;
   const key = args.key as string | undefined;
   const value = args.value as string | undefined;
+  const dryRun = args.dryRun === true;
 
   const sessionManager = getSessionManager();
 
@@ -218,6 +224,46 @@ const handler: ToolHandler = async (
       }
 
       case 'clear': {
+        // #878 — dryRun: report what would be cleared; no mutation.
+        if (dryRun) {
+          const preview = await withTimeout(
+            page.evaluate((storage: string) => {
+              const s = storage === 'localStorage' ? localStorage : sessionStorage;
+              const sample: string[] = [];
+              for (let i = 0; i < Math.min(s.length, 10); i++) {
+                const k = s.key(i);
+                if (k) sample.push(k);
+              }
+              return { count: s.length, sample };
+            }, storageName),
+            5000,
+            'storage',
+          );
+          const wouldAffect = {
+            count: preview.count,
+            samples: preview.sample,
+            details: { storageType, storageName },
+          };
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'clear',
+                  dryRun: true,
+                  wouldAffect,
+                  guidance: 'Pass dryRun:false (or omit) to execute.',
+                }),
+              },
+            ],
+            structuredContent: {
+              dryRun: true,
+              wouldAffect,
+              guidance: 'Pass dryRun:false (or omit) to execute.',
+            },
+          };
+        }
+
         const countBefore = await withTimeout(page.evaluate((storage: string) => {
           const s = storage === 'localStorage' ? localStorage : sessionStorage;
           return s.length;
