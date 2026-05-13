@@ -375,8 +375,12 @@ export class PlanExecutor {
         );
         executed++;
         if (!result.isError && !isEmptyResult(result)) {
-          recoveryAttempts.push({ tool: candidate.tool, status: 'success', reason: candidate.reason });
-          return { recovered: true, stepsExecuted: executed };
+          recoveryAttempts.push({
+            tool: candidate.tool,
+            status: 'success',
+            reason: `${candidate.reason}; original step still requires retry`,
+          });
+          return { recovered: false, stepsExecuted: executed };
         }
         recoveryAttempts.push({ tool: candidate.tool, status: 'failed', reason: 'candidate returned empty or error result' });
       } catch (err) {

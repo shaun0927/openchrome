@@ -33,7 +33,7 @@ describe('PlanExecutor bounded recovery', () => {
     expect(result.recovery).toBeUndefined();
   });
 
-  it('tries bounded read-only recovery and continues on success', async () => {
+  it('tries bounded read-only recovery but does not skip retrying the failed step', async () => {
     const calls: string[] = [];
     const handlers = new Map<string, ToolHandler>([
       ['interact', async () => { calls.push('interact'); return text('ref is stale', true); }],
@@ -45,8 +45,9 @@ describe('PlanExecutor bounded recovery', () => {
       boundedRecovery: { enabled: true, maxCandidates: 2, maxToolCalls: 1, perCandidateTimeoutMs: 1000 },
     });
 
-    expect(result.success).toBe(true);
-    expect(calls).toEqual(['interact', 'read_page', 'read_page']);
+    expect(result.success).toBe(false);
+    expect(calls).toEqual(['interact', 'read_page']);
+    expect(result.error).toContain('ref is stale');
     expect(result.recovery?.attempts[0]).toMatchObject({ tool: 'read_page', status: 'success' });
   });
 
