@@ -1223,8 +1223,22 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
   return sanitizedResult;
 };
 
+/**
+ * Snapshot-cache wrapper (#879).
+ *
+ * read_page stays uncached for now. AX/semantic responses embed ephemeral
+ * ref_* ids owned by RefIdManager, and DOM/CSS outputs include scroll-sensitive
+ * page stats/content. Until cache identity can include scroll state and ref
+ * mappings can be replayed or made stable, returning cached read_page payloads
+ * risks stale refs or stale post-scroll snapshots. Keep the wrapper as a
+ * behavior-preserving seam so the feature can be re-enabled safely later.
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  return sanitizedHandler(sessionId, args, context);
+};
+
 export function registerReadPageTool(server: MCPServer): void {
-  server.registerTool('read_page', sanitizedHandler, definition);
+  server.registerTool('read_page', cachedHandler, definition);
 }
 
 /**

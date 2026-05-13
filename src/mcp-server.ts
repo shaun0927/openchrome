@@ -1864,7 +1864,8 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, true);
+        const toolSucceeded = (result as MCPResult).isError !== true;
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, toolSucceeded);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
