@@ -25,6 +25,23 @@ plus stable `latest.{json,md}` pointers.
 | `mock` | (default) | Replays JSONL transcripts under `transcripts/`. Deterministic, no network, no API key. CI uses this. |
 | `claude` | `OPENCHROME_BENCH_ADAPTER=claude`, `ANTHROPIC_API_KEY`, `OPENCHROME_BENCH_REAL=1` | Anthropic Messages API. Requires `@anthropic-ai/sdk` installed locally (`npm i -D @anthropic-ai/sdk`). The v1 scaffold throws a deliberate error explaining the recording workflow; the full tool-use loop lands in the follow-up PR that records the remaining 7 transcripts. |
 
+## Transcript determinism contract
+
+Frozen transcripts are JSONL files containing zero or more `tool_call` entries
+followed by a `final_state`. Every `tool_call` entry must include:
+
+- `tool` — the MCP tool name invoked by the recording adapter.
+- `args` — the exact JSON-compatible argument object sent to that tool.
+- `args_digest_sha256` — `sha256(deterministicStringify(args))`.
+- `response_kind` — a compact response classification used for report metrics.
+
+`deterministicStringify` sorts object keys recursively, preserves array order,
+drops `undefined` object fields the same way JSON does, and emits no whitespace.
+The mock adapter recomputes every digest before contract evaluation. A mismatch
+returns `replay_drift` with `{ expected, actual, tool, step_index }`, catching
+the case where a transcript keeps the same tool sequence but silently mutates
+arguments.
+
 ## Budget caps
 
 Defined in `llm/budget.ts`, applied by the claude adapter:
@@ -98,7 +115,7 @@ regressed score.
 1. Build `dist/` (`npm run build`).
 2. Set `ANTHROPIC_API_KEY` and `OPENCHROME_BENCH_REAL=1`.
 3. Run the claude adapter with the target task: `npm run bench:webvoyager:real -- --task <name>`.
-4. Capture the final page state and the per-step tool-call digests into
+4. Capture the final page state and the per-step tool-call `args` plus digests into
    `transcripts/<name>.jsonl`.
 5. Flip `pending: false` on the task spec and add the task name to
    `baseline.json` `transcripts_required`.
