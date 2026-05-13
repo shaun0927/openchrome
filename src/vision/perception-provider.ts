@@ -144,6 +144,13 @@ function sanitizePositiveInteger(value: unknown, fallback: number, cap: number):
   return Math.min(cap, Math.max(1, Math.floor(value)));
 }
 
+function sanitizeNonNegativeInteger(value: unknown, fallback: number, cap: number): number {
+  if (typeof value !== 'number') return fallback;
+  if (value === Number.POSITIVE_INFINITY) return cap;
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(cap, Math.max(0, Math.floor(value)));
+}
+
 export function validatePerceptionSnapshot(
   snapshot: unknown,
   options: PerceptionValidationOptions = {}
@@ -151,7 +158,7 @@ export function validatePerceptionSnapshot(
   const maxErrors = sanitizePositiveInteger(options.maxErrors, 25, 100);
   const maxElements = options.maxElements === undefined
     ? undefined
-    : sanitizePositiveInteger(options.maxElements, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER);
+    : sanitizeNonNegativeInteger(options.maxElements, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER);
   const errors: string[] = [];
   const addError = (message: string): void => {
     if (errors.length < maxErrors) errors.push(message);

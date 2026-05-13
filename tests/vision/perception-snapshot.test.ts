@@ -245,6 +245,32 @@ describe('perception snapshot schema validation', () => {
     expect(result.errors).toEqual(['elements length must be <= 1']);
   });
 
+  test('honors zero maxElements as a strict validation cap', () => {
+    const result = validatePerceptionSnapshot({
+      version: 1,
+      provider: 'fixture',
+      tabId: 'tab-1',
+      url: 'https://example.test',
+      capturedAt: Date.now(),
+      viewport: { width: 100, height: 100 },
+      screenshotMimeType: 'image/png',
+      warnings: [],
+      latencyMs: 0,
+      elements: [{
+        id: '',
+        type: 'bad-after-cap',
+        label: 123,
+        interactive: 'maybe',
+        source: '',
+        bbox: { x: -1, y: -1, width: -1, height: -1 },
+        bboxRatio: { x: 2, y: 2, width: 2, height: 2 },
+      }],
+    }, { maxElements: 0, maxErrors: 25 });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual(['elements length must be <= 0']);
+  });
+
   test('sanitizes hostile maxErrors bounds before collecting diagnostics', () => {
     const malformed = {
       version: 'bad',
