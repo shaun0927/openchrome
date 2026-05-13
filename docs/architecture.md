@@ -165,6 +165,11 @@ Mandatory native runtime dep: **`argon2`** (authentication). Pure-JS deps:
 Top-level `npm overrides` for `basic-ftp` and `ip-address` neutralize
 transitive advisories.
 
+
+## Composition patterns
+
+OpenChrome keeps multi-step research composition in host-controlled recipes rather than adding server-side LLM planning. Runnable examples live in [`docs/recipes/`](recipes/README.md), including the topic survey, single-page deep extract, and changelog watch patterns from issue #858. These recipes combine existing deterministic tools such as `read_page`, `extract_data`, `validate_page`, `oc_assert`, `oc_evidence_bundle`, and `batch_execute` without changing the MCP API surface.
+
 ## Out of scope for the server
 
 Things that explicitly do **not** live in `openchrome-mcp`:
