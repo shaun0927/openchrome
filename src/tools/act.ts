@@ -59,13 +59,38 @@ function substituteActionVariables(action: ParsedAction, variables: Record<strin
 }
 
 function redactVariableValues(text: string, variables: Record<string, string>): string {
-  let redacted = text;
-  const replacements = Object.entries(variables)
-    .filter(([, value]) => value.length > 0)
-    .sort((a, b) => b[1].length - a[1].length);
-  for (const [name, value] of replacements) {
-    redacted = redacted.split(value).join(`%${name}%`);
+  const matches: Array<{ start: number; end: number; label: string }> = [];
+  for (const [name, value] of Object.entries(variables)) {
+    if (value.length === 0) continue;
+    let start = text.indexOf(value);
+    while (start !== -1) {
+      matches.push({ start, end: start + value.length, label: `%${name}%` });
+      start = text.indexOf(value, start + 1);
+    }
   }
+  if (matches.length === 0) return text;
+
+  matches.sort((a, b) => a.start - b.start || b.end - a.end);
+  const chunks: Array<{ start: number; end: number; label: string; ambiguous: boolean }> = [];
+  for (const match of matches) {
+    const last = chunks[chunks.length - 1];
+    if (!last || match.start >= last.end) {
+      chunks.push({ ...match, ambiguous: false });
+      continue;
+    }
+    if (match.end <= last.end) continue;
+    last.end = match.end;
+    last.ambiguous = true;
+  }
+
+  let redacted = '';
+  let offset = 0;
+  for (const chunk of chunks) {
+    redacted += text.slice(offset, chunk.start);
+    redacted += chunk.ambiguous ? '[REDACTED_VARIABLE]' : chunk.label;
+    offset = chunk.end;
+  }
+  redacted += text.slice(offset);
   return redacted;
 }
 

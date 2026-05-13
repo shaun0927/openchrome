@@ -465,6 +465,27 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('%long%');
     });
 
+    test('redacts equal-length overlapping variable values without leaking fragments', async () => {
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      (page!.evaluate as jest.Mock).mockResolvedValue({
+        url: 'https://example.com/callback?value=abcd',
+        title: 'overlap abcd',
+      });
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction: 'navigate to https://example.com/callback?value=abcd',
+        variables: { first: 'abc', second: 'bcd' },
+      }) as any;
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).not.toContain('abcd');
+      expect(result.content[0].text).not.toContain('abc');
+      expect(result.content[0].text).not.toContain('bcd');
+      expect(result.content[0].text).toContain('[REDACTED_VARIABLE]');
+    });
+
     test('type with target finds element first', async () => {
       (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
         backendDOMNodeId: 400,
