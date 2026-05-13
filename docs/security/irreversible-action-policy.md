@@ -31,3 +31,13 @@ Every denial includes `policy`, `reason`, `missing`, and `suggested_next_action`
 ## Operator guidance
 
 Use this matrix as the common policy source for ToolAnnotations, dry-run previews, elicitation hooks, and TaskRun checkpoints. Future tool integrations should call the shared helper before executing a destructive commit path and should include the returned decision in structured tool output when blocked.
+
+## Inspecting policy at runtime
+
+Use the read-only `oc_policy` tool to inspect or evaluate the effective policy without executing the target action.
+
+- `oc_policy({"action":"matrix"})` returns the static policy matrix.
+- `oc_policy({"action":"evaluate","tool":"cookies","args":{"action":"delete-all"}})` returns the same structured decision helper used by policy consumers, for example `preview_required` with missing `dryRun`.
+- `oc_policy({"action":"evaluate","tool":"navigate","args":{"url":"https://example.com"},"allowedDomains":["localhost"]})` shows the deterministic allowed-domain decision.
+
+`oc_policy` is read-only and never performs the high-risk action it evaluates.

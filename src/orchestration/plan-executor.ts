@@ -16,12 +16,82 @@ import {
   PlanFailureMetadata,
   PlanFinalVerificationResult,
   PlanRecoveryCandidate,
+  PlanStepEvidence,
 } from '../types/plan-cache';
 import { evaluate } from '../contracts/evaluate';
 import type { EvalContext, NetworkLogEntry } from '../contracts/eval-context';
 import { evaluateTaskSignature, preflightAllowedTools } from '../contracts/task-signature';
 import type { TaskSignatureToolCallSummary } from '../contracts/task-signature';
 import { withTimeout } from '../utils/with-timeout';
+
+const SAFE_CONTRACT_MAX_RECOVERY_STEPS = 10;
+
+function isSafeContractPlan(plan: CompiledPlan): boolean {
+  return plan.contractVersion === 2 || Array.isArray(plan.allowedTools);
+}
+
+function validateCompiledPlanContract(plan: CompiledPlan, toolResolver: (toolName: string) => ToolHandler | null): string | null {
+  if (!isSafeContractPlan(plan)) return null;
+  const allowedTools = new Set(plan.allowedTools || []);
+  const allSteps = [
+    ...plan.steps.map(step => ({ step, source: 'plan' })),
+    ...plan.errorHandlers.flatMap(handler => handler.steps.map(step => ({ step, source: `errorHandler:${handler.condition}` }))),
+  ];
+
+  if (plan.allowedTools && plan.allowedTools.length === 0) return 'allowedTools must not be empty for safe contract plans';
+  if (!plan.successCriteria || Object.keys(plan.successCriteria).length === 0) {
+    return 'safe contract plans require explicit successCriteria';
+  }
+
+  for (const { step, source } of allSteps) {
+    if (!toolResolver(step.tool)) {
+      return `unknown tool "${step.tool}" in ${source}`;
+    }
+    if (allowedTools.size > 0 && !allowedTools.has(step.tool)) {
+      return `tool "${step.tool}" in ${source} is not in allowedTools`;
+    }
+    if (typeof step.timeout !== 'number' || !Number.isFinite(step.timeout) || step.timeout <= 0) {
+      return `step ${step.order} in ${source} is missing a positive timeout`;
+    }
+    const badTemplate = findMalformedTemplate(step.args);
+    if (badTemplate) return `malformed substitution "${badTemplate}" in step ${step.order}`;
+  }
+
+  for (const handler of plan.errorHandlers) {
+    if (handler.steps.length > SAFE_CONTRACT_MAX_RECOVERY_STEPS) {
+      return `recovery handler "${handler.condition}" exceeds ${SAFE_CONTRACT_MAX_RECOVERY_STEPS} steps`;
+    }
+  }
+
+  return null;
+}
+
+function findMalformedTemplate(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const matches = value.match(/\$\{[^}]*\}?/g) || [];
+    for (const match of matches) {
+      if (!/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(match)) return match;
+    }
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const bad = findMalformedTemplate(item);
+      if (bad) return bad;
+    }
+  } else if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      const bad = findMalformedTemplate(item);
+      if (bad) return bad;
+    }
+  }
+  return null;
+}
+
+function summarizeMcpResult(mcpResult: MCPResult): string {
+  const text = mcpResult.content?.[0]?.text || '';
+  return text.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
 
 interface SnapshotInput {
   url?: string;
@@ -126,7 +196,7 @@ async function runFinalVerification(
 function classifyPlanFailure(message: string, fallback: PlanFailureClass): PlanFailureClass {
   const text = message.toLowerCase();
   if (/timeout|timed out|deadline/.test(text)) return 'timeout';
-  if (/stale_ref|stale ref|stale-ref/.test(text)) return 'stale_ref';
+  if (/stale[_ -]?ref|stale ref|stale-ref/.test(text)) return 'stale_ref';
   if (/\b(?:auth|authentication|authorization|unauthorized|login|sign[ -]?in|access denied|forbidden)\b/.test(text)) return 'auth_redirect';
   if (/empty|no data|not found|missing selector/.test(text)) return 'empty_result';
   return fallback;
@@ -135,7 +205,7 @@ function classifyPlanFailure(message: string, fallback: PlanFailureClass): PlanF
 function recoveryCandidatesFor(
   conditionKey: string | undefined,
   errorHandlers: PlanErrorHandler[],
-  failure: PlanFailureMetadata
+  failure: PlanFailureMetadata,
 ): PlanRecoveryCandidate[] {
   const candidates: PlanRecoveryCandidate[] = [];
   if (conditionKey) {
@@ -158,11 +228,11 @@ function recoveryCandidatesFor(
   if (failure.reflectionId) {
     candidates.push({
       source: 'reflection',
-      action: 'review_reflection',
+      action: failure.reflectionId,
       message: `Review reflection ${failure.reflectionId} before retrying this plan.`,
     });
   }
-  return candidates.slice(0, 3);
+  return candidates;
 }
 
 /**
@@ -297,6 +367,21 @@ export class PlanExecutor {
     const startTime = Date.now();
     let stepsExecuted = 0;
     const recentTools: TaskSignatureToolCallSummary[] = [];
+    const evidence: PlanStepEvidence[] = [];
+    let lastEmptyStep: { order: number; tool: string; conditionKey: string } | null = null;
+
+    const contractError = validateCompiledPlanContract(plan, this.toolResolver);
+    if (contractError) {
+      return {
+        success: false,
+        planId: plan.id,
+        error: `Plan contract validation failed: ${contractError}`,
+        durationMs: Date.now() - startTime,
+        stepsExecuted,
+        totalSteps: plan.steps.length,
+        evidence,
+      };
+    }
 
     if (options.taskSignature) {
       const preflight = preflightAllowedTools(
@@ -313,10 +398,10 @@ export class PlanExecutor {
           success: false,
           planId: plan.id,
           error: preflight.reasons.join('; '),
-          failure: { class: 'contract_failed', message: preflight.reasons.join('; ') },
           durationMs: Date.now() - startTime,
           stepsExecuted,
           totalSteps: plan.steps.length,
+          evidence,
           taskSignature: preflight,
         };
       }
@@ -331,28 +416,22 @@ export class PlanExecutor {
     }
     Object.assign(params, runtimeParams);
 
-    let lastEmptyStep: { order: number; tool: string; conditionKey: string } | null = null;
     const failure = (
       error: string,
       taskSignature?: PlanExecutionResult['taskSignature'],
       failureMeta?: PlanFailureMetadata,
-      conditionKey?: string
-    ): PlanExecutionResult => {
-      const recoveryCandidates = failureMeta
-        ? recoveryCandidatesFor(conditionKey, plan.errorHandlers, failureMeta)
-        : [];
-      return {
-        success: false,
-        planId: plan.id,
-        error,
-        ...(failureMeta ? { failure: failureMeta } : {}),
-        ...(recoveryCandidates.length > 0 ? { recoveryCandidates } : {}),
-        durationMs: Date.now() - startTime,
-        stepsExecuted,
-        totalSteps: plan.steps.length,
-        ...(taskSignature ? { taskSignature } : {}),
-      };
-    };
+      conditionKey?: string,
+    ): PlanExecutionResult => ({
+      success: false,
+      planId: plan.id,
+      error,
+      durationMs: Date.now() - startTime,
+      stepsExecuted,
+      totalSteps: plan.steps.length,
+      evidence,
+      ...(failureMeta ? { failure: failureMeta, recoveryCandidates: recoveryCandidatesFor(conditionKey, plan.errorHandlers, failureMeta) } : {}),
+      ...(taskSignature ? { taskSignature } : {}),
+    });
 
     // 2. Execute each step sequentially
     for (const step of plan.steps) {
@@ -371,6 +450,7 @@ export class PlanExecutor {
 
       // c. Call handler with timeout
       let mcpResult: MCPResult;
+      const stepStart = Date.now();
       try {
         mcpResult = await withTimeout(
           handler(sessionId, substitutedArgs),
@@ -378,7 +458,16 @@ export class PlanExecutor {
           stepLabel
         );
         stepsExecuted++;
-        recentTools.push({ tool: step.tool, progressed: !isEmptyResult(mcpResult) && !mcpResult.isError });
+        const empty = isEmptyResult(mcpResult);
+        evidence.push({
+          step: step.order,
+          tool: step.tool,
+          source: 'plan',
+          outcome: mcpResult.isError ? 'error' : empty ? 'empty' : 'success',
+          durationMs: Date.now() - stepStart,
+          summary: summarizeMcpResult(mcpResult),
+        });
+        recentTools.push({ tool: step.tool, progressed: !empty && !mcpResult.isError });
         if (options.taskSignature) {
           const taskStatus = await evaluateTaskSignature({
             signature: options.taskSignature,
@@ -395,14 +484,23 @@ export class PlanExecutor {
               stepsExecuted,
               totalSteps: plan.steps.length,
               taskSignature: taskStatus,
+              evidence,
             };
           }
           if (taskStatus.status !== 'continue') {
-            return failure(`task signature ${taskStatus.status}: ${taskStatus.reasons.join('; ')}`, taskStatus, { class: 'contract_failed', stepOrder: step.order, tool: step.tool, message: taskStatus.reasons.join('; ') });
+            return failure(`task signature ${taskStatus.status}: ${taskStatus.reasons.join('; ')}`, taskStatus);
           }
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        evidence.push({
+          step: step.order,
+          tool: step.tool,
+          source: 'plan',
+          outcome: 'error',
+          durationMs: Date.now() - stepStart,
+          summary: errMsg.slice(0, 240),
+        });
         console.error(`[PlanExecutor] Step failed at ${stepLabel}: ${errMsg}`);
 
         // Check for a matching error handler
@@ -412,7 +510,8 @@ export class PlanExecutor {
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted
+          stepsExecuted,
+          evidence
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
@@ -435,7 +534,8 @@ export class PlanExecutor {
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted
+          stepsExecuted,
+          evidence
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
@@ -455,7 +555,8 @@ export class PlanExecutor {
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted
+          stepsExecuted,
+          evidence
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
@@ -500,15 +601,14 @@ export class PlanExecutor {
       const emptyResultCausedCriteriaFailure = Boolean(
         lastEmptyStep && /^minDataItems requirement not met: (got 0|no collection found)/.test(criteriaError),
       );
-      const failureMeta: PlanFailureMetadata = {
-        class: emptyResultCausedCriteriaFailure ? 'empty_result' : 'contract_failed',
-        ...(emptyResultCausedCriteriaFailure ? { stepOrder: lastEmptyStep!.order, tool: lastEmptyStep!.tool } : {}),
-        message: criteriaError,
-      };
       return failure(
         `Success criteria not met: ${criteriaError}`,
         taskStatus,
-        failureMeta,
+        {
+          class: emptyResultCausedCriteriaFailure ? 'empty_result' : 'contract_failed',
+          ...(emptyResultCausedCriteriaFailure ? { stepOrder: lastEmptyStep!.order, tool: lastEmptyStep!.tool } : {}),
+          message: criteriaError,
+        },
         emptyResultCausedCriteriaFailure ? lastEmptyStep!.conditionKey : undefined,
       );
     }
@@ -520,10 +620,14 @@ export class PlanExecutor {
         success: false,
         planId: plan.id,
         error: finalVerification.error || `Final verification failed at assertion ${finalVerification.failedAssertion?.index ?? 'unknown'}`,
-        failure: { class: 'contract_failed', message: finalVerification.error || `Final verification failed at assertion ${finalVerification.failedAssertion?.index ?? 'unknown'}` },
+        failure: {
+          class: 'contract_failed',
+          message: finalVerification.error || `Final verification failed at assertion ${finalVerification.failedAssertion?.index ?? 'unknown'}`,
+        },
         durationMs: Date.now() - startTime,
         stepsExecuted,
         totalSteps: plan.steps.length,
+        evidence,
         finalVerification,
         ...(options.taskSignature
           ? { taskSignature: await evaluateTaskSignature({
@@ -544,6 +648,7 @@ export class PlanExecutor {
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
+      evidence,
       ...(finalVerification ? { finalVerification } : {}),
       ...(options.taskSignature
         ? { taskSignature: await evaluateTaskSignature({
@@ -565,10 +670,11 @@ export class PlanExecutor {
     errorHandlers: PlanErrorHandler[],
     sessionId: string,
     params: Record<string, unknown>,
-    currentStepsExecuted: number
+    currentStepsExecuted: number,
+    evidence?: PlanStepEvidence[]
   ): Promise<{ stepsExecuted: number; params: Record<string, unknown> } | null> {
     const handler = errorHandlers.find((h) => h.condition === conditionKey);
-    if (!handler || handler.steps.length === 0) return null;
+    if (!handler) return null;
 
     console.error(
       `[PlanExecutor] Running error handler "${handler.action}" for condition "${conditionKey}"`
@@ -588,6 +694,7 @@ export class PlanExecutor {
       const substitutedArgs = substituteParams(step.args, params) as Record<string, unknown>;
 
       let mcpResult: MCPResult;
+      const stepStart = Date.now();
       try {
         mcpResult = await withTimeout(
           toolHandler(sessionId, substitutedArgs),
@@ -595,6 +702,15 @@ export class PlanExecutor {
           stepLabel
         );
         stepsExecuted++;
+        const empty = isEmptyResult(mcpResult);
+        evidence?.push({
+          step: step.order,
+          tool: step.tool,
+          source: 'recovery',
+          outcome: mcpResult.isError ? 'error' : empty ? 'empty' : 'success',
+          durationMs: Date.now() - stepStart,
+          summary: summarizeMcpResult(mcpResult),
+        });
       } catch (err) {
         console.error(
           `[PlanExecutor] Recovery step failed at ${stepLabel}: ${

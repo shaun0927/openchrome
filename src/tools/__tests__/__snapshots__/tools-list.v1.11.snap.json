@@ -145,6 +145,9 @@
       "name": "oc_performance_insights"
     },
     {
+      "name": "oc_policy"
+    },
+    {
       "name": "oc_profile_status"
     },
     {

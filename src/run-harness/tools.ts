@@ -143,6 +143,7 @@ function recordSummary(record: RunRecord): Record<string, unknown> {
     session_id: record.session_id,
     tab_id: record.tab_id,
     event_count: record.events.length,
+    retention: { max_records_env: 'OPENCHROME_RUN_MAX_RECORDS', default_max_records: 500 },
     terminal: TERMINAL_RUN_STATUSES.has(record.status),
   };
 }

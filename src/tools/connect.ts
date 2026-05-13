@@ -15,6 +15,7 @@ import { getAutoConnectState } from '../chrome/auto-connect-state';
 import { getChromePool } from '../chrome/pool';
 import { getDevToolsInstanceInfo } from '../chrome/devtools-info';
 import { getGlobalConfig } from '../config/global';
+import { getRuntimeProfile } from '../config/runtime-profile';
 
 function getServerState(): ServerConnectionState {
   const httpPort = process.env.OPENCHROME_HTTP_PORT || '3100';
@@ -113,6 +114,7 @@ const getConnectionInfoHandler: ToolHandler = async (
                 port: autoConnect.port,
                 wsEndpoint: autoConnect.wsEndpoint,
                 attachedAt: new Date(autoConnect.attachedAt).toISOString(),
+                runtimeProfile: getRuntimeProfile(),
               },
               null,
               2,
@@ -125,7 +127,7 @@ const getConnectionInfoHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: JSON.stringify({ mode: 'managed' }, null, 2),
+          text: JSON.stringify({ mode: 'managed', runtimeProfile: getRuntimeProfile() }, null, 2),
         },
       ],
     };

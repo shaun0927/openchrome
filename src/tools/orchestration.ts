@@ -853,6 +853,7 @@ const executePlanHandler: ToolHandler = async (
           error: result.error,
           failure: result.failure,
           recoveryCandidates: result.recoveryCandidates,
+          evidence: result.evidence,
           ...(result.taskSignature ? { taskSignature: result.taskSignature } : {}),
           ...(reflectionStrategy ? { reflectionStrategy } : {}),
           message: result.success

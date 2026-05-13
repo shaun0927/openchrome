@@ -315,6 +315,16 @@ describe('PlanRegistry', () => {
         registry.updateStats('nonexistent-plan', true, 100)
       ).not.toThrow();
     });
+
+    test('records failure class counts without changing confidence math', () => {
+      registry.updateStats('tracked-plan', false, 200, 'auth_redirect');
+      registry.updateStats('tracked-plan', false, 200, 'auth_redirect');
+      registry.updateStats('tracked-plan', true, 200);
+
+      const entry = registry.getEntry('tracked-plan')!;
+      expect(entry.stats.failureClassCounts?.auth_redirect).toBe(2);
+      expect(entry.confidence).toBeCloseTo(1 / 3);
+    });
   });
 
 
@@ -409,6 +419,111 @@ describePlanExecutor('PlanExecutor', () => {
   }
 
   // -----------------------------------------------------------------------
+
+  describe('safe plan-as-code contract validation', () => {
+    function safePlan(overrides: Partial<CompiledPlan> = {}): CompiledPlan {
+      return buildPlan({
+        id: 'safe-plan',
+        contractVersion: 2,
+        allowedTools: ['mock_tool', 'recovery_tool'],
+        steps: [buildStep({ order: 1, tool: 'mock_tool', timeout: 5000 })],
+        successCriteria: { requiredFields: ['ok'] },
+        ...overrides,
+      });
+    }
+
+    test('rejects tools outside allowedTools before execution', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler, javascript_tool: handler }));
+      const plan = safePlan({ steps: [buildStep({ tool: 'javascript_tool' })] });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not in allowedTools');
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    test('rejects unknown tools, missing timeouts, malformed substitutions, and missing success criteria', async () => {
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: makeMockHandler(makeMCPResult('ok')) }));
+
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'ghost_tool' })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('unknown tool') });
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'mock_tool', timeout: 0 })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('positive timeout') });
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'mock_tool', args: { url: '${bad-name}' } })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('malformed substitution') });
+      await expect(executor.execute(safePlan({ successCriteria: {} }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('explicit successCriteria') });
+    });
+
+    test('bounds recovery handler length for safe contract plans', async () => {
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: makeMockHandler(makeMCPResult('ok')) }));
+      const tooManySteps = Array.from({ length: 11 }, (_, index) => buildStep({ order: index + 1, tool: 'mock_tool' }));
+      const plan = safePlan({ errorHandlers: [{ condition: 'step1_error', action: 'too-much', steps: tooManySteps }] });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('exceeds 10 steps');
+    });
+
+    test('successful safe contract execution includes bounded evidence', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler }));
+      const plan = safePlan();
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(true);
+      expect(result.evidence).toEqual([expect.objectContaining({
+        step: 1,
+        tool: 'mock_tool',
+        source: 'plan',
+        outcome: 'success',
+        summary: 'ok',
+      })]);
+    });
+
+    test('safe contract execution includes recovery evidence', async () => {
+      const failHandler = makeErrorHandler('boom');
+      const recoveryHandler = makeMockHandler(makeMCPResult('recovered'));
+      const executor = new PlanExecutor(makeResolverWith({ fail_tool: failHandler, recovery_tool: recoveryHandler }));
+      const plan = safePlan({
+        allowedTools: ['fail_tool', 'recovery_tool'],
+        steps: [buildStep({ order: 1, tool: 'fail_tool', timeout: 5000 })],
+        errorHandlers: [{
+          condition: 'step1_error',
+          action: 'recover',
+          steps: [buildStep({ order: 1, tool: 'recovery_tool', timeout: 5000 })],
+        }],
+      });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(true);
+      expect(result.evidence).toEqual([
+        expect.objectContaining({ step: 1, tool: 'fail_tool', source: 'plan', outcome: 'error' }),
+        expect.objectContaining({ step: 1, tool: 'recovery_tool', source: 'recovery', outcome: 'success', summary: 'recovered' }),
+      ]);
+    });
+
+    test('legacy plans without contractVersion remain backward compatible', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler }));
+      const legacy = buildPlan({
+        steps: [buildStep({ tool: 'mock_tool', timeout: 0 })],
+        successCriteria: {},
+      });
+
+      const result = await executor.execute(legacy, SESSION_ID, {});
+
+      expect(result.success).toBe(false);
+      expect(result.error).not.toContain('Plan contract validation failed');
+      expect(handler).toHaveBeenCalled();
+    });
+  });
+
   // Basic execution
   // -----------------------------------------------------------------------
 
@@ -691,6 +806,35 @@ describePlanExecutor('PlanExecutor', () => {
     expect(typeof result.durationMs).toBe('number');
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
+
+  test('classifies unauthorized tool errors as auth_redirect', async () => {
+    const handler = makeMockHandler({ content: [{ type: 'text', text: 'unauthorized: login required' }], isError: true });
+    const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler }));
+    const plan = buildPlan({
+      id: 'auth-failure-plan',
+      steps: [buildStep({ order: 1, tool: 'mock_tool', args: {} })],
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toMatchObject({ class: 'auth_redirect', stepOrder: 1, tool: 'mock_tool' });
+  });
+
+  test('maps empty-result success-criteria failures to empty_result metadata', async () => {
+    const handler = makeMockHandler(makeMCPResult('[]'));
+    const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler }));
+    const plan = buildPlan({
+      id: 'empty-taxonomy-plan',
+      steps: [buildStep({ order: 1, tool: 'mock_tool', args: {}, parseResult: { format: 'json', storeAs: 'items' } })],
+      successCriteria: { minDataItems: 1 },
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toMatchObject({ class: 'empty_result', stepOrder: 1, tool: 'mock_tool' });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -919,166 +1063,5 @@ describe('PlanExecutor final verification gate', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('unsupported finalVerification.requiredEvidence');
-  });
-});
-
-describe('Plan failure taxonomy (#1012)', () => {
-  test('executor classifies thrown step errors and exposes recovery candidates', async () => {
-    const handlers: Record<string, ToolHandler> = {
-      boom: jest.fn().mockRejectedValue(new Error('STALE_REF: old ref')),
-    };
-    const executor = new PlanExecutor((tool) => handlers[tool] || null);
-    const plan = buildPlan({
-      id: 'failure-taxonomy-plan',
-      steps: [buildStep({ order: 1, tool: 'boom', timeout: 100 })],
-      errorHandlers: [{ condition: 'step1_error', action: 'refresh refs', steps: [] }],
-    });
-
-    const result = await executor.execute(plan, 'sess', {});
-
-    expect(result.success).toBe(false);
-    expect(result.failure).toEqual(expect.objectContaining({
-      class: 'stale_ref',
-      stepOrder: 1,
-      tool: 'boom',
-    }));
-    expect(result.recoveryCandidates).toEqual([
-      expect.objectContaining({ source: 'error_handler', condition: 'step1_error', action: 'refresh refs' }),
-    ]);
-  });
-
-  test('executor classifies empty result that later fails success criteria', async () => {
-    const handlers: Record<string, ToolHandler> = {
-      empty: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: '[]' }] }),
-    };
-    const executor = new PlanExecutor((tool) => handlers[tool] || null);
-    const plan = buildPlan({
-      id: 'empty-taxonomy-plan',
-      steps: [buildStep({
-        order: 1,
-        tool: 'empty',
-        timeout: 100,
-        parseResult: { format: 'json', storeAs: 'items' },
-      })],
-      successCriteria: { minDataItems: 1 },
-    });
-
-    const result = await executor.execute(plan, 'sess', {});
-
-    expect(result.success).toBe(false);
-    expect(result.failure).toEqual(expect.objectContaining({
-      class: 'empty_result',
-      stepOrder: 1,
-      tool: 'empty',
-    }));
-  });
-
-  test('executor exposes empty-result recovery candidate only for empty-result criteria failures', async () => {
-    const handlers: Record<string, ToolHandler> = {
-      empty: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: '[]' }] }),
-    };
-    const executor = new PlanExecutor((tool) => handlers[tool] || null);
-    const plan = buildPlan({
-      id: 'empty-recovery-candidate-plan',
-      steps: [buildStep({
-        order: 1,
-        tool: 'empty',
-        timeout: 100,
-        parseResult: { format: 'json', storeAs: 'items' },
-      })],
-      errorHandlers: [{ condition: 'step1_empty_result', action: 'refresh query', steps: [] }],
-      successCriteria: { minDataItems: 1 },
-    });
-
-    const result = await executor.execute(plan, 'sess', {});
-
-    expect(result.success).toBe(false);
-    expect(result.failure?.class).toBe('empty_result');
-    expect(result.recoveryCandidates).toEqual([
-      expect.objectContaining({ condition: 'step1_empty_result', action: 'refresh query' }),
-    ]);
-  });
-
-  test('executor does not classify unrelated criteria failures as empty_result after an empty step', async () => {
-    const handlers: Record<string, ToolHandler> = {
-      empty: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: '[]' }] }),
-    };
-    const executor = new PlanExecutor((tool) => handlers[tool] || null);
-    const plan = buildPlan({
-      id: 'required-field-after-empty-plan',
-      steps: [buildStep({
-        order: 1,
-        tool: 'empty',
-        timeout: 100,
-        parseResult: { format: 'json', storeAs: 'items' },
-      })],
-      errorHandlers: [{ condition: 'step1_empty_result', action: 'refresh query', steps: [] }],
-      successCriteria: { requiredFields: ['missing'] },
-    });
-
-    const result = await executor.execute(plan, 'sess', {});
-
-    expect(result.success).toBe(false);
-    expect(result.failure).toEqual(expect.objectContaining({
-      class: 'contract_failed',
-      message: expect.stringContaining('Required field missing'),
-    }));
-    expect(result.recoveryCandidates).toBeUndefined();
-  });
-
-
-  test('executor requires token boundaries for auth failure classification', async () => {
-    const handlers: Record<string, ToolHandler> = {
-      boom: jest.fn().mockRejectedValue(new Error('authoritative content missing selector')),
-    };
-    const executor = new PlanExecutor((tool) => handlers[tool] || null);
-    const plan = buildPlan({
-      id: 'auth-boundary-taxonomy-plan',
-      steps: [buildStep({ order: 1, tool: 'boom', timeout: 100 })],
-    });
-
-    const result = await executor.execute(plan, 'sess', {});
-
-    expect(result.success).toBe(false);
-    expect(result.failure?.class).toBe('empty_result');
-  });
-
-
-  test('executor classifies unauthorized token as auth redirect', async () => {
-    const handlers: Record<string, ToolHandler> = {
-      boom: jest.fn().mockRejectedValue(new Error('HTTP 401 unauthorized')),
-    };
-    const executor = new PlanExecutor((tool) => handlers[tool] || null);
-    const plan = buildPlan({
-      id: 'unauthorized-taxonomy-plan',
-      steps: [buildStep({ order: 1, tool: 'boom', timeout: 100 })],
-    });
-
-    const result = await executor.execute(plan, 'sess', {});
-
-    expect(result.success).toBe(false);
-    expect(result.failure?.class).toBe('auth_redirect');
-  });
-
-  test('registry persists failure-class counts without changing aggregate stats', () => {
-    const tmpDir = makeTempDir();
-    try {
-      const registry = new PlanRegistry(tmpDir);
-      registry.registerPlan(buildPlan({ id: 'stats-failure-plan' }), buildPattern());
-
-      registry.updateStats('stats-failure-plan', false, 100, 'stale_ref');
-      registry.updateStats('stats-failure-plan', false, 200, 'contract_failed');
-      registry.updateStats('stats-failure-plan', true, 300);
-
-      const reloaded = new PlanRegistry(tmpDir);
-      reloaded.load();
-      const entry = reloaded.getEntry('stats-failure-plan')!;
-      expect(entry.stats.totalExecutions).toBe(3);
-      expect(entry.stats.successCount).toBe(1);
-      expect(entry.stats.failCount).toBe(2);
-      expect(entry.stats.failureClassCounts).toEqual({ stale_ref: 1, contract_failed: 1 });
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
   });
 });

@@ -161,3 +161,53 @@ describe('run evidence auto-capture', () => {
     expect(parsed.metadata.console.included).toBe(false);
   });
 });
+
+describe('run long-task events and retention', () => {
+  it('appends pollable progress and partial-result events', () => {
+    const { store } = tempStoreForBudget();
+    store.startRun({ run_id: 'run-long' });
+    store.appendRunEvent({
+      run_id: 'run-long',
+      kind: 'progress',
+      tool: 'crawl',
+      message: 'long task started',
+      metadata: { stage: 'started', token: 'abc123' },
+    });
+    store.appendRunEvent({
+      run_id: 'run-long',
+      kind: 'partial_result',
+      tool: 'crawl',
+      ok: true,
+      metadata: { collected: 2 },
+    });
+
+    const run = store.getRun('run-long')!;
+    expect(run.events.map((event) => event.kind)).toEqual([
+      'run_started',
+      'progress',
+      'partial_result',
+    ]);
+    expect(JSON.stringify(run)).not.toContain('abc123');
+  });
+
+  it('retains active runs while pruning older terminal run records', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-retain-'));
+    let now = 1000;
+    let seq = 0;
+    const store = new RunStore({
+      rootDir: dir,
+      maxRecords: 2,
+      now: () => now++,
+      idFactory: () => `retain-${seq++}`,
+    });
+    store.startRun({ run_id: 'run-old-terminal' });
+    store.finishRun('run-old-terminal', { status: 'completed' });
+    store.startRun({ run_id: 'run-active' });
+    store.startRun({ run_id: 'run-new-terminal' });
+    store.finishRun('run-new-terminal', { status: 'failed' });
+
+    expect(store.getRun('run-active')).not.toBeNull();
+    expect(store.getRun('run-new-terminal')).not.toBeNull();
+    expect(store.getRun('run-old-terminal')).toBeNull();
+  });
+});

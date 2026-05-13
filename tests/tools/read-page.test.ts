@@ -117,6 +117,7 @@ describe('ReadPageTool', () => {
   });
 
   afterEach(() => {
+    delete process.env.OPENCHROME_PROFILE;
     jest.clearAllMocks();
     // Keep delta snapshot cache isolated between read_page tests.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -124,6 +125,21 @@ describe('ReadPageTool', () => {
   });
 
   describe('Accessibility Tree', () => {
+    test('semantic include_metrics reports the final serialized payload size', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'semantic',
+        include_metrics: true,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      const payload = JSON.parse(text) as { _metrics: { returned_chars: number; estimated_tokens: number } };
+      expect(payload._metrics.returned_chars).toBe(text.length);
+      expect(payload._metrics.estimated_tokens).toBe(Math.ceil(text.length / 4));
+    });
+
     test('returns tree with default depth', async () => {
       const handler = await getReadPageHandler();
 
@@ -641,6 +657,31 @@ describe('ReadPageTool', () => {
       expect(matchingCall).toBeDefined();
       expect(typeof matchingCall![2]).toBe('number');
       expect(typeof matchingCall![3]).toBe('string');
+    });
+
+
+
+    test('OPENCHROME_PROFILE=fast defaults AX reads to compact output and explicit compact=false disables it', async () => {
+      process.env.OPENCHROME_PROFILE = 'fast';
+      const handler = await getReadPageHandler();
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        {
+          nodes: [
+            { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Fast Page' }, childIds: [2, 3] },
+            { nodeId: 2, role: { value: 'StaticText' }, name: { value: 'Decorative copy' } },
+            { nodeId: 3, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+          ],
+        }
+      );
+
+      const fast = await handler(testSessionId, { tabId: testTargetId, mode: 'ax' }) as { content: Array<{ type: string; text: string }> };
+      expect(fast.content[0].text).toContain('button: "Submit"');
+      expect(fast.content[0].text).not.toContain('Decorative copy');
+
+      const explicitFull = await handler(testSessionId, { tabId: testTargetId, mode: 'ax', compact: false }) as { content: Array<{ type: string; text: string }> };
+      expect(explicitFull.content[0].text).toContain('Decorative copy');
     });
 
     test('compact AX mode omits non-actionable no-ref leaves while preserving actionable nodes', async () => {

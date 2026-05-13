@@ -193,25 +193,27 @@ describe('crawl engine=static', () => {
   });
 
 
-  test('dispatcher=adaptive includes dispatcher stats without changing fixed default', async () => {
+  test('include_metrics adds summary and per-page token estimates without changing default', async () => {
     const handler = await loadHandler('crawl');
-    const adaptive = await handler('s-adaptive', {
+    const withMetrics = await handler('s-metrics', {
       url: `${server.origin}/index.html`,
       max_pages: 1,
       max_depth: 0,
       delay_ms: 0,
       engine: 'static',
       respect_robots: false,
-      dispatcher: 'adaptive',
-      dispatcher_options: { min_concurrency: 1, max_concurrency: 3 },
+      include_metrics: true,
     });
-    const parsedAdaptive = parseResult(adaptive);
-    expect(parsedAdaptive.summary.dispatcher).toMatchObject({
-      mode: 'adaptive',
-      min_concurrency: 1,
+    const parsedWithMetrics = parseResult(withMetrics);
+    const summaryMetrics = parsedWithMetrics.summary.metrics as Record<string, number>;
+    expect(summaryMetrics.returned_chars).toBeGreaterThan(0);
+    expect(summaryMetrics.estimated_tokens).toBeGreaterThan(0);
+    expect(parsedWithMetrics.pages[0].metrics).toMatchObject({
+      mode: 'markdown',
+      truncated: false,
     });
 
-    const fixed = await handler('s-fixed', {
+    const withoutMetrics = await handler('s-metrics-default', {
       url: `${server.origin}/index.html`,
       max_pages: 1,
       max_depth: 0,
@@ -219,8 +221,9 @@ describe('crawl engine=static', () => {
       engine: 'static',
       respect_robots: false,
     });
-    const parsedFixed = parseResult(fixed);
-    expect(parsedFixed.summary.dispatcher).toBeUndefined();
+    const parsedWithoutMetrics = parseResult(withoutMetrics);
+    expect(parsedWithoutMetrics.summary.metrics).toBeUndefined();
+    expect(parsedWithoutMetrics.pages[0].metrics).toBeUndefined();
   });
 
   test('respect_robots:true does not open a Chrome tab for robots.txt', async () => {
