@@ -5,13 +5,16 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { canAccessTask, getTaskStore, taskAccessDeniedResult, waitForTaskStartupReap } from './oc-task-start';
+import { buildTaskEvidenceDigest } from '../core/task-ledger';
 
 const definition: MCPToolDefinition = {
   name: 'oc_task_get',
   description:
     'Fetch a single task by task_id. By default returns meta only; pass ' +
     'include_result=true to also resolve the persisted result payload.',
+  annotations: TOOL_ANNOTATIONS.oc_task_get,
   inputSchema: {
     type: 'object',
     properties: {
@@ -23,7 +26,11 @@ const definition: MCPToolDefinition = {
       },
       includeDigest: {
         type: 'boolean',
-        description: 'Reserved for #1036; currently returns the same task envelope summary fields.',
+        description: 'When true, also returns a deterministic bounded task evidence digest.',
+      },
+      include_digest: {
+        type: 'boolean',
+        description: 'Alias for includeDigest.',
       },
     },
   },
@@ -49,7 +56,9 @@ const handler: ToolHandler = async (
   }
   if (!canAccessTask(meta, sessionId, context?.principal)) return taskAccessDeniedResult(taskId);
   const includeResult = params.include_result === true;
+  const includeDigest = params.includeDigest === true || params.include_digest === true;
   const result = includeResult ? store.readResultSync(taskId) : undefined;
+  const digest = includeDigest ? buildTaskEvidenceDigest(store, taskId) : undefined;
   return {
     content: [
       {
@@ -66,6 +75,7 @@ const handler: ToolHandler = async (
     phase: meta.phase,
     objective: meta.objective,
     ...(includeResult ? { result } : {}),
+    ...(includeDigest ? { digest } : {}),
   };
 };
 

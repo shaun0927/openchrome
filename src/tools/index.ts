@@ -1,8 +1,14 @@
 /**
  * Tool Registry - Registers all MCP tools
+ *
+ * Capability tagging (#829): every tool is assigned a capability group via
+ * TOOL_CAPABILITY_MAP below. The CapabilityInjectingServer wrapper injects the
+ * capability into each MCPToolDefinition at registerTool() time, so callers
+ * never need to know about capability grouping — it is authoritative here.
  */
 
 import { MCPServer } from '../mcp-server';
+import type { ToolCapability, MCPToolDefinition, ToolHandler } from '../types/mcp';
 import { registerNavigateTool } from './navigate';
 import { registerComputerTool } from './computer';
 import { registerReadPageTool } from './read-page';
@@ -59,6 +65,7 @@ import { registerMemoryTools } from './memory';
 
 // Consolidated DOM query tool
 import { registerQueryDomTool } from './query-dom';
+import { registerOcQueryTool } from './oc-query';
 
 // Lifecycle tools
 import { registerShutdownTool } from './shutdown';
@@ -148,123 +155,316 @@ import { registerOcContextTools } from './oc-context';
 import { registerOcNormalizeActionTool } from './oc-normalize-action';
 import { isRunHarnessEnabled } from '../run-harness/flags';
 import { registerRunHarnessTools } from '../run-harness/tools';
+// Goal-level TaskRun lifecycle (#1039)
+import { registerTaskRunTools } from './task-run';
 // Read-only progress diagnostics (#1060).
 import { registerOcProgressStatusTool } from './oc-progress-status';
+// 2-stage large-output fetch (#887) — store + paging tool.
+import { registerOcOutputFetchTool } from './oc-output-fetch';
+import { getHandleStore } from '../core/output/handle-store';
+
+
+/**
+ * Authoritative capability map for every registered tool (#829).
+ *
+ * Groups:
+ *   core      — fundamental browser control & session management
+ *   storage   — cookie and web-storage access
+ *   profile   — Chrome profile management
+ *   crawl     — multi-page crawling, batch pagination, worker coordination
+ *   recording — session recording (start/stop/list/export)
+ *   workflow  — Chrome-Sisyphus orchestration workflow
+ *   totp      — 2FA / TOTP generation
+ *   pilot     — experimental pilot-tier tools
+ *
+ * Absent entry → defaults to 'core' (P1 backward-compat).
+ * lint:tools-capabilities enforces that every registered tool appears here.
+ */
+export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
+  // core — fundamental browser control
+  act: 'core',
+  computer: 'core',
+  console_capture: 'core',
+  drag_drop: 'core',
+  emulate_device: 'core',
+  expand_tools: 'core',
+  extract_data: 'core',
+  file_upload: 'core',
+  fill_form: 'core',
+  find: 'core',
+  form_input: 'core',
+  geolocation: 'core',
+  http_auth: 'core',
+  inspect: 'core',
+  interact: 'core',
+  javascript_tool: 'core',
+  lightweight_scroll: 'core',
+  memory: 'core',
+  navigate: 'core',
+  network: 'core',
+  network_capture_full: 'core',
+  network_capture_lite: 'core',
+  oc_assert: 'core',
+  oc_checkpoint: 'core',
+  oc_context_export: 'core',
+  oc_context_import: 'core',
+  oc_connection_health: 'core',
+  oc_copy_to_clipboard: 'core',
+  oc_devtools_url: 'core',
+  oc_doctor_report: 'core',
+  oc_evidence_bundle: 'core',
+  oc_get_connection_info: 'core',
+  oc_journal: 'core',
+  oc_observe: 'core',
+  oc_open_host_settings: 'core',
+  oc_output_fetch: 'core',
+  oc_performance_analyze: 'core',
+  oc_performance_insights: 'core',
+  oc_reap_orphans: 'core',
+  oc_session_resume: 'core',
+  oc_session_snapshot: 'core',
+  oc_skill_recall: 'core',
+  oc_skill_record: 'core',
+  oc_skill_replay: 'pilot',
+  oc_stop: 'core',
+  page_content: 'core',
+  page_pdf: 'core',
+  page_reload: 'core',
+  page_screenshot: 'core',
+  performance_metrics: 'core',
+  query_dom: 'core',
+  oc_query: 'core',
+  read_page: 'core',
+  request_intercept: 'core',
+  tabs_close: 'core',
+  tabs_context: 'core',
+  tabs_create: 'core',
+  user_agent: 'core',
+  validate_page: 'core',
+  vision_find: 'core',
+  wait_for: 'core',
+  worker: 'core',
+
+  // storage — cookie and web-storage
+  cookies: 'storage',
+  storage: 'storage',
+
+  // profile — Chrome profile management
+  list_profiles: 'profile',
+  oc_profile_status: 'profile',
+
+  // crawl — multi-page crawling and batch workers
+  batch_execute: 'crawl',
+  batch_paginate: 'crawl',
+  crawl: 'crawl',
+  crawl_sitemap: 'crawl',
+  crawl_cancel: 'crawl',
+  crawl_start: 'crawl',
+  crawl_status: 'crawl',
+  worker_complete: 'crawl',
+  worker_update: 'crawl',
+
+  // recording — session recording
+  oc_recording_export: 'recording',
+  oc_recording_list: 'recording',
+  oc_recording_start: 'recording',
+  oc_recording_status: 'recording',
+  oc_recording_stop: 'recording',
+
+  // workflow — Chrome-Sisyphus orchestration
+  execute_plan: 'workflow',
+  workflow_cleanup: 'workflow',
+  workflow_collect: 'workflow',
+  workflow_collect_partial: 'workflow',
+  workflow_init: 'workflow',
+  workflow_status: 'workflow',
+
+  // totp — 2FA / TOTP generation
+  oc_totp_generate: 'totp',
+
+  // pilot — experimental pilot-tier tools
+  oc_pilot_handoff_create: 'pilot',
+  oc_pilot_handoff_redeem: 'pilot',
+  oc_proxy_hook: 'pilot',
+
+  // core — develop-era additions (#1062 normalize, #1060 progress, #1019
+  // reflect, #855 task ledger, run-harness ledger). All are diagnostics or
+  // ledger ops with no special filter group.
+  oc_normalize_action: 'core',
+  oc_progress_status: 'core',
+  oc_reflect: 'core',
+  oc_run_events: 'core',
+  oc_run_finish: 'core',
+  oc_run_start: 'core',
+  oc_run_status: 'core',
+  oc_task_cancel: 'core',
+  oc_task_get: 'core',
+  oc_task_list: 'core',
+  oc_task_run_checkpoint: 'core',
+  oc_task_run_complete: 'core',
+  oc_task_run_get: 'core',
+  oc_task_run_list: 'core',
+  oc_task_run_needs_help: 'core',
+  oc_task_run_start: 'core',
+  oc_task_run_update: 'core',
+  oc_task_start: 'core',
+  oc_task_wait: 'core',
+};
+
+/**
+ * Build a proxy around MCPServer that injects the capability field from
+ * TOOL_CAPABILITY_MAP into every MCPToolDefinition at registerTool() time.
+ *
+ * Uses a real ES Proxy so every other method/property on the underlying
+ * MCPServer is forwarded automatically. The previous implementation listed
+ * methods explicitly and required `as unknown as MCPServer` casts at every
+ * call site, which would TypeError at runtime if a register* function ever
+ * reached for an un-listed method.
+ *
+ * Keeping capability metadata in one authoritative location (this file)
+ * means individual tool files do not need to know about capability groups.
+ */
+function makeCapabilityInjectingProxy(server: MCPServer): MCPServer {
+  return new Proxy(server, {
+    get(target, prop, receiver) {
+      if (prop === 'registerTool') {
+        return (
+          name: string,
+          handler: ToolHandler,
+          definition: MCPToolDefinition,
+          options?: { timeoutRecoverable?: boolean },
+        ): void => {
+          const capability: ToolCapability = TOOL_CAPABILITY_MAP[name] ?? 'core';
+          target.registerTool(name, handler, { ...definition, capability }, options);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 
 export function registerAllTools(server: MCPServer): void {
+  // Wrap the real server so every registerTool() call gets a capability tag.
+  const proxy = makeCapabilityInjectingProxy(server);
+
   // Core browser tools
-  registerNavigateTool(server);
-  registerComputerTool(server);
-  registerReadPageTool(server);
-  registerFindTool(server);
-  registerFormInputTool(server);
-  registerJavascriptTool(server);
-  registerNetworkTool(server);
+  registerNavigateTool(proxy);
+  registerComputerTool(proxy);
+  registerReadPageTool(proxy);
+  registerFindTool(proxy);
+  registerFormInputTool(proxy);
+  registerJavascriptTool(proxy);
+  registerNetworkTool(proxy);
 
   // Phase 1: Page and content tools
-  registerPageReloadTool(server);
-  registerCookiesTool(server);
-  registerQueryDomTool(server);
-  registerPageContentTool(server);
-  registerWaitForTool(server);
-  registerStorageTool(server);
+  registerPageReloadTool(proxy);
+  registerCookiesTool(proxy);
+  registerQueryDomTool(proxy);
+  registerPageContentTool(proxy);
+  registerWaitForTool(proxy);
+  registerStorageTool(proxy);
 
   // Phase 2: Device emulation and settings
-  registerUserAgentTool(server);
-  registerGeolocationTool(server);
-  registerEmulateDeviceTool(server);
-  registerPagePdfTool(server);
-  registerPageScreenshotTool(server);
-  registerConsoleCaptureTool(server);
-  registerPerformanceMetricsTool(server);
-  registerRequestInterceptTool(server);
+  registerUserAgentTool(proxy);
+  registerGeolocationTool(proxy);
+  registerEmulateDeviceTool(proxy);
+  registerPagePdfTool(proxy);
+  registerPageScreenshotTool(proxy);
+  registerConsoleCaptureTool(proxy);
+  registerPerformanceMetricsTool(proxy);
+  registerRequestInterceptTool(proxy);
 
   // Passive network capture (#896) — lite=headers-only, full=bodies-with-cap.
   // Coexists with request_intercept (which owns setRequestInterception(true)).
-  registerNetworkCaptureLiteTool(server);
-  registerNetworkCaptureFullTool(server);
+  registerNetworkCaptureLiteTool(proxy);
+  registerNetworkCaptureFullTool(proxy);
 
   // Phase 3: Advanced tools
-  registerFileUploadTool(server);
-  registerHttpAuthTool(server);
-  registerDragDropTool(server);
+  registerFileUploadTool(proxy);
+  registerHttpAuthTool(proxy);
+  registerDragDropTool(proxy);
 
   // UX improvement composite tools (reduce tool call count)
-  registerFillFormTool(server);
+  registerFillFormTool(proxy);
 
   // Tab management
-  registerTabsContextTool(server);
-  registerTabsCreateTool(server);
-  registerTabsCloseTool(server);
+  registerTabsContextTool(proxy);
+  registerTabsCreateTool(proxy);
+  registerTabsCloseTool(proxy);
 
   // Worker management (parallel browser operations)
-  registerWorkerTool(server);
+  registerWorkerTool(proxy);
 
   // Orchestration tools (Chrome-Sisyphus workflow management)
-  registerOrchestrationTools(server);
+  registerOrchestrationTools(proxy);
 
   // Performance tools (P0 - eliminate agent spawn overhead & screenshot bottleneck)
-  registerBatchExecuteTool(server);
-  registerLightweightScrollTool(server);
-  registerBatchPaginateTool(server);
+  registerBatchExecuteTool(proxy);
+  registerLightweightScrollTool(proxy);
+  registerBatchPaginateTool(proxy);
 
   // Smart Tools (reduce LLM wandering — response enrichment + composite tools)
-  registerInteractTool(server);
-  registerInspectTool(server);
+  registerInteractTool(proxy);
+  registerInspectTool(proxy);
 
   // Vision tools (vision-based element discovery #577)
-  registerVisionFindTool(server);
+  registerVisionFindTool(proxy);
 
   // Memory tools (domain knowledge persistence)
-  registerMemoryTools(server);
+  registerMemoryTools(proxy);
+
+  // Semantic query tool (#1045)
+  registerOcQueryTool(proxy);
 
   // Lifecycle tools
-  registerShutdownTool(server);
-  registerReapOrphansTool(server);
-  registerProfileStatusTool(server);
-  registerListProfilesTool(server);
+  registerShutdownTool(proxy);
+  registerReapOrphansTool(proxy);
+  registerProfileStatusTool(proxy);
+  registerListProfilesTool(proxy);
 
   // AI Agent Continuity tools (#355, #356)
-  registerSessionSnapshotTool(server);
-  registerSessionResumeTool(server);
-  registerJournalTool(server);
-  registerOcReflectTool(server);
+  registerSessionSnapshotTool(proxy);
+  registerSessionResumeTool(proxy);
+  registerJournalTool(proxy);
+  registerOcReflectTool(proxy);
 
   // Self-healing tools (#347)
-  registerConnectionHealthTool(server);
+  registerConnectionHealthTool(proxy);
 
   // AI Agent Continuity tools (#347 Phase 4)
-  registerCheckpointTool(server);
+  registerCheckpointTool(proxy);
 
   // Web AI host connection tools (#523)
-  registerConnectTools(server);
+  registerConnectTools(proxy);
 
   // Session recording tools (#572)
-  registerRecordingTools(server);
+  registerRecordingTools(proxy);
 
   // Crawl tools (#576)
-  registerCrawlTool(server);
-  registerCrawlSitemapTool(server);
+  registerCrawlTool(proxy);
+  registerCrawlSitemapTool(proxy);
 
   // Resumable host-driven crawl jobs (#886)
-  registerCrawlStartTool(server);
-  registerCrawlStatusTool(server);
-  registerCrawlCancelTool(server);
+  registerCrawlStartTool(proxy);
+  registerCrawlStatusTool(proxy);
+  registerCrawlCancelTool(proxy);
 
   // Natural language action API (#578)
-  registerActTool(server);
+  registerActTool(proxy);
 
   // Composite page-health check (#token-efficiency)
-  registerValidatePageTool(server);
+  registerValidatePageTool(proxy);
 
   // Structured extraction (#571)
-  registerExtractDataTool(server);
+  registerExtractDataTool(proxy);
 
   // 2FA tools (#575)
-  registerTotpGenerateTool(server);
+  registerTotpGenerateTool(proxy);
 
   // Outcome Contracts (#784) — single-call assertion verifier
-  registerOcAssertTool(server);
+  registerOcAssertTool(proxy);
 
   // Action schema normalizer (#1062) — no browser side effects.
   registerOcNormalizeActionTool(server);
@@ -272,20 +472,33 @@ export function registerAllTools(server: MCPServer): void {
   // Read-only anti-wandering diagnostics (#1060).
   registerOcProgressStatusTool(server);
 
+  // 2-stage large-output fetch (#887) — paging tool for handle payloads.
+  registerOcOutputFetchTool(proxy);
+
   // Outcome Contracts (#792) — evidence bundle capture
-  registerOcEvidenceBundleTool(server);
+  registerOcEvidenceBundleTool(proxy);
 
   // Skill memory tools (#785) — record + recall
-  registerOcSkillRecordTool(server);
-  registerOcSkillRecallTool(server);
+  registerOcSkillRecordTool(proxy);
+  registerOcSkillRecallTool(proxy);
   // Skill replay (#856) — pilot-tier. Dynamically imported so no
   // `src/pilot/**` dependency is loaded unless --pilot and
   // OPENCHROME_SKILL_REPLAY=1 are both active.
   if (isSkillReplayEnabled()) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { registerOcSkillReplayTool } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
-    registerOcSkillReplayTool(server);
+    const { registerOcSkillReplayTool: _reg } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
+    _reg(proxy);
   }
+
+  // P2 fix (#887): purge expired output handles every 5 minutes.
+  // `.unref()` ensures the interval does not prevent clean process exit.
+  const _outputPurgeTimer = setInterval(() => {
+    const removed = getHandleStore().purgeExpired();
+    if (removed > 0) {
+      console.error(`[output-handles] Purged ${removed} expired handle(s)`);
+    }
+  }, 5 * 60 * 1000);
+  _outputPurgeTimer.unref();
 
   // Async task ledger (#855) — persistent background task table
   registerOcTaskStartTool(server);
@@ -311,14 +524,14 @@ export function registerAllTools(server: MCPServer): void {
   );
 
   // Doctor report tool (#898) — read cached `openchrome doctor` output
-  registerOcDoctorReportTool(server);
+  registerOcDoctorReportTool(proxy);
   // Performance insights two-step API (#846).
   // TODO(#844): use isCoreFeatureEnabled() helper once #844 lands.
   // Off-switch: when OPENCHROME_PERF_INSIGHTS=0 the two tools are NOT
   // registered, preserving v1.10.4 tools/list parity (P2). Default on.
   if (process.env.OPENCHROME_PERF_INSIGHTS !== '0') {
-    registerOcPerformanceInsightsTool(server);
-    registerOcPerformanceAnalyzeTool(server);
+    registerOcPerformanceInsightsTool(proxy);
+    registerOcPerformanceAnalyzeTool(proxy);
     // Wire session-scoped trace eviction once. The store keeps an
     // in-memory map of session_id -> trace_ids; on session deletion we
     // delete every trace file owned by that session.
@@ -342,19 +555,22 @@ export function registerAllTools(server: MCPServer): void {
   if (isProxyHookEnabled()) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { registerOcProxyHookTool } = require('../pilot/proxy/hook') as typeof import('../pilot/proxy/hook');
-    registerOcProxyHookTool(server);
+    registerOcProxyHookTool(proxy);
   }
   // oc_observe (#866) — deterministic actionable-element enumeration
-  registerOcObserveTool(server);
+  registerOcObserveTool(proxy);
   // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
-  registerOcDevToolsUrlTool(server);
+  registerOcDevToolsUrlTool(proxy);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
-  registerOcContextTools(server);
+  registerOcContextTools(proxy);
 
   // Run harness (#1021) — opt-in tool-call event ledger.
   if (isRunHarnessEnabled()) {
     registerRunHarnessTools(server);
   }
+
+  // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
+  registerTaskRunTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

@@ -1,6 +1,7 @@
 import { getGlobalConfig } from '../config/global';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { cleanOrphanedChromeProcesses } from '../utils/pid-manager';
 
 const definition: MCPToolDefinition = {
@@ -17,6 +18,7 @@ const definition: MCPToolDefinition = {
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_reap_orphans,
 };
 
 const FALLBACK_BASE_PORT = 9222;

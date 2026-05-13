@@ -96,10 +96,10 @@ describe('runPlaybook — call ordering', () => {
     expect(calls[0].tool).toBe('navigate');
     expect(calls[0].args).toEqual({ url: 'https://example.com' });
 
-    // Step 1: assert → tool 'oc_assert', wrapped in assertion field
+    // Step 1: assert → tool 'oc_assert', wrapped in contract field
     expect(calls[1].tool).toBe('oc_assert');
     expect(calls[1].args).toEqual({
-      assertion: { kind: 'dom_text', selector: 'h1', pattern: 'Example' },
+      contract: { kind: 'dom_text', selector: 'h1', pattern: 'Example' },
     });
 
     // Step 2: interact → tool 'interact', args pass-through
@@ -119,6 +119,30 @@ describe('runPlaybook — call ordering', () => {
 
     await runPlaybook(sanityPlaybook, { reuse: false, varMap: { url: 'https://example.com' }, client: wrappedClient });
     expect(disconnectCalled).toBe(true);
+  });
+
+  test('reuses navigate tabId for subsequent same-tab browser steps', async () => {
+    const tabPlaybook: Playbook = {
+      name: 'same-tab form',
+      steps: [
+        { verb: 'navigate', args: { url: 'https://example.com/form' } },
+        { verb: 'fill_form', args: { fields: { name: 'OpenChrome' } } },
+      ],
+    };
+    const { client, calls } = makeMockClient({
+      results: {
+        navigate: { success: true, result: { tabId: 'tab-123' } },
+        fill_form: { success: true, result: { ok: true } },
+      },
+    });
+
+    const result = await runPlaybook(tabPlaybook, { reuse: false, varMap: {}, client });
+
+    expect(result.summary.ok).toBe(true);
+    expect(calls[1]).toEqual({
+      tool: 'fill_form',
+      args: { fields: { name: 'OpenChrome' }, tabId: 'tab-123' },
+    });
   });
 });
 

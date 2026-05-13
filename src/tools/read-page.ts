@@ -4,6 +4,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, REF_TTL_MS } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
@@ -15,6 +16,7 @@ import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
 
 /**
  * Build the `[node_refs]` block that surfaces the #844 backend-node uid
@@ -129,6 +131,11 @@ const definition: MCPToolDefinition = {
         enum: ['none', 'delta'],
         description: 'Compression mode. "delta" returns only changes since last read.',
       },
+      planningProfile: {
+        type: 'string',
+        enum: ['default', 'stable'],
+        description: 'DOM mode only: stable omits decorative/noisy serialization details without mutating the live page. Default: default.',
+      },
       fallback: {
         type: 'string',
         enum: ['none', 'dom'],
@@ -145,6 +152,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.read_page,
 };
 
 
@@ -680,10 +688,12 @@ const handler: ToolHandler = async (
       try {
         const refId = args.ref_id as string | undefined;
         const depth = args.depth as number | undefined;
+        const planningProfile = (args.planningProfile as 'default' | 'stable' | undefined) ?? 'default';
         const result = await measure('domGetDocumentMs', () => serializeDOM(page, cdpClient, {
           maxDepth: depth ?? -1,
           filter: filter,
           interactiveOnly: filter === 'interactive',
+          planningProfile,
         }));
         diagnostics.formatMs = diagnostics.domGetDocumentMs;
 
@@ -1216,8 +1226,70 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
   return sanitizedResult;
 };
 
+/**
+ * Snapshot-cache wrapper (#879).
+ *
+ * read_page stays uncached for now. AX/semantic responses embed ephemeral
+ * ref_* ids owned by RefIdManager, and DOM/CSS outputs include scroll-sensitive
+ * page stats/content. Until cache identity can include scroll state and ref
+ * mappings can be replayed or made stable, returning cached read_page payloads
+ * risks stale refs or stale post-scroll snapshots. Keep the wrapper as a
+ * behavior-preserving seam so the feature can be re-enabled safely later.
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  const result = await sanitizedHandler(sessionId, args, context);
+  if (!isStateHeaderEnabled() || result.isError || !result.content) return result;
+
+  const tabId = typeof args.tabId === 'string' ? args.tabId : '';
+  if (!tabId) return result;
+
+  let page: Awaited<ReturnType<ReturnType<typeof getSessionManager>['getPage']>> | null = null;
+  try {
+    page = await getSessionManager().getPage(sessionId, tabId);
+  } catch {
+    page = null;
+  }
+  if (!page) return result;
+
+  let url = '';
+  let title = '';
+  try {
+    url = page.url() || '';
+  } catch {
+    url = '';
+  }
+  try {
+    title = await page.title();
+  } catch {
+    title = '';
+  }
+
+  const requestedMode = typeof args.mode === 'string' ? args.mode : 'dom';
+  const mode = ['ax', 'dom', 'css', 'semantic', 'markdown'].includes(requestedMode)
+    ? requestedMode
+    : 'dom';
+  const headerMode = mode === 'markdown' ? 'html' : mode;
+  const header = { url, title, mode: headerMode as 'ax' | 'dom' | 'css' | 'html', capturedAt: Date.now(), tabId };
+
+  return {
+    ...result,
+    content: result.content.map((block) => {
+      if (block.type !== 'text' || typeof block.text !== 'string') return block;
+      if (mode === 'semantic') {
+        try {
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          return { ...block, text: JSON.stringify(mergeHeaderJson(header, parsed)) };
+        } catch {
+          return { ...block, text: prependHeaderText(header, block.text) };
+        }
+      }
+      return { ...block, text: prependHeaderText(header, block.text) };
+    }),
+  };
+};
+
 export function registerReadPageTool(server: MCPServer): void {
-  server.registerTool('read_page', sanitizedHandler, definition);
+  server.registerTool('read_page', cachedHandler, definition);
 }
 
 /**

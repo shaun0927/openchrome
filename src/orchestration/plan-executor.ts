@@ -10,11 +10,114 @@ import {
   CompiledPlan,
   CompiledStep,
   PlanErrorHandler,
+  PlanExecutionOptions,
   PlanExecutionResult,
-  PlanStepExecutionRecord,
+  PlanFinalVerificationResult,
 } from '../types/plan-cache';
-import * as crypto from 'node:crypto';
+import { evaluate } from '../contracts/evaluate';
+import type { EvalContext, NetworkLogEntry } from '../contracts/eval-context';
+import { evaluateTaskSignature, preflightAllowedTools } from '../contracts/task-signature';
+import type { TaskSignatureToolCallSummary } from '../contracts/task-signature';
 import { withTimeout } from '../utils/with-timeout';
+
+interface SnapshotInput {
+  url?: string;
+  dom_text?: string | null | Record<string, string | null>;
+  dom_count?: Record<string, number>;
+  network?: NetworkLogEntry[];
+  screenshot_png_base64?: string;
+  has_open_dialog?: boolean;
+  captured_at?: number;
+  timestamp?: number;
+}
+
+function buildSnapshotEvalContext(snapshot: SnapshotInput): EvalContext {
+  const domTextBySelector = typeof snapshot.dom_text === 'object' && snapshot.dom_text !== null
+    ? snapshot.dom_text as Record<string, string | null>
+    : undefined;
+  const bodyText = typeof snapshot.dom_text === 'string' || snapshot.dom_text === null
+    ? snapshot.dom_text
+    : undefined;
+  const screenshot = snapshot.screenshot_png_base64 ? Buffer.from(snapshot.screenshot_png_base64, 'base64') : null;
+  return {
+    async url() { return snapshot.url ?? ''; },
+    async domText(selector) {
+      if (!domTextBySelector) return bodyText ?? null;
+      const requestedSelector = selector ?? 'body';
+      if (requestedSelector === 'body') return domTextBySelector.body ?? null;
+      return Object.prototype.hasOwnProperty.call(domTextBySelector, requestedSelector)
+        ? domTextBySelector[requestedSelector] ?? null
+        : null;
+    },
+    async domCount(selector) { return snapshot.dom_count?.[selector] ?? 0; },
+    async networkSince() { return snapshot.network ?? []; },
+    async screenshotPng() { return screenshot; },
+    async hasOpenDialog() { return snapshot.has_open_dialog ?? false; },
+  };
+}
+
+function isSnapshotInput(value: unknown): value is SnapshotInput {
+  return typeof value === 'object' && value !== null;
+}
+
+async function runFinalVerification(
+  plan: CompiledPlan,
+  params: Record<string, unknown>,
+): Promise<PlanFinalVerificationResult | null> {
+  const gate = plan.finalVerification;
+  if (!gate) return null;
+  const snapshotParam = gate.snapshotParam || 'finalSnapshot';
+  const snapshot = params[snapshotParam];
+  if (!isSnapshotInput(snapshot)) {
+    return {
+      passed: false,
+      snapshotParam,
+      assertions: [],
+      error: `final verification snapshot param missing or invalid: ${snapshotParam}`,
+    };
+  }
+
+  const capturedAt = typeof snapshot.captured_at === 'number'
+    ? snapshot.captured_at
+    : typeof snapshot.timestamp === 'number'
+      ? snapshot.timestamp
+      : undefined;
+  if (gate.freshnessMs !== undefined && capturedAt !== undefined && Date.now() - capturedAt > gate.freshnessMs) {
+    return {
+      passed: false,
+      snapshotParam,
+      assertions: [],
+      error: `final verification snapshot is stale: age ${Date.now() - capturedAt}ms exceeds ${gate.freshnessMs}ms`,
+    };
+  }
+
+  const unsupportedEvidence = (gate.requiredEvidence || []).filter(kind => !['dom', 'url', 'network', 'screenshot'].includes(kind));
+  if (unsupportedEvidence.length > 0) {
+    return {
+      passed: false,
+      snapshotParam,
+      assertions: [],
+      error: `unsupported finalVerification.requiredEvidence: ${unsupportedEvidence.join(', ')}`,
+    };
+  }
+
+  const assertions: PlanFinalVerificationResult['assertions'] = [];
+  const ctx = buildSnapshotEvalContext(snapshot);
+  for (let i = 0; i < gate.finalAssertions.length; i++) {
+    const assertion = gate.finalAssertions[i];
+    const result = await evaluate(assertion, ctx);
+    assertions.push({ index: i, passed: result.passed, evidence: result.evidence });
+    if (!result.passed) {
+      return {
+        passed: false,
+        snapshotParam,
+        assertions,
+        failedAssertion: { index: i, assertion, evidence: result.evidence },
+      };
+    }
+  }
+  return { passed: true, snapshotParam, assertions };
+}
 
 /**
  * Recursively substitute ${varName} templates in a value using the params map.
@@ -41,53 +144,6 @@ function substituteParams(value: unknown, params: Record<string, unknown>): unkn
     return result;
   }
   return value;
-}
-
-
-function stableHash(value: unknown): string {
-  return crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortKeys(value));
-}
-
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key] = sortKeys((value as Record<string, unknown>)[key]);
-    }
-    return out;
-  }
-  return value;
-}
-
-function computeKnownGoodPrefix(ledger: PlanStepExecutionRecord[]): number {
-  let prefix = 0;
-  for (const entry of ledger.filter((step) => step.phase === 'main').sort((a, b) => a.order - b.order)) {
-    if (entry.order !== prefix + 1 || entry.status !== 'success') break;
-    prefix = entry.order;
-  }
-  return prefix;
-}
-
-function withLedger(
-  result: Omit<PlanExecutionResult, 'ledger'>,
-  ledger: PlanStepExecutionRecord[],
-  frontierStepOrder?: number,
-  invalidationReason?: string,
-): PlanExecutionResult {
-  return {
-    ...result,
-    ledger: {
-      steps: ledger,
-      knownGoodPrefixLength: computeKnownGoodPrefix(ledger),
-      ...(frontierStepOrder !== undefined && { frontierStepOrder }),
-      ...(invalidationReason && { invalidationReason }),
-    },
-  };
 }
 
 
@@ -189,11 +245,35 @@ export class PlanExecutor {
   async execute(
     plan: CompiledPlan,
     sessionId: string,
-    runtimeParams: Record<string, unknown>
+    runtimeParams: Record<string, unknown>,
+    options: PlanExecutionOptions = {}
   ): Promise<PlanExecutionResult> {
     const startTime = Date.now();
     let stepsExecuted = 0;
-    const ledger: PlanStepExecutionRecord[] = [];
+    const recentTools: TaskSignatureToolCallSummary[] = [];
+
+    if (options.taskSignature) {
+      const preflight = preflightAllowedTools(
+        options.taskSignature,
+        [
+          ...plan.steps.map((step) => step.tool),
+          ...plan.errorHandlers.flatMap((handler) =>
+            handler.steps.map((recoveryStep) => recoveryStep.tool),
+          ),
+        ],
+      );
+      if (preflight) {
+        return {
+          success: false,
+          planId: plan.id,
+          error: preflight.reasons.join('; '),
+          durationMs: Date.now() - startTime,
+          stepsExecuted,
+          totalSteps: plan.steps.length,
+          taskSignature: preflight,
+        };
+      }
+    }
 
     // 1. Build params map: plan defaults first, runtime overrides on top
     const params: Record<string, unknown> = {};
@@ -204,14 +284,15 @@ export class PlanExecutor {
     }
     Object.assign(params, runtimeParams);
 
-    const failure = (error: string, frontierStepOrder?: number): PlanExecutionResult => withLedger({
+    const failure = (error: string, taskSignature?: PlanExecutionResult['taskSignature']): PlanExecutionResult => ({
       success: false,
       planId: plan.id,
       error,
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
-    }, ledger, frontierStepOrder, error);
+      ...(taskSignature ? { taskSignature } : {}),
+    });
 
     // 2. Execute each step sequentially
     for (const step of plan.steps) {
@@ -222,14 +303,11 @@ export class PlanExecutor {
       if (!handler) {
         const msg = `No handler found for tool "${step.tool}" at ${stepLabel}`;
         console.error(`[PlanExecutor] ${msg}`);
-        ledger.push({ order: step.order, tool: step.tool, argsHash: stableHash(step.args), phase: 'main', status: 'failed', durationMs: 0, reason: msg });
-        return failure(msg, step.order);
+        return failure(msg);
       }
 
       // b. Substitute template variables in args
       const substitutedArgs = substituteParams(step.args, params) as Record<string, unknown>;
-      const stepStartedAt = Date.now();
-      const argsHash = stableHash(substitutedArgs);
 
       // c. Call handler with timeout
       let mcpResult: MCPResult;
@@ -240,10 +318,32 @@ export class PlanExecutor {
           stepLabel
         );
         stepsExecuted++;
+        recentTools.push({ tool: step.tool, progressed: !isEmptyResult(mcpResult) && !mcpResult.isError });
+        if (options.taskSignature) {
+          const taskStatus = await evaluateTaskSignature({
+            signature: options.taskSignature,
+            recentTools,
+            elapsedMs: Date.now() - startTime,
+            toolCount: stepsExecuted,
+          });
+          if (taskStatus.status === 'success') {
+            return {
+              success: true,
+              planId: plan.id,
+              data: params,
+              durationMs: Date.now() - startTime,
+              stepsExecuted,
+              totalSteps: plan.steps.length,
+              taskSignature: taskStatus,
+            };
+          }
+          if (taskStatus.status !== 'continue') {
+            return failure(`task signature ${taskStatus.status}: ${taskStatus.reasons.join('; ')}`, taskStatus);
+          }
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error(`[PlanExecutor] Step failed at ${stepLabel}: ${errMsg}`);
-        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'main', status: 'failed', durationMs: Date.now() - stepStartedAt, reason: errMsg });
 
         // Check for a matching error handler
         const conditionKey = `step${step.order}_error`;
@@ -252,8 +352,7 @@ export class PlanExecutor {
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted,
-          ledger
+          stepsExecuted
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
@@ -262,14 +361,13 @@ export class PlanExecutor {
           continue;
         }
 
-        return failure(`Step ${step.order} (${step.tool}) failed: ${errMsg}`, step.order);
+        return failure(`Step ${step.order} (${step.tool}) failed: ${errMsg}`);
       }
 
       // d. Check for error result
       if (mcpResult.isError) {
         const errMsg = mcpResult.content?.[0]?.text ?? 'Unknown tool error';
         console.error(`[PlanExecutor] Tool returned error at ${stepLabel}: ${errMsg}`);
-        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'main', status: 'failed', durationMs: Date.now() - stepStartedAt, reason: errMsg });
 
         const conditionKey = `step${step.order}_error`;
         const recovered = await this.tryRecovery(
@@ -277,8 +375,7 @@ export class PlanExecutor {
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted,
-          ledger
+          stepsExecuted
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
@@ -286,36 +383,36 @@ export class PlanExecutor {
           continue;
         }
 
-        return failure(`Step ${step.order} (${step.tool}) returned error: ${errMsg}`, step.order);
+        return failure(`Step ${step.order} (${step.tool}) returned error: ${errMsg}`);
       }
 
       // e. Check for empty result (before storing) — may trigger empty_result handler
       if (isEmptyResult(mcpResult)) {
-        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'main', status: 'empty_result', durationMs: Date.now() - stepStartedAt, reason: 'empty result' });
         const conditionKey = `step${step.order}_empty_result`;
         const recovered = await this.tryRecovery(
           conditionKey,
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted,
-          ledger
+          stepsExecuted
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
           Object.assign(params, recovered.params);
           continue;
         }
-        // No handler for empty — treat as non-fatal, just skip storing
+        // Compatibility/fail-safe (#1031): pre-existing cached plans treated an
+        // empty, non-error tool result as a completed step unless the plan
+        // explicitly supplied `stepN_empty_result` recovery. Keep that contract
+        // for optional observe/poll steps, but still run parseResult below so
+        // empty values are visible to successCriteria/finalVerification gates.
       }
 
       // f. Parse and store result if requested
-      let storedAs: string | undefined;
       if (step.parseResult && step.parseResult.storeAs) {
         try {
           const extracted = extractResult(mcpResult, step.parseResult);
           params[step.parseResult.storeAs] = extracted;
-          storedAs = step.parseResult.storeAs;
         } catch (err) {
           console.error(
             `[PlanExecutor] Failed to extract result at ${stepLabel}: ${
@@ -325,34 +422,70 @@ export class PlanExecutor {
           // Non-fatal: continue without storing
         }
       }
-      if (!isEmptyResult(mcpResult)) {
-        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'main', status: 'success', durationMs: Date.now() - stepStartedAt, storedAs });
-      }
     }
 
     // 3. Validate success criteria
     const criteriaError = validateSuccessCriteria(plan.successCriteria, params);
     if (criteriaError) {
       console.error(`[PlanExecutor] Success criteria failed for plan=${plan.id}: ${criteriaError}`);
-      return withLedger({
+      return {
         success: false,
         planId: plan.id,
         error: `Success criteria not met: ${criteriaError}`,
         durationMs: Date.now() - startTime,
         stepsExecuted,
         totalSteps: plan.steps.length,
-      }, ledger, computeKnownGoodPrefix(ledger) + 1, `Success criteria not met: ${criteriaError}`);
+        ...(options.taskSignature
+          ? { taskSignature: await evaluateTaskSignature({
+              signature: options.taskSignature,
+              recentTools,
+              elapsedMs: Date.now() - startTime,
+              toolCount: stepsExecuted,
+            }) }
+          : {}),
+      };
     }
 
-    // 4. Return success with all collected params as data
-    return withLedger({
+    // 4. Optional final Outcome Contract verification gate
+    const finalVerification = await runFinalVerification(plan, params);
+    if (finalVerification && !finalVerification.passed) {
+      return {
+        success: false,
+        planId: plan.id,
+        error: finalVerification.error || `Final verification failed at assertion ${finalVerification.failedAssertion?.index ?? 'unknown'}`,
+        durationMs: Date.now() - startTime,
+        stepsExecuted,
+        totalSteps: plan.steps.length,
+        finalVerification,
+        ...(options.taskSignature
+          ? { taskSignature: await evaluateTaskSignature({
+              signature: options.taskSignature,
+              recentTools,
+              elapsedMs: Date.now() - startTime,
+              toolCount: stepsExecuted,
+            }) }
+          : {}),
+      };
+    }
+
+    // 5. Return success with all collected params as data
+    return {
       success: true,
       planId: plan.id,
       data: params,
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
-    }, ledger);
+      ...(finalVerification ? { finalVerification } : {}),
+      ...(options.taskSignature
+        ? { taskSignature: await evaluateTaskSignature({
+            signature: options.taskSignature,
+            recentTools,
+            elapsedMs: Date.now() - startTime,
+            toolCount: stepsExecuted,
+          }) }
+        : {}),
+    };
   }
 
   /**
@@ -364,8 +497,7 @@ export class PlanExecutor {
     errorHandlers: PlanErrorHandler[],
     sessionId: string,
     params: Record<string, unknown>,
-    currentStepsExecuted: number,
-    ledger: PlanStepExecutionRecord[]
+    currentStepsExecuted: number
   ): Promise<{ stepsExecuted: number; params: Record<string, unknown> } | null> {
     const handler = errorHandlers.find((h) => h.condition === conditionKey);
     if (!handler) return null;
@@ -386,8 +518,6 @@ export class PlanExecutor {
       }
 
       const substitutedArgs = substituteParams(step.args, params) as Record<string, unknown>;
-      const recoveryStartedAt = Date.now();
-      const argsHash = stableHash(substitutedArgs);
 
       let mcpResult: MCPResult;
       try {
@@ -398,29 +528,27 @@ export class PlanExecutor {
         );
         stepsExecuted++;
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
         console.error(
-          `[PlanExecutor] Recovery step failed at ${stepLabel}: ${errMsg}`
+          `[PlanExecutor] Recovery step failed at ${stepLabel}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
         );
-        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'recovery', recoveryCondition: conditionKey, status: 'failed', durationMs: Date.now() - recoveryStartedAt, reason: errMsg });
         continue;
       }
 
       if (mcpResult.isError) {
-        const errMsg = mcpResult.content?.[0]?.text ?? 'unknown';
         console.error(
-          `[PlanExecutor] Recovery step returned error at ${stepLabel}: ${errMsg}`
+          `[PlanExecutor] Recovery step returned error at ${stepLabel}: ${
+            mcpResult.content?.[0]?.text ?? 'unknown'
+          }`
         );
-        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'recovery', recoveryCondition: conditionKey, status: 'failed', durationMs: Date.now() - recoveryStartedAt, reason: errMsg });
         continue;
       }
 
-      let storedAs: string | undefined;
       if (step.parseResult && step.parseResult.storeAs) {
         try {
           const extracted = extractResult(mcpResult, step.parseResult);
           params[step.parseResult.storeAs] = extracted;
-          storedAs = step.parseResult.storeAs;
         } catch (err) {
           console.error(
             `[PlanExecutor] Recovery: failed to extract result at ${stepLabel}: ${
@@ -429,7 +557,6 @@ export class PlanExecutor {
           );
         }
       }
-      ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'recovery', recoveryCondition: conditionKey, status: isEmptyResult(mcpResult) ? 'empty_result' : 'success', durationMs: Date.now() - recoveryStartedAt, storedAs });
     }
 
     return { stepsExecuted, params };

@@ -1,2 +1,2 @@
-{"kind":"tool_call","tool":"navigate","response_kind":"ok"}
+{"kind":"tool_call","tool":"navigate","args":{"url":"https://tc39.es/ecma262/"},"args_digest_sha256":"22d589bc81b4c6fe91f4a95a8dc3b2568aad364eab05f66a9e2424c695e2346c","response_kind":"ok"}
 {"kind":"final_state","url":"https://tc39.es/ecma262/","dom_text":{"body":"ECMAScript 2025 Language Specification Draft ECMA-262 / December 2024 Editors: ..."},"dom_count":{"h1":1},"network":[{"url":"https://tc39.es/ecma262/","status":200,"ts":1730000002000}],"has_open_dialog":false}

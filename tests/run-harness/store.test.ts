@@ -79,3 +79,85 @@ describe('RunStore', () => {
     expect(() => store.startRun({ run_id: '../escape' })).toThrow(/run_id/);
   });
 });
+
+describe('run budget guard', () => {
+  it('detects same-tool retry budget without flagging batch-exempt tools', () => {
+    const { store } = ((): ReturnType<typeof tempStoreForBudget> => tempStoreForBudget())();
+    store.startRun({ run_id: 'run-budget-retry' });
+    for (let i = 0; i < 3; i++) store.appendToolFinished({ run_id: 'run-budget-retry', tool: 'interact', ok: false, message: 'element not found' });
+    for (let i = 0; i < 5; i++) store.appendToolFinished({ run_id: 'run-budget-retry', tool: 'batch_execute', ok: true });
+    const { evaluateRunBudget } = require('../../src/run-harness/budget') as typeof import('../../src/run-harness/budget');
+    const verdict = evaluateRunBudget(store.getRun('run-budget-retry')!, { max_same_tool_retries: 2 });
+    expect(verdict.exceeded).toBe(true);
+    expect(verdict.category).toBe('LLM_WANDERING');
+  });
+
+  it('detects observation-only and no-progress budgets', () => {
+    const { store } = tempStoreForBudget();
+    store.startRun({ run_id: 'run-budget-observe' });
+    for (const tool of ['read_page', 'tabs_context', 'oc_progress_status']) store.appendToolFinished({ run_id: 'run-budget-observe', tool, ok: true, message: 'snapshot only' });
+    const { evaluateRunBudget } = require('../../src/run-harness/budget') as typeof import('../../src/run-harness/budget');
+    const verdict = evaluateRunBudget(store.getRun('run-budget-observe')!, { max_observation_only_calls: 2, max_no_progress_streak: 2 });
+    expect(verdict.exceeded).toBe(true);
+    expect(verdict.category).toBe('NO_PROGRESS');
+  });
+
+  it('detects wall-clock budget', () => {
+    const { store } = tempStoreForBudget();
+    store.startRun({ run_id: 'run-budget-wall' });
+    const { evaluateRunBudget } = require('../../src/run-harness/budget') as typeof import('../../src/run-harness/budget');
+    const verdict = evaluateRunBudget(store.getRun('run-budget-wall')!, { max_wall_ms: 10 }, 5000);
+    expect(verdict.exceeded).toBe(true);
+    expect(verdict.category).toBe('MAX_STEPS_EXCEEDED');
+  });
+});
+
+function tempStoreForBudget() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-budget-'));
+  let now = 1000;
+  let seq = 0;
+  const store = new RunStore({ rootDir: dir, now: () => now++, idFactory: () => `budget-${seq++}` });
+  return { dir, store };
+}
+describe('run evidence auto-capture', () => {
+  it('captures evidence metadata for failed tool calls and redacts secrets', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-evidence-store-'));
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-evidence-out-'));
+    let now = 1000;
+    let seq = 0;
+    const store = new RunStore({ rootDir: dir, evidenceRootDir: evidenceDir, now: () => now++, idFactory: () => `ev-${seq++}` });
+    store.startRun({ run_id: 'run-evidence', session_id: 's1', tab_id: 't1' });
+    store.appendToolFinished({
+      run_id: 'run-evidence',
+      session_id: 's1',
+      tab_id: 't1',
+      tool: 'interact',
+      ok: false,
+      message: 'selector not found password=hunter2',
+      metadata: { url: 'https://example.test', title: 'Example', failureCategory: 'ELEMENT_NOT_FOUND', token: 'abc123' },
+    });
+
+    const run = store.getRun('run-evidence')!;
+    const evidenceEvent = run.events.find((event) => event.kind === 'evidence')!;
+    expect(evidenceEvent).toBeTruthy();
+    const evidencePath = (evidenceEvent.metadata as any).path as string;
+    const raw = fs.readFileSync(evidencePath, 'utf8');
+    expect(raw).toContain('ELEMENT_NOT_FOUND');
+    expect(raw).toContain('disabled by run evidence safe mode');
+    expect(raw).not.toContain('hunter2');
+    expect(raw).not.toContain('abc123');
+  });
+
+  it('captures evidence for stuck progress metadata without network or console slices', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-stuck-store-'));
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-stuck-evidence-'));
+    const store = new RunStore({ rootDir: dir, evidenceRootDir: evidenceDir, now: () => 2000, idFactory: () => 'stuck-id' });
+    store.startRun({ run_id: 'run-stuck' });
+    store.appendToolFinished({ run_id: 'run-stuck', tool: 'read_page', ok: true, metadata: { progress: { status: 'stuck' } } });
+    const evidenceEvent = store.getRun('run-stuck')!.events.find((event) => event.kind === 'evidence')!;
+    const parsed = JSON.parse(fs.readFileSync((evidenceEvent.metadata as any).path, 'utf8'));
+    expect(parsed.trigger).toBe('stuck');
+    expect(parsed.metadata.network.included).toBe(false);
+    expect(parsed.metadata.console.included).toBe(false);
+  });
+});

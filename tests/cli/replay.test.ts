@@ -216,7 +216,12 @@ describe('replay report', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-replay-report-test-'));
+    // fs.realpathSync normalizes Windows short/long path forms (e.g. RUNNER~1
+    // vs runneradmin) so the test's destPath matches what cli/replay.ts gets
+    // back from path.resolve() when comparing with stdout.
+    tmpDir = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'oc-replay-report-test-')),
+    );
   });
 
   afterEach(() => {

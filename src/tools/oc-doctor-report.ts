@@ -12,6 +12,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import type { DoctorReport } from '../cli/doctor';
 
 const REPORT_PATH = path.join(os.homedir(), '.openchrome', 'diagnostics', 'last-report.json');
@@ -19,6 +20,7 @@ const REPORT_PATH = path.join(os.homedir(), '.openchrome', 'diagnostics', 'last-
 const definition: MCPToolDefinition = {
   name: 'oc_doctor_report',
   description: 'Read the most recent openchrome doctor diagnostic report from cache. Returns the DoctorReport written by the last `openchrome doctor` run. Does NOT trigger new checks — run `openchrome doctor` in a shell to refresh.',
+  annotations: TOOL_ANNOTATIONS.oc_doctor_report,
   inputSchema: {
     type: 'object',
     properties: {},

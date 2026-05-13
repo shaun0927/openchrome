@@ -2,7 +2,7 @@
  * Step expansion — maps playbook verb + args to MCP tool name + call args.
  *
  * Static map of 9 verbs. `assert` maps to `oc_assert` with the YAML node
- * passed verbatim as the `assertion` field (including nested and/or/not).
+ * wrapped as the `contract` field unless explicit contract/evidence is provided (including nested and/or/not).
  */
 
 import type { Verb } from './parse';
@@ -49,8 +49,15 @@ const VERB_MAP: Record<Verb, { tool: string; mapArgs: ArgMapper }> = {
   },
   assert: {
     tool: 'oc_assert',
-    // Pass the entire YAML node verbatim as the `assertion` field.
-    mapArgs: (args) => ({ assertion: args }),
+    // oc_assert expects { contract, evidence? }. For compact playbooks, allow
+    // the assertion DSL directly under `assert:` and wrap it as `contract`.
+    // For live-verification fixtures, pass explicit contract/evidence through.
+    mapArgs: (args) => (
+      Object.prototype.hasOwnProperty.call(args, 'contract') ||
+      Object.prototype.hasOwnProperty.call(args, 'evidence')
+        ? args
+        : { contract: args }
+    ),
   },
 };
 

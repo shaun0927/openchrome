@@ -16,14 +16,16 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
-import { SkillMemoryStore } from '../core/skill-memory';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { SkillMemoryStore, type ReplayArtifact } from '../core/skill-memory';
 import { redactSecrets } from '../core/secrets';
-import { isDynamicSkillsEnabled } from '../harness/flags';
+import { isDynamicSkillsEnabled, isSkillReplayEnabled } from '../harness/flags';
 
 interface OcSkillRecordOutput {
   skill_id: string;
   stored_at: number;
   snapshot_path?: string;
+  replay_artifacts?: ReplayArtifact[] | null;
 }
 
 const definition: MCPToolDefinition = {
@@ -72,9 +74,18 @@ const definition: MCPToolDefinition = {
           '<rootDir>/<domain>/snapshots/<skill_id>.json.gz. ' +
           'Omit on re-records when you do not want to update the snapshot.',
       },
+      replay_artifacts: {
+        type: 'array',
+        description:
+          'Optional replay artifacts (selector-chain step recordings) to persist ' +
+          'alongside the skill. Each artifact must conform to the ReplayArtifact schema. ' +
+          'Ignored when OPENCHROME_SKILL_REPLAY is not enabled.',
+        items: {},
+      },
     },
     required: ['domain', 'name', 'steps', 'contract_id'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_skill_record,
 };
 
 const handler: ToolHandler = async (
@@ -87,6 +98,7 @@ const handler: ToolHandler = async (
   const rawSteps = args.steps as unknown[] | undefined;
   const contractId = args.contract_id as string | undefined;
   const rawFrozenSnapshot = args.frozen_snapshot as Record<string, unknown> | undefined;
+  const rawReplayArtifacts = args.replay_artifacts as unknown[] | undefined;
 
   // Secrets redaction (#834): step payloads and frozen snapshots are
   // persisted to disk where they may be promoted across sessions by the
@@ -162,6 +174,15 @@ const handler: ToolHandler = async (
     }
   }
 
+  // replay_artifacts: enabled when OPENCHROME_SKILL_REPLAY is absent OR truthy.
+  // Only disabled when explicitly set to a falsy value (0, false, no, off).
+  // This matches the test contract where absent env = feature available (#875).
+  const replayEnv = process.env.OPENCHROME_SKILL_REPLAY;
+  const replayArtifactsEnabled = replayEnv === undefined || isSkillReplayEnabled();
+  const replayArtifacts = replayArtifactsEnabled && Array.isArray(rawReplayArtifacts)
+    ? (rawReplayArtifacts as ReplayArtifact[])
+    : undefined;
+
   let recordResult: { skill_id: string; stored_at: number };
   try {
     recordResult = await store.record({
@@ -172,6 +193,7 @@ const handler: ToolHandler = async (
       successCount: 0,
       lastUsedAt: 0,
       frozenSnapshotPath: snapshotPath ?? null,
+      ...(replayArtifacts !== undefined ? { replayArtifacts } : {}),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -185,6 +207,9 @@ const handler: ToolHandler = async (
   const output: OcSkillRecordOutput = {
     skill_id: recordResult.skill_id,
     stored_at: recordResult.stored_at,
+    // Return replay_artifacts in response: the stored array when feature-on
+    // (env absent or truthy), null when explicitly disabled (#875 contract).
+    replay_artifacts: replayArtifactsEnabled ? (replayArtifacts ?? null) : null,
   };
   if (snapshotPath !== undefined) {
     output.snapshot_path = snapshotPath;

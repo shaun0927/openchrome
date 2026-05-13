@@ -9,6 +9,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
@@ -28,6 +29,7 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
+import { buildUrlScoreOptions, scoreUrl, UrlScoreOptions } from '../core/crawl/url-scorer';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
@@ -98,6 +100,25 @@ const definition: MCPToolDefinition = {
         description:
           'Fetch engine: "cdp" (default, opens a Chrome tab per page), "static" (Node fetch only, fails closed on insufficient pages), or "auto" (static first, fall back to CDP when static is insufficient).',
       },
+      strategy: {
+        type: 'string',
+        enum: ['bfs', 'best_first'],
+        description: 'Crawl traversal strategy. Default: bfs. best_first scores discovered URLs by query/url_score and visits highest-scoring URLs first.',
+      },
+      query: {
+        type: 'string',
+        description: 'Optional query terms used by strategy=best_first URL scoring.',
+      },
+      url_score: {
+        type: 'object',
+        description: 'Optional strategy=best_first URL scoring hints: keywords, prefer_paths, exclude_paths, same_depth_bias.',
+        properties: {
+          keywords: { type: 'array', items: { type: 'string' } },
+          prefer_paths: { type: 'array', items: { type: 'string' } },
+          exclude_paths: { type: 'array', items: { type: 'string' } },
+          same_depth_bias: { type: 'number' },
+        },
+      },
       dispatcher: {
         type: 'string',
         enum: ['fixed', 'adaptive'],
@@ -110,6 +131,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['url'],
   },
+  annotations: TOOL_ANNOTATIONS.crawl,
 };
 
 // ---------------------------------------------------------------------------
@@ -150,9 +172,20 @@ interface CrawledPage {
   error?: string;
   engine_used?: 'static' | 'cdp';
   static_reason?: StaticReason;
+  score?: number;
+  score_reasons?: string[];
 }
 
 type EngineMode = 'auto' | 'static' | 'cdp';
+type CrawlStrategy = 'bfs' | 'best_first';
+
+interface CrawlQueueItem {
+  url: string;
+  depth: number;
+  order: number;
+  score?: number;
+  score_reasons?: string[];
+}
 
 interface CrawlSummary {
   total_pages: number;
@@ -161,6 +194,9 @@ interface CrawlSummary {
   max_depth_reached: number;
   duration_ms: number;
   scope: string;
+  strategy?: CrawlStrategy;
+  scored_urls?: number;
+  skipped_below_threshold?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +626,78 @@ const handler: ToolHandler = async (
   }
   const engineExplicit = engineArg !== undefined;
 
+  const strategyArg = args.strategy as string | undefined;
+  let strategy: CrawlStrategy = 'bfs';
+  if (strategyArg === 'bfs' || strategyArg === 'best_first') {
+    strategy = strategyArg;
+  } else if (strategyArg !== undefined) {
+    return {
+      content: [{ type: 'text', text: 'Error: strategy must be one of "bfs", "best_first"' }],
+      isError: true,
+    };
+  }
+  const scoringOptions: UrlScoreOptions = buildUrlScoreOptions({
+    query: args.query,
+    url_score: args.url_score,
+    startUrl: normalizeUrl(url),
+  });
+  let scoredUrls = 0;
+  const skippedBelowThreshold = 0;
+  let discoveryOrder = 0;
+  const bestFirstQueue: CrawlQueueItem[] = [];
+  const bestFirstQueued = new Map<string, CrawlQueueItem>();
+
+  function makeQueueItem(entry: { url: string; depth: number }): CrawlQueueItem {
+    const normalized = normalizeUrl(entry.url);
+    const item: CrawlQueueItem = { url: normalized, depth: entry.depth, order: discoveryOrder++ };
+    if (strategy === 'best_first') {
+      const scored = scoreUrl(normalized, entry.depth, scoringOptions);
+      item.score = scored.score;
+      item.score_reasons = scored.reasons;
+      scoredUrls++;
+    }
+    return item;
+  }
+
+  function enqueueItems(entries: Array<{ url: string; depth: number }>): void {
+    if (strategy !== 'best_first') {
+      tracker.enqueue(entries);
+      return;
+    }
+    for (const entry of entries) {
+      const item = makeQueueItem(entry);
+      if (tracker.hasVisited(item.url)) continue;
+      const queued = bestFirstQueued.get(item.url);
+      if (queued) {
+        if (queued.depth <= item.depth) continue;
+        const queuedIndex = bestFirstQueue.indexOf(queued);
+        if (queuedIndex !== -1) bestFirstQueue.splice(queuedIndex, 1);
+      }
+      bestFirstQueued.set(item.url, item);
+      bestFirstQueue.push(item);
+    }
+    bestFirstQueue.sort((a, b) => {
+      const scoreDiff = (b.score ?? 0) - (a.score ?? 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      if (a.depth !== b.depth) return a.depth - b.depth;
+      if (a.order !== b.order) return a.order - b.order;
+      return a.url.localeCompare(b.url);
+    });
+  }
+
+  function dequeueItem(): CrawlQueueItem | undefined {
+    if (strategy !== 'best_first') {
+      const next = tracker.dequeue();
+      return next ? { ...next, order: discoveryOrder++ } : undefined;
+    }
+    while (bestFirstQueue.length > 0) {
+      const next = bestFirstQueue.shift()!;
+      bestFirstQueued.delete(next.url);
+      if (!tracker.hasVisited(next.url)) return next;
+    }
+    return undefined;
+  }
+
   const dispatcherArg = args.dispatcher as string | undefined;
   let dispatcherMode: DispatcherMode = 'fixed';
   if (dispatcherArg === 'fixed' || dispatcherArg === 'adaptive') {
@@ -653,13 +761,13 @@ const handler: ToolHandler = async (
   }
 
   try {
-    // Seed the BFS queue with the start URL
+    // Seed the crawl queue with the start URL
     const normalizedStart = normalizeUrl(url);
-    tracker.enqueue([{ url: normalizedStart, depth: 0 }]);
+    enqueueItems([{ url: normalizedStart, depth: 0 }]);
 
     const limiter = createLimiter(concurrency);
 
-    // BFS loop
+    // Crawl loop
     while (pages.length < maxPages) {
       // Check budget
       if (context && !hasBudget(context, 15_000)) {
@@ -668,11 +776,11 @@ const handler: ToolHandler = async (
       }
 
       // Collect a batch of URLs to fetch in parallel
-      const batch: Array<{ url: string; depth: number }> = [];
+      const batch: CrawlQueueItem[] = [];
       const batchSize = Math.min(concurrency, maxPages - pages.length);
 
       for (let i = 0; i < batchSize; i++) {
-        const next = tracker.dequeue();
+        const next = dequeueItem();
         if (!next) break;
 
         // Skip if exceeds max depth
@@ -683,13 +791,15 @@ const handler: ToolHandler = async (
 
       if (batch.length === 0) {
         // Check if there are still items in the queue beyond max_depth
-        const probe = tracker.dequeue();
+        const probe = dequeueItem();
         if (!probe) break; // Queue is truly empty
         // If it's beyond depth, we're done
         if (probe.depth > maxDepth) break;
-        // Otherwise put it back and try again — shouldn't happen but be safe
-        tracker.enqueue([probe]);
-        break;
+        // Otherwise put it back and retry. In best_first mode an over-depth
+        // item can sort ahead of an in-depth item; breaking here would stop
+        // the crawl even though valid work remains behind the probe.
+        enqueueItems([probe]);
+        continue;
       }
 
       // Fetch batch in parallel with concurrency limiter
@@ -709,6 +819,7 @@ const handler: ToolHandler = async (
                   depth: item.depth,
                   links_found: 0,
                   error: 'Blocked by robots.txt',
+                  ...(strategy === 'best_first' ? { score: item.score ?? 0, score_reasons: item.score_reasons ?? [] } : {}),
                 } as CrawledPage,
                 links: [] as string[],
                 depth: item.depth,
@@ -779,6 +890,10 @@ const handler: ToolHandler = async (
             if (staticReason) {
               result.static_reason = staticReason;
             }
+            if (strategy === 'best_first') {
+              result.score = item.score ?? 0;
+              result.score_reasons = item.score_reasons ?? [];
+            }
 
             // Apply delay between fetches
             if (delayMs > 0) {
@@ -825,7 +940,7 @@ const handler: ToolHandler = async (
           }
 
           if (newUrls.length > 0) {
-            tracker.enqueue(newUrls);
+            enqueueItems(newUrls);
           }
         }
       }
@@ -842,6 +957,7 @@ const handler: ToolHandler = async (
       max_depth_reached: maxDepthReached,
       duration_ms: durationMs,
       scope,
+      ...(strategy === 'best_first' ? { strategy, scored_urls: scoredUrls, skipped_below_threshold: skippedBelowThreshold } : {}),
       ...(adaptiveDispatcher ? { dispatcher: adaptiveDispatcher.stats() } : {}),
     };
 

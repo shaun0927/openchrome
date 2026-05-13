@@ -10,6 +10,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { canAccessTask, getTaskStore, taskAccessDeniedResult, waitForTaskStartupReap } from './oc-task-start';
 import type { TaskStatus } from '../core/task-ledger';
 
@@ -19,6 +20,7 @@ const definition: MCPToolDefinition = {
     'Request cancellation of a background task. Best-effort: the runner ' +
     'aborts the underlying tool at the next work-unit boundary. Terminal ' +
     'tasks are unaffected. PENDING tasks transition straight to CANCELLED.',
+  annotations: TOOL_ANNOTATIONS.oc_task_cancel,
   inputSchema: {
     type: 'object',
     properties: {

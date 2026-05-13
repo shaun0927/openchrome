@@ -25,7 +25,12 @@ function waitForFlush(): Promise<void> {
 async function waitForAuditEntries(
   logPath: string,
   expectedCount: number,
-  timeoutMs = 1000,
+  // Heavier CI hosts (notably ubuntu-20 / windows-20) sometimes miss the 1s
+  // budget while the audit append is queued behind unrelated I/O. The default
+  // is now 5s so a slow flush surfaces as a deterministic length assertion
+  // rather than as `Cannot read properties of undefined (reading 'args')` on
+  // entries[0].
+  timeoutMs = 5000,
 ): Promise<Array<Record<string, unknown>>> {
   const deadline = Date.now() + timeoutMs;
   let lines: Array<Record<string, unknown>> = [];
@@ -125,8 +130,9 @@ describe('audit-logger extended fields', () => {
     try {
       __resetAuditLoggerCachesForTests();
       logAuditEntry('cookies.set', 'sess_1', { name: 'session', value: 'super-secret' });
-      const entry = (await waitForAuditEntries(logPath, 1))[0];
-      const args = entry.args as Record<string, unknown>;
+      const entries = await waitForAuditEntries(logPath, 1);
+      expect(entries).toHaveLength(1);
+      const args = entries[0].args as Record<string, unknown>;
       expect(typeof args.value).toBe('string');
       expect(args.value as string).toMatch(/^sha256:/);
       expect(args.value).not.toContain('super-secret');

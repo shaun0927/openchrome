@@ -57,6 +57,45 @@ export interface MCPError {
   data?: unknown;
 }
 
+export const TOOL_CAPABILITIES = [
+  'core',
+  'crawl',
+  'recording',
+  'workflow',
+  'storage',
+  'profile',
+  'totp',
+  'pilot',
+] as const;
+
+/** Capability group a tool belongs to. Used by --tools-only / --disable-tools CLI flags. */
+export type ToolCapability = typeof TOOL_CAPABILITIES[number];
+
+/**
+ * Allowed category values for MCPToolDefinition.category.
+ * Used by scripts/gen-capability-map.ts to group tools in the generated
+ * docs/agent/capability-map.md preamble.
+ *
+ * Values: navigation | dom | interact | forms | js | tabs | storage |
+ *         profile | lifecycle | observability | evidence | recording |
+ *         pilot | misc
+ */
+export type ToolCategory =
+  | 'navigation'
+  | 'dom'
+  | 'interact'
+  | 'forms'
+  | 'js'
+  | 'tabs'
+  | 'storage'
+  | 'profile'
+  | 'lifecycle'
+  | 'observability'
+  | 'evidence'
+  | 'recording'
+  | 'pilot'
+  | 'misc';
+
 /**
  * JSON-Schema-Draft-7 shape used for both `inputSchema` and the optional
  * `outputSchema` on `MCPToolDefinition`. The runtime validator only inspects
@@ -69,10 +108,30 @@ export interface MCPObjectSchema {
   required?: string[];
 }
 
+
+/**
+ * Tool annotations per MCP spec.
+ *
+ * Semantics are **per-tool, worst-case** — they describe the most destructive /
+ * least pure behavior the tool can produce across all valid input combinations,
+ * not the typical or default behavior.
+ */
+export interface ToolAnnotations {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+}
+
 export interface MCPToolDefinition {
   name: string;
   description: string;
   inputSchema: MCPObjectSchema;
+  /**
+   * Optional grouping category for the LLM capability-map preamble.
+   * Defaults to "misc" when absent. See ToolCategory for allowed values.
+   */
+  category?: ToolCategory;
   /**
    * Optional MCP-spec `outputSchema`. When declared, callers can validate the
    * tool's `structuredContent` result against this schema. Tools that opt in
@@ -81,6 +140,13 @@ export interface MCPToolDefinition {
    * Tools without `outputSchema` continue to return free-form `content[]`.
    */
   outputSchema?: MCPObjectSchema;
+  /** Optional MCP-spec tool annotations. */
+  annotations?: ToolAnnotations;
+  /**
+   * Capability group this tool belongs to. Absent or undefined → defaults to 'core'.
+   * Used by --tools-only / --disable-tools CLI flags to gate tool visibility.
+   */
+  capability?: ToolCapability;
 }
 
 /**

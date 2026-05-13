@@ -37,10 +37,13 @@ export interface WebVoyagerTask {
  * adapter feeds these straight into the EvalContext.
  *
  * The transcript file is a JSONL with one JSON object per line; in v1 the
- * harness reads only the *last* line (the final state the contract should
- * be evaluated against). Earlier lines may carry per-step tool-call traces
- * recorded by the real adapter — they're informational and unused by the
- * mock runner today.
+ * harness reads the `final_state` line for contract evaluation and validates
+ * every preceding `tool_call` line for replay-drift protection. Each tool
+ * call stores its original argument object plus
+ * `args_digest_sha256 = sha256(deterministicStringify(args))` where
+ * deterministicStringify sorts object keys recursively and emits no
+ * whitespace. If a transcript is re-recorded with mutated arguments but the
+ * stored digest is not updated, mock replay reports `replay_drift`.
  */
 export interface TranscriptFinalState {
   kind: 'final_state';
@@ -52,16 +55,20 @@ export interface TranscriptFinalState {
 }
 
 /**
- * Per-step tool-call entry. v1 records only the tool name and the kind of
- * response we got back — enough for the mock adapter to compute
- * `tool_calls` count and `response_bytes`, but deliberately not enough to
- * detect argument drift. Argument-digest validation is tracked separately
- * in #943 (it requires a deterministic JSON serializer and a real-adapter
- * recorder; both land in the follow-up PR that records the remaining 7
- * transcripts).
+ * Per-step tool-call entry. `args` is the exact tool argument object observed
+ * by the recording adapter; `args_digest_sha256` is validated by the mock
+ * adapter before frozen-state contract evaluation.
  */
+export interface TranscriptToolCall {
+  kind: 'tool_call';
+  tool: string;
+  args: Record<string, unknown>;
+  args_digest_sha256: string;
+  response_kind: string;
+}
+
 export type TranscriptEntry =
-  | { kind: 'tool_call'; tool: string; response_kind: string }
+  | TranscriptToolCall
   | TranscriptFinalState;
 
 export interface TaskRunReport {
