@@ -9,6 +9,10 @@ interface RuntimeFieldPlan {
   field: string;
   aliases: string[];
   selectorTokens: string[];
+<<<<<<< HEAD
+=======
+  expectedType?: string | string[];
+>>>>>>> origin/feat/974-schema-aware-extract
 }
 
 function normalisePlans(fields: FieldInput): RuntimeFieldPlan[] {
@@ -20,13 +24,25 @@ function normalisePlans(fields: FieldInput): RuntimeFieldPlan[] {
       field: field.field,
       aliases: field.aliases,
       selectorTokens: field.selectorTokens,
+<<<<<<< HEAD
+=======
+      expectedType: field.expectedType,
+>>>>>>> origin/feat/974-schema-aware-extract
     };
   });
 }
 
 export function buildJsonLdExtractor(fields: FieldInput): string {
   const plans = normalisePlans(fields);
+<<<<<<< HEAD
   return `(function(fp){var r={};var sc=document.querySelectorAll('script[type="application/ld+json"]');function norm(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'')}function read(item,keys){for(var a=0;a<keys.length;a++){var key=keys[a];if(item[key]!==undefined)return item[key];var nk=norm(key);for(var p in item){if(norm(p)===nk)return item[p]}}return undefined}function val(v){if(typeof v==='object'&&v&&!Array.isArray(v)){return v.name||v['@value']||v.value||v.ratingValue||JSON.stringify(v)}return v}for(var i=0;i<sc.length;i++){try{var d=JSON.parse(sc[i].textContent||'');var it=Array.isArray(d)?d:(d['@graph']?d['@graph']:[d]);for(var j=0;j<it.length;j++){var item=it[j];if(!item||typeof item!=='object')continue;for(var k=0;k<fp.length;k++){var f=fp[k];if(r[f.field]!=null)continue;var keys=f.aliases&&f.aliases.length?f.aliases:[f.field];var v=read(item,keys);if(v===undefined&&item.offers){var of=Array.isArray(item.offers)?item.offers:[item.offers];for(var o=0;o<of.length;o++){v=read(of[o],keys);if(v!==undefined)break}}if(v!==undefined)r[f.field]=val(v)}}}catch(e){}}return r})(${JSON.stringify(plans)})`;
+=======
+  // val(v, t): project JSON-LD value based on declared schema type.
+  // Scalar types attempt common JSON-LD shape projections; object/untyped preserve as-is.
+  // IIFE scalar projection keys tried in order: @value, value, ratingValue, name.
+  const valFn = `function val(v,t){if(v===null||v===undefined)return v;var st={'string':1,'number':1,'integer':1,'boolean':1};var ts=Array.isArray(t)?t:[t];var isScalar=ts.some(function(x){return st[x]});if(!isScalar)return v;if(typeof v!=='object')return v;var proj=['@value','value','ratingValue','name'];for(var pi=0;pi<proj.length;pi++){if(has(v,proj[pi]))return v[proj[pi]]}return v}`;
+  return `(function(fp){var r=Object.create(null);var sc=document.querySelectorAll('script[type="application/ld+json"]');function has(o,k){return !!o&&Object.prototype.hasOwnProperty.call(o,k)}function get(o,k){return has(o,k)?o[k]:undefined}function norm(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'')}function read(item,keys){for(var a=0;a<keys.length;a++){var key=keys[a];if(has(item,key))return item[key];var nk=norm(key);if(nk){for(var p in item){if(!has(item,p))continue;if(norm(p)===nk)return item[p]}}}return undefined}${valFn}for(var i=0;i<sc.length;i++){try{var d=JSON.parse(sc[i].textContent||'');var g=get(d,'@graph');var it=Array.isArray(d)?d:(g?g:[d]);for(var j=0;j<it.length;j++){var item=it[j];if(!item||typeof item!=='object')continue;for(var k=0;k<fp.length;k++){var f=fp[k];if(has(r,f.field)&&r[f.field]!=null)continue;var keys=f.aliases&&f.aliases.length?f.aliases:[f.field];var v=read(item,keys);var offers=get(item,'offers');if(v===undefined&&offers){var of=Array.isArray(offers)?offers:[offers];for(var o=0;o<of.length;o++){v=read(of[o],keys);if(v!==undefined)break}}if(v!==undefined)r[f.field]=val(v,f.expectedType)}}}catch(e){}}return r})(${JSON.stringify(plans)})`;
+>>>>>>> origin/feat/974-schema-aware-extract
 }
 
 export function buildMicrodataExtractor(fields: FieldInput): string {
@@ -36,7 +52,11 @@ export function buildMicrodataExtractor(fields: FieldInput): string {
 
 export function buildOpenGraphExtractor(fields: FieldInput): string {
   const plans = normalisePlans(fields);
+<<<<<<< HEAD
   return `(function(fp){var r={};var mp={'title':['og:title','twitter:title'],'name':['og:title','twitter:title','og:site_name'],'headline':['og:title','twitter:title'],'description':['og:description','twitter:description','description'],'summary':['og:description','twitter:description','description'],'image':['og:image','twitter:image'],'imageurl':['og:image','twitter:image'],'url':['og:url'],'link':['og:url'],'author':['author','article:author'],'publisheddate':['article:published_time','date'],'publishedat':['article:published_time','date'],'date':['article:published_time','date'],'site_name':['og:site_name']};function norm(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'')}for(var i=0;i<fp.length;i++){var f=fp[i];if(r[f.field]!=null)continue;var cd=[];for(var a=0;a<(f.aliases||[]).length;a++){var key=norm(f.aliases[a]);cd=cd.concat(mp[key]||[f.aliases[a]])}for(var c=0;c<cd.length;c++){try{var m=document.querySelector('meta[property="'+cd[c]+'"]')||document.querySelector('meta[name="'+cd[c]+'"]');if(m){var ct=m.getAttribute('content');if(ct){r[f.field]=ct;break}}}catch(e){}}if(!r[f.field]&&(norm(f.field)==='url'||norm(f.field)==='canonical')){var lk=document.querySelector('link[rel="canonical"]');if(lk)r[f.field]=lk.getAttribute('href')}}return r})(${JSON.stringify(plans)})`;
+=======
+  return `(function(fp){var r={};var mp={'title':['og:title','twitter:title'],'name':['og:title','twitter:title','og:site_name'],'headline':['og:title','twitter:title'],'description':['og:description','twitter:description','description'],'summary':['og:description','twitter:description','description'],'image':['og:image','twitter:image'],'imageurl':['og:image','twitter:image'],'url':['og:url'],'link':['og:url'],'author':['author','article:author'],'publisheddate':['article:published_time','date'],'publishedat':['article:published_time','date'],'date':['article:published_time','date'],'sitename':['og:site_name']};function norm(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'')}for(var i=0;i<fp.length;i++){var f=fp[i];if(r[f.field]!=null)continue;var cd=[];for(var a=0;a<(f.aliases||[]).length;a++){var alias=f.aliases[a];var key=norm(alias);var mapped=mp[key]||[];cd=cd.concat(mapped);if(cd.indexOf(alias)===-1)cd.push(alias)}for(var c=0;c<cd.length;c++){try{var m=document.querySelector('meta[property="'+cd[c]+'"]')||document.querySelector('meta[name="'+cd[c]+'"]');if(m){var ct=m.getAttribute('content');if(ct){r[f.field]=ct;break}}}catch(e){}}if(!r[f.field]&&(norm(f.field)==='url'||norm(f.field)==='canonical')){var lk=document.querySelector('link[rel="canonical"]');if(lk)r[f.field]=lk.getAttribute('href')}}return r})(${JSON.stringify(plans)})`;
+>>>>>>> origin/feat/974-schema-aware-extract
 }
 
 export function buildCssHeuristicExtractor(fields: FieldInput, schemaProps: Record<string, SchemaProperty>, scopeSelector?: string): string {

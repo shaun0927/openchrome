@@ -26,6 +26,21 @@ async function waitForDead(pid: number, timeoutMs = 15000): Promise<void> {
   throw new Error('timeout waiting for child death');
 }
 
+async function rmDirEventually(dir: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  throw lastError;
+}
+
 describe('spawnProcessGuardian', () => {
   test('kills the child process when the watched parent PID is already gone', async () => {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
@@ -59,6 +74,6 @@ describe('spawnProcessGuardian', () => {
     await waitForDead(child.pid);
     expect(fs.existsSync(pidFile)).toBe(true);
     expect(fs.readFileSync(pidFile, 'utf8').trim()).toBe('123456');
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmDirEventually(dir);
   }, 20000);
 });

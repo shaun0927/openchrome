@@ -24,6 +24,7 @@ import { compositeSuggestionRules } from './rules/composite-suggestions';
 import { sequenceDetectionRules } from './rules/sequence-detection';
 import { repetitionDetectionRules } from './rules/repetition-detection';
 import { paginationDetectionRules } from './rules/pagination-detection';
+import { snapshotStaleRules } from './rules/snapshot-stale';
 import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
 import { setupHintRules } from './rules/setup-hints';
@@ -114,6 +115,7 @@ export class HintEngine {
       ...repetitionDetectionRules,   // priority 245-252
       ...sequenceDetectionRules,     // priority 300-304
       ...createLearnedRules(this.learner), // priority 350
+      ...snapshotStaleRules,         // priority 395 (#831)
       ...successHintRules,           // priority 400-403
     ].sort((a, b) => a.priority - b.priority);
 
