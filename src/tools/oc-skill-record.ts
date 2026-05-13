@@ -91,11 +91,8 @@ const definition: MCPToolDefinition = {
       replay_artifacts: {
         type: 'array',
         description:
-          'Optional per-step replay artifacts (#875). When supplied, MUST be ' +
-          'parallel-indexed with `steps` (null entries permitted). Each non-null ' +
-          'entry is validated against the ReplayArtifact schema. When omitted, ' +
-          'the tool backfills from the per-target recorder buffer (if `target_id` ' +
-          'is supplied) or persists an array of nulls.',
+          'Optional per-step replay artifacts (#875), parallel-indexed with steps. ' +
+          'Null entries are allowed; omitted values backfill from target_id recorder buffer.',
         items: {},
       },
       target_id: {

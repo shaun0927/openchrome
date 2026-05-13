@@ -88,12 +88,12 @@ const definition: MCPToolDefinition = {
     properties: {
       skill_id: {
         type: 'string',
-        description: 'skill_id returned by a prior oc_skill_record call.',
+        description: 'REQUIRED skill_id returned by a prior oc_skill_record call.',
       },
       domain: {
         type: 'string',
         description:
-          'Domain partition this skill lives under (matches the domain used at record time).',
+          'REQUIRED Domain partition matching the domain used at record time.',
       },
       tabId: {
         type: 'string',
@@ -244,7 +244,7 @@ async function dispatchStep(step: ReplayArtifactStep, selector: ReplaySelector |
         const cssEscape = (value: string): string => {
           const esc = (globalThis as unknown as { CSS?: { escape?: (v: string) => string } }).CSS?.escape;
           if (esc) return esc(value);
-          return value.replace(/\\/g, '\\\\').replace(/"/g, '\"');
+          return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         };
         let el: Element | null = null;
         if (sel.type === 'xpath') {
