@@ -13,6 +13,7 @@ import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
+import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { getGlobalConfig } from '../config/global';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
@@ -148,6 +149,10 @@ const definition: MCPToolDefinition = {
       diagnostics: {
         type: 'boolean',
         description: 'Include structured read_page timing diagnostics in the MCP result metadata. Default: false.',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate returned size/token metrics in the emitted payload. Default: false.',
       },
     },
     required: ['tabId'],
@@ -287,6 +292,42 @@ const handler: ToolHandler = async (
     const withDiagnostics = (result: MCPResult): MCPResult => (
       diagnosticsEnabled ? { ...result, _diagnostics: diagnostics } : result
     );
+    const includeMetrics = args.include_metrics === true;
+    const withTextMetrics = (text: string, emittedMode: string, truncated = hasTruncationMarker(text)): string => {
+      if (!includeMetrics) return text;
+      let baseText = text;
+      let metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+      for (let i = 0; i < 8; i++) {
+        const candidate = appendMetricsFooter(baseText, metrics);
+        const nextMetrics = buildTextMetrics(candidate, { mode: emittedMode, truncated });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) {
+          if (candidate.length <= MAX_OUTPUT_CHARS) return candidate;
+          const reserve = Math.min(512, Math.max(128, candidate.length - baseText.length + 64));
+          baseText = `${baseText.slice(0, Math.max(0, MAX_OUTPUT_CHARS - reserve))}
+
+[Output truncated — metrics footer reserved output budget]`;
+          truncated = true;
+          metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+          continue;
+        }
+        metrics = nextMetrics;
+      }
+      return appendMetricsFooter(baseText, metrics);
+    };
+    const withSemanticMetrics = (view: Record<string, unknown>): string => {
+      if (!includeMetrics) return JSON.stringify(view);
+      const payload: Record<string, unknown> = { ...view };
+      let metrics = buildTextMetrics(JSON.stringify(payload), { mode: 'semantic' });
+      for (let i = 0; i < 8; i++) {
+        payload._metrics = metrics;
+        const text = JSON.stringify(payload);
+        const nextMetrics = buildTextMetrics(text, { mode: 'semantic' });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) return text;
+        metrics = nextMetrics;
+      }
+      payload._metrics = metrics;
+      return JSON.stringify(payload);
+    };
 
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
     const compactAX = args.compact === true;
@@ -335,7 +376,7 @@ const handler: ToolHandler = async (
       }
       const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
       return {
-        content: [{ type: 'text', text: md + suffix }],
+        content: [{ type: 'text', text: withTextMetrics(md + suffix, 'markdown', truncated) }],
       };
     }
 
@@ -497,7 +538,7 @@ const handler: ToolHandler = async (
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: cssText + cssPaginationSection }],
+        content: [{ type: 'text', text: withTextMetrics(cssText + cssPaginationSection, 'css') }],
       };
     }
 
@@ -690,7 +731,7 @@ const handler: ToolHandler = async (
       );
 
       return {
-        content: [{ type: 'text', text: JSON.stringify(view) }],
+        content: [{ type: 'text', text: withSemanticMetrics(view as unknown as Record<string, unknown>) }],
       };
     }
 
@@ -740,7 +781,7 @@ const handler: ToolHandler = async (
               const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
               const compressedText = statsLine + delta.content + nodeRefsBlock + domPaginationSection;
               return withDiagnostics({
-                content: [{ type: 'text', text: compressedText }],
+                content: [{ type: 'text', text: withTextMetrics(compressedText, 'dom') }],
                 _compression: {
                   level: 'delta',
                   originalChars: outputText.length,
@@ -758,7 +799,7 @@ const handler: ToolHandler = async (
         const includePaginationDom = args.includePagination !== false;
         const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
         return withDiagnostics({
-          content: [{ type: 'text', text: outputText + nodeRefsBlock + domPaginationSection }],
+          content: [{ type: 'text', text: withTextMetrics(outputText + nodeRefsBlock + domPaginationSection, 'dom') }],
         });
       } catch (error) {
         if (isExplicitDomMode) {
@@ -1292,6 +1333,22 @@ const cachedHandler: ToolHandler = async (sessionId, args, context) => {
     : 'dom';
   const headerMode = mode === 'markdown' ? 'html' : mode;
   const header = { url, title, mode: headerMode as 'ax' | 'dom' | 'css' | 'html', capturedAt: Date.now(), tabId };
+  const includeMetrics = args.include_metrics === true;
+  const refreshSemanticMetrics = (payload: Record<string, unknown>): Record<string, unknown> => {
+    if (!includeMetrics || !('_metrics' in payload)) return payload;
+    const next = { ...payload };
+    delete next._metrics;
+    let metrics = buildTextMetrics(JSON.stringify(next), { mode: 'semantic' });
+    for (let i = 0; i < 8; i++) {
+      next._metrics = metrics;
+      const text = JSON.stringify(next);
+      const candidate = buildTextMetrics(text, { mode: 'semantic' });
+      if (candidate.returned_chars === metrics.returned_chars && candidate.estimated_tokens === metrics.estimated_tokens) return next;
+      metrics = candidate;
+    }
+    next._metrics = metrics;
+    return next;
+  };
 
   return {
     ...result,
@@ -1300,7 +1357,8 @@ const cachedHandler: ToolHandler = async (sessionId, args, context) => {
       if (mode === 'semantic') {
         try {
           const parsed = JSON.parse(block.text) as Record<string, unknown>;
-          return { ...block, text: JSON.stringify(mergeHeaderJson(header, parsed)) };
+          const merged = mergeHeaderJson(header, parsed) as Record<string, unknown>;
+          return { ...block, text: JSON.stringify(refreshSemanticMetrics(merged)) };
         } catch {
           return { ...block, text: prependHeaderText(header, block.text) };
         }
@@ -1309,6 +1367,10 @@ const cachedHandler: ToolHandler = async (sessionId, args, context) => {
     }),
   };
 };
+
+function hasTruncationMarker(text: string): boolean {
+  return text.includes('...[truncated]') || text.includes('[Output truncated') || text.includes('Content omitted due to size constraints');
+}
 
 export function registerReadPageTool(server: MCPServer): void {
   server.registerTool('read_page', cachedHandler, definition);

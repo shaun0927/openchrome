@@ -27,6 +27,7 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
+import { buildTextMetrics } from '../core/metrics/token-estimate';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
@@ -100,6 +101,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         enum: ['public', 'session'],
         description: 'Cache namespace/safety scope. Default: public.',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate output size/token metrics in the JSON result. Default: false.',
       },
     },
     required: ['url'],
@@ -287,7 +292,6 @@ async function resolveSitemapPageUrls(
 // Static engine — Node fetch path. Returns null + reason on insufficiency so
 // the caller (auto mode) can fall back to CDP.
 // ---------------------------------------------------------------------------
-
 
 function cleanMarkdownFromHtml(
   html: string,
@@ -618,6 +622,7 @@ const handler: ToolHandler = async (
   };
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 
+  const includeMetrics = args.include_metrics === true;
   const engineArg = args.engine as string | undefined;
   let engine: EngineMode = 'cdp';
   if (engineArg === 'static' || engineArg === 'auto' || engineArg === 'cdp') {
@@ -880,10 +885,26 @@ const handler: ToolHandler = async (
       sitemap_source: sitemapSource,
     };
 
-    const output = { summary, pages };
+    const buildOutput = (outputPages: CrawledPage[]) => includeMetrics
+      ? {
+          summary: {
+            ...summary,
+            metrics: {
+              returned_chars: outputPages.reduce((sum, p) => sum + p.content.length, 0),
+              estimated_tokens: outputPages.reduce((sum, p) => sum + buildTextMetrics(p.content).estimated_tokens, 0),
+              truncated_pages: outputPages.filter((p) => p.content.includes('...[truncated]')).length,
+              mode: `crawl_sitemap:${outputFormat}`,
+            },
+          },
+          pages: outputPages.map((p) => ({
+            ...p,
+            metrics: buildTextMetrics(p.content, { mode: outputFormat }),
+          })),
+        }
+      : { summary, pages: outputPages };
 
     // Ensure output fits within limits
-    let outputJson = JSON.stringify(output, null, 2);
+    let outputJson = JSON.stringify(buildOutput(pages), null, 2);
     if (outputJson.length > MAX_OUTPUT_CHARS) {
       // Truncate page contents progressively to fit
       const truncatedPages = pages.map((p) => ({
@@ -893,7 +914,7 @@ const handler: ToolHandler = async (
             ? p.content.slice(0, 2000) + '...[truncated]'
             : p.content,
       }));
-      outputJson = JSON.stringify({ summary, pages: truncatedPages }, null, 2);
+      outputJson = JSON.stringify(buildOutput(truncatedPages), null, 2);
 
       // If still too large, remove content entirely
       if (outputJson.length > MAX_OUTPUT_CHARS) {
@@ -903,12 +924,41 @@ const handler: ToolHandler = async (
           links_found: p.links_found,
           content_length: p.content.length,
           error: p.error,
+          ...(includeMetrics && { metrics: buildTextMetrics('', { mode: outputFormat, truncated: true }) }),
         }));
+        // Per-page metrics are computed from empty strings (content omitted),
+        // so the summary metrics must align with what is actually emitted —
+        // not the original full-content pages.
+        const emptyPageMetrics = buildTextMetrics('', { mode: outputFormat, truncated: true });
+        const minimalSummary = includeMetrics
+          ? {
+              ...summary,
+              metrics: {
+                returned_chars: minimalPages.reduce(
+                  (sum, p) => sum + (p.metrics?.returned_chars ?? 0),
+                  0,
+                ),
+                estimated_tokens: minimalPages.reduce(
+                  (sum, p) => sum + (p.metrics?.estimated_tokens ?? emptyPageMetrics.estimated_tokens),
+                  0,
+                ),
+                truncated_pages: pages.length,
+                mode: `crawl_sitemap:${outputFormat}`,
+              },
+            }
+          : summary;
         outputJson = JSON.stringify(
-          { summary, pages: minimalPages, note: 'Content omitted due to size constraints' },
+          { summary: minimalSummary, pages: minimalPages, note: 'Content omitted due to size constraints' },
           null,
           2,
         );
+        if (outputJson.length > MAX_OUTPUT_CHARS) {
+          outputJson = JSON.stringify({
+            summary: minimalSummary,
+            pages: minimalPages.map(({ url, title, links_found, content_length, error }) => ({ url, title, links_found, content_length, error })),
+            note: 'Content omitted due to size constraints',
+          }, null, 2);
+        }
       }
     }
 

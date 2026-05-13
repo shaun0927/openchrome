@@ -124,6 +124,21 @@ describe('ReadPageTool', () => {
   });
 
   describe('Accessibility Tree', () => {
+    test('semantic include_metrics reports the final serialized payload size', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'semantic',
+        include_metrics: true,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      const payload = JSON.parse(text) as { _metrics: { returned_chars: number; estimated_tokens: number } };
+      expect(payload._metrics.returned_chars).toBe(text.length);
+      expect(payload._metrics.estimated_tokens).toBe(Math.ceil(text.length / 4));
+    });
+
     test('returns tree with default depth', async () => {
       const handler = await getReadPageHandler();
 
