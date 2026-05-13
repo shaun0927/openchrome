@@ -62,13 +62,22 @@ describe('check: disk-space', () => {
     expect(result.status).toBe('ok');
   });
 
+<<<<<<< HEAD
   test('boundary: exactly 100 MB is warn', async () => {
+=======
+  test('boundary: exactly 100 MB is warn (>= 100 MB)', async () => {
+>>>>>>> origin/develop
     process.env.OPENCHROME_DOCTOR_FAKE_FREE_MB = '100';
 
     const { checkDiskSpace } = await import('../../../../src/cli/doctor/checks/disk-space');
     const result = await checkDiskSpace();
 
     expect(result.id).toBe('disk-space');
+<<<<<<< HEAD
+=======
+    // Matches the inclusive boundary of the source: < 100 → fail, >= 100 → warn.
+    // The 500 MB boundary test (above) is symmetric: == 500 → ok, < 500 → warn.
+>>>>>>> origin/develop
     expect(result.status).toBe('warn');
   });
 });

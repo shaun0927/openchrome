@@ -5,8 +5,13 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
+import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+} from './_shared/return-after-state';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
@@ -26,6 +31,7 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Value to set. Checkboxes: "true"/"false"',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['ref', 'value', 'tabId'],
   },
@@ -39,6 +45,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const ref = args.ref as string;
   const value = args.value;
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -83,7 +90,21 @@ const handler: ToolHandler = async (
 
     // Get the backend node ID
     let backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
-    if (backendNodeId === undefined) {
+
+    // #831: for `ref_N`-formatted refs (the canonical snapshot output), an
+    // unresolvable or stale ref → STALE_REF. Raw integer / `node_N` formats
+    // are legacy backend-node-id passthroughs and keep their original error.
+    const isRefIdFormat = /^ref_\d+$/.test(ref);
+    if (isRefIdFormat) {
+      const entry = refIdManager.getRef(sessionId, tabId, ref);
+      if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
+        return {
+          content: [{ type: 'text', text: formatStaleRefError(ref) }],
+          isError: true,
+          error: makeStaleRefError(ref),
+        };
+      }
+    } else if (backendNodeId === undefined) {
       return {
         content: [
           {
@@ -97,20 +118,43 @@ const handler: ToolHandler = async (
 
     const cdpClient = sessionManager.getCDPClient();
 
-    // Validate ref identity if fingerprint is available
+    // Validate ref identity if fingerprint is available.
+    //
+    // #831: the validateRef check and the STALE_REF dispatch live OUTSIDE
+    // the try block — a silent CDP failure must NOT downgrade a ref_N to
+    // the legacy "not editable" path. If `DOM.describeNode` rejects we
+    // simply skip the fingerprint check and let `DOM.resolveNode` below
+    // surface the real error.
     const refEntry = refIdManager.getRef(sessionId, tabId, ref);
     if (refEntry && refEntry.tagName) {
+      let nodeLocalName: string | undefined;
       try {
         const { node } = await cdpClient.send<{
           node: { localName: string };
         }>(page, 'DOM.describeNode', { backendNodeId });
+        nodeLocalName = node?.localName;
+      } catch {
+        // Probe failed (element removed, frame detached, etc). Leave
+        // nodeLocalName undefined so the validation block below is skipped.
+      }
 
+      if (nodeLocalName !== undefined) {
         const validation = refIdManager.validateRef(
           sessionId, tabId, ref,
-          node.localName
+          nodeLocalName,
         );
 
         if (!validation.valid && validation.stale) {
+          // #831: explicit `ref_N` refs must NOT silently relocate. The
+          // snapshot-refs contract requires a STALE_REF so the caller knows
+          // to re-snapshot. Legacy raw-id refs keep transparent recovery.
+          if (isRefIdFormat) {
+            return {
+              content: [{ type: 'text', text: formatStaleRefError(ref) }],
+              isError: true,
+              error: makeStaleRefError(ref),
+            };
+          }
           // Attempt transparent recovery: re-find the element using stored metadata
           const relocated = await refIdManager.tryRelocateRef(
             sessionId, tabId, ref, page, cdpClient
@@ -129,8 +173,6 @@ const handler: ToolHandler = async (
             };
           }
         }
-      } catch {
-        // If validation fails, proceed — DOM.resolveNode will catch removed elements
       }
     }
 
@@ -369,9 +411,11 @@ const handler: ToolHandler = async (
     const response = result.result.value;
 
     if (response.success) {
-      return {
+      const successResult: MCPResult = {
         content: [{ type: 'text', text: (response.message || 'Value set successfully') + delta }],
       };
+      await appendReturnAfterState(successResult, page, sessionId, tabId, returnAfterState, context);
+      return successResult;
     } else {
       return {
         content: [
