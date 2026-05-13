@@ -18,6 +18,11 @@ import { normalizeQuery } from '../utils/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
+import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+} from './_shared/return-after-state';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -66,6 +71,7 @@ const definition: MCPToolDefinition = {
         additionalProperties: { type: 'string' },
       },
       verify: VERIFY_FIELD_SCHEMA,
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['tabId'],
   },
@@ -87,6 +93,7 @@ const handler: ToolHandler = async (
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 300, 50), 2000);
   const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
   const verifyMode = coerceVerifyMode(args.verify);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
 
   const sessionManager = getSessionManager();
 
@@ -619,7 +626,7 @@ const handler: ToolHandler = async (
     if (detectorFailedLogin) errorReason = 'login_failed';
     else if (submitFailed) errorReason = 'submit_failed';
 
-    return {
+    const fillFormResult: MCPResult = {
       content: [
         {
           type: 'text',
@@ -635,6 +642,14 @@ const handler: ToolHandler = async (
           : {}),
       ...(fillVerifyReport ? { verify: fillVerifyReport } : {}),
     } as MCPResult;
+    // Snapshot capture happens after the post-action wait inside withDomDelta
+    // (and the optional login-detector poll), so the snapshot reflects the
+    // post-action DOM. Only attach on non-error results — when fill_form
+    // failed there is no point paying for an extra snapshot.
+    if (!isError) {
+      await appendReturnAfterState(fillFormResult, page, sessionId, tabId, returnAfterState, context);
+    }
+    return fillFormResult;
   } catch (error) {
     return {
       content: [

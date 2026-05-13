@@ -58,6 +58,7 @@ function createMockPage(evaluateResult: unknown[] = [], viewport = { width: 1920
     }),
     screenshot: jest.fn().mockResolvedValue(Buffer.from('fake-screenshot-data')),
     viewport: jest.fn().mockReturnValue(viewport),
+    url: jest.fn().mockReturnValue('https://example.test'),
   };
 }
 

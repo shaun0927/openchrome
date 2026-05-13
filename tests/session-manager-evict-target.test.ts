@@ -72,7 +72,7 @@ describe('SessionManager.evictTarget', () => {
     });
 
     await sm.createSession({ id: 's1' });
-    sm.registerExternalTarget('target-1', 's1', 'default');
+    await sm.registerExternalTarget('target-1', 's1', 'default');
     expect(sm.getTargetOwner('target-1')).toEqual({ sessionId: 's1', workerId: 'default' });
 
     const before = counterValueFor('listener_error');
@@ -88,5 +88,65 @@ describe('SessionManager.evictTarget', () => {
       useDefaultContext: true,
     });
     expect(sm.evictTarget('missing-target')).toBe(false);
+  });
+
+  test('registerExternalTarget enforces maxTargetsPerWorker and closes oldest browser target', async () => {
+    const sm = new SessionManager(undefined, {
+      autoCleanup: false,
+      useConnectionPool: false,
+      useDefaultContext: true,
+      maxTargetsPerWorker: 2,
+    });
+
+    await sm.createSession({ id: 's1' });
+    const closeTargetSpy = jest.spyOn(sm, 'closeTarget').mockImplementation(async (_sessionId, targetId) => {
+      sm.evictTarget(targetId);
+      return true;
+    });
+
+    await sm.registerExternalTarget('target-1', 's1', 'default');
+    await sm.registerExternalTarget('target-2', 's1', 'default');
+    await sm.registerExternalTarget('target-3', 's1', 'default');
+
+    expect(closeTargetSpy).toHaveBeenCalledWith('s1', 'target-1');
+    expect(sm.getTargetOwner('target-1')).toBeUndefined();
+    expect(sm.getTargetOwner('target-2')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getTargetOwner('target-3')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getSessionInfo('s1')?.targetCount).toBe(2);
+    expect(sm.getSessionInfo('s1')?.workers[0].targetCount).toBe(2);
+  });
+
+  test('serializes concurrent external registrations so cap cannot be overfilled', async () => {
+    const sm = new SessionManager(undefined, {
+      autoCleanup: false,
+      useConnectionPool: false,
+      useDefaultContext: true,
+      maxTargetsPerWorker: 2,
+    });
+
+    await sm.createSession({ id: 's1' });
+    await sm.registerExternalTarget('target-1', 's1', 'default');
+    await sm.registerExternalTarget('target-2', 's1', 'default');
+
+    const closedTargets: string[] = [];
+    jest.spyOn(sm, 'closeTarget').mockImplementation(async (_sessionId, targetId) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      closedTargets.push(targetId);
+      sm.evictTarget(targetId);
+      return true;
+    });
+
+    await Promise.all([
+      sm.registerExternalTarget('target-3', 's1', 'default'),
+      sm.registerExternalTarget('target-4', 's1', 'default'),
+    ]);
+
+    expect(closedTargets).toEqual(['target-1', 'target-2']);
+    expect(sm.getTargetOwner('target-1')).toBeUndefined();
+    expect(sm.getTargetOwner('target-2')).toBeUndefined();
+    expect(sm.getTargetOwner('target-3')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getTargetOwner('target-4')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getSessionInfo('s1')?.targetCount).toBe(2);
+    expect(sm.getSessionInfo('s1')?.workers[0].targetCount).toBe(2);
   });
 });

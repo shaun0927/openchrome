@@ -11,7 +11,9 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
+import { formatElementMapAsText } from '../vision/screenshot-analyzer';
+import { formatPerceptionSnapshotAsText } from '../vision/perception-provider';
+import { DomAnnotatorPerceptionProvider } from '../vision/providers/dom-annotator-provider';
 import { trackVisionUsage } from '../vision/config';
 
 const definition: MCPToolDefinition = {
@@ -39,6 +41,15 @@ const definition: MCPToolDefinition = {
       interactiveOnly: {
         type: 'boolean',
         description: 'Only show interactive elements (buttons, links, inputs). Default: true',
+      },
+      format: {
+        type: 'string',
+        enum: ['legacy', 'snapshot', 'both'],
+        description: 'Output format: legacy text+image, provider-neutral snapshot JSON, or both. Default: legacy.',
+      },
+      includeImage: {
+        type: 'boolean',
+        description: 'Include annotated image output. Defaults to true for legacy/both and false for snapshot.',
       },
       occlusionFilter: {
         type: 'boolean',
@@ -102,6 +113,16 @@ const handler: ToolHandler = async (
     const showGrid = args.showGrid === true;
     const showBoundingBoxes = args.showBoundingBoxes !== false;
     const interactiveOnly = args.interactiveOnly !== false;
+    const format = (args.format as string | undefined) || 'legacy';
+    if (format !== 'legacy' && format !== 'snapshot' && format !== 'both') {
+      return {
+        content: [{ type: 'text', text: `Error: Invalid format "${format}". Must be "legacy", "snapshot", or "both".` }],
+        isError: true,
+      };
+    }
+    const includeImage = args.includeImage !== undefined
+      ? args.includeImage === true
+      : format !== 'snapshot';
     const occlusionFilter = args.occlusionFilter === true;
     const iframesArg = args.iframes;
     const iframes: 'none' | 'same-origin' | 'all' =
@@ -109,7 +130,8 @@ const handler: ToolHandler = async (
     const modeArg = args.mode;
     const mode: 'viewport' | 'tiled' = modeArg === 'tiled' ? 'tiled' : 'viewport';
 
-    const result = await analyzeScreenshot(page, {
+    const provider = new DomAnnotatorPerceptionProvider(page);
+    const { result, snapshot } = await provider.captureAnnotated(tabId, page.url(), {
       showGrid,
       showBoundingBoxes,
       interactiveOnly,
@@ -122,30 +144,38 @@ const handler: ToolHandler = async (
     const textMap = formatElementMapAsText(result.elementMap);
     console.error(`[vision_find] Analyzed tab ${tabId}: ${result.elementCount} elements in ${result.annotationTimeMs}ms`);
 
-    // P1 codex fix: when mode='tiled' was requested, emit every captured tile
-    // as a separate image block. Previously the response only carried
-    // `result.screenshot` (the first tile), so callers explicitly opting into
-    // tiled mode could not access the additional tile screenshots and the
-    // feature was effectively unusable for downstream vision workflows.
     const tiles = mode === 'tiled' ? (result.tiling?.tiles ?? []) : [];
     const tileNote =
       mode === 'tiled' && tiles.length > 0
-        ? `\n\nTiled mode: ${tiles.length} tile screenshot(s) attached below in document-Y order.`
+        ? `
+
+Tiled mode: ${tiles.length} tile screenshot(s) attached below in document-Y order.`
         : '';
     const imageBlocks =
       tiles.length > 0
         ? tiles.map((t) => ({ type: 'image' as const, data: t.imageBase64, mimeType: t.mimeType }))
         : [{ type: 'image' as const, data: result.screenshot, mimeType: result.mimeType }];
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)${tileNote}\n\n${textMap}`,
-        },
-        ...imageBlocks,
-      ],
-    };
+    const content: MCPResult['content'] = [];
+    if (format === 'legacy' || format === 'both') {
+      content.push({
+        type: 'text',
+        text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)${tileNote}
+
+${textMap}`,
+      });
+    }
+    if (format === 'snapshot' || format === 'both') {
+      content.push({
+        type: 'text',
+        text: formatPerceptionSnapshotAsText(snapshot),
+      });
+    }
+    if (includeImage) {
+      content.push(...imageBlocks);
+    }
+
+    return { content };
   } catch (error) {
     return {
       content: [

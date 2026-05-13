@@ -57,7 +57,7 @@ export interface ChromeProfileInfo {
  * - Track whether the persistent profile is stale relative to the real
  *   Chrome profile using lightweight file-stat hashing.
  * - Perform atomic cookie sync via the `sqlite3` CLI `.backup` command when
- *   available, falling back to a plain file copy otherwise.
+ *   available.
  * - Decide which profile directory Chrome should use (`resolveProfile`).
  */
 export class ProfileManager {
@@ -232,14 +232,16 @@ export class ProfileManager {
    * `sourceDir` into `destDir`.
    *
    * Uses the `sqlite3` CLI `.backup` command for an atomic, consistent
-   * snapshot of the Cookies database. Falls back to a plain file copy when
-   * `sqlite3` is not available.
+   * snapshot of the Cookies database. When `sqlite3` is not available,
+   * cookie sync is skipped because copying Cookies/WAL/SHM files sequentially
+   * can produce an inconsistent snapshot. Non-cookie profile data is still
+   * copied.
    *
    * After a successful sync the metadata file is updated via
    * `updateSyncMetadata`.
    *
    * @returns `{ atomic: true, success: true }` when sqlite3 backup was used,
-   *          `{ atomic: false, success: true }` when the plain-copy fallback was used,
+   *          `{ atomic: false, success: false }` when cookie sync was skipped,
    *          `{ atomic: false, success: false }` when all methods failed.
    */
   syncProfileData(
@@ -295,30 +297,9 @@ export class ProfileManager {
 
           atomic = true;
         } else {
-          // sqlite3 not available — fall back to plain file copy (same as
-          // the legacy copyEssentialProfileData behaviour).
           console.error(
-            '[ProfileManager] sqlite3 not found, falling back to non-atomic cookie copy'
+            '[ProfileManager] sqlite3 not found, skipping cookie sync to avoid non-atomic WAL snapshot'
           );
-
-          const cookieFiles = [
-            'Cookies',
-            'Cookies-wal',
-            'Cookies-shm',
-            'Cookies-journal',
-          ];
-          for (const file of cookieFiles) {
-            const src = path.join(sourceDir, profileSubdir, file);
-            if (fs.existsSync(src)) {
-              try {
-                fs.copyFileSync(src, path.join(destDefault, file));
-              } catch {
-                // Individual file copy failure is non-fatal
-              }
-            }
-          }
-
-          atomic = false;
         }
       }
 
@@ -372,13 +353,15 @@ export class ProfileManager {
         }
       }
 
-      // --- 4. Update metadata -----------------------------------------------
-      this.updateSyncMetadata(sourceDir, profileSubdir);
+      // --- 4. Update cookie sync metadata -----------------------------------
+      if (atomic) {
+        this.updateSyncMetadata(sourceDir, profileSubdir);
+      }
 
       console.error(
         `[ProfileManager] Profile data sync complete (atomic=${atomic}) from ${sourceDir} → ${destDir}`
       );
-      return { atomic, success: true };
+      return { atomic, success: atomic };
     } catch (err) {
       console.error(
         '[ProfileManager] syncProfileData failed (non-fatal):',
@@ -540,7 +523,7 @@ export class ProfileManager {
       return {
         userDataDir: persistentDir,
         profileType: 'persistent',
-        syncPerformed: syncResult.atomic || syncResult.success,
+        syncPerformed: syncResult.atomic,
         ...(profileDirectory && { profileDirectory }),
       };
     }

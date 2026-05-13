@@ -26,6 +26,7 @@ import {
   readSkillGraphResource,
 } from './resources/skill-graph';
 import { HintEngine } from './hints';
+import { buildAutomationInsight, formatAutomationFallback, shouldInjectAutomationFallback } from './hints/result-guidance';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
@@ -56,14 +57,36 @@ import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
 import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
+import { isRunHarnessEnabled } from './run-harness/flags';
+import { extractRunId, getRunStore } from './run-harness/store';
 import {
   substituteSecrets,
   redactSecrets,
+  redactSecretString,
   MissingSecretError,
   getSecretStore,
 } from './core/secrets';
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
+import { RecoveryTrajectoryLedger, type RecoveryResultStatus } from './recovery';
+
+
+function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  if (toolName !== 'act' || !('variables' in args)) {
+    return args;
+  }
+  if (!args.variables || typeof args.variables !== 'object') {
+    return { ...args, variables: '[VARIABLE]' };
+  }
+  if (Array.isArray(args.variables)) {
+    return { ...args, variables: args.variables.map(() => '[VARIABLE]') };
+  }
+  const redactedVariables: Record<string, string> = {};
+  for (const key of Object.keys(args.variables as Record<string, unknown>)) {
+    redactedVariables[key] = '[VARIABLE]';
+  }
+  return { ...args, variables: redactedVariables };
+}
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -164,7 +187,10 @@ export function isConnectionError(error: unknown): boolean {
  *  Task ledger tools (`oc_task_*`) are also listed here because they are pure
  *  ledger operations (or, for `oc_task_start`, just persist a meta row before
  *  background work begins). They never touch the browser themselves, so they
- *  must not trigger Chrome auto-launch on malformed input (#1034). */
+ *  must not trigger Chrome auto-launch on malformed input (#1034).
+ *
+ *  Run-harness tools (`oc_run_*`) and `oc_progress_status` are pure read /
+ *  bookkeeping calls landed on develop after this PR branched — also skip. */
 const SKIP_SESSION_INIT_TOOLS = new Set([
   'oc_stop',
   'oc_reap_orphans',
@@ -179,6 +205,11 @@ const SKIP_SESSION_INIT_TOOLS = new Set([
   'oc_task_wait',
   'oc_task_update',
   'oc_task_finish',
+  'oc_run_start',
+  'oc_run_status',
+  'oc_run_events',
+  'oc_run_finish',
+  'oc_progress_status',
 ]);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
@@ -198,6 +229,7 @@ const STATE_STABLE_HIGH_FREQ_TOOLS = new Set([
   'wait_for',
   'page_content',
   'tabs_context',
+  'oc_progress_status',
 ]);
 
 /**
@@ -334,6 +366,7 @@ export class MCPServer {
   private activityTracker: ActivityTracker | null = null;
   private operationController: OperationController | null = null;
   private hintEngine: HintEngine | null = null;
+  private recoveryLedger: RecoveryTrajectoryLedger | null = null;
   private options: MCPServerOptions;
   private profileWarningShown = false;
   private exposedTier: ToolTier = 1;
@@ -437,6 +470,14 @@ export class MCPServer {
     this.hintEngine.enableLogging(hintsDir);
     this.hintEngine.enableLearning(hintsDir);
 
+    // Initialize passive recovery trajectory ledger (#1017). Default-on with the
+    // existing .openchrome harness logs; set OPENCHROME_RECOVERY_LEDGER=0 to disable.
+    if (process.env.OPENCHROME_RECOVERY_LEDGER !== '0') {
+      this.recoveryLedger = new RecoveryTrajectoryLedger({
+        dirPath: path.join(process.cwd(), '.openchrome', 'recovery'),
+      });
+    }
+
     // Initialize task journal
     getTaskJournal().init().catch((err: unknown) => {
       console.error('[MCPServer] Task journal init failed:', err);
@@ -511,6 +552,44 @@ export class MCPServer {
     validateToolSchema(name, definition.inputSchema);
     this.tools.set(name, { name, handler, definition, ...options });
     this.manifestVersion++;
+  }
+
+  /**
+   * Remove a previously-registered tool by name.
+   *
+   * Mirrors {@link registerTool} for the pilot dynamic-skill synthesis
+   * family (issue #889): when a session ends or a skill is removed, the
+   * synthesized tool must disappear from `tools/list`. Returns true
+   * iff a matching tool existed and was removed. The
+   * `list_changed` notification fires only when the client supports it
+   * (mirrors `expandToolTier`'s gate at line 302 above) so unknown
+   * clients — which already have every tool — are not spammed with
+   * notifications they would otherwise ignore.
+   */
+  unregisterTool(name: string): boolean {
+    if (typeof name !== 'string' || name.length === 0) return false;
+    const removed = this.tools.delete(name);
+    if (removed) {
+      this.manifestVersion++;
+      if (this.clientSupportsListChanged) {
+        this.sendNotification('notifications/tools/list_changed');
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Emit a single `notifications/tools/list_changed` frame iff the
+   * client supports it. Used by the pilot dynamic-skills bootstrap
+   * (issue #889) after a synthesis batch lands so the agent re-fetches
+   * `tools/list` and sees the new synthesized tool(s). The check
+   * mirrors {@link expandToolTier} so behavior is consistent across
+   * the two notification sources.
+   */
+  emitListChanged(): void {
+    if (this.clientSupportsListChanged) {
+      this.sendNotification('notifications/tools/list_changed');
+    }
   }
 
   /**
@@ -1282,6 +1361,7 @@ export class MCPServer {
 
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
+    const telemetryToolArgs = redactActVariablesForTelemetry(toolName, toolArgs);
     // Use 'default' session if no sessionId is provided
     const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
 
@@ -1547,9 +1627,23 @@ export class MCPServer {
     const taskEnvelopeId = toolName.startsWith('oc_task_') ? undefined : extractTaskId(toolArgs);
 
     // Start activity tracking
-    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
-    getDashboardState().recordToolStart(sessionId || 'default', toolName, toolArgs, callId);
+    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
+    getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
     const toolStartTime = Date.now();
+    const runHarnessId = isRunHarnessEnabled() ? extractRunId(toolArgs) : undefined;
+    if (runHarnessId && !toolName.startsWith('oc_run_')) {
+      try {
+        getRunStore().appendToolStarted({
+          run_id: runHarnessId,
+          session_id: sessionId,
+          tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+          tool: toolName,
+          args: toolArgs,
+        });
+      } catch {
+        // best-effort run ledger; never alter tool behavior
+      }
+    }
 
     // Adaptive heartbeat: switch to heavy mode during tool execution
     try {
@@ -1763,6 +1857,8 @@ export class MCPServer {
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
+      result = redactSecrets(result);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');
 
       // Record Prometheus metrics
@@ -1778,7 +1874,7 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, true);
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, true);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -1790,7 +1886,7 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const summary = (result as Record<string, unknown>)?._summary as string | undefined;
-          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -1884,23 +1980,34 @@ export class MCPServer {
       // user. Mirrors the error-path injection below for consistency.
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
+        const automation = buildAutomationInsight(toolName, result as Record<string, unknown>, false, hintResult ?? undefined);
+        if (automation) {
+          (result as Record<string, unknown>)._automation = automation;
+        }
         if (hintResult) {
           const injectHint =
             verbosity !== 'compact' ||
             hintResult.severity === 'critical';
+          (result as Record<string, unknown>)._hint = hintResult.hint;
+          (result as Record<string, unknown>)._hintMeta = {
+            severity: hintResult.severity,
+            rule: hintResult.rule,
+            fireCount: hintResult.fireCount,
+            ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+            ...(hintResult.context && { context: hintResult.context }),
+            ...(automation && { automation }),
+          };
           if (injectHint) {
-            (result as Record<string, unknown>)._hint = hintResult.hint;
-            (result as Record<string, unknown>)._hintMeta = {
-              severity: hintResult.severity,
-              rule: hintResult.rule,
-              fireCount: hintResult.fireCount,
-              ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
-              ...(hintResult.context && { context: hintResult.context }),
-            };
             const content = (result as Record<string, unknown>).content;
             if (Array.isArray(content)) {
               content.push({ type: 'text', text: `\n${hintResult.hint}` });
             }
+          }
+        }
+        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
+          const content = (result as Record<string, unknown>).content;
+          if (Array.isArray(content)) {
+            content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
           }
         }
       }
@@ -1924,6 +2031,22 @@ export class MCPServer {
         ok: result.isError !== true,
       });
 
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          getRunStore().appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+            tool: toolName,
+            args: toolArgs,
+            ok: !result.isError,
+            duration_ms: Date.now() - toolStartTime,
+          });
+        } catch {
+          // best-effort run ledger; never alter tool behavior
+        }
+      }
+
       // ─── Secrets redaction (#834) ─────────────────────────────────────
       // Last line of defense before the MCP envelope: replace any literal
       // secret value still present in the response (handler may have echoed
@@ -1935,11 +2058,13 @@ export class MCPServer {
       return finalResult;
     } catch (error) {
       const message = formatError(error);
+      const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
       const aborted = abortReason !== null;
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
       getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
 
       // Audit log failed invocation — same correlation fields as success path.
@@ -1973,7 +2098,7 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, false);
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, false);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -1985,7 +2110,7 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const errMsg = message;
-          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -2068,6 +2193,10 @@ export class MCPServer {
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId);
+        const automation = buildAutomationInsight(toolName, errResult as Record<string, unknown>, true, hintResult ?? undefined);
+        if (automation) {
+          (errResult as Record<string, unknown>)._automation = automation;
+        }
         if (hintResult) {
           (errResult as Record<string, unknown>)._hint = hintResult.hint;
           (errResult as Record<string, unknown>)._hintMeta = {
@@ -2076,10 +2205,33 @@ export class MCPServer {
             fireCount: hintResult.fireCount,
             ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
             ...(hintResult.context && { context: hintResult.context }),
+            ...(automation && { automation }),
           };
           if (Array.isArray(errResult.content)) {
             errResult.content.push({ type: 'text', text: `\n${hintResult.hint}` });
           }
+        }
+        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
+          if (Array.isArray(errResult.content)) {
+            errResult.content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
+          }
+        }
+      }
+
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          getRunStore().appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+            tool: toolName,
+            args: toolArgs,
+            ok: false,
+            duration_ms: Date.now() - toolStartTime,
+            message: displayMessage,
+          });
+        } catch {
+          // best-effort run ledger; never alter tool behavior
         }
       }
 
@@ -2373,6 +2525,53 @@ export class MCPServer {
    * Get a tool handler by name (for internal server-side plan execution).
    * Returns null if the tool is not registered.
    */
+
+  private recordRecoveryTrajectory(
+    callId: string,
+    toolName: string,
+    sessionId: string,
+    toolArgs: Record<string, unknown>,
+    resultStatus: RecoveryResultStatus,
+    result?: MCPResult,
+    error?: string,
+  ): void {
+    if (!this.recoveryLedger || !this.activityTracker) return;
+
+    try {
+      const recent = this.activityTracker.getRecentCalls(3, sessionId);
+      const current = recent.find((call) => call.id === callId);
+      const tabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+      const previousTrajectory = this.recoveryLedger.getLastNode(sessionId, tabId);
+      const previousFailed =
+        previousTrajectory?.resultStatus === 'error' ||
+        previousTrajectory?.resultStatus === 'no_progress' ||
+        previousTrajectory?.resultStatus === 'aborted';
+      const recovered =
+        resultStatus === 'success' &&
+        previousTrajectory !== undefined &&
+        previousFailed &&
+        previousTrajectory.toolName !== toolName;
+      const progressStatus =
+        resultStatus === 'error' || resultStatus === 'no_progress' || current?.result === 'error'
+          ? 'stuck'
+          : 'unknown';
+
+      this.recoveryLedger.record({
+        sessionId,
+        tabId,
+        toolName,
+        args: toolArgs,
+        resultStatus: recovered ? 'recovered' : resultStatus,
+        progressStatus,
+        error,
+        result,
+        recoveryTool: recovered ? toolName : undefined,
+      });
+    } catch {
+      // Recovery telemetry is best-effort and must not affect tool behavior.
+    }
+  }
+
   getToolHandler(toolName: string): ToolHandler | null {
     const registry = this.tools.get(toolName);
     return registry ? registry.handler : null;
@@ -2436,7 +2635,7 @@ export class MCPServer {
     warning: string | null;
   } | null {
     try {
-      const launcher = getChromeLauncher();
+      const launcher = getChromeLauncher(getGlobalConfig().port);
       const state = launcher.getProfileState();
 
       const profile: Record<string, unknown> = {

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "skills": {
+    "skill_example_login_v1": {
+      "skillId": "skill_example_login_v1",
+      "domain": "example.com",
+      "name": "login",
+      "steps": {
+        "parameters": [
+          { "name": "username", "type": "string", "description": "The username", "required": true },
+          { "name": "password", "type": "string", "description": "The password", "required": true }
+        ],
+        "actions": [
+          { "kind": "fill", "selector": "#username", "valueParam": "username" },
+          { "kind": "fill", "selector": "#password", "valueParam": "password" },
+          { "kind": "click", "selector": "button[type=submit]" },
+          { "kind": "wait_for", "selector": ".logged-in", "timeout_ms": 5000 }
+        ]
+      },
+      "contractId": "ctr_example_login_v1",
+      "successCount": 3,
+      "lastUsedAt": 1715520000000,
+      "frozenSnapshotPath": null
+    }
+  }
+}

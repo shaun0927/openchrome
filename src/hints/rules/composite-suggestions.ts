@@ -12,6 +12,18 @@ function recentToolCount(ctx: HintContext, name: string): number {
   return ctx.recentCalls.filter(c => c.toolName === name).length;
 }
 
+/**
+ * True when the most recent call's args carried a non-'none' `returnAfterState`.
+ * Such calls already inlined a fresh page snapshot in their response, so any
+ * "consider read_page" follow-up nag is noise — the agent has already
+ * observed the page state. See issue #845.
+ */
+function lastCallCarriedSnapshot(ctx: HintContext): boolean {
+  if (ctx.recentCalls.length === 0) return false;
+  const ras = ctx.recentCalls[0].args?.returnAfterState;
+  return ras === 'ax' || ras === 'dom';
+}
+
 export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'find-then-click',
@@ -116,6 +128,11 @@ export const compositeSuggestionRules: HintRule[] = [
         lastToolWas(ctx, 'navigate') ||
         lastToolWas(ctx, 'interact')
       ) {
+        // Suppress when the previous action already returned a snapshot
+        // via returnAfterState — the agent has already observed page state
+        // in that response, so a follow-up read_page is the user's choice,
+        // not something to nag about. See issue #845.
+        if (lastCallCarriedSnapshot(ctx)) return null;
         return 'Hint: Use inspect(query) for quick page state checks after actions — e.g. inspect("error messages") or inspect("form field values").';
       }
       return null;

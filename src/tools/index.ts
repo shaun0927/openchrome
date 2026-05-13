@@ -70,6 +70,7 @@ import { registerListProfilesTool } from './list-profiles';
 import { registerSessionSnapshotTool } from './session-snapshot';
 import { registerSessionResumeTool } from './session-resume';
 import { registerJournalTool } from './journal';
+import { registerOcReflectTool } from './oc-reflect';
 
 // Self-healing tools (#347)
 import { registerConnectionHealthTool } from './connection-health';
@@ -143,6 +144,12 @@ import { registerOcObserveTool } from './oc-observe';
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
+// Action schema normalizer (#1062) — side-effect-free diagnostics.
+import { registerOcNormalizeActionTool } from './oc-normalize-action';
+import { isRunHarnessEnabled } from '../run-harness/flags';
+import { registerRunHarnessTools } from '../run-harness/tools';
+// Read-only progress diagnostics (#1060).
+import { registerOcProgressStatusTool } from './oc-progress-status';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -221,6 +228,7 @@ export function registerAllTools(server: MCPServer): void {
   registerSessionSnapshotTool(server);
   registerSessionResumeTool(server);
   registerJournalTool(server);
+  registerOcReflectTool(server);
 
   // Self-healing tools (#347)
   registerConnectionHealthTool(server);
@@ -257,6 +265,12 @@ export function registerAllTools(server: MCPServer): void {
 
   // Outcome Contracts (#784) — single-call assertion verifier
   registerOcAssertTool(server);
+
+  // Action schema normalizer (#1062) — no browser side effects.
+  registerOcNormalizeActionTool(server);
+
+  // Read-only anti-wandering diagnostics (#1060).
+  registerOcProgressStatusTool(server);
 
   // Outcome Contracts (#792) — evidence bundle capture
   registerOcEvidenceBundleTool(server);
@@ -336,6 +350,11 @@ export function registerAllTools(server: MCPServer): void {
   registerOcDevToolsUrlTool(server);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
   registerOcContextTools(server);
+
+  // Run harness (#1021) — opt-in tool-call event ledger.
+  if (isRunHarnessEnabled()) {
+    registerRunHarnessTools(server);
+  }
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
