@@ -14,12 +14,30 @@ import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
+import { detectPagination, type PaginationInfo } from '../utils/pagination-detector';
 import {
   getBase64EncodedByteLength,
   resolveViewportDimensions,
   validateCaptureArea,
   validateInlineImagePayload,
 } from '../utils/screenshot-guards';
+
+function formatPaginationGuidance(pagination: PaginationInfo): string {
+  const detail = pagination.type === 'none'
+    ? ''
+    : ` detected (${pagination.type}${pagination.currentPage !== undefined ? ` page ${pagination.currentPage}` : ''}${pagination.totalPages !== undefined ? ` of ${pagination.totalPages}` : ''})`;
+  return `[Pagination Detected] Pagination${detail}. Use batch_paginate to collect pages/items; avoid manual next/scroll loops.`;
+}
+
+async function getPaginationGuidance(page: import('puppeteer-core').Page, tabId: string): Promise<string | null> {
+  try {
+    const pagination = await detectPagination(page, tabId);
+    if (pagination.type === 'none' || !pagination.hasNext) return null;
+    return formatPaginationGuidance(pagination);
+  } catch {
+    return null;
+  }
+}
 
 const definition: MCPToolDefinition = {
   name: 'computer',
@@ -279,6 +297,11 @@ const handler: ToolHandler = async (
           const content: MCPContent[] = [
             { type: 'image', data: screenshot.data, mimeType: screenshot.mimeType },
           ];
+
+          const paginationGuidance = await getPaginationGuidance(page, tabId);
+          if (paginationGuidance) {
+            content.push({ type: 'text', text: paginationGuidance });
+          }
 
           // annotated mode: append note about repeated screenshot
           if (effectiveMode === 'annotated') {
