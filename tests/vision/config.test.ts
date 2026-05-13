@@ -58,9 +58,27 @@ describe('getVisionMode (additional coverage)', () => {
     expect(getVisionMode()).toBe('fallback');
   });
 
-  it('returns fallback when env is empty string', async () => {
+  it('returns off when env is empty string (#831 default flipped)', async () => {
     process.env.OPENCHROME_VISION_MODE = '';
     const { getVisionMode } = await import('../../src/vision/config');
+    expect(getVisionMode()).toBe('off');
+  });
+
+  it('returns off when env is unset (#831 default flipped)', async () => {
+    delete process.env.OPENCHROME_VISION_MODE;
+    const { getVisionMode } = await import('../../src/vision/config');
+    expect(getVisionMode()).toBe('off');
+  });
+
+  it('returns fallback when env is "on" (alias, #831)', async () => {
+    process.env.OPENCHROME_VISION_MODE = 'on';
+    const { getVisionMode } = await import('../../src/vision/config');
     expect(getVisionMode()).toBe('fallback');
+  });
+
+  it('returns auto when env is "auto"', async () => {
+    process.env.OPENCHROME_VISION_MODE = 'auto';
+    const { getVisionMode } = await import('../../src/vision/config');
+    expect(getVisionMode()).toBe('auto');
   });
 });
