@@ -54,6 +54,10 @@ export const READ_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   'oc_recording_list',
   'oc_recording_export',
 
+  // Goal-level TaskRun read-only queries (#1039)
+  'oc_task_run_get',
+  'oc_task_run_list',
+
   // Local, non-browser-mutating utilities
   'oc_totp_generate',
 ]);
