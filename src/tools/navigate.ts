@@ -1037,6 +1037,31 @@ export function registerNavigateTool(server: MCPServer): void {
  * (P2: zero-impact-when-off). Errors in the synthesis hook must never
  * fail the navigate response.
  */
+const COMMON_MULTI_LABEL_PUBLIC_SUFFIXES = new Set([
+  'co.uk',
+  'com.au',
+  'com.br',
+  'com.cn',
+  'com.mx',
+  'com.tr',
+  'co.jp',
+  'co.kr',
+  'co.nz',
+  'co.in',
+]);
+
+function domainForDynamicSkillLookup(hostname: string): string {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  if (host.length === 0 || host === 'localhost' || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+    return host;
+  }
+  const parts = host.split('.').filter(Boolean);
+  if (parts.length <= 2) return host;
+  const suffix2 = parts.slice(-2).join('.');
+  const labelCount = COMMON_MULTI_LABEL_PUBLIC_SUFFIXES.has(suffix2) ? 3 : 2;
+  return parts.slice(-labelCount).join('.');
+}
+
 async function emitDomainEnteredIfActive(sessionId: string, url: string): Promise<void> {
   if (!isDynamicSkillsEnabled()) return;
   try {
@@ -1046,9 +1071,10 @@ async function emitDomainEnteredIfActive(sessionId: string, url: string): Promis
     // time, not module-load time.
     const events = await import('../pilot/dynamic-skills/events.js');
     const host = new URL(url).hostname.toLowerCase();
-    if (host.length === 0) return;
+    const domain = domainForDynamicSkillLookup(host);
+    if (domain.length === 0) return;
     events.dynamicSkillEvents.emit('domain_entered', {
-      domain: host,
+      domain,
       url,
       sessionId,
     });
@@ -1064,4 +1090,7 @@ async function emitDomainEnteredIfActive(sessionId: string, url: string): Promis
 // success paths below. The export is here for the pilot dynamic-skills
 // integration tests to exercise the hook without driving the full
 // browser stack.
-export { emitDomainEnteredIfActive as _emitDomainEnteredForTesting };
+export {
+  emitDomainEnteredIfActive as _emitDomainEnteredForTesting,
+  domainForDynamicSkillLookup as _domainForDynamicSkillLookupForTesting,
+};
