@@ -144,6 +144,8 @@ import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 import { registerOcContextTools } from './oc-context';
 import { isRunHarnessEnabled } from '../run-harness/flags';
 import { registerRunHarnessTools } from '../run-harness/tools';
+// Read-only progress diagnostics (#1060).
+import { registerOcProgressStatusTool } from './oc-progress-status';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -259,6 +261,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Outcome Contracts (#784) — single-call assertion verifier
   registerOcAssertTool(server);
+
+  // Read-only anti-wandering diagnostics (#1060).
+  registerOcProgressStatusTool(server);
 
   // Outcome Contracts (#792) — evidence bundle capture
   registerOcEvidenceBundleTool(server);
