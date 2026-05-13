@@ -382,6 +382,6 @@ describe('crawl cache root resolution', () => {
     delete process.env.OPENCHROME_CRAWL_CACHE_DIR;
     const { defaultCrawlCacheRootDir } = await import('../../../src/core/crawl/content-cache');
 
-    expect(defaultCrawlCacheRootDir()).toBe('/tmp/openchrome-home-test/cache/crawl');
+    expect(defaultCrawlCacheRootDir()).toBe(path.join('/tmp/openchrome-home-test', 'cache', 'crawl'));
   });
 });
