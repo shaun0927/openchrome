@@ -136,11 +136,11 @@ async function validateLocatorCandidate(
       await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
       const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId }) as { model?: { content?: number[] } };
       const content = boxModel.model?.content;
-      if (!content || content.length < 8) return null;
+      if (!content || content.length < 8) throw new Error('invalid box model');
       const [x1, y1,, , x2,, , y2] = content;
       const width = Math.abs(x2 - x1);
       const height = Math.abs(y2 - y1);
-      if (width <= 0 || height <= 0) return null;
+      if (width <= 0 || height <= 0) throw new Error('invalid box dimensions');
       return {
         ...candidate,
         selector: candidate.selector ?? candidate.ref ?? `backendNodeId:${backendNodeId}`,
@@ -148,7 +148,7 @@ async function validateLocatorCandidate(
         rect: { x: (x1 + x2) / 2, y: (y1 + y2) / 2, width, height },
       };
     } catch {
-      return null;
+      // Fall through to selector validation when a provider supplied both selector and backendNodeId.
     }
   }
 
@@ -645,9 +645,14 @@ const handler: ToolHandler = async (
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           continue;
         }
-        const fallback = locatorFallbackEnabled
-          ? await runLocatorFallbackForPage(page, 'ELEMENT_NOT_FOUND')
-          : null;
+        let fallback: MCPResult | null = null;
+        if (locatorFallbackEnabled) {
+          try {
+            fallback = await runLocatorFallbackForPage(page, 'ELEMENT_NOT_FOUND');
+          } catch {
+            fallback = null;
+          }
+        }
         if (fallback) return fallback;
         return {
           content: [{ type: 'text', text: `No elements found matching "${query}"` }],
@@ -679,9 +684,14 @@ const handler: ToolHandler = async (
     const bestMatch = bestElement;
 
     if (!bestMatch || bestMatch.score < 10) {
-      const fallback = locatorFallbackEnabled
-        ? await runLocatorFallbackForPage(page, 'AMBIGUOUS_SELECTOR')
-        : null;
+      let fallback: MCPResult | null = null;
+      if (locatorFallbackEnabled) {
+        try {
+          fallback = await runLocatorFallbackForPage(page, 'AMBIGUOUS_SELECTOR');
+        } catch {
+          fallback = null;
+        }
+      }
       if (fallback) return fallback;
       return {
         content: [
