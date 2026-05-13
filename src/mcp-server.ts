@@ -59,6 +59,7 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
 import {
   substituteSecrets,
   redactSecrets,
@@ -159,8 +160,35 @@ export function isConnectionError(error: unknown): boolean {
 }
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
- *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish', 'oc_progress_status']);
+ *  sleep/wake). Skip session initialization so recovery handlers can always run.
+ *
+ *  Task ledger tools (`oc_task_*`) are also listed here because they are pure
+ *  ledger operations (or, for `oc_task_start`, just persist a meta row before
+ *  background work begins). They never touch the browser themselves, so they
+ *  must not trigger Chrome auto-launch on malformed input (#1034).
+ *
+ *  Run-harness tools (`oc_run_*`) and `oc_progress_status` are pure read /
+ *  bookkeeping calls landed on develop after this PR branched — also skip. */
+const SKIP_SESSION_INIT_TOOLS = new Set([
+  'oc_stop',
+  'oc_reap_orphans',
+  'oc_profile_status',
+  'oc_session_snapshot',
+  'oc_session_resume',
+  'oc_journal',
+  'oc_task_start',
+  'oc_task_list',
+  'oc_task_get',
+  'oc_task_cancel',
+  'oc_task_wait',
+  'oc_task_update',
+  'oc_task_finish',
+  'oc_run_start',
+  'oc_run_status',
+  'oc_run_events',
+  'oc_run_finish',
+  'oc_progress_status',
+]);
 
 const RUN_HARNESS_LONG_TASK_TOOLS = new Set([
   'execute_plan',
@@ -318,6 +346,30 @@ export interface MCPServerOptions {
    * When undefined, all capabilities are exposed (default, P2-compliant).
    */
   capabilityFilter?: Set<ToolCapability>;
+}
+
+
+const TASK_ENVELOPE_BROWSER_TOOLS = new Set([
+  'navigate',
+  'read_page',
+  'find',
+  'interact',
+  'act',
+  'fill_form',
+  'form_input',
+  'computer',
+  'page_screenshot',
+  'tabs_context',
+  'tabs_list',
+  'tabs_get',
+  'inspect',
+  'vision_find',
+  'oc_assert',
+]);
+
+function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>): string | undefined {
+  if (!TASK_ENVELOPE_BROWSER_TOOLS.has(toolName)) return undefined;
+  return extractTaskId(args);
 }
 
 export class MCPServer {
@@ -1621,6 +1673,8 @@ export class MCPServer {
       // CDPClient may not be initialized — proceed with normal flow
     }
 
+    const taskEnvelopeId = taskEnvelopeIdForTool(toolName, toolArgs);
+
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
     getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
@@ -2023,6 +2077,17 @@ export class MCPServer {
         };
       }
 
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: result.isError !== true,
+      });
 
       if (runHarnessId && !toolName.startsWith('oc_run_')) {
         try {
@@ -2261,6 +2326,18 @@ export class MCPServer {
         }
 
       }
+
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: !errorIsError,
+      });
 
       // Secrets redaction (#834) — see success path. Error messages can
       // include the literal value (e.g. "type ... failed for value X").
