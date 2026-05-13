@@ -159,8 +159,27 @@ export function isConnectionError(error: unknown): boolean {
 }
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
- *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
+ *  sleep/wake). Skip session initialization so recovery handlers can always run.
+ *
+ *  Task ledger tools (`oc_task_*`) are also listed here because they are pure
+ *  ledger operations (or, for `oc_task_start`, just persist a meta row before
+ *  background work begins). They never touch the browser themselves, so they
+ *  must not trigger Chrome auto-launch on malformed input (#1034). */
+const SKIP_SESSION_INIT_TOOLS = new Set([
+  'oc_stop',
+  'oc_reap_orphans',
+  'oc_profile_status',
+  'oc_session_snapshot',
+  'oc_session_resume',
+  'oc_journal',
+  'oc_task_start',
+  'oc_task_list',
+  'oc_task_get',
+  'oc_task_cancel',
+  'oc_task_wait',
+  'oc_task_update',
+  'oc_task_finish',
+]);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
