@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<!--
+  Skill-replay fixture (#875). Bundled, self-contained HTML used by the
+  oc_skill_replay verification scenarios. Intentionally minimal — no external
+  scripts, no network calls, no fonts.
+
+  The page exposes a 4-control form:
+    1. Name           (input[type=text]      id=name)
+    2. Email          (input[type=email]     id=email)
+    3. Captcha        (input[type=text]      id=captcha)
+    4. Submit         (button[type=submit]   id=submit)
+
+  Submission flips a #status banner so an oc_assert contract can verify the
+  flow completed without leaving the page.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OpenChrome skill-replay fixture</title>
+    <style>
+      body {
+        font-family: -apple-system, sans-serif;
+        max-width: 480px;
+        margin: 2rem auto;
+        padding: 1rem;
+      }
+      label {
+        display: block;
+        margin: 0.5rem 0 0.25rem;
+        font-weight: 600;
+      }
+      input,
+      button {
+        width: 100%;
+        padding: 0.5rem;
+        font-size: 1rem;
+        box-sizing: border-box;
+      }
+      button {
+        margin-top: 1rem;
+        background: #2563eb;
+        color: white;
+        border: none;
+        border-radius: 0.25rem;
+        cursor: pointer;
+      }
+      #status {
+        margin-top: 1rem;
+        padding: 0.5rem;
+        border-radius: 0.25rem;
+        display: none;
+      }
+      #status.ok {
+        display: block;
+        background: #ecfdf5;
+        color: #047857;
+      }
+      #status.err {
+        display: block;
+        background: #fef2f2;
+        color: #b91c1c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Form flow</h1>
+    <form id="form">
+      <label for="name">Name</label>
+      <input id="name" name="name" type="text" autocomplete="off" />
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="off" />
+
+      <label for="captcha">Captcha</label>
+      <input id="captcha" name="captcha" type="text" autocomplete="off" />
+
+      <button id="submit" type="submit" aria-label="Submit">Submit</button>
+    </form>
+    <div id="status" role="status"></div>
+    <script>
+      document.getElementById('form').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var status = document.getElementById('status');
+        var ok =
+          document.getElementById('name').value &&
+          document.getElementById('email').value &&
+          document.getElementById('captcha').value;
+        if (ok) {
+          status.className = 'ok';
+          status.textContent = 'Submitted successfully.';
+        } else {
+          status.className = 'err';
+          status.textContent = 'All fields are required.';
+        }
+      });
+    </script>
+  </body>
+</html>

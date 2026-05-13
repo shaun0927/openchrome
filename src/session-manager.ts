@@ -30,6 +30,7 @@ import { getTargetId } from './utils/puppeteer-helpers';
 import { safeTitle } from './utils/safe-title';
 import { getMetricsCollector } from './metrics/collector';
 import { getLifecycleBus } from './core/lifecycle';
+import { flush as flushRecorderBuffer } from './core/skill-memory/recorder-buffer';
 import type { LifecycleEvent, SessionDestroyReason } from './core/lifecycle';
 import { getTenantManager, isStrictTenantIsolationEnabled } from './tenant/registry';
 import type { TenantManager } from './tenant/manager';
@@ -1647,6 +1648,7 @@ export class SessionManager {
    * Handle target closed event
    */
   onTargetClosed(targetId: string): void {
+    flushRecorderBuffer(targetId);
     const ownerInfo = this.targetToWorker.get(targetId);
     if (ownerInfo) {
       const session = this.sessions.get(ownerInfo.sessionId);
