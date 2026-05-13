@@ -129,6 +129,8 @@ import { registerOcTaskListTool } from './oc-task-list';
 import { registerOcTaskGetTool } from './oc-task-get';
 import { registerOcTaskCancelTool } from './oc-task-cancel';
 import { registerOcTaskWaitTool } from './oc-task-wait';
+import { registerOcTaskUpdateTool } from './oc-task-update';
+import { registerOcTaskFinishTool } from './oc-task-finish';
 // Doctor report tool (#898) — read cached `openchrome doctor` output
 import { registerOcDoctorReportTool } from './oc-doctor-report';
 // Performance insights two-step API (#846)
@@ -300,6 +302,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_run_start: 'core',
   oc_run_status: 'core',
   oc_task_cancel: 'core',
+  oc_task_finish: 'core',
   oc_task_get: 'core',
   oc_task_list: 'core',
   oc_task_run_checkpoint: 'core',
@@ -310,6 +313,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_task_run_start: 'core',
   oc_task_run_update: 'core',
   oc_task_start: 'core',
+  oc_task_update: 'core',
   oc_task_wait: 'core',
 };
 
@@ -514,6 +518,8 @@ export function registerAllTools(server: MCPServer): void {
   registerOcTaskGetTool(server);
   registerOcTaskCancelTool(server);
   registerOcTaskWaitTool(server);
+  registerOcTaskUpdateTool(server);
+  registerOcTaskFinishTool(server);
 
   // Reap any RUNNING task whose owner pid is no longer alive. Runs
   // once at server start (issue #855 invariant #2) so a crash on a
