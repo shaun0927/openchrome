@@ -239,6 +239,7 @@ describe('DOM Serializer', () => {
           attributes: [
             'value', 'Tom & "Jerry" <Cartoon> > Show',
             'placeholder', 'Use "quotes" & <angle> brackets',
+            'title', "Bob's <special> label",
           ],
           children: [],
         }],
@@ -254,6 +255,7 @@ describe('DOM Serializer', () => {
     expect(line).toBeDefined();
     expect(line).toContain('value="Tom &amp; &quot;Jerry&quot; &lt;Cartoon&gt; &gt; Show"');
     expect(line).toContain('placeholder="Use &quot;quotes&quot; &amp; &lt;angle&gt; brackets"');
+    expect(line).toContain('title="Bob&apos;s &lt;special&gt; label"');
     expect(line).not.toContain('Tom & "Jerry" <Cartoon> > Show');
   });
 

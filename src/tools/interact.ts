@@ -20,6 +20,12 @@ import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-class
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
 import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+  type ReturnAfterState,
+} from './_shared/return-after-state';
+import {
   formatNodeRefToken,
   formatUidEvictedError,
   getCurrentLoaderId,
@@ -29,6 +35,7 @@ import {
 } from '../core/perception/node-ref';
 import { dispatchCoordinateClick } from '../cdp/input';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import { guardIrreversibleBrowserAction } from '../harness/irreversible-action';
 
 /**
  * Inject the structured {@link VerifyReport} onto an MCPResult under
@@ -104,6 +111,7 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
       ref: {
         type: 'string',
         description:
@@ -145,10 +153,25 @@ type PostActionInput = {
   verify: boolean | undefined;
   verifyReport?: VerifyReport;
   extraTopLevel?: Record<string, unknown>;
+  sessionId?: string;
+  tabId?: string;
+  returnAfterState?: ReturnAfterState;
 };
 
 async function buildPostActionResponse(input: PostActionInput): Promise<MCPResult> {
-  const { page, context, headerLine, delta, returnFormat, verify, verifyReport, extraTopLevel } = input;
+  const {
+    page,
+    context,
+    headerLine,
+    delta,
+    returnFormat,
+    verify,
+    verifyReport,
+    extraTopLevel,
+    sessionId,
+    tabId,
+    returnAfterState = 'none',
+  } = input;
 
   const lines: string[] = [headerLine];
 
@@ -299,11 +322,14 @@ async function buildPostActionResponse(input: PostActionInput): Promise<MCPResul
   ];
   if (screenshotContent) responseContent.push(screenshotContent);
 
-  const result = {
+  const result = attachVerifyReport({
     content: responseContent,
     ...(extraTopLevel || {}),
-  } as MCPResult;
-  return attachVerifyReport(result, verifyReport);
+  } as MCPResult, verifyReport);
+  if (sessionId && tabId) {
+    await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+  }
+  return result;
 }
 
 const handler: ToolHandler = async (
@@ -324,6 +350,7 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
+<<<<<<< HEAD
   const intent = args.intent as string | undefined;
 
   // Validate intent when provided — use typeof guard for null-safety
@@ -341,6 +368,9 @@ const handler: ToolHandler = async (
       };
     }
   }
+=======
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+>>>>>>> origin/develop
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -437,7 +467,9 @@ const handler: ToolHandler = async (
         } catch { /* screenshot failed, non-fatal */ }
       }
 
-      return { content: resultContent };
+      const coordinateResult = { content: resultContent } as MCPResult;
+      await appendReturnAfterState(coordinateResult, page, sessionId, tabId, returnAfterState, context);
+      return coordinateResult;
     } catch (error) {
       return {
         content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
@@ -579,6 +611,9 @@ const handler: ToolHandler = async (
           verify: verifyMode === 'screenshot' || verifyMode === 'both',
           verifyReport: refVerifyReport,
           extraTopLevel: { via: 'ref' },
+          sessionId,
+          tabId,
+          returnAfterState,
         });
       } catch (refErr) {
         throwIfAborted(context);
@@ -710,7 +745,9 @@ const handler: ToolHandler = async (
       const lines: string[] = [line, refToken];
       if (nrDelta) lines.push('', '[DOM Delta]', nrDelta);
 
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
+      const nodeRefResult = { content: [{ type: 'text', text: lines.join('\n') }] } as MCPResult;
+      await appendReturnAfterState(nodeRefResult, page, sessionId, tabId, returnAfterState, context);
+      return nodeRefResult;
     }
 
     const queryString = query as string;
@@ -764,18 +801,28 @@ const handler: ToolHandler = async (
         // Perform action with DOM delta — wrapped in runVerify so the per-action
         // verify report (AX-hash + pHash) is captured around the actual click.
         const isStealth = sessionManager.isStealthTarget(tabId);
-        const { verify: axVerifyReport, result: axActionResult } = await runVerify(
-          page,
-          verifyMode,
-          async () =>
-            withDomDelta(page, async () => {
-              // Stealth: use Bézier curve mouse path to avoid bot detection
-              if (isStealth) await humanMouseMove(page, axX, axY);
-              if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
-              else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
-              else await page.mouse.click(axX, axY);
-            }, { settleMs: Math.max(150, waitAfter) }),
+        const axGuard = await guardIrreversibleBrowserAction(
+          {
+            toolName: 'interact',
+            action,
+            labelText: `${query} ${ax.role} ${ax.name}`,
+            pageUrl: page.url(),
+          },
+          () => runVerify(
+            page,
+            verifyMode,
+            async () =>
+              withDomDelta(page, async () => {
+                // Stealth: use Bézier curve mouse path to avoid bot detection
+                if (isStealth) await humanMouseMove(page, axX, axY);
+                if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
+                else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
+                else await page.mouse.click(axX, axY);
+              }, { settleMs: Math.max(150, waitAfter) }),
+          ),
         );
+        if (axGuard.blocked) return axGuard.blocked;
+        const { verify: axVerifyReport, result: axActionResult } = axGuard.value!;
         const axDelta = axActionResult.delta;
 
         // Invalidate AX cache after interaction
@@ -841,7 +888,9 @@ const handler: ToolHandler = async (
           } catch { /* screenshot failed, non-fatal */ }
         }
 
-        return attachVerifyReport({ content: resultContent }, axVerifyReport);
+        const axResult = attachVerifyReport({ content: resultContent }, axVerifyReport);
+        await appendReturnAfterState(axResult, page, sessionId, tabId, returnAfterState, context);
+        return axResult;
       }
     } catch (axError) {
       throwIfAborted(context);
@@ -954,26 +1003,36 @@ const handler: ToolHandler = async (
     // Perform the action with DOM delta capture, wrapped in runVerify so the
     // structured verify report (AX-hash + pHash) covers the actual click.
     const isStealthCSS = sessionManager.isStealthTarget(tabId);
-    const { result: cssDomResult, verify: cssVerifyReport } = await runVerify(
-      page,
-      verifyMode,
-      async () =>
-        withDomDelta(
-          page,
-          async () => {
-            // Stealth: use Bézier curve mouse path to avoid bot detection
-            if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
-            if (action === 'double_click') {
-              await page.mouse.click(finalX, finalY, { clickCount: 2 });
-            } else if (action === 'hover') {
-              if (!isStealthCSS) await page.mouse.move(finalX, finalY);
-            } else {
-              await page.mouse.click(finalX, finalY);
-            }
-          },
-          { settleMs: Math.max(150, waitAfter) }
-        ),
+    const cssGuard = await guardIrreversibleBrowserAction(
+      {
+        toolName: 'interact',
+        action,
+        labelText: `${query} ${bestMatch.role} ${bestMatch.name} ${bestMatch.textContent ?? ''}`,
+        pageUrl: page.url(),
+      },
+      () => runVerify(
+        page,
+        verifyMode,
+        async () =>
+          withDomDelta(
+            page,
+            async () => {
+              // Stealth: use Bézier curve mouse path to avoid bot detection
+              if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
+              if (action === 'double_click') {
+                await page.mouse.click(finalX, finalY, { clickCount: 2 });
+              } else if (action === 'hover') {
+                if (!isStealthCSS) await page.mouse.move(finalX, finalY);
+              } else {
+                await page.mouse.click(finalX, finalY);
+              }
+            },
+            { settleMs: Math.max(150, waitAfter) }
+          ),
+      ),
     );
+    if (cssGuard.blocked) return cssGuard.blocked;
+    const { result: cssDomResult, verify: cssVerifyReport } = cssGuard.value!;
     const { delta } = cssDomResult;
 
     // Generate ref for the interacted element
@@ -1169,7 +1228,9 @@ const handler: ToolHandler = async (
       responseContent.push(screenshotContent);
     }
 
-    return attachVerifyReport({ content: responseContent }, cssVerifyReport);
+    const cssResult = attachVerifyReport({ content: responseContent }, cssVerifyReport);
+    await appendReturnAfterState(cssResult, page, sessionId, tabId, returnAfterState, context);
+    return cssResult;
   } catch (error) {
     return {
       content: [

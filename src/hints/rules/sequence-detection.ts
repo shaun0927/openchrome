@@ -8,6 +8,17 @@ function lastToolWas(ctx: HintContext, name: string): boolean {
   return ctx.recentCalls.length > 0 && ctx.recentCalls[0].toolName === name;
 }
 
+/**
+ * True when the most recent call's args carried a non-'none' `returnAfterState`.
+ * Such calls already inlined a fresh page snapshot in their response, which is
+ * a stronger signal than a follow-up read_page would be. See issue #845.
+ */
+function lastCallCarriedSnapshot(ctx: HintContext): boolean {
+  if (ctx.recentCalls.length === 0) return false;
+  const ras = ctx.recentCalls[0].args?.returnAfterState;
+  return ras === 'ax' || ras === 'dom';
+}
+
 export const sequenceDetectionRules: HintRule[] = [
   {
     name: 'post-scroll-click',
@@ -73,6 +84,10 @@ export const sequenceDetectionRules: HintRule[] = [
     match(ctx) {
       if (ctx.toolName !== 'find' && ctx.toolName !== 'read_page') return null;
       if (!lastToolWas(ctx, 'interact')) return null;
+      // If the prior interact already inlined a snapshot via returnAfterState,
+      // the agent has already seen the post-action DOM and the follow-up
+      // read_page is redundant — not a sign of a stuck modal. See #845.
+      if (lastCallCarriedSnapshot(ctx)) return null;
       if (/modal|overlay|dialog|backdrop|popup|drawer/i.test(ctx.resultText)) {
         return 'Hint: Modal may still be open. Try Escape key via computer(action:"key", text:"Escape") or javascript_tool to remove overlay.';
       }

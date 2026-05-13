@@ -7,6 +7,11 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
+import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+} from './_shared/return-after-state';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
@@ -26,11 +31,15 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Value to set. Checkboxes: "true"/"false"',
       },
+<<<<<<< HEAD
       intent: {
         type: 'string',
         description: 'Human-readable label for this action in audit logs (≤120 chars)',
         maxLength: 120,
       },
+=======
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
+>>>>>>> origin/develop
     },
     required: ['ref', 'value', 'tabId'],
   },
@@ -44,6 +53,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const ref = args.ref as string;
   const value = args.value;
+<<<<<<< HEAD
   const intent = args.intent as string | undefined;
 
   // Validate intent when provided — use typeof guard for null-safety
@@ -61,6 +71,9 @@ const handler: ToolHandler = async (
       };
     }
   }
+=======
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+>>>>>>> origin/develop
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -426,9 +439,11 @@ const handler: ToolHandler = async (
     const response = result.result.value;
 
     if (response.success) {
-      return {
+      const successResult: MCPResult = {
         content: [{ type: 'text', text: (response.message || 'Value set successfully') + delta }],
       };
+      await appendReturnAfterState(successResult, page, sessionId, tabId, returnAfterState, context);
+      return successResult;
     } else {
       return {
         content: [
