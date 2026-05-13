@@ -23,6 +23,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_observe: 1,              // src/tools/oc-observe.ts — compact observable action map (#866)
   inspect: 1,
   query_dom: 1,
+  oc_query: 1, // src/tools/oc-query.ts — semantic refs for interaction workflows (#1045)
   javascript_tool: 1,
   tabs_context: 1,
   tabs_create: 1,
@@ -49,6 +50,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_skill_record: 1,         // src/tools/oc-skill-record.ts — skill memory write surface (#785)
   oc_skill_recall: 1,         // src/tools/oc-skill-recall.ts — skill memory read surface (#785)
   oc_skill_export: 1,         // src/tools/oc-skill-export.ts — replay-script export for stored skills (#836)
+  oc_output_fetch: 1,         // src/tools/oc-output-fetch.ts — 2-stage fetch for large-output tools (#887)
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
@@ -83,6 +85,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
   // Names must match the 'name' field in each tool's definition
   oc_connection_health: 1,  // src/tools/connection-health.ts
+  oc_policy: 1,             // src/tools/oc-policy.ts
   oc_checkpoint: 1,         // src/tools/checkpoint.ts
   list_profiles: 1,         // src/tools/list-profiles.ts
   oc_devtools_url: 1,       // src/tools/oc-devtools-url.ts (#860) — gated by env

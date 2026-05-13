@@ -13,6 +13,11 @@ import { getPlanRegistry } from '../orchestration/plan-registry';
 import { PlanExecutor } from '../orchestration/plan-executor';
 import { formatError } from '../utils/format-error';
 import { validateBrowserTaskSignature } from '../contracts/task-signature';
+import {
+  buildReflectionStrategyMetadata,
+  parseReflectionStrategy,
+} from '../orchestration/reflection-strategy';
+import { getTaskDriftLedger } from '../harness/task-ledger';
 
 const dnsResolve = promisify(dns.resolve);
 
@@ -224,6 +229,10 @@ const workflowStatusDefinition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include worker scratchpad details. Default: false',
       },
+      includeLedger: {
+        type: 'boolean',
+        description: 'Include compact task drift ledger diagnostics. Default: false',
+      },
     },
     required: [],
   },
@@ -231,20 +240,25 @@ const workflowStatusDefinition: MCPToolDefinition = {
 };
 
 const workflowStatusHandler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
   const engine = getWorkflowEngine();
   const includeWorkerDetails = args.includeWorkerDetails as boolean ?? false;
+  const includeLedger = args.includeLedger as boolean ?? false;
 
   try {
     const orch = await engine.getOrchestrationStatus();
     if (!orch) {
+      const noWorkflow: Record<string, unknown> = { status: 'NO_WORKFLOW', message: 'No active workflow found' };
+      if (includeLedger) {
+        noWorkflow.taskLedger = getTaskDriftLedger().snapshot(sessionId);
+      }
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ status: 'NO_WORKFLOW', message: 'No active workflow found' }),
+            text: JSON.stringify(noWorkflow),
           },
         ],
       };
@@ -270,6 +284,10 @@ const workflowStatusHandler: ToolHandler = async (
         extractedData: w.extractedData,
         errors: w.errors,
       }));
+    }
+
+    if (includeLedger) {
+      result.taskLedger = getTaskDriftLedger().snapshot(sessionId);
     }
 
     return {
@@ -687,6 +705,17 @@ const executePlanDefinition: MCPToolDefinition = {
         properties: {},
         additionalProperties: true,
       },
+      reflectionStrategy: {
+        type: 'string',
+        enum: ['none', 'last_attempt', 'reflection', 'last_attempt_and_reflection'],
+        description: 'Opt-in bounded reflection metadata strategy. Default omitted path preserves legacy output.',
+      },
+      reflectionScope: {
+        type: 'object',
+        description: 'Optional reflection recall scope: domain, taskFingerprint, contractId.',
+        properties: {},
+        additionalProperties: true,
+      },
     },
     required: ['planId', 'tabId'],
   },
@@ -701,10 +730,19 @@ const executePlanHandler: ToolHandler = async (
   const tabId = args.tabId as string;
   const runtimeParams = (args.params as Record<string, unknown>) || {};
   const rawTaskSignature = args.taskSignature;
+  const rawReflectionStrategy = args.reflectionStrategy;
 
   if (!planId || !tabId) {
     return {
       content: [{ type: 'text', text: 'Error: planId and tabId are required' }],
+      isError: true,
+    };
+  }
+
+  const reflectionStrategyResult = parseReflectionStrategy(rawReflectionStrategy);
+  if (!reflectionStrategyResult.ok) {
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ status: 'INVALID_REFLECTION_STRATEGY', error: reflectionStrategyResult.error }) }],
       isError: true,
     };
   }
@@ -792,7 +830,15 @@ const executePlanHandler: ToolHandler = async (
     );
 
     // Update stats
-    registry.updateStats(planId, result.success, result.durationMs);
+    registry.updateStats(planId, result.success, result.durationMs, result.failure?.class);
+    const reflectionStrategy = rawReflectionStrategy === undefined
+      ? undefined
+      : buildReflectionStrategyMetadata({
+          strategy: reflectionStrategyResult.value,
+          planId,
+          params: runtimeParams,
+          scope: args.reflectionScope as { domain?: string; taskFingerprint?: string; contractId?: string } | undefined,
+        });
 
     return {
       content: [{
@@ -805,7 +851,11 @@ const executePlanHandler: ToolHandler = async (
           durationMs: result.durationMs,
           data: result.data,
           error: result.error,
+          failure: result.failure,
+          recoveryCandidates: result.recoveryCandidates,
+          evidence: result.evidence,
           ...(result.taskSignature ? { taskSignature: result.taskSignature } : {}),
+          ...(reflectionStrategy ? { reflectionStrategy } : {}),
           message: result.success
             ? `Plan "${planId}" executed successfully in ${result.durationMs}ms (${result.stepsExecuted}/${result.totalSteps} steps)`
             : `Plan "${planId}" failed: ${result.error}. Consider manual execution.`,

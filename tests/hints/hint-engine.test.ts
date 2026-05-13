@@ -136,6 +136,29 @@ describe('HintEngine', () => {
     });
   });
 
+  describe('recovery feedback bundles', () => {
+    it('writes a blocked-page feedback bundle when a blocking hint fires', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-feedback-hints-'));
+      const engine = new HintEngine(new ActivityTracker());
+      engine.enableRecoveryFeedback(tmpDir);
+
+      const hint = engine.getHint(
+        'navigate',
+        makeResult(JSON.stringify({ blockingPage: { type: 'access-denied', detail: '403 Forbidden' } })),
+        false,
+        'session-a',
+      );
+
+      expect(hint?.rule).toBe('access-denied-detected');
+      const files = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.jsonl'));
+      expect(files).toHaveLength(1);
+      const parsed = JSON.parse(fs.readFileSync(path.join(tmpDir, files[0]), 'utf8').trim());
+      expect(parsed.sessionId).toBe('session-a');
+      expect(parsed.trigger.category).toBe('blocked_page');
+      expect(parsed.hints[0].rule).toBe('access-denied-detected');
+    });
+  });
+
   describe('composite suggestion rules', () => {
     it('should suggest interact after find+click pattern', () => {
       const tracker = makeTracker([{ toolName: 'find' }]);
@@ -875,5 +898,42 @@ describe('HintEngine', () => {
       expect(critical!.hint).toContain('Previous actions:');
       expect(critical!.hint).toContain('computer');
     });
+  });
+});
+
+describe('failure episode memory', () => {
+  it('records a verified recovery episode and emits a future advisory hint', () => {
+    const tracker = new ActivityTracker();
+    const engine = new HintEngine(tracker);
+
+    const first = engine.getHint(
+      'custom_action',
+      makeResult('opaque widget failure on https://example.test/form', true),
+      true,
+      's-episode',
+      { url: 'https://example.test/form', description: 'submit contact form' },
+    );
+    expect(first).toBeNull();
+
+    engine.getHint(
+      'read_page',
+      makeResult('success banner visible after dismiss overlay'),
+      false,
+      's-episode',
+      { url: 'https://example.test/form', description: 'inspect page and dismiss overlay' },
+    );
+
+    const hint = engine.getHint(
+      'custom_action',
+      makeResult('opaque widget failure on https://example.test/form', true),
+      true,
+      's-episode',
+      { url: 'https://example.test/form', description: 'submit contact form' },
+    );
+
+    expect(hint?.rule).toBe('learned-pattern');
+    expect(hint?.hint).toContain('Similar failure episode');
+    expect(hint?.hint).toContain('no recovery was auto-executed');
+    expect(engine.getLearner().getFailureEpisodes()).toHaveLength(1);
   });
 });

@@ -4,12 +4,15 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { redactValue } from '../core/trace/redactor.js';
+import { evidenceTriggerForEvent, RunEvidenceCapture, shouldAutoCaptureRunEvidence } from './evidence.js';
 import { TERMINAL_RUN_STATUSES, type RunEvent, type RunRecord, type RunStatus } from './types.js';
 
 export interface RunStoreOptions {
   rootDir?: string;
   now?: () => number;
   idFactory?: () => string;
+  evidenceRootDir?: string;
+  maxRecords?: number;
 }
 
 export interface StartRunInput {
@@ -21,6 +24,18 @@ export interface StartRunInput {
 
 export interface FinishRunInput {
   status: RunStatus;
+  message?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RunEventInput {
+  run_id: string;
+  session_id?: string;
+  tab_id?: string;
+  kind: 'progress' | 'warning' | 'partial_result' | 'hint' | 'evidence' | 'failure';
+  tool?: string;
+  ok?: boolean;
+  duration_ms?: number;
   message?: string;
   metadata?: Record<string, unknown>;
 }
@@ -49,11 +64,15 @@ export class RunStore {
   private readonly rootDir: string;
   private readonly now: () => number;
   private readonly idFactory: () => string;
+  private readonly evidenceCapture: RunEvidenceCapture;
+  private readonly maxRecords: number;
 
   constructor(opts: RunStoreOptions = {}) {
     this.rootDir = opts.rootDir ?? defaultRunRootDir();
     this.now = opts.now ?? Date.now;
     this.idFactory = opts.idFactory ?? (() => crypto.randomUUID());
+    this.evidenceCapture = new RunEvidenceCapture({ rootDir: opts.evidenceRootDir, now: this.now, idFactory: this.idFactory });
+    this.maxRecords = opts.maxRecords ?? maxRecordsFromEnv();
   }
 
   startRun(input: StartRunInput = {}): RunRecord {
@@ -95,6 +114,25 @@ export class RunStore {
     return this.appendToolEvent('tool_call_finished', input);
   }
 
+  appendRunEvent(input: RunEventInput): RunEvent | null {
+    const safeRunId = sanitizeRunId(input.run_id);
+    const record = this.readRun(safeRunId);
+    if (!record || TERMINAL_RUN_STATUSES.has(record.status)) return null;
+    const event = this.event(safeRunId, input.kind, {
+      session_id: input.session_id,
+      tab_id: input.tab_id,
+      tool: input.tool,
+      ok: input.ok,
+      duration_ms: input.duration_ms,
+      message: sanitizeText(input.message),
+      metadata: sanitizeMetadata(input.metadata),
+    });
+    record.events.push(event);
+    record.updated_at = event.ts;
+    this.writeRun(record);
+    return event;
+  }
+
   finishRun(run_id: string, input: FinishRunInput): RunRecord | null {
     const safeRunId = sanitizeRunId(run_id);
     const record = this.readRun(safeRunId);
@@ -129,6 +167,28 @@ export class RunStore {
       metadata: sanitizeMetadata(input.metadata),
     });
     record.events.push(event);
+    if (shouldAutoCaptureRunEvidence(event)) {
+      const captured = this.evidenceCapture.capture({
+        record,
+        event,
+        trigger: evidenceTriggerForEvent(event),
+        failureCategory: stringMetadata(input.metadata?.failureCategory),
+        message: input.message,
+      });
+      if (captured) {
+        record.events.push(this.event(safeRunId, 'evidence', {
+          session_id: input.session_id,
+          tab_id: input.tab_id,
+          tool: input.tool,
+          message: 'auto-captured run evidence bundle',
+          metadata: {
+            path: captured.path,
+            trigger: captured.bundle.trigger,
+            failureCategory: captured.bundle.failure_category,
+          },
+        }));
+      }
+    }
     record.updated_at = event.ts;
     this.writeRun(record);
     return event;
@@ -165,6 +225,38 @@ export class RunStore {
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(record, null, 2));
     fs.renameSync(tmp, file);
+    this.cleanupRetainedRuns(record.run_id);
+  }
+
+  private cleanupRetainedRuns(currentRunId: string): void {
+    if (!Number.isFinite(this.maxRecords) || this.maxRecords <= 0) return;
+    let files: Array<{ file: string; mtimeMs: number; runId: string; terminal: boolean }> = [];
+    try {
+      files = fs.readdirSync(this.rootDir)
+        .filter((file) => file.endsWith('.json'))
+        .map((file) => {
+          const runId = file.slice(0, -'.json'.length);
+          const fullPath = path.join(this.rootDir, file);
+          const stat = fs.statSync(fullPath);
+          const record = this.readRun(runId);
+          return {
+            file: fullPath,
+            mtimeMs: stat.mtimeMs,
+            runId,
+            terminal: record ? TERMINAL_RUN_STATUSES.has(record.status) : true,
+          };
+        });
+    } catch {
+      return;
+    }
+    if (files.length <= this.maxRecords) return;
+
+    const removable = files
+      .filter((entry) => entry.runId !== currentRunId && entry.terminal)
+      .sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const entry of removable.slice(0, files.length - this.maxRecords)) {
+      try { fs.unlinkSync(entry.file); } catch { /* best-effort retention cleanup */ }
+    }
   }
 }
 
@@ -192,6 +284,17 @@ function sanitizeMetadata(value: Record<string, unknown> | undefined): Record<st
 
 function sanitizeText(value: string | undefined): string | undefined {
   return value === undefined ? undefined : String(redactValue(sanitizeRunLedgerString(value)));
+}
+
+function stringMetadata(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function maxRecordsFromEnv(): number {
+  const raw = process.env.OPENCHROME_RUN_MAX_RECORDS;
+  if (!raw) return 500;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 500;
 }
 
 function sanitizeRunLedgerValue(value: unknown): unknown {

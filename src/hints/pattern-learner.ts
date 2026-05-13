@@ -10,6 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { FailureEpisodeStore, type FailureEpisode, type FailureEpisodeContext } from './failure-episode-store';
 
 export interface LearnedPattern {
   id: string;
@@ -28,6 +29,7 @@ interface PendingObservation {
   errorFingerprint: string;
   timestamp: number;
   remainingSlots: number;
+  context?: FailureEpisodeContext;
 }
 
 interface RawObservation {
@@ -49,6 +51,7 @@ export class PatternLearner {
   private patterns: LearnedPattern[] = [];
   private filePath: string | null = null;
   private dirty = false;
+  private episodeStore = new FailureEpisodeStore();
 
   static readonly WATCH_WINDOW = 3;
   static readonly PROMOTE_THRESHOLD = 3;
@@ -62,6 +65,7 @@ export class PatternLearner {
     try {
       fs.mkdirSync(dirPath, { recursive: true });
       this.filePath = path.join(dirPath, 'learned-patterns.json');
+      this.episodeStore.enablePersistence(dirPath);
       this.load();
     } catch {
       // Best-effort
@@ -72,7 +76,7 @@ export class PatternLearner {
    * Called when a hint miss occurs on an error (no static rule matched).
    * Starts observing subsequent calls to detect recovery pattern.
    */
-  onMiss(toolName: string, errorText: string): void {
+  onMiss(toolName: string, errorText: string, context?: FailureEpisodeContext): void {
     const fingerprint = this.normalizeError(errorText);
     if (!fingerprint) return;
 
@@ -86,21 +90,29 @@ export class PatternLearner {
       errorFingerprint: fingerprint,
       timestamp: Date.now(),
       remainingSlots: PatternLearner.WATCH_WINDOW,
+      context,
     });
   }
 
   /**
    * Called on every tool completion to observe potential recovery patterns.
    */
-  onToolComplete(toolName: string, isError: boolean): void {
+  onToolComplete(toolName: string, isError: boolean, context?: FailureEpisodeContext): void {
     const resolved: number[] = [];
 
     for (let i = 0; i < this.pending.length; i++) {
       const obs = this.pending[i];
 
       if (!isError && toolName !== obs.errorTool) {
-        // Success with different tool = potential recovery
+        // Success with different tool = potential verified recovery
         this.recordRecovery(obs.errorFingerprint, obs.errorTool, toolName);
+        this.episodeStore.recordVerifiedRecovery({
+          failedTool: obs.errorTool,
+          errorFingerprint: obs.errorFingerprint,
+          recoveryTool: toolName,
+          failure: obs.context,
+          recovery: context,
+        });
         resolved.push(i);
       } else if (!isError && toolName === obs.errorTool) {
         // Same tool succeeded = self-resolved, discard
@@ -199,6 +211,28 @@ export class PatternLearner {
       }
     }
     return null;
+  }
+
+
+  /**
+   * Match an error against privacy-safe verified failure episodes.
+   */
+  matchEpisode(errorText: string, toolName: string, context?: FailureEpisodeContext): FailureEpisode | null {
+    return this.episodeStore.match({
+      failedTool: toolName,
+      errorFingerprint: this.normalizeError(errorText),
+      domain: context?.domain,
+      taskIntent: context?.taskIntent,
+      stateFingerprint: context?.stateFingerprint,
+    });
+  }
+
+  buildEpisodeHint(episode: FailureEpisode): string {
+    return this.episodeStore.buildHint(episode);
+  }
+
+  getFailureEpisodes(): FailureEpisode[] {
+    return this.episodeStore.list();
   }
 
   /**

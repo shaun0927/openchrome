@@ -28,6 +28,7 @@ import * as path from 'node:path';
 import { acquireLock } from '../../utils/atomic-file';
 import { normalizeUrl } from '../../utils/crawl-utils';
 import { redactValue } from '../trace/redactor';
+import type { CrawlCacheMetadata, CrawlCacheMode, CrawlCacheScope } from './content-cache';
 
 /** A page recorded in the job log (mirrors the legacy `crawl` tool shape). */
 export interface CrawledPage {
@@ -43,6 +44,7 @@ export interface CrawledPage {
    * on-disk growth of a single job to a predictable size.
    */
   truncated?: boolean;
+  cache?: CrawlCacheMetadata;
 }
 
 /** Public crawl configuration (mirrors legacy `crawl` tool args). */
@@ -59,6 +61,9 @@ export interface JobConfig {
   respect_robots: boolean;
   delay_ms: number;
   concurrency: number;
+  cache_mode?: CrawlCacheMode;
+  cache_ttl_ms?: number;
+  cache_scope?: CrawlCacheScope;
 }
 
 export type JobStatus =

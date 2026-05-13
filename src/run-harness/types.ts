@@ -7,6 +7,7 @@ export const RUN_STATUSES = [
   'canceled',
   'aborted',
   'needs_user_input',
+  'needs_strategy_change',
 ] as const;
 
 export type RunStatus = typeof RUN_STATUSES[number];
@@ -17,6 +18,7 @@ export const TERMINAL_RUN_STATUSES = new Set<RunStatus>([
   'timed_out',
   'canceled',
   'aborted',
+  'needs_strategy_change',
 ]);
 
 export type RunEventKind =
@@ -24,6 +26,9 @@ export type RunEventKind =
   | 'run_finished'
   | 'tool_call_started'
   | 'tool_call_finished'
+  | 'progress'
+  | 'warning'
+  | 'partial_result'
   | 'hint'
   | 'evidence'
   | 'failure';

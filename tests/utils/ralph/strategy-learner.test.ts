@@ -68,8 +68,8 @@ describe('Strategy Learner', () => {
       expect(mockRecord).not.toHaveBeenCalled();
     });
 
-    test('should NOT record S7 HITL', () => {
-      learnStrategy('https://example.com', 'button', 'S7_HITL');
+    test('should NOT record S8 HITL', () => {
+      learnStrategy('https://example.com', 'button', 'S8_HITL');
       expect(mockRecord).not.toHaveBeenCalled();
     });
 

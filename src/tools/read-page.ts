@@ -6,16 +6,21 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager, REF_TTL_MS } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
+import { isFastProfile } from '../config/runtime-profile';
 import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
+import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { getGlobalConfig } from '../config/global';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { applyContentFilter, parseContentFilterType } from '../core/extract/content-filter';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
+import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 
 /**
  * Build the `[node_refs]` block that surfaces the #844 backend-node uid
@@ -121,6 +126,27 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Markdown mode only: preserve <a> as markdown links. Default: true.',
       },
+      contentFilter: {
+        type: 'string',
+        enum: ['none', 'prune', 'bm25'],
+        description: 'Markdown mode only: deterministic fit_markdown filter. Default: none.',
+      },
+      query: {
+        type: 'string',
+        description: 'Markdown mode only: required when contentFilter="bm25".',
+      },
+      returnRaw: {
+        type: 'boolean',
+        description: 'Markdown mode only: include raw_markdown in JSON response. Default: false.',
+      },
+      returnFit: {
+        type: 'boolean',
+        description: 'Markdown mode only: include fit_markdown and use it as content when filtering. Default: true when filtered.',
+      },
+      filterOptions: {
+        type: 'object',
+        description: 'Markdown mode only: minWords, maxSections, bm25Threshold, pruneThreshold.',
+      },
       includePagination: {
         type: 'boolean',
         description: 'Include pagination info. Default: true',
@@ -142,11 +168,19 @@ const definition: MCPToolDefinition = {
       },
       compact: {
         type: 'boolean',
-        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false.',
+        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false, or true when OPENCHROME_PROFILE=fast.',
       },
       diagnostics: {
         type: 'boolean',
         description: 'Include structured read_page timing diagnostics in the MCP result metadata. Default: false.',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate returned size/token metrics in the emitted payload. Default: false.',
+      },
+      boundaryMarkers: {
+        type: 'boolean',
+        description: 'Wrap page-origin plaintext in <oc:page>. Default true; false disables.',
       },
     },
     required: ['tabId'],
@@ -209,6 +243,16 @@ interface AXNode {
   properties?: Array<{ name: string; value: { value: unknown } }>;
 }
 
+
+function createReadPageSnapshotMetadata(tabId: string, url: string, capturedAt = Date.now()): SnapshotRefMetadata {
+  return {
+    snapshotId: `snap_${capturedAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    capturedAt,
+    url,
+    tabId,
+  };
+}
+
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
@@ -248,6 +292,10 @@ const handler: ToolHandler = async (
     }
 
     const cdpClient = sessionManager.getCDPClient();
+    const boundaryMarkers = areBoundaryMarkersEnabled(args);
+    const wrapPage = (body: string, emittedMode: string) => (
+      boundaryMarkers ? wrapBoundaryMarker('page', { src: page.url(), mode: emittedMode }, body) : body
+    );
 
     // Mode dispatch
     const requestedMode = args.mode as string | undefined;
@@ -276,9 +324,45 @@ const handler: ToolHandler = async (
     const withDiagnostics = (result: MCPResult): MCPResult => (
       diagnosticsEnabled ? { ...result, _diagnostics: diagnostics } : result
     );
+    const includeMetrics = args.include_metrics === true;
+    const withTextMetrics = (text: string, emittedMode: string, truncated = hasTruncationMarker(text)): string => {
+      if (!includeMetrics) return text;
+      let baseText = text;
+      let metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+      for (let i = 0; i < 8; i++) {
+        const candidate = appendMetricsFooter(baseText, metrics);
+        const nextMetrics = buildTextMetrics(candidate, { mode: emittedMode, truncated });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) {
+          if (candidate.length <= MAX_OUTPUT_CHARS) return candidate;
+          const reserve = Math.min(512, Math.max(128, candidate.length - baseText.length + 64));
+          baseText = `${baseText.slice(0, Math.max(0, MAX_OUTPUT_CHARS - reserve))}
+
+[Output truncated — metrics footer reserved output budget]`;
+          truncated = true;
+          metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+          continue;
+        }
+        metrics = nextMetrics;
+      }
+      return appendMetricsFooter(baseText, metrics);
+    };
+    const withSemanticMetrics = (view: Record<string, unknown>): string => {
+      if (!includeMetrics) return JSON.stringify(view);
+      const payload: Record<string, unknown> = { ...view };
+      let metrics = buildTextMetrics(JSON.stringify(payload), { mode: 'semantic' });
+      for (let i = 0; i < 8; i++) {
+        payload._metrics = metrics;
+        const text = JSON.stringify(payload);
+        const nextMetrics = buildTextMetrics(text, { mode: 'semantic' });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) return text;
+        metrics = nextMetrics;
+      }
+      payload._metrics = metrics;
+      return JSON.stringify(payload);
+    };
 
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
-    const compactAX = args.compact === true;
+    const compactAX = args.compact === true || (args.compact === undefined && isFastProfile());
     if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
       return {
         content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],
@@ -300,6 +384,10 @@ const handler: ToolHandler = async (
       const onlyMainContent = args.onlyMainContent !== false;
       const includeLinks = args.includeLinks !== false;
       const includePaginationMarkdown = args.includePagination !== false;
+      const contentFilter = parseContentFilterType(args.contentFilter);
+      const returnRaw = args.returnRaw === true;
+      const returnFit = args.returnFit !== false;
+      const filterOptions = (args.filterOptions && typeof args.filterOptions === 'object') ? args.filterOptions as Record<string, unknown> : {};
       const refIdNote = args.ref_id
         ? '[Note: ref_id is not supported in markdown mode — full-page content returned. Use mode "ax" for ref_id subtree scoping.]\n\n'
         : '';
@@ -323,8 +411,34 @@ const handler: ToolHandler = async (
         truncated = true;
       }
       const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
+      const rawMarkdown = md + suffix;
+      if (contentFilter !== 'none' || returnRaw || args.returnFit === true) {
+        try {
+          const filtered = applyContentFilter(rawMarkdown, {
+            type: contentFilter,
+            query: args.query as string | undefined,
+            returnRaw,
+            returnFit,
+            minWords: filterOptions.minWords as number | undefined,
+            maxSections: filterOptions.maxSections as number | undefined,
+            bm25Threshold: filterOptions.bm25Threshold as number | undefined,
+            pruneThreshold: filterOptions.pruneThreshold as number | undefined,
+          });
+          const filteredPayload = {
+            ...filtered,
+            content: withTextMetrics(wrapPage(filtered.content, 'markdown'), 'markdown', truncated),
+            ...(filtered.raw_markdown ? { raw_markdown: wrapPage(filtered.raw_markdown, 'markdown') } : {}),
+            ...(filtered.fit_markdown ? { fit_markdown: wrapPage(filtered.fit_markdown, 'markdown') } : {}),
+          };
+          return {
+            content: [{ type: 'text', text: JSON.stringify(filteredPayload) }],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      }
       return {
-        content: [{ type: 'text', text: md + suffix }],
+        content: [{ type: 'text', text: withTextMetrics(wrapPage(rawMarkdown, 'markdown'), 'markdown', truncated) }],
       };
     }
 
@@ -486,7 +600,7 @@ const handler: ToolHandler = async (
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: cssText + cssPaginationSection }],
+        content: [{ type: 'text', text: withTextMetrics(wrapPage(cssText, 'css') + cssPaginationSection, 'css') }],
       };
     }
 
@@ -679,7 +793,7 @@ const handler: ToolHandler = async (
       );
 
       return {
-        content: [{ type: 'text', text: JSON.stringify(view) }],
+        content: [{ type: 'text', text: withSemanticMetrics(view as unknown as Record<string, unknown>) }],
       };
     }
 
@@ -729,7 +843,7 @@ const handler: ToolHandler = async (
               const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
               const compressedText = statsLine + delta.content + nodeRefsBlock + domPaginationSection;
               return withDiagnostics({
-                content: [{ type: 'text', text: compressedText }],
+                content: [{ type: 'text', text: withTextMetrics(compressedText, 'dom') }],
                 _compression: {
                   level: 'delta',
                   originalChars: outputText.length,
@@ -747,7 +861,7 @@ const handler: ToolHandler = async (
         const includePaginationDom = args.includePagination !== false;
         const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
         return withDiagnostics({
-          content: [{ type: 'text', text: outputText + nodeRefsBlock + domPaginationSection }],
+          content: [{ type: 'text', text: withTextMetrics(wrapPage(outputText, 'dom') + nodeRefsBlock + domPaginationSection, 'dom') }],
         });
       } catch (error) {
         if (isExplicitDomMode) {
@@ -873,7 +987,11 @@ const handler: ToolHandler = async (
       frame_id?: string;
       created_at: number;
       stale_after_ms: number;
+      snapshot_id: string;
+      snapshot_captured_at: number;
+      snapshot_url: string;
     }> = {};
+    const snapshotMetadata = createReadPageSnapshotMetadata(tabId, axPageStats.url);
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
@@ -925,7 +1043,9 @@ const handler: ToolHandler = async (
           node.backendDOMNodeId,
           role,
           name,
-          tagName
+          tagName,
+          undefined,
+          { snapshot: snapshotMetadata }
         );
 
         // #831: record the structured ref entry for the response `refs` map.
@@ -940,6 +1060,9 @@ const handler: ToolHandler = async (
           ...(entry?.frameId ? { frame_id: entry.frameId } : {}),
           created_at: entry?.createdAt ?? Date.now(),
           stale_after_ms: entry?.staleAfterMs ?? REF_TTL_MS,
+          snapshot_id: snapshotMetadata.snapshotId,
+          snapshot_captured_at: snapshotMetadata.capturedAt,
+          snapshot_url: snapshotMetadata.url,
         };
       }
 
@@ -1051,6 +1174,7 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
+          snapshot: snapshotMetadata,
         });
       }
 
@@ -1103,13 +1227,15 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
+          snapshot: snapshotMetadata,
         });
       }
     }
 
     return withDiagnostics({
-      content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
+      content: [{ type: 'text', text: pageStatsLine + wrapPage(output, 'ax') + axPaginationSection }],
       refs: refsMap,
+      snapshot: snapshotMetadata,
     });
   } catch (error) {
     return {
@@ -1236,8 +1362,77 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
  * behavior-preserving seam so the feature can be re-enabled safely later.
  */
 const cachedHandler: ToolHandler = async (sessionId, args, context) => {
-  return sanitizedHandler(sessionId, args, context);
+  const result = await sanitizedHandler(sessionId, args, context);
+  if (!isStateHeaderEnabled() || result.isError || !result.content) return result;
+
+  const tabId = typeof args.tabId === 'string' ? args.tabId : '';
+  if (!tabId) return result;
+
+  let page: Awaited<ReturnType<ReturnType<typeof getSessionManager>['getPage']>> | null = null;
+  try {
+    page = await getSessionManager().getPage(sessionId, tabId);
+  } catch {
+    page = null;
+  }
+  if (!page) return result;
+
+  let url = '';
+  let title = '';
+  try {
+    url = page.url() || '';
+  } catch {
+    url = '';
+  }
+  try {
+    title = await page.title();
+  } catch {
+    title = '';
+  }
+
+  const requestedMode = typeof args.mode === 'string' ? args.mode : 'dom';
+  const mode = ['ax', 'dom', 'css', 'semantic', 'markdown'].includes(requestedMode)
+    ? requestedMode
+    : 'dom';
+  const headerMode = mode === 'markdown' ? 'html' : mode;
+  const header = { url, title, mode: headerMode as 'ax' | 'dom' | 'css' | 'html', capturedAt: Date.now(), tabId };
+  const includeMetrics = args.include_metrics === true;
+  const refreshSemanticMetrics = (payload: Record<string, unknown>): Record<string, unknown> => {
+    if (!includeMetrics || !('_metrics' in payload)) return payload;
+    const next = { ...payload };
+    delete next._metrics;
+    let metrics = buildTextMetrics(JSON.stringify(next), { mode: 'semantic' });
+    for (let i = 0; i < 8; i++) {
+      next._metrics = metrics;
+      const text = JSON.stringify(next);
+      const candidate = buildTextMetrics(text, { mode: 'semantic' });
+      if (candidate.returned_chars === metrics.returned_chars && candidate.estimated_tokens === metrics.estimated_tokens) return next;
+      metrics = candidate;
+    }
+    next._metrics = metrics;
+    return next;
+  };
+
+  return {
+    ...result,
+    content: result.content.map((block) => {
+      if (block.type !== 'text' || typeof block.text !== 'string') return block;
+      if (mode === 'semantic') {
+        try {
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          const merged = mergeHeaderJson(header, parsed) as Record<string, unknown>;
+          return { ...block, text: JSON.stringify(refreshSemanticMetrics(merged)) };
+        } catch {
+          return { ...block, text: prependHeaderText(header, block.text) };
+        }
+      }
+      return { ...block, text: prependHeaderText(header, block.text) };
+    }),
+  };
 };
+
+function hasTruncationMarker(text: string): boolean {
+  return text.includes('...[truncated]') || text.includes('[Output truncated') || text.includes('Content omitted due to size constraints');
+}
 
 export function registerReadPageTool(server: MCPServer): void {
   server.registerTool('read_page', cachedHandler, definition);

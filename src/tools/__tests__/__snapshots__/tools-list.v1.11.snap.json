@@ -136,16 +136,25 @@
       "name": "oc_open_host_settings"
     },
     {
+      "name": "oc_output_fetch"
+    },
+    {
       "name": "oc_performance_analyze"
     },
     {
       "name": "oc_performance_insights"
     },
     {
+      "name": "oc_policy"
+    },
+    {
       "name": "oc_profile_status"
     },
     {
       "name": "oc_progress_status"
+    },
+    {
+      "name": "oc_query"
     },
     {
       "name": "oc_reap_orphans"
@@ -199,6 +208,9 @@
       "name": "oc_task_cancel"
     },
     {
+      "name": "oc_task_finish"
+    },
+    {
       "name": "oc_task_get"
     },
     {
@@ -227,6 +239,9 @@
     },
     {
       "name": "oc_task_start"
+    },
+    {
+      "name": "oc_task_update"
     },
     {
       "name": "oc_task_wait"

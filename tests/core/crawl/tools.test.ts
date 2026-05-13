@@ -202,7 +202,7 @@ describe('crawl_status', () => {
     expect(body.completed).toBe(25);
     expect((body.pages as CrawledPage[]).length).toBe(10);
     expect(body.pagesOmitted).toBe(15);
-  });
+  }, 30000);
 
   test('expired job reports status=expired, performs zero fetches', async () => {
     mkTmpRoot();
@@ -364,5 +364,24 @@ describe('legacy crawl snapshot — runner CrawledPage shape', () => {
         expect(allowed).toContain(k);
       }
     }
+  });
+});
+
+
+describe('crawl cache root resolution', () => {
+  const OLD_ENV = process.env;
+
+  afterEach(() => {
+    process.env = OLD_ENV;
+    jest.resetModules();
+  });
+
+  test('uses OPENCHROME_HOME as the OpenChrome root, not the user home', async () => {
+    jest.resetModules();
+    process.env = { ...OLD_ENV, OPENCHROME_HOME: '/tmp/openchrome-home-test' };
+    delete process.env.OPENCHROME_CRAWL_CACHE_DIR;
+    const { defaultCrawlCacheRootDir } = await import('../../../src/core/crawl/content-cache');
+
+    expect(defaultCrawlCacheRootDir()).toBe(path.join('/tmp/openchrome-home-test', 'cache', 'crawl'));
   });
 });

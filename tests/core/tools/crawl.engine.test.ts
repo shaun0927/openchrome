@@ -193,25 +193,27 @@ describe('crawl engine=static', () => {
   });
 
 
-  test('dispatcher=adaptive includes dispatcher stats without changing fixed default', async () => {
+  test('include_metrics adds summary and per-page token estimates without changing default', async () => {
     const handler = await loadHandler('crawl');
-    const adaptive = await handler('s-adaptive', {
+    const withMetrics = await handler('s-metrics', {
       url: `${server.origin}/index.html`,
       max_pages: 1,
       max_depth: 0,
       delay_ms: 0,
       engine: 'static',
       respect_robots: false,
-      dispatcher: 'adaptive',
-      dispatcher_options: { min_concurrency: 1, max_concurrency: 3 },
+      include_metrics: true,
     });
-    const parsedAdaptive = parseResult(adaptive);
-    expect(parsedAdaptive.summary.dispatcher).toMatchObject({
-      mode: 'adaptive',
-      min_concurrency: 1,
+    const parsedWithMetrics = parseResult(withMetrics);
+    const summaryMetrics = parsedWithMetrics.summary.metrics as Record<string, number>;
+    expect(summaryMetrics.returned_chars).toBeGreaterThan(0);
+    expect(summaryMetrics.estimated_tokens).toBeGreaterThan(0);
+    expect(parsedWithMetrics.pages[0].metrics).toMatchObject({
+      mode: 'markdown',
+      truncated: false,
     });
 
-    const fixed = await handler('s-fixed', {
+    const withoutMetrics = await handler('s-metrics-default', {
       url: `${server.origin}/index.html`,
       max_pages: 1,
       max_depth: 0,
@@ -219,8 +221,9 @@ describe('crawl engine=static', () => {
       engine: 'static',
       respect_robots: false,
     });
-    const parsedFixed = parseResult(fixed);
-    expect(parsedFixed.summary.dispatcher).toBeUndefined();
+    const parsedWithoutMetrics = parseResult(withoutMetrics);
+    expect(parsedWithoutMetrics.summary.metrics).toBeUndefined();
+    expect(parsedWithoutMetrics.pages[0].metrics).toBeUndefined();
   });
 
   test('respect_robots:true does not open a Chrome tab for robots.txt', async () => {
@@ -421,5 +424,221 @@ describe('crawl_sitemap engine=static', () => {
       expect(page.engine_used).toBe('static');
     }
     expect(mockSessionManager.createTarget).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// crawl content cache modes (#987)
+// ---------------------------------------------------------------------------
+
+describe('crawl cache modes', () => {
+  let cacheDir: string;
+
+  beforeEach(() => {
+    cacheDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'openchrome-crawl-cache-'));
+    process.env.OPENCHROME_CRAWL_CACHE_DIR = cacheDir;
+    server.setRoute('/cache.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Cacheable', `<h1>Cacheable</h1><p>${PARA}</p>`),
+    });
+    server.setRoute('/account.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Account Settings', '<form><input type="password" name="password" /></form>' + PARA),
+    });
+  });
+
+  afterEach(() => {
+    delete process.env.OPENCHROME_CRAWL_CACHE_DIR;
+    require('fs').rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  test('default cache_mode disabled preserves output shape and does not write files', async () => {
+    const handler = await loadHandler('crawl');
+    const result = await handler('cache-default', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+    });
+    const parsed = parseResult(result);
+    expect(parsed.pages[0].cache).toBeUndefined();
+    expect(require('fs').readdirSync(cacheDir)).toEqual([]);
+  });
+
+  test('enabled mode stores then serves a hit without fetching the page again', async () => {
+    const handler = await loadHandler('crawl');
+    const before = server.hitCount('/cache.html');
+    const first = parseResult(await handler('cache-enabled', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+    expect(first.pages[0].cache).toMatchObject({ status: 'miss', write: 'stored', hit: false });
+    expect(server.hitCount('/cache.html')).toBe(before + 1);
+
+    const second = parseResult(await handler('cache-enabled', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+    expect(second.pages[0].cache).toMatchObject({ status: 'hit', hit: true });
+    expect(server.hitCount('/cache.html')).toBe(before + 1);
+  });
+
+
+  test('enabled cache still enforces robots.txt before serving a hit', async () => {
+    const handler = await loadHandler('crawl');
+    server.setRoute('/robots.txt', {
+      status: 200,
+      contentType: 'text/plain',
+      body: 'User-agent: *\nDisallow:\n',
+    });
+    parseResult(await handler('cache-robots', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: true,
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+
+    server.setRoute('/robots.txt', {
+      status: 200,
+      contentType: 'text/plain',
+      body: 'User-agent: *\nDisallow: /cache.html\n',
+    });
+    const blocked = parseResult(await handler('cache-robots', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: true,
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+
+    expect(blocked.pages[0]).toMatchObject({ error: 'Blocked by robots.txt' });
+    expect(blocked.pages[0].cache).toBeUndefined();
+  });
+
+  test('read_only does not create entries on miss and write_only never serves hits', async () => {
+    const handler = await loadHandler('crawl');
+    const before = server.hitCount('/cache.html');
+    const readOnly = parseResult(await handler('cache-read-only', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'read_only',
+    }));
+    expect(readOnly.pages[0].cache).toMatchObject({ status: 'miss', write: 'disabled' });
+    expect(require('fs').readdirSync(cacheDir)).toEqual([]);
+
+    const writeOnlyA = parseResult(await handler('cache-write-only', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'write_only',
+    }));
+    const writeOnlyB = parseResult(await handler('cache-write-only', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'write_only',
+    }));
+    expect(writeOnlyA.pages[0].cache).toMatchObject({ status: 'write_only', write: 'stored' });
+    expect(writeOnlyB.pages[0].cache).toMatchObject({ status: 'write_only', write: 'stored' });
+    expect(server.hitCount('/cache.html')).toBe(before + 3);
+  });
+
+  test('bypass overwrites and public scope skips auth-sensitive pages', async () => {
+    const handler = await loadHandler('crawl');
+    const bypass = parseResult(await handler('cache-bypass', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'bypass',
+    }));
+    expect(bypass.pages[0].cache).toMatchObject({ status: 'bypass', write: 'stored' });
+
+    const sensitive = parseResult(await handler('cache-sensitive', {
+      url: `${server.origin}/account.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'enabled',
+    }));
+    expect(sensitive.pages[0].cache).toMatchObject({ status: 'miss', write: 'skipped' });
+    expect(String((sensitive.pages[0].cache as Record<string, unknown>).write_skipped_reason)).toMatch(/auth-sensitive/);
+  });
+});
+
+describe('crawl_sitemap cache_mode=enabled', () => {
+  let cacheDir: string;
+
+  beforeEach(() => {
+    cacheDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'openchrome-sitemap-cache-'));
+    process.env.OPENCHROME_CRAWL_CACHE_DIR = cacheDir;
+  });
+
+  afterEach(() => {
+    delete process.env.OPENCHROME_CRAWL_CACHE_DIR;
+    require('fs').rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  test('stores sitemap page content and serves later page hits from cache', async () => {
+    const handler = await loadHandler('crawl_sitemap');
+    const before = server.hitCount('/page-a.html');
+    const first = parseResult(await handler('sitemap-cache', {
+      url: server.origin,
+      max_pages: 1,
+      concurrency: 1,
+      engine: 'static',
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+    expect(first.pages[0].cache).toMatchObject({ status: 'miss', write: 'stored' });
+    expect(server.hitCount('/page-a.html')).toBe(before + 1);
+
+    const second = parseResult(await handler('sitemap-cache', {
+      url: server.origin,
+      max_pages: 1,
+      concurrency: 1,
+      engine: 'static',
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+    expect(second.pages[0].cache).toMatchObject({ status: 'hit', hit: true });
+    expect(server.hitCount('/page-a.html')).toBe(before + 1);
   });
 });

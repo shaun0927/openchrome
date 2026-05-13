@@ -1,0 +1,35 @@
+import type { EpisodeTaskSpec } from '../types';
+
+export const fixtureTasks: EpisodeTaskSpec[] = [
+  {
+    id: 'example-h1',
+    title: 'Example H1 fixture',
+    startUrl: 'mock://example',
+    goal: 'Verify the page contains the Example Domain heading.',
+    maxSteps: 5,
+    maxDurationMs: 30_000,
+    success: { kind: 'dom_text', selector: 'h1', contains: 'Example Domain' },
+    tags: ['fixture', 'read-only'],
+  },
+  {
+    id: 'local-form-submit',
+    title: 'Local form submit fixture',
+    startUrl: 'mock://form',
+    goal: 'Fill and submit the local fixture form.',
+    maxSteps: 8,
+    maxDurationMs: 30_000,
+    success: { kind: 'dom_text', selector: '.success', contains: 'Form submitted successfully' },
+    setup: { clearCookies: true, viewport: { width: 1280, height: 800 } },
+    tags: ['fixture', 'form'],
+  },
+  {
+    id: 'local-recovery-stall',
+    title: 'Local recovery stall fixture',
+    startUrl: 'mock://stall',
+    goal: 'Intentionally repeat page reads to exercise max-step and no-progress metrics.',
+    maxSteps: 3,
+    maxDurationMs: 30_000,
+    success: { kind: 'dom_text', selector: '.success', contains: 'Recovered' },
+    tags: ['fixture', 'stall'],
+  },
+];
