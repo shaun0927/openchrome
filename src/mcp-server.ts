@@ -48,7 +48,7 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
-import { assertUrlAllowedBySessionRoots, setSessionMcpRoots } from './security/mcp-roots';
+import { assertFilePathAllowedBySessionRoots, assertUrlAllowedBySessionRoots, setSessionMcpRoots } from './security/mcp-roots';
 import { isClientDisconnect } from './errors/abort';
 import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
 import { isAllowed, requiredScope } from './auth/scope-policy';
@@ -107,6 +107,22 @@ function extractNetworkRootCandidateUrls(toolName: string, args: Record<string, 
       }
       break;
     }
+    default:
+      break;
+  }
+  return out;
+}
+
+function extractFileRootCandidatePaths(toolName: string, args: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) out.push(value);
+  };
+  switch (toolName) {
+    case 'page_pdf':
+    case 'page_screenshot':
+      push(args.path);
+      break;
     default:
       break;
   }
@@ -1227,6 +1243,26 @@ export class MCPServer {
     }
   }
 
+  private enforceFileRootsForTool(
+    mcpSessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): MCPResult | null {
+    const paths = extractFileRootCandidatePaths(toolName, args);
+    if (paths.length === 0) return null;
+    try {
+      for (const filePath of paths) {
+        assertFilePathAllowedBySessionRoots(mcpSessionId, filePath);
+      }
+      return null;
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: formatError(error) }],
+        isError: true,
+      };
+    }
+  }
+
   /**
    * Handle initialize request
    */
@@ -1655,6 +1691,16 @@ export class MCPServer {
     if (rootsDenial) {
       this.recordToolOutputObservability(toolName, rootsDenial);
       return rootsDenial;
+    }
+
+    const fileRootsDenial = this.enforceFileRootsForTool(
+      currentRequestContext()?.mcpSessionId ?? sessionId,
+      toolName,
+      substitutedArgs,
+    );
+    if (fileRootsDenial) {
+      this.recordToolOutputObservability(toolName, fileRootsDenial);
+      return fileRootsDenial;
     }
 
     // All static gates passed (scope, tool existence, required args). Only

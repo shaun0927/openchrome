@@ -5,9 +5,13 @@
  * narrowing only: they can deny URLs/files otherwise allowed by static config,
  * but they never permit anything the static server policy would deny.
  *
- * This first slice enforces network roots for URL-egress tools. File roots and
- * retroactive in-flight cancellation remain outside this helper.
+ * Network roots constrain URL-egress tools. File roots constrain explicit
+ * output-file writes. Retroactive in-flight cancellation remains outside this
+ * helper.
  */
+
+import * as path from 'path';
+import { fileURLToPath } from 'url';
 
 export interface McpRootEntry {
   uri: string;
@@ -21,9 +25,15 @@ export interface NetworkRoot {
   wildcardSubdomains: boolean;
 }
 
+export interface FileRoot {
+  uri: string;
+  path: string;
+}
+
 export interface ParsedMcpRoots {
   raw: McpRootEntry[];
   network: NetworkRoot[];
+  file: FileRoot[];
 }
 
 const sessionRoots = new Map<string, ParsedMcpRoots>();
@@ -37,16 +47,19 @@ export function parseMcpRoots(value: unknown): ParsedMcpRoots {
 
   const raw: McpRootEntry[] = [];
   const network: NetworkRoot[] = [];
+  const file: FileRoot[] = [];
   for (const item of rootsValue) {
     if (!item || typeof item !== 'object') continue;
     const uri = (item as { uri?: unknown }).uri;
     if (typeof uri !== 'string' || uri.length === 0) continue;
     const name = (item as { name?: unknown }).name;
     raw.push({ uri, ...(typeof name === 'string' ? { name } : {}) });
-    const parsed = parseNetworkRoot(uri);
-    if (parsed) network.push(parsed);
+    const networkRoot = parseNetworkRoot(uri);
+    if (networkRoot) network.push(networkRoot);
+    const fileRoot = parseFileRoot(uri);
+    if (fileRoot) file.push(fileRoot);
   }
-  return { raw, network };
+  return { raw, network, file };
 }
 
 export function setSessionMcpRoots(sessionId: string, value: unknown): ParsedMcpRoots {
@@ -92,6 +105,28 @@ export function isUrlAllowedBySessionRoots(sessionId: string, url: string): bool
   }
 }
 
+export function assertFilePathAllowedBySessionRoots(sessionId: string, filePath: string): void {
+  const roots = getSessionMcpRoots(sessionId);
+  if (!roots || roots.file.length === 0) return;
+  const resolvedPath = path.resolve(expandHomePath(filePath));
+  const allowed = roots.file.some((root) => isPathWithinRoot(resolvedPath, root.path));
+  if (!allowed) {
+    throw new Error(
+      `Access to file output path "${resolvedPath}" is blocked by MCP roots narrowing for session "${sessionId}". ` +
+      `Allowed file roots: ${roots.file.map((root) => root.uri).join(', ')}`,
+    );
+  }
+}
+
+export function isFilePathAllowedBySessionRoots(sessionId: string, filePath: string): boolean {
+  try {
+    assertFilePathAllowedBySessionRoots(sessionId, filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function parseNetworkRoot(uri: string): NetworkRoot | null {
   let parsed: URL;
   try {
@@ -106,6 +141,40 @@ function parseNetworkRoot(uri: string): NetworkRoot | null {
   if (wildcardSubdomains) host = host.slice(2);
   if (!host || host.includes('*')) return null;
   return { uri, protocol: 'https:', host, wildcardSubdomains };
+}
+
+function parseFileRoot(uri: string): FileRoot | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'file:') return null;
+  try {
+    const rootPath = path.resolve(fileURLToPath(parsed));
+    return { uri, path: rootPath };
+  } catch {
+    return null;
+  }
+}
+
+function expandHomePath(filePath: string): string {
+  if (filePath.startsWith('~')) {
+    const os = require('os') as typeof import('os');
+    return path.join(os.homedir(), filePath.slice(1));
+  }
+  if (process.platform === 'win32' && filePath.startsWith('%USERPROFILE%')) {
+    const os = require('os') as typeof import('os');
+    const rest = filePath.slice('%USERPROFILE%'.length).replace(/^[/\\]+/, '');
+    return path.join(os.homedir(), rest);
+  }
+  return filePath;
+}
+
+function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function extractHttpsHost(url: string): string | null {

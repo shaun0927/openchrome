@@ -41,4 +41,38 @@ describe('MCPServer roots narrowing integration (#880)', () => {
     expect(response.result?.isError).toBe(true);
     expect(response.result?.content?.[0]?.text).toContain('MCP roots narrowing');
   });
+
+  test('rejects file-output tools before handler execution when MCP file roots exclude the path', async () => {
+    const server = new MCPServer(undefined, { initialToolTier: 3 });
+    const handler = jest.fn(async () => ({ content: [{ type: 'text' as const, text: 'should not run' }] }));
+    server.registerTool('page_pdf', handler, {
+      name: 'page_pdf',
+      description: 'test pdf',
+      inputSchema: {
+        type: 'object',
+        properties: { tabId: { type: 'string' }, path: { type: 'string' } },
+        required: ['tabId'],
+      },
+      annotations: TOOL_ANNOTATIONS.page_pdf,
+    });
+    setSessionMcpRoots('mcp-session-a', { roots: [{ uri: 'file:///tmp/allowed-output' }] });
+
+    const response = await runWithRequestContext(
+      { requestId: 'req-roots-file-deny', mcpSessionId: 'mcp-session-a' },
+      () => server.handleRequest({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'page_pdf',
+          arguments: { sessionId: 'browser-session-a', tabId: 'tab-a', path: '/tmp/other-output/page.pdf' },
+        },
+      }),
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(response.result?.isError).toBe(true);
+    expect(response.result?.content?.[0]?.text).toContain('MCP roots narrowing');
+    expect(response.result?.content?.[0]?.text).toContain('Allowed file roots');
+  });
 });
