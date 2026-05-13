@@ -26,6 +26,22 @@ async function waitForSave(ms = 100): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForNonEmptyFile(file: string, timeoutMs = 2_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = 0;
+  while (Date.now() < deadline) {
+    try {
+      const stat = await fsPromises.stat(file);
+      lastSize = stat.size;
+      if (stat.size > 0) return stat.size;
+    } catch {
+      // file not written yet
+    }
+    await waitForSave(50);
+  }
+  return lastSize;
+}
+
 // Helper: read raw store file
 async function readStoreFile(): Promise<{ version: number; entries: unknown[]; updatedAt: number }> {
   const data = await fsPromises.readFile(STORE_FILE, 'utf-8');
@@ -369,8 +385,7 @@ describe('Issue #493: Domain Memory Persistence E2E', () => {
       await waitForSave(200);
 
       const sizeFile = path.join(sizeDir, 'domain-knowledge.json');
-      const stat1 = await fsPromises.stat(sizeFile);
-      const size200 = stat1.size;
+      const size200 = await waitForNonEmptyFile(sizeFile);
 
       // Add 100 more (total 300) and compress
       for (let i = 200; i < 300; i++) {
@@ -379,8 +394,7 @@ describe('Issue #493: Domain Memory Persistence E2E', () => {
       dm.compress();
       await waitForSave(200);
 
-      const stat2 = await fsPromises.stat(sizeFile);
-      const sizeAfterCompress = stat2.size;
+      const sizeAfterCompress = await waitForNonEmptyFile(sizeFile);
 
       // After compress, file should not be significantly larger than 200 entries
       // Allow 10% tolerance for JSON formatting differences
