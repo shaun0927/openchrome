@@ -198,6 +198,97 @@ describe('action-cache', () => {
     });
   });
 
+
+
+  describe('action cache v2 page fingerprint keys', () => {
+    const keyInput = {
+      url: TEST_URL,
+      instruction: TEST_INSTRUCTION,
+      actionKinds: ['click'],
+      viewport: { width: 1280, height: 720 },
+      pageFingerprint: JSON.stringify({ title: 'Login', nodes: [{ role: 'button', name: 'Login', tag: 'button' }] }),
+      optionFingerprint: 'verify=both',
+      locale: 'en-US',
+      userAgent: 'Chrome/120',
+    };
+
+    it('misses before record, hits after record, and includes bounded v2 metadata', () => {
+      const cache = getCache();
+      const keyParts = cache.buildActionCacheKeyV2Parts(keyInput)!;
+
+      const miss = cache.getCachedSequenceV2(TEST_URL, TEST_INSTRUCTION, keyParts);
+      expect(miss.status).toBe('MISS');
+      expect(miss.keyVersion).toBe(2);
+
+      const entry = cache.cacheSequenceV2(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS, keyParts)!;
+      const hit = cache.getCachedSequenceV2(TEST_URL, TEST_INSTRUCTION, keyParts);
+
+      expect(entry.version).toBe(2);
+      expect(entry.keyParts.pageFingerprint).toHaveLength(24);
+      expect(hit.status).toBe('HIT');
+      expect(hit.keyVersion).toBe(2);
+      expect(hit.actions).toEqual(TEST_ACTIONS);
+      expect(JSON.stringify(entry)).not.toContain('<html');
+    });
+
+    it('reports stale instead of replaying when the page fingerprint changes', () => {
+      const cache = getCache();
+      const keyParts = cache.buildActionCacheKeyV2Parts(keyInput)!;
+      cache.cacheSequenceV2(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS, keyParts);
+
+      const drifted = cache.buildActionCacheKeyV2Parts({
+        ...keyInput,
+        pageFingerprint: JSON.stringify({ title: 'Login', nodes: [{ role: 'button', name: 'Cancel', tag: 'button' }] }),
+      })!;
+      const decision = cache.getCachedSequenceV2(TEST_URL, TEST_INSTRUCTION, drifted);
+
+      expect(decision.status).toBe('STALE');
+      expect(decision.reason).toBe('page_or_option_fingerprint_mismatch');
+      expect(decision.actions).toBeUndefined();
+    });
+
+    it('ignores low-confidence v2 rows when deciding stale state', () => {
+      const cache = getCache();
+      const keyParts = cache.buildActionCacheKeyV2Parts(keyInput)!;
+      const entry = cache.cacheSequenceV2(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS, keyParts)!;
+      cache.validateCachedSequenceV2(TEST_URL, TEST_INSTRUCTION, entry.keyHash, false);
+
+      const drifted = cache.buildActionCacheKeyV2Parts({
+        ...keyInput,
+        pageFingerprint: JSON.stringify({ title: 'Login', nodes: [{ role: 'button', name: 'Cancel', tag: 'button' }] }),
+      })!;
+      const decision = cache.getCachedSequenceV2(TEST_URL, TEST_INSTRUCTION, drifted);
+
+      expect(decision.status).toBe('MISS');
+      expect(decision.reason).toBe('no_candidate');
+      expect(decision.actions).toBeUndefined();
+    });
+
+    it('keeps v1 entries readable as migration fallback when no v2 candidate exists', () => {
+      const cache = getCache();
+      cache.cacheSequence(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS);
+      cache.validateCachedSequence(TEST_URL, TEST_INSTRUCTION, true);
+
+      const keyParts = cache.buildActionCacheKeyV2Parts(keyInput)!;
+      const decision = cache.getCachedSequenceV2(TEST_URL, TEST_INSTRUCTION, keyParts, { allowLegacyFallback: true });
+
+      expect(decision.status).toBe('HIT');
+      expect(decision.keyVersion).toBe(1);
+      expect(decision.reason).toBe('legacy_v1_fallback');
+      expect(decision.actions).toEqual(TEST_ACTIONS);
+    });
+
+    it('changes the key for viewport and option drift', () => {
+      const cache = getCache();
+      const base = cache.buildActionCacheKeyV2Parts(keyInput)!;
+      const changedViewport = cache.buildActionCacheKeyV2Parts({ ...keyInput, viewport: { width: 800, height: 600 } })!;
+      const changedOptions = cache.buildActionCacheKeyV2Parts({ ...keyInput, optionFingerprint: 'verify=none' })!;
+
+      expect(cache.getActionCacheKeyV2Hash(changedViewport)).not.toBe(cache.getActionCacheKeyV2Hash(base));
+      expect(cache.getActionCacheKeyV2Hash(changedOptions)).not.toBe(cache.getActionCacheKeyV2Hash(base));
+    });
+  });
+
   describe('guarded workflow cache', () => {
     const signature = {
       titleHash: 'title-a',

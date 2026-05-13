@@ -9,6 +9,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { createJob, type JobConfig } from '../core/crawl/job-store';
+import { parseCrawlCacheMode, parseCrawlCacheScope } from '../core/crawl/content-cache';
 import { emitCrawlTrace } from '../core/crawl/trace-emit';
 
 const definition: MCPToolDefinition = {
@@ -34,6 +35,9 @@ const definition: MCPToolDefinition = {
       respect_robots: { type: 'boolean', description: 'Whether to obey robots.txt. Default: true' },
       delay_ms: { type: 'number', description: 'Delay between page fetches (ms). Default: 1000' },
       concurrency: { type: 'number', description: 'Max parallel fetches. Default: 3' },
+      cache_mode: { type: 'string', enum: ['disabled', 'enabled', 'read_only', 'write_only', 'bypass'], description: 'Opt-in crawl content cache mode. Default: disabled.' },
+      cache_ttl_ms: { type: 'number', description: 'Maximum age for enabled/read_only cache hits. Omit for no TTL expiry.' },
+      cache_scope: { type: 'string', enum: ['public', 'session'], description: 'Cache namespace/safety scope. Default: public.' },
     },
     required: ['url'],
   },
@@ -71,6 +75,15 @@ const handler: ToolHandler = async (
     ? Math.max(0, Math.floor(rawMaxDepth))
     : 2;
 
+  let cacheMode;
+  let cacheScope;
+  try {
+    cacheMode = parseCrawlCacheMode(args.cache_mode);
+    cacheScope = parseCrawlCacheScope(args.cache_scope);
+  } catch (err) {
+    return errorResult(err instanceof Error ? err.message : String(err));
+  }
+
   const config: JobConfig = {
     url,
     max_depth: clampedMaxDepth,
@@ -87,6 +100,9 @@ const handler: ToolHandler = async (
       args.concurrency != null
         ? Math.max(1, Math.min(10, Number(args.concurrency)))
         : 3,
+    cache_mode: cacheMode,
+    cache_ttl_ms: typeof args.cache_ttl_ms === 'number' ? args.cache_ttl_ms : undefined,
+    cache_scope: cacheScope,
   };
 
   let jobId: string;
