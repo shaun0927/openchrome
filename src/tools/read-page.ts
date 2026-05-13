@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
@@ -15,6 +15,52 @@ import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { getGlobalConfig } from '../config/global';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+
+/**
+ * Build the `[node_refs]` block that surfaces the #844 backend-node uid
+ * contract in `read_page` DOM mode responses.
+ *
+ * P2 contract: this section is **always** present in the response shape so
+ * `tools/list` parity holds regardless of the `OPENCHROME_NODE_REF` env var.
+ * When the flag is off (or loaderId resolution fails), every uid is rendered
+ * as the literal `null`, keeping the field present but the runtime value
+ * inert.
+ *
+ * The format is line-oriented JSON-ish, one `<backendNodeId>=<nodeRef>` per
+ * line, so a trace-replay parser can reconstruct the registry state without
+ * bringing along a full JSON parser.
+ */
+async function formatNodeRefsBlock(
+  page: import('puppeteer-core').Page,
+  cdpClient: { send: (page: import('puppeteer-core').Page, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+  backendNodeIds: number[],
+): Promise<string> {
+  if (backendNodeIds.length === 0) {
+    return '\n\n[node_refs]\n(empty)\n';
+  }
+  let loaderId: string | null = null;
+  try {
+    loaderId = await getCurrentLoaderId(page, cdpClient as any);
+  } catch {
+    loaderId = null;
+  }
+  const lines: string[] = ['', '', '[node_refs]'];
+  for (const backendNodeId of backendNodeIds) {
+    let uid: string | null = null;
+    if (loaderId) {
+      try {
+        uid = mintNodeRefSync(page, loaderId, backendNodeId);
+      } catch {
+        uid = null;
+      }
+    }
+    lines.push(`${backendNodeId}=${uid ?? 'null'}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
 import {
   buildSemanticView,
   type SemanticAXNode,
@@ -38,7 +84,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.\n\nWhen to use: Reading page structure, verifying content, or extracting the full DOM tree.\nWhen NOT to use: Use inspect for targeted state queries or find to locate a specific element.',
+  description: 'Get page as DOM, accessibility tree (ax), CSS diagnostics, semantic summary, or clean Markdown (article-shaped).\n\nWhen to use: Reading page structure, verifying content, extracting the full DOM tree, or reducing article-like pages to Markdown.\nWhen NOT to use: Use inspect for targeted state queries or find to locate a specific element.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -65,8 +111,16 @@ const definition: MCPToolDefinition = {
       },
       mode: {
         type: 'string',
-        enum: ['ax', 'dom', 'css', 'semantic'],
-        description: 'Output mode: dom (default), ax, css, or semantic',
+        enum: ['ax', 'dom', 'css', 'semantic', 'markdown'],
+        description: 'Output mode: dom (default), ax, css, semantic, or markdown (clean article extraction).',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'Markdown mode only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'Markdown mode only: preserve <a> as markdown links. Default: true.',
       },
       includePagination: {
         type: 'boolean',
@@ -77,20 +131,78 @@ const definition: MCPToolDefinition = {
         enum: ['none', 'delta'],
         description: 'Compression mode. "delta" returns only changes since last read.',
       },
+      planningProfile: {
+        type: 'string',
+        enum: ['default', 'stable'],
+        description: 'DOM mode only: stable omits decorative/noisy serialization details without mutating the live page. Default: default.',
+      },
       fallback: {
         type: 'string',
         enum: ['none', 'dom'],
         description: 'AX mode only: use "dom" to explicitly fall back to DOM output if AX output exceeds the output budget. Default: none.',
       },
+      compact: {
+        type: 'boolean',
+        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false.',
+      },
+      diagnostics: {
+        type: 'boolean',
+        description: 'Include structured read_page timing diagnostics in the MCP result metadata. Default: false.',
+      },
       include_metrics: {
         type: 'boolean',
-        description: 'When true, append approximate returned size/token metrics to text output. Default: false.',
+        description: 'When true, include approximate returned size/token metrics in the emitted payload. Default: false.',
       },
     },
     required: ['tabId'],
   },
   annotations: TOOL_ANNOTATIONS.read_page,
 };
+
+
+function compactAXLines(lines: string[]): string[] {
+  const keep = new Set<number>();
+  const stack: Array<{ indent: number; index: number }> = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+      stack.pop();
+    }
+
+    const actionableOrValuable =
+      line.includes('[ref_') ||
+      line.includes(' = "') ||
+      /\((focused|disabled|checked|selected|expanded)/.test(line);
+
+    if (actionableOrValuable) {
+      keep.add(i);
+      for (const ancestor of stack) {
+        keep.add(ancestor.index);
+      }
+    }
+
+    stack.push({ indent, index: i });
+  }
+
+  return lines.filter((_, index) => keep.has(index));
+}
+
+interface ReadPageDiagnostics {
+  mode: string;
+  requestedMode?: string;
+  pageStatsMs?: number;
+  domGetDocumentMs?: number;
+  axGetFullTreeMs?: number;
+  formatMs?: number;
+  paginationMs?: number;
+  sanitizeMs?: number;
+  deltaMs?: number;
+}
+
+type ReadPageDiagnosticTimingKey = Exclude<keyof ReadPageDiagnostics, 'mode' | 'requestedMode'>;
+
 
 interface AXNode {
   nodeId: number;
@@ -111,7 +223,10 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const filter = (args.filter as string) || 'all';
   const defaultDepth = filter === 'interactive' ? 5 : 8;
-  const maxDepth = (args.depth as number) || defaultDepth;
+  const requestedDepth = typeof args.depth === 'number' ? args.depth : undefined;
+  const maxDepth = filter === 'interactive'
+    ? Math.min(requestedDepth ?? defaultDepth, defaultDepth)
+    : requestedDepth ?? defaultDepth;
   const fetchDepth = maxDepth;
 
   const sessionManager = getSessionManager();
@@ -140,14 +255,71 @@ const handler: ToolHandler = async (
     const cdpClient = sessionManager.getCDPClient();
 
     // Mode dispatch
-    const mode = (args.mode as string) || 'dom';
-    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic') {
+    const requestedMode = args.mode as string | undefined;
+    const mode = requestedMode || 'dom';
+    const isExplicitDomMode = requestedMode === 'dom';
+    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic' && mode !== 'markdown') {
       return {
-        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", or "semantic".` }],
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", "semantic", or "markdown".` }],
         isError: true,
       };
     }
+    const diagnosticsEnabled = args.diagnostics === true;
+    const diagnostics: ReadPageDiagnostics = {
+      mode,
+      ...(requestedMode !== undefined && requestedMode !== mode ? { requestedMode } : {}),
+    };
+    const mark = () => Date.now();
+    const measure = async <T>(key: ReadPageDiagnosticTimingKey, fn: () => Promise<T>): Promise<T> => {
+      const start = mark();
+      try {
+        return await fn();
+      } finally {
+        diagnostics[key] = mark() - start;
+      }
+    };
+    const withDiagnostics = (result: MCPResult): MCPResult => (
+      diagnosticsEnabled ? { ...result, _diagnostics: diagnostics } : result
+    );
+    const includeMetrics = args.include_metrics === true;
+    const withTextMetrics = (text: string, emittedMode: string, truncated = hasTruncationMarker(text)): string => {
+      if (!includeMetrics) return text;
+      let baseText = text;
+      let metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+      for (let i = 0; i < 8; i++) {
+        const candidate = appendMetricsFooter(baseText, metrics);
+        const nextMetrics = buildTextMetrics(candidate, { mode: emittedMode, truncated });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) {
+          if (candidate.length <= MAX_OUTPUT_CHARS) return candidate;
+          const reserve = Math.min(512, Math.max(128, candidate.length - baseText.length + 64));
+          baseText = `${baseText.slice(0, Math.max(0, MAX_OUTPUT_CHARS - reserve))}
+
+[Output truncated — metrics footer reserved output budget]`;
+          truncated = true;
+          metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+          continue;
+        }
+        metrics = nextMetrics;
+      }
+      return appendMetricsFooter(baseText, metrics);
+    };
+    const withSemanticMetrics = (view: Record<string, unknown>): string => {
+      if (!includeMetrics) return JSON.stringify(view);
+      const payload: Record<string, unknown> = { ...view };
+      let metrics = buildTextMetrics(JSON.stringify(payload), { mode: 'semantic' });
+      for (let i = 0; i < 8; i++) {
+        payload._metrics = metrics;
+        const text = JSON.stringify(payload);
+        const nextMetrics = buildTextMetrics(text, { mode: 'semantic' });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) return text;
+        metrics = nextMetrics;
+      }
+      payload._metrics = metrics;
+      return JSON.stringify(payload);
+    };
+
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
+    const compactAX = args.compact === true;
     if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
       return {
         content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],
@@ -160,6 +332,40 @@ const handler: ToolHandler = async (
       return {
         content: [{ type: 'text', text: 'Error: "selector" parameter is only supported in mode="css". Use ref_id for subtree scoping in "ax" mode.' }],
         isError: true,
+      };
+    }
+
+    // Markdown mode — clean HTML→Markdown extraction.
+    // Keep pagination metadata parity with DOM/AX/CSS modes when requested.
+    if (mode === 'markdown') {
+      const onlyMainContent = args.onlyMainContent !== false;
+      const includeLinks = args.includeLinks !== false;
+      const includePaginationMarkdown = args.includePagination !== false;
+      const refIdNote = args.ref_id
+        ? '[Note: ref_id is not supported in markdown mode — full-page content returned. Use mode "ax" for ref_id subtree scoping.]\n\n'
+        : '';
+      const html = await withTimeout(
+        page.content(),
+        15000,
+        'read_page.markdown.content',
+        context,
+      );
+      const { html: cleaned } = extractMainContent(html, { onlyMainContent });
+      let md = refIdNote + toMarkdown(cleaned, { includeLinks });
+      const paginationSection = includePaginationMarkdown
+        ? formatPaginationSection(await detectPagination(page, tabId))
+        : '';
+      if (paginationSection) {
+        md += `\n${paginationSection}`;
+      }
+      let truncated = false;
+      if (md.length > MAX_OUTPUT_CHARS) {
+        md = md.slice(0, MAX_OUTPUT_CHARS);
+        truncated = true;
+      }
+      const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
+      return {
+        content: [{ type: 'text', text: withTextMetrics(md + suffix, 'markdown', truncated) }],
       };
     }
 
@@ -321,7 +527,7 @@ const handler: ToolHandler = async (
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: cssText + cssPaginationSection }],
+        content: [{ type: 'text', text: withTextMetrics(cssText + cssPaginationSection, 'css') }],
       };
     }
 
@@ -514,7 +720,7 @@ const handler: ToolHandler = async (
       );
 
       return {
-        content: [{ type: 'text', text: JSON.stringify(view) }],
+        content: [{ type: 'text', text: withSemanticMetrics(view as unknown as Record<string, unknown>) }],
       };
     }
 
@@ -522,16 +728,28 @@ const handler: ToolHandler = async (
       try {
         const refId = args.ref_id as string | undefined;
         const depth = args.depth as number | undefined;
-        const result = await serializeDOM(page, cdpClient, {
+        const planningProfile = (args.planningProfile as 'default' | 'stable' | undefined) ?? 'default';
+        const result = await measure('domGetDocumentMs', () => serializeDOM(page, cdpClient, {
           maxDepth: depth ?? -1,
           filter: filter,
           interactiveOnly: filter === 'interactive',
-        });
+          planningProfile,
+        }));
+        diagnostics.formatMs = diagnostics.domGetDocumentMs;
 
         let outputText = result.content;
         if (refId) {
           outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
         }
+
+        // #844: build the [node_refs] block from emitted backendNodeIds.
+        // P2 contract — block is always present (never gated by the flag);
+        // the flag only flips uid values to `null` at runtime.
+        const nodeRefsBlock = await formatNodeRefsBlock(
+          page,
+          cdpClient,
+          result.emittedBackendNodeIds ?? [],
+        );
 
         // Delta compression: cache DOM and return diff if applicable
         const compression = args.compression as string | undefined;
@@ -541,7 +759,7 @@ const handler: ToolHandler = async (
           const previous = snapshotStore.get(sessionId, tabId);
 
           if (previous) {
-            const delta = snapshotStore.computeDelta(previous, outputText, currentUrl);
+            const delta = await measure('deltaMs', async () => snapshotStore.computeDelta(previous, outputText, currentUrl));
             // Always update cache with current content
             snapshotStore.set(sessionId, tabId, outputText, currentUrl);
 
@@ -549,10 +767,16 @@ const handler: ToolHandler = async (
               // Return delta instead of full content, but keep page stats header
               const statsLine = `[page_stats] url: ${result.pageStats.url} | title: ${result.pageStats.title} | scroll: ${result.pageStats.scrollX},${result.pageStats.scrollY} | viewport: ${result.pageStats.viewportWidth}x${result.pageStats.viewportHeight} | docSize: ${result.pageStats.scrollWidth}x${result.pageStats.scrollHeight}\n\n`;
               const includePaginationDom = args.includePagination !== false;
-              const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
-              return {
-                content: [{ type: 'text', text: statsLine + delta.content + domPaginationSection }],
-              };
+              const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
+              const compressedText = statsLine + delta.content + nodeRefsBlock + domPaginationSection;
+              return withDiagnostics({
+                content: [{ type: 'text', text: withTextMetrics(compressedText, 'dom') }],
+                _compression: {
+                  level: 'delta',
+                  originalChars: outputText.length,
+                  compressedChars: compressedText.length,
+                },
+              });
             }
             // If not delta (too many changes), fall through to full response
           } else {
@@ -562,12 +786,24 @@ const handler: ToolHandler = async (
         }
 
         const includePaginationDom = args.includePagination !== false;
-        const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
-        return {
-          content: [{ type: 'text', text: outputText + domPaginationSection }],
-        };
-      } catch {
+        const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
+        return withDiagnostics({
+          content: [{ type: 'text', text: withTextMetrics(outputText + nodeRefsBlock + domPaginationSection, 'dom') }],
+        });
+      } catch (error) {
+        if (isExplicitDomMode) {
+          return withDiagnostics({
+            content: [
+              {
+                type: 'text',
+                text: `Read page DOM serialization error: ${error instanceof Error ? error.message : String(error)}`,
+              },
+            ],
+            isError: true,
+          });
+        }
         // DOM serialization failed — fall through to AX mode as fallback
+        diagnostics.mode = 'ax';
       }
     }
 
@@ -599,15 +835,15 @@ const handler: ToolHandler = async (
       : undefined;
 
     // Get the accessibility tree
-    const { nodes } = await withTimeout(
+    const { nodes } = await measure('axGetFullTreeMs', () => withTimeout(
       cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
       15000,
       'Accessibility.getFullAXTree',
       context,
-    );
+    ));
 
     // Add page stats header for AX mode after the AX snapshot so stats are not older than the tree.
-    const axPageStats = await withTimeout(page.evaluate(() => ({
+    const axPageStats = await measure('pageStatsMs', () => withTimeout(page.evaluate(() => ({
       url: window.location.href,
       title: document.title,
       scrollX: Math.round(window.scrollX),
@@ -616,8 +852,10 @@ const handler: ToolHandler = async (
       scrollHeight: document.documentElement.scrollHeight,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
-    })), 15000, 'read_page', context);
+    })), 15000, 'read_page', context));
     const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
+
+    const formatStart = mark();
 
     // Clear previous refs for this target
     refIdManager.clearTargetRefs(sessionId, tabId);
@@ -662,6 +900,21 @@ const handler: ToolHandler = async (
     const lines: string[] = [];
     let charCount = 0;
     const MAX_OUTPUT = MAX_OUTPUT_CHARS;
+
+    /**
+     * Per-snapshot refs map (#831). Populated as the AX tree is walked so that
+     * the final response carries a structured `refs` map alongside the textual
+     * tree. Additive to the existing ax response — `mode='ax'` is unchanged.
+     */
+    const refsMap: Record<string, {
+      role: string;
+      name?: string;
+      tag_name?: string;
+      text_content?: string;
+      frame_id?: string;
+      created_at: number;
+      stale_after_ms: number;
+    }> = {};
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
@@ -715,6 +968,20 @@ const handler: ToolHandler = async (
           name,
           tagName
         );
+
+        // #831: record the structured ref entry for the response `refs` map.
+        // Fields mirror the RefEntry contract documented in the issue.
+        const entry = refIdManager.getRef(sessionId, tabId, refId);
+        const textContent = value || undefined;
+        refsMap[refId] = {
+          role,
+          ...(name ? { name } : {}),
+          ...(tagName ? { tag_name: tagName } : {}),
+          ...(textContent ? { text_content: textContent } : {}),
+          ...(entry?.frameId ? { frame_id: entry.frameId } : {}),
+          created_at: entry?.createdAt ?? Date.now(),
+          stale_after_ms: entry?.staleAfterMs ?? REF_TTL_MS,
+        };
       }
 
       // Build line
@@ -770,10 +1037,10 @@ const handler: ToolHandler = async (
         });
       }
       if (!scopedNode) {
-        return {
+        return withDiagnostics({
           content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
           isError: true,
-        };
+        });
       }
       startNodes = [scopedNode];
     } else {
@@ -783,16 +1050,37 @@ const handler: ToolHandler = async (
       formatNode(root, 0);
     }
 
-    const output = lines.join('\n');
+    const outputLines = compactAX ? compactAXLines(lines) : lines;
+    const output = outputLines.join('\n');
+    const outputCharCount = output.length;
+    diagnostics.formatMs = mark() - formatStart;
     const includePaginationAx = args.includePagination !== false;
-    const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+    const axPaginationSection = includePaginationAx ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
 
-    if (charCount > MAX_OUTPUT) {
+    const compression = args.compression as string | undefined;
+    if (compression === 'delta') {
+      const snapshotStore = SnapshotStore.getInstance();
+      const axCacheTabId = `${tabId}:ax${compactAX ? ':compact' : ''}`;
+      const previous = snapshotStore.get(sessionId, axCacheTabId);
+      if (previous) {
+        const delta = snapshotStore.computeDelta(previous, output, axPageStats.url);
+        snapshotStore.set(sessionId, axCacheTabId, output, axPageStats.url);
+        if (delta.isDelta) {
+          return {
+            content: [{ type: 'text', text: pageStatsLine + delta.content.replace('[DOM Delta', '[AX Delta') + axPaginationSection }],
+          };
+        }
+      } else {
+        snapshotStore.set(sessionId, axCacheTabId, output, axPageStats.url);
+      }
+    }
+
+    if (outputCharCount > MAX_OUTPUT) {
       // Large AX output should not trigger a second full DOM traversal unless
       // the caller explicitly opts into that fallback. Otherwise preserve AX
       // intent and return the bounded/truncated AX representation.
       if (axOverflowFallback !== 'dom') {
-        return {
+        return withDiagnostics({
           content: [
             {
               type: 'text',
@@ -803,7 +1091,8 @@ const handler: ToolHandler = async (
                 axPaginationSection,
             },
           ],
-        };
+          refs: refsMap,
+        });
       }
 
       // Explicit fallback: DOM mode often produces equivalent page structure at
@@ -815,22 +1104,35 @@ const handler: ToolHandler = async (
           interactiveOnly: filter === 'interactive',
         });
 
+        // #844: include the [node_refs] block in the AX-overflow DOM
+        // fallback path too — P2 contract is unconditional across response
+        // shapes that ship DOM content.
+        const fallbackNodeRefsBlock = await formatNodeRefsBlock(
+          page,
+          cdpClient,
+          domResult.emittedBackendNodeIds ?? [],
+        );
+
         const fallbackNote =
           '\n\n[AX tree exceeded output limit (' + charCount + ' chars). ' +
           'Switched to DOM mode because fallback: "dom" was requested. ' +
           'Use mode: "ax" with smaller depth / ref_id to scope specific subtrees for AX format.]';
 
-        return {
+        // Update diagnostics to reflect the effective output mode (DOM), not the requested one (AX).
+        diagnostics.requestedMode = diagnostics.requestedMode ?? diagnostics.mode;
+        diagnostics.mode = 'dom';
+
+        return withDiagnostics({
           content: [
             {
               type: 'text',
-              text: domResult.content + fallbackNote + axPaginationSection,
+              text: domResult.content + fallbackNote + fallbackNodeRefsBlock + axPaginationSection,
             },
           ],
-        };
+        });
       } catch {
         // If DOM serialization fails, fall back to truncated AX (original behavior)
-        return {
+        return withDiagnostics({
           content: [
             {
               type: 'text',
@@ -841,13 +1143,15 @@ const handler: ToolHandler = async (
                 axPaginationSection,
             },
           ],
-        };
+          refs: refsMap,
+        });
       }
     }
 
-    return {
+    return withDiagnostics({
       content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
-    };
+      refs: refsMap,
+    });
   } catch (error) {
     return {
       content: [
@@ -921,8 +1225,7 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return value;
   }
 
-  const includeMetrics = args.include_metrics === true;
-  const modeForMetrics = typeof args.mode === 'string' ? args.mode : 'dom';
+  const sanitizeStart = Date.now();
 
   // Sanitize all text content blocks
   const sanitizedContent = result.content.map((block) => {
@@ -939,9 +1242,6 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
             const unique = Array.from(new Set(notes));
             cleaned['_sanitization'] = unique.join('; ');
           }
-          if (includeMetrics) {
-            cleaned['_metrics'] = buildTextMetrics(JSON.stringify(cleaned), { mode: modeForMetrics });
-          }
           return { ...block, text: JSON.stringify(cleaned) };
         } catch {
           // Parse failed — fall back to string-level sanitization so the
@@ -951,28 +1251,48 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
         }
       }
       const sanitized = sanitizeContent(block.text);
-      const text = sanitized.text + sanitized.sanitizationNote;
       return {
         ...block,
-        text: includeMetrics
-          ? appendMetricsFooter(text, buildTextMetrics(text, { mode: modeForMetrics }))
-          : text,
+        text: sanitized.text + sanitized.sanitizationNote,
       };
     }
     return block;
   });
 
-  return { ...result, content: sanitizedContent };
+  const sanitizedResult: MCPResult = { ...result, content: sanitizedContent };
+  if (args.diagnostics === true && sanitizedResult._diagnostics && typeof sanitizedResult._diagnostics === 'object') {
+    (sanitizedResult._diagnostics as ReadPageDiagnostics).sanitizeMs = Date.now() - sanitizeStart;
+  }
+  return sanitizedResult;
 };
 
 /**
- * Exported reference to the sanitized handler so the shared
- * `returnAfterState` plumbing (src/tools/_shared/return-after-state.ts)
- * can invoke read_page in-process for the post-action snapshot without
- * re-creating the formatter/sanitizer pipeline. Internal API.
+ * Snapshot-cache wrapper (#879).
+ *
+ * read_page stays uncached for now. AX/semantic responses embed ephemeral
+ * ref_* ids owned by RefIdManager, and DOM/CSS outputs include scroll-sensitive
+ * page stats/content. Until cache identity can include scroll state and ref
+ * mappings can be replayed or made stable, returning cached read_page payloads
+ * risks stale refs or stale post-scroll snapshots. Keep the wrapper as a
+ * behavior-preserving seam so the feature can be re-enabled safely later.
  */
-export const readPageHandlerForReuse: ToolHandler = sanitizedHandler;
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  return sanitizedHandler(sessionId, args, context);
+};
+
+function hasTruncationMarker(text: string): boolean {
+  return text.includes('...[truncated]') || text.includes('[Output truncated') || text.includes('Content omitted due to size constraints');
+}
 
 export function registerReadPageTool(server: MCPServer): void {
-  server.registerTool('read_page', sanitizedHandler, definition);
+  server.registerTool('read_page', cachedHandler, definition);
 }
+
+/**
+ * Internal handler exported for in-process reuse (e.g. the
+ * `returnAfterState` chaining option on input tools). External callers should
+ * register the tool via `registerReadPageTool` and invoke it through the MCP
+ * server. This export wraps the sanitized handler so callers get the same
+ * post-processing the public tool applies.
+ */
+export const readPageHandlerForReuse: ToolHandler = sanitizedHandler;

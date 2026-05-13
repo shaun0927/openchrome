@@ -7,6 +7,12 @@ describe('token metrics helpers', () => {
     expect(estimateTokens('abcdefghijklm')).toBe(4);
   });
 
+  test('uses a JSON-safe compression ratio for empty returned text', () => {
+    const metrics = buildRawTextMetrics('raw', '');
+    expect(Number.isFinite(metrics.compression_ratio)).toBe(true);
+    expect(JSON.parse(JSON.stringify(metrics)).compression_ratio).toBe(0);
+  });
+
   test('handles CJK and large strings deterministically', () => {
     expect(estimateTokens('한국어문장')).toBe(Math.ceil('한국어문장'.length / 4));
     expect(estimateTokens('x'.repeat(10_001))).toBe(2501);

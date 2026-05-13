@@ -825,12 +825,12 @@ const handler: ToolHandler = async (
           links_found: p.links_found,
           content_length: p.content.length,
           error: p.error,
-          ...(includeMetrics && { metrics: buildTextMetrics('', { mode: outputFormat }) }),
+          ...(includeMetrics && { metrics: buildTextMetrics('', { mode: outputFormat, truncated: true }) }),
         }));
         // Per-page metrics are computed from empty strings (content omitted),
         // so the summary metrics must align with what is actually emitted —
         // not the original full-content pages.
-        const emptyPageMetrics = buildTextMetrics('', { mode: outputFormat });
+        const emptyPageMetrics = buildTextMetrics('', { mode: outputFormat, truncated: true });
         const minimalSummary = includeMetrics
           ? {
               ...summary,
@@ -853,6 +853,13 @@ const handler: ToolHandler = async (
           null,
           2,
         );
+        if (outputJson.length > MAX_OUTPUT_CHARS) {
+          outputJson = JSON.stringify({
+            summary: minimalSummary,
+            pages: minimalPages.map(({ url, title, links_found, content_length, error }) => ({ url, title, links_found, content_length, error })),
+            note: 'Content omitted due to size constraints',
+          }, null, 2);
+        }
       }
     }
 

@@ -41,7 +41,7 @@ export function buildRawTextMetrics(
     estimated_tokens: returnedTokens,
     compression_ratio: returnedText.length > 0
       ? Number((rawText.length / returnedText.length).toFixed(3))
-      : rawText.length === 0 ? 1 : Number.POSITIVE_INFINITY,
+      : rawText.length === 0 ? 1 : 0,
     truncated: opts?.truncated ?? returnedText.includes('...[truncated]'),
     ...(opts?.mode ? { mode: opts.mode } : {}),
   };

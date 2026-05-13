@@ -1021,12 +1021,24 @@ const handler: ToolHandler = async (
               },
               pages: minimalPages.map((p) => ({
                 ...p,
-                metrics: buildTextMetrics('', { mode: outputFormat }),
+                metrics: buildTextMetrics('', { mode: outputFormat, truncated: true }),
               })),
               note: 'Content omitted due to size constraints',
             }
           : { summary, pages: minimalPages, note: 'Content omitted due to size constraints' };
         outputJson = JSON.stringify(minimalOutput, null, 2);
+        if (outputJson.length > MAX_OUTPUT_CHARS) {
+          outputJson = JSON.stringify({
+            summary: includeMetrics
+              ? {
+                  ...summary,
+                  metrics: { returned_chars: 0, estimated_tokens: 0, truncated_pages: pages.length, mode: `crawl:${outputFormat}` },
+                }
+              : summary,
+            pages: minimalPages.map(({ url, title, depth, links_found, content_length, error }) => ({ url, title, depth, links_found, content_length, error })),
+            note: 'Content omitted due to size constraints',
+          }, null, 2);
+        }
       }
     }
 
