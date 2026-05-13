@@ -8,6 +8,7 @@ model composes them into prose.
 
 | Recipe | Goal | Tools touched |
 |---|---|---|
+| [action-cache-v2.md](action-cache-v2.md) | Interpret `act` cache status and verify page-fingerprint drift behavior. | `act` |
 | [fast-profile.md](fast-profile.md) | Enable and verify the opt-in low-token runtime profile. | `oc_get_connection_info`, `read_page` |
 | [multi-source-news-digest.md](multi-source-news-digest.md) | Pull headlines from several news sources and produce a one-screen daily digest. | `navigate`, `read_page`, `crawl` |
 | [fit-markdown.md](fit-markdown.md) | Return raw and fit markdown with deterministic prune/BM25 filters. | `read_page`, `crawl`, `crawl_sitemap` |
