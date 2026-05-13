@@ -17,6 +17,7 @@ import {
   buildReflectionStrategyMetadata,
   parseReflectionStrategy,
 } from '../orchestration/reflection-strategy';
+import { getTaskDriftLedger } from '../harness/task-ledger';
 
 const dnsResolve = promisify(dns.resolve);
 
@@ -228,6 +229,10 @@ const workflowStatusDefinition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include worker scratchpad details. Default: false',
       },
+      includeLedger: {
+        type: 'boolean',
+        description: 'Include compact task drift ledger diagnostics. Default: false',
+      },
     },
     required: [],
   },
@@ -235,20 +240,25 @@ const workflowStatusDefinition: MCPToolDefinition = {
 };
 
 const workflowStatusHandler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
   const engine = getWorkflowEngine();
   const includeWorkerDetails = args.includeWorkerDetails as boolean ?? false;
+  const includeLedger = args.includeLedger as boolean ?? false;
 
   try {
     const orch = await engine.getOrchestrationStatus();
     if (!orch) {
+      const noWorkflow: Record<string, unknown> = { status: 'NO_WORKFLOW', message: 'No active workflow found' };
+      if (includeLedger) {
+        noWorkflow.taskLedger = getTaskDriftLedger().snapshot(sessionId);
+      }
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ status: 'NO_WORKFLOW', message: 'No active workflow found' }),
+            text: JSON.stringify(noWorkflow),
           },
         ],
       };
@@ -274,6 +284,10 @@ const workflowStatusHandler: ToolHandler = async (
         extractedData: w.extractedData,
         errors: w.errors,
       }));
+    }
+
+    if (includeLedger) {
+      result.taskLedger = getTaskDriftLedger().snapshot(sessionId);
     }
 
     return {

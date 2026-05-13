@@ -53,11 +53,15 @@ export function buildReflectionStrategyMetadata(input: {
       })
     : [];
 
+  const lastAttemptSummary = includeLastAttempt
+    ? buildLastAttemptSummary(input.params, maxSummaryChars)
+    : undefined;
+
   return {
     strategy: input.strategy,
     reflectionIdsConsidered: reflections.map(reflection => reflection.id),
     ...(includeReflection && reflections.length === 0 ? { noMatchingReflections: true } : {}),
-    ...(includeLastAttempt ? { lastAttemptSummary: buildLastAttemptSummary(input.params, maxSummaryChars) ?? '' } : {}),
+    ...(lastAttemptSummary ? { lastAttemptSummary } : {}),
     limits: { maxReflections, maxSummaryChars },
   };
 }

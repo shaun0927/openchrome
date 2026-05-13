@@ -219,7 +219,9 @@ export const TOOL_ANNOTATIONS = {
 
   // ── Run-harness lifecycle (develop-era additions) ──────────────────────
   oc_run_start: MUTATES,
-  oc_run_status: READ_ONLY,
+  // `oc_run_status` is read-only without a budget, but budget-exceeded inputs
+  // finish the run as needs_strategy_change and append ledger evidence.
+  oc_run_status: MUTATES,
   oc_run_events: READ_ONLY,
   oc_run_finish: DESTRUCTIVE,
 

@@ -29,6 +29,17 @@ describe('reflection strategy controls', () => {
     expect(summary?.length).toBeLessThanOrEqual(80);
   });
 
+
+  test('last_attempt strategy omits summary field when no prior attempt is supplied', () => {
+    const metadata = buildReflectionStrategyMetadata({
+      strategy: 'last_attempt',
+      planId: 'plan-a',
+      params: {},
+    });
+
+    expect(metadata.lastAttemptSummary).toBeUndefined();
+  });
+
   test('last_attempt_and_reflection caps journal summary and reflection ids', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reflection-strategy-'));
     try {
