@@ -21,6 +21,7 @@ import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
 import { dispatchCoordinateClick } from '../cdp/input';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 
 /**
  * Inject the structured {@link VerifyReport} onto an MCPResult under
@@ -36,6 +37,7 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 const definition: MCPToolDefinition = {
   name: 'interact',
   description: 'Find element by natural language; click/hover/double_click it; wait for DOM settle; return state.\n\nWhen to use: One described element action, with coordinate fallback for Shadow DOM/canvas/iframes.\nWhen NOT to use: Use act for multi-step flows; computer for general coordinate clicks.',
+  annotations: TOOL_ANNOTATIONS.interact,
   inputSchema: {
     type: 'object',
     properties: {
@@ -91,6 +93,15 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      ref: {
+        type: 'string',
+        description: 'Snapshot ref ID (from read_page refs map). When provided, skips AX re-resolution and clicks the element directly via its cached backendDOMNodeId.',
+      },
+      intent: {
+        type: 'string',
+        maxLength: 120,
+        description: 'Optional short label (≤120 chars) describing the user-facing goal of this action, e.g. "submit login form". Recorded in the task journal for observability.',
+      },
     },
     required: ['tabId'],
   },
@@ -113,6 +124,9 @@ const handler: ToolHandler = async (
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
 
+  const intent = args.intent as string | undefined;
+  const refArg = args.ref as string | undefined;
+
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
 
@@ -121,6 +135,83 @@ const handler: ToolHandler = async (
       content: [{ type: 'text', text: 'Error: tabId is required' }],
       isError: true,
     };
+  }
+
+  // ─── intent validation (#894) ───
+  if (intent !== undefined) {
+    if (typeof intent !== 'string' || intent.trim() === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must be a non-empty string with at most 120 characters.' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must be at most 120 characters.' }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Ref fast-path (#831) ───
+  if (refArg) {
+    // Check if the ref is stale (missing or TTL-expired).
+    if (refIdManager.isRefStale(sessionId, tabId, refArg)) {
+      return {
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" is no longer valid (element may have changed or page navigated). Call read_page to get fresh refs.` }],
+        isError: true,
+        error: { code: 'STALE_REF', ref_id: refArg },
+      } as MCPResult;
+    }
+
+    const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refArg);
+    if (!backendDOMNodeId) {
+      return {
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" could not be resolved to a DOM node.` }],
+        isError: true,
+        error: { code: 'STALE_REF', ref_id: refArg },
+      } as MCPResult;
+    }
+
+    try {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+      if (!page) {
+        return {
+          content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.` }],
+          isError: true,
+        };
+      }
+
+      const cdpClient = sessionManager.getCDPClient();
+      // Scroll into view then get bounding box
+      await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: backendDOMNodeId });
+      const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId: backendDOMNodeId }) as
+        { model: { content: number[] } };
+      const [x1, y1,, , x2,, , y2] = boxModel.model.content;
+      const cx = Math.round((x1 + x2) / 2);
+      const cy = Math.round((y1 + y2) / 2);
+
+      if (action === 'double_click') {
+        await page.mouse.click(cx, cy, { clickCount: 2 });
+      } else if (action === 'hover') {
+        await page.mouse.move(cx, cy);
+      } else {
+        await page.mouse.click(cx, cy);
+      }
+
+      const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+      const lines = [`${actionVerb} [${refArg}] [via ref]`];
+
+      return {
+        content: [{ type: 'text', text: lines.join('\n') }],
+        via: 'ref',
+      } as MCPResult;
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Interact error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
   }
 
   // ─── Mode: coordinate ───
