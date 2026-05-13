@@ -125,4 +125,17 @@ describe('FailureEpisodeStore', () => {
     expect(second.id).toMatch(/-[0-9a-f]{8}$/);
   });
 
+
+  it('does not infer domains from non-URL task text', () => {
+    const store = new FailureEpisodeStore({ now: () => 3000 });
+    const episode = store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'button missing',
+      recoveryTool: 'read_page',
+      failure: { domain: 'checkout flow step' },
+    });
+
+    expect(episode.domain).toBe('unknown');
+  });
+
 });

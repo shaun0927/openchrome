@@ -282,11 +282,13 @@ function sanitizeText(value: unknown, limit: number): string {
 function normalizeDomain(value: unknown): string {
   const raw = stringFrom(value);
   if (!raw) return UNKNOWN;
+  const looksUrlLike = raw.includes('://') || /^[a-z0-9.-]+\.[a-z]{2,}(?::\d+)?(?:[/?#]|$)/i.test(raw);
+  if (!looksUrlLike) return UNKNOWN;
   try {
     const parsed = raw.includes('://') ? new URL(raw) : new URL(`https://${raw}`);
     return parsed.hostname.toLowerCase();
   } catch {
-    return raw.toLowerCase().replace(/[^a-z0-9.-]/g, '').slice(0, 120) || UNKNOWN;
+    return UNKNOWN;
   }
 }
 
