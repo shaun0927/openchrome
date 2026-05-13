@@ -216,7 +216,11 @@ async function readTimelineEntries(): Promise<{ checkpoints: AutomationCheckpoin
     if (warning) warnings.push(warning);
     if (checkpoint?.checkpointId) checkpoints.push(checkpoint);
   }
-  checkpoints.sort((a, b) => (b.createdAt ?? b.timestamp) - (a.createdAt ?? a.timestamp));
+  checkpoints.sort((a, b) => {
+    const timeDiff = (b.createdAt ?? b.timestamp) - (a.createdAt ?? a.timestamp);
+    if (timeDiff !== 0) return timeDiff;
+    return (b.checkpointId ?? '').localeCompare(a.checkpointId ?? '');
+  });
   return { checkpoints, warnings };
 }
 

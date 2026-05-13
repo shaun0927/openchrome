@@ -189,6 +189,22 @@ describe('oc_checkpoint timeline (#1025)', () => {
     expect(readJson(await handler('sess-1', { action: 'list' })).checkpoints).toEqual([]);
   });
 
+
+  test('list ordering is deterministic for same-millisecond checkpoints', async () => {
+    const handler = await loadHandler();
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1234567890);
+    try {
+      const first = readJson(await handler('sess-1', { action: 'save', taskDescription: 'same ms one' }));
+      const second = readJson(await handler('sess-1', { action: 'save', taskDescription: 'same ms two' }));
+      const listed = readJson(await handler('sess-1', { action: 'list' }));
+      const expected = [first.checkpointId, second.checkpointId].sort().reverse();
+
+      expect(listed.checkpoints.map((entry: any) => entry.checkpointId)).toEqual(expected);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   test('retention prunes old timeline artifacts only', async () => {
     process.env.OPENCHROME_CHECKPOINT_TIMELINE_MAX = '2';
     const handler = await loadHandler();
