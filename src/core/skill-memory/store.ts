@@ -174,6 +174,10 @@ function normaliseRecordForRead(rec: SkillRecord): SkillRecord {
  * process restarts so `record()` is idempotent without needing a
  * separate uniqueness index.
  */
+function normalizeSkillDomain(domain: string): string {
+  return domain.trim().toLowerCase();
+}
+
 function computeSkillId(domain: string, name: string): string {
   return crypto
     .createHash('sha256')
@@ -200,8 +204,8 @@ export class SkillMemoryStore {
       throw new Error('SkillMemoryStore: opts.domain is required');
     }
     this.rootDir = opts.rootDir ?? defaultSkillMemoryRootDir();
-    this.domain = opts.domain;
-    this.encodedDomain = encodeDomain(opts.domain);
+    this.domain = normalizeSkillDomain(opts.domain);
+    this.encodedDomain = encodeDomain(this.domain);
   }
 
   /** Ensure the per-domain directory exists exactly once per instance. */
@@ -321,7 +325,8 @@ export class SkillMemoryStore {
    * Returns the assigned `skill_id` and the wall-clock ms `stored_at`.
    */
   async record(skill: Omit<SkillRecord, 'skillId'> & { skillId?: string }): Promise<RecordResult> {
-    if (skill.domain !== this.domain) {
+    const skillDomain = normalizeSkillDomain(skill.domain);
+    if (skillDomain !== this.domain) {
       throw new Error(
         `SkillMemoryStore: domain mismatch — store bound to "${this.domain}", record carries "${skill.domain}"`,
       );
@@ -344,7 +349,7 @@ export class SkillMemoryStore {
           break;
         }
       }
-      const skillId = existingId ?? skill.skillId ?? computeSkillId(skill.domain, skill.name);
+      const skillId = existingId ?? skill.skillId ?? computeSkillId(this.domain, skill.name);
       const existing = existingId ? file.skills[existingId] : undefined;
       // `replayArtifacts` (#875) — when the caller supplies a value, validate
       // each non-null entry and persist as-is. When omitted, fall back to
@@ -385,7 +390,7 @@ export class SkillMemoryStore {
       }
       const next: SkillRecord = {
         skillId,
-        domain: skill.domain,
+        domain: this.domain,
         name: skill.name,
         steps: skill.steps,
         contractId: skill.contractId,

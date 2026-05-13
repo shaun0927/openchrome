@@ -27,6 +27,7 @@ import {
 } from '../core/skill-memory';
 import { isCoreFeatureEnabled } from '../harness/flags';
 import { redactSecrets } from '../core/secrets';
+import { isDynamicSkillsEnabled } from '../harness/flags';
 
 interface OcSkillRecordOutput {
   skill_id: string;
@@ -112,7 +113,8 @@ const handler: ToolHandler = async (
   _sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
-  const domain = args.domain as string | undefined;
+  const domainArg = args.domain as string | undefined;
+  const domain = typeof domainArg === 'string' ? domainArg.trim().toLowerCase() : undefined;
   const name = args.name as string | undefined;
   const rawSteps = args.steps as unknown[] | undefined;
   const contractId = args.contract_id as string | undefined;
@@ -282,6 +284,26 @@ const handler: ToolHandler = async (
   if (snapshotPath !== undefined) {
     output.snapshot_path = snapshotPath;
   }
+
+  // Emit `skill_recorded` on the dynamic-skills event bus when the
+  // pilot family is active. The synthesizer picks this up to register
+  // a fresh synthesized tool so subsequent calls in the same session
+  // can use it. Best-effort — the record() result is already settled
+  // and must not be impacted by a hook failure.
+  if (isDynamicSkillsEnabled()) {
+    try {
+      const events = await import('../pilot/dynamic-skills/events.js');
+      events.dynamicSkillEvents.emit('skill_recorded', {
+        domain,
+        skillId: recordResult.skill_id,
+      });
+    } catch (err) {
+      console.error(
+        `[oc_skill_record] dynamic-skills event emit failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   return jsonResult(output);
 };
 
