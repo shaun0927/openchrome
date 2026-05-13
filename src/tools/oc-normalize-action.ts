@@ -289,7 +289,7 @@ const definition: MCPToolDefinition = {
     properties: {
       action: {
         type: 'object',
-        description: 'Candidate action object to validate and normalize. The action is never executed.',
+        description: 'REQUIRED Candidate action object to validate and normalize. The action is never executed.',
       },
       targetTool: {
         type: 'string',
