@@ -57,6 +57,20 @@ export interface MCPError {
   data?: unknown;
 }
 
+export const TOOL_CAPABILITIES = [
+  'core',
+  'crawl',
+  'recording',
+  'workflow',
+  'storage',
+  'profile',
+  'totp',
+  'pilot',
+] as const;
+
+/** Capability group a tool belongs to. Used by --tools-only / --disable-tools CLI flags. */
+export type ToolCapability = typeof TOOL_CAPABILITIES[number];
+
 /**
  * Allowed category values for MCPToolDefinition.category.
  * Used by scripts/gen-capability-map.ts to group tools in the generated
@@ -128,6 +142,11 @@ export interface MCPToolDefinition {
   outputSchema?: MCPObjectSchema;
   /** Optional MCP-spec tool annotations. */
   annotations?: ToolAnnotations;
+  /**
+   * Capability group this tool belongs to. Absent or undefined → defaults to 'core'.
+   * Used by --tools-only / --disable-tools CLI flags to gate tool visibility.
+   */
+  capability?: ToolCapability;
 }
 
 /**
