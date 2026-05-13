@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
+import { waitForPageReady, PageReadyResult } from '../utils/page-ready-state';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import {
   validateSchema,
@@ -52,6 +53,14 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include field-level extraction diagnostics. Default: false',
       },
+      waitForReady: {
+        type: 'boolean',
+        description: 'Opt in to a bounded page-ready gate before extraction. Waits for document readiness and a short DOM mutation quiet window. Default: false',
+      },
+      readyTimeoutMs: {
+        type: 'number',
+        description: 'Maximum wait for waitForReady in milliseconds. Default: 5000',
+      },
     },
     required: ['tabId', 'schema'],
   },
@@ -71,7 +80,7 @@ function countFields(data: Record<string, unknown>): number {
   return Object.values(data).filter(v => v !== null && v !== undefined && v !== '').length;
 }
 
-const handler: ToolHandler = async (
+export const extractDataHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   _context?: ToolContext
@@ -81,6 +90,8 @@ const handler: ToolHandler = async (
   const selector = args.selector as string | undefined;
   const multiple = (args.multiple as boolean) ?? false;
   const debug = (args.debug as boolean) ?? false;
+  const waitForReady = (args.waitForReady as boolean) ?? false;
+  const readyTimeoutMs = args.readyTimeoutMs as number | undefined;
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
@@ -102,6 +113,11 @@ const handler: ToolHandler = async (
   }
 
   try {
+    let readiness: PageReadyResult | undefined;
+    if (waitForReady) {
+      readiness = await waitForPageReady(page, { timeoutMs: readyTimeoutMs }, _context);
+    }
+
     const schemaProps: Record<string, SchemaProperty> = multiple
       ? (schema.items?.properties || schema.properties || {})
       : (schema.properties || {});
@@ -127,6 +143,7 @@ const handler: ToolHandler = async (
         return {
           content: [{ type: 'text', text: JSON.stringify({
             action: 'extract_data', url: pageUrl, multiple: true, items: [], count: 0,
+            ...(readiness && { readiness }),
             message: 'No repeating items found. Try a more specific selector or check if the page has loaded.',
           }) }],
         };
@@ -143,6 +160,7 @@ const handler: ToolHandler = async (
       return {
         content: [{ type: 'text', text: JSON.stringify({
           action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
+          ...(readiness && { readiness }),
         }) }],
       };
     }
@@ -173,7 +191,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
+      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined, readiness);
     }
 
     // Strategy 2: Microdata
@@ -190,7 +208,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
+      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined, readiness);
     }
 
     // Strategy 4: CSS heuristic
@@ -200,7 +218,7 @@ const handler: ToolHandler = async (
     } catch { /* non-fatal */ }
 
     const { result, validation } = validateAndCoerce(merged, schema);
-    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
+    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined, readiness);
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -209,7 +227,8 @@ const handler: ToolHandler = async (
 function buildResponse(
   data: Record<string, unknown>, errors: string[], url: string,
   strategies: string[], domain: string, fieldNames: string[],
-  fieldDiagnostics?: Record<string, { resolvedVia?: string; aliasesTried: string[] }>
+  fieldDiagnostics?: Record<string, { resolvedVia?: string; aliasesTried: string[] }>,
+  readiness?: PageReadyResult,
 ): MCPResult {
   const fieldsFound = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k]) => k);
   const fieldsMissing = fieldNames.filter(f => !fieldsFound.includes(f));
@@ -224,6 +243,7 @@ function buildResponse(
   const response: Record<string, unknown> = {
     action: 'extract_data', url, data, fieldsFound: fieldsFound.length, fieldsTotal: fieldNames.length, strategies,
   };
+  if (readiness) response.readiness = readiness;
   if (fieldsMissing.length > 0) response.fieldsMissing = fieldsMissing;
   if (fieldDiagnostics) response.fieldDiagnostics = fieldDiagnostics;
   if (errors.length > 0) response.validationErrors = errors;
@@ -235,5 +255,5 @@ function buildResponse(
 }
 
 export function registerExtractDataTool(server: MCPServer): void {
-  server.registerTool('extract_data', handler, definition);
+  server.registerTool('extract_data', extractDataHandler, definition);
 }
