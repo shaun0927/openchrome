@@ -78,8 +78,9 @@ while (( SECONDS < deadline )); do
     fail "daemon exited before becoming ready"
   fi
 
-  body="$(curl -s "http://127.0.0.1:${HEALTH_PORT}/ready" || true)"
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HEALTH_PORT}/ready" || true)"
+  response="$(curl -s -w $'\n%{http_code}' "http://127.0.0.1:${HEALTH_PORT}/ready" || true)"
+  code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
 
   if [[ "${code}" == "503" ]]; then
     saw_503=1
