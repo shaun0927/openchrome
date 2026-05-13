@@ -10,30 +10,13 @@ import * as net from 'node:net';
 // Inline require to avoid TS module resolution issues with dynamic transport loading
 const { HTTPTransport } = require('../../src/transports/http');
 
-let activePort = 0;
+const TEST_PORT_START = 20_000 + (process.pid % 400) * 100;
+let nextTestPort = TEST_PORT_START;
+let activePort = TEST_PORT_START;
 
-function reserveLoopbackPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close((err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        if (!port) {
-          reject(new Error('Failed to reserve loopback test port'));
-          return;
-        }
-        activePort = port;
-        resolve(port);
-      });
-    });
-  });
+function allocatePort(): number {
+  activePort = nextTestPort++;
+  return activePort;
 }
 const TEST_TOKEN = 'test-s...c123';
 const TRUSTED_ORIGIN = 'http://127.0.0.1:5173';
@@ -116,19 +99,30 @@ async function startTransport(transport: InstanceType<typeof HTTPTransport>): Pr
     return { jsonrpc: '2.0', id: msg.id, result: { ok: true } };
   });
   transport.start();
-  await new Promise<void>((resolve, reject) => {
-    const server = (transport as { server?: net.Server | null }).server;
-    if (!server) {
-      reject(new Error('HTTP transport did not create a server'));
+  // Wait for the underlying http server to actually accept connections so
+  // the first request doesn't race with bind() and trip ECONNREFUSED. We
+  // poll instead of just sleeping because the previous 100 ms fixed wait
+  // intermittently lost the race on slower ubuntu-18 / macos-22 runners.
+  await waitForListening(activePort);
+}
+
+async function waitForListening(port: number, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = net.connect({ host: '127.0.0.1', port });
+        socket.once('connect', () => { socket.destroy(); resolve(); });
+        socket.once('error', reject);
+      });
       return;
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 25));
     }
-    if (server.listening) {
-      resolve();
-      return;
-    }
-    server.once('listening', resolve);
-    server.once('error', reject);
-  });
+  }
+  throw new Error(`HTTP transport never started listening on 127.0.0.1:${port} within ${timeoutMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
 describe('HTTP Bearer Token Auth', () => {
@@ -155,7 +149,7 @@ describe('HTTP Bearer Token Auth', () => {
 
   describe('with auth token configured', () => {
     beforeEach(async () => {
-      transport = new HTTPTransport(await reserveLoopbackPort(), '127.0.0.1', TEST_TOKEN);
+      transport = new HTTPTransport(allocatePort(), '127.0.0.1', TEST_TOKEN);
       await startTransport(transport);
     });
 
@@ -207,11 +201,11 @@ describe('HTTP Bearer Token Auth', () => {
 
   describe('unauthenticated HTTP policy', () => {
     it('fails closed by default when no auth is configured', () => {
-      expect(() => new HTTPTransport(0, '127.0.0.1')).toThrow(/Refusing to start unauthenticated HTTP transport/);
+      expect(() => new HTTPTransport(allocatePort(), '127.0.0.1')).toThrow(/Refusing to start unauthenticated HTTP transport/);
     });
 
     it('allows explicit loopback-only development mode', async () => {
-      transport = new HTTPTransport(await reserveLoopbackPort(), '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
+      transport = new HTTPTransport(allocatePort(), '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       await startTransport(transport);
       const res = await request('/mcp', 'POST', { 'Content-Type': 'application/json' },
         JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
@@ -220,14 +214,14 @@ describe('HTTP Bearer Token Auth', () => {
 
     it('allows explicit loopback development mode via env flag', async () => {
       process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = '1';
-      transport = new HTTPTransport(await reserveLoopbackPort(), '127.0.0.1');
+      transport = new HTTPTransport(allocatePort(), '127.0.0.1');
       await startTransport(transport);
       const res = await request('/health');
       expect(res.status).toBe(200);
     });
 
     it('refuses external bind without auth even with development opt-in', () => {
-      expect(() => new HTTPTransport(0, '0.0.0.0', undefined, { allowUnauthenticatedHttp: true }))
+      expect(() => new HTTPTransport(allocatePort(), '0.0.0.0', undefined, { allowUnauthenticatedHttp: true }))
         .toThrow(/non-loopback host/);
     });
   });
@@ -235,7 +229,7 @@ describe('HTTP Bearer Token Auth', () => {
   describe('CORS allowlist', () => {
     beforeEach(async () => {
       process.env.OPENCHROME_HTTP_CORS_ORIGINS = TRUSTED_ORIGIN;
-      transport = new HTTPTransport(await reserveLoopbackPort(), '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
+      transport = new HTTPTransport(allocatePort(), '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       await startTransport(transport);
     });
 
