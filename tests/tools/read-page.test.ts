@@ -467,6 +467,30 @@ describe('ReadPageTool', () => {
       );
     });
 
+    test('diagnostics.mode reflects DOM when AX-overflow triggers fallback=dom', async () => {
+      const mockSerializeDOM = jest.fn().mockResolvedValue({
+        content: '[page_stats] url: https://example.com\n\n<body></body>',
+      });
+      const handler = await getReadPageHandler(mockSerializeDOM);
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        generateLargeAXTree(600)
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        fallback: 'dom',
+        diagnostics: true,
+      }) as any;
+
+      // effective mode must reflect the actual output format, not the requested one
+      expect(result._diagnostics.mode).toBe('dom');
+      expect(result._diagnostics.requestedMode).toBe('ax');
+    });
+
     test('falls back to truncated AX output when DOM serialization fails', async () => {
       const mockSerializeDOM = jest.fn().mockRejectedValue(new Error('DOM serialization failed'));
       const handler = await getReadPageHandler(mockSerializeDOM);
