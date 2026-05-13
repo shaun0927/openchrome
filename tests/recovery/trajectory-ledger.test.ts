@@ -69,6 +69,28 @@ describe('RecoveryTrajectoryLedger', () => {
     expect(String(args?.html)).toMatch(/^sha256:/);
   });
 
+
+  it('redacts inline secrets inside non-sensitive short strings', () => {
+    const args = summarizeArgs({ note: 'please use token=abc123 and password: hunter2', url: 'https://example.test/?api_key=secret' });
+
+    expect(String(args?.note)).not.toContain('abc123');
+    expect(String(args?.note)).not.toContain('hunter2');
+    expect(String(args?.url)).not.toContain('secret');
+  });
+
+  it('preserves valid JSONL history when one persisted line is malformed', () => {
+    const filePath = path.join(dir, 'trajectory.jsonl');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, [
+      JSON.stringify({ nodeId: 'n1', timestamp: 1, sessionId: 's1', toolName: 'read_page', resultStatus: 'success', progressStatus: 'unknown' }),
+      '{truncated',
+      JSON.stringify({ nodeId: 'n2', timestamp: 2, sessionId: 's1', toolName: 'find', resultStatus: 'success', progressStatus: 'unknown' }),
+    ].join('\n') + '\n');
+
+    const ledger = new RecoveryTrajectoryLedger({ dirPath: dir, maxNodes: 10 });
+    expect(ledger.readRecent(10, 's1').map((node) => node.nodeId)).toEqual(['n1', 'n2']);
+  });
+
   it('summarizes result text without storing full content or obvious secrets', () => {
     const summary = summarizeResult({
       content: [{ type: 'text', text: 'hello\n'.repeat(200) + ' authorization: Bearer abc token=xyz cookie: sid=123' }],
