@@ -196,6 +196,13 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
           const payload = responsePayloadSize(result);
           responseChars += payload.responseChars;
           screenshotBytes += payload.screenshotBytes;
+          if (step.tool === 'tabs_create') {
+            const createdTabId = extractTabId(result);
+            if (!createdTabId) {
+              throw new Error(`Benchmark step failed: tabs_create returned no tabId for cleanup`);
+            }
+            createdTabIds.push(createdTabId);
+          }
         };
 
         if (scenario.category === 'parallel-tabs') {

@@ -132,6 +132,27 @@ describe('benchmark matrix', () => {
     expect(adapter.callTool).toHaveBeenNthCalledWith(3, 'tabs_close', { tabId: 'real-tab-1' });
   });
 
+  test('matrix closes tabs created by measured tabs_create steps', async () => {
+    const task = createMatrixTasks({ category: 'cold-start-first-tab' })[0];
+    const adapter = {
+      name: 'stub',
+      mode: 'dom',
+      callTool: jest.fn().mockImplementation(async (toolName: string) => ({
+        content: [{
+          type: 'text',
+          text: toolName === 'tabs_create' ? JSON.stringify({ tabId: 'cold-start-tab' }) : 'ok',
+        }],
+      })),
+    };
+
+    const result = await task.run(adapter);
+
+    expect(result.success).toBe(true);
+    expect(result.toolCallCount).toBe(1);
+    expect(adapter.callTool).toHaveBeenNthCalledWith(1, 'tabs_create', { url: 'about:blank' });
+    expect(adapter.callTool).toHaveBeenNthCalledWith(2, 'tabs_close', { tabId: 'cold-start-tab' });
+  });
+
   test('parallel matrix waits for all reads before returning a failure', async () => {
     const task = createMatrixTasks({ category: 'parallel-tabs-5' })[0];
     const calls: string[] = [];
