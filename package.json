@@ -37,11 +37,8 @@
     "clean": "rimraf dist",
     "prepare": "npm run build",
     "lint:changed": "node scripts/lint-changed-src.js",
-<<<<<<< HEAD
-    "gen:capability-map": "ts-node scripts/gen-capability-map.ts"
-=======
+    "gen:capability-map": "ts-node scripts/gen-capability-map.ts",
     "harness:parallel-smoke": "ts-node tests/harness/parallel-smoke.ts"
->>>>>>> origin/develop
   },
   "keywords": [
     "openchrome",
