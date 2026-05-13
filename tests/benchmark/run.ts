@@ -52,12 +52,19 @@ export async function main(args = process.argv.slice(2), output: BenchmarkCliOut
     ? args[categoryIndex + 1]
     : undefined;
   const runsIndex = args.indexOf('--runs');
-  const parsedRuns = runsIndex !== -1 && runsIndex + 1 < args.length
-    ? Number(args[runsIndex + 1])
-    : undefined;
+  let parsedRuns: number | undefined;
+  if (runsIndex !== -1 && runsIndex + 1 < args.length) {
+    const raw = args[runsIndex + 1];
+    const trimmed = raw.trim();
+    const n = parseInt(trimmed, 10);
+    if (!Number.isInteger(n) || n <= 0 || String(n) !== trimmed) {
+      throw new Error(`--runs must be a positive integer; got: ${raw}`);
+    }
+    parsedRuns = n;
+  }
 
   const runner = new BenchmarkRunner({
-    runsPerTask: Number.isFinite(parsedRuns) && parsedRuns! > 0 ? parsedRuns : (ciMode ? 3 : 5),
+    runsPerTask: parsedRuns ?? (ciMode ? 3 : 5),
     ciMode,
   });
 

@@ -396,6 +396,63 @@ describe('BenchmarkRunner', () => {
     expect(output.stderr.write).not.toHaveBeenCalled();
   });
 
+  test('benchmark CLI rejects fractional --runs values', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await expect(main(['--category', 'agent-loop', '--runs', '1.5'], output as never)).rejects.toThrow(
+      '--runs must be a positive integer; got: 1.5'
+    );
+
+    expect(output.stdout.write).not.toHaveBeenCalled();
+  });
+
+  test('benchmark CLI rejects zero or negative --runs values', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await expect(main(['--category', 'agent-loop', '--runs', '0'], output as never)).rejects.toThrow(
+      '--runs must be a positive integer; got: 0'
+    );
+    await expect(main(['--category', 'agent-loop', '--runs', '-3'], output as never)).rejects.toThrow(
+      '--runs must be a positive integer; got: -3'
+    );
+  });
+
+  test('benchmark CLI rejects non-numeric --runs values', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await expect(main(['--category', 'agent-loop', '--runs', 'abc'], output as never)).rejects.toThrow(
+      '--runs must be a positive integer; got: abc'
+    );
+  });
+
+  test('benchmark CLI honors positive integer --runs values', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await main(['--category', 'agent-loop', '--runs', '2', '--json'], output as never);
+
+    expect(output.stdout.write).toHaveBeenCalledTimes(1);
+    const stdout = output.stdout.write.mock.calls[0][0];
+    const reports = JSON.parse(stdout);
+    expect(Array.isArray(reports)).toBe(true);
+    for (const report of reports) {
+      for (const task of report.tasks) {
+        expect(task.runs).toHaveLength(2);
+      }
+    }
+  });
+
   test('benchmark CLI treats --json as machine-readable matrix output', async () => {
     const output = {
       stdout: { write: jest.fn() },
