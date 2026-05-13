@@ -117,6 +117,7 @@ describe('ReadPageTool', () => {
   });
 
   afterEach(() => {
+    delete process.env.OPENCHROME_PROFILE;
     jest.clearAllMocks();
     // Keep delta snapshot cache isolated between read_page tests.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -620,6 +621,55 @@ describe('ReadPageTool', () => {
       expect(text).toContain('Pages: 1 / 3');
     });
 
+
+
+    test('markdown contentFilter=prune returns raw and fit markdown with metrics', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId);
+      (page!.content as jest.Mock).mockResolvedValue(`
+        <main>
+          <h1>Article</h1>
+          <p>Home Login Cookie settings Privacy Policy</p>
+          <p>Enterprise pricing includes annual discounts and support.</p>
+          <table><tr><th>Plan</th><th>Price</th></tr><tr><td>Enterprise</td><td>Contact us</td></tr></table>
+        </main>
+      `);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        contentFilter: 'prune',
+        returnRaw: true,
+        returnFit: true,
+        includePagination: false,
+      }) as { content: Array<{ type: string; text: string }> };
+      const jsonStart = result.content[0].text.indexOf('{');
+      const body = JSON.parse(result.content[0].text.slice(jsonStart));
+
+      expect(body.content).toContain('Enterprise pricing');
+      expect(body.raw_markdown).toContain('Cookie settings');
+      expect(body.fit_markdown).toContain('Enterprise pricing');
+      expect(body.fit_markdown).not.toContain('Cookie settings');
+      expect(body.filter.type).toBe('prune');
+      expect(body.filter.raw_chars).toBeGreaterThan(body.filter.fit_chars);
+    });
+
+    test('markdown contentFilter=bm25 requires query', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId);
+      (page!.content as jest.Mock).mockResolvedValue('<main><h1>Article</h1></main>');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        contentFilter: 'bm25',
+        includePagination: false,
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('requires a non-empty query');
+    });
+
     test('can suppress markdown pagination metadata', async () => {
       const handler = await getReadPageHandler();
       const page = mockSessionManager.pages.get(testTargetId)!;
@@ -656,6 +706,31 @@ describe('ReadPageTool', () => {
       expect(matchingCall).toBeDefined();
       expect(typeof matchingCall![2]).toBe('number');
       expect(typeof matchingCall![3]).toBe('string');
+    });
+
+
+
+    test('OPENCHROME_PROFILE=fast defaults AX reads to compact output and explicit compact=false disables it', async () => {
+      process.env.OPENCHROME_PROFILE = 'fast';
+      const handler = await getReadPageHandler();
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        {
+          nodes: [
+            { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Fast Page' }, childIds: [2, 3] },
+            { nodeId: 2, role: { value: 'StaticText' }, name: { value: 'Decorative copy' } },
+            { nodeId: 3, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+          ],
+        }
+      );
+
+      const fast = await handler(testSessionId, { tabId: testTargetId, mode: 'ax' }) as { content: Array<{ type: string; text: string }> };
+      expect(fast.content[0].text).toContain('button: "Submit"');
+      expect(fast.content[0].text).not.toContain('Decorative copy');
+
+      const explicitFull = await handler(testSessionId, { tabId: testTargetId, mode: 'ax', compact: false }) as { content: Array<{ type: string; text: string }> };
+      expect(explicitFull.content[0].text).toContain('Decorative copy');
     });
 
     test('compact AX mode omits non-actionable no-ref leaves while preserving actionable nodes', async () => {

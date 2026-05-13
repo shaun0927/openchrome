@@ -10,12 +10,14 @@ import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
+import { isFastProfile } from '../config/runtime-profile';
 import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { getGlobalConfig } from '../config/global';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { applyContentFilter, parseContentFilterType } from '../core/extract/content-filter';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
 
@@ -123,6 +125,27 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Markdown mode only: preserve <a> as markdown links. Default: true.',
       },
+      contentFilter: {
+        type: 'string',
+        enum: ['none', 'prune', 'bm25'],
+        description: 'Markdown mode only: deterministic fit_markdown filter. Default: none.',
+      },
+      query: {
+        type: 'string',
+        description: 'Markdown mode only: required when contentFilter="bm25".',
+      },
+      returnRaw: {
+        type: 'boolean',
+        description: 'Markdown mode only: include raw_markdown in JSON response. Default: false.',
+      },
+      returnFit: {
+        type: 'boolean',
+        description: 'Markdown mode only: include fit_markdown and use it as content when filtering. Default: true when filtered.',
+      },
+      filterOptions: {
+        type: 'object',
+        description: 'Markdown mode only: minWords, maxSections, bm25Threshold, pruneThreshold.',
+      },
       includePagination: {
         type: 'boolean',
         description: 'Include pagination info. Default: true',
@@ -144,7 +167,7 @@ const definition: MCPToolDefinition = {
       },
       compact: {
         type: 'boolean',
-        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false.',
+        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false, or true when OPENCHROME_PROFILE=fast.',
       },
       diagnostics: {
         type: 'boolean',
@@ -330,7 +353,7 @@ const handler: ToolHandler = async (
     };
 
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
-    const compactAX = args.compact === true;
+    const compactAX = args.compact === true || (args.compact === undefined && isFastProfile());
     if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
       return {
         content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],
@@ -352,6 +375,10 @@ const handler: ToolHandler = async (
       const onlyMainContent = args.onlyMainContent !== false;
       const includeLinks = args.includeLinks !== false;
       const includePaginationMarkdown = args.includePagination !== false;
+      const contentFilter = parseContentFilterType(args.contentFilter);
+      const returnRaw = args.returnRaw === true;
+      const returnFit = args.returnFit !== false;
+      const filterOptions = (args.filterOptions && typeof args.filterOptions === 'object') ? args.filterOptions as Record<string, unknown> : {};
       const refIdNote = args.ref_id
         ? '[Note: ref_id is not supported in markdown mode — full-page content returned. Use mode "ax" for ref_id subtree scoping.]\n\n'
         : '';
@@ -375,8 +402,28 @@ const handler: ToolHandler = async (
         truncated = true;
       }
       const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
+      const rawMarkdown = md + suffix;
+      if (contentFilter !== 'none' || returnRaw || args.returnFit === true) {
+        try {
+          const filtered = applyContentFilter(rawMarkdown, {
+            type: contentFilter,
+            query: args.query as string | undefined,
+            returnRaw,
+            returnFit,
+            minWords: filterOptions.minWords as number | undefined,
+            maxSections: filterOptions.maxSections as number | undefined,
+            bm25Threshold: filterOptions.bm25Threshold as number | undefined,
+            pruneThreshold: filterOptions.pruneThreshold as number | undefined,
+          });
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ ...filtered, content: withTextMetrics(filtered.content, 'markdown', truncated) }) }],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      }
       return {
-        content: [{ type: 'text', text: withTextMetrics(md + suffix, 'markdown', truncated) }],
+        content: [{ type: 'text', text: withTextMetrics(rawMarkdown, 'markdown', truncated) }],
       };
     }
 

@@ -87,6 +87,21 @@ describe('oc_get_connection_info devtools field (#860)', () => {
 
   afterEach(() => {
     delete process.env.OPENCHROME_EXPOSE_DEVTOOLS_URL;
+    delete process.env.OPENCHROME_PROFILE;
+  });
+
+
+
+  test('host=openchrome reports fast runtime profile when enabled', async () => {
+    process.env.OPENCHROME_PROFILE = 'fast';
+
+    const result = await handler('default', { host: 'openchrome' });
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.mode).toBe('managed');
+    expect(data.runtimeProfile).toMatchObject({ profile: 'fast', source: 'env', fast: true });
+    expect(data.runtimeProfile.guidance.join(' ')).toContain('read_page AX defaults to compact');
   });
 
   test('tool is registered', () => {

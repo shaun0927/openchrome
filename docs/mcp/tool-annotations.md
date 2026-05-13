@@ -143,6 +143,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | `network_capture_lite`  | Starts/stops passive network capture state                         |
 | `network_capture_full`  | Starts/stops passive network capture with body retention options    |
 | `oc_context_import`     | Imports cookies/storage/auth context into a tab                     |
+| `oc_pilot_run_with_recovery` | Pilot wrapper can invoke a mutating original action plus bounded recovery recipes |
 
 ### Virtual / runtime-only
 

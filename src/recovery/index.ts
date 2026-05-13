@@ -3,6 +3,13 @@ export {
   summarizeArgs,
   summarizeResult,
 } from './trajectory-ledger';
+export {
+  scoreFromToolResult,
+  scoreRecoveryOutcome,
+  type RecoveryRewardClassification,
+  type RecoveryRewardInput,
+  type RecoveryRewardScore,
+} from './reward-scorer';
 export type {
   RecoveryProgressStatus,
   RecoveryResultStatus,

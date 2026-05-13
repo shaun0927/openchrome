@@ -41,6 +41,7 @@ jest.mock('../../../src/config/defaults', () => ({
 
 import { resolveElementsByAXTree } from '../../../src/utils/ax-element-resolver';
 import { discoverElements } from '../../../src/utils/element-discovery';
+import { scoreElement, tokenizeQuery } from '../../../src/utils/element-finder';
 import { withDomDelta } from '../../../src/utils/dom-delta';
 
 describe('Ralph Engine', () => {
@@ -49,6 +50,14 @@ describe('Ralph Engine', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
+    (discoverElements as jest.Mock).mockResolvedValue([]);
+    (scoreElement as jest.Mock).mockReturnValue(50);
+    (tokenizeQuery as jest.Mock).mockReturnValue(['test']);
+    (withDomDelta as jest.Mock).mockImplementation(async (_page: any, fn: () => Promise<void>) => {
+      await fn();
+      return { delta: '' };
+    });
 
     mockPage = {
       mouse: {
@@ -71,11 +80,11 @@ describe('Ralph Engine', () => {
       const result = await ralphClick(mockPage, mockCDPClient, 'nonexistent element');
 
       expect(result.success).toBe(false);
-      expect(result.strategyUsed).toBe('S7_HITL');
+      expect(result.strategyUsed).toBe('S8_HITL');
       expect(result.hitlRequired).toBe(true);
       expect(result.strategiesTried).toContain('S1_AX');
       expect(result.strategiesTried).toContain('S2_CSS');
-      expect(result.strategiesTried).toContain('S7_HITL');
+      expect(result.strategiesTried).toContain('S8_HITL');
     });
 
     test('should succeed on S1 when AX finds element and DOM changes', async () => {
@@ -139,6 +148,81 @@ describe('Ralph Engine', () => {
       // Should have tried multiple strategies since all return SILENT_CLICK
       expect(result.strategiesTried.length).toBeGreaterThan(1);
       expect(result.strategiesTried).toContain('S1_AX');
+    });
+
+    test('should use gated visual grounding before HITL when deterministic visual candidate is clear', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
+      (discoverElements as jest.Mock).mockResolvedValue([]);
+      (tokenizeQuery as jest.Mock).mockReturnValue(['launch', 'report']);
+      (withDomDelta as jest.Mock).mockImplementationOnce(async (_page: any, fn: () => Promise<void>) => {
+        await fn();
+        return { delta: '+ main: "Report launched"' };
+      });
+
+      const result = await ralphClick(mockPage, mockCDPClient, 'Launch report', {
+        visualGrounding: true,
+        visualSnapshot: {
+          version: 1,
+          provider: 'mock',
+          tabId: 'tab-1',
+          url: 'https://example.test',
+          capturedAt: Date.now(),
+          viewport: { width: 800, height: 600 },
+          latencyMs: 12,
+          warnings: [],
+          elements: [{
+            id: 'v1',
+            type: 'control',
+            label: 'Launch report',
+            role: 'button',
+            interactive: true,
+            bbox: { x: 100, y: 120, width: 160, height: 40 },
+            bboxRatio: { x: 0.125, y: 0.2, width: 0.2, height: 0.067 },
+            confidence: 0.95,
+            source: 'mock',
+          }],
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.strategyUsed).toBe('S7_VISUAL_GROUNDING');
+      expect(result.strategiesTried).toContain('S7_VISUAL_GROUNDING');
+      expect(mockPage.mouse.click).toHaveBeenCalledWith(180, 140);
+      expect(result.responseLine).toContain('visual grounding');
+    });
+
+    test('should skip visual grounding for unsafe visual-only targets and escalate to HITL', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
+      (discoverElements as jest.Mock).mockResolvedValue([]);
+      const result = await ralphClick(mockPage, mockCDPClient, 'Delete account', {
+        visualGrounding: true,
+        visualSnapshot: {
+          version: 1,
+          provider: 'mock',
+          tabId: 'tab-1',
+          url: 'https://example.test',
+          capturedAt: Date.now(),
+          viewport: { width: 800, height: 600 },
+          latencyMs: 12,
+          warnings: [],
+          elements: [{
+            id: 'v1',
+            type: 'control',
+            label: 'Delete account',
+            role: 'button',
+            interactive: true,
+            bbox: { x: 100, y: 120, width: 160, height: 40 },
+            bboxRatio: { x: 0.125, y: 0.2, width: 0.2, height: 0.067 },
+            confidence: 0.99,
+            source: 'mock',
+          }],
+        },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.strategyUsed).toBe('S8_HITL');
+      expect(result.strategiesTried).toContain('S7_VISUAL_GROUNDING');
+      expect(mockPage.mouse.click).not.toHaveBeenCalled();
     });
 
     test('should succeed on S4 (JS inject) when earlier strategies fail', async () => {
@@ -208,7 +292,7 @@ describe('Ralph Engine', () => {
 
       // Should not have tried all 6 strategies due to budget
       expect(result.strategiesTried.length).toBeLessThanOrEqual(7);
-      expect(result.strategiesTried).toContain('S7_HITL');
+      expect(result.strategiesTried).toContain('S8_HITL');
     });
   });
 
