@@ -11,9 +11,9 @@
  * driven from this module goes through the local CDP session. No
  * third-party HTTP, no LLM API.
  *
- * Tab resolution strategy: use the default session + default worker.
- * The most recently added worker target is treated as "current", matching
- * other current-tab helpers such as oc_devtools_url. When no tab
+ * Tab resolution strategy: use the caller session and scan all workers.
+ * The most recently added target is treated as "current", matching other
+ * current-tab helpers such as oc_devtools_url. When no tab
  * is registered, we return `null` and the replay handler short-circuits
  * with `skill_no_active_tab`.
  *
@@ -42,7 +42,7 @@ const DEFAULT_WORKER_ID = 'default';
 /**
  * Default tab resolver. Walks the caller's session (passed by the synth
  * handler from the MCP request envelope) and returns the most recently
- * added target on its default worker. Returns `null` when no tab has been
+ * added target across that session's workers. Returns `null` when no tab has been
  * created yet (the replay handler then emits `skill_no_active_tab`).
  *
  * Codex P1 on PR #930: this previously used a hardcoded `"default"`
@@ -52,16 +52,16 @@ const DEFAULT_WORKER_ID = 'default';
 export async function defaultResolveCurrentTab(sessionId: string): Promise<CurrentTabInfo | null> {
   try {
     const sessionManager = getSessionManager();
-    const targetIds = sessionManager.getWorkerTargetIds(sessionId, DEFAULT_WORKER_ID);
+    const targetIds = sessionManager.getSessionTargetIds(sessionId);
     if (targetIds.length === 0) return null;
-    // Match the rest of OpenChrome's "current tab" convention: worker.targets
-    // is insertion-ordered, so the last target is the most recently created/used
-    // browser page. Using index 0 picks the oldest/background tab.
+    // Match the rest of OpenChrome's "current tab" convention: target sets are
+    // insertion-ordered, so the last target is the most recently added page.
     const targetId = targetIds[targetIds.length - 1];
+    const workerId = sessionManager.getTargetWorkerId(targetId) ?? DEFAULT_WORKER_ID;
     const page = await sessionManager.getPage(
       sessionId,
       targetId,
-      DEFAULT_WORKER_ID,
+      workerId,
       'dynamic-skills-replay',
     );
     if (!page) return null;
@@ -72,7 +72,7 @@ export async function defaultResolveCurrentTab(sessionId: string): Promise<Curre
       return null;
     }
     if (!url || url.length === 0) return null;
-    return { tabId: targetId, url };
+    return { tabId: targetId, workerId, url };
   } catch (err) {
     console.error(
       `[dynamic-skills] defaultResolveCurrentTab failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -97,7 +97,7 @@ export async function defaultRunStep(
     page = await getSessionManager().getPage(
       sessionId,
       tab.tabId,
-      DEFAULT_WORKER_ID,
+      tab.workerId ?? DEFAULT_WORKER_ID,
       'dynamic-skills-replay',
     );
   } catch (err) {
@@ -181,10 +181,10 @@ export async function defaultRunStep(
  *                               (`globalThis.__openchromeContracts[id]`) or
  *                               a same-named global function/boolean. Found
  *                               predicates pass only when they return boolean
- *                               true. Missing opaque IDs are deferred because
- *                               OpenChrome does not yet implement contract_id
- *                               lookup (see oc_assert); failing them here would
- *                               make normal recorded skills unusable.
+ *                               true. Missing opaque IDs fail closed until
+ *                               OpenChrome implements contract_id lookup (see
+ *                               oc_assert); this avoids reporting replay success
+ *                               without any post-condition check.
  */
 const CONTRACT_EVAL_TIMEOUT_MS = 2_000;
 const JS_EXPR_PREFIX = 'js:';
@@ -212,9 +212,6 @@ export async function defaultAssertContract(
       return { __openchrome_contract_missing: true };
     })()`;
     const verdict = await evaluateJsContractExpression(expr, sessionId, tab, `contract_id:${contractId}`);
-    if (verdict.reason?.startsWith('contract_not_found:')) {
-      return { pass: true, reason: `contract_deferred:${contractId}` };
-    }
     return verdict;
   }
   const expr = contractId.slice(JS_EXPR_PREFIX.length).trim();
@@ -235,7 +232,7 @@ async function evaluateJsContractExpression(
     const page = await sessionManager.getPage(
       sessionId,
       tab.tabId,
-      DEFAULT_WORKER_ID,
+      tab.workerId ?? DEFAULT_WORKER_ID,
       'dynamic-skills-assert',
     );
     if (!page) {

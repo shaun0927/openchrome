@@ -75,6 +75,8 @@ export interface CurrentTabInfo {
   readonly url: string;
   /** Tab id, for downstream calls into the action runner. */
   readonly tabId: string;
+  /** Worker that owns the tab. Defaults to the session default worker when omitted. */
+  readonly workerId?: string;
 }
 
 /**
