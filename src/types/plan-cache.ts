@@ -6,6 +6,7 @@
  */
 
 import type { BrowserTaskSignature, TaskSignatureStatus } from '../contracts/task-signature';
+import type { Assertion, Evidence } from '../contracts/types';
 
 /** A single step in a compiled plan */
 export interface CompiledStep {
@@ -49,6 +50,25 @@ export interface PlanSuccessCriteria {
   customCheck?: string;
 }
 
+export interface FinalVerificationGate {
+  /** Inline Outcome Contract assertions evaluated after successCriteria. */
+  finalAssertions: Assertion[];
+  /** Params key containing an oc_assert-compatible evidence.snapshot object. Default: finalSnapshot. */
+  snapshotParam?: string;
+  /** Maximum age in ms for snapshot.captured_at / timestamp when present. */
+  freshnessMs?: number;
+  /** Evidence kinds requested by caller. Currently supports bounded snapshot evidence only. */
+  requiredEvidence?: Array<'dom' | 'url' | 'network' | 'screenshot' | 'phash'>;
+}
+
+export interface PlanFinalVerificationResult {
+  passed: boolean;
+  snapshotParam: string;
+  assertions: Array<{ index: number; passed: boolean; evidence: Evidence }>;
+  failedAssertion?: { index: number; assertion: Assertion; evidence: Evidence };
+  error?: string;
+}
+
 /** Task pattern for matching incoming tasks to cached plans */
 export interface TaskPattern {
   /** URL regex pattern (e.g. "https://x\\.com/.*") */
@@ -80,6 +100,8 @@ export interface CompiledPlan {
   errorHandlers: PlanErrorHandler[];
   /** Success validation criteria */
   successCriteria: PlanSuccessCriteria;
+  /** Optional final Outcome Contract verification gate (#1031). */
+  finalVerification?: FinalVerificationGate;
 }
 
 /** Registry entry for a plan with usage statistics */
@@ -134,4 +156,6 @@ export interface PlanExecutionResult {
   totalSteps: number;
   /** Present only when execution was bound to a BrowserTaskSignature. */
   taskSignature?: TaskSignatureStatus;
+  /** Present when a plan opted into final verification. */
+  finalVerification?: PlanFinalVerificationResult;
 }
