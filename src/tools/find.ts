@@ -14,6 +14,7 @@ import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
 import { getVisionMode, trackVisionUsage } from '../vision/config';
 import { detectVisionHints, formatVisionHints } from '../vision/auto-detect';
+import { formatAffordancePrefix } from '../utils/element-affordance';
 
 const definition: MCPToolDefinition = {
   name: 'find',
@@ -114,7 +115,7 @@ const handler: ToolHandler = async (
           );
           const scoreLabel = el.matchLevel === 1 ? '\u2605\u2605\u2605' : el.matchLevel === 2 ? '\u2605\u2605' : '\u2605';
           axOutput.push(
-            `[${refId}] ${el.role}: "${el.name}" at (${Math.round(el.rect.x)}, ${Math.round(el.rect.y)}) ${scoreLabel} [AX]`
+            `${formatAffordancePrefix({ role: el.role })}[${refId}] ${el.role}: "${el.name}" at (${Math.round(el.rect.x)}, ${Math.round(el.rect.y)}) ${scoreLabel} [AX]`
           );
         }
 
@@ -187,7 +188,7 @@ const handler: ToolHandler = async (
         // Include score in output for transparency
         const scoreLabel = el.score >= 100 ? '★★★' : el.score >= 50 ? '★★' : el.score >= 20 ? '★' : '';
         output.push(
-          `[${refId}] ${el.role}: "${el.name}" at (${Math.round(el.rect.x)}, ${Math.round(el.rect.y)}) ${scoreLabel}`.trim()
+          `${formatAffordancePrefix({ role: el.role, tagName: el.tagName, type: el.type })}[${refId}] ${el.role}: "${el.name}" at (${Math.round(el.rect.x)}, ${Math.round(el.rect.y)}) ${scoreLabel}`.trim()
         );
       }
     }

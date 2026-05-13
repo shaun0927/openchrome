@@ -163,7 +163,7 @@ describe('DOM Serializer - Shadow DOM', () => {
     // shadow children at depth+2 = depth 4 = 8 spaces
     const buttonLine = lines.find(l => l.includes('[2100]<button'));
     expect(buttonLine).toBeDefined();
-    expect(buttonLine!.startsWith('        [2100]<button')).toBe(true);
+    expect(buttonLine!).toMatch(/^        (?:\$ )?\[2100\]<button/);
   });
 
   // 2. Closed shadow root rendering

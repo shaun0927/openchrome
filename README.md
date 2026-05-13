@@ -401,13 +401,13 @@ read_page tabId="tab1" mode="dom"
 
 [page_stats] url: https://example.com | title: Example | scroll: 0,0 | viewport: 1920x1080
 
-[142]<input type="search" placeholder="Search..." aria-label="Search"/> ★
-[156]<button type="submit"/>Search ★
-[289]<a href="/home"/>Home ★
+# [142]<input type="search" placeholder="Search..." aria-label="Search"/> ★
+$ [156]<button type="submit"/>Search ★
+@ [289]<a href="/home"/>Home ★
 [352]<h1/>Welcome to Example
 ```
 
-DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` IDs which are cleared on each AX-mode `read_page` call.
+DOM mode outputs `[backendNodeId]` as stable identifiers — they persist for the lifetime of the DOM node, unlike `ref_N` IDs which are cleared on each AX-mode `read_page` call. A compact marker before an identifier describes the action affordance: `#` text input, `@` link, `$` button/control, `%` visual target. The marker is display metadata only; pass the identifier itself (`142`, `node_142`, or `ref_N`) to action tools.
 
 ### JavaScript and Shadow DOM
 
@@ -541,13 +541,15 @@ Measure token efficiency and parallel performance:
 ```bash
 npm run benchmark                                    # Stub mode: AX vs DOM token efficiency (interactive)
 npm run benchmark:ci                                 # Stub mode: AX vs DOM with JSON + regression detection
+npm run benchmark:perception                         # Stub mode: perception latency/token/fallback guards
+npm run benchmark:perception -- --ci --json          # CI-friendly JSON output for perception regression checks
 npm run benchmark -- --mode real                     # Real mode: actual MCP server (requires Chrome)
 npx ts-node tests/benchmark/run-parallel.ts          # Stub mode: all parallel benchmark categories
 npx ts-node tests/benchmark/run-parallel.ts --mode real --category batch-js --runs 1  # Real mode
 npx ts-node tests/benchmark/run-parallel.ts --mode real --category realworld --runs 1  # Real-world benchmarks
 ```
 
-By default, benchmarks run in **stub mode** — measuring protocol correctness and tool-call counts with mock responses. Use `--mode real` to spawn an actual MCP server subprocess and measure real performance (requires Chrome to be available).
+By default, benchmarks run in **stub mode** — measuring protocol correctness and tool-call counts with mock responses. Use `--mode real` to spawn an actual MCP server subprocess and measure real performance (requires Chrome to be available). The perception benchmark is intentionally stub-only: it guards token-output caps, fallback-path accounting, and pending spatial-mode reporting without requiring OCR, network pages, or a live browser.
 
 **Parallel benchmark categories:**
 
