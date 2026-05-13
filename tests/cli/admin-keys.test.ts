@@ -135,9 +135,11 @@ describe('admin keys CLI', () => {
       '--description', 'test key',
     ]);
     expect(exitCode).toBeNull();
-    const plaintextMatches = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
-    expect(plaintextMatches).toHaveLength(1);
-    const plaintext = plaintextMatches[0];
+// Plaintext is emitted exactly once even if unrelated Jest worker noise
+    // is captured by the shared stdout hook on CI.
+    const stdoutTokens = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
+    expect(stdoutTokens).toHaveLength(1);
+    const plaintext = stdoutTokens[0];
     expect(plaintext).toMatch(/^oc_live_acme_[A-Za-z0-9]+$/);
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
