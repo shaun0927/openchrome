@@ -541,13 +541,15 @@ Measure token efficiency and parallel performance:
 ```bash
 npm run benchmark                                    # Stub mode: AX vs DOM token efficiency (interactive)
 npm run benchmark:ci                                 # Stub mode: AX vs DOM with JSON + regression detection
+npm run benchmark:perception                         # Stub mode: perception latency/token/fallback guards
+npm run benchmark:perception -- --ci --json          # CI-friendly JSON output for perception regression checks
 npm run benchmark -- --mode real                     # Real mode: actual MCP server (requires Chrome)
 npx ts-node tests/benchmark/run-parallel.ts          # Stub mode: all parallel benchmark categories
 npx ts-node tests/benchmark/run-parallel.ts --mode real --category batch-js --runs 1  # Real mode
 npx ts-node tests/benchmark/run-parallel.ts --mode real --category realworld --runs 1  # Real-world benchmarks
 ```
 
-By default, benchmarks run in **stub mode** — measuring protocol correctness and tool-call counts with mock responses. Use `--mode real` to spawn an actual MCP server subprocess and measure real performance (requires Chrome to be available).
+By default, benchmarks run in **stub mode** — measuring protocol correctness and tool-call counts with mock responses. Use `--mode real` to spawn an actual MCP server subprocess and measure real performance (requires Chrome to be available). The perception benchmark is intentionally stub-only: it guards token-output caps, fallback-path accounting, and pending spatial-mode reporting without requiring OCR, network pages, or a live browser.
 
 **Parallel benchmark categories:**
 
