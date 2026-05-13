@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getActionRecorder, registerSessionRecorder, unregisterSessionRecorder } from '../recording/action-recorder';
 import { getRecordingStore } from '../recording/recording-store';
 import { RecordingAction, RecordingMetadata } from '../recording/types';
@@ -22,6 +23,7 @@ function isValidRecordingId(id: string): boolean {
 
 const startDefinition: MCPToolDefinition = {
   name: 'oc_recording_start',
+  annotations: TOOL_ANNOTATIONS.oc_recording_start,
   description:
     'Start a new session recording. All subsequent MCP tool calls will be recorded ' +
     'until oc_recording_stop is called. Errors if a recording is already active.',
@@ -94,6 +96,7 @@ const startHandler: ToolHandler = async (
 
 const stopDefinition: MCPToolDefinition = {
   name: 'oc_recording_stop',
+  annotations: TOOL_ANNOTATIONS.oc_recording_stop,
   description:
     'Stop the active session recording and finalize it to disk. ' +
     'Returns a summary of the recording. Errors if no recording is active.',
@@ -156,6 +159,7 @@ const stopHandler: ToolHandler = async (
 
 const statusDefinition: MCPToolDefinition = {
   name: 'oc_recording_status',
+  annotations: TOOL_ANNOTATIONS.oc_recording_status,
   description: 'Report whether session recording is active, including trajectory bundle metadata when enabled.',
   inputSchema: { type: 'object', properties: {} },
 };
@@ -181,6 +185,7 @@ const statusHandler: ToolHandler = async (
 
 const listDefinition: MCPToolDefinition = {
   name: 'oc_recording_list',
+  annotations: TOOL_ANNOTATIONS.oc_recording_list,
   description: 'List available session recordings, newest first.',
   inputSchema: {
     type: 'object',
@@ -247,6 +252,7 @@ const listHandler: ToolHandler = async (
 
 const exportDefinition: MCPToolDefinition = {
   name: 'oc_recording_export',
+  annotations: TOOL_ANNOTATIONS.oc_recording_export,
   description:
     'Export a recording as JSON or a self-contained HTML report. ' +
     'For HTML, saves to ~/.openchrome/recordings/{id}/report.html and returns the path.',

@@ -9,6 +9,7 @@
 
 import { CDPSession } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '../core/console-buffer/ring-buffer';
@@ -178,6 +179,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
 const definition: MCPToolDefinition = {
   name: 'console_capture',
   description: 'Capture browser console output (start, stop, get, clear).',
+  annotations: TOOL_ANNOTATIONS.console_capture,
   inputSchema: {
     type: 'object',
     properties: {

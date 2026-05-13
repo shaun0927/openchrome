@@ -4,6 +4,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
@@ -32,6 +33,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'action'],
   },
+  annotations: TOOL_ANNOTATIONS.http_auth,
 };
 
 const handler: ToolHandler = async (

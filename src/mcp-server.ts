@@ -16,6 +16,7 @@ import {
   ToolRegistry,
   MCPErrorCodes,
 } from './types/mcp';
+import { TOOL_ANNOTATIONS } from './types/tool-annotations';
 import { MCPTransport, createTransport } from './transports/index';
 import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
@@ -536,6 +537,11 @@ export class MCPServer {
     options?: { timeoutRecoverable?: boolean }
   ): void {
     validateToolSchema(name, definition.inputSchema);
+    // Compile-time enforcement: MCPToolDefinition makes `annotations`
+    // required, so reaching this point guarantees the field is present.
+    // (No runtime guard here — the test suite registers synthetic dummy
+    // tools with dynamic names that don't appear in TOOL_ANNOTATIONS, and
+    // those legitimately bring their own inline annotations.)
     this.tools.set(name, { name, handler, definition, ...options });
     this.manifestVersion++;
   }
@@ -1268,6 +1274,7 @@ export class MCPServer {
             },
             required: ['tier'],
           },
+          annotations: TOOL_ANNOTATIONS.expand_tools,
         });
       }
     }

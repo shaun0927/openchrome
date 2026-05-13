@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import {
   bufferToBase64WithPayloadGuard,
@@ -62,6 +63,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.page_screenshot,
 };
 
 const handler: ToolHandler = async (

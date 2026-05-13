@@ -333,7 +333,11 @@ describe('recordSuccessfulRun — concurrent writes', () => {
     const list = listSkillsForDomain('amazon.com', { rootDir: root });
     expect(list).toHaveLength(1);
     expect(list[0].frontmatter.verified_runs).toBe(N);
-  });
+    // Bumped from the default 10s timeout. Spawning 8 ts-node processes on a
+    // hosted Windows-22 runner can comfortably take 12–15s before the first
+    // child even reaches recordSuccessfulRun, so the default deadline trips
+    // before the cross-process write lock can finish serializing N writers.
+  }, 60_000);
 });
 
 describe('recordSuccessfulRun — domain validation', () => {

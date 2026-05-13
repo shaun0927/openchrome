@@ -16,16 +16,8 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
-import {
-  SkillMemoryStore,
-  flushRecorderBuffer,
-  peekRecorderBuffer,
-  validateReplayArtifact,
-  type ReplayArtifact,
-  REPLAY_ARTIFACT_SCHEMA_VERSION,
-  type ReplayArtifactStep,
-} from '../core/skill-memory';
-import { isCoreFeatureEnabled } from '../harness/flags';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { SkillMemoryStore } from '../core/skill-memory';
 import { redactSecrets } from '../core/secrets';
 import { isDynamicSkillsEnabled } from '../harness/flags';
 
@@ -33,14 +25,6 @@ interface OcSkillRecordOutput {
   skill_id: string;
   stored_at: number;
   snapshot_path?: string;
-  /**
-   * Per-step replay artifacts persisted with this record. Indexed parallel to
-   * `steps`. `null` entries indicate no artifact was attached for that step
-   * (legacy v1 records or steps recorded without `capture_artifact`). Always
-   * surfaced (even as all-null) when the v2 schema is in use, so callers see a
-   * deterministic shape. When the feature gate is off this is `null`.
-   */
-  replay_artifacts: Array<ReplayArtifact | null> | null;
 }
 
 const definition: MCPToolDefinition = {
@@ -89,24 +73,10 @@ const definition: MCPToolDefinition = {
           '<rootDir>/<domain>/snapshots/<skill_id>.json.gz. ' +
           'Omit on re-records when you do not want to update the snapshot.',
       },
-      replay_artifacts: {
-        type: 'array',
-        description:
-          'Optional per-step replay artifacts (#875), parallel-indexed with steps. ' +
-          'Null entries are allowed; omitted values backfill from target_id recorder buffer.',
-        items: {},
-      },
-      target_id: {
-        type: 'string',
-        description:
-          'Optional CDP target id used to drain the in-process recorder buffer ' +
-          '(#875). When provided and `replay_artifacts` is omitted, every step ' +
-          'captured via `capture_artifact: true` since the last record() is ' +
-          'flushed into this skill.',
-      },
     },
     required: ['domain', 'name', 'steps', 'contract_id'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_skill_record,
 };
 
 const handler: ToolHandler = async (
@@ -119,11 +89,6 @@ const handler: ToolHandler = async (
   const rawSteps = args.steps as unknown[] | undefined;
   const contractId = args.contract_id as string | undefined;
   const rawFrozenSnapshot = args.frozen_snapshot as Record<string, unknown> | undefined;
-  const explicitArtifacts = args.replay_artifacts as Array<ReplayArtifact | null> | undefined;
-  const targetId = typeof args.target_id === 'string' ? (args.target_id as string) : undefined;
-  // Whether the replay feature gate is on. P2 schema parity: the field is
-  // always present in tools/list, but persisted artifacts are null when off.
-  const replayEnabled = isCoreFeatureEnabled('OPENCHROME_SKILL_REPLAY', true);
 
   // Secrets redaction (#834): step payloads and frozen snapshots are
   // persisted to disk where they may be promoted across sessions by the
@@ -137,7 +102,6 @@ const handler: ToolHandler = async (
     return jsonResult({
       skill_id: '',
       stored_at: 0,
-      replay_artifacts: null,
       error: 'missing required field: domain (must be a non-empty string)',
     } as OcSkillRecordOutput & { error: string });
   }
@@ -145,7 +109,6 @@ const handler: ToolHandler = async (
     return jsonResult({
       skill_id: '',
       stored_at: 0,
-      replay_artifacts: null,
       error: 'missing required field: name (must be a non-empty string)',
     } as OcSkillRecordOutput & { error: string });
   }
@@ -153,7 +116,6 @@ const handler: ToolHandler = async (
     return jsonResult({
       skill_id: '',
       stored_at: 0,
-      replay_artifacts: null,
       error: 'missing required field: steps (must be an array)',
     } as OcSkillRecordOutput & { error: string });
   }
@@ -161,54 +123,8 @@ const handler: ToolHandler = async (
     return jsonResult({
       skill_id: '',
       stored_at: 0,
-      replay_artifacts: null,
       error: 'missing required field: contract_id (must be a non-empty string)',
     } as OcSkillRecordOutput & { error: string });
-  }
-
-  // Build per-step replay artifacts. Three sources, in priority order:
-  //   1) explicit `replay_artifacts` arg from the caller,
-  //   2) recorder-buffer flush keyed by `target_id`,
-  //   3) array of nulls sized to `steps.length`.
-  // When the feature gate is off, we still accept input but force the
-  // persisted array to nulls so downstream tools see DISABLED behaviour.
-  let replayArtifacts: Array<ReplayArtifact | null> = new Array(steps.length).fill(null);
-  if (replayEnabled) {
-    if (Array.isArray(explicitArtifacts)) {
-      // Pad / truncate to match steps.length, then validate each non-null
-      // entry. Validation failure aborts the record so the caller learns
-      // immediately rather than discovering corruption at replay time.
-      const padded: Array<ReplayArtifact | null> = new Array(steps.length).fill(null);
-      for (let i = 0; i < Math.min(explicitArtifacts.length, steps.length); i++) {
-        padded[i] = explicitArtifacts[i] ?? null;
-      }
-      for (let i = 0; i < padded.length; i++) {
-        const a = padded[i];
-        if (a === null) continue;
-        const v = validateReplayArtifact(a);
-        if (!v.ok) {
-          return jsonResult({
-            skill_id: '',
-            stored_at: 0,
-            replay_artifacts: null,
-            error: `replay_artifacts[${i}] invalid: ${v.error ?? 'unknown'}`,
-          } as OcSkillRecordOutput & { error: string });
-        }
-      }
-      replayArtifacts = padded;
-    } else if (targetId) {
-      const flushed = peekRecorderBuffer(targetId);
-      // Wrap each captured ReplayArtifactStep in a single-step ReplayArtifact
-      // so the on-disk shape is uniform. Pad to `steps.length`.
-      const wrapped = flushed.map((step: ReplayArtifactStep) =>
-        wrapStepAsArtifact(step),
-      );
-      const padded: Array<ReplayArtifact | null> = new Array(steps.length).fill(null);
-      for (let i = 0; i < Math.min(wrapped.length, steps.length); i++) {
-        padded[i] = wrapped[i];
-      }
-      replayArtifacts = padded;
-    }
   }
 
   let store: SkillMemoryStore;
@@ -219,7 +135,6 @@ const handler: ToolHandler = async (
     return jsonResult({
       skill_id: '',
       stored_at: 0,
-      replay_artifacts: null,
       error: `failed to initialise skill memory store: ${message}`,
     } as OcSkillRecordOutput & { error: string });
   }
@@ -244,7 +159,6 @@ const handler: ToolHandler = async (
       return jsonResult({
         skill_id: '',
         stored_at: 0,
-        replay_artifacts: null,
         error: `failed to write frozen snapshot: ${message}`,
       } as OcSkillRecordOutput & { error: string });
     }
@@ -260,26 +174,19 @@ const handler: ToolHandler = async (
       successCount: 0,
       lastUsedAt: 0,
       frozenSnapshotPath: snapshotPath ?? null,
-      replayArtifacts,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return jsonResult({
       skill_id: '',
       stored_at: 0,
-      replay_artifacts: null,
       error: `failed to record skill: ${message}`,
     } as OcSkillRecordOutput & { error: string });
-  }
-
-  if (replayEnabled && targetId) {
-    flushRecorderBuffer(targetId);
   }
 
   const output: OcSkillRecordOutput = {
     skill_id: recordResult.skill_id,
     stored_at: recordResult.stored_at,
-    replay_artifacts: replayEnabled ? replayArtifacts : null,
   };
   if (snapshotPath !== undefined) {
     output.snapshot_path = snapshotPath;
@@ -306,19 +213,6 @@ const handler: ToolHandler = async (
 
   return jsonResult(output);
 };
-
-/**
- * Lift a per-step ReplayArtifactStep into a single-step ReplayArtifact so the
- * on-disk shape stays uniform regardless of capture path.
- */
-function wrapStepAsArtifact(step: ReplayArtifactStep): ReplayArtifact {
-  return {
-    schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
-    recorded_at: Date.now(),
-    recorder: { openchrome_version: 'core' },
-    steps: [step],
-  };
-}
 
 /**
  * Compute the deterministic skill_id for a (domain, name) pair.

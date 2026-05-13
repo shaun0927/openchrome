@@ -4,8 +4,8 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_close',
@@ -28,6 +28,7 @@ const definition: MCPToolDefinition = {
       },
     },
   },
+  annotations: TOOL_ANNOTATIONS.tabs_close,
 };
 
 const handler: ToolHandler = async (
@@ -134,12 +135,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerTabsCloseTool(server: MCPServer): void {
-  // Snapshot-cache (#879): the target close listener disposes per-target
-  // caches automatically; the bump covers the rare path where the close
-  // call resolves before the close listener fires.
-  const sm = getSessionManager();
-  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid, undefined, 'tabs_close') : Promise.resolve(null),
-  );
-  server.registerTool('tabs_close', wrapped, definition);
+  server.registerTool('tabs_close', handler, definition);
 }

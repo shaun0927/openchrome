@@ -55,6 +55,7 @@ describe('sessions/* authz (MCPServer round-5)', () => {
         name: 'noop',
         description: 'test helper',
         inputSchema: { type: 'object', properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       },
     );
   });

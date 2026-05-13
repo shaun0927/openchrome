@@ -10,6 +10,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
@@ -53,6 +54,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['url'],
   },
+  annotations: TOOL_ANNOTATIONS.tabs_create,
 };
 
 const handler: ToolHandler = async (

@@ -5,6 +5,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { canAccessTask, getTaskStore, taskAccessDeniedResult, waitForTaskStartupReap } from './oc-task-start';
 
 const definition: MCPToolDefinition = {
@@ -12,6 +13,7 @@ const definition: MCPToolDefinition = {
   description:
     'Fetch a single task by task_id. By default returns meta only; pass ' +
     'include_result=true to also resolve the persisted result payload.',
+  annotations: TOOL_ANNOTATIONS.oc_task_get,
   inputSchema: {
     type: 'object',
     properties: {

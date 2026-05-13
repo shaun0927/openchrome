@@ -24,6 +24,7 @@
 import * as crypto from 'crypto';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
 import {
@@ -275,6 +276,7 @@ const exportDefinition: MCPToolDefinition = {
     'SECURITY: the envelope is plaintext by design — the host MUST treat it as a secret. ' +
     'Pair with `oc_context_import` on a fresh openchrome instance to carry signed-in ' +
     'state across hosts.',
+  annotations: TOOL_ANNOTATIONS.oc_context_export,
   inputSchema: {
     type: 'object',
     properties: {
@@ -384,6 +386,7 @@ const importDefinition: MCPToolDefinition = {
     'are CLEARED, then the envelope payload is installed. Merge semantics are ' +
     'intentionally not supported. ' +
     'SECURITY: the envelope is plaintext — the host MUST treat it as a secret.',
+  annotations: TOOL_ANNOTATIONS.oc_context_import,
   inputSchema: {
     type: 'object',
     properties: {

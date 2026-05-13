@@ -9,6 +9,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { assertValidJobId, loadJob, isExpired, type JobState } from '../core/crawl/job-store';
 import { advanceJob, defaultAdvance, type AdvanceOptions } from '../core/crawl/runner';
 import { emitCrawlTrace } from '../core/crawl/trace-emit';
@@ -21,6 +22,7 @@ const definition: MCPToolDefinition = {
     'read-only and performs no fetching. Returns { status, completed, total, ' +
     'errors, pages?, pagesOmitted?, startedAt, finishedAt? }. Pages array is ' +
     'capped at OC_CRAWL_STATUS_MAX_PAGES (default 200).',
+  annotations: TOOL_ANNOTATIONS.crawl_status,
   inputSchema: {
     type: 'object',
     properties: {

@@ -8,6 +8,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getChromeLauncher } from '../chrome/launcher';
 import { getChromePool } from '../chrome/pool';
 import { getGlobalConfig } from '../config/global';
@@ -21,6 +22,7 @@ const definition: MCPToolDefinition = {
     properties: {},
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_profile_status,
 };
 
 const handler: ToolHandler = async (

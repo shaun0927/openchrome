@@ -9,6 +9,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
@@ -130,6 +131,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['url'],
   },
+  annotations: TOOL_ANNOTATIONS.crawl,
 };
 
 // ---------------------------------------------------------------------------

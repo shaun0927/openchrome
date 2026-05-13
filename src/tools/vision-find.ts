@@ -10,6 +10,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { formatElementMapAsText } from '../vision/screenshot-analyzer';
 import { formatPerceptionSnapshotAsText } from '../vision/perception-provider';
@@ -71,6 +72,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.vision_find,
 };
 
 const handler: ToolHandler = async (

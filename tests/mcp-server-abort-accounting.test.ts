@@ -20,6 +20,7 @@ describe('MCPServer aborted tool accounting', () => {
         name: toolName,
         description: 'abort metric test',
         inputSchema: { type: 'object', properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       },
     );
 
