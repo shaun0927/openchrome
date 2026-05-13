@@ -172,7 +172,11 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
           const payload = responsePayloadSize(result);
           responseChars += payload.responseChars;
           screenshotBytes += payload.screenshotBytes;
-          tabIds.set(placeholder, extractTabId(result) ?? placeholder);
+          const tabId = extractTabId(result);
+          if (!tabId) {
+            throw new Error(`Benchmark scenario ${scenario.name} could not resolve tab alias ${placeholder}: tabs_create returned no tabId`);
+          }
+          tabIds.set(placeholder, tabId);
         }
 
         const runStep = async (step: BenchmarkMatrixScenario['steps'][number]) => {

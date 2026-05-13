@@ -41,7 +41,8 @@ export function writeCiOutput(
 }
 
 export async function main(args = process.argv.slice(2), output: BenchmarkCliOutput = process): Promise<void> {
-  const ciMode = args.includes('--ci');
+  const jsonMode = args.includes('--json');
+  const ciMode = args.includes('--ci') || jsonMode;
   const modeIndex = args.indexOf('--mode');
   const mode = modeIndex !== -1 && modeIndex + 1 < args.length
     ? args[modeIndex + 1]
@@ -98,7 +99,7 @@ export async function main(args = process.argv.slice(2), output: BenchmarkCliOut
 
   const reports: BenchmarkReport[] = [axReport, domReport];
 
-  if (ciMode) {
+  if (ciMode || jsonMode) {
     const regression = BenchmarkRunner.checkRegression(axReport, domReport, 0.1);
     writeCiOutput(reports, regression, output);
     if (!regression.passed) {

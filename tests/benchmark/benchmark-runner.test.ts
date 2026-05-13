@@ -396,6 +396,22 @@ describe('BenchmarkRunner', () => {
     expect(output.stderr.write).not.toHaveBeenCalled();
   });
 
+  test('benchmark CLI treats --json as machine-readable matrix output', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await main(['--category', 'agent-loop', '--runs', '1', '--json'], output as never);
+
+    expect(output.stdout.write).toHaveBeenCalledTimes(1);
+    const stdout = output.stdout.write.mock.calls[0][0];
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect(JSON.parse(stdout)).toHaveLength(2);
+    expect(stdout).not.toContain('BENCHMARK REPORT');
+    expect(output.stderr.write.mock.calls.join('\n')).toContain('Running benchmarks in AX mode');
+  });
+
   test('run computes latency distribution and payload stats', async () => {
     const runner = new BenchmarkRunner({ runsPerTask: 4 });
     const adapter = makeAdapter();

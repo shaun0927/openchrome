@@ -52,18 +52,24 @@ describe('benchmark matrix', () => {
 
   test('matrix tasks run without external network using an adapter', async () => {
     const task = createMatrixTasks({ category: 'agent-loop' })[0];
+    let tabSeq = 0;
     const adapter = {
       name: 'stub',
       mode: 'dom',
-      callTool: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
+      callTool: jest.fn().mockImplementation(async (toolName: string) => ({
+        content: [{
+          type: 'text',
+          text: toolName === 'tabs_create' ? JSON.stringify({ tabId: `real-tab-${++tabSeq}` }) : 'ok',
+        }],
+      })),
     };
 
     const result = await task.run(adapter);
 
     expect(result.success).toBe(true);
     expect(result.toolCallCount).toBe(4);
-    expect(result.responseChars).toBe(8);
-    expect(result.estimatedOutputTokens).toBe(2);
+    expect(result.responseChars).toBeGreaterThan(8);
+    expect(result.estimatedOutputTokens).toBe(Math.ceil(result.responseChars! / 4));
     expect(result.nodeRssBytes).toBeGreaterThan(0);
   });
 
@@ -94,7 +100,7 @@ describe('benchmark matrix', () => {
       mode: 'dom',
       callTool: jest
         .fn()
-        .mockResolvedValueOnce({ content: [{ type: 'text', text: 'ok' }] })
+        .mockResolvedValueOnce({ content: [{ type: 'text', text: JSON.stringify({ tabId: 'real-tab-1' }) }] })
         .mockResolvedValueOnce({ content: [{ type: 'text', text: 'Error: invalid instruction' }], isError: true }),
     };
 
@@ -121,6 +127,21 @@ describe('benchmark matrix', () => {
     expect(result.success).toBe(true);
     expect(adapter.callTool).toHaveBeenNthCalledWith(1, 'tabs_create', { url: expect.any(String) });
     expect(adapter.callTool).toHaveBeenNthCalledWith(2, 'read_page', { tabId: 'real-tab-1', mode: 'dom' });
+  });
+
+  test('matrix tasks fail if tabs_create does not return a concrete tab id', async () => {
+    const task = createMatrixTasks({ category: 'warm-read-page-dom' })[0];
+    const adapter = {
+      name: 'stub',
+      mode: 'dom',
+      callTool: jest.fn().mockResolvedValueOnce({ content: [{ type: 'text', text: 'ok' }] }),
+    };
+
+    const result = await task.run(adapter);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('tabs_create returned no tabId');
+    expect(adapter.callTool).toHaveBeenCalledTimes(1);
   });
 
   test('action scenarios use resolvable text targets instead of synthetic refs', () => {
