@@ -451,7 +451,8 @@ describe('CDPClient – forceReconnect invalidates pending connects', () => {
     resolveStaleConnect!();
     await staleReconnectPromise;
 
-    expect(client.isReconnecting()).toBe(false);
+    expect((client as any).reconnecting).toBe(false);
+    expect((client as any).connectionState).toBe('reconnecting');
     expect((client as any).reconnectingAttempt).toBe(0);
     expect((client as any).reconnectNextRetryAt).toBe(0);
     expect((client as any).browser).toBeNull();
