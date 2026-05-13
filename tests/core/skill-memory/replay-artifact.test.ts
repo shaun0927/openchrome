@@ -155,11 +155,11 @@ describe('validateReplayArtifactStep', () => {
 });
 
 describe('validateReplaySelector', () => {
-  test('accepts every documented selector type', () => {
+  test('accepts live-resolvable selector types and rejects node_ref until resolved', () => {
     expect(validateReplaySelector({ type: 'css', value: '#x' }).ok).toBe(true);
     expect(validateReplaySelector({ type: 'xpath', value: '//div' }).ok).toBe(true);
     expect(validateReplaySelector({ type: 'text', value: 'Submit' }).ok).toBe(true);
-    expect(validateReplaySelector({ type: 'node_ref', value: 'n1' }).ok).toBe(true);
+    expect(validateReplaySelector({ type: 'node_ref', value: 'n1' }).ok).toBe(false);
     expect(validateReplaySelector({ type: 'accessible_name', value: 'Submit' }).ok).toBe(true);
     expect(
       validateReplaySelector({ type: 'role_name', role: 'button', name: 'Submit' }).ok,
