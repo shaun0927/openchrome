@@ -110,9 +110,13 @@ program
       const server = new MCPServer(undefined, { initialToolTier: 3 });
       registerAllTools(server);
       const manifest = server.getToolManifest();
-      await new Promise<void>((resolve) => {
-        process.stdout.write(JSON.stringify(manifest.tools) + '\n', () => resolve());
-      });
+      const output = JSON.stringify(manifest.tools) + '\n';
+      for (let offset = 0; offset < output.length; offset += 16_384) {
+        const chunk = output.slice(offset, offset + 16_384);
+        if (!process.stdout.write(chunk)) {
+          await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+        }
+      }
       return;
     }
 
