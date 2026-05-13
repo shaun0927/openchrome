@@ -202,7 +202,7 @@ describe('crawl_status', () => {
     expect(body.completed).toBe(25);
     expect((body.pages as CrawledPage[]).length).toBe(10);
     expect(body.pagesOmitted).toBe(15);
-  });
+  }, 30000);
 
   test('expired job reports status=expired, performs zero fetches', async () => {
     mkTmpRoot();

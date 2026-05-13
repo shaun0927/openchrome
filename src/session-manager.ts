@@ -1253,13 +1253,17 @@ export class SessionManager {
   async getPage(sessionId: string, targetId: string, workerId?: string, toolName?: string): Promise<Page | null> {
     const ownerInfo = this.targetToWorker.get(targetId);
 
-    if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
+    if (!ownerInfo) {
       // Fallback: target may exist in Chrome but not in our tracking map.
       // This happens after cross-origin navigation (e.g., OAuth redirect) where
       // Chrome replaces the renderer process, creating a new target that we missed
       // (we skip targetcreated indexing to prevent ghost tabs).
       const recovered = await this.tryRecoverTarget(sessionId, targetId, workerId);
       if (recovered) return recovered;
+      throw new Error(this.buildStaleTargetError(sessionId, targetId));
+    }
+
+    if (ownerInfo.sessionId !== sessionId) {
       throw new Error(this.buildStaleTargetError(sessionId, targetId));
     }
 

@@ -9,6 +9,7 @@ import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS, DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 import { mergeHeaderJson, isStateHeaderEnabled } from './_shared/state-header';
+import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 
 const definition: MCPToolDefinition = {
   name: 'page_content',
@@ -28,6 +29,10 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Return outerHTML vs innerHTML. Default: true',
       },
+      boundaryMarkers: {
+        type: 'boolean',
+        description: 'Wrap page-origin content in <oc:page>. Default true; false disables.',
+      },
     },
     required: ['tabId'],
   },
@@ -41,6 +46,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const selector = args.selector as string | undefined;
   const outerHTML = (args.outerHTML as boolean) ?? true;
+  const boundaryMarkers = areBoundaryMarkersEnabled(args);
 
   const sessionManager = getSessionManager();
 
@@ -101,7 +107,7 @@ const handler: ToolHandler = async (
         selector,
         outerHTML,
         contentLength: originalLength,
-        content: html,
+        content: boundaryMarkers ? wrapBoundaryMarker('page', { src: page.url(), mode: 'text' }, html) : html,
       };
       const elementWithState = isStateHeaderEnabled()
         ? mergeHeaderJson(
@@ -125,7 +131,7 @@ const handler: ToolHandler = async (
         action: 'page_content',
         selector: null,
         contentLength: originalLength,
-        content: html,
+        content: boundaryMarkers ? wrapBoundaryMarker('page', { src: page.url(), mode: 'text' }, html) : html,
       };
       const fullPageWithState = isStateHeaderEnabled()
         ? mergeHeaderJson(
