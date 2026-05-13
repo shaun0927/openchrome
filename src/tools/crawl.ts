@@ -284,6 +284,31 @@ async function fetchPageStatic(
   }
 }
 
+
+/** Options for `fetchOnePage`, shared by legacy crawl and host-driven crawl jobs. */
+export interface FetchOnePageOptions {
+  outputFormat: string;
+}
+
+/** Single-page crawl result plus transient links for BFS/job queue expansion. */
+export interface FetchOnePageResult extends CrawledPage {
+  _links?: string[];
+}
+
+/**
+ * Fetch a single page with the same CDP extraction path used by legacy `crawl`.
+ * The async crawl runner imports this instead of duplicating browser behavior.
+ */
+export async function fetchOnePage(
+  sessionId: string,
+  url: string,
+  depth: number,
+  opts: FetchOnePageOptions,
+  context?: ToolContext,
+): Promise<FetchOnePageResult> {
+  return fetchPage(sessionId, url, depth, opts.outputFormat, context) as Promise<FetchOnePageResult>;
+}
+
 async function fetchPage(
   sessionId: string,
   url: string,
