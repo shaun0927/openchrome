@@ -139,7 +139,7 @@ export function registerTabsCloseTool(server: MCPServer): void {
   // call resolves before the close listener fires.
   const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
+    tid ? sm.getPage(sid, tid, undefined, 'tabs_close') : Promise.resolve(null),
   );
   server.registerTool('tabs_close', wrapped, definition);
 }

@@ -30,6 +30,23 @@ export {
   FIND_PARAMS,
   QUERY_DOM_PARAMS,
 } from './params-hash';
+export {
+  InMemoryBackendNodeRegistry,
+  getBackendNodeRegistry,
+  _resetBackendNodeRegistryForTests,
+} from './backend-node-registry';
+export type { BackendNodeRegistry, StableUid } from './backend-node-registry';
+export {
+  NODE_REF_OFF,
+  formatNodeRefToken,
+  formatUidEvictedError,
+  getCurrentLoaderId,
+  isNodeRefEnabled,
+  mintNodeRef,
+  mintNodeRefSync,
+  resolveNodeRef,
+} from './node-ref';
+export type { CdpSendShape } from './node-ref';
 export type {
   EffectiveDisplay,
   InteractionFeasibility,

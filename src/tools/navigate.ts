@@ -994,7 +994,7 @@ export function registerNavigateTool(server: MCPServer): void {
   // (loaderId change) so the next read recomputes against the new page.
   const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
+    tid ? sm.getPage(sid, tid, undefined, 'navigate') : Promise.resolve(null),
   );
   server.registerTool('navigate', wrapped, definition, { timeoutRecoverable: true });
 }

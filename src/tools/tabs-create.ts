@@ -41,11 +41,9 @@ const definition: MCPToolDefinition = {
       isolatedContext: {
         type: 'string',
         description:
-          'Optional name of a puppeteer BrowserContext to open the tab in (#848). ' +
-          'Multiple named contexts share a single Chrome process but have isolated ' +
-          'cookies / localStorage / sessionStorage / HTTP cache. Created on first use, ' +
-          'looked up by name on subsequent calls. Names match [A-Za-z0-9_-]{1,64}; ' +
-          '"default" is reserved.',
+          'Optional BrowserContext name (#848). Named contexts share one Chrome ' +
+          'process but isolate cookies/storage/cache. Created on first use, reused ' +
+          'later. Names match [A-Za-z0-9_-]{1,64}; "default" is reserved.',
       },
     },
     required: ['url'],
@@ -157,7 +155,7 @@ export function registerTabsCreateTool(server: MCPServer): void {
   // target id.
   const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
+    tid ? sm.getPage(sid, tid, undefined, 'tabs_create') : Promise.resolve(null),
   );
   server.registerTool('tabs_create', wrapped, definition);
 }

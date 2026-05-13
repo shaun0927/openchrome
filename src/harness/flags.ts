@@ -17,10 +17,39 @@
  */
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
+const FALSY = new Set(['0', 'false', 'no', 'off']);
 
 export function isTruthy(value: string | undefined): boolean {
   if (value === undefined) return false;
   return TRUTHY.has(value.trim().toLowerCase());
+}
+
+/**
+ * Core-tier feature flag (issue #844 family).
+ *
+ * Unlike pilot family flags (which require `--pilot` to be enabled), core
+ * flags ship unflagged in `openchrome serve` and use the env var to allow
+ * operators to opt out for byte-parity testing.
+ *
+ *   - `defaultOn=true`:  enabled unless the env var is explicitly falsy
+ *                        (`0`, `false`, `no`, `off`).
+ *   - `defaultOn=false`: disabled unless the env var is explicitly truthy
+ *                        (`1`, `true`, `yes`, `on`).
+ *
+ * This helper is purely additive — it does not affect existing pilot helpers.
+ * It is unaffected by `isPilotEnabled()`.
+ *
+ * Used by:
+ *   - `OPENCHROME_NODE_REF` (default ON; backend-node uid contract, #844).
+ */
+export function isCoreFeatureEnabled(envVar: string, defaultOn: boolean): boolean {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw.trim() === '') return defaultOn;
+  const normalized = raw.trim().toLowerCase();
+  if (defaultOn) {
+    return !FALSY.has(normalized);
+  }
+  return TRUTHY.has(normalized);
 }
 
 function pilotFromArgv(argv: readonly string[] = process.argv): boolean {
@@ -133,20 +162,4 @@ export async function bootstrapPilot(): Promise<unknown | null> {
  */
 export function resetFlagsCache(): void {
   cachedPilot = null;
-}
-
-/**
- * Core-tier feature gate.
- *
- * Returns `defaultOn` when the env var is unset or empty; otherwise parses
- * the value as a boolean (`'1'` / `'true'` enable, anything else disables).
- *
- * TODO(#844): replace this inline copy with the shared helper introduced
- * by issue #844 once that PR lands on `develop`. The signature is held
- * stable so the swap is a one-line import change.
- */
-export function isCoreFeatureEnabled(envVar: string, defaultOn: boolean): boolean {
-  const raw = process.env[envVar];
-  if (raw === undefined || raw === '') return defaultOn;
-  return raw === '1' || raw.toLowerCase() === 'true';
 }

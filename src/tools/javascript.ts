@@ -402,7 +402,7 @@ export function registerJavascriptTool(server: MCPServer): void {
   // `read_page` therefore always recomputes.
   const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
+    tid ? sm.getPage(sid, tid, undefined, 'javascript_tool') : Promise.resolve(null),
   );
   server.registerTool('javascript_tool', wrapped, definition);
 }

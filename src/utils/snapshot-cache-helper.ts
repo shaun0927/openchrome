@@ -155,6 +155,13 @@ export interface LookupResult<T> {
   age_ms?: number;
 }
 
+function cloneCachedValue<T>(value: T): T {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 export async function lookupOrSet<T>(
   page: Page,
   params: BuildKeyParams,
@@ -167,10 +174,12 @@ export async function lookupOrSet<T>(
     return { value, hit: false };
   }
   const hit = built.cache.get<T>(built.key) as SnapshotCacheHit<T> | null;
-  if (hit) return { value: hit.value, hit: true, age_ms: hit.age_ms };
+  if (hit) {
+    return { value: cloneCachedValue(hit.value), hit: true, age_ms: hit.age_ms };
+  }
   const fresh = await recompute();
   if (shouldCache(fresh)) {
-    built.cache.set(built.key, fresh);
+    built.cache.set(built.key, cloneCachedValue(fresh));
   }
   return { value: fresh, hit: false };
 }
@@ -298,7 +307,14 @@ function attachEvictionSubscribersOnce(
         ATTACHED.delete(pageKey);
         return;
       }
-      const session = (await target.createCDPSession()) as CDPSessionLike;
+      let session: CDPSessionLike | null = null;
+      const closePage = capable.once?.bind(capable);
+      closePage?.('close', () => {
+        void session?.detach?.().catch(() => undefined);
+        disposeSnapshotCacheForTarget(targetId);
+      });
+
+      session = (await target.createCDPSession()) as CDPSessionLike;
 
       // Subscribe to relevant CDP domains. Errors enabling are non-fatal.
       await session.send('DOM.enable').catch(() => undefined);
@@ -326,13 +342,8 @@ function attachEvictionSubscribersOnce(
       session.on('Page.frameNavigated', handleFrameNavigated);
       session.on('Page.frameResized', handleFrameResized);
 
-      // Drop the per-target cache when the page closes — keeps memory
-      // bounded across long-running sessions.
-      const closePage = capable.once?.bind(capable);
-      closePage?.('close', () => {
-        void session.detach?.().catch(() => undefined);
-        disposeSnapshotCacheForTarget(targetId);
-      });
+      // Close cleanup is registered before CDP setup awaits above so a page
+      // closing during setup still disposes this target cache.
     } catch {
       // Best-effort, but do not permanently suppress retries after a transient
       // attach/listener failure. If this setup fails before listeners are
