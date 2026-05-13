@@ -142,6 +142,8 @@ import { registerOcObserveTool } from './oc-observe';
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
+// Action schema normalizer (#1062) — side-effect-free diagnostics.
+import { registerOcNormalizeActionTool } from './oc-normalize-action';
 import { isRunHarnessEnabled } from '../run-harness/flags';
 import { registerRunHarnessTools } from '../run-harness/tools';
 // Read-only progress diagnostics (#1060).
@@ -261,6 +263,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Outcome Contracts (#784) — single-call assertion verifier
   registerOcAssertTool(server);
+
+  // Action schema normalizer (#1062) — no browser side effects.
+  registerOcNormalizeActionTool(server);
 
   // Read-only anti-wandering diagnostics (#1060).
   registerOcProgressStatusTool(server);
