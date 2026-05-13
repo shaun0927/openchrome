@@ -150,6 +150,14 @@ export function createMockCDPClient() {
           return { result: { value: { success: true, message: 'Mock success' } } };
         case 'DOM.describeNode':
           return { node: { backendNodeId: 12345 } };
+        case 'Page.captureScreenshot': {
+          const target = (page as any).target?.();
+          const session = await (target?.createCDPSession?.() ?? (page as any).createCDPSession?.());
+          if (session?.send) {
+            return session.send(method, params);
+          }
+          return { data: 'base64-screenshot-data' };
+        }
         default:
           return {};
       }
