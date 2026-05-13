@@ -121,8 +121,6 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
-// Skill memory tools (#875) — deterministic replay
-import { registerOcSkillReplayTool } from './oc-skill-replay';
 // Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
 import { registerOcTaskStartTool, getTaskStore, setTaskStartupReapPromise } from './oc-task-start';
 import { registerOcTaskListTool } from './oc-task-list';

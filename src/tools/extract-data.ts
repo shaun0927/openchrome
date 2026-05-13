@@ -7,6 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
+import { waitForPageReady } from '../utils/page-ready-state';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import {
   validateSchema,
@@ -84,6 +85,8 @@ const handler: ToolHandler = async (
   const selector = args.selector as string | undefined;
   const multiple = (args.multiple as boolean) ?? false;
   const { mode, inlineLimit } = parseOutputMode(args);
+  const waitForReady = args.waitForReady === true;
+  const readyTimeoutMs = typeof args.readyTimeoutMs === 'number' ? args.readyTimeoutMs : undefined;
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
@@ -116,6 +119,11 @@ const handler: ToolHandler = async (
       return { content: [{ type: 'text', text: 'Error: Schema must define at least one property' }], isError: true };
     }
 
+    let readiness: Awaited<ReturnType<typeof waitForPageReady>> | undefined;
+    if (waitForReady) {
+      readiness = await waitForPageReady(page, readyTimeoutMs ? { timeoutMs: readyTimeoutMs } : {}, _context);
+    }
+
     const pageUrl = page.url();
     const domain = extractDomainFromUrl(pageUrl);
 
@@ -143,6 +151,7 @@ const handler: ToolHandler = async (
 
       const multiplePayload = {
         action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
+        ...(readiness ? { readiness } : {}),
       };
       const multipleInlineResult: MCPResult = {
         content: [{ type: 'text', text: JSON.stringify(multiplePayload) }],
@@ -162,7 +171,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit);
+      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit, readiness);
     }
 
     // Strategy 2: Microdata
@@ -179,7 +188,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit);
+      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit, readiness);
     }
 
     // Strategy 4: CSS heuristic
@@ -189,7 +198,7 @@ const handler: ToolHandler = async (
     } catch { /* non-fatal */ }
 
     const { result, validation } = validateAndCoerce(merged, schema);
-    return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit);
+    return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, inlineLimit, readiness);
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -225,10 +234,19 @@ async function buildResponseWithMode(
   data: Record<string, unknown>, errors: string[], url: string,
   strategies: string[], domain: string, fieldNames: string[],
   mode: import('./_shared/output-mode').OutputMode, inlineLimit: number,
+  readiness?: Awaited<ReturnType<typeof waitForPageReady>>,
 ): Promise<MCPResult> {
   const { inlineResult, payload } = buildResponse(data, errors, url, strategies, domain, fieldNames);
+  if (readiness) {
+    payload.readiness = readiness;
+    if (inlineResult.content?.[0]?.type === 'text') {
+      inlineResult.content[0].text = JSON.stringify(payload);
+    }
+  }
   return resolveOutputMode(mode, inlineLimit, inlineResult, payload, 'extract_data');
 }
+
+export const extractDataHandler = handler;
 
 export function registerExtractDataTool(server: MCPServer): void {
   server.registerTool('extract_data', handler, definition);

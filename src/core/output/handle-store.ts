@@ -52,6 +52,13 @@ export interface FetchHandleOptions {
   format?: 'bytes' | 'items' | 'auto';
 }
 
+type NonItemFetchHandleOptions = Omit<FetchHandleOptions, 'format'> & {
+  format?: 'bytes' | 'auto';
+};
+type ItemFetchHandleOptions = Omit<FetchHandleOptions, 'format'> & {
+  format: 'items';
+};
+
 export interface FetchHandleResult {
   output_handle: OutputHandle;
   offset: number;
@@ -203,6 +210,8 @@ export class HandleStore {
    * Returns FetchHandleFormatError when format:'items' is requested but the
    * stored payload is not a JSON array (P2 fix #887 — never silently falls back).
    */
+  fetch(handle: OutputHandle, opts?: NonItemFetchHandleOptions): FetchHandleResult | null;
+  fetch(handle: OutputHandle, opts: ItemFetchHandleOptions): FetchHandleResult | FetchHandleFormatError | null;
   fetch(handle: OutputHandle, opts?: FetchHandleOptions): FetchHandleResult | FetchHandleFormatError | null {
     const meta = this.resolveHandle(handle);
     if (!meta) return null;

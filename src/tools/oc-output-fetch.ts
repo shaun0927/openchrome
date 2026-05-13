@@ -82,7 +82,9 @@ const handler: ToolHandler = async (
   const format = (args.format as 'bytes' | 'items' | 'auto' | undefined) ?? 'auto';
 
   const store = getHandleStore();
-  const result = store.fetch(handle, { offset, limit, format });
+  const result = format === 'items'
+    ? store.fetch(handle, { offset, limit, format: 'items' })
+    : store.fetch(handle, { offset, limit, format });
 
   if (isFetchFormatError(result)) {
     return {
