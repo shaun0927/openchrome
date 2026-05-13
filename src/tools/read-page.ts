@@ -13,6 +13,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 
 /**
@@ -81,7 +82,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.\n\nWhen to use: Reading page structure, verifying content, or extracting the full DOM tree.\nWhen NOT to use: Use inspect for targeted state queries or find to locate a specific element.',
+  description: 'Get page as DOM, accessibility tree (ax), CSS diagnostics, semantic summary, or clean Markdown (article-shaped).\n\nWhen to use: Reading page structure, verifying content, extracting the full DOM tree, or reducing article-like pages to Markdown.\nWhen NOT to use: Use inspect for targeted state queries or find to locate a specific element.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -108,8 +109,16 @@ const definition: MCPToolDefinition = {
       },
       mode: {
         type: 'string',
-        enum: ['ax', 'dom', 'css', 'semantic'],
-        description: 'Output mode: dom (default), ax, css, or semantic',
+        enum: ['ax', 'dom', 'css', 'semantic', 'markdown'],
+        description: 'Output mode: dom (default), ax, css, semantic, or markdown (clean article extraction).',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'Markdown mode only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'Markdown mode only: preserve <a> as markdown links. Default: true.',
       },
       includePagination: {
         type: 'boolean',
@@ -218,9 +227,9 @@ const handler: ToolHandler = async (
     const requestedMode = args.mode as string | undefined;
     const mode = requestedMode || 'dom';
     const isExplicitDomMode = requestedMode === 'dom';
-    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic') {
+    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic' && mode !== 'markdown') {
       return {
-        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", or "semantic".` }],
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", "semantic", or "markdown".` }],
         isError: true,
       };
     }
@@ -238,6 +247,40 @@ const handler: ToolHandler = async (
       return {
         content: [{ type: 'text', text: 'Error: "selector" parameter is only supported in mode="css". Use ref_id for subtree scoping in "ax" mode.' }],
         isError: true,
+      };
+    }
+
+    // Markdown mode — clean HTML→Markdown extraction.
+    // Keep pagination metadata parity with DOM/AX/CSS modes when requested.
+    if (mode === 'markdown') {
+      const onlyMainContent = args.onlyMainContent !== false;
+      const includeLinks = args.includeLinks !== false;
+      const includePaginationMarkdown = args.includePagination !== false;
+      const refIdNote = args.ref_id
+        ? '[Note: ref_id is not supported in markdown mode — full-page content returned. Use mode "ax" for ref_id subtree scoping.]\n\n'
+        : '';
+      const html = await withTimeout(
+        page.content(),
+        15000,
+        'read_page.markdown.content',
+        context,
+      );
+      const { html: cleaned } = extractMainContent(html, { onlyMainContent });
+      let md = refIdNote + toMarkdown(cleaned, { includeLinks });
+      const paginationSection = includePaginationMarkdown
+        ? formatPaginationSection(await detectPagination(page, tabId))
+        : '';
+      if (paginationSection) {
+        md += `\n${paginationSection}`;
+      }
+      let truncated = false;
+      if (md.length > MAX_OUTPUT_CHARS) {
+        md = md.slice(0, MAX_OUTPUT_CHARS);
+        truncated = true;
+      }
+      const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
+      return {
+        content: [{ type: 'text', text: md + suffix }],
       };
     }
 
