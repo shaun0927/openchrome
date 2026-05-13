@@ -271,7 +271,10 @@ describe('replay report', () => {
     ]);
 
     expect(exitCode).toBeNull();
-    expect(stdout.trim()).toBe(destPath);
+    // Windows CI can surface unrelated late console output from other tests while
+    // this in-process harness has stdout patched; the CLI contract only requires
+    // that the destination path is emitted.
+    expect(stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)).toContain(destPath);
     expect(fs.existsSync(destPath)).toBe(true);
     expect(fs.readFileSync(destPath, 'utf-8')).toContain('<!DOCTYPE html>');
   });

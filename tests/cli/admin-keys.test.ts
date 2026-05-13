@@ -39,13 +39,19 @@ function extractToken(stdout: string): string {
 }
 
 function extractJsonArray(stdout: string): string {
-  for (const line of stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
-    if (!line.startsWith('[')) continue;
-    try {
-      const parsed = JSON.parse(line);
-      if (Array.isArray(parsed)) return line;
-    } catch {
-      // Ignore unrelated bracket-prefixed test noise such as [WorkflowEngine].
+  const starts: number[] = [];
+  for (let i = 0; i < stdout.length; i++) {
+    if (stdout[i] === '[') starts.push(i);
+  }
+  for (const start of starts) {
+    for (let end = stdout.lastIndexOf(']'); end > start; end = stdout.lastIndexOf(']', end - 1)) {
+      const candidate = stdout.slice(start, end + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        if (Array.isArray(parsed)) return candidate;
+      } catch {
+        // Ignore unrelated log prefixes such as [WorkflowEngine] captured by the shared stdout hook.
+      }
     }
   }
   throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
@@ -139,11 +145,13 @@ describe('admin keys CLI', () => {
       '--description', 'test key',
     ]);
     expect(exitCode).toBeNull();
+
     // Plaintext is emitted exactly once even if unrelated Jest worker noise
     // is captured by the shared stdout hook on Windows CI.
     const stdoutTokens = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
     expect(stdoutTokens).toHaveLength(1);
     const plaintext = stdoutTokens[0];
+
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
     // keyId is reported on stderr, not stdout.
