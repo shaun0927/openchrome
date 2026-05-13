@@ -32,12 +32,12 @@ const definition: MCPToolDefinition = {
     properties: {
       trace_id: {
         type: 'string',
-        description: 'Trace handle returned by oc_performance_insights.',
+        description: 'REQUIRED Trace handle returned by oc_performance_insights.',
       },
       insight: {
         type: 'string',
         enum: [...INSIGHT_NAMES],
-        description: 'Name of the insight to drill into.',
+        description: 'REQUIRED Name of the insight to drill into.',
       },
     },
     required: ['trace_id', 'insight'],
