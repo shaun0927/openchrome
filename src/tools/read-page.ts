@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { aliasFor, getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
@@ -161,6 +161,12 @@ const definition: MCPToolDefinition = {
   annotations: TOOL_ANNOTATIONS.read_page,
 };
 
+
+
+function shortAliasForRef(refId: string): string | undefined {
+  const match = refId.match(/^ref_(\d+)$/);
+  return match ? `@e${match[1]}` : undefined;
+}
 
 function compactAXLines(lines: string[]): string[] {
   const keep = new Set<number>();
@@ -1007,7 +1013,7 @@ const handler: ToolHandler = async (
 
       // Build line
       const indentStr = '  '.repeat(indent);
-      const refLabel = refId ? `${refId} ${aliasFor(refId) ?? ''}`.trim() : 'no-ref';
+      const refLabel = refId ? `${refId} ${shortAliasForRef(refId) ?? ''}`.trim() : 'no-ref';
       let line = `${indentStr}[${refLabel}] ${role}`;
       if (name) line += `: "${name}"`;
       if (value) line += ` = "${value}"`;
