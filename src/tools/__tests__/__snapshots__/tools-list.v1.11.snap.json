@@ -115,6 +115,9 @@
       "name": "oc_devtools_url"
     },
     {
+      "name": "oc_diff"
+    },
+    {
       "name": "oc_doctor_report"
     },
     {

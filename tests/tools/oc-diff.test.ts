@@ -63,4 +63,29 @@ describe('oc_diff', () => {
     expect(data.console).toMatchObject({ addedMessages: 2, byLevel: { error: 1, warn: 1 } });
     expect(data.network).toMatchObject({ addedRequests: 2, byStatus: { '200': 1, '404': 1 } });
   });
+
+  test('compares nested console and network entries with stable recursive keys', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-diff-'));
+    const a = writeBundle(root, 'a', {
+      'console.json': { entries: [{ level: 'error', detail: { message: 'same' } }] },
+      'network.json': { entries: [{ status: 200, request: { url: '/same' } }] },
+    });
+    const b = writeBundle(root, 'b', {
+      'console.json': { entries: [{ detail: { message: 'same' }, level: 'error' }, { level: 'error', detail: { message: 'new' } }] },
+      'network.json': { entries: [{ request: { url: '/same' }, status: 200 }, { status: 200, request: { url: '/new' } }] },
+    });
+    const result = await handler()('session', { before: a, after: b, kinds: ['console', 'network'] });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.console).toMatchObject({ addedMessages: 1, byLevel: { error: 1 } });
+    expect(data.network).toMatchObject({ addedRequests: 1, byStatus: { '200': 1 } });
+  });
+
+  test('rejects unknown diff kinds instead of silently returning no facts', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-diff-'));
+    const a = writeBundle(root, 'a', {});
+    const b = writeBundle(root, 'b', {});
+    const result = await handler()('session', { before: a, after: b, kinds: ['bogus'] });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ error: 'invalid_input', invalidKinds: ['bogus'] });
+  });
 });

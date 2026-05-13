@@ -13,6 +13,7 @@ import { getMetricsCollector } from '../metrics/collector';
 
 const VALID_KINDS = ['dom', 'screenshot', 'url', 'console', 'network'] as const;
 type DiffKind = typeof VALID_KINDS[number];
+interface ParseKindsResult { kinds: DiffKind[]; invalid: string[] }
 
 const definition: MCPToolDefinition = {
   name: 'oc_diff',
@@ -42,9 +43,15 @@ function recordDiff(kind: string, domEntries?: number): void {
   } catch { /* best-effort */ }
 }
 
-function parseKinds(raw: unknown): DiffKind[] {
-  if (!Array.isArray(raw) || raw.length === 0) return [...VALID_KINDS];
-  return raw.filter((kind): kind is DiffKind => typeof kind === 'string' && (VALID_KINDS as readonly string[]).includes(kind));
+function parseKinds(raw: unknown): ParseKindsResult {
+  if (!Array.isArray(raw) || raw.length === 0) return { kinds: [...VALID_KINDS], invalid: [] };
+  const kinds: DiffKind[] = [];
+  const invalid: string[] = [];
+  for (const kind of raw) {
+    if (typeof kind === 'string' && (VALID_KINDS as readonly string[]).includes(kind)) kinds.push(kind as DiffKind);
+    else invalid.push(typeof kind === 'string' ? kind : String(kind));
+  }
+  return { kinds, invalid };
 }
 
 function bundlePath(idOrPath: string): string { return path.isAbsolute(idOrPath) ? idOrPath : path.join(defaultEvidenceRootDir(), idOrPath); }
@@ -75,7 +82,16 @@ function readEntries(dir: string, filename: string): Record<string, unknown>[] {
   return Array.isArray(entries) ? entries.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object') : [];
 }
 
-function stableEntryKey(entry: Record<string, unknown>): string { return JSON.stringify(entry, Object.keys(entry).sort()); }
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${stableJson(obj[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function stableEntryKey(entry: Record<string, unknown>): string { return stableJson(entry); }
 
 function diffConsole(beforeDir: string, afterDir: string): Record<string, unknown> {
   const before = new Set(readEntries(beforeDir, 'console.json').map(stableEntryKey));
@@ -99,7 +115,11 @@ const handler: ToolHandler = async (_sessionId, args): Promise<MCPResult> => {
   if (!before || !after) return { content: [{ type: 'text', text: 'Error: before and after are required' }], isError: true };
   const beforeDir = bundlePath(before);
   const afterDir = bundlePath(after);
-  const kinds = parseKinds(args.kinds);
+  const parsedKinds = parseKinds(args.kinds);
+  if (parsedKinds.invalid.length > 0) {
+    return { content: [{ type: 'text', text: JSON.stringify({ action: 'oc_diff', error: 'invalid_input', invalidKinds: parsedKinds.invalid, validKinds: VALID_KINDS }) }], isError: true };
+  }
+  const kinds = parsedKinds.kinds;
   const beforeDom = readDom(beforeDir);
   const afterDom = readDom(afterDir);
   const output: Record<string, unknown> = { before, after };
