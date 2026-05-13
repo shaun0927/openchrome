@@ -19,6 +19,7 @@ import { getGlobalConfig } from '../config/global';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
+import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 
 /**
  * Build the `[node_refs]` block that surfaces the #844 backend-node uid
@@ -155,6 +156,10 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'When true, include approximate returned size/token metrics in the emitted payload. Default: false.',
       },
+      boundaryMarkers: {
+        type: 'boolean',
+        description: 'Wrap page-origin plaintext in <oc:page>. Default true; false disables.',
+      },
     },
     required: ['tabId'],
   },
@@ -265,6 +270,10 @@ const handler: ToolHandler = async (
     }
 
     const cdpClient = sessionManager.getCDPClient();
+    const boundaryMarkers = areBoundaryMarkersEnabled(args);
+    const wrapPage = (body: string, emittedMode: string) => (
+      boundaryMarkers ? wrapBoundaryMarker('page', { src: page.url(), mode: emittedMode }, body) : body
+    );
 
     // Mode dispatch
     const requestedMode = args.mode as string | undefined;
@@ -377,7 +386,7 @@ const handler: ToolHandler = async (
       }
       const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
       return {
-        content: [{ type: 'text', text: withTextMetrics(md + suffix, 'markdown', truncated) }],
+        content: [{ type: 'text', text: withTextMetrics(wrapPage(md + suffix, 'markdown'), 'markdown', truncated) }],
       };
     }
 
@@ -539,7 +548,7 @@ const handler: ToolHandler = async (
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: withTextMetrics(cssText + cssPaginationSection, 'css') }],
+        content: [{ type: 'text', text: withTextMetrics(wrapPage(cssText, 'css') + cssPaginationSection, 'css') }],
       };
     }
 
@@ -800,7 +809,7 @@ const handler: ToolHandler = async (
         const includePaginationDom = args.includePagination !== false;
         const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
         return withDiagnostics({
-          content: [{ type: 'text', text: withTextMetrics(outputText + nodeRefsBlock + domPaginationSection, 'dom') }],
+          content: [{ type: 'text', text: withTextMetrics(wrapPage(outputText, 'dom') + nodeRefsBlock + domPaginationSection, 'dom') }],
         });
       } catch (error) {
         if (isExplicitDomMode) {
@@ -1172,7 +1181,7 @@ const handler: ToolHandler = async (
     }
 
     return withDiagnostics({
-      content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
+      content: [{ type: 'text', text: pageStatsLine + wrapPage(output, 'ax') + axPaginationSection }],
       refs: refsMap,
       snapshot: snapshotMetadata,
     });
