@@ -5,6 +5,7 @@
 import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
@@ -119,6 +120,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['action', 'tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.computer,
 };
 
 const innerHandler: ToolHandler = async (

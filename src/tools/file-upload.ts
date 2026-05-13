@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getGlobalConfig } from '../config/global';
 import { DEFAULT_FILE_UPLOAD_TEMP_DIR } from '../config/defaults';
 import { getSessionManager } from '../session-manager';
@@ -84,6 +85,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'selector', 'filePaths'],
   },
+  annotations: TOOL_ANNOTATIONS.file_upload,
 };
 
 export function parseUploadRootsEnv(raw: string | undefined, delimiter: string = path.delimiter): string[] {

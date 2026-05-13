@@ -2,6 +2,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getActivityTracker } from '../dashboard/activity-tracker';
 import { buildProgressStatus } from '../progress/progress-status';
 
@@ -16,6 +17,7 @@ function parseWindow(value: unknown): number {
 
 const definition: MCPToolDefinition = {
   name: 'oc_progress_status',
+  annotations: TOOL_ANNOTATIONS.oc_progress_status,
   description:
     'Read-only diagnostics for whether the current OpenChrome session appears to be progressing, stalling, or stuck. ' +
     'Returns bounded counters and advisory next-call suggestions; it never stops, retries, recovers, or executes browser actions.',

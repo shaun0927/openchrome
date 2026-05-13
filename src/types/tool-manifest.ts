@@ -1,3 +1,5 @@
+import type { ToolAnnotations } from './mcp';
+
 /**
  * Tool Manifest Types - Shared Tool Registry for worker agents
  *
@@ -17,6 +19,8 @@ export interface ToolEntry {
     properties: Record<string, unknown>;
     required?: string[];
   };
+  /** MCP ToolAnnotations, when available from registered tool definitions. */
+  annotations?: ToolAnnotations;
   /** Tool category for filtering */
   category: ToolCategory;
 }

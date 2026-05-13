@@ -16,6 +16,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { SkillMemoryStore } from '../core/skill-memory';
 import { redactSecrets } from '../core/secrets';
 import { isDynamicSkillsEnabled } from '../harness/flags';
@@ -75,6 +76,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['domain', 'name', 'steps', 'contract_id'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_skill_record,
 };
 
 const handler: ToolHandler = async (
