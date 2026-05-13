@@ -78,6 +78,7 @@ export const TOOL_ANNOTATIONS = {
   oc_profile_status: READ_ONLY,
   oc_get_connection_info: READ_ONLY,
   oc_connection_health: READ_ONLY,
+  oc_policy: READ_ONLY,
   oc_skill_recall: READ_ONLY,
   vision_find: READ_ONLY,
   oc_assert: READ_ONLY,

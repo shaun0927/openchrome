@@ -20,6 +20,7 @@ describe('oc_run_status budget guard', () => {
     registerRunHarnessTools({ registerTool: (name: string, handler: any) => handlers.set(name, handler) } as any);
     const start = JSON.parse((await handlers.get('oc_run_start')('s1', { run_id: 'budget-tool' })).content[0].text);
     expect(start.status).toBe('running');
+    expect(start.resource_uri).toBeUndefined();
 
     const store = (jest.requireMock('../../src/run-harness/store').getRunStore() as RunStore);
     store.appendToolFinished({ run_id: 'budget-tool', tool: 'interact', ok: false, message: 'element not found' });

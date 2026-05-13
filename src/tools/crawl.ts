@@ -29,8 +29,10 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
+import { buildTextMetrics } from '../core/metrics/token-estimate';
 import { buildUrlScoreOptions, scoreUrl, UrlScoreOptions } from '../core/crawl/url-scorer';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { applyContentFilter, ContentFilterMetrics, parseContentFilterType, ContentFilterType } from '../core/extract/content-filter';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
 import { AdaptiveCrawlDispatcher, DispatcherMode, parseAdaptiveDispatcherOptions } from '../core/crawl/dispatcher';
@@ -82,6 +84,19 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'markdown-clean only: preserve <a> as markdown links. Default: true.',
       },
+      content_filter: {
+        type: 'string',
+        enum: ['none', 'prune', 'bm25'],
+        description: 'markdown-clean only: deterministic fit_markdown filter. Default: none.',
+      },
+      return_raw: {
+        type: 'boolean',
+        description: 'markdown-clean only: include raw_markdown in each page. Default: false.',
+      },
+      return_fit: {
+        type: 'boolean',
+        description: 'markdown-clean only: include fit_markdown and use it as content when filtering. Default: true when filtered.',
+      },
       respect_robots: {
         type: 'boolean',
         description: 'Whether to fetch and obey robots.txt. Default: true',
@@ -99,6 +114,10 @@ const definition: MCPToolDefinition = {
         enum: ['auto', 'static', 'cdp'],
         description:
           'Fetch engine: "cdp" (default, opens a Chrome tab per page), "static" (Node fetch only, fails closed on insufficient pages), or "auto" (static first, fall back to CDP when static is insufficient).',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate output size/token metrics in the JSON result. Default: false.',
       },
       strategy: {
         type: 'string',
@@ -167,6 +186,9 @@ interface CrawledPage {
   url: string;
   title: string;
   content: string;
+  raw_markdown?: string;
+  fit_markdown?: string;
+  filter?: ContentFilterMetrics;
   depth: number;
   links_found: number;
   error?: string;
@@ -239,11 +261,10 @@ async function fetchRobotsTxt(
 // the caller (auto mode) can fall back to CDP.
 // ---------------------------------------------------------------------------
 
-
 function cleanMarkdownFromHtml(
   html: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
-): string {
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
+): { content: string; raw_markdown?: string; fit_markdown?: string; filter?: ContentFilterMetrics } {
   const { html: cleaned } = extractMainContent(html, { onlyMainContent: cleanOpts.onlyMainContent });
   let cleanMd = toMarkdown(cleaned, { includeLinks: cleanOpts.includeLinks });
   const cfg = getGlobalConfig();
@@ -251,7 +272,16 @@ function cleanMarkdownFromHtml(
     const sanitized = sanitizeContent(cleanMd);
     cleanMd = sanitized.text + sanitized.sanitizationNote;
   }
-  return cleanMd;
+  const filterType = cleanOpts.contentFilter ?? 'none';
+  if (filterType !== 'none' || cleanOpts.returnRaw || cleanOpts.returnFit === true) {
+    return applyContentFilter(cleanMd, {
+      type: filterType,
+      query: cleanOpts.query,
+      returnRaw: cleanOpts.returnRaw,
+      returnFit: cleanOpts.returnFit !== false,
+    });
+  }
+  return { content: cleanMd };
 }
 
 function buildMarkdownFromHtml(html: string): { title: string; content: string } {
@@ -291,7 +321,7 @@ async function fetchPageStatic(
   url: string,
   depth: number,
   outputFormat: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
   context?: ToolContext,
 ): Promise<
   | { ok: true; page: CrawledPage & { _links?: string[] } }
@@ -310,6 +340,7 @@ async function fetchPageStatic(
 
     let title = '';
     let content = '';
+    let cleanExtra: { raw_markdown?: string; fit_markdown?: string; filter?: ContentFilterMetrics } = {};
     if (outputFormat === 'structured') {
       const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
       title = titleMatch ? titleMatch[1].trim() : '';
@@ -318,7 +349,15 @@ async function fetchPageStatic(
     } else if (outputFormat === 'markdown-clean') {
       const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
       title = titleMatch ? titleMatch[1].trim() : '';
-      content = cleanMarkdownFromHtml(html, cleanOpts);
+      {
+        const cleanResult = cleanMarkdownFromHtml(html, cleanOpts);
+        content = cleanResult.content;
+        cleanExtra = {
+          ...(cleanResult.raw_markdown ? { raw_markdown: cleanResult.raw_markdown } : {}),
+          ...(cleanResult.fit_markdown ? { fit_markdown: cleanResult.fit_markdown } : {}),
+          ...(cleanResult.filter ? { filter: cleanResult.filter } : {}),
+        };
+      }
     } else {
       const built = buildMarkdownFromHtml(html);
       title = built.title;
@@ -335,6 +374,7 @@ async function fetchPageStatic(
         url,
         title,
         content,
+        ...cleanExtra,
         depth,
         links_found: links.length,
         ...(links.length > 0 ? { _links: links } : {}),
@@ -355,7 +395,9 @@ async function fetchPageStatic(
 /** Options for `fetchOnePage`, shared by legacy crawl and host-driven crawl jobs. */
 export interface FetchOnePageOptions {
   outputFormat: string;
+  /** When true (default), strip nav/footer/ads from extracted content. */
   onlyMainContent?: boolean;
+  /** When true, include outgoing links in the result for BFS expansion. */
   includeLinks?: boolean;
 }
 
@@ -387,7 +429,7 @@ async function fetchPage(
   url: string,
   depth: number,
   outputFormat: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
   context?: ToolContext,
 ): Promise<CrawledPage> {
   const sessionManager = getSessionManager();
@@ -434,7 +476,8 @@ async function fetchPage(
       await sessionManager.closeTarget(sessionId, tid);
       targetId = null;
 
-      let cleanMd = cleanMarkdownFromHtml(fullHtml, cleanOpts);
+      const cleanResult = cleanMarkdownFromHtml(fullHtml, cleanOpts);
+      let cleanMd = cleanResult.content;
       if (cleanMd.length > MAX_OUTPUT_CHARS) {
         cleanMd = cleanMd.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
       }
@@ -442,6 +485,9 @@ async function fetchPage(
         url,
         title: linkResult.title,
         content: cleanMd,
+        ...(cleanResult.raw_markdown ? { raw_markdown: cleanResult.raw_markdown } : {}),
+        ...(cleanResult.fit_markdown ? { fit_markdown: cleanResult.fit_markdown } : {}),
+        ...(cleanResult.filter ? { filter: cleanResult.filter } : {}),
         depth,
         links_found: linkResult.links.length,
         ...(linkResult.links.length > 0 ? { _links: linkResult.links } as Record<string, unknown> : {}),
@@ -609,11 +655,16 @@ const handler: ToolHandler = async (
   const cleanOpts = {
     onlyMainContent: args.onlyMainContent !== false,
     includeLinks: args.includeLinks !== false,
+    contentFilter: parseContentFilterType(args.content_filter),
+    query: args.query as string | undefined,
+    returnRaw: args.return_raw === true,
+    returnFit: args.return_fit !== false,
   };
   const respectRobots = args.respect_robots !== false;
   const delayMs = args.delay_ms != null ? Number(args.delay_ms) : 1000;
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 
+  const includeMetrics = args.include_metrics === true;
   const engineArg = args.engine as string | undefined;
   let engine: EngineMode = 'cdp';
   if (engineArg === 'static' || engineArg === 'auto' || engineArg === 'cdp') {
@@ -961,10 +1012,26 @@ const handler: ToolHandler = async (
       ...(adaptiveDispatcher ? { dispatcher: adaptiveDispatcher.stats() } : {}),
     };
 
-    const output = { summary, pages };
+    const buildOutput = (outputPages: CrawledPage[]) => includeMetrics
+      ? {
+          summary: {
+            ...summary,
+            metrics: {
+              returned_chars: outputPages.reduce((sum, p) => sum + p.content.length, 0),
+              estimated_tokens: outputPages.reduce((sum, p) => sum + buildTextMetrics(p.content).estimated_tokens, 0),
+              truncated_pages: outputPages.filter((p) => p.content.includes('...[truncated]')).length,
+              mode: `crawl:${outputFormat}`,
+            },
+          },
+          pages: outputPages.map((p) => ({
+            ...p,
+            metrics: buildTextMetrics(p.content, { mode: outputFormat }),
+          })),
+        }
+      : { summary, pages: outputPages };
 
     // Ensure output fits within limits
-    let outputJson = JSON.stringify(output, null, 2);
+    let outputJson = JSON.stringify(buildOutput(pages), null, 2);
     if (outputJson.length > MAX_OUTPUT_CHARS) {
       // Truncate page contents progressively to fit
       const truncatedPages = pages.map((p) => ({
@@ -973,7 +1040,7 @@ const handler: ToolHandler = async (
           ? p.content.slice(0, 2000) + '...[truncated]'
           : p.content,
       }));
-      outputJson = JSON.stringify({ summary, pages: truncatedPages }, null, 2);
+      outputJson = JSON.stringify(buildOutput(truncatedPages), null, 2);
 
       // If still too large, remove content entirely
       if (outputJson.length > MAX_OUTPUT_CHARS) {
@@ -985,7 +1052,37 @@ const handler: ToolHandler = async (
           content_length: p.content.length,
           error: p.error,
         }));
-        outputJson = JSON.stringify({ summary, pages: minimalPages, note: 'Content omitted due to size constraints' }, null, 2);
+        const minimalOutput = includeMetrics
+          ? {
+              summary: {
+                ...summary,
+                metrics: {
+                  returned_chars: 0,
+                  estimated_tokens: 0,
+                  truncated_pages: minimalPages.length,
+                  mode: `crawl:${outputFormat}`,
+                },
+              },
+              pages: minimalPages.map((p) => ({
+                ...p,
+                metrics: buildTextMetrics('', { mode: outputFormat, truncated: true }),
+              })),
+              note: 'Content omitted due to size constraints',
+            }
+          : { summary, pages: minimalPages, note: 'Content omitted due to size constraints' };
+        outputJson = JSON.stringify(minimalOutput, null, 2);
+        if (outputJson.length > MAX_OUTPUT_CHARS) {
+          outputJson = JSON.stringify({
+            summary: includeMetrics
+              ? {
+                  ...summary,
+                  metrics: { returned_chars: 0, estimated_tokens: 0, truncated_pages: pages.length, mode: `crawl:${outputFormat}` },
+                }
+              : summary,
+            pages: minimalPages.map(({ url, title, depth, links_found, content_length, error }) => ({ url, title, depth, links_found, content_length, error })),
+            note: 'Content omitted due to size constraints',
+          }, null, 2);
+        }
       }
     }
 

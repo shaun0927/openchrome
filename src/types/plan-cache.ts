@@ -9,21 +9,25 @@ import type { BrowserTaskSignature, TaskSignatureStatus } from '../contracts/tas
 import type { Assertion, Evidence } from '../contracts/types';
 
 /** A single step in a compiled plan */
+export type PlanStepRisk = 'low' | 'interactive' | 'destructive';
+
 export interface CompiledStep {
   /** Execution order (1-based) */
   order: number;
   /** MCP tool name (e.g. "javascript_tool", "computer") */
   tool: string;
-  /** Tool arguments — supports ${param} template variables */
+  /** Tool arguments — supports ${param} and ${param.path.to.value} template variables */
   args: Record<string, unknown>;
   /** Step-level timeout in milliseconds */
   timeout: number;
   /** Whether to retry this step on failure */
   retryOnFail?: boolean;
+  /** Risk classification for safe plan-as-code validation. */
+  risk?: PlanStepRisk;
   /** How to parse and store the result for subsequent steps */
   parseResult?: {
     format: 'json' | 'text';
-    /** JSON field to extract from result */
+    /** JSON field/path to extract from result */
     extractField?: string;
     /** Variable name to store result for later steps */
     storeAs?: string;
@@ -82,7 +86,20 @@ export interface TaskPattern {
 }
 
 /** A complete compiled plan — a cached sequence of tool calls */
+export interface PlanStepEvidence {
+  step: number;
+  tool: string;
+  source: 'plan' | 'recovery';
+  outcome: 'success' | 'error' | 'empty';
+  durationMs: number;
+  summary: string;
+}
+
 export interface CompiledPlan {
+  /** Optional v2 safe contract gate. Legacy plans without this remain backward compatible. */
+  contractVersion?: 2;
+  /** Explicit allow-list for tools that plan and recovery steps may invoke. */
+  allowedTools?: string[];
   /** Unique plan identifier */
   id: string;
   /** Plan version for cache invalidation */
@@ -158,4 +175,6 @@ export interface PlanExecutionResult {
   taskSignature?: TaskSignatureStatus;
   /** Present when a plan opted into final verification. */
   finalVerification?: PlanFinalVerificationResult;
+  /** Bounded execution evidence suitable for critic/outcome validation. */
+  evidence?: PlanStepEvidence[];
 }

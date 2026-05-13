@@ -60,8 +60,6 @@ import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
 import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
-import { isRunHarnessEnabled } from './run-harness/flags';
-import { extractRunId, getRunStore } from './run-harness/store';
 import {
   substituteSecrets,
   redactSecrets,
@@ -71,24 +69,15 @@ import {
 } from './core/secrets';
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
-import { RecoveryTrajectoryLedger, type RecoveryResultStatus } from './recovery';
-
+import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
+import { isRunHarnessEnabled } from './run-harness/flags';
+import { extractRunId, getRunStore } from './run-harness/store';
 
 function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
   if (toolName !== 'act' || !('variables' in args)) {
     return args;
   }
-  if (!args.variables || typeof args.variables !== 'object') {
-    return { ...args, variables: '[VARIABLE]' };
-  }
-  if (Array.isArray(args.variables)) {
-    return { ...args, variables: args.variables.map(() => '[VARIABLE]') };
-  }
-  const redactedVariables: Record<string, string> = {};
-  for (const key of Object.keys(args.variables as Record<string, unknown>)) {
-    redactedVariables[key] = '[VARIABLE]';
-  }
-  return { ...args, variables: redactedVariables };
+  return { ...args, variables: '[redacted]' };
 }
 
 /** Recording tools excluded from session recording to prevent infinite loops */
@@ -243,6 +232,14 @@ const SKIP_SESSION_INIT_TOOLS = new Set([
   'oc_run_events',
   'oc_run_finish',
   'oc_progress_status',
+]);
+
+const RUN_HARNESS_LONG_TASK_TOOLS = new Set([
+  'execute_plan',
+  'crawl',
+  'crawl_sitemap',
+  'batch_paginate',
+  'batch_execute',
 ]);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
@@ -630,44 +627,6 @@ export class MCPServer {
     // those legitimately bring their own inline annotations.)
     this.tools.set(name, { name, handler, definition, ...options });
     this.manifestVersion++;
-  }
-
-  /**
-   * Remove a previously-registered tool by name.
-   *
-   * Mirrors {@link registerTool} for the pilot dynamic-skill synthesis
-   * family (issue #889): when a session ends or a skill is removed, the
-   * synthesized tool must disappear from `tools/list`. Returns true
-   * iff a matching tool existed and was removed. The
-   * `list_changed` notification fires only when the client supports it
-   * (mirrors `expandToolTier`'s gate at line 302 above) so unknown
-   * clients — which already have every tool — are not spammed with
-   * notifications they would otherwise ignore.
-   */
-  unregisterTool(name: string): boolean {
-    if (typeof name !== 'string' || name.length === 0) return false;
-    const removed = this.tools.delete(name);
-    if (removed) {
-      this.manifestVersion++;
-      if (this.clientSupportsListChanged) {
-        this.sendNotification('notifications/tools/list_changed');
-      }
-    }
-    return removed;
-  }
-
-  /**
-   * Emit a single `notifications/tools/list_changed` frame iff the
-   * client supports it. Used by the pilot dynamic-skills bootstrap
-   * (issue #889) after a synthesis batch lands so the agent re-fetches
-   * `tools/list` and sees the new synthesized tool(s). The check
-   * mirrors {@link expandToolTier} so behavior is consistent across
-   * the two notification sources.
-   */
-  emitListChanged(): void {
-    if (this.clientSupportsListChanged) {
-      this.sendNotification('notifications/tools/list_changed');
-    }
   }
 
   /**
@@ -1764,20 +1723,35 @@ export class MCPServer {
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
     getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
     const toolStartTime = Date.now();
+
     const runHarnessId = isRunHarnessEnabled() ? extractRunId(toolArgs) : undefined;
     if (runHarnessId && !toolName.startsWith('oc_run_')) {
       try {
-        getRunStore().appendToolStarted({
+        const runStore = getRunStore();
+        const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+        runStore.appendToolStarted({
           run_id: runHarnessId,
           session_id: sessionId,
-          tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+          tab_id: runTabId,
           tool: toolName,
           args: toolArgs,
         });
+        if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+          runStore.appendRunEvent({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: runTabId,
+            kind: 'progress',
+            tool: toolName,
+            message: 'long task started',
+            metadata: { stage: 'started' },
+          });
+        }
       } catch {
         // best-effort run ledger; never alter tool behavior
       }
     }
+
 
     // Adaptive heartbeat: switch to heavy mode during tool execution
     try {
@@ -1992,7 +1966,7 @@ export class MCPServer {
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
       result = redactSecrets(result);
-      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, result.isError ? 'no_progress' : 'success', result);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');
 
       // Record Prometheus metrics
@@ -2123,26 +2097,19 @@ export class MCPServer {
           const injectHint =
             verbosity !== 'compact' ||
             hintResult.severity === 'critical';
-          (result as Record<string, unknown>)._hint = hintResult.hint;
-          (result as Record<string, unknown>)._hintMeta = {
-            severity: hintResult.severity,
-            rule: hintResult.rule,
-            fireCount: hintResult.fireCount,
-            ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
-            ...(hintResult.context && { context: hintResult.context }),
-            ...(automation && { automation }),
-          };
           if (injectHint) {
+            (result as Record<string, unknown>)._hint = hintResult.hint;
+            (result as Record<string, unknown>)._hintMeta = {
+              severity: hintResult.severity,
+              rule: hintResult.rule,
+              fireCount: hintResult.fireCount,
+              ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+              ...(hintResult.context && { context: hintResult.context }),
+            };
             const content = (result as Record<string, unknown>).content;
             if (Array.isArray(content)) {
               content.push({ type: 'text', text: `\n${hintResult.hint}` });
             }
-          }
-        }
-        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
-          const content = (result as Record<string, unknown>).content;
-          if (Array.isArray(content)) {
-            content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
           }
         }
       }
@@ -2168,19 +2135,36 @@ export class MCPServer {
 
       if (runHarnessId && !toolName.startsWith('oc_run_')) {
         try {
-          getRunStore().appendToolFinished({
+          const runStore = getRunStore();
+          const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+          const durationMs = Date.now() - toolStartTime;
+          runStore.appendToolFinished({
             run_id: runHarnessId,
             session_id: sessionId,
-            tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+            tab_id: runTabId,
             tool: toolName,
             args: toolArgs,
             ok: !result.isError,
-            duration_ms: Date.now() - toolStartTime,
+            duration_ms: durationMs,
           });
+          if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+            runStore.appendRunEvent({
+              run_id: runHarnessId,
+              session_id: sessionId,
+              tab_id: runTabId,
+              kind: 'partial_result',
+              tool: toolName,
+              ok: !result.isError,
+              duration_ms: durationMs,
+              message: result.isError ? 'long task returned an error result' : 'long task returned a synchronous final result',
+              metadata: { stage: 'final_response' },
+            });
+          }
         } catch {
           // best-effort run ledger; never alter tool behavior
         }
       }
+
 
       // ─── Secrets redaction (#834) ─────────────────────────────────────
       // Last line of defense before the MCP envelope: replace any literal
@@ -2199,7 +2183,7 @@ export class MCPServer {
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
-      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
       getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
 
       // Audit log failed invocation — same correlation fields as success path.
@@ -2233,7 +2217,7 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, false);
+        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, false);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -2340,12 +2324,12 @@ export class MCPServer {
             fireCount: hintResult.fireCount,
             ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
             ...(hintResult.context && { context: hintResult.context }),
-            ...(automation && { automation }),
           };
           if (Array.isArray(errResult.content)) {
             errResult.content.push({ type: 'text', text: `\n${hintResult.hint}` });
           }
         }
+
         if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
           if (Array.isArray(errResult.content)) {
             errResult.content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
@@ -2355,19 +2339,36 @@ export class MCPServer {
 
       if (runHarnessId && !toolName.startsWith('oc_run_')) {
         try {
-          getRunStore().appendToolFinished({
+          const runStore = getRunStore();
+          const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+          const durationMs = Date.now() - toolStartTime;
+          runStore.appendToolFinished({
             run_id: runHarnessId,
             session_id: sessionId,
-            tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+            tab_id: runTabId,
             tool: toolName,
             args: toolArgs,
             ok: false,
-            duration_ms: Date.now() - toolStartTime,
+            duration_ms: durationMs,
             message: displayMessage,
           });
+          if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+            runStore.appendRunEvent({
+              run_id: runHarnessId,
+              session_id: sessionId,
+              tab_id: runTabId,
+              kind: 'warning',
+              tool: toolName,
+              ok: false,
+              duration_ms: durationMs,
+              message: displayMessage,
+              metadata: { stage: 'failed_response' },
+            });
+          }
         } catch {
           // best-effort run ledger; never alter tool behavior
         }
+
       }
 
       await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
@@ -2690,6 +2691,21 @@ export class MCPServer {
         resultStatus === 'error' || resultStatus === 'no_progress' || current?.result === 'error'
           ? 'stuck'
           : 'unknown';
+      const priorNoProgressCount =
+        resultStatus === 'no_progress' &&
+        previousTrajectory?.toolName === toolName &&
+        previousTrajectory?.resultStatus === 'no_progress'
+          ? 1
+          : 0;
+      const score = scoreFromToolResult({
+        toolName,
+        isError: resultStatus === 'error' || resultStatus === 'aborted' || result?.isError === true,
+        resultText: summarizeResult(result),
+        errorText: error,
+        repeatedFailureCount: previousTrajectory?.resultStatus === 'error' ? 1 : 0,
+        repeatedNoProgressCount: priorNoProgressCount,
+        ...this.recoveryProgressEvidence(toolName, resultStatus, result),
+      });
 
       this.recoveryLedger.record({
         sessionId,
@@ -2701,11 +2717,66 @@ export class MCPServer {
         error,
         result,
         recoveryTool: recovered ? toolName : undefined,
+        reward: score.score,
       });
     } catch {
       // Recovery telemetry is best-effort and must not affect tool behavior.
     }
   }
+
+  private recoveryProgressEvidence(
+    toolName: string,
+    resultStatus: RecoveryResultStatus,
+    result?: MCPResult,
+  ): {
+    urlChanged?: boolean;
+    domChanged?: boolean;
+    networkChanged?: boolean;
+    dataItemsExtracted?: number;
+    freshRefsDiscovered?: boolean;
+    observationOnly?: boolean;
+  } {
+    if (resultStatus !== 'success' && resultStatus !== 'recovered') return {};
+    const resultText = summarizeResult(result) ?? '';
+    const hasRef = /\bref[_-]?[A-Za-z0-9]+|\[ref[^\]]+\]/.test(resultText);
+    if (toolName === 'navigate' || toolName === 'tabs_create' || toolName === 'page_reload') {
+      return { urlChanged: true, observationOnly: false };
+    }
+    if (toolName === 'act' || toolName === 'interact' || toolName === 'form_input' || toolName === 'fill_form') {
+      return { domChanged: true, freshRefsDiscovered: hasRef, observationOnly: false };
+    }
+    if (toolName === 'extract_data') {
+      return { dataItemsExtracted: this.countExtractedDataItems(result), observationOnly: false };
+    }
+    if (toolName === 'request_intercept' || toolName === 'network_capture_lite' || toolName === 'network_capture_full') {
+      return { networkChanged: true, observationOnly: false };
+    }
+    return { freshRefsDiscovered: hasRef };
+  }
+
+  private countExtractedDataItems(result?: MCPResult): number {
+    for (const item of result?.content ?? []) {
+      if (typeof item.text !== 'string') continue;
+      try {
+        const parsed = JSON.parse(item.text) as {
+          count?: unknown;
+          fieldsFound?: unknown;
+          items?: unknown;
+          data?: unknown;
+        };
+        if (typeof parsed.count === 'number' && Number.isFinite(parsed.count)) return Math.max(0, parsed.count);
+        if (Array.isArray(parsed.items)) return parsed.items.length;
+        if (typeof parsed.fieldsFound === 'number' && Number.isFinite(parsed.fieldsFound)) return Math.max(0, parsed.fieldsFound);
+        if (parsed.data && typeof parsed.data === 'object') {
+          return Object.values(parsed.data as Record<string, unknown>).filter((value) => value !== null && value !== undefined && value !== '').length;
+        }
+      } catch {
+        // Ignore non-JSON text payloads.
+      }
+    }
+    return 0;
+  }
+
 
   getToolHandler(toolName: string): ToolHandler | null {
     const registry = this.tools.get(toolName);

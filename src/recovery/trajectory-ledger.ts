@@ -10,8 +10,6 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { redactSecretString } from '../core/secrets';
-
 export type RecoveryResultStatus = 'success' | 'error' | 'no_progress' | 'recovered' | 'aborted';
 export type RecoveryProgressStatus = 'progressing' | 'stalling' | 'stuck' | 'unknown';
 
@@ -119,7 +117,7 @@ export class RecoveryTrajectoryLedger {
       const content = fs.readFileSync(this.filePath, 'utf8');
       const nodes = content.trim().length === 0
         ? []
-        : parseRecoveryNodes(content.trim().split('\n'));
+        : parseNodes(content.trim().split('\n'));
       const merged = this.mergePending(nodes);
       const filtered = sessionId ? merged.filter((n) => n.sessionId === sessionId) : merged;
       return filtered.slice(-Math.max(0, limit));
@@ -286,7 +284,7 @@ export class RecoveryTrajectoryLedger {
 
   private async pruneSessionIndexFromDisk(): Promise<void> {
     try {
-      const nodes = parseRecoveryNodes((await safeReadLinesAsync(this.filePath)).slice(-this.maxNodes));
+      const nodes = parseNodes((await safeReadLinesAsync(this.filePath)).slice(-this.maxNodes));
       const liveSessions = new Set(nodes.map((node) => node.sessionId));
       for (const sessionId of this.lastNodeBySession.keys()) {
         if (!liveSessions.has(sessionId)) this.lastNodeBySession.delete(sessionId);
@@ -324,7 +322,6 @@ function contextKey(sessionId: string, tabId?: string): string {
   return `${sessionId}\u0000${tabId ?? ''}`;
 }
 
-
 function isSensitiveKey(key: string): boolean {
   if (SENSITIVE_KEY_RE.test(key)) return true;
   const normalized = key
@@ -337,9 +334,10 @@ function sanitizeObject(value: unknown, depth: number, key = ''): unknown {
   if (isSensitiveKey(key)) return REDACTED;
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
-    const redacted = redactSecretString(redactSensitiveText(value));
-    if (LARGE_VALUE_KEY_RE.test(key) || redacted.length > 200) return hashValue(redacted);
-    return redacted;
+    const redacted = redactSensitiveText(value);
+    if (redacted !== value) return redacted;
+    if (LARGE_VALUE_KEY_RE.test(key) || value.length > 200) return hashValue(value);
+    return value;
   }
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (Array.isArray(value)) {
@@ -378,8 +376,7 @@ function redactSensitiveText(text: string): string {
   return text
     .replace(/(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+/gi, '$1[REDACTED]')
     .replace(/((?:set-)?cookie\s*[:=]\s*)[^\n]+/gi, '$1[REDACTED]')
-    .replace(/((?:password|secret|token|api[_-]?key|session[_-]?id)\s*[:=]\s*)[^\s,;&]+/gi, '$1[REDACTED]')
-    .replace(/([?&](?:password|secret|token|api[_-]?key|session[_-]?id)=)[^&#\s]+/gi, '$1[REDACTED]');
+    .replace(/((?:password|secret|token|api[_-]?key|session[_-]?id)\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]');
 }
 
 function truncate(value: string | undefined, max: number): string | undefined {
@@ -412,14 +409,14 @@ function pruneUndefined<T extends Record<string, unknown>>(value: T): T {
   return value;
 }
 
-function parseRecoveryNodes(lines: string[]): RecoveryTrajectoryNode[] {
+
+function parseNodes(lines: string[]): RecoveryTrajectoryNode[] {
   const nodes: RecoveryTrajectoryNode[] = [];
   for (const line of lines) {
-    if (line.trim().length === 0) continue;
     try {
       nodes.push(JSON.parse(line) as RecoveryTrajectoryNode);
     } catch {
-      // Best-effort telemetry must tolerate torn/truncated JSONL appends.
+      // Ignore torn JSONL records while preserving the rest of the persisted history.
     }
   }
   return nodes;

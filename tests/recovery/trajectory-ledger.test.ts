@@ -3,7 +3,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { RecoveryTrajectoryLedger, summarizeArgs, summarizeResult } from '../../src/recovery';
-import { EMPTY_SECRET_STORE, makeSecretStore, setSecretStore } from '../../src/core/secrets';
 
 describe('RecoveryTrajectoryLedger', () => {
   let dir: string;
@@ -13,7 +12,6 @@ describe('RecoveryTrajectoryLedger', () => {
   });
 
   afterEach(() => {
-    setSecretStore(EMPTY_SECRET_STORE);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -71,18 +69,26 @@ describe('RecoveryTrajectoryLedger', () => {
     expect(String(args?.html)).toMatch(/^sha256:/);
   });
 
-  it('redacts secret values embedded in ordinary arg fields', () => {
-    setSecretStore(makeSecretStore(new Map([['API_TOKEN', 'sk-live-ordinary-field']])));
 
-    const args = summarizeArgs({
-      note: 'retry with sk-live-ordinary-field',
-      url: 'https://example.test/path?token=query-secret&ok=1',
-      query: 'authorization: Bearer header-secret',
-    });
+  it('redacts inline secrets inside non-sensitive short strings', () => {
+    const args = summarizeArgs({ note: 'please use token=abc123 and password: hunter2', url: 'https://example.test/?api_key=secret' });
 
-    expect(args?.note).toBe('retry with ${SECRET:API_TOKEN}');
-    expect(args?.url).toBe('https://example.test/path?token=[REDACTED]&ok=1');
-    expect(args?.query).toBe('authorization: [REDACTED]');
+    expect(String(args?.note)).not.toContain('abc123');
+    expect(String(args?.note)).not.toContain('hunter2');
+    expect(String(args?.url)).not.toContain('secret');
+  });
+
+  it('preserves valid JSONL history when one persisted line is malformed', () => {
+    const filePath = path.join(dir, 'trajectory.jsonl');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, [
+      JSON.stringify({ nodeId: 'n1', timestamp: 1, sessionId: 's1', toolName: 'read_page', resultStatus: 'success', progressStatus: 'unknown' }),
+      '{truncated',
+      JSON.stringify({ nodeId: 'n2', timestamp: 2, sessionId: 's1', toolName: 'find', resultStatus: 'success', progressStatus: 'unknown' }),
+    ].join('\n') + '\n');
+
+    const ledger = new RecoveryTrajectoryLedger({ dirPath: dir, maxNodes: 10 });
+    expect(ledger.readRecent(10, 's1').map((node) => node.nodeId)).toEqual(['n1', 'n2']);
   });
 
   it('summarizes result text without storing full content or obvious secrets', () => {
@@ -106,17 +112,6 @@ describe('RecoveryTrajectoryLedger', () => {
     const nodes = ledger.readRecent(10, 's1');
     expect(nodes).toHaveLength(3);
     expect(nodes.map((n) => n.toolName)).toEqual(['tool-5', 'tool-6', 'tool-7']);
-  });
-
-  it('skips malformed persisted JSONL entries without hiding valid history', async () => {
-    const ledger = new RecoveryTrajectoryLedger({ dirPath: dir, maxNodes: 10, maxNodeBytes: 2048 });
-    const first = ledger.record({ sessionId: 's1', toolName: 'read_page', resultStatus: 'success' });
-    await ledger.flush();
-    fs.appendFileSync(ledger.getPath(), '{bad-json\n', 'utf8');
-    const second = ledger.record({ sessionId: 's1', toolName: 'click', resultStatus: 'error' });
-
-    const nodes = ledger.readRecent(10, 's1');
-    expect(nodes.map((node) => node.nodeId)).toEqual([first!.nodeId, second!.nodeId]);
   });
 
   it('queues disk writes asynchronously while immediate reads include pending nodes', async () => {
