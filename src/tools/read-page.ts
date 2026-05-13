@@ -2,6 +2,7 @@
  * Read Page Tool - Get accessibility tree representation
  */
 
+import crypto from 'crypto';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
@@ -21,6 +22,9 @@ import { applyContentFilter, parseContentFilterType } from '../core/extract/cont
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
+import { decodeCursor, encodeCursor } from '../utils/paginate';
+
+const READ_PAGE_CURSOR_CHARS = 5000;
 
 /**
  * Build the `[node_refs]` block that surfaces the #844 backend-node uid
@@ -151,6 +155,10 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include pagination info. Default: true',
       },
+      cursor: {
+        type: 'string',
+        description: 'Markdown mode only: opaque cursor returned as nextCursor from a prior paginated read_page markdown call.',
+      },
       compression: {
         type: 'string',
         enum: ['none', 'delta'],
@@ -216,6 +224,60 @@ function compactAXLines(lines: string[]): string[] {
   }
 
   return lines.filter((_, index) => keep.has(index));
+}
+
+interface ReadPageTextPage {
+  text: string;
+  offset: number;
+  total: number;
+  hasMore: boolean;
+  nextCursor?: string;
+  staleCursor?: true;
+}
+
+function hashReadPageText(text: string): string {
+  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function paginateReadPageText(text: string, cursor: string | undefined, pageSize = READ_PAGE_CURSOR_CHARS): ReadPageTextPage {
+  if (!Number.isInteger(pageSize) || pageSize <= 0) {
+    throw new Error(`paginateReadPageText: pageSize must be a positive integer, got ${pageSize}`);
+  }
+  const hash = hashReadPageText(text);
+  let offset = 0;
+  if (cursor !== undefined) {
+    const state = decodeCursor(cursor);
+    if (state.hash !== undefined && state.hash !== hash) {
+      return { text: '', offset: state.offset, total: text.length, hasMore: false, staleCursor: true };
+    }
+    offset = Math.min(state.offset, text.length);
+  }
+  const end = Math.min(offset + pageSize, text.length);
+  const hasMore = end < text.length;
+  return {
+    text: text.slice(offset, end),
+    offset,
+    total: text.length,
+    hasMore,
+    ...(hasMore ? { nextCursor: encodeCursor({ offset: end, hash }) } : {}),
+  };
+}
+
+function invalidCursorResult(error: unknown): MCPResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_cursor', message } }) }],
+    structuredContent: { error: { code: 'invalid_cursor', message } },
+  };
+}
+
+function staleCursorResult(): MCPResult {
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } }) }],
+    structuredContent: { error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } },
+  };
 }
 
 interface ReadPageDiagnostics {
@@ -388,6 +450,7 @@ const handler: ToolHandler = async (
       const returnRaw = args.returnRaw === true;
       const returnFit = args.returnFit !== false;
       const filterOptions = (args.filterOptions && typeof args.filterOptions === 'object') ? args.filterOptions as Record<string, unknown> : {};
+      const cursor = args.cursor as string | undefined;
       const refIdNote = args.ref_id
         ? '[Note: ref_id is not supported in markdown mode — full-page content returned. Use mode "ax" for ref_id subtree scoping.]\n\n'
         : '';
@@ -404,6 +467,41 @@ const handler: ToolHandler = async (
         : '';
       if (paginationSection) {
         md += `\n${paginationSection}`;
+      }
+      const fullMarkdown = md;
+      if (cursor !== undefined) {
+        if (contentFilter !== 'none' || returnRaw || args.returnFit === true) {
+          return {
+            content: [{ type: 'text', text: 'Error: cursor is currently supported only for unfiltered mode="markdown" responses.' }],
+            isError: true,
+          };
+        }
+        let pageResult: ReadPageTextPage;
+        try {
+          pageResult = paginateReadPageText(md, cursor);
+        } catch (error) {
+          return invalidCursorResult(error);
+        }
+        if (pageResult.staleCursor) {
+          return staleCursorResult();
+        }
+        const continuation = pageResult.hasMore
+          ? '\n\n[Output truncated — use structuredContent.nextCursor to continue]'
+          : '';
+        const wrappedText = withTextMetrics(wrapPage(pageResult.text + continuation, 'markdown'), 'markdown', pageResult.hasMore);
+        const payload = {
+          action: 'read_page',
+          mode: 'markdown',
+          text: wrappedText,
+          offset: pageResult.offset,
+          total: pageResult.total,
+          hasMore: pageResult.hasMore,
+          ...(pageResult.nextCursor ? { nextCursor: pageResult.nextCursor } : {}),
+        };
+        return {
+          content: [{ type: 'text', text: JSON.stringify(payload) }],
+          structuredContent: payload,
+        };
       }
       let truncated = false;
       if (md.length > MAX_OUTPUT_CHARS) {
@@ -437,8 +535,25 @@ const handler: ToolHandler = async (
           return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
         }
       }
+      const wrappedMarkdown = withTextMetrics(wrapPage(rawMarkdown, 'markdown'), 'markdown', truncated);
+      if (truncated) {
+        const firstPage = paginateReadPageText(fullMarkdown, undefined, MAX_OUTPUT_CHARS);
+        const payload = {
+          action: 'read_page',
+          mode: 'markdown',
+          text: wrappedMarkdown,
+          offset: firstPage.offset,
+          total: firstPage.total,
+          hasMore: firstPage.hasMore,
+          ...(firstPage.nextCursor ? { nextCursor: firstPage.nextCursor } : {}),
+        };
+        return {
+          content: [{ type: 'text', text: wrappedMarkdown }],
+          structuredContent: payload,
+        };
+      }
       return {
-        content: [{ type: 'text', text: withTextMetrics(wrapPage(rawMarkdown, 'markdown'), 'markdown', truncated) }],
+        content: [{ type: 'text', text: wrappedMarkdown }],
       };
     }
 
