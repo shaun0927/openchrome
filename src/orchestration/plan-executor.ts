@@ -12,10 +12,108 @@ import {
   PlanErrorHandler,
   PlanExecutionOptions,
   PlanExecutionResult,
+  PlanFinalVerificationResult,
 } from '../types/plan-cache';
+import { evaluate } from '../contracts/evaluate';
+import type { EvalContext, NetworkLogEntry } from '../contracts/eval-context';
 import { evaluateTaskSignature, preflightAllowedTools } from '../contracts/task-signature';
 import type { TaskSignatureToolCallSummary } from '../contracts/task-signature';
 import { withTimeout } from '../utils/with-timeout';
+
+interface SnapshotInput {
+  url?: string;
+  dom_text?: string | null | Record<string, string | null>;
+  dom_count?: Record<string, number>;
+  network?: NetworkLogEntry[];
+  screenshot_png_base64?: string;
+  has_open_dialog?: boolean;
+  captured_at?: number;
+  timestamp?: number;
+}
+
+function buildSnapshotEvalContext(snapshot: SnapshotInput): EvalContext {
+  const domTextBySelector = typeof snapshot.dom_text === 'object' && snapshot.dom_text !== null
+    ? snapshot.dom_text as Record<string, string | null>
+    : undefined;
+  const bodyText = typeof snapshot.dom_text === 'string' || snapshot.dom_text === null
+    ? snapshot.dom_text
+    : undefined;
+  const screenshot = snapshot.screenshot_png_base64 ? Buffer.from(snapshot.screenshot_png_base64, 'base64') : null;
+  return {
+    async url() { return snapshot.url ?? ''; },
+    async domText(selector) {
+      if (domTextBySelector) return domTextBySelector[selector ?? 'body'] ?? domTextBySelector.body ?? null;
+      return bodyText ?? null;
+    },
+    async domCount(selector) { return snapshot.dom_count?.[selector] ?? 0; },
+    async networkSince() { return snapshot.network ?? []; },
+    async screenshotPng() { return screenshot; },
+    async hasOpenDialog() { return snapshot.has_open_dialog ?? false; },
+  };
+}
+
+function isSnapshotInput(value: unknown): value is SnapshotInput {
+  return typeof value === 'object' && value !== null;
+}
+
+async function runFinalVerification(
+  plan: CompiledPlan,
+  params: Record<string, unknown>,
+): Promise<PlanFinalVerificationResult | null> {
+  const gate = plan.finalVerification;
+  if (!gate) return null;
+  const snapshotParam = gate.snapshotParam || 'finalSnapshot';
+  const snapshot = params[snapshotParam];
+  if (!isSnapshotInput(snapshot)) {
+    return {
+      passed: false,
+      snapshotParam,
+      assertions: [],
+      error: `final verification snapshot param missing or invalid: ${snapshotParam}`,
+    };
+  }
+
+  const capturedAt = typeof snapshot.captured_at === 'number'
+    ? snapshot.captured_at
+    : typeof snapshot.timestamp === 'number'
+      ? snapshot.timestamp
+      : undefined;
+  if (gate.freshnessMs !== undefined && capturedAt !== undefined && Date.now() - capturedAt > gate.freshnessMs) {
+    return {
+      passed: false,
+      snapshotParam,
+      assertions: [],
+      error: `final verification snapshot is stale: age ${Date.now() - capturedAt}ms exceeds ${gate.freshnessMs}ms`,
+    };
+  }
+
+  const unsupportedEvidence = (gate.requiredEvidence || []).filter(kind => !['dom', 'url', 'network', 'screenshot'].includes(kind));
+  if (unsupportedEvidence.length > 0) {
+    return {
+      passed: false,
+      snapshotParam,
+      assertions: [],
+      error: `unsupported finalVerification.requiredEvidence: ${unsupportedEvidence.join(', ')}`,
+    };
+  }
+
+  const assertions: PlanFinalVerificationResult['assertions'] = [];
+  const ctx = buildSnapshotEvalContext(snapshot);
+  for (let i = 0; i < gate.finalAssertions.length; i++) {
+    const assertion = gate.finalAssertions[i];
+    const result = await evaluate(assertion, ctx);
+    assertions.push({ index: i, passed: result.passed, evidence: result.evidence });
+    if (!result.passed) {
+      return {
+        passed: false,
+        snapshotParam,
+        assertions,
+        failedAssertion: { index: i, assertion, evidence: result.evidence },
+      };
+    }
+  }
+  return { passed: true, snapshotParam, assertions };
+}
 
 /**
  * Recursively substitute ${varName} templates in a value using the params map.
@@ -340,7 +438,29 @@ export class PlanExecutor {
       };
     }
 
-    // 4. Return success with all collected params as data
+    // 4. Optional final Outcome Contract verification gate
+    const finalVerification = await runFinalVerification(plan, params);
+    if (finalVerification && !finalVerification.passed) {
+      return {
+        success: false,
+        planId: plan.id,
+        error: finalVerification.error || `Final verification failed at assertion ${finalVerification.failedAssertion?.index ?? 'unknown'}`,
+        durationMs: Date.now() - startTime,
+        stepsExecuted,
+        totalSteps: plan.steps.length,
+        finalVerification,
+        ...(options.taskSignature
+          ? { taskSignature: await evaluateTaskSignature({
+              signature: options.taskSignature,
+              recentTools,
+              elapsedMs: Date.now() - startTime,
+              toolCount: stepsExecuted,
+            }) }
+          : {}),
+      };
+    }
+
+    // 5. Return success with all collected params as data
     return {
       success: true,
       planId: plan.id,
@@ -348,6 +468,7 @@ export class PlanExecutor {
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
+      ...(finalVerification ? { finalVerification } : {}),
       ...(options.taskSignature
         ? { taskSignature: await evaluateTaskSignature({
             signature: options.taskSignature,

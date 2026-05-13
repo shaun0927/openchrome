@@ -841,3 +841,65 @@ describe('PlanExecutor task signatures', () => {
     });
   });
 });
+
+describe('PlanExecutor final verification gate', () => {
+  const SESSION_ID = 'test-session-001';
+  const handler: ToolHandler = jest.fn(async () => makeMCPResult(JSON.stringify({
+    url: 'https://example.com/done',
+    dom_text: { body: 'Done', '#status': 'Done' },
+    captured_at: Date.now(),
+  })));
+  const resolver = (toolName: string): ToolHandler | null => toolName === 'snapshot_tool' ? handler : null;
+
+  function planWithFinalAssertion(contains: string, extra: Partial<CompiledPlan['finalVerification']> = {}): CompiledPlan {
+    return buildPlan({
+      id: 'final-verification-plan',
+      steps: [buildStep({
+        order: 1,
+        tool: 'snapshot_tool',
+        args: {},
+        parseResult: { format: 'json', storeAs: 'finalSnapshot' },
+      })],
+      successCriteria: {},
+      finalVerification: {
+        finalAssertions: [{ kind: 'dom_text', selector: '#status', contains }],
+        snapshotParam: 'finalSnapshot',
+        ...extra,
+      },
+    });
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('passes when final assertion matches stored snapshot', async () => {
+    const executor = new PlanExecutor(resolver);
+    const result = await executor.execute(planWithFinalAssertion('Done'), SESSION_ID, {});
+
+    expect(result.success).toBe(true);
+    expect(result.finalVerification?.passed).toBe(true);
+    expect(result.finalVerification?.assertions[0].passed).toBe(true);
+  });
+
+  test('fails when final assertion does not match stored snapshot', async () => {
+    const executor = new PlanExecutor(resolver);
+    const result = await executor.execute(planWithFinalAssertion('Missing'), SESSION_ID, {});
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Final verification failed');
+    expect(result.finalVerification?.failedAssertion?.index).toBe(0);
+  });
+
+  test('fails clearly when requested evidence kind is unsupported', async () => {
+    const executor = new PlanExecutor(resolver);
+    const result = await executor.execute(
+      planWithFinalAssertion('Done', { requiredEvidence: ['phash'] }),
+      SESSION_ID,
+      {},
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('unsupported finalVerification.requiredEvidence');
+  });
+});
