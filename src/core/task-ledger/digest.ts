@@ -129,12 +129,17 @@ function pageStateFrom(meta: TaskMeta, result: unknown): TaskEvidenceDigest['pag
   const args = recordFrom(meta.args_summary);
   const data = recordFrom(result);
   const structured = recordFrom(data.structuredContent);
-  const page = recordFrom(data.page_state) ?? recordFrom(data.pageState) ?? structured;
+  const page = firstNonEmptyRecord(data.page_state, data.pageState, structured);
   const capturedAt = numberField(page.capturedAt) ?? numberField(page.captured_at) ?? meta.ended_at ?? meta.started_at;
+  const tabId = stringField(data.tabId)
+    ?? stringField(data.tab_id)
+    ?? stringField(page.tabId)
+    ?? stringField(page.tab_id)
+    ?? stringField(args.tabId);
   return {
     ...(stringField(data.url) ?? stringField(page.url) ?? stringField(args.url) ? { url: stringField(data.url) ?? stringField(page.url) ?? stringField(args.url) } : {}),
     ...(stringField(data.title) ?? stringField(page.title) ? { title: stringField(data.title) ?? stringField(page.title) } : {}),
-    ...(stringField(data.tabId) ?? stringField(data.tab_id) ?? stringField(args.tabId) ? { tabId: stringField(data.tabId) ?? stringField(data.tab_id) ?? stringField(args.tabId) } : {}),
+    ...(tabId ? { tabId } : {}),
     ...(capturedAt ? { capturedAt } : {}),
   };
 }
@@ -256,6 +261,15 @@ function redactValue(value: unknown): unknown {
   }
   if (typeof value === 'string') return redact(value);
   return value;
+}
+
+
+function firstNonEmptyRecord(...values: unknown[]): Record<string, unknown> {
+  for (const value of values) {
+    const record = recordFrom(value);
+    if (Object.keys(record).length > 0) return record;
+  }
+  return {};
 }
 
 function recordFrom(value: unknown): Record<string, unknown> {

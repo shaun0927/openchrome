@@ -77,6 +77,39 @@ describe('Task evidence digest', () => {
     expect(a?.recent_meaningful_events.every(e => e.evidence_ref?.startsWith(`task://${meta.task_id}/events/`))).toBe(true);
   });
 
+  test('uses camelCase and structured page-state fallbacks, including nested tab id', async () => {
+    const meta = metaFor('read_page', { objective: 'Inspect page' });
+    await store.create(meta);
+
+    await store.writeResult(meta.task_id, {
+      pageState: {
+        url: 'https://example.test/camel',
+        title: 'Camel',
+        tabId: 'tab-camel',
+        capturedAt: 2222,
+      },
+    });
+    expect(buildTaskEvidenceDigest(store, meta.task_id)?.page_state).toMatchObject({
+      url: 'https://example.test/camel',
+      title: 'Camel',
+      tabId: 'tab-camel',
+      capturedAt: 2222,
+    });
+
+    await store.writeResult(meta.task_id, {
+      structuredContent: {
+        url: 'https://example.test/structured',
+        title: 'Structured',
+        tab_id: 'tab-structured',
+      },
+    });
+    expect(buildTaskEvidenceDigest(store, meta.task_id)?.page_state).toMatchObject({
+      url: 'https://example.test/structured',
+      title: 'Structured',
+      tabId: 'tab-structured',
+    });
+  });
+
   test('bounds summaries and redacts credential-bearing fields', async () => {
     const meta = metaFor('read_page', { objective: 'Inspect token=super-secret-value', url: 'https://example.test' });
     await store.create(meta);
