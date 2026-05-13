@@ -43,6 +43,27 @@ export function responsePayloadSize(result: MCPToolResult): { responseChars: num
   return { responseChars, screenshotBytes };
 }
 
+function extractTabId(result: MCPToolResult): string | undefined {
+  for (const item of result.content ?? []) {
+    if (typeof item.text !== 'string') continue;
+    try {
+      const parsed = JSON.parse(item.text) as { tabId?: unknown };
+      if (typeof parsed.tabId === 'string' && parsed.tabId.length > 0) return parsed.tabId;
+    } catch {
+      // Ignore non-JSON text payloads.
+    }
+  }
+  return undefined;
+}
+
+function tabPlaceholders(scenario: BenchmarkMatrixScenario): string[] {
+  return Array.from(new Set(
+    scenario.steps
+      .map((step) => step.args.tabId)
+      .filter((tabId): tabId is string => typeof tabId === 'string' && /^tab\d+$/.test(tabId)),
+  ));
+}
+
 export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
   return [
     {
@@ -134,15 +155,42 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
       let screenshotBytes = 0;
 
       try {
-        for (const step of scenario.steps) {
-          const result = await adapter.callTool(step.tool, step.args);
-          measureCall(result, step.args, counters);
+        const tabIds = new Map<string, string>();
+        for (const placeholder of tabPlaceholders(scenario)) {
+          const args = { url: 'about:blank' };
+          const result = await adapter.callTool('tabs_create', args);
+          if (result.isError) {
+            const text = result.content?.find((item) => typeof item.text === 'string')?.text;
+            throw new Error(`Benchmark step failed: tabs_create${text ? ` — ${text.slice(0, 160)}` : ''}`);
+          }
+          measureCall(result, args, counters);
           const payload = responsePayloadSize(result);
           responseChars += payload.responseChars;
           screenshotBytes += payload.screenshotBytes;
+          tabIds.set(placeholder, extractTabId(result) ?? placeholder);
+        }
+
+        const runStep = async (step: BenchmarkMatrixScenario['steps'][number]) => {
+          const args = { ...step.args };
+          if (typeof args.tabId === 'string') {
+            args.tabId = tabIds.get(args.tabId) ?? args.tabId;
+          }
+          const result = await adapter.callTool(step.tool, args);
           if (result.isError) {
             const text = result.content?.find((item) => typeof item.text === 'string')?.text;
             throw new Error(`Benchmark step failed: ${step.tool}${text ? ` — ${text.slice(0, 160)}` : ''}`);
+          }
+          measureCall(result, args, counters);
+          const payload = responsePayloadSize(result);
+          responseChars += payload.responseChars;
+          screenshotBytes += payload.screenshotBytes;
+        };
+
+        if (scenario.category === 'parallel-tabs') {
+          await Promise.all(scenario.steps.map(runStep));
+        } else {
+          for (const step of scenario.steps) {
+            await runStep(step);
           }
         }
 

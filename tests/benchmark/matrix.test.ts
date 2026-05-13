@@ -61,8 +61,8 @@ describe('benchmark matrix', () => {
     const result = await task.run(adapter);
 
     expect(result.success).toBe(true);
-    expect(result.toolCallCount).toBe(3);
-    expect(result.responseChars).toBe(6);
+    expect(result.toolCallCount).toBe(4);
+    expect(result.responseChars).toBe(8);
     expect(result.estimatedOutputTokens).toBe(2);
     expect(result.nodeRssBytes).toBeGreaterThan(0);
   });
@@ -100,7 +100,25 @@ describe('benchmark matrix', () => {
     const result = await task.run(adapter);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('Benchmark step failed: act');
-    expect(result.toolCallCount).toBe(2);
+    expect(result.error).toContain('Benchmark step failed');
+    expect(result.toolCallCount).toBe(1);
+  });
+
+  test('matrix creates and reuses concrete tab ids for placeholders', async () => {
+    const task = createMatrixTasks({ category: 'warm-read-page-dom' })[0];
+    const adapter = {
+      name: 'stub',
+      mode: 'dom',
+      callTool: jest
+        .fn()
+        .mockResolvedValueOnce({ content: [{ type: 'text', text: JSON.stringify({ tabId: 'real-tab-1' }) }] })
+        .mockResolvedValueOnce({ content: [{ type: 'text', text: 'page' }] }),
+    };
+
+    const result = await task.run(adapter);
+
+    expect(result.success).toBe(true);
+    expect(adapter.callTool).toHaveBeenNthCalledWith(1, 'tabs_create', { url: 'about:blank' });
+    expect(adapter.callTool).toHaveBeenNthCalledWith(2, 'read_page', { tabId: 'real-tab-1', mode: 'dom' });
   });
 });

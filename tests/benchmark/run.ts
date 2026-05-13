@@ -61,7 +61,11 @@ export async function main(args = process.argv.slice(2), output: BenchmarkCliOut
   });
 
   if (category) {
-    for (const task of createMatrixTasks({ category })) {
+    const tasks = createMatrixTasks({ category });
+    if (tasks.length === 0) {
+      throw new Error(`Unknown benchmark category or scenario: ${category}`);
+    }
+    for (const task of tasks) {
       runner.addTask(task);
     }
   } else {
