@@ -10,6 +10,7 @@ import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
+import { isFastProfile } from '../config/runtime-profile';
 import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
@@ -144,7 +145,7 @@ const definition: MCPToolDefinition = {
       },
       compact: {
         type: 'boolean',
-        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false.',
+        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false, or true when OPENCHROME_PROFILE=fast.',
       },
       diagnostics: {
         type: 'boolean',
@@ -330,7 +331,7 @@ const handler: ToolHandler = async (
     };
 
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
-    const compactAX = args.compact === true;
+    const compactAX = args.compact === true || (args.compact === undefined && isFastProfile());
     if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
       return {
         content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],

@@ -9,6 +9,7 @@ model composes them into prose.
 | Recipe | Goal | Tools touched |
 |---|---|---|
 | [action-cache-v2.md](action-cache-v2.md) | Interpret `act` cache status and verify page-fingerprint drift behavior. | `act` |
+| [fast-profile.md](fast-profile.md) | Enable and verify the opt-in low-token runtime profile. | `oc_get_connection_info`, `read_page` |
 | [multi-source-news-digest.md](multi-source-news-digest.md) | Pull headlines from several news sources and produce a one-screen daily digest. | `navigate`, `read_page`, `crawl` |
 | [docs-changelog-diff.md](docs-changelog-diff.md) | Compare two snapshots of a docs page (e.g. before/after a release) and explain what changed. | `navigate`, `read_page` |
 | [competitive-feature-matrix.md](competitive-feature-matrix.md) | Build a structured feature-matrix table across several vendor pages. | `navigate`, `extract_data`, `read_page` |
