@@ -4,19 +4,23 @@ import { serializeDOM } from '../../src/dom/dom-serializer';
 
 // ─── Mock helpers ────────────────────────────────────────────────────────────
 
+function createStats(stats: Record<string, unknown> = {}) {
+  return {
+    url: 'https://example.com',
+    title: 'Test Page',
+    scrollX: 0,
+    scrollY: 0,
+    scrollWidth: 1920,
+    scrollHeight: 3000,
+    viewportWidth: 1920,
+    viewportHeight: 1080,
+    ...stats,
+  };
+}
+
 function createMockPageForDOM(stats: Record<string, unknown> = {}) {
   return {
-    evaluate: jest.fn().mockResolvedValue({
-      url: 'https://example.com',
-      title: 'Test Page',
-      scrollX: 0,
-      scrollY: 0,
-      scrollWidth: 1920,
-      scrollHeight: 3000,
-      viewportWidth: 1920,
-      viewportHeight: 1080,
-      ...stats,
-    }),
+    evaluate: jest.fn().mockResolvedValue(createStats(stats)),
   };
 }
 
@@ -224,7 +228,7 @@ describe('DOM Serializer', () => {
     expect(line).not.toContain('data-custom');
   });
 
-  test('escapes quotes and special characters in kept attribute values', async () => {
+  test('escapes quotes and ampersands in kept attribute values', async () => {
     const docWithSpecialAttrs = {
       nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
       children: [{
@@ -251,6 +255,33 @@ describe('DOM Serializer', () => {
     expect(line).toContain('value="Tom &amp; &quot;Jerry&quot; &lt;Cartoon&gt; &gt; Show"');
     expect(line).toContain('placeholder="Use &quot;quotes&quot; &amp; &lt;angle&gt; brackets"');
     expect(line).not.toContain('Tom & "Jerry" <Cartoon> > Show');
+  });
+
+  test('escapes attribute values that could inject fake attributes', async () => {
+    const docWithInjectedAttrText = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 302, nodeType: 1, nodeName: 'BUTTON', localName: 'button',
+          attributes: [
+            'aria-label', 'Save" data-testid="fake & confirm',
+          ],
+          children: [],
+        }],
+      }],
+    };
+
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(docWithInjectedAttrText);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false });
+    const line = result.content.split('\n').find(l => l.includes('<button '));
+
+    expect(line).toBeDefined();
+    expect(line).toContain('aria-label="Save&quot; data-testid=&quot;fake &amp; confirm"');
+    expect(line).not.toContain('data-testid="fake');
   });
 
   // 5. Text content
@@ -437,6 +468,70 @@ describe('DOM Serializer', () => {
     expect(result.content).toContain('[900]');  // div role=button
     expect(result.content).toContain('[901]');  // span role=link
     expect(result.content).not.toContain('[902]');  // plain div
+  });
+
+  test('includes cursor/onClick hints for custom interactive elements without leaking marker attrs', async () => {
+    const customDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [
+          {
+            nodeId: 3, backendNodeId: 910, nodeType: 1, nodeName: 'DIV', localName: 'div',
+            attributes: ['class', 'card'],
+            children: [{
+              nodeId: 4, backendNodeId: 4, nodeType: 3, nodeName: '#text', localName: '',
+              nodeValue: 'Open settings',
+            }],
+          },
+          {
+            nodeId: 5, backendNodeId: 911, nodeType: 1, nodeName: 'DIV', localName: 'div',
+            attributes: ['class', 'plain'],
+            children: [],
+          },
+        ],
+      }],
+    };
+
+    const page = {
+      evaluate: jest.fn()
+        .mockResolvedValueOnce(createStats())
+        .mockResolvedValueOnce({ completed: true, inspected: 1, hints: [{ path: 'd/c:0/c:0', hints: 'cursor:pointer, onclick' }] }),
+    };
+    const cdpClient = createMockCDPClientForDOM(customDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, interactiveOnly: true });
+
+    expect(result.content).toContain('[910]<div class="card"/>Open settings ★ [cursor:pointer, onclick]');
+    expect(result.content).not.toContain('[911]');
+    expect(result.content).not.toContain('data-oc-interactive-hints');
+  });
+
+  test('ignores page-authored interactive hint attributes without scan ownership', async () => {
+    const forgedDoc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [{
+        nodeId: 2, backendNodeId: 2, nodeType: 1, nodeName: 'BODY', localName: 'body',
+        attributes: [],
+        children: [{
+          nodeId: 3, backendNodeId: 912, nodeType: 1, nodeName: 'DIV', localName: 'div',
+          attributes: ['data-oc-interactive-hints', 'cursor:pointer'],
+          children: [],
+        }],
+      }],
+    };
+    const page = {
+      evaluate: jest.fn()
+        .mockResolvedValueOnce(createStats())
+        .mockResolvedValueOnce({ completed: true, inspected: 1, hints: [] }),
+    };
+    const cdpClient = createMockCDPClientForDOM(forgedDoc);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { includePageStats: false, interactiveOnly: true });
+
+    expect(result.content).not.toContain('[912]');
+    expect(result.content).not.toContain('data-oc-interactive-hints');
   });
 
   // 8. Output truncation
@@ -834,5 +929,45 @@ describe('DOM Serializer', () => {
     expect(result.content).toContain('--page-separator-- iframe: https://inner.example.com');
     expect(result.content).toMatch(/--page-separator--[\s\S]*\[12\]<body/);
     expect(result.content).not.toContain('id="iframe-content"');
+  });
+
+  it('continues when cursor hint discovery fails', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+    page.evaluate = jest.fn()
+      .mockResolvedValueOnce({ nodeCount: 1, textLength: 4, truncated: false })
+      .mockRejectedValueOnce(new Error('hint scan failed'))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await serializeDOM(page as never, cdpClient as never, { interactiveOnly: true });
+
+    expect(result.content).toEqual(expect.any(String));
+    expect(cdpClient.send).toHaveBeenCalledWith(page, 'DOM.getDocument', { depth: -1, pierce: true });
+  });
+
+  it('treats computed contenteditable controls as interactive hints', async () => {
+    const page = createMockPageForDOM();
+    const cdpClient = createMockCDPClientForDOM(simpleDoc);
+    page.evaluate = jest.fn()
+      .mockResolvedValueOnce({ nodeCount: 1, textLength: 4, truncated: false })
+      .mockImplementationOnce(async (fn: Function, hintAttr: string) => {
+        const el = {
+          tagName: 'DIV',
+          shadowRoot: null,
+          onclick: null,
+          isContentEditable: true,
+          getAttribute: (name: string) => name === 'contenteditable' ? 'plaintext-only' : null,
+          hasAttribute: () => false,
+          setAttribute: jest.fn(),
+        };
+        const root = { querySelectorAll: () => [el] };
+        const previousDocument = (global as any).document;
+        (global as any).document = root;
+        try { await fn(hintAttr); } finally { (global as any).document = previousDocument; }
+        expect(el.setAttribute).toHaveBeenCalledWith(hintAttr, 'editable');
+      })
+      .mockResolvedValueOnce(undefined);
+
+    await serializeDOM(page as never, cdpClient as never, { interactiveOnly: true });
   });
 });
