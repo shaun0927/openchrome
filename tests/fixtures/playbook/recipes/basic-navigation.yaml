@@ -1,0 +1,32 @@
+name: local fixture basic navigation
+vars:
+  base_url: http://127.0.0.1:8765
+steps:
+  - navigate:
+      url: ${base_url}/index.html
+  - assert:
+      contract:
+        kind: dom_text
+        selector: h1
+        contains: Playbook Fixture Home
+      evidence:
+        snapshot:
+          url: ${base_url}/index.html
+          dom_text:
+            h1: Playbook Fixture Home
+  - navigate:
+      url: ${base_url}/details.html
+  - assert:
+      contract:
+        kind: and
+        children:
+          - kind: url
+            pattern: "details\\.html"
+          - kind: dom_text
+            selector: h1
+            contains: Details Page
+      evidence:
+        snapshot:
+          url: ${base_url}/details.html
+          dom_text:
+            h1: Details Page

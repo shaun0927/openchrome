@@ -13,14 +13,20 @@ const mockStart = jest.fn();
 const mockStop = jest.fn();
 let mockIsRecording = false;
 let mockActiveRecordingId: string | null = null;
+let mockActiveMetadata: Record<string, unknown> | null = null;
+let mockActiveTrajectoryBundle: Record<string, unknown> | null = null;
 
 jest.mock('../../src/recording/action-recorder', () => ({
   getActionRecorder: jest.fn(() => ({
     get isRecording() { return mockIsRecording; },
     get activeRecordingId() { return mockActiveRecordingId; },
+    get activeMetadata() { return mockActiveMetadata; },
+    get activeTrajectoryBundle() { return mockActiveTrajectoryBundle; },
     start: mockStart,
     stop: mockStop,
   })),
+  registerSessionRecorder: jest.fn(),
+  unregisterSessionRecorder: jest.fn(),
 }));
 
 const mockListRecordings = jest.fn();
@@ -100,6 +106,8 @@ describe('recording tools', () => {
     jest.clearAllMocks();
     mockIsRecording = false;
     mockActiveRecordingId = null;
+    mockActiveMetadata = null;
+    mockActiveTrajectoryBundle = null;
 
     // Default mock implementations
     mockListRecordings.mockResolvedValue([]);
@@ -116,10 +124,11 @@ describe('recording tools', () => {
   // ─── Registration ──────────────────────────────────────────────────────────
 
   describe('registration', () => {
-    test('registers all four tools', () => {
+    test('registers recording tools', () => {
       const names = server.getToolNames();
       expect(names).toContain('oc_recording_start');
       expect(names).toContain('oc_recording_stop');
+      expect(names).toContain('oc_recording_status');
       expect(names).toContain('oc_recording_list');
       expect(names).toContain('oc_recording_export');
     });

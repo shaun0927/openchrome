@@ -93,6 +93,8 @@ export interface RecordingMetadata {
   profile?: string;
   /** Optional user-supplied label for the recording */
   label?: string;
+  /** Optional active trajectory bundle metadata (#1059). */
+  trajectoryBundle?: { enabled: boolean; trajectory_id?: string; dir?: string; report?: Record<string, unknown> };
 }
 
 /**

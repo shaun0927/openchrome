@@ -14,6 +14,7 @@ import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { getGlobalConfig } from '../config/global';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 
 /**
@@ -82,7 +83,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.\n\nWhen to use: Reading page structure, verifying content, or extracting the full DOM tree.\nWhen NOT to use: Use inspect for targeted state queries or find to locate a specific element.',
+  description: 'Get page as DOM, accessibility tree (ax), CSS diagnostics, semantic summary, or clean Markdown (article-shaped).\n\nWhen to use: Reading page structure, verifying content, extracting the full DOM tree, or reducing article-like pages to Markdown.\nWhen NOT to use: Use inspect for targeted state queries or find to locate a specific element.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -109,8 +110,16 @@ const definition: MCPToolDefinition = {
       },
       mode: {
         type: 'string',
-        enum: ['ax', 'dom', 'css', 'semantic'],
-        description: 'Output mode: dom (default), ax, css, or semantic',
+        enum: ['ax', 'dom', 'css', 'semantic', 'markdown'],
+        description: 'Output mode: dom (default), ax, css, semantic, or markdown (clean article extraction).',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'Markdown mode only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'Markdown mode only: preserve <a> as markdown links. Default: true.',
       },
       includePagination: {
         type: 'boolean',
@@ -133,6 +142,10 @@ const definition: MCPToolDefinition = {
       compact: {
         type: 'boolean',
         description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false.',
+      },
+      diagnostics: {
+        type: 'boolean',
+        description: 'Include structured read_page timing diagnostics in the MCP result metadata. Default: false.',
       },
     },
     required: ['tabId'],
@@ -168,6 +181,21 @@ function compactAXLines(lines: string[]): string[] {
 
   return lines.filter((_, index) => keep.has(index));
 }
+
+interface ReadPageDiagnostics {
+  mode: string;
+  requestedMode?: string;
+  pageStatsMs?: number;
+  domGetDocumentMs?: number;
+  axGetFullTreeMs?: number;
+  formatMs?: number;
+  paginationMs?: number;
+  sanitizeMs?: number;
+  deltaMs?: number;
+}
+
+type ReadPageDiagnosticTimingKey = Exclude<keyof ReadPageDiagnostics, 'mode' | 'requestedMode'>;
+
 
 interface AXNode {
   nodeId: number;
@@ -223,12 +251,30 @@ const handler: ToolHandler = async (
     const requestedMode = args.mode as string | undefined;
     const mode = requestedMode || 'dom';
     const isExplicitDomMode = requestedMode === 'dom';
-    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic') {
+    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic' && mode !== 'markdown') {
       return {
-        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", or "semantic".` }],
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", "semantic", or "markdown".` }],
         isError: true,
       };
     }
+    const diagnosticsEnabled = args.diagnostics === true;
+    const diagnostics: ReadPageDiagnostics = {
+      mode,
+      ...(requestedMode !== undefined && requestedMode !== mode ? { requestedMode } : {}),
+    };
+    const mark = () => Date.now();
+    const measure = async <T>(key: ReadPageDiagnosticTimingKey, fn: () => Promise<T>): Promise<T> => {
+      const start = mark();
+      try {
+        return await fn();
+      } finally {
+        diagnostics[key] = mark() - start;
+      }
+    };
+    const withDiagnostics = (result: MCPResult): MCPResult => (
+      diagnosticsEnabled ? { ...result, _diagnostics: diagnostics } : result
+    );
+
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
     const compactAX = args.compact === true;
     if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
@@ -243,6 +289,40 @@ const handler: ToolHandler = async (
       return {
         content: [{ type: 'text', text: 'Error: "selector" parameter is only supported in mode="css". Use ref_id for subtree scoping in "ax" mode.' }],
         isError: true,
+      };
+    }
+
+    // Markdown mode — clean HTML→Markdown extraction.
+    // Keep pagination metadata parity with DOM/AX/CSS modes when requested.
+    if (mode === 'markdown') {
+      const onlyMainContent = args.onlyMainContent !== false;
+      const includeLinks = args.includeLinks !== false;
+      const includePaginationMarkdown = args.includePagination !== false;
+      const refIdNote = args.ref_id
+        ? '[Note: ref_id is not supported in markdown mode — full-page content returned. Use mode "ax" for ref_id subtree scoping.]\n\n'
+        : '';
+      const html = await withTimeout(
+        page.content(),
+        15000,
+        'read_page.markdown.content',
+        context,
+      );
+      const { html: cleaned } = extractMainContent(html, { onlyMainContent });
+      let md = refIdNote + toMarkdown(cleaned, { includeLinks });
+      const paginationSection = includePaginationMarkdown
+        ? formatPaginationSection(await detectPagination(page, tabId))
+        : '';
+      if (paginationSection) {
+        md += `\n${paginationSection}`;
+      }
+      let truncated = false;
+      if (md.length > MAX_OUTPUT_CHARS) {
+        md = md.slice(0, MAX_OUTPUT_CHARS);
+        truncated = true;
+      }
+      const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
+      return {
+        content: [{ type: 'text', text: md + suffix }],
       };
     }
 
@@ -605,11 +685,12 @@ const handler: ToolHandler = async (
       try {
         const refId = args.ref_id as string | undefined;
         const depth = args.depth as number | undefined;
-        const result = await serializeDOM(page, cdpClient, {
+        const result = await measure('domGetDocumentMs', () => serializeDOM(page, cdpClient, {
           maxDepth: depth ?? -1,
           filter: filter,
           interactiveOnly: filter === 'interactive',
-        });
+        }));
+        diagnostics.formatMs = diagnostics.domGetDocumentMs;
 
         let outputText = result.content;
         if (refId) {
@@ -633,7 +714,7 @@ const handler: ToolHandler = async (
           const previous = snapshotStore.get(sessionId, tabId);
 
           if (previous) {
-            const delta = snapshotStore.computeDelta(previous, outputText, currentUrl);
+            const delta = await measure('deltaMs', async () => snapshotStore.computeDelta(previous, outputText, currentUrl));
             // Always update cache with current content
             snapshotStore.set(sessionId, tabId, outputText, currentUrl);
 
@@ -641,16 +722,16 @@ const handler: ToolHandler = async (
               // Return delta instead of full content, but keep page stats header
               const statsLine = `[page_stats] url: ${result.pageStats.url} | title: ${result.pageStats.title} | scroll: ${result.pageStats.scrollX},${result.pageStats.scrollY} | viewport: ${result.pageStats.viewportWidth}x${result.pageStats.viewportHeight} | docSize: ${result.pageStats.scrollWidth}x${result.pageStats.scrollHeight}\n\n`;
               const includePaginationDom = args.includePagination !== false;
-              const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+              const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
               const compressedText = statsLine + delta.content + nodeRefsBlock + domPaginationSection;
-              return {
+              return withDiagnostics({
                 content: [{ type: 'text', text: compressedText }],
                 _compression: {
                   level: 'delta',
                   originalChars: outputText.length,
                   compressedChars: compressedText.length,
                 },
-              };
+              });
             }
             // If not delta (too many changes), fall through to full response
           } else {
@@ -660,13 +741,13 @@ const handler: ToolHandler = async (
         }
 
         const includePaginationDom = args.includePagination !== false;
-        const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
-        return {
+        const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
+        return withDiagnostics({
           content: [{ type: 'text', text: outputText + nodeRefsBlock + domPaginationSection }],
-        };
+        });
       } catch (error) {
         if (isExplicitDomMode) {
-          return {
+          return withDiagnostics({
             content: [
               {
                 type: 'text',
@@ -674,8 +755,10 @@ const handler: ToolHandler = async (
               },
             ],
             isError: true,
-          };
+          });
         }
+        // DOM serialization failed — fall through to AX mode as fallback
+        diagnostics.mode = 'ax';
       }
     }
 
@@ -707,15 +790,15 @@ const handler: ToolHandler = async (
       : undefined;
 
     // Get the accessibility tree
-    const { nodes } = await withTimeout(
+    const { nodes } = await measure('axGetFullTreeMs', () => withTimeout(
       cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
       15000,
       'Accessibility.getFullAXTree',
       context,
-    );
+    ));
 
     // Add page stats header for AX mode after the AX snapshot so stats are not older than the tree.
-    const axPageStats = await withTimeout(page.evaluate(() => ({
+    const axPageStats = await measure('pageStatsMs', () => withTimeout(page.evaluate(() => ({
       url: window.location.href,
       title: document.title,
       scrollX: Math.round(window.scrollX),
@@ -724,8 +807,10 @@ const handler: ToolHandler = async (
       scrollHeight: document.documentElement.scrollHeight,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
-    })), 15000, 'read_page', context);
+    })), 15000, 'read_page', context));
     const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
+
+    const formatStart = mark();
 
     // Clear previous refs for this target
     refIdManager.clearTargetRefs(sessionId, tabId);
@@ -907,10 +992,10 @@ const handler: ToolHandler = async (
         });
       }
       if (!scopedNode) {
-        return {
+        return withDiagnostics({
           content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
           isError: true,
-        };
+        });
       }
       startNodes = [scopedNode];
     } else {
@@ -923,8 +1008,9 @@ const handler: ToolHandler = async (
     const outputLines = compactAX ? compactAXLines(lines) : lines;
     const output = outputLines.join('\n');
     const outputCharCount = output.length;
+    diagnostics.formatMs = mark() - formatStart;
     const includePaginationAx = args.includePagination !== false;
-    const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+    const axPaginationSection = includePaginationAx ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
 
     const compression = args.compression as string | undefined;
     if (compression === 'delta') {
@@ -949,7 +1035,7 @@ const handler: ToolHandler = async (
       // the caller explicitly opts into that fallback. Otherwise preserve AX
       // intent and return the bounded/truncated AX representation.
       if (axOverflowFallback !== 'dom') {
-        return {
+        return withDiagnostics({
           content: [
             {
               type: 'text',
@@ -961,7 +1047,7 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
-        };
+        });
       }
 
       // Explicit fallback: DOM mode often produces equivalent page structure at
@@ -987,17 +1073,21 @@ const handler: ToolHandler = async (
           'Switched to DOM mode because fallback: "dom" was requested. ' +
           'Use mode: "ax" with smaller depth / ref_id to scope specific subtrees for AX format.]';
 
-        return {
+        // Update diagnostics to reflect the effective output mode (DOM), not the requested one (AX).
+        diagnostics.requestedMode = diagnostics.requestedMode ?? diagnostics.mode;
+        diagnostics.mode = 'dom';
+
+        return withDiagnostics({
           content: [
             {
               type: 'text',
               text: domResult.content + fallbackNote + fallbackNodeRefsBlock + axPaginationSection,
             },
           ],
-        };
+        });
       } catch {
         // If DOM serialization fails, fall back to truncated AX (original behavior)
-        return {
+        return withDiagnostics({
           content: [
             {
               type: 'text',
@@ -1009,14 +1099,14 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
-        };
+        });
       }
     }
 
-    return {
+    return withDiagnostics({
       content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
       refs: refsMap,
-    };
+    });
   } catch (error) {
     return {
       content: [
@@ -1134,6 +1224,8 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return value;
   }
 
+  const sanitizeStart = Date.now();
+
   // Sanitize all text content blocks
   const sanitizedContent = result.content.map((block) => {
     if (block.type === 'text' && typeof block.text === 'string') {
@@ -1170,9 +1262,22 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return block;
   });
 
-  return { ...result, content: sanitizedContent };
+  const sanitizedResult: MCPResult = { ...result, content: sanitizedContent };
+  if (args.diagnostics === true && sanitizedResult._diagnostics && typeof sanitizedResult._diagnostics === 'object') {
+    (sanitizedResult._diagnostics as ReadPageDiagnostics).sanitizeMs = Date.now() - sanitizeStart;
+  }
+  return sanitizedResult;
 };
 
 export function registerReadPageTool(server: MCPServer): void {
   server.registerTool('read_page', sanitizedHandler, definition);
 }
+
+/**
+ * Internal handler exported for in-process reuse (e.g. the
+ * `returnAfterState` chaining option on input tools). External callers should
+ * register the tool via `registerReadPageTool` and invoke it through the MCP
+ * server. This export wraps the sanitized handler so callers get the same
+ * post-processing the public tool applies.
+ */
+export const readPageHandlerForReuse: ToolHandler = sanitizedHandler;

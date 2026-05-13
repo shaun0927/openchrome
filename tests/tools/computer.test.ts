@@ -14,6 +14,8 @@ jest.mock('../../src/session-manager', () => ({
 
 jest.mock('../../src/utils/ref-id-manager', () => ({
   getRefIdManager: jest.fn(),
+  makeStaleRefError: (refId: string) => ({ code: 'STALE_REF', ref_id: refId, hint: "call read_page (mode='ax') to get fresh refs" }),
+  formatStaleRefError: (refId: string) => `STALE_REF: ref_id="${refId}" — call read_page (mode='ax') to get fresh refs`,
 }));
 
 import { getSessionManager } from '../../src/session-manager';
@@ -33,6 +35,8 @@ describe('ComputerTool', () => {
     }));
     jest.doMock('../../src/utils/ref-id-manager', () => ({
       getRefIdManager: () => mockRefIdManager,
+      makeStaleRefError: (refId: string) => ({ code: 'STALE_REF', ref_id: refId, hint: "call read_page (mode='ax') to get fresh refs" }),
+      formatStaleRefError: (refId: string) => `STALE_REF: ref_id="${refId}" — call read_page (mode='ax') to get fresh refs`,
     }));
     jest.doMock('../../src/utils/pagination-detector', () => ({
       detectPagination: mockDetectPagination,
