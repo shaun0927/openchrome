@@ -39,7 +39,14 @@ const definition: MCPToolDefinition = {
       },
       vision_fallback: {
         type: 'boolean',
-        description: 'Use vision-based screenshot analysis if DOM discovery finds nothing. Default: follows OPENCHROME_VISION_MODE env.',
+        description: 'Deprecated alias for allow_vision_fallback (kept for back-compat).',
+      },
+      allow_vision_fallback: {
+        type: 'boolean',
+        description:
+          'Opt into vision-based screenshot analysis when DOM discovery returns ' +
+          'nothing. #831 flipped the default to OFF — supply `true` here OR set ' +
+          'OPENCHROME_VISION_MODE=on (or fallback/auto) to enable vision.',
       },
     },
     required: ['query', 'tabId'],
@@ -55,7 +62,10 @@ const handler: ToolHandler = async (
   const query = args.query as string;
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
-  const visionFallback = args.vision_fallback as boolean | undefined;
+  // #831: accept both `vision_fallback` (legacy) and `allow_vision_fallback`
+  // (the new canonical name). Either-of opts in regardless of default-off env.
+  const visionFallback = (args.allow_vision_fallback as boolean | undefined)
+    ?? (args.vision_fallback as boolean | undefined);
   const visionMode = getVisionMode();
 
   const sessionManager = getSessionManager();
@@ -208,9 +218,11 @@ const handler: ToolHandler = async (
 
     if (output.length === 0) {
       // ─── Vision Fallback ───
+      // #831: explicit `allow_vision_fallback: true` overrides the default-off
+      // env policy. Otherwise the env-derived visionMode decides.
       const explicitlyRequested = visionFallback === true;
-      let shouldUseVision = visionMode !== 'off' &&
-        (explicitlyRequested || visionMode === 'fallback' || visionMode === 'auto');
+      let shouldUseVision = explicitlyRequested
+        || (visionMode !== 'off' && (visionMode === 'fallback' || visionMode === 'auto'));
 
       // In auto mode without explicit request, check if the page actually needs vision
       if (shouldUseVision && visionMode === 'auto' && !explicitlyRequested) {
