@@ -120,14 +120,42 @@ async function runFinalVerification(
 }
 
 /**
+ * Resolve a dotted path from a parsed plan value. Numeric path segments address
+ * array indexes so plans can bind values like matches.login.submit.ref or
+ * results.0.ref without evaluating arbitrary expressions.
+ */
+function getPathValue(value: unknown, path: string): unknown {
+  if (!path) return value;
+  let current = value;
+  for (const segment of path.split('.')) {
+    if (current === null || current === undefined) return undefined;
+    if (Array.isArray(current)) {
+      if (!/^\d+$/.test(segment)) return undefined;
+      current = current[Number(segment)];
+      continue;
+    }
+    if (typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function resolveParamPath(params: Record<string, unknown>, path: string): unknown {
+  if (Object.prototype.hasOwnProperty.call(params, path)) return params[path];
+  const [root, ...rest] = path.split('.');
+  if (!Object.prototype.hasOwnProperty.call(params, root)) return undefined;
+  return getPathValue(params[root], rest.join('.'));
+}
+
+/**
  * Recursively substitute ${varName} templates in a value using the params map.
- * Handles strings, objects, and arrays. Non-string primitives are returned as-is.
+ * Handles strings, objects, arrays, and dotted paths. Non-string primitives are returned as-is.
  * Missing vars are left as-is (no crash).
  */
 function substituteParams(value: unknown, params: Record<string, unknown>): unknown {
   if (typeof value === 'string') {
     return value.replace(/\$\{([^}]+)\}/g, (match, varName) => {
-      const resolved = params[varName];
+      const resolved = resolveParamPath(params, varName);
       if (resolved === undefined) return match;
       if (typeof resolved === 'string') return resolved;
       return JSON.stringify(resolved);
@@ -171,8 +199,7 @@ function extractResult(
   }
 
   if (parseResult.extractField) {
-    const obj = parsed as Record<string, unknown>;
-    parsed = obj?.[parseResult.extractField];
+    parsed = getPathValue(parsed, parseResult.extractField);
   }
 
   return parsed;

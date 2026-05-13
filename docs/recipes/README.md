@@ -11,6 +11,7 @@ model composes them into prose.
 | [multi-source-news-digest.md](multi-source-news-digest.md) | Pull headlines from several news sources and produce a one-screen daily digest. | `navigate`, `read_page`, `crawl` |
 | [docs-changelog-diff.md](docs-changelog-diff.md) | Compare two snapshots of a docs page (e.g. before/after a release) and explain what changed. | `navigate`, `read_page` |
 | [competitive-feature-matrix.md](competitive-feature-matrix.md) | Build a structured feature-matrix table across several vendor pages. | `navigate`, `extract_data`, `read_page` |
+| [semantic-login-flow.md](semantic-login-flow.md) | Resolve semantic query refs, drive plan actions, and verify with an Outcome Contract. | `oc_query`, `fill_form`, `interact`, `oc_assert`, `oc_evidence_bundle`, `execute_plan` |
 
 ## How recipes are structured
 
