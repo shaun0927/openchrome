@@ -379,35 +379,40 @@ describe('crawl_sitemap engine=static', () => {
   });
 
   test('size-fallback summary metrics align with emitted per-page metrics', async () => {
-    // Force the minimal-pages fallback (content omitted) by serving large pages
-    // that overflow MAX_OUTPUT_CHARS even after the per-page-truncation step.
-    const BIG = 'x'.repeat(60_000); // each page > MAX_OUTPUT_CHARS / 2
-    server.setRoute('/big-a.html', {
-      status: 200,
-      contentType: 'text/html; charset=utf-8',
-      body: RICH_HTML('Big A', `<h1>Big A</h1><p>${BIG}</p>`),
-    });
-    server.setRoute('/big-b.html', {
-      status: 200,
-      contentType: 'text/html; charset=utf-8',
-      body: RICH_HTML('Big B', `<h1>Big B</h1><p>${BIG}</p>`),
-    });
+    // Force the minimal-pages fallback (content omitted) by serving enough
+    // large pages that the per-page truncation step (2_000 chars each) still
+    // pushes the aggregate JSON above MAX_OUTPUT_CHARS (50_000). Two big pages
+    // is not enough — after the 2_000-char truncation pass the output collapses
+    // to ~5 KB and the second-stage fallback never runs. 30 pages × 2_000 chars
+    // ≈ 60 KB, which reliably exercises the content-omitted code path.
+    const BIG = 'x'.repeat(60_000); // each page > MAX_OUTPUT_CHARS / 2 raw
+    const PAGE_COUNT = 30;
+    const urlList: string[] = [];
+    for (let i = 0; i < PAGE_COUNT; i++) {
+      const slug = `big-${i.toString().padStart(2, '0')}`;
+      const route = `/${slug}.html`;
+      server.setRoute(route, {
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: RICH_HTML(`Big ${i}`, `<h1>Big ${i}</h1><p>${BIG}</p>`),
+      });
+      urlList.push(`<url><loc>${server.origin}${route}</loc></url>`);
+    }
     server.setRoute('/sitemap.xml', {
       status: 200,
       contentType: 'application/xml',
       body:
         '<?xml version="1.0" encoding="UTF-8"?>' +
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' +
-        `<url><loc>${server.origin}/big-a.html</loc></url>` +
-        `<url><loc>${server.origin}/big-b.html</loc></url>` +
+        urlList.join('') +
         '</urlset>',
     });
 
     const handler = await loadHandler('crawl_sitemap');
     const result = await handler('s-fallback-metrics', {
       url: server.origin,
-      max_pages: 5,
-      concurrency: 2,
+      max_pages: PAGE_COUNT,
+      concurrency: 4,
       engine: 'static',
       include_metrics: true,
     });
