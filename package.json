@@ -38,7 +38,9 @@
     "prepare": "npm run build",
     "lint:changed": "node scripts/lint-changed-src.js",
     "harness:parallel-smoke": "ts-node tests/harness/parallel-smoke.ts",
-    "harness:evaluate-candidates": "ts-node tests/harness/candidates/evaluator.ts"
+    "harness:evaluate-candidates": "ts-node tests/harness/candidates/evaluator.ts",
+    "bench:episode": "ts-node tests/benchmark/episode-harness/cli.ts",
+    "bench:episode:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock"
   },
   "keywords": [
     "openchrome",
