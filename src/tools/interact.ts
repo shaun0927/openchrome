@@ -147,10 +147,25 @@ type PostActionInput = {
   verify: boolean | undefined;
   verifyReport?: VerifyReport;
   extraTopLevel?: Record<string, unknown>;
+  sessionId?: string;
+  tabId?: string;
+  returnAfterState?: ReturnAfterState;
 };
 
 async function buildPostActionResponse(input: PostActionInput): Promise<MCPResult> {
-  const { page, context, headerLine, delta, returnFormat, verify, verifyReport, extraTopLevel } = input;
+  const {
+    page,
+    context,
+    headerLine,
+    delta,
+    returnFormat,
+    verify,
+    verifyReport,
+    extraTopLevel,
+    sessionId,
+    tabId,
+    returnAfterState = 'none',
+  } = input;
 
   const lines: string[] = [headerLine];
 
@@ -301,11 +316,14 @@ async function buildPostActionResponse(input: PostActionInput): Promise<MCPResul
   ];
   if (screenshotContent) responseContent.push(screenshotContent);
 
-  const result = {
+  const result = attachVerifyReport({
     content: responseContent,
     ...(extraTopLevel || {}),
-  } as MCPResult;
-  return attachVerifyReport(result, verifyReport);
+  } as MCPResult, verifyReport);
+  if (sessionId && tabId) {
+    await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+  }
+  return result;
 }
 
 const handler: ToolHandler = async (
@@ -423,7 +441,9 @@ const handler: ToolHandler = async (
         } catch { /* screenshot failed, non-fatal */ }
       }
 
-      return { content: resultContent };
+      const coordinateResult = { content: resultContent } as MCPResult;
+      await appendReturnAfterState(coordinateResult, page, sessionId, tabId, returnAfterState, context);
+      return coordinateResult;
     } catch (error) {
       return {
         content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
@@ -565,6 +585,9 @@ const handler: ToolHandler = async (
           verify: verifyMode === 'screenshot' || verifyMode === 'both',
           verifyReport: refVerifyReport,
           extraTopLevel: { via: 'ref' },
+          sessionId,
+          tabId,
+          returnAfterState,
         });
       } catch (refErr) {
         throwIfAborted(context);
@@ -696,7 +719,9 @@ const handler: ToolHandler = async (
       const lines: string[] = [line, refToken];
       if (nrDelta) lines.push('', '[DOM Delta]', nrDelta);
 
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
+      const nodeRefResult = { content: [{ type: 'text', text: lines.join('\n') }] } as MCPResult;
+      await appendReturnAfterState(nodeRefResult, page, sessionId, tabId, returnAfterState, context);
+      return nodeRefResult;
     }
 
     const queryString = query as string;
