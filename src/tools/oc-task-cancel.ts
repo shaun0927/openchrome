@@ -22,7 +22,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      task_id: { type: 'string' },
+      task_id: { type: 'string', description: 'REQUIRED task_id returned by oc_task_start.' },
     },
     required: ['task_id'],
   },

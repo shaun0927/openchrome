@@ -58,12 +58,12 @@ const definition: MCPToolDefinition = {
       kind: {
         type: 'string',
         description:
-          'Name of the underlying MCP tool to run. Canonical values: ' +
+          'REQUIRED Name of the underlying MCP tool to run. Canonical values: ' +
           'crawl, crawl_sitemap, recording, oc_evidence_bundle, oc_session_snapshot.',
       },
       args: {
         type: 'object',
-        description: 'Arguments forwarded to the underlying tool.',
+        description: 'REQUIRED Arguments forwarded to the underlying tool.',
       },
     },
     required: ['kind', 'args'],
