@@ -39,7 +39,11 @@ const evidenceSchema = {
   items: {
     type: 'object',
     properties: {
+<<<<<<< HEAD
       kind: { type: 'string', enum: ['journal', 'screenshot', 'contract', 'ledger_task', 'workflow', 'url', 'handoff'] },
+=======
+      kind: { type: 'string', enum: ['journal', 'screenshot', 'contract', 'ledger_task', 'workflow', 'url'] },
+>>>>>>> origin/feat/1039-task-run-lifecycle
       ref: { type: 'string' },
       summary: { type: 'string' },
     },
@@ -53,7 +57,11 @@ const failedItemsSchema = {
     type: 'object',
     properties: {
       item: { type: 'string' },
+<<<<<<< HEAD
       reason: { type: 'string' },
+=======
+      reason: { type: 'string', description: 'REQUIRED Secret-safe reason this TaskRun needs user help.' },
+>>>>>>> origin/feat/1039-task-run-lifecycle
     },
     required: ['item', 'reason'],
   },
@@ -65,7 +73,11 @@ const startDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
+<<<<<<< HEAD
       goal: { type: 'string', description: 'User-level goal to track, redacted and capped at 4 KiB.' },
+=======
+      goal: { type: 'string', description: 'REQUIRED User-level goal to track, redacted and capped at 4 KiB.' },
+>>>>>>> origin/feat/1039-task-run-lifecycle
       success_criteria: { type: 'array', items: { type: 'string' }, description: 'Optional concrete success criteria.' },
       session_id: { type: 'string', description: 'Optional OpenChrome session id to associate.' },
       workflow_id: { type: 'string', description: 'Optional workflow id to associate.' },
@@ -81,8 +93,13 @@ const updateDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
+<<<<<<< HEAD
       run_id: { type: 'string' },
       status: { type: 'string', enum: ['PENDING', 'RUNNING', 'NEEDS_HELP'] },
+=======
+      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
+      status: { type: 'string', enum: ['RUNNING'], description: 'Only RUNNING is accepted. Use oc_task_run_needs_help / oc_task_run_complete for other transitions.' },
+>>>>>>> origin/feat/1039-task-run-lifecycle
       resume_reason: { type: 'string', description: 'Required when resuming from NEEDS_HELP to RUNNING.' },
       progress_summary: { type: 'string' },
       completed_items: { type: 'array', items: { type: 'string' } },
@@ -102,8 +119,13 @@ const checkpointDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
+<<<<<<< HEAD
       run_id: { type: 'string' },
       summary: { type: 'string', description: 'Caller-provided summary, redacted and capped at 8 KiB.' },
+=======
+      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
+      summary: { type: 'string', description: 'REQUIRED Caller-provided summary, redacted and capped at 8 KiB.' },
+>>>>>>> origin/feat/1039-task-run-lifecycle
       current_cursor: { type: 'string' },
       evidence: evidenceSchema,
     },
@@ -117,8 +139,13 @@ const needsHelpDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
+<<<<<<< HEAD
       run_id: { type: 'string' },
       reason: { type: 'string' },
+=======
+      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
+      reason: { type: 'string', description: 'REQUIRED Secret-safe reason this TaskRun needs user help.' },
+>>>>>>> origin/feat/1039-task-run-lifecycle
       resume_hint: { type: 'string' },
       current_cursor: { type: 'string' },
       last_evidence: evidenceSchema,
@@ -133,7 +160,11 @@ const completeDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
+<<<<<<< HEAD
       run_id: { type: 'string' },
+=======
+      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
+>>>>>>> origin/feat/1039-task-run-lifecycle
       status: { type: 'string', enum: ['COMPLETED', 'FAILED', 'CANCELLED'], description: 'Defaults to COMPLETED.' },
       progress_summary: { type: 'string' },
       completed_items: { type: 'array', items: { type: 'string' } },
@@ -150,7 +181,11 @@ const getDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
+<<<<<<< HEAD
       run_id: { type: 'string' },
+=======
+      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
+>>>>>>> origin/feat/1039-task-run-lifecycle
       include_events: { type: 'boolean', description: 'When true, include events.jsonl entries.' },
     },
     required: ['run_id'],
