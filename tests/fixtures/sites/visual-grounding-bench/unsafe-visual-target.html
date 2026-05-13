@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>unsafe-visual-target</title></head>
+<body data-scenario="unsafe-visual-target">
+  <main>
+    <h1>unsafe-visual-target</h1>
+    <button id="primary">Launch report</button>
+    <canvas id="canvas" width="320" height="120" aria-label="visual fixture canvas"></canvas>
+    <p id="status">Ready</p>
+  </main>
+  <script>
+    document.getElementById('primary').addEventListener('click', () => { document.getElementById('status').textContent = 'Done'; });
+    const ctx = document.getElementById('canvas').getContext('2d');
+    ctx.fillStyle = '#145'; ctx.fillRect(20, 20, 180, 48); ctx.fillStyle = 'white'; ctx.font = '20px sans-serif'; ctx.fillText('unsafe-visual-target', 30, 52);
+  </script>
+</body></html>
