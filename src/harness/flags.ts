@@ -95,16 +95,22 @@ export const isPerceptionVotingEnabled = (): boolean => isFamilyEnabled('OPENCHR
 export const isSkillCuratorEnabled = (): boolean => isFamilyEnabled('OPENCHROME_SKILL_CURATOR');
 
 /**
- * Proxy hook family (issue #874). Unlike the other pilot families this one
- * does NOT default to active when `--pilot` is set — the operator must
- * additionally export `OPENCHROME_PROXY_HOOK=1`. The extra opt-in reduces
- * blast radius for users who run `--pilot` for other features (per the
- * issue's r2 critic pass).
+ * Pilot-tier skill replay (#856). Off-by-default even when `--pilot` is on:
+ * the operator must explicitly opt in via `OPENCHROME_SKILL_REPLAY=1`.
+ */
+export function isSkillReplayEnabled(): boolean {
+  if (!isPilotEnabled()) return false;
+  return isTruthy(process.env.OPENCHROME_SKILL_REPLAY);
+}
+
+/**
+ * Proxy hook family (issue #874). Explicit opt-in on top of --pilot.
  */
 export function isProxyHookEnabled(): boolean {
   if (!isPilotEnabled()) return false;
   return isTruthy(process.env.OPENCHROME_PROXY_HOOK);
 }
+
 
 const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['trace', isTraceEnabled],
@@ -113,7 +119,8 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['handoff_persist', isHandoffPersistEnabled],
   ['perception_voting', isPerceptionVotingEnabled],
   ['skill_curator', isSkillCuratorEnabled],
-  ['proxy_hook', isProxyHookEnabled],
+  ['skill_replay', isSkillReplayEnabled],
+  ['proxy_hook', isProxyHookEnabled]
 ];
 
 /**
