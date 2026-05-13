@@ -170,7 +170,7 @@ const handler: ToolHandler = async (
       } as MCPResult;
     }
 
-    const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refArg);
+    const backendDOMNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, refArg);
     if (!backendDOMNodeId) {
       return {
         content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" could not be resolved to a DOM node.` }],

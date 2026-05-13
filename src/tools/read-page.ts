@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
+import { aliasFor, getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
@@ -1007,7 +1007,8 @@ const handler: ToolHandler = async (
 
       // Build line
       const indentStr = '  '.repeat(indent);
-      let line = `${indentStr}[${refId || 'no-ref'}] ${role}`;
+      const refLabel = refId ? `${refId} ${aliasFor(refId) ?? ''}`.trim() : 'no-ref';
+      let line = `${indentStr}[${refLabel}] ${role}`;
       if (name) line += `: "${name}"`;
       if (value) line += ` = "${value}"`;
 

@@ -111,7 +111,7 @@ const handler: ToolHandler = async (
     // #831: for `ref_N`-formatted refs (the canonical snapshot output), an
     // unresolvable or stale ref → STALE_REF. Raw integer / `node_N` formats
     // are legacy backend-node-id passthroughs and keep their original error.
-    const isRefIdFormat = /^ref_\d+$/.test(ref);
+    const isRefIdFormat = /^(?:ref_\d+|@e\d+)$/.test(ref);
     if (isRefIdFormat) {
       const entry = refIdManager.getRef(sessionId, tabId, ref);
       if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
