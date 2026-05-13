@@ -1,0 +1,590 @@
+[
+  {
+    "tool": "act",
+    "field": "instruction",
+    "rule": "required_prefix",
+    "value": "Natural language description of actions ",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "act",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to execute on",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "batch_execute",
+    "field": "tasks",
+    "rule": "required_prefix",
+    "value": "Tasks to execute in parallel",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "batch_paginate",
+    "field": "strategy",
+    "rule": "required_prefix",
+    "value": "Pagination strategy",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "batch_paginate",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "computer",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Action to perform",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "computer",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "console_capture",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Action to perform",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "console_capture",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "cookies",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Action to perform",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "cookies",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "crawl",
+    "field": "url",
+    "rule": "required_prefix",
+    "value": "Starting URL to crawl",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "crawl_sitemap",
+    "field": "url",
+    "rule": "required_prefix",
+    "value": "Website URL (auto-discovers /sitemap.xml",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "drag_drop",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "emulate_device",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "execute_plan",
+    "field": "planId",
+    "rule": "required_prefix",
+    "value": "Plan ID to execute",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "execute_plan",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to execute the plan against",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "extract_data",
+    "field": "schema",
+    "rule": "required_prefix",
+    "value": "JSON Schema defining output structure. E",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "extract_data",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to extract from",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "file_upload",
+    "field": "filePaths",
+    "rule": "required_prefix",
+    "value": "File paths to upload. Paths must resolve",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "file_upload",
+    "field": "selector",
+    "rule": "required_prefix",
+    "value": "CSS selector for the file input element",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "file_upload",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to upload files to",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "fill_form",
+    "field": "fields",
+    "rule": "required_prefix",
+    "value": "Field label/name/placeholder to value ma",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "fill_form",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to execute on",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "find",
+    "field": "query",
+    "rule": "required_prefix",
+    "value": "What to find (natural language)",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "find",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to search in",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "form_input",
+    "field": "ref",
+    "rule": "required_prefix",
+    "value": "Element ref or backendNodeId",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "form_input",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to set form value in",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "form_input",
+    "field": "value",
+    "rule": "required_prefix",
+    "value": "Value to set. Checkboxes: \"true\"/\"false\"",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "geolocation",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "http_auth",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Set or clear credentials",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "http_auth",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to set auth for",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "inspect",
+    "field": "query",
+    "rule": "required_prefix",
+    "value": "What to inspect (natural language)",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "inspect",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to inspect",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "interact",
+    "field": "query",
+    "rule": "required_prefix",
+    "value": "Element to act on (natural language)",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "interact",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to execute on",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "javascript_tool",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to execute code in",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "lightweight_scroll",
+    "field": "direction",
+    "rule": "required_prefix",
+    "value": "Scroll direction",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "lightweight_scroll",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to scroll",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "memory",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Action: record, query, or validate",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "navigate",
+    "field": "url",
+    "rule": "required_prefix",
+    "value": "URL, \"forward\", or \"back\"",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "network",
+    "field": "preset",
+    "rule": "required_prefix",
+    "value": "Network preset",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "network",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_checkpoint",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Action to perform",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_copy_to_clipboard",
+    "field": "text",
+    "rule": "required_prefix",
+    "value": "Text to copy to clipboard.",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_get_connection_info",
+    "field": "host",
+    "rule": "required_prefix",
+    "value": "Web AI host to generate config for. Use ",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_journal",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Query type",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_open_host_settings",
+    "field": "host",
+    "rule": "required_prefix",
+    "value": "Web AI host whose settings page to open.",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_recording_export",
+    "field": "recordingId",
+    "rule": "required_prefix",
+    "value": "The recording ID to export.",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_session_snapshot",
+    "field": "currentStep",
+    "rule": "required_prefix",
+    "value": "What step you are currently on",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_session_snapshot",
+    "field": "nextActions",
+    "rule": "required_prefix",
+    "value": "Planned next actions",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_session_snapshot",
+    "field": "objective",
+    "rule": "required_prefix",
+    "value": "What you are trying to accomplish",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_skill_recall",
+    "field": "domain",
+    "rule": "required_prefix",
+    "value": "Domain to retrieve skills for (e.g. \"ama",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_skill_record",
+    "field": "contract_id",
+    "rule": "required_prefix",
+    "value": "Identifier of the Outcome Contract that ",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_skill_record",
+    "field": "domain",
+    "rule": "required_prefix",
+    "value": "Domain this skill belongs to (e.g. \"amaz",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_skill_record",
+    "field": "name",
+    "rule": "required_prefix",
+    "value": "Human-readable skill name, unique within",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_skill_record",
+    "field": "steps",
+    "rule": "required_prefix",
+    "value": "Opaque step list supplied by the host ag",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "oc_totp_generate",
+    "field": "domain",
+    "rule": "required_prefix",
+    "value": "Domain to generate TOTP code for (e.g., ",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "page_content",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to get content from",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "page_pdf",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to generate PDF from",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "page_reload",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to reload",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "page_screenshot",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to capture",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "performance_metrics",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to get metrics from",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "query_dom",
+    "field": "method",
+    "rule": "required_prefix",
+    "value": "Query method: css or xpath",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "query_dom",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to query",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "read_page",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to read from",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "request_intercept",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Action to perform",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "request_intercept",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "storage",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Action to perform",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "storage",
+    "field": "storageType",
+    "rule": "required_prefix",
+    "value": "local or session storage",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "storage",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "tabs_create",
+    "field": "url",
+    "rule": "required_prefix",
+    "value": "URL to open in the new tab",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "user_agent",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "validate_page",
+    "field": "url",
+    "rule": "required_prefix",
+    "value": "URL to validate. http:// and https:// sc",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "vision_find",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to analyze",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "wait_for",
+    "field": "tabId",
+    "rule": "required_prefix",
+    "value": "Tab ID to wait on",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "wait_for",
+    "field": "type",
+    "rule": "required_prefix",
+    "value": "Condition. PREFER: 'selector' (element a",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "worker",
+    "field": "action",
+    "rule": "required_prefix",
+    "value": "Action: create, list, or delete",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "worker_complete",
+    "field": "resultSummary",
+    "rule": "required_prefix",
+    "value": "Result summary (max 100 chars)",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "worker_complete",
+    "field": "status",
+    "rule": "required_prefix",
+    "value": "Final status",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "worker_complete",
+    "field": "workerName",
+    "rule": "required_prefix",
+    "value": "Name of the worker",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "worker_update",
+    "field": "workerName",
+    "rule": "required_prefix",
+    "value": "Name of the worker",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "workflow_init",
+    "field": "name",
+    "rule": "required_prefix",
+    "value": "Workflow name",
+    "limit": "REQUIRED "
+  },
+  {
+    "tool": "workflow_init",
+    "field": "workers",
+    "rule": "required_prefix",
+    "value": "List of workers to create",
+    "limit": "REQUIRED "
+  }
+]
