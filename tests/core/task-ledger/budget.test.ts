@@ -107,6 +107,23 @@ describe('task envelope store integration', () => {
     expect(a).not.toBe(b);
   });
 
+
+  test('recordTaskToolCall ignores non-browser_task rows', async () => {
+    const meta = makeMeta({ kind: 'crawl', status: 'RUNNING' });
+    await store.create(meta);
+
+    await recordTaskToolCall(store, meta.task_id, {
+      ts: Date.now(),
+      tool: 'read_page',
+      sessionId: 'sess',
+      args: {},
+      durationMs: 1,
+      ok: true,
+    });
+
+    expect(store.readMetaSync(meta.task_id)?.counters?.toolCalls).toBe(0);
+  });
+
   test('recordTaskToolCall ignores cross-owner task ids', async () => {
     const meta = makeMeta({
       owner: { session_id: 'sess-a', tenant_id: 'tenant-a', key_id: 'key-a', mode: 'api-key' },

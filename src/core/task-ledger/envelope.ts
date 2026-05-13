@@ -19,6 +19,7 @@ export async function recordTaskToolCall(
     if (meta.owner.session_id !== call.sessionId) return;
     if ((call.principalMode === 'api-key' || call.principalMode === 'jwt') && meta.owner.tenant_id !== call.tenantId) return;
   }
+  if (meta.kind !== 'browser_task') return;
   if (meta.status === 'COMPLETED' || meta.status === 'FAILED' || meta.status === 'CANCELLED') return;
   try {
     const updated = await store.update(taskId, (cur) => {
