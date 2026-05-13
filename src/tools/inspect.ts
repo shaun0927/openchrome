@@ -14,6 +14,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
+import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { prependHeaderText } from './_shared/state-header';
 import {
   formatNodeRefToken,
@@ -39,6 +40,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         enum: ['interactive', 'all', 'visible'],
         description: 'Element scope. Default: visible',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, append approximate returned size/token metrics to text output. Default: false.',
       },
     },
     required: ['tabId', 'query'],
@@ -108,6 +113,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const query = args.query as string;
   const scope = (args.scope as string) || 'visible';
+  const includeMetrics = args.include_metrics === true;
 
   const sessionManager = getSessionManager();
 
@@ -578,10 +584,15 @@ const handler: ToolHandler = async (
 
     // Footer with page context (always included)
     lines.push(`[Page] ${inspectResult.url} | "${inspectResult.title}"`);
-
     const inspectPayload = lines.join('\n');
+    const headeredText = prependHeaderText({ url: inspectResult.url, title: inspectResult.title, mode: 'inspect', capturedAt: Date.now(), tabId }, inspectPayload);
     return {
-      content: [{ type: 'text', text: prependHeaderText({ url: inspectResult.url, title: inspectResult.title, mode: 'inspect', capturedAt: Date.now(), tabId }, inspectPayload) }],
+      content: [{
+        type: 'text',
+        text: includeMetrics
+          ? appendMetricsFooter(headeredText, buildTextMetrics(headeredText, { mode: `inspect:${scope}` }))
+          : headeredText,
+      }],
     };
   } catch (error) {
     return {
