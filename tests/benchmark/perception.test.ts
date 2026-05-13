@@ -18,6 +18,16 @@ async function runTask(name: string, adapter: MCPAdapter) {
   return task.run(adapter);
 }
 
+async function runTaskWithOptions(
+  name: string,
+  adapter: MCPAdapter,
+  options: Parameters<typeof createPerceptionTasks>[0],
+) {
+  const task = createPerceptionTasks(options).find((candidate) => candidate.name === name);
+  if (!task) throw new Error(`Missing task ${name}`);
+  return task.run(adapter);
+}
+
 describe('perception benchmark', () => {
   test('registers token, fallback, and pending spatial guard tasks', () => {
     expect(createPerceptionTasks().map((task) => task.name)).toEqual([
@@ -83,6 +93,36 @@ describe('perception benchmark', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('must not use vision fallback');
     expect(result.metadata).toMatchObject({ guard: 'fail', fallbackPath: 'vision' });
+  });
+
+  test('custom wall-time threshold applies to makeResult-based tasks', async () => {
+    const adapter: MCPAdapter = {
+      name: 'slow',
+      mode: 'find',
+      async callTool() {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return jsonToolResult('$ [ref_submit] Submit button', {
+          fixture: 'simple-named-button',
+          fallbackPath: 'ax',
+          truncated: false,
+          capped: false,
+          visionUsed: false,
+        });
+      },
+    };
+
+    const result = await runTaskWithOptions('find.ax.simple-no-vision', adapter, {
+      thresholds: {
+        readPageDomLargeMaxOutputChars: 20_000,
+        readPageRepeatedDeltaMaxOutputChars: 500,
+        findSimpleMaxOutputChars: 400,
+        findVisionMaxOutputChars: 1_200,
+        maxWallTimeMs: 1,
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('above 1ms benchmark guard');
   });
 
   test('explicit dense-icon fixture records vision fallback separately', async () => {

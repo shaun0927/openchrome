@@ -30,8 +30,12 @@ export interface PerceptionMetadata {
   reason?: string;
 }
 
+type PerceptionThresholds = {
+  [Key in keyof typeof PERCEPTION_THRESHOLDS]: number;
+};
+
 interface PerceptionTaskOptions {
-  thresholds?: typeof PERCEPTION_THRESHOLDS;
+  thresholds?: PerceptionThresholds;
 }
 
 interface ToolTextAndMetadata {
@@ -72,6 +76,7 @@ function makeResult(
   result: MCPToolResult,
   guard: Omit<PerceptionMetadata, 'outputChars' | 'guard'>,
   check: (outputChars: number, metadata: Partial<PerceptionMetadata>) => string | undefined,
+  maxWallTimeMs: number,
 ): TaskResult {
   const counters = createCounters();
   measureCall(result, args, counters);
@@ -79,8 +84,8 @@ function makeResult(
   const outputChars = text.length;
   const wallTimeMs = Date.now() - startMs;
   let error = result.isError ? text : check(outputChars, metadata);
-  if (!error && wallTimeMs > PERCEPTION_THRESHOLDS.maxWallTimeMs) {
-    error = `tool path took ${wallTimeMs}ms, above ${PERCEPTION_THRESHOLDS.maxWallTimeMs}ms benchmark guard`;
+  if (!error && wallTimeMs > maxWallTimeMs) {
+    error = `tool path took ${wallTimeMs}ms, above ${maxWallTimeMs}ms benchmark guard`;
   }
 
   return {
@@ -234,6 +239,7 @@ export function createPerceptionTasks(options: PerceptionTaskOptions = {}): Benc
             }
             return undefined;
           },
+          thresholds.maxWallTimeMs,
         );
       },
     },
@@ -293,6 +299,7 @@ export function createPerceptionTasks(options: PerceptionTaskOptions = {}): Benc
           result,
           { fixture: 'layout-grid', fallbackPath: 'pending', truncated: false, capped: false, visionUsed: false, pending: true },
           () => undefined,
+          thresholds.maxWallTimeMs,
         );
       },
     },
@@ -317,6 +324,7 @@ export function createPerceptionTasks(options: PerceptionTaskOptions = {}): Benc
             }
             return undefined;
           },
+          thresholds.maxWallTimeMs,
         );
       },
     },
@@ -341,6 +349,7 @@ export function createPerceptionTasks(options: PerceptionTaskOptions = {}): Benc
             }
             return undefined;
           },
+          thresholds.maxWallTimeMs,
         );
       },
     },
