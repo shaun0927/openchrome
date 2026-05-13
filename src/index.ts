@@ -110,8 +110,14 @@ program
       const server = new MCPServer(undefined, { initialToolTier: 3 });
       registerAllTools(server);
       const manifest = server.getToolManifest();
-      process.stdout.write(JSON.stringify(manifest.tools) + '\n');
-      process.exit(0);
+      const json = JSON.stringify(manifest.tools) + '\n';
+      // Let Node drain stdout fully before exiting. process.exit() called
+      // before the OS pipe buffer is consumed truncates output at 64 KB on
+      // Linux/macOS. Writing via end() and waiting for the 'finish' event
+      // (which fires after the last byte leaves the OS pipe buffer) is the
+      // only reliable cross-platform approach.
+      process.stdout.end(json);
+      process.stdout.once('finish', () => process.exit(0));
     }
 
     let port = parseInt(options.port, 10);

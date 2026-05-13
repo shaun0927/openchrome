@@ -84,8 +84,8 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const intent = args.intent as string | undefined;
 
-  // Validate intent when provided
-  if (intent !== undefined) {
+  // Validate intent when provided — use typeof guard for null-safety
+  if (typeof intent === 'string') {
     if (intent === '') {
       return {
         content: [{ type: 'text', text: 'INVALID_INTENT: intent must not be an empty string' }],

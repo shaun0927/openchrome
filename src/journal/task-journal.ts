@@ -196,7 +196,7 @@ export class TaskJournal {
     switch (tool) {
       case 'navigate': base = `${s} → ${args.url || 'unknown'}`; break;
       case 'read_page': base = `${s} Read page`; break;
-      case 'interact': base = `${s} Click "${args.description || args.selector || ''}"`; break;
+      case 'interact': base = `${s} Click "${args.query || args.description || args.selector || ''}"`; break;
       case 'fill_form': {
         const fields = args.fields as Record<string, unknown> | undefined;
         base = `${s} Fill form (${fields ? Object.keys(fields).length : 0} fields)`;

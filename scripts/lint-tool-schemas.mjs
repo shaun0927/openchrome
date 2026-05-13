@@ -43,10 +43,21 @@ if (!inputFile) {
   process.exit(2);
 }
 
+// ── read stdin fully (avoids 64 KB readFileSync(0) truncation on Linux/macOS) ──
+async function readStdin() {
+  const chunks = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+  }
+  return chunks.join('');
+}
+
 // ── load tools list ────────────────────────────────────────────────────────
 let tools;
 try {
-  tools = JSON.parse(readFileSync(inputFile === '-' ? 0 : resolve(inputFile), 'utf8'));
+  const raw =
+    inputFile === '-' ? await readStdin() : readFileSync(resolve(inputFile), 'utf8');
+  tools = JSON.parse(raw);
 } catch (err) {
   process.stderr.write(`Error reading tools list: ${err.message}\n`);
   process.exit(2);
