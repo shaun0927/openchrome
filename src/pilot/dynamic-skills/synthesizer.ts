@@ -169,6 +169,17 @@ export function synthesizeToolDefinition(
   const definition: MCPToolDefinition = {
     name: toolName,
     description,
+    // Synthesized skill-replay tools execute a recorded action sequence that
+    // may navigate to arbitrary origins, click, fill, and submit forms. The
+    // worst-case envelope therefore matches `oc_skill_replay` itself — open
+    // world (network egress via page.goto) and potentially destructive
+    // (form submits, irreversible clicks).
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema:
       required.length > 0
         ? { type: 'object', properties, required }

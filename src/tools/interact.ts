@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -126,6 +127,7 @@ const definition: MCPToolDefinition = {
     // OPENCHROME_NODE_REF flag value).
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.interact,
 };
 
 /**

@@ -6,6 +6,7 @@ import * as dns from 'dns';
 import { promisify } from 'util';
 import { MCPServer, getMCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getWorkflowEngine, WorkflowDefinition } from '../orchestration/workflow-engine';
 import { filterToolsForWorker, WorkerToolConfig } from '../types/tool-manifest';
 import { getPlanRegistry } from '../orchestration/plan-registry';
@@ -74,6 +75,7 @@ const workflowInitDefinition: MCPToolDefinition = {
     },
     required: ['name', 'workers'],
   },
+  annotations: TOOL_ANNOTATIONS.workflow_init,
 };
 
 const workflowInitHandler: ToolHandler = async (
@@ -225,6 +227,7 @@ const workflowStatusDefinition: MCPToolDefinition = {
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.workflow_status,
 };
 
 const workflowStatusHandler: ToolHandler = async (
@@ -302,6 +305,7 @@ const workflowCollectDefinition: MCPToolDefinition = {
     properties: {},
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.workflow_collect,
 };
 
 const workflowCollectHandler: ToolHandler = async (
@@ -356,6 +360,7 @@ const workflowCleanupDefinition: MCPToolDefinition = {
     properties: {},
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.workflow_cleanup,
 };
 
 const workflowCleanupHandler: ToolHandler = async (
@@ -436,6 +441,7 @@ const workerUpdateDefinition: MCPToolDefinition = {
     },
     required: ['workerName'],
   },
+  annotations: TOOL_ANNOTATIONS.worker_update,
 };
 
 const workerUpdateHandler: ToolHandler = async (
@@ -512,6 +518,7 @@ const workerCompleteDefinition: MCPToolDefinition = {
     },
     required: ['workerName', 'status', 'resultSummary'],
   },
+  annotations: TOOL_ANNOTATIONS.worker_complete,
 };
 
 const workerCompleteHandler: ToolHandler = async (
@@ -570,6 +577,7 @@ const workflowCollectPartialDefinition: MCPToolDefinition = {
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.workflow_collect_partial,
 };
 
 const workflowCollectPartialHandler: ToolHandler = async (
@@ -682,6 +690,7 @@ const executePlanDefinition: MCPToolDefinition = {
     },
     required: ['planId', 'tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.execute_plan,
 };
 
 const executePlanHandler: ToolHandler = async (

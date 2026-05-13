@@ -9,6 +9,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
@@ -53,6 +54,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'direction'],
   },
+  annotations: TOOL_ANNOTATIONS.lightweight_scroll,
 };
 
 const handler: ToolHandler = async (

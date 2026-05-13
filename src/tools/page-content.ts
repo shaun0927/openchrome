@@ -4,6 +4,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS, DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
@@ -29,6 +30,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.page_content,
 };
 
 const handler: ToolHandler = async (
