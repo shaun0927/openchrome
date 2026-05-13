@@ -22,6 +22,11 @@ import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';
 import { getCachedSequence, cacheSequence, validateCachedSequence } from '../actions/action-cache';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+} from './_shared/return-after-state';
 
 
 const VARIABLE_RE = /%([A-Za-z_][A-Za-z0-9_]*)%/g;
@@ -170,6 +175,7 @@ const definition: MCPToolDefinition = {
         type: 'object',
         description: 'Optional runtime values for %name% placeholders. Values are injected only at execution time and redacted from responses/cache.',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['tabId', 'instruction'],
   },
@@ -684,6 +690,7 @@ const handler: ToolHandler = async (
   const timeoutMs = Math.min(Math.max((args.timeout as number) || 30000, 1000), 120000);
   const variables = normalizeVariables(args.variables);
   const missingVariables = findMissingVariables(instruction || '', variables);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
@@ -911,11 +918,15 @@ const handler: ToolHandler = async (
     });
   }
 
-  const baseResult: MCPResult = {
+  const actResult: MCPResult = {
     content: [{ type: 'text', text: responseText }],
     isError: !success,
+    ...(actVerifyReport ? { verify: actVerifyReport } : {}),
   };
-  return actVerifyReport ? { ...baseResult, verify: actVerifyReport } : baseResult;
+  if (success) {
+    await appendReturnAfterState(actResult, page, sessionId, tabId, returnAfterState, context);
+  }
+  return actResult;
 };
 
 // ─── Registration ───

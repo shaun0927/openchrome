@@ -1219,3 +1219,12 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
 export function registerReadPageTool(server: MCPServer): void {
   server.registerTool('read_page', sanitizedHandler, definition);
 }
+
+/**
+ * Internal handler exported for in-process reuse (e.g. the
+ * `returnAfterState` chaining option on input tools). External callers should
+ * register the tool via `registerReadPageTool` and invoke it through the MCP
+ * server. This export wraps the sanitized handler so callers get the same
+ * post-processing the public tool applies.
+ */
+export const readPageHandlerForReuse: ToolHandler = sanitizedHandler;

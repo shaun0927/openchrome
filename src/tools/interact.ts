@@ -20,6 +20,12 @@ import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-class
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
 import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+  type ReturnAfterState,
+} from './_shared/return-after-state';
+import {
   formatNodeRefToken,
   formatUidEvictedError,
   getCurrentLoaderId,
@@ -105,6 +111,7 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
       ref: {
         type: 'string',
         description:
@@ -141,10 +148,25 @@ type PostActionInput = {
   verify: boolean | undefined;
   verifyReport?: VerifyReport;
   extraTopLevel?: Record<string, unknown>;
+  sessionId?: string;
+  tabId?: string;
+  returnAfterState?: ReturnAfterState;
 };
 
 async function buildPostActionResponse(input: PostActionInput): Promise<MCPResult> {
-  const { page, context, headerLine, delta, returnFormat, verify, verifyReport, extraTopLevel } = input;
+  const {
+    page,
+    context,
+    headerLine,
+    delta,
+    returnFormat,
+    verify,
+    verifyReport,
+    extraTopLevel,
+    sessionId,
+    tabId,
+    returnAfterState = 'none',
+  } = input;
 
   const lines: string[] = [headerLine];
 
@@ -295,11 +317,14 @@ async function buildPostActionResponse(input: PostActionInput): Promise<MCPResul
   ];
   if (screenshotContent) responseContent.push(screenshotContent);
 
-  const result = {
+  const result = attachVerifyReport({
     content: responseContent,
     ...(extraTopLevel || {}),
-  } as MCPResult;
-  return attachVerifyReport(result, verifyReport);
+  } as MCPResult, verifyReport);
+  if (sessionId && tabId) {
+    await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+  }
+  return result;
 }
 
 const handler: ToolHandler = async (
@@ -320,6 +345,7 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -416,7 +442,9 @@ const handler: ToolHandler = async (
         } catch { /* screenshot failed, non-fatal */ }
       }
 
-      return { content: resultContent };
+      const coordinateResult = { content: resultContent } as MCPResult;
+      await appendReturnAfterState(coordinateResult, page, sessionId, tabId, returnAfterState, context);
+      return coordinateResult;
     } catch (error) {
       return {
         content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
@@ -558,6 +586,9 @@ const handler: ToolHandler = async (
           verify: verifyMode === 'screenshot' || verifyMode === 'both',
           verifyReport: refVerifyReport,
           extraTopLevel: { via: 'ref' },
+          sessionId,
+          tabId,
+          returnAfterState,
         });
       } catch (refErr) {
         throwIfAborted(context);
@@ -689,7 +720,9 @@ const handler: ToolHandler = async (
       const lines: string[] = [line, refToken];
       if (nrDelta) lines.push('', '[DOM Delta]', nrDelta);
 
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
+      const nodeRefResult = { content: [{ type: 'text', text: lines.join('\n') }] } as MCPResult;
+      await appendReturnAfterState(nodeRefResult, page, sessionId, tabId, returnAfterState, context);
+      return nodeRefResult;
     }
 
     const queryString = query as string;
@@ -830,7 +863,9 @@ const handler: ToolHandler = async (
           } catch { /* screenshot failed, non-fatal */ }
         }
 
-        return attachVerifyReport({ content: resultContent }, axVerifyReport);
+        const axResult = attachVerifyReport({ content: resultContent }, axVerifyReport);
+        await appendReturnAfterState(axResult, page, sessionId, tabId, returnAfterState, context);
+        return axResult;
       }
     } catch (axError) {
       throwIfAborted(context);
@@ -1168,7 +1203,9 @@ const handler: ToolHandler = async (
       responseContent.push(screenshotContent);
     }
 
-    return attachVerifyReport({ content: responseContent }, cssVerifyReport);
+    const cssResult = attachVerifyReport({ content: responseContent }, cssVerifyReport);
+    await appendReturnAfterState(cssResult, page, sessionId, tabId, returnAfterState, context);
+    return cssResult;
   } catch (error) {
     return {
       content: [
