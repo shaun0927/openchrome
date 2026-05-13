@@ -12,8 +12,8 @@
  * third-party HTTP, no LLM API.
  *
  * Tab resolution strategy: use the default session + default worker.
- * The first known target id is treated as "current". This is a pilot
- * — multi-tab dispatch is out of scope for issue #889. When no tab
+ * The most recently added worker target is treated as "current", matching
+ * other current-tab helpers such as oc_devtools_url. When no tab
  * is registered, we return `null` and the replay handler short-circuits
  * with `skill_no_active_tab`.
  *
@@ -41,8 +41,8 @@ const DEFAULT_WORKER_ID = 'default';
 
 /**
  * Default tab resolver. Walks the caller's session (passed by the synth
- * handler from the MCP request envelope) and returns the first known
- * target on its default worker. Returns `null` when no tab has been
+ * handler from the MCP request envelope) and returns the most recently
+ * added target on its default worker. Returns `null` when no tab has been
  * created yet (the replay handler then emits `skill_no_active_tab`).
  *
  * Codex P1 on PR #930: this previously used a hardcoded `"default"`
@@ -54,7 +54,10 @@ export async function defaultResolveCurrentTab(sessionId: string): Promise<Curre
     const sessionManager = getSessionManager();
     const targetIds = sessionManager.getWorkerTargetIds(sessionId, DEFAULT_WORKER_ID);
     if (targetIds.length === 0) return null;
-    const targetId = targetIds[0];
+    // Match the rest of OpenChrome's "current tab" convention: worker.targets
+    // is insertion-ordered, so the last target is the most recently created/used
+    // browser page. Using index 0 picks the oldest/background tab.
+    const targetId = targetIds[targetIds.length - 1];
     const page = await sessionManager.getPage(
       sessionId,
       targetId,
@@ -176,13 +179,12 @@ export async function defaultRunStep(
  *                                     opt-in for inline checks.
  *   • any other identifier    → resolve against an in-page contract registry
  *                               (`globalThis.__openchromeContracts[id]`) or
- *                               a same-named global function/boolean. Missing
- *                               identifiers fail closed; found predicates pass
- *                               only when they return boolean true.
- *
- * Together this matches the "no false positives, no false negatives"
- * contract codex asked for: only explicit JS expressions are graded;
- * bare IDs are returned as "deferred to a real verifier".
+ *                               a same-named global function/boolean. Found
+ *                               predicates pass only when they return boolean
+ *                               true. Missing opaque IDs are deferred because
+ *                               OpenChrome does not yet implement contract_id
+ *                               lookup (see oc_assert); failing them here would
+ *                               make normal recorded skills unusable.
  */
 const CONTRACT_EVAL_TIMEOUT_MS = 2_000;
 const JS_EXPR_PREFIX = 'js:';
@@ -211,7 +213,7 @@ export async function defaultAssertContract(
     })()`;
     const verdict = await evaluateJsContractExpression(expr, sessionId, tab, `contract_id:${contractId}`);
     if (verdict.reason?.startsWith('contract_not_found:')) {
-      return { ...verdict, stale: true };
+      return { pass: true, reason: `contract_deferred:${contractId}` };
     }
     return verdict;
   }

@@ -236,6 +236,19 @@ function hostnameOf(url: string): string {
   }
 }
 
+function hostMatchesSkillDomain(host: string, skillDomain: string): boolean {
+  return host === skillDomain || host.endsWith(`.${skillDomain}`);
+}
+
+function domainMismatch(message: string, stepIndex?: number): ReplayResult {
+  return {
+    success: false,
+    code: 'skill_domain_mismatch',
+    message,
+    ...(stepIndex !== undefined && { step_index: stepIndex }),
+  };
+}
+
 /**
  * Drive one skill replay. The handler is pure-ish — every side effect
  * (browser action, contract evaluation, tab resolution) is supplied
@@ -261,24 +274,13 @@ export async function runReplay(
   // for a blocked domain still gets refused at replay time.
   const currentHost = hostnameOf(tab.url);
   const skillHost = skill.domain.toLowerCase();
-  const hostMatchesSkill =
-    currentHost === skillHost ||
-    (currentHost !== null && currentHost.endsWith(`.${skillHost}`));
-  if (!currentHost || !hostMatchesSkill) {
-    return {
-      success: false,
-      code: 'skill_domain_mismatch',
-      message: `current tab host "${currentHost}" does not match skill domain "${skillHost}"`,
-    };
+  if (!currentHost || !hostMatchesSkillDomain(currentHost, skillHost)) {
+    return domainMismatch(`current tab host "${currentHost}" does not match skill domain "${skillHost}"`);
   }
   try {
     assertDomainAllowed(tab.url);
   } catch (err) {
-    return {
-      success: false,
-      code: 'skill_domain_mismatch',
-      message: err instanceof Error ? err.message : String(err),
-    };
+    return domainMismatch(err instanceof Error ? err.message : String(err));
   }
   // Belt-and-suspenders: if the policy was updated mid-session and
   // assertDomainAllowed somehow did not throw (e.g., a corner case in
@@ -286,11 +288,7 @@ export async function runReplay(
   // catches it. Both axes converge on the same error code so callers
   // do not need to branch.
   if (isDomainBlocked(tab.url)) {
-    return {
-      success: false,
-      code: 'skill_domain_mismatch',
-      message: `domain "${currentHost}" is on the blocklist`,
-    };
+    return domainMismatch(`domain "${currentHost}" is on the blocklist`);
   }
 
   // Step 2: parse & validate the recorded action sequence.
@@ -319,7 +317,25 @@ export async function runReplay(
   // Step 3: drive each step sequentially. We deliberately do not
   // parallelise — replay must preserve recorded order.
   for (let i = 0; i < steps.length; i++) {
-    const result = await opts.runStep(tab, steps[i], args, sessionId);
+    const step = steps[i];
+    if (step.kind === 'navigate') {
+      const stepHost = hostnameOf(step.url);
+      if (!stepHost || !hostMatchesSkillDomain(stepHost, skillHost)) {
+        return domainMismatch(
+          `navigate step host "${stepHost}" does not match skill domain "${skillHost}"`,
+          i,
+        );
+      }
+      try {
+        assertDomainAllowed(step.url);
+      } catch (err) {
+        return domainMismatch(err instanceof Error ? err.message : String(err), i);
+      }
+      if (isDomainBlocked(step.url)) {
+        return domainMismatch(`navigate step domain "${stepHost}" is on the blocklist`, i);
+      }
+    }
+    const result = await opts.runStep(tab, step, args, sessionId);
     if (!result.ok) {
       return {
         success: false,

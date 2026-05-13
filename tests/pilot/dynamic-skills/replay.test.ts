@@ -108,6 +108,33 @@ describe('runReplay — domain enforcement', () => {
     expect(out.success).toBe(true);
   });
 
+  test('refuses recorded navigate steps that leave the synthesized skill domain', async () => {
+    const calls: ReplayActionStep[] = [];
+    const opts = makeOpts({
+      runStep: async (_tab, step) => {
+        calls.push(step);
+        return { ok: true };
+      },
+    });
+    const out = await runReplay(
+      makeSkill({
+        steps: {
+          parameters: [],
+          actions: [{ kind: 'navigate', url: 'https://evil.test/phish' }],
+        },
+      }),
+      {},
+      opts,
+      "test-session",
+    );
+    expect(out.success).toBe(false);
+    if (!out.success) {
+      expect(out.code).toBe('skill_domain_mismatch');
+      expect(out.step_index).toBe(0);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
   test('refuses when no active tab is available', async () => {
     const opts = makeOpts({ resolveCurrentTab: async () => null });
     const out = await runReplay(makeSkill(), {}, opts, "test-session");
