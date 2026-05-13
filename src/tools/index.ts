@@ -65,6 +65,7 @@ import { registerMemoryTools } from './memory';
 
 // Consolidated DOM query tool
 import { registerQueryDomTool } from './query-dom';
+import { registerOcQueryTool } from './oc-query';
 
 // Lifecycle tools
 import { registerShutdownTool } from './shutdown';
@@ -230,6 +231,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   page_screenshot: 'core',
   performance_metrics: 'core',
   query_dom: 'core',
+  oc_query: 'core',
   read_page: 'core',
   request_intercept: 'core',
   tabs_close: 'core',
@@ -410,6 +412,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Memory tools (domain knowledge persistence)
   registerMemoryTools(proxy);
+
+  // Semantic query tool (#1045)
+  registerOcQueryTool(proxy);
 
   // Lifecycle tools
   registerShutdownTool(proxy);
