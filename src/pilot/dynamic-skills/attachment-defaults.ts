@@ -197,7 +197,23 @@ export async function defaultAssertContract(
     return { pass: true, reason: 'no_contract' };
   }
   if (!contractId.startsWith(JS_EXPR_PREFIX)) {
-    return { pass: true, reason: `contract_id_deferred:${contractId}` };
+    const quotedId = JSON.stringify(contractId);
+    const expr = `(() => {
+      const id = ${quotedId};
+      const registry = globalThis.__openchromeContracts;
+      const candidate =
+        registry && typeof registry === 'object' && id in registry
+          ? registry[id]
+          : globalThis[id];
+      if (typeof candidate === 'function') return Promise.resolve(candidate()).then(Boolean);
+      if (typeof candidate === 'boolean') return candidate;
+      return { __openchrome_contract_missing: true };
+    })()`;
+    const verdict = await evaluateJsContractExpression(expr, sessionId, tab, `contract_id:${contractId}`);
+    if (verdict.reason?.startsWith('contract_not_found:')) {
+      return { ...verdict, stale: true };
+    }
+    return verdict;
   }
   const expr = contractId.slice(JS_EXPR_PREFIX.length).trim();
   if (expr.length === 0) {
