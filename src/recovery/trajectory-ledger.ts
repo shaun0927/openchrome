@@ -10,6 +10,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { redactSecretString } from '../core/secrets';
+
 export type RecoveryResultStatus = 'success' | 'error' | 'no_progress' | 'recovered' | 'aborted';
 export type RecoveryProgressStatus = 'progressing' | 'stalling' | 'stuck' | 'unknown';
 
@@ -117,7 +119,7 @@ export class RecoveryTrajectoryLedger {
       const content = fs.readFileSync(this.filePath, 'utf8');
       const nodes = content.trim().length === 0
         ? []
-        : content.trim().split('\n').map((line) => JSON.parse(line) as RecoveryTrajectoryNode);
+        : parseRecoveryNodes(content.trim().split('\n'));
       const merged = this.mergePending(nodes);
       const filtered = sessionId ? merged.filter((n) => n.sessionId === sessionId) : merged;
       return filtered.slice(-Math.max(0, limit));
@@ -284,9 +286,7 @@ export class RecoveryTrajectoryLedger {
 
   private async pruneSessionIndexFromDisk(): Promise<void> {
     try {
-      const nodes = (await safeReadLinesAsync(this.filePath))
-        .slice(-this.maxNodes)
-        .map((line) => JSON.parse(line) as RecoveryTrajectoryNode);
+      const nodes = parseRecoveryNodes((await safeReadLinesAsync(this.filePath)).slice(-this.maxNodes));
       const liveSessions = new Set(nodes.map((node) => node.sessionId));
       for (const sessionId of this.lastNodeBySession.keys()) {
         if (!liveSessions.has(sessionId)) this.lastNodeBySession.delete(sessionId);
@@ -337,8 +337,9 @@ function sanitizeObject(value: unknown, depth: number, key = ''): unknown {
   if (isSensitiveKey(key)) return REDACTED;
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
-    if (LARGE_VALUE_KEY_RE.test(key) || value.length > 200) return hashValue(value);
-    return value;
+    const redacted = redactSecretString(redactSensitiveText(value));
+    if (LARGE_VALUE_KEY_RE.test(key) || redacted.length > 200) return hashValue(redacted);
+    return redacted;
   }
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (Array.isArray(value)) {
@@ -377,7 +378,8 @@ function redactSensitiveText(text: string): string {
   return text
     .replace(/(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+/gi, '$1[REDACTED]')
     .replace(/((?:set-)?cookie\s*[:=]\s*)[^\n]+/gi, '$1[REDACTED]')
-    .replace(/((?:password|secret|token|api[_-]?key|session[_-]?id)\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]');
+    .replace(/((?:password|secret|token|api[_-]?key|session[_-]?id)\s*[:=]\s*)[^\s,;&]+/gi, '$1[REDACTED]')
+    .replace(/([?&](?:password|secret|token|api[_-]?key|session[_-]?id)=)[^&#\s]+/gi, '$1[REDACTED]');
 }
 
 function truncate(value: string | undefined, max: number): string | undefined {
@@ -408,6 +410,19 @@ function pruneUndefined<T extends Record<string, unknown>>(value: T): T {
     if (value[key] === undefined) delete value[key];
   }
   return value;
+}
+
+function parseRecoveryNodes(lines: string[]): RecoveryTrajectoryNode[] {
+  const nodes: RecoveryTrajectoryNode[] = [];
+  for (const line of lines) {
+    if (line.trim().length === 0) continue;
+    try {
+      nodes.push(JSON.parse(line) as RecoveryTrajectoryNode);
+    } catch {
+      // Best-effort telemetry must tolerate torn/truncated JSONL appends.
+    }
+  }
+  return nodes;
 }
 
 async function safeReadLinesAsync(filePath: string): Promise<string[]> {
