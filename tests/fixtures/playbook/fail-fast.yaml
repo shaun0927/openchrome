@@ -1,0 +1,9 @@
+name: fail-fast fixture
+steps:
+  - navigate:
+      url: https://example.com
+  - assert:
+      kind: url
+      pattern: "WILL_NOT_MATCH"
+  - interact:
+      ref: "should be skipped"

@@ -29,6 +29,8 @@ import { assertDomainAllowed } from './security/domain-guard';
 import { getTargetId } from './utils/puppeteer-helpers';
 import { safeTitle } from './utils/safe-title';
 import { getMetricsCollector } from './metrics/collector';
+import { getLifecycleBus } from './core/lifecycle';
+import type { LifecycleEvent, SessionDestroyReason } from './core/lifecycle';
 import { getTenantManager, isStrictTenantIsolationEnabled } from './tenant/registry';
 import type { TenantManager } from './tenant/manager';
 import { DEFAULT_TENANT_ID, type TenantId } from './tenant/types';
@@ -128,6 +130,7 @@ export class SessionManager {
   private storageStateManagers = new Map<string, StorageStateManager>();
   private storageStateConfig: StorageStateConfig | null = null;
   private pendingCreations = new Map<string, Promise<Session>>();
+  private externalTargetRegistrationLocks = new Map<string, Promise<void>>();
 
   // Stealth mode tracking — targets opened via createTargetStealth
   private stealthTargets = new Set<string>();
@@ -449,6 +452,7 @@ export class SessionManager {
     this.sessions.set(id, session);
     this.totalSessionsCreated++;
     this.emitEvent({ type: 'session:created', sessionId: id, timestamp: Date.now() });
+    this.emitLifecycle({ kind: 'session:create', sessionId: id, tenantId: String(tenantId), ts: Date.now() });
 
     console.error(`[SessionManager] Created session ${id} with default worker (tenant=${tenantId})`);
     return session;
@@ -500,9 +504,15 @@ export class SessionManager {
   }
 
   /**
-   * Delete a session and clean up all workers
+   * Delete a session and clean up all workers.
+   *
+   * @param sessionId session to delete
+   * @param reason lifecycle-bus reason for the destroy event (#857). Defaults
+   *   to `'close'` for user/API-initiated deletes; TTL cleanup passes `'ttl'`
+   *   and full-shutdown cleanup passes `'shutdown'` so consumers can
+   *   distinguish operator action from background cleanup.
    */
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteSession(sessionId: string, reason: SessionDestroyReason = 'close'): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       return;
@@ -551,6 +561,7 @@ export class SessionManager {
     // Remove session
     this.sessions.delete(sessionId);
     this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
+    this.emitLifecycle({ kind: 'session:destroy', sessionId, reason, ts: Date.now() });
 
     console.error(`[SessionManager] Deleted session ${sessionId}`);
   }
@@ -572,7 +583,10 @@ export class SessionManager {
         continue;
       }
       if (now - session.lastActivityAt > maxAgeMs) {
-        await this.deleteSession(sessionId);
+        // TTL-driven cleanup — #857 lifecycle bus distinguishes this from a
+        // user-initiated `deleteSession()` call so consumers (recorder,
+        // future journal) can attribute the destroy correctly.
+        await this.deleteSession(sessionId, 'ttl');
         deletedSessions.push(sessionId);
         this.totalSessionsCleaned++;
       }
@@ -602,7 +616,10 @@ export class SessionManager {
     const sessionIds = Array.from(this.sessions.keys());
 
     for (const sessionId of sessionIds) {
-      await this.deleteSession(sessionId);
+      // Full-process teardown — #857 lifecycle bus tags this as `shutdown`
+      // so consumers can correlate the burst of destroys with intentional
+      // server shutdown rather than TTL pressure or operator API calls.
+      await this.deleteSession(sessionId, 'shutdown');
       this.totalSessionsCleaned++;
     }
 
@@ -736,6 +753,7 @@ export class SessionManager {
       workerId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'worker:create', sessionId, workerId, ts: Date.now() });
 
     console.error(`[SessionManager] Created worker ${workerId} in session ${sessionId}`);
     return worker;
@@ -827,6 +845,7 @@ export class SessionManager {
       workerId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'worker:destroy', sessionId, workerId, ts: Date.now() });
   }
 
   /**
@@ -956,14 +975,10 @@ export class SessionManager {
     // context, so we bypass it for named contexts.
     let namedContext: import('puppeteer-core').BrowserContext | null = null;
     if (useNamedContext) {
-      try {
-        namedContext = await this.namedContextRegistry.getOrCreate(
-          cdpClient.getBrowser(),
-          isolatedContext!,
-        );
-      } catch (err) {
-        throw err;
-      }
+      namedContext = await this.namedContextRegistry.getOrCreate(
+        cdpClient.getBrowser(),
+        isolatedContext!,
+      );
     }
 
     // Snapshot existing target IDs before page creation.
@@ -985,7 +1000,22 @@ export class SessionManager {
         poolPage = await this.connectionPool.acquirePage();
         // Navigate the pre-warmed page to the target URL
         if (url) {
+          // #857: capture the from-URL BEFORE navigation so the lifecycle
+          // bus reports the transition the operator actually drove (pool
+          // pages typically start at 'about:blank' but a recycled page may
+          // carry its prior URL until smartGoto resolves).
+          const fromUrl = poolPage.url();
           await smartGoto(poolPage, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+          const navTargetId = getTargetId(poolPage.target());
+          this.emitLifecycle({
+            kind: 'target:navigate',
+            sessionId,
+            workerId: worker.id,
+            targetId: navTargetId,
+            fromUrl,
+            toUrl: url,
+            ts: Date.now(),
+          });
         }
         // Copy cookies from the worker's browser context if available
         // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
@@ -1076,6 +1106,7 @@ export class SessionManager {
       targetId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'target:create', sessionId, workerId: worker.id, targetId, url: url ?? '', ts: Date.now() });
 
     this.touchSession(sessionId);
 
@@ -1159,6 +1190,7 @@ export class SessionManager {
       targetId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'target:create', sessionId, workerId: worker.id, targetId, url: url ?? '', ts: Date.now() });
 
     this.touchSession(sessionId);
 
@@ -1192,6 +1224,7 @@ export class SessionManager {
       targetId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'target:create', sessionId, workerId, targetId, url: '', ts: Date.now() });
 
     this.touchSession(sessionId);
   }
@@ -1384,9 +1417,9 @@ export class SessionManager {
    * Injects the page into the main CDPClient's targetIdIndex so all tools
    * (read_page, interact, screenshot, etc.) work without a separate connection. (#485)
    */
-  registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): void {
+  async registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): Promise<void> {
     // Register target ownership (no parent — headed pages are top-level navigations).
-    this.registerExternalTarget(targetId, sessionId, workerId);
+    await this.registerExternalTarget(targetId, sessionId, workerId);
 
     // Inject the page into the main CDPClient's index so getPageByTargetId()
     // returns it and the stale-target guards in getCDPSession()/send() pass.
@@ -1403,12 +1436,34 @@ export class SessionManager {
    * count is bumped so closing the parent tab cannot trigger
    * `maybeDestroy` on a context that still has popups attached.
    */
-  registerExternalTarget(
+  async registerExternalTarget(
     targetId: string,
     sessionId: string,
     workerId: string,
     opts?: { inheritContextFromTargetId?: string },
-  ): void {
+  ): Promise<void> {
+    const lockKey = `${sessionId}:${workerId}`;
+    const previous = this.externalTargetRegistrationLocks.get(lockKey) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() =>
+      this.registerExternalTargetLocked(targetId, sessionId, workerId, opts),
+    );
+
+    this.externalTargetRegistrationLocks.set(lockKey, next);
+    try {
+      await next;
+    } finally {
+      if (this.externalTargetRegistrationLocks.get(lockKey) === next) {
+        this.externalTargetRegistrationLocks.delete(lockKey);
+      }
+    }
+  }
+
+  private async registerExternalTargetLocked(
+    targetId: string,
+    sessionId: string,
+    workerId: string,
+    opts?: { inheritContextFromTargetId?: string },
+  ): Promise<void> {
     // Don't overwrite existing entries
     if (this.targetToWorker.has(targetId)) return;
 
@@ -1417,6 +1472,20 @@ export class SessionManager {
 
     const worker = session.workers.get(workerId);
     if (!worker) return;
+
+    // Enforce per-worker tab limit for externally-created targets too
+    // (popups, headed fallback pages, and other out-of-band registrations).
+    // Use closeTarget(), not evictTarget(), so the browser tab is actually
+    // closed and cannot leak after the ownership record is removed. The public
+    // wrapper serializes this block per worker so concurrent popups cannot all
+    // close the same oldest target and then overfill the worker.
+    if (worker.targets.size >= this.config.maxTargetsPerWorker) {
+      const oldestTargetId = worker.targets.values().next().value;
+      if (oldestTargetId) {
+        console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest external tab ${oldestTargetId}`);
+        await this.closeTarget(sessionId, oldestTargetId);
+      }
+    }
 
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
@@ -1440,6 +1509,7 @@ export class SessionManager {
       targetId,
       timestamp: Date.now(),
     });
+    this.emitLifecycle({ kind: 'target:create', sessionId, workerId, targetId, url: '', ts: Date.now() });
 
     this.touchSession(sessionId);
     console.error(`[SessionManager] Registered external target ${targetId} in worker ${workerId} of session ${sessionId}`);
@@ -1511,6 +1581,7 @@ export class SessionManager {
         targetId,
         timestamp: Date.now(),
       });
+      this.emitLifecycle({ kind: 'target:close', sessionId, workerId: ownerInfo.workerId, targetId, ts: Date.now() });
 
       return true;
     } catch (error) {
@@ -1609,6 +1680,7 @@ export class SessionManager {
           targetId,
           timestamp: Date.now(),
         });
+        this.emitLifecycle({ kind: 'target:close', sessionId: ownerInfo.sessionId, workerId: ownerInfo.workerId, targetId, ts: Date.now() });
       }
     }
   }
@@ -1928,6 +2000,22 @@ export class SessionManager {
       } catch (e) {
         console.error('Session event listener error:', e);
       }
+    }
+  }
+
+  /**
+   * Mirror a session-manager transition onto the process-wide lifecycle bus
+   * (issue #857). Each existing `emitEvent` call site that maps to a
+   * lifecycle event also invokes this helper, so legacy `SessionEvent`
+   * subscribers stay intact while new consumers (trace recorder, future
+   * journal) attach via the bus only. Never throws — `getLifecycleBus().emit`
+   * is contractually no-throw, but we defend in depth.
+   */
+  private emitLifecycle(event: LifecycleEvent): void {
+    try {
+      getLifecycleBus().emit(event);
+    } catch {
+      /* bus emit is no-throw; defence in depth */
     }
   }
 

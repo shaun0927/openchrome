@@ -783,3 +783,65 @@ describeIntegration('Integration: PlanRegistry + PlanExecutor', () => {
     expect(after).toBeGreaterThan(before);
   });
 });
+
+describe('PlanExecutor known-good prefix ledger', () => {
+  const SESSION_ID = 'ledger-session';
+
+  function handler(text: string, isError = false): ToolHandler {
+    return jest.fn(async () => ({ content: [{ type: 'text' as const, text }], isError }));
+  }
+
+  function resolver(handlers: Record<string, ToolHandler>) {
+    return (toolName: string): ToolHandler | null => handlers[toolName] ?? null;
+  }
+
+  test('records all-success known-good prefix', async () => {
+    const executor = new PlanExecutor(resolver({ a: handler('A'), b: handler('B') }));
+    const plan = buildPlan({
+      id: 'ledger-success',
+      steps: [buildStep({ order: 1, tool: 'a', args: { b: 2, a: 1 } }), buildStep({ order: 2, tool: 'b', args: {} })],
+      successCriteria: {},
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.success).toBe(true);
+    expect(result.ledger?.knownGoodPrefixLength).toBe(2);
+    expect(result.ledger?.frontierStepOrder).toBeUndefined();
+    expect(result.ledger?.steps.map((s) => s.status)).toEqual(['success', 'success']);
+    expect(result.ledger?.steps[0].argsHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test('records failed frontier after known-good prefix', async () => {
+    const executor = new PlanExecutor(resolver({ a: handler('A'), b: jest.fn(async () => { throw new Error('boom'); }) }));
+    const plan = buildPlan({
+      id: 'ledger-fail',
+      steps: [buildStep({ order: 1, tool: 'a', args: {} }), buildStep({ order: 2, tool: 'b', args: {} })],
+      successCriteria: {},
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.success).toBe(false);
+    expect(result.ledger?.knownGoodPrefixLength).toBe(1);
+    expect(result.ledger?.frontierStepOrder).toBe(2);
+    expect(result.ledger?.invalidationReason).toContain('boom');
+  });
+
+  test('records recovery handler metadata for empty result', async () => {
+    const executor = new PlanExecutor(resolver({ empty: handler('{}'), recover: handler('{"ok":true}') }));
+    const plan = buildPlan({
+      id: 'ledger-recovery',
+      steps: [buildStep({ order: 1, tool: 'empty', args: {} })],
+      errorHandlers: [{ condition: 'step1_empty_result', action: 'recover', steps: [buildStep({ order: 1, tool: 'recover', args: {} })] }],
+      successCriteria: {},
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.ledger?.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'main', status: 'empty_result' }),
+      expect.objectContaining({ phase: 'recovery', recoveryCondition: 'step1_empty_result', status: 'success' }),
+    ]));
+  });
+});
