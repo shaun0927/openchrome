@@ -9,11 +9,12 @@ function escapeAttr(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-export function escapeBoundaryContent(text: string, markerName: string): string {
+export function escapeBoundaryContent(text: string, _markerName: string): string {
   return text
-    .replace(new RegExp(`<(/oc:${markerName})`, 'g'), '<\u200B$1')
-    .replace(new RegExp(`<(oc:${markerName})(?=[\\s>])`, 'g'), '<\u200B$1');
+    .replace(/<(\/oc:[A-Za-z0-9_-]+)/g, '<\u200B$1')
+    .replace(/<(oc:[A-Za-z0-9_-]+)(?=[\s>])/g, '<\u200B$1');
 }
+
 
 export function wrapBoundaryMarker(markerName: string, attrs: Record<string, string | undefined>, body: string): string {
   const attrText = Object.entries(attrs)
