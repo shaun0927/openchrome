@@ -551,7 +551,7 @@ const handler: ToolHandler = async (
   const skippedBelowThreshold = 0;
   let discoveryOrder = 0;
   const bestFirstQueue: CrawlQueueItem[] = [];
-  const bestFirstQueued = new Set<string>();
+  const bestFirstQueued = new Map<string, CrawlQueueItem>();
 
   function makeQueueItem(entry: { url: string; depth: number }): CrawlQueueItem {
     const normalized = normalizeUrl(entry.url);
@@ -572,13 +572,20 @@ const handler: ToolHandler = async (
     }
     for (const entry of entries) {
       const item = makeQueueItem(entry);
-      if (tracker.hasVisited(item.url) || bestFirstQueued.has(item.url)) continue;
-      bestFirstQueued.add(item.url);
+      if (tracker.hasVisited(item.url)) continue;
+      const queued = bestFirstQueued.get(item.url);
+      if (queued) {
+        if (queued.depth <= item.depth) continue;
+        const queuedIndex = bestFirstQueue.indexOf(queued);
+        if (queuedIndex !== -1) bestFirstQueue.splice(queuedIndex, 1);
+      }
+      bestFirstQueued.set(item.url, item);
       bestFirstQueue.push(item);
     }
     bestFirstQueue.sort((a, b) => {
       const scoreDiff = (b.score ?? 0) - (a.score ?? 0);
       if (scoreDiff !== 0) return scoreDiff;
+      if (a.depth !== b.depth) return a.depth - b.depth;
       if (a.order !== b.order) return a.order - b.order;
       return a.url.localeCompare(b.url);
     });
