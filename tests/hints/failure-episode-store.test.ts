@@ -1,0 +1,85 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+import { FailureEpisodeStore } from '../../src/hints/failure-episode-store';
+
+describe('FailureEpisodeStore', () => {
+  it('persists verified recovery episodes with redacted bounded summaries', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'failure-episodes-'));
+    const filePath = path.join(dir, 'failure-episodes.json');
+    const store = new FailureEpisodeStore({ filePath, now: () => 1000 });
+
+    store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'element not interactive password=hunter2 user@example.com',
+      recoveryTool: 'read_page',
+      failure: {
+        domain: 'https://example.test/form',
+        taskIntent: 'submit contact form token=abc123',
+        stateFingerprint: 'overlay-present',
+        actionSummary: 'click submit',
+      },
+      recovery: {
+        actionSummary: 'dismiss overlay then retry',
+        evidenceSummary: 'success banner visible api_key=secret123',
+      },
+    });
+
+    const raw = fs.readFileSync(filePath, 'utf8');
+    expect(raw).toContain('example.test');
+    expect(raw).toContain('[REDACTED]');
+    expect(raw).not.toContain('hunter2');
+    expect(raw).not.toContain('user@example.com');
+    expect(raw).not.toContain('secret123');
+  });
+
+  it('matches by domain, tool, error, task/state context and builds advisory hints', () => {
+    const store = new FailureEpisodeStore({ now: () => 1000 });
+    const episode = store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'element not interactive',
+      recoveryTool: 'read_page',
+      failure: { domain: 'example.test', taskIntent: 'submit form', stateFingerprint: 'overlay-present' },
+      recovery: { actionSummary: 'inspect page and dismiss overlay' },
+    });
+
+    const match = store.match({
+      failedTool: 'interact',
+      errorFingerprint: 'element not interactive on button',
+      domain: 'example.test',
+      taskIntent: 'submit contact form',
+      stateFingerprint: 'overlay-present',
+    });
+
+    expect(match?.id).toBe(episode.id);
+    const hint = store.buildHint(match!);
+    expect(hint).toContain('Suggested recovery');
+    expect(hint).toContain('no recovery was auto-executed');
+  });
+
+  it('prunes low-confidence and over-cap stale/noisy episodes', () => {
+    let now = 1000;
+    const store = new FailureEpisodeStore({ now: () => now, maxEpisodes: 1, staleAfterMs: 50 });
+    const first = store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'first failure',
+      recoveryTool: 'read_page',
+    });
+    now += 10;
+    const second = store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'second failure',
+      recoveryTool: 'find',
+    });
+
+    expect(store.list().map((episode) => episode.id)).toEqual([second.id]);
+    store.recordFailedReuse(second.id);
+    store.recordFailedReuse(second.id);
+    expect(store.list()).toHaveLength(0);
+
+    now += 100;
+    store.recordFailedReuse(first.id);
+    expect(store.match({ failedTool: 'interact', errorFingerprint: 'first failure' })).toBeNull();
+  });
+});
