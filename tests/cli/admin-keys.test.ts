@@ -39,12 +39,19 @@ function extractToken(stdout: string): string {
 }
 
 function extractJsonArray(stdout: string): string {
-  const start = stdout.indexOf('[');
-  const end = stdout.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
+  for (let start = stdout.indexOf('['); start !== -1; start = stdout.indexOf('[', start + 1)) {
+    for (let end = stdout.lastIndexOf(']'); end > start; end = stdout.lastIndexOf(']', end - 1)) {
+      const candidate = stdout.slice(start, end + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        if (Array.isArray(parsed)) return candidate;
+      } catch {
+        // Continue scanning: Jest console-capture noise can contain bracketed
+        // log prefixes before the CLI's own JSON payload in shared workers.
+      }
+    }
   }
-  return stdout.slice(start, end + 1);
+  throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
 }
 
 async function runCli(argv: string[]): Promise<RunResult> {
