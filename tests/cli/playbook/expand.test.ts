@@ -57,14 +57,14 @@ describe('expandStep', () => {
     expect(result.callArgs).toEqual({ code: 'document.title' });
   });
 
-  test('assert → oc_assert tool, YAML node wrapped in assertion field', () => {
+  test('assert → oc_assert tool, YAML node wrapped in contract field', () => {
     const assertArgs = { kind: 'dom_text', selector: 'h1', pattern: 'Example' };
     const result = expandStep('assert', assertArgs);
     expect(result.tool).toBe('oc_assert');
-    expect(result.callArgs).toEqual({ assertion: assertArgs });
+    expect(result.callArgs).toEqual({ contract: assertArgs });
   });
 
-  test('assert: nested and/or/not passes verbatim', () => {
+  test('assert: nested and/or/not is wrapped in contract field', () => {
     const assertArgs = {
       kind: 'and',
       children: [
@@ -74,14 +74,24 @@ describe('expandStep', () => {
     };
     const result = expandStep('assert', assertArgs);
     expect(result.tool).toBe('oc_assert');
-    expect(result.callArgs).toEqual({ assertion: assertArgs });
+    expect(result.callArgs).toEqual({ contract: assertArgs });
   });
 
-  test('assert: url pattern passes verbatim', () => {
+  test('assert: url pattern is wrapped in contract field', () => {
     const assertArgs = { kind: 'url', pattern: 'iana\\.org' };
     const result = expandStep('assert', assertArgs);
     expect(result.tool).toBe('oc_assert');
-    expect(result.callArgs).toEqual({ assertion: { kind: 'url', pattern: 'iana\\.org' } });
+    expect(result.callArgs).toEqual({ contract: { kind: 'url', pattern: 'iana\\.org' } });
+  });
+
+  test('assert: explicit contract/evidence payload passes through unchanged', () => {
+    const assertArgs = {
+      contract: { kind: 'url', pattern: 'fixtures/playbook' },
+      evidence: { snapshot: { url: 'http://127.0.0.1:8765/fixtures/playbook' } },
+    };
+    const result = expandStep('assert', assertArgs);
+    expect(result.tool).toBe('oc_assert');
+    expect(result.callArgs).toEqual(assertArgs);
   });
 
   test('all 9 verbs produce non-empty tool names', () => {

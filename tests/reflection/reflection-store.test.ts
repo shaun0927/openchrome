@@ -90,3 +90,40 @@ describe('ReflectionStore', () => {
     })).rejects.toThrow('invalid trigger');
   });
 });
+
+describe('ReflectionStore bounded recall and validation', () => {
+  let dir: string;
+  let store: ReflectionStore;
+
+  beforeEach(() => {
+    dir = tmpDir();
+    store = new ReflectionStore(dir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('recalls at most three reflections by confidence then recency and excludes expired records', async () => {
+    await store.create({ scope: { domain: 'example.com', taskFingerprint: 'task' }, trigger: 'stuck', evidence: { lastTools: ['a'] }, confidence: 0.4 });
+    const high = await store.create({ scope: { domain: 'example.com', taskFingerprint: 'task' }, trigger: 'stuck', evidence: { lastTools: ['b'] }, confidence: 0.9 });
+    const mid = await store.create({ scope: { domain: 'example.com', taskFingerprint: 'task' }, trigger: 'stuck', evidence: { lastTools: ['c'] }, confidence: 0.7 });
+    const low = await store.create({ scope: { domain: 'example.com', taskFingerprint: 'task' }, trigger: 'stuck', evidence: { lastTools: ['d'] }, confidence: 0.6 });
+    await store.create({ scope: { domain: 'example.com', taskFingerprint: 'task' }, trigger: 'stuck', evidence: { lastTools: ['expired'] }, confidence: 1, expiresAt: Date.now() - 1 });
+
+    expect(store.list({ domain: 'example.com', taskFingerprint: 'task' }).map((item) => item.id)).toEqual([high.id, mid.id, low.id]);
+  });
+
+  it('updates confidence asymmetrically and prunes below threshold', async () => {
+    const artifact = await store.create({ scope: { taskFingerprint: 'task' }, trigger: 'stuck', evidence: { lastTools: ['read_page'] }, confidence: 0.3 });
+    const boosted = await store.validate(artifact.id, true);
+    expect(boosted?.confidence).toBeCloseTo(0.4);
+
+    const penalized = await store.validate(artifact.id, false);
+    expect(penalized?.confidence).toBeCloseTo(0.2);
+
+    const pruned = await store.validate(artifact.id, false);
+    expect(pruned).toBeNull();
+    expect(await store.get(artifact.id)).toBeNull();
+  });
+});

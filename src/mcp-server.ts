@@ -92,6 +92,7 @@ const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_start',
   'oc_recording_stop',
   'oc_recording_list',
+  'oc_recording_status',
   'oc_recording_export',
 ]);
 
@@ -326,6 +327,25 @@ export interface MCPServerOptions {
   dashboard?: boolean;
   dashboardRefreshInterval?: number;
   initialToolTier?: ToolTier;
+}
+
+
+export function summarizeMcpResultForJournal(result: MCPResult): string | undefined {
+  const content = result.content;
+  if (!Array.isArray(content)) return undefined;
+  const injectedHint = typeof (result as Record<string, unknown>)._hint === 'string'
+    ? String((result as Record<string, unknown>)._hint).trim()
+    : undefined;
+  const text = content
+    .map((part) => (part && part.type === 'text' ? part.text : ''))
+    .filter((textPart) => {
+      if (!textPart) return false;
+      return injectedHint === undefined || textPart.trim() !== injectedHint;
+    })
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text ? text.slice(0, 500) : undefined;
 }
 
 export class MCPServer {
@@ -2013,6 +2033,24 @@ export class MCPServer {
       // when --secrets was not passed.
       const finalResult = redactSecrets(result);
       this.recordToolOutputObservability(toolName, finalResult);
+
+      // Record to task journal after response redaction so arbitrary literal
+      // secret values cannot be persisted in journal result summaries.
+      try {
+        const journal = getTaskJournal();
+        const entry = journal.createEntry(
+          toolName,
+          sessionId,
+          toolArgs,
+          Date.now() - toolStartTime,
+          !(finalResult as MCPResult).isError,
+          summarizeMcpResultForJournal(finalResult as MCPResult),
+        );
+        journal.record(entry);
+      } catch {
+        // Best-effort journal recording
+      }
+
       return finalResult;
     } catch (error) {
       const message = formatError(error);
@@ -2056,7 +2094,14 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, false);
+        const entry = journal.createEntry(
+          toolName,
+          sessionId,
+          telemetryToolArgs,
+          Date.now() - toolStartTime,
+          false,
+          redactedMessage,
+        );
         journal.record(entry);
       } catch {
         // Best-effort journal recording

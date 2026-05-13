@@ -89,6 +89,44 @@ const handler: ToolHandler = async (
       lines.push(`Tools: ${sorted.map(([t, c]) => `${t}(${c})`).join(', ')}`);
     }
 
+    const failureClasses = Object.entries(summary.failureClasses ?? {})
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1]);
+    if (failureClasses.length > 0) {
+      lines.push('');
+      lines.push(`Failure classes: ${failureClasses.map(([klass, count]) => `${klass}(${count})`).join(', ')}`);
+    }
+
+    if (summary.lastProgressTool) {
+      const time = new Date(summary.lastProgressTool.ts).toLocaleTimeString();
+      lines.push(`Last progress: ${time} ${summary.lastProgressTool.summary}`);
+    }
+
+    const recentNonProgressTools = summary.recentNonProgressTools ?? [];
+    if (recentNonProgressTools.length > 0) {
+      lines.push('Recent non-progress:');
+      for (const item of recentNonProgressTools) {
+        const time = new Date(item.ts).toLocaleTimeString();
+        lines.push(`  ${time} [${item.failureClass}] ${item.summary}`);
+      }
+    }
+
+    const repeatedErrorFingerprints = summary.repeatedErrorFingerprints ?? [];
+    if (repeatedErrorFingerprints.length > 0) {
+      lines.push('Repeated error fingerprints:');
+      for (const item of repeatedErrorFingerprints) {
+        lines.push(`  ${item.fingerprint} ×${item.count} (${item.failureClass})`);
+      }
+    }
+
+    const candidateRecoveryHints = summary.candidateRecoveryHints ?? [];
+    if (candidateRecoveryHints.length > 0) {
+      lines.push('Candidate recovery hints:');
+      for (const hint of candidateRecoveryHints) {
+        lines.push(`  - ${hint}`);
+      }
+    }
+
     if (summary.total > 0) {
       const failRate = ((summary.failed / summary.total) * 100).toFixed(1);
       lines.push(`Failure rate: ${failRate}%`);

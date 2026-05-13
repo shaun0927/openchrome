@@ -98,8 +98,9 @@ export class ReflectionStore {
     return result.data;
   }
 
-  list(filter?: { domain?: string; taskFingerprint?: string; contractId?: string; limit?: number }): ReflectionArtifact[] {
-    const limit = Math.max(0, Math.min(filter?.limit ?? 20, 100));
+  list(filter?: { domain?: string; taskFingerprint?: string; contractId?: string; limit?: number; includeExpired?: boolean }): ReflectionArtifact[] {
+    const limit = Math.max(0, Math.min(filter?.limit ?? 3, 100));
+    const now = Date.now();
     let files: string[] = [];
     try {
       files = fs.readdirSync(this.rootDir).filter((file) => file.endsWith('.json'));
@@ -116,6 +117,7 @@ export class ReflectionStore {
         if (filter?.domain && artifact.scope.domain !== filter.domain) continue;
         if (filter?.taskFingerprint && artifact.scope.taskFingerprint !== filter.taskFingerprint) continue;
         if (filter?.contractId && artifact.scope.contractId !== filter.contractId) continue;
+        if (!filter?.includeExpired && artifact.expiresAt !== undefined && artifact.expiresAt <= now) continue;
         artifacts.push(artifact);
       } catch {
         // Ignore corrupt reflection files. The store is best-effort and must
@@ -123,7 +125,25 @@ export class ReflectionStore {
       }
     }
 
-    return artifacts.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+    return artifacts
+      .sort((a, b) => b.confidence - a.confidence || b.createdAt - a.createdAt)
+      .slice(0, limit);
+  }
+
+  async validate(id: string, success: boolean): Promise<ReflectionArtifact | null> {
+    const artifact = await this.get(id);
+    if (!artifact) return null;
+    artifact.confidence = clamp(artifact.confidence + (success ? 0.1 : -0.2));
+    if (artifact.confidence < 0.2) {
+      try {
+        fs.unlinkSync(this.pathFor(id));
+      } catch {
+        // Best-effort pruning.
+      }
+      return null;
+    }
+    await writeFileAtomicSafe(this.pathFor(id), artifact);
+    return artifact;
   }
 
   private validateInput(input: ReflectionCreateInput): void {
