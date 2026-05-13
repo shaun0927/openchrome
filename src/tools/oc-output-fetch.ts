@@ -27,7 +27,7 @@ const definition: MCPToolDefinition = {
     properties: {
       output_handle: {
         type: 'string',
-        description: 'Handle identifier returned by a large-output tool (e.g. "oh_ABCDEFGHIJKL").',
+        description: 'REQUIRED Handle identifier returned by a large-output tool (e.g. "oh_ABCDEFGHIJKL").',
       },
       offset: {
         type: 'number',
