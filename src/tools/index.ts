@@ -275,6 +275,22 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_pilot_handoff_create: 'pilot',
   oc_pilot_handoff_redeem: 'pilot',
   oc_proxy_hook: 'pilot',
+
+  // core — develop-era additions (#1062 normalize, #1060 progress, #1019
+  // reflect, #855 task ledger, run-harness ledger). All are diagnostics or
+  // ledger ops with no special filter group.
+  oc_normalize_action: 'core',
+  oc_progress_status: 'core',
+  oc_reflect: 'core',
+  oc_run_events: 'core',
+  oc_run_finish: 'core',
+  oc_run_start: 'core',
+  oc_run_status: 'core',
+  oc_task_cancel: 'core',
+  oc_task_get: 'core',
+  oc_task_list: 'core',
+  oc_task_start: 'core',
+  oc_task_wait: 'core',
 };
 
 /**
