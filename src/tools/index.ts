@@ -76,6 +76,7 @@ import { registerListProfilesTool } from './list-profiles';
 import { registerSessionSnapshotTool } from './session-snapshot';
 import { registerSessionResumeTool } from './session-resume';
 import { registerJournalTool } from './journal';
+import { registerOcReflectTool } from './oc-reflect';
 
 // Self-healing tools (#347)
 import { registerConnectionHealthTool } from './connection-health';
@@ -120,7 +121,12 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
-
+// Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
+import { registerOcTaskStartTool, getTaskStore, setTaskStartupReapPromise } from './oc-task-start';
+import { registerOcTaskListTool } from './oc-task-list';
+import { registerOcTaskGetTool } from './oc-task-get';
+import { registerOcTaskCancelTool } from './oc-task-cancel';
+import { registerOcTaskWaitTool } from './oc-task-wait';
 // Doctor report tool (#898) — read cached `openchrome doctor` output
 import { registerOcDoctorReportTool } from './oc-doctor-report';
 // Performance insights two-step API (#846)
@@ -142,6 +148,10 @@ import { registerOcObserveTool } from './oc-observe';
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
+import { isRunHarnessEnabled } from '../run-harness/flags';
+import { registerRunHarnessTools } from '../run-harness/tools';
+// Read-only progress diagnostics (#1060).
+import { registerOcProgressStatusTool } from './oc-progress-status';
 
 
 /**
@@ -379,6 +389,7 @@ export function registerAllTools(server: MCPServer): void {
   registerSessionSnapshotTool(proxy);
   registerSessionResumeTool(proxy);
   registerJournalTool(proxy);
+  registerOcReflectTool(proxy);
 
   // Self-healing tools (#347)
   registerConnectionHealthTool(proxy);
@@ -416,6 +427,9 @@ export function registerAllTools(server: MCPServer): void {
   // Outcome Contracts (#784) — single-call assertion verifier
   registerOcAssertTool(proxy);
 
+  // Read-only anti-wandering diagnostics (#1060).
+  registerOcProgressStatusTool(server);
+
   // Outcome Contracts (#792) — evidence bundle capture
   registerOcEvidenceBundleTool(proxy);
 
@@ -430,6 +444,27 @@ export function registerAllTools(server: MCPServer): void {
     const { registerOcSkillReplayTool } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
     registerOcSkillReplayTool(proxy);
   }
+
+  // Async task ledger (#855) — persistent background task table
+  registerOcTaskStartTool(server);
+  registerOcTaskListTool(server);
+  registerOcTaskGetTool(server);
+  registerOcTaskCancelTool(server);
+  registerOcTaskWaitTool(server);
+
+  // Reap any RUNNING task whose owner pid is no longer alive. Runs
+  // once at server start (issue #855 invariant #2) so a crash on a
+  // previous boot transitions orphaned rows to FAILED before new
+  // tasks are accepted. Best-effort: log and continue on failure.
+  setTaskStartupReapPromise(
+    getTaskStore()
+      .reapOrphans()
+      .then((reaped) => {
+        if (reaped.length > 0) {
+          console.error(`[task-ledger] Reaped ${reaped.length} orphaned task(s) at startup`);
+        }
+      }),
+  );
 
   // Doctor report tool (#898) — read cached `openchrome doctor` output
   registerOcDoctorReportTool(proxy);
@@ -471,6 +506,11 @@ export function registerAllTools(server: MCPServer): void {
   registerOcDevToolsUrlTool(proxy);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
   registerOcContextTools(proxy);
+
+  // Run harness (#1021) — opt-in tool-call event ledger.
+  if (isRunHarnessEnabled()) {
+    registerRunHarnessTools(server);
+  }
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

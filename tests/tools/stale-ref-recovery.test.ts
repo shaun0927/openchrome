@@ -184,41 +184,34 @@ describe('computer tool stale ref auto-recovery', () => {
     jest.clearAllMocks();
   });
 
-  test('recovers transparently when ref is stale and element is re-located', async () => {
+  test('returns STALE_REF when explicit ref_N identity mismatches instead of relocating', async () => {
     const handler = await getComputerHandler();
 
     const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 12345, 'button', 'Submit', 'button', 'Submit');
 
-    // DOM.describeNode returns a different tag (div) -> triggers stale detection
-    // tryRelocateRef returns a new node
+    // DOM.describeNode returns a different tag (div) -> triggers stale detection.
     mockSessionManager.mockCDPClient.send
-      .mockResolvedValueOnce({ node: { localName: 'div' } })  // DOM.describeNode (stale check - tag changed)
-      // tryRelocateRef inner CDP calls handled by tryRelocateRef mock
-      .mockResolvedValueOnce({})  // DOM.scrollIntoViewIfNeeded
-      .mockResolvedValueOnce({ model: { content: [100, 100, 200, 100, 200, 200, 100, 200] } }); // DOM.getBoxModel
+      .mockResolvedValueOnce({ node: { localName: 'div' } });  // DOM.describeNode (stale check - tag changed)
 
     // validateRef returns stale
     mockRefIdManager.validateRef.mockReturnValue({ valid: false, stale: true, reason: 'Element tag changed: expected <button>, found <div>' });
 
-    // tryRelocateRef succeeds with a new node
+    // Even if relocation would succeed, explicit ref_N must return STALE_REF.
     mockRefIdManager.tryRelocateRef.mockResolvedValue({ backendNodeId: 99999, newRef: 'ref_2' });
-
-    const page = mockSessionManager.pages.get(testTargetId)!;
-    (page.evaluate as jest.Mock).mockResolvedValue(null); // withDomDelta + generateVisualSummary
 
     const result = await handler(testSessionId, {
       tabId: testTargetId,
       action: 'left_click',
       ref: refId,
-    }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    }) as { content: Array<{ type: string; text: string }>; isError?: boolean; error?: { code: string } };
 
-    expect(result.isError).toBeUndefined();
-    expect(mockRefIdManager.tryRelocateRef).toHaveBeenCalledWith(
-      testSessionId, testTargetId, refId, expect.anything(), expect.anything()
-    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('STALE_REF');
+    expect(result.error?.code).toBe('STALE_REF');
+    expect(mockRefIdManager.tryRelocateRef).not.toHaveBeenCalled();
   });
 
-  test('returns error when ref is stale and element cannot be re-located', async () => {
+  test('returns STALE_REF when explicit ref_N cannot be re-located', async () => {
     const handler = await getComputerHandler();
 
     const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 12345, 'button', 'Gone', 'button', 'Gone');
@@ -238,8 +231,7 @@ describe('computer tool stale ref auto-recovery', () => {
     }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('stale');
-    expect(result.content[0].text).toContain('re-located');
+    expect(result.content[0].text).toContain('STALE_REF');
   });
 });
 
