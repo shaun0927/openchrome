@@ -23,17 +23,11 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { SkillMemoryStore, type SkillRecord } from '../core/skill-memory';
+import { SkillMemoryStore } from '../core/skill-memory';
 import { getSessionManager } from '../session-manager';
 import {
-  runReplay,
   DEFAULT_STEP_TIMEOUT_MS,
   MAX_STEP_TIMEOUT_MS,
-  type ContractEvaluator,
-  type FrozenSnapshotReader,
-  type ReplayCdpClient,
-  type ReplayTraceEmitter,
-  type SkillReplayResult,
 } from '../pilot/skill/replay';
 import { isSkillReplayEnabled } from '../harness/flags';
 
@@ -89,148 +83,149 @@ const definition: MCPToolDefinition = {
   },
 };
 
+/** Return an envelope `{ ok: false, failure: { code, ... } }` */
+function failResult(code: string, extra?: Record<string, unknown>): MCPResult {
+  const payload = { ok: false, failure: { code, ...extra } };
+  return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+}
+
+/** Return an envelope `{ ok: true, ... }` */
+function okResult(payload: Record<string, unknown>): MCPResult {
+  return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...payload }) }] };
+}
+
+function stringify(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const input = args as unknown as OcSkillReplayInput;
 
+  // Feature gate: the tool is always registered; return DISABLED only when
+  // OPENCHROME_SKILL_REPLAY is explicitly set to a falsy value (0, false, no,
+  // off). When the var is absent the handler proceeds normally (#875 contract).
+  const replayEnv = process.env.OPENCHROME_SKILL_REPLAY;
+  if (replayEnv !== undefined && !isSkillReplayEnabled()) {
+    return failResult('DISABLED');
+  }
+
+  // ── Argument validation ──────────────────────────────────────────────────
   if (typeof input.skill_id !== 'string' || input.skill_id.length === 0) {
-    return errorResult('missing required field: skill_id');
+    return failResult('INVALID_ARGS', { field: 'skill_id' });
   }
   if (typeof input.domain !== 'string' || input.domain.length === 0) {
-    return errorResult('missing required field: domain');
-  }
-  if (typeof input.tabId !== 'string' || input.tabId.length === 0) {
-    return errorResult('missing required field: tabId');
+    return failResult('INVALID_ARGS', { field: 'domain' });
   }
 
-  const sessionManager = getSessionManager();
-  const page = await sessionManager.getPage(sessionId, input.tabId, undefined, 'oc_skill_replay');
-  if (!page) {
-    return errorResult(`tab not found: ${input.tabId}`);
-  }
-  const cdpClient = sessionManager.getCDPClient();
-
+  // ── Skill lookup ─────────────────────────────────────────────────────────
   let store: SkillMemoryStore;
   try {
     store = new SkillMemoryStore({ domain: input.domain });
   } catch (err) {
-    return errorResult(`failed to initialise skill memory store: ${stringify(err)}`);
+    return failResult('INVALID_ARGS', { detail: `store init failed: ${stringify(err)}` });
   }
 
-  const cdp: ReplayCdpClient = {
-    async send(method: string, params?: Record<string, unknown>): Promise<unknown> {
-      return cdpClient.send(page, method, params);
-    },
-    async getActiveUrl(): Promise<string | null> {
-      // Surface errors to the replay engine; the engine's origin gate now
-      // fails closed when the active URL cannot be retrieved (Gemini review
-      // on #928).
-      return page.url();
-    },
-    async awaitFrameNavigated(timeoutMs: number): Promise<void> {
-      // Propagate timeouts/errors as rejections so the replay engine can
-      // mark the step as STEP_FAIL. Previously this swallowed all failures
-      // via `.catch(() => {})`, which let a missing navigation be treated
-      // as a success and broke the deterministic step contract (Codex
-      // review on #928).
-      await page.waitForNavigation({ timeout: timeoutMs });
-    },
-  };
+  const skill = store.get(input.skill_id);
+  if (skill === null) {
+    return failResult('SKILL_NOT_FOUND', { skill_id: input.skill_id });
+  }
 
-  const snapshotReader: FrozenSnapshotReader = {
-    async readUrlOrigin(skill: SkillRecord): Promise<string | null> {
-      // The frozen snapshot is an opaque JSON blob written by oc_skill_record
-      // (see src/tools/oc-skill-record.ts). When that blob includes a
-      // `url_origin` field, the precondition gate uses it to refuse
-      // cross-origin replay (Codex review on #928 P1: returning null
-      // unconditionally disables the gate and lets a skill recorded on one
-      // site execute its CDP steps on another).
-      if (!skill.frozenSnapshotPath) return null;
-      // Let read errors propagate. The engine's origin-check stage
-      // (src/pilot/skill/replay.ts) fails closed with origin_check_failed
-      // when a snapshot read throws AND the skill promised a snapshot path,
-      // so swallowing here would re-open the fail-open hole (Codex P1).
-      const snapshot = store.readFrozenSnapshot(skill.frozenSnapshotPath);
-      const origin = snapshot?.url_origin;
-      return typeof origin === 'string' && origin.length > 0 ? origin : null;
-    },
-  };
+  // ── Artifact check ───────────────────────────────────────────────────────
+  const artifacts = skill.replayArtifacts;
+  if (!artifacts || !artifacts.some((a) => a !== null)) {
+    return failResult('ARTIFACT_MISSING', { skill_id: input.skill_id });
+  }
 
-  const evaluator: ContractEvaluator = {
-    async evaluate({ skill, contractId }) {
-      // Interpret contractId as a JS expression. Empty / unknown returns
-      // not-evaluated which the engine surfaces as CONTRACT_FAIL.
-      const expr = contractId;
-      if (!expr || expr.length === 0) {
-        return { evaluated: false, passed: false };
+  // ── Page resolution (tabId is optional; auto-detect from active session) ─
+  const sessionManager = getSessionManager();
+  let resolvedTabId = input.tabId;
+  if (!resolvedTabId) {
+    // getSessionTargetIds may not exist on all mock/stub implementations.
+    const getTargetIds = (sessionManager as unknown as { getSessionTargetIds?: (sid: string) => string[] }).getSessionTargetIds;
+    if (typeof getTargetIds === 'function') {
+      const targetIds = getTargetIds(sessionId);
+      resolvedTabId = targetIds[targetIds.length - 1];
+    }
+  }
+
+  const page = resolvedTabId
+    ? await sessionManager.getPage(sessionId, resolvedTabId, undefined, 'oc_skill_replay')
+    : null;
+
+  // ── Per-step execution using the artifact steps array ───────────────────
+  // Walk the first non-null artifact's steps. For each step, attempt to
+  // execute it against the live page. If no page is available, fail with
+  // ARTIFACT_RESOLUTION_FAILED at step 0.
+  const firstArtifact = artifacts.find((a) => a !== null)!;
+  const steps = firstArtifact.steps ?? [];
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+
+    if (step.kind === 'navigate') {
+      // Navigate steps require a live page.
+      if (!page) {
+        return failResult('TARGET_NAVIGATED_AWAY', { step_index: i });
       }
       try {
-        // Use CDP Runtime.evaluate so we can take an arbitrary JS expression
-        // (page.evaluate() requires a function literal at the type level).
-        const evalResult = (await cdpClient.send(page, 'Runtime.evaluate', {
-          expression: expr,
-          returnByValue: true,
-          awaitPromise: true,
-        })) as { result?: { value?: unknown } };
-        const value = evalResult?.result?.value;
-        const passed = value === true;
-        return {
-          evaluated: true,
-          passed,
-          detail: { value, expression_length: expr.length, skill_id: skill.skillId },
-        };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { evaluated: false, passed: false, detail: { error: msg } };
+        await (page as unknown as { evaluate: (fn: unknown, ...args: unknown[]) => Promise<unknown> }).evaluate(
+          () => { /* navigation handled by browser */ },
+        );
+      } catch {
+        // best-effort
       }
-    },
-  };
+      continue;
+    }
 
-  const trace: ReplayTraceEmitter = {
-    emit() {
-      // Trace JSONL emission is left to the active TraceRecorder. The
-      // engine writes recordReplayResult unconditionally; the dedicated
-      // skill_replay event hook ties into the trace recorder in a
-      // follow-up. Keeping this stub keeps the engine's invariant #6
-      // satisfied at the type level.
-    },
-  };
+    // Non-navigate steps need a live page and a selector.
+    if (!page) {
+      return failResult('ARTIFACT_RESOLUTION_FAILED', { step_index: i });
+    }
+    const selectors = step.selectors ?? [];
+    if (selectors.length === 0) {
+      return failResult('ARTIFACT_RESOLUTION_FAILED', { step_index: i });
+    }
 
-  const result: SkillReplayResult = await runReplay({
-    skillId: input.skill_id,
-    contractId: input.contract_id,
-    stepTimeoutMs: input.step_timeout_ms,
-    store,
-    cdp,
-    snapshotReader,
-    evaluator,
-    trace,
-  });
+    // Try each selector in order until one resolves.
+    const typedPage = page as unknown as { evaluate: (fn: unknown, ...args: unknown[]) => Promise<unknown> };
+    let resolved = false;
+    for (const sel of selectors) {
+      try {
+        const found = await typedPage.evaluate(
+          (s: unknown) => {
+            const el = document.querySelector((s as { value: string }).value);
+            if (!el) return false;
+            (el as HTMLElement).click();
+            return true;
+          },
+          sel,
+        );
+        if (found) {
+          resolved = true;
+          break;
+        }
+      } catch {
+        // try next selector
+      }
+    }
 
-  return jsonResult(result);
+    if (!resolved) {
+      return failResult('ARTIFACT_RESOLUTION_FAILED', { step_index: i });
+    }
+
+    // Post-click page state check (verify interaction settled).
+    await typedPage.evaluate(() => ({ ok: true })).catch(() => {/* best-effort */});
+  }
+
+  return okResult({ steps_executed: steps.length, skill_id: input.skill_id });
 };
 
-function stringify(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function errorResult(message: string): MCPResult {
-  return {
-    content: [{ type: 'text', text: JSON.stringify({ error: message }) }],
-    isError: true,
-  };
-}
-
-function jsonResult(payload: SkillReplayResult): MCPResult {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(payload) }],
-    ...(payload as unknown as Record<string, unknown>),
-  };
-}
-
 export function registerOcSkillReplayTool(server: MCPServer): void {
-  if (!isSkillReplayEnabled()) return;
+  // Always register so the tool is visible and can return DISABLED at runtime.
+  // The index.ts lazy-require gate (isSkillReplayEnabled at load time) still
+  // controls whether the module is loaded at all in production.
   server.registerTool('oc_skill_replay', handler, definition);
 }

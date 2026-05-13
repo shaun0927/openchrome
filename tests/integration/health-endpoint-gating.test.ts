@@ -240,12 +240,21 @@ describeFn('health endpoint gating (issue #648)', () => {
         // Expected wording.
         expect(stderr).toMatch(scenario.expectedLogPattern);
 
-        // Give the listener a beat to actually bind() on the enabled path.
+        // Wait for the listener to actually bind() on the enabled path.
+        // Slow CI runners (especially ubuntu-20 with --transport=both) need
+        // more than a fixed 500ms after the log line — bind() happens slightly
+        // after the SelfHealing log on those machines. Poll instead of guess.
+        let probe: 'connected' | 'refused' | 'timeout' = 'refused';
         if (scenario.expectBound) {
-          await sleep(500);
+          const deadline = Date.now() + 10_000;
+          while (Date.now() < deadline) {
+            probe = await probePort(healthPort, 300);
+            if (probe === 'connected') break;
+            await sleep(150);
+          }
+        } else {
+          probe = await probePort(healthPort, 500);
         }
-
-        const probe = await probePort(healthPort, 500);
         if (scenario.expectBound) {
           expect(probe).toBe('connected');
           // And the payload should be the daemon's own /health JSON.

@@ -12,6 +12,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
+import type { ToolCapability } from '../types/mcp';
 import {
   CategorySelection,
   resolveEnabledCategories,
@@ -174,6 +175,138 @@ interface RegistrationEntry {
   tools: readonly string[];
   register: (server: MCPServer) => void;
 }
+
+// Legacy capability filter (#829) — kept alongside the new category filter so
+// that existing --tools-only / --disable-tools / OPENCHROME_TOOL_TIER callers
+// keep working unchanged while operators migrate to --slim / --enable-categories.
+export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
+  // core — fundamental browser control
+  act: 'core',
+  computer: 'core',
+  console_capture: 'core',
+  drag_drop: 'core',
+  emulate_device: 'core',
+  expand_tools: 'core',
+  extract_data: 'core',
+  file_upload: 'core',
+  fill_form: 'core',
+  find: 'core',
+  form_input: 'core',
+  geolocation: 'core',
+  http_auth: 'core',
+  inspect: 'core',
+  interact: 'core',
+  javascript_tool: 'core',
+  lightweight_scroll: 'core',
+  memory: 'core',
+  navigate: 'core',
+  network: 'core',
+  network_capture_full: 'core',
+  network_capture_lite: 'core',
+  oc_assert: 'core',
+  oc_checkpoint: 'core',
+  oc_context_export: 'core',
+  oc_context_import: 'core',
+  oc_connection_health: 'core',
+  oc_copy_to_clipboard: 'core',
+  oc_devtools_url: 'core',
+  oc_doctor_report: 'core',
+  oc_evidence_bundle: 'core',
+  oc_get_connection_info: 'core',
+  oc_journal: 'core',
+  oc_observe: 'core',
+  oc_open_host_settings: 'core',
+  oc_performance_analyze: 'core',
+  oc_performance_insights: 'core',
+  oc_reap_orphans: 'core',
+  oc_session_resume: 'core',
+  oc_session_snapshot: 'core',
+  oc_skill_recall: 'core',
+  oc_skill_record: 'core',
+  oc_skill_replay: 'pilot',
+  oc_stop: 'core',
+  page_content: 'core',
+  page_pdf: 'core',
+  page_reload: 'core',
+  page_screenshot: 'core',
+  performance_metrics: 'core',
+  query_dom: 'core',
+  read_page: 'core',
+  request_intercept: 'core',
+  tabs_close: 'core',
+  tabs_context: 'core',
+  tabs_create: 'core',
+  user_agent: 'core',
+  validate_page: 'core',
+  vision_find: 'core',
+  wait_for: 'core',
+  worker: 'core',
+
+  // storage — cookie and web-storage
+  cookies: 'storage',
+  storage: 'storage',
+
+  // profile — Chrome profile management
+  list_profiles: 'profile',
+  oc_profile_status: 'profile',
+
+  // crawl — multi-page crawling and batch workers
+  batch_execute: 'crawl',
+  batch_paginate: 'crawl',
+  crawl: 'crawl',
+  crawl_sitemap: 'crawl',
+  crawl_cancel: 'crawl',
+  crawl_start: 'crawl',
+  crawl_status: 'crawl',
+  worker_complete: 'crawl',
+  worker_update: 'crawl',
+
+  // recording — session recording
+  oc_recording_export: 'recording',
+  oc_recording_list: 'recording',
+  oc_recording_start: 'recording',
+  oc_recording_status: 'recording',
+  oc_recording_stop: 'recording',
+
+  // workflow — Chrome-Sisyphus orchestration
+  execute_plan: 'workflow',
+  workflow_cleanup: 'workflow',
+  workflow_collect: 'workflow',
+  workflow_collect_partial: 'workflow',
+  workflow_init: 'workflow',
+  workflow_status: 'workflow',
+
+  // totp — 2FA / TOTP generation
+  oc_totp_generate: 'totp',
+
+  // pilot — experimental pilot-tier tools
+  oc_pilot_handoff_create: 'pilot',
+  oc_pilot_handoff_redeem: 'pilot',
+  oc_proxy_hook: 'pilot',
+
+  // core — develop-era additions (#1062 normalize, #1060 progress, #1019
+  // reflect, #855 task ledger, run-harness ledger). All are diagnostics or
+  // ledger ops with no special filter group.
+  oc_normalize_action: 'core',
+  oc_progress_status: 'core',
+  oc_reflect: 'core',
+  oc_run_events: 'core',
+  oc_run_finish: 'core',
+  oc_run_start: 'core',
+  oc_run_status: 'core',
+  oc_task_cancel: 'core',
+  oc_task_get: 'core',
+  oc_task_list: 'core',
+  oc_task_run_checkpoint: 'core',
+  oc_task_run_complete: 'core',
+  oc_task_run_get: 'core',
+  oc_task_run_list: 'core',
+  oc_task_run_needs_help: 'core',
+  oc_task_run_start: 'core',
+  oc_task_run_update: 'core',
+  oc_task_start: 'core',
+  oc_task_wait: 'core',
+};
 
 /**
  * Build a `MCPServer` proxy that delegates `registerTool` only when the
