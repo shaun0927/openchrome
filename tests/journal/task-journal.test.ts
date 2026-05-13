@@ -237,7 +237,7 @@ describe('TaskJournal', () => {
       const entry = journal.createEntry('navigate', 'sess-1', { url: 'https://example.com' }, 100, true);
       journal.record(entry);
 
-      const recent = journal.getRecent(10);
+      const recent = journal.getRecent(10) as JournalEntry[];
       expect(recent).toHaveLength(1);
       expect(recent[0].tool).toBe('navigate');
       expect(recent[0].sessionId).toBe('sess-1');
@@ -267,7 +267,7 @@ describe('TaskJournal', () => {
         journal.record(journal.createEntry('navigate', 'sess', { url }, 10, true));
       }
 
-      const recent = journal.getRecent(2);
+      const recent = journal.getRecent(2) as JournalEntry[];
       expect(recent).toHaveLength(2);
       // Should be the last 2
       expect(recent[0].args.url).toBe('https://b.com');
@@ -416,6 +416,24 @@ describe('TaskJournal', () => {
       const summary = journal.getSummary({ since: checkpoint });
       expect(summary.total).toBe(1);
       expect(summary.toolCounts['read_page']).toBe(1);
+    });
+
+
+    it('excludes output-handle events from tool-call totals', () => {
+      journal.record(journal.createEntry('read_page', 'sess', {}, 10, true));
+      journal.recordOutputHandle({
+        event: 'output_handle_created',
+        handle: 'oh_ABCDEFGHIJKL',
+        source_tool: 'read_page',
+        size_bytes: 1234,
+        mime_type: 'application/json',
+      });
+
+      const summary = journal.getSummary();
+      expect(summary.total).toBe(1);
+      expect(summary.succeeded).toBe(1);
+      expect(summary.failed).toBe(0);
+      expect(summary.toolCounts.read_page).toBe(1);
     });
 
     it('returns zeros when no entries exist', () => {

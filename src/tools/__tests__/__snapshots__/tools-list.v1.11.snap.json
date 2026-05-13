@@ -136,6 +136,9 @@
       "name": "oc_open_host_settings"
     },
     {
+      "name": "oc_output_fetch"
+    },
+    {
       "name": "oc_performance_analyze"
     },
     {

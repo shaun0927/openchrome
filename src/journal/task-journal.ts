@@ -110,6 +110,22 @@ export class TaskJournal {
   }
 
   /**
+   * Record an output-handle creation event (#887). Best-effort sidecar log.
+   */
+  recordOutputHandle(event: Record<string, unknown>): void {
+    try {
+      const filename = `journal-${this.dateString()}.jsonl`;
+      const filepath = path.join(this.dir, filename);
+      fs.appendFileSync(filepath, JSON.stringify(event) + "\n");
+    } catch (err) {
+      console.error(
+        "[TaskJournal] Output-handle write failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  /**
    * Create a JournalEntry from a tool call.
    */
   createEntry(
@@ -211,7 +227,7 @@ export class TaskJournal {
     candidateRecoveryHints: string[];
     period: { start: number; end: number };
   } {
-    let entries = this.getRecent(1000);
+    let entries = this.getRecent(1000).filter(isJournalEntry);
     if (opts?.since) {
       entries = entries.filter((e) => e.ts > opts.since!);
     }
@@ -493,8 +509,8 @@ function emptyFailureClassCounts(): Record<JournalFailureClass, number> {
   };
 }
 
-function stripUrls(text: string): string {
-  return text.replace(/https?:\/\/[^\s)]+/gi, '[url]');
+function stripUrls(text: unknown): string {
+  return (typeof text === 'string' ? text : '').replace(/https?:\/\/[^\s)]+/gi, '[url]');
 }
 
 function hasOkNonProgressSignal(text: string): boolean {
@@ -546,4 +562,14 @@ export function getTaskJournal(): TaskJournal {
     instance = new TaskJournal();
   }
   return instance;
+}
+
+function isJournalEntry(entry: unknown): entry is JournalEntry {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    typeof (entry as JournalEntry).tool === 'string' &&
+    typeof (entry as JournalEntry).ok === 'boolean' &&
+    typeof (entry as JournalEntry).summary === 'string'
+  );
 }

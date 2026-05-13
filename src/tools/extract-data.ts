@@ -7,7 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
-import { waitForPageReady, PageReadyResult } from '../utils/page-ready-state';
+import { waitForPageReady } from '../utils/page-ready-state';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import {
   validateSchema,
@@ -23,6 +23,11 @@ import {
 } from '../extraction';
 import type { ExtractionMode } from '../extraction';
 import type { ExtractionSchema, SchemaProperty } from '../extraction';
+import {
+  OUTPUT_MODE_SCHEMA_PROPERTIES,
+  parseOutputMode,
+  resolveOutputMode,
+} from './_shared/output-mode';
 
 const definition: MCPToolDefinition = {
   name: 'extract_data',
@@ -53,14 +58,7 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Extract array of items (for listings/tables). Default: false',
       },
-      waitForReady: {
-        type: 'boolean',
-        description: 'Opt in to a bounded page-ready gate before extraction. Waits for document readiness and a short DOM mutation quiet window. Default: false',
-      },
-      readyTimeoutMs: {
-        type: 'number',
-        description: 'Maximum wait for waitForReady in milliseconds. Default: 5000',
-      },
+      ...OUTPUT_MODE_SCHEMA_PROPERTIES,
     },
     required: ['tabId', 'schema'],
   },
@@ -81,7 +79,7 @@ function countFields(data: Record<string, unknown>): number {
   return Object.values(data).filter(v => v !== null && v !== undefined && v !== '').length;
 }
 
-export const extractDataHandler: ToolHandler = async (
+const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   _context?: ToolContext
@@ -91,15 +89,16 @@ export const extractDataHandler: ToolHandler = async (
   if (!modeCheck.ok) {
     return { content: [{ type: 'text', text: `Error: ${modeCheck.error}` }], isError: true };
   }
-  const mode = modeCheck.mode;
-  const budget = EXTRACTION_MODE_BUDGETS[mode];
+  const extractionMode = modeCheck.mode;
+  const budget = EXTRACTION_MODE_BUDGETS[extractionMode];
 
   const tabId = args.tabId as string;
   const schema = args.schema as ExtractionSchema;
   const selector = args.selector as string | undefined;
   const multiple = (args.multiple as boolean) ?? false;
-  const waitForReady = (args.waitForReady as boolean) ?? false;
-  const readyTimeoutMs = args.readyTimeoutMs as number | undefined;
+  const { mode: outputMode, inlineLimit } = parseOutputMode(args);
+  const waitForReady = args.waitForReady === true;
+  const readyTimeoutMs = typeof args.readyTimeoutMs === 'number' ? args.readyTimeoutMs : undefined;
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
@@ -121,11 +120,6 @@ export const extractDataHandler: ToolHandler = async (
   }
 
   try {
-    let readiness: PageReadyResult | undefined;
-    if (waitForReady) {
-      readiness = await waitForPageReady(page, { timeoutMs: readyTimeoutMs }, _context);
-    }
-
     const schemaProps: Record<string, SchemaProperty> = multiple
       ? (schema.items?.properties || schema.properties || {})
       : (schema.properties || {});
@@ -135,6 +129,11 @@ export const extractDataHandler: ToolHandler = async (
 
     if (fieldNames.length === 0) {
       return { content: [{ type: 'text', text: 'Error: Schema must define at least one property' }], isError: true };
+    }
+
+    let readiness: Awaited<ReturnType<typeof waitForPageReady>> | undefined;
+    if (waitForReady) {
+      readiness = await waitForPageReady(page, readyTimeoutMs ? { timeoutMs: readyTimeoutMs } : {}, _context);
     }
 
     const pageUrl = page.url();
@@ -149,7 +148,6 @@ export const extractDataHandler: ToolHandler = async (
         return {
           content: [{ type: 'text', text: JSON.stringify({
             action: 'extract_data', url: pageUrl, multiple: true, items: [], count: 0,
-            ...(readiness && { readiness }),
             message: 'No repeating items found. Try a more specific selector or check if the page has loaded.',
           }) }],
         };
@@ -163,12 +161,17 @@ export const extractDataHandler: ToolHandler = async (
         selector: selector || 'auto', fieldCount: fieldNames.length, itemCount: validated.length,
       }));
 
-      return {
-        content: [{ type: 'text', text: JSON.stringify({
-          action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
-          ...(readiness && { readiness }),
-        }) }],
+      const multiplePayload: Record<string, unknown> = {
+        action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length,
+        modeUsed: extractionMode,
+        ...(readiness ? { readiness } : {}),
       };
+      const multipleTextWithoutMetrics = JSON.stringify(multiplePayload);
+      multiplePayload.metrics = { mode: extractionMode, outputChars: multipleTextWithoutMetrics.length };
+      const multipleInlineResult: MCPResult = {
+        content: [{ type: 'text', text: JSON.stringify(multiplePayload) }],
+      };
+      return resolveOutputMode(outputMode, inlineLimit, multipleInlineResult, multiplePayload, 'extract_data');
     }
 
     // Single item — layered strategies
@@ -183,7 +186,7 @@ export const extractDataHandler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, readiness);
+      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness);
     }
 
     // Strategy 2: Microdata
@@ -200,7 +203,7 @@ export const extractDataHandler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, readiness);
+      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness);
     }
 
     // Strategy 4: CSS heuristic
@@ -209,7 +212,7 @@ export const extractDataHandler: ToolHandler = async (
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('css-heuristic'); }
     } catch { /* non-fatal */ }
 
-    if (mode === 'standard' && countFields(merged) < fieldNames.length) {
+    if (extractionMode === 'standard' && countFields(merged) < fieldNames.length) {
       try {
         const r = await withTimeout(
           page.evaluate(buildStandardDomExtractor(fieldNames, schemaProps, selector, budget.maxStandardDomNodes)) as Promise<Record<string, unknown>>,
@@ -224,7 +227,7 @@ export const extractDataHandler: ToolHandler = async (
     }
 
     const { result, validation } = validateAndCoerce(merged, schema);
-    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, readiness);
+    return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness);
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -232,8 +235,8 @@ export const extractDataHandler: ToolHandler = async (
 
 function buildResponse(
   data: Record<string, unknown>, errors: string[], url: string,
-  strategies: string[], domain: string, fieldNames: string[], mode: ExtractionMode, readiness?: PageReadyResult
-): MCPResult {
+  strategies: string[], domain: string, fieldNames: string[], extractionMode: ExtractionMode,
+): { inlineResult: MCPResult; payload: Record<string, unknown> } {
   const fieldsFound = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k]) => k);
   const fieldsMissing = fieldNames.filter(f => !fieldsFound.includes(f));
 
@@ -244,22 +247,40 @@ function buildResponse(
     }));
   }
 
-  const response: Record<string, unknown> = {
+  const payload: Record<string, unknown> = {
     action: 'extract_data', url, data, fieldsFound: fieldsFound.length, fieldsTotal: fieldNames.length, strategies,
-    modeUsed: mode,
+    modeUsed: extractionMode,
   };
-  if (readiness) response.readiness = readiness;
-  if (fieldsMissing.length > 0) response.fieldsMissing = fieldsMissing;
-  if (errors.length > 0) response.validationErrors = errors;
+  if (fieldsMissing.length > 0) payload.fieldsMissing = fieldsMissing;
+  if (errors.length > 0) payload.validationErrors = errors;
   if (fieldsFound.length === 0) {
-    response.message = 'No data extracted. Try: (1) read_page to verify content, (2) provide a CSS selector, (3) wait_for before extracting.';
+    payload.message = 'No data extracted. Try: (1) read_page to verify content, (2) provide a CSS selector, (3) wait_for before extracting.';
   }
 
-  const textWithoutMetrics = JSON.stringify(response);
-  response.metrics = { mode, outputChars: textWithoutMetrics.length };
-  return { content: [{ type: 'text', text: JSON.stringify(response) }] };
+  const textWithoutMetrics = JSON.stringify(payload);
+  payload.metrics = { mode: extractionMode, outputChars: textWithoutMetrics.length };
+  return { inlineResult: { content: [{ type: 'text', text: JSON.stringify(payload) }] }, payload };
 }
 
+
+async function buildResponseWithMode(
+  data: Record<string, unknown>, errors: string[], url: string,
+  strategies: string[], domain: string, fieldNames: string[],
+  extractionMode: ExtractionMode, outputMode: import('./_shared/output-mode').OutputMode, inlineLimit: number,
+  readiness?: Awaited<ReturnType<typeof waitForPageReady>>,
+): Promise<MCPResult> {
+  const { inlineResult, payload } = buildResponse(data, errors, url, strategies, domain, fieldNames, extractionMode);
+  if (readiness) {
+    payload.readiness = readiness;
+    if (inlineResult.content?.[0]?.type === 'text') {
+      inlineResult.content[0].text = JSON.stringify(payload);
+    }
+  }
+  return resolveOutputMode(outputMode, inlineLimit, inlineResult, payload, 'extract_data');
+}
+
+export const extractDataHandler = handler;
+
 export function registerExtractDataTool(server: MCPServer): void {
-  server.registerTool('extract_data', extractDataHandler, definition);
+  server.registerTool('extract_data', handler, definition);
 }
