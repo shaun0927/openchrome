@@ -161,6 +161,47 @@ describe('AX Element Resolver', () => {
       expect(results.every(r => r.matchLevel === 1)).toBe(true);
     });
 
+
+    test('context hint reorders repeated labels within the same match level', () => {
+      const repeated = [
+        makeNode('button', 'Add to cart', { description: 'Budget keyboard card $29' }),
+        makeNode('button', 'Add to cart', { description: 'Noise Cancelling Headphones card $199' }),
+        makeNode('button', 'Add to cart', { description: 'USB-C hub card $49' }),
+      ];
+
+      const results = cascadeFilter(repeated, 'button', 'Add to cart', 3, 'Noise Cancelling Headphones');
+
+      expect(results).toHaveLength(3);
+      expect(results[0].node.properties.description).toContain('Headphones');
+      expect(results[0].contextScore).toBeGreaterThan(0);
+      expect(results.every(r => r.matchLevel === 1)).toBe(true);
+    });
+
+    test('context hint does not cross cascade levels or overpower a stricter role/name match', () => {
+      const repeated = [
+        makeNode('button', 'Submit'),
+        makeNode('link', 'Submit shipping details', { description: 'Checkout payment form' }),
+      ];
+
+      const results = cascadeFilter(repeated, 'button', 'Submit', 3, 'Checkout payment form');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].node.role).toBe('button');
+      expect(results[0].matchLevel).toBe(1);
+    });
+
+    test('without context hint repeated labels preserve current candidate order', () => {
+      const repeated = [
+        makeNode('button', 'Login', { description: 'Header navigation' }),
+        makeNode('button', 'Login', { description: 'Footer links' }),
+      ];
+
+      const results = cascadeFilter(repeated, 'button', 'Login');
+
+      expect(results[0].node.properties.description).toBe('Header navigation');
+      expect(results[0].contextScore).toBe(0);
+    });
+
     describe('real-world Angular Material radio button scenario', () => {
       test('should pick radio "외부" over button "외부 사용자 유형 도움말"', () => {
         const results = cascadeFilter(nodes, 'radio', '외부');
