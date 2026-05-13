@@ -2291,13 +2291,35 @@ export class MCPServer {
       return { domChanged: true, freshRefsDiscovered: hasRef, observationOnly: false };
     }
     if (toolName === 'extract_data') {
-      const content = result?.content;
-      return { dataItemsExtracted: Array.isArray(content) && content.length > 0 ? content.length : 1, observationOnly: false };
+      return { dataItemsExtracted: this.countExtractedDataItems(result), observationOnly: false };
     }
-    if (toolName === 'request_intercept' || toolName === 'network_capture') {
+    if (toolName === 'request_intercept' || toolName === 'network_capture_lite' || toolName === 'network_capture_full') {
       return { networkChanged: true, observationOnly: false };
     }
     return { freshRefsDiscovered: hasRef };
+  }
+
+  private countExtractedDataItems(result?: MCPResult): number {
+    for (const item of result?.content ?? []) {
+      if (typeof item.text !== 'string') continue;
+      try {
+        const parsed = JSON.parse(item.text) as {
+          count?: unknown;
+          fieldsFound?: unknown;
+          items?: unknown;
+          data?: unknown;
+        };
+        if (typeof parsed.count === 'number' && Number.isFinite(parsed.count)) return Math.max(0, parsed.count);
+        if (Array.isArray(parsed.items)) return parsed.items.length;
+        if (typeof parsed.fieldsFound === 'number' && Number.isFinite(parsed.fieldsFound)) return Math.max(0, parsed.fieldsFound);
+        if (parsed.data && typeof parsed.data === 'object') {
+          return Object.values(parsed.data as Record<string, unknown>).filter((value) => value !== null && value !== undefined && value !== '').length;
+        }
+      } catch {
+        // Ignore non-JSON text payloads.
+      }
+    }
+    return 0;
   }
 
   getToolHandler(toolName: string): ToolHandler | null {
