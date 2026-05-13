@@ -9,6 +9,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { formatCDPResult, CDPEvalResult } from './javascript';
 
@@ -55,6 +56,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tasks'],
   },
+  annotations: TOOL_ANNOTATIONS.batch_execute,
 };
 
 interface BatchTask {

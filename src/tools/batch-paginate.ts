@@ -9,6 +9,7 @@
 import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
@@ -70,6 +71,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'strategy'],
   },
+  annotations: TOOL_ANNOTATIONS.batch_paginate,
 };
 
 interface PageResult {

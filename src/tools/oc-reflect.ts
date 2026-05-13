@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { ReflectionStore, ReflectionCreateInput } from '../reflection';
 
 const definition: MCPToolDefinition = {
@@ -14,6 +15,7 @@ const definition: MCPToolDefinition = {
   description:
     'Create, get, or list structured task-failure reflection artifacts. ' +
     'Reflections are passive recovery guidance only; OpenChrome never executes nextPlan automatically.',
+  annotations: TOOL_ANNOTATIONS.oc_reflect,
   inputSchema: {
     type: 'object',
     properties: {

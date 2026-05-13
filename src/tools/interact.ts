@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -19,7 +20,6 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import {
   appendReturnAfterState,
   parseReturnAfterState,
@@ -51,7 +51,7 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Click/hover/double_click an element by natural language; waits for DOM to settle, returns a state summary.\n\nWhen to use: single-call click on an element described in plain language. For Shadow DOM / canvas / cross-origin iframes, screenshot first and pass mode:"coordinate".\nWhen NOT to use: prefer computer for generic coordinate clicks, or act for multi-step sequences.',
+  description: 'Find an element by natural language and click/hover/double_click; returns state summary after DOM settles.\n\nWhen to use: clicking/hovering an element you can describe in plain language. For Shadow DOM / canvas / cross-origin iframes, screenshot first and call with mode:"coordinate".\nWhen NOT to use: computer for plain-DOM coordinate clicks, or act for multi-step sequences.', 
   inputSchema: {
     type: 'object',
     properties: {
@@ -127,6 +127,7 @@ const definition: MCPToolDefinition = {
     // OPENCHROME_NODE_REF flag value).
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.interact,
 };
 
 /**
@@ -1221,11 +1222,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerInteractTool(server: MCPServer): void {
-  // Snapshot-cache (#879): bump the active frame's docEpoch after a
-  // successful interaction so any later read sees a miss.
-  const sm = getSessionManager();
-  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid, undefined, 'interact') : Promise.resolve(null),
-  );
-  server.registerTool('interact', wrapped, definition);
+  server.registerTool('interact', handler, definition);
 }

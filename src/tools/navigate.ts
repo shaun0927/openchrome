@@ -4,6 +4,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
@@ -479,6 +480,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['url'],
   },
+  annotations: TOOL_ANNOTATIONS.navigate,
 };
 
 const handler: ToolHandler = async (

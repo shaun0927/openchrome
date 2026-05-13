@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { createJob, type JobConfig } from '../core/crawl/job-store';
 import { emitCrawlTrace } from '../core/crawl/trace-emit';
 
@@ -17,6 +18,7 @@ const definition: MCPToolDefinition = {
     'immediately — performs NO network I/O. Drive progress with crawl_status' +
     '({ jobId, advance: N }) which fetches up to N pages per call. Same args ' +
     'as the legacy crawl tool. Use crawl_cancel to stop.',
+  annotations: TOOL_ANNOTATIONS.crawl_start,
   inputSchema: {
     type: 'object',
     properties: {

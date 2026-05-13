@@ -27,6 +27,7 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
 import type { CDPClient } from '../cdp/client';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 
 // ─── Types ───
 
@@ -217,6 +218,7 @@ const definition: MCPToolDefinition = {
     'When NOT to use: full-page comprehension (use read_page), structural CSS ' +
     'diagnostics (use read_page mode=css), or natural-language replay (use act). ' +
     'No LLM, no outbound network — pure AX-tree traversal.',
+  annotations: TOOL_ANNOTATIONS.oc_observe,
   inputSchema: {
     type: 'object',
     properties: {

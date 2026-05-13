@@ -13,6 +13,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { SkillMemoryStore, type SkillRecord } from '../core/skill-memory';
 
 interface OcSkillRecallOutput {
@@ -53,6 +54,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['domain'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_skill_recall,
 };
 
 const handler: ToolHandler = async (

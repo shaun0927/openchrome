@@ -16,6 +16,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import {
   DEFAULT_INCLUDE,
   DEFAULT_NETWORK_WINDOW_MS,
@@ -105,6 +106,7 @@ const definition: MCPToolDefinition = {
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_evidence_bundle,
 };
 
 function parseInclude(raw: unknown): EvidenceBundlePart[] | undefined {

@@ -8,6 +8,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 
 export interface NormalizeDiagnostic {
   code: string;
@@ -280,6 +281,7 @@ export function normalizeActionPayload(params: {
 
 const definition: MCPToolDefinition = {
   name: 'oc_normalize_action',
+  annotations: TOOL_ANNOTATIONS.oc_normalize_action,
   description:
     'Validate and normalize a near-valid browser/computer action payload without executing it. ' +
     'Use this before calling real action tools when a host model produced aliases such as left_click, hotkey, coordinate, or missing click button. ' +

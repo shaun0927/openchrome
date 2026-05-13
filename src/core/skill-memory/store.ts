@@ -39,10 +39,12 @@ import { acquireLock, writeFileAtomicSafe } from '../../utils/atomic-file';
 
 import {
   SKILL_MEMORY_SCHEMA_VERSION,
+  SKILL_MEMORY_SCHEMA_VERSION_V1,
   type FrozenSnapshot,
   type SkillMemoryFile,
   type SkillRecord,
 } from './types';
+import { validateReplayArtifact, type ReplayArtifact } from './replay-artifact';
 
 export interface SkillMemoryStoreOptions {
   /** Root directory for per-domain skills.json + snapshot files. */
@@ -147,6 +149,27 @@ function assertSafeSnapshotId(snapshotId: string): void {
 }
 
 /**
+ * Normalise a record read from disk so its `replayArtifacts` field is
+ * always defined and parallel-indexed with `steps`. Defensive against:
+ *   - v1 records (no field on disk),
+ *   - partial v2 writes (field present but wrong length),
+ *   - non-array `steps` (we leave the field undefined; callers handle).
+ */
+function normaliseRecordForRead(rec: SkillRecord): SkillRecord {
+  if (!Array.isArray(rec.steps)) return { ...rec };
+  const stepCount = rec.steps.length;
+  const existing = rec.replayArtifacts;
+  if (Array.isArray(existing) && existing.length === stepCount) return rec;
+  const padded: Array<ReplayArtifact | null> = new Array(stepCount).fill(null);
+  if (Array.isArray(existing)) {
+    for (let i = 0; i < Math.min(existing.length, stepCount); i++) {
+      padded[i] = existing[i] ?? null;
+    }
+  }
+  return { ...rec, replayArtifacts: padded };
+}
+
+/**
  * Deterministic skill_id derived from (domain, name). Stable across
  * process restarts so `record()` is idempotent without needing a
  * separate uniqueness index.
@@ -216,11 +239,21 @@ export class SkillMemoryStore {
   }
 
   /**
-   * Read skills.json synchronously. Returns an empty file shape when
-   * the file is missing, malformed, or stamped with an unknown schema
-   * version. The schema-mismatch case is logged via `console.error`
-   * (per project rule — `console.log` collides with MCP JSON-RPC) so
-   * operators can spot the rollback path during upgrades.
+   * Read skills.json synchronously. Returns an empty file shape when the
+   * file is missing or malformed.
+   *
+   * Schema handling:
+   *   - v2 (current): returned as-is.
+   *   - v1: each record is normalised to v2 in memory by attaching a
+   *     `replayArtifacts: [null, null, …]` parallel to `steps`. The file
+   *     on disk is NOT rewritten here — the next idempotent `record()`
+   *     write promotes it. This keeps reads side-effect-free, which is
+   *     important for `get()` / `list()` consumers.
+   *   - Anything else: logged and skipped (returns an empty file).
+   *
+   * The schema-mismatch case is logged via `console.error` (per project
+   * rule — `console.log` collides with MCP JSON-RPC) so operators can spot
+   * the rollback path during upgrades.
    */
   private readFileSync(): SkillMemoryFile {
     const file = this.skillsFile();
@@ -243,16 +276,37 @@ export class SkillMemoryStore {
       return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
     }
     const obj = parsed as Partial<SkillMemoryFile>;
-    if (obj.schema_version !== SKILL_MEMORY_SCHEMA_VERSION) {
-      console.error(
-        `SkillMemoryStore: skipping ${file} — unknown schema_version=${String(obj.schema_version)}`,
-      );
-      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+    if (obj.schema_version === SKILL_MEMORY_SCHEMA_VERSION) {
+      if (!obj.skills || typeof obj.skills !== 'object') {
+        return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+      }
+      // Normalise: ensure every record has a `replayArtifacts` array
+      // parallel-indexed with `steps`. Defends against partial/legacy v2
+      // writes that omitted the field.
+      const skills = obj.skills as Record<string, SkillRecord>;
+      const normalised: Record<string, SkillRecord> = {};
+      for (const [id, rec] of Object.entries(skills)) {
+        normalised[id] = normaliseRecordForRead(rec);
+      }
+      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: normalised };
     }
-    if (!obj.skills || typeof obj.skills !== 'object') {
-      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+    if (obj.schema_version === SKILL_MEMORY_SCHEMA_VERSION_V1) {
+      if (!obj.skills || typeof obj.skills !== 'object') {
+        return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+      }
+      const v1Skills = obj.skills as Record<string, SkillRecord>;
+      const upgraded: Record<string, SkillRecord> = {};
+      for (const [id, rec] of Object.entries(v1Skills)) {
+        upgraded[id] = normaliseRecordForRead(rec);
+      }
+      // Note: we return v2 in memory but do NOT rewrite the file here.
+      // The next record() acquires the lock and writes v2 explicitly.
+      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: upgraded };
     }
-    return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: obj.skills as Record<string, SkillRecord> };
+    console.error(
+      `SkillMemoryStore: skipping ${file} — unknown schema_version=${String(obj.schema_version)}`,
+    );
+    return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
   }
 
   /** Persist skills.json atomically (temp + rename via write-file-atomic). */
@@ -297,6 +351,43 @@ export class SkillMemoryStore {
       }
       const skillId = existingId ?? skill.skillId ?? computeSkillId(this.domain, skill.name);
       const existing = existingId ? file.skills[existingId] : undefined;
+      // `replayArtifacts` (#875) — when the caller supplies a value, validate
+      // each non-null entry and persist as-is. When omitted, fall back to
+      // the existing record's artifacts (re-record without artifact change),
+      // or to a parallel array of nulls sized to `steps.length`. Validation
+      // failure throws so callers see the issue rather than silently dropping
+      // captured strategies.
+      let replayArtifacts: Array<ReplayArtifact | null> | undefined;
+      if (skill.replayArtifacts !== undefined) {
+        if (!Array.isArray(skill.replayArtifacts)) {
+          throw new Error('SkillMemoryStore.record: replayArtifacts must be an array when present');
+        }
+        for (let i = 0; i < skill.replayArtifacts.length; i++) {
+          const a = skill.replayArtifacts[i];
+          if (a === null) continue;
+          const v = validateReplayArtifact(a);
+          if (!v.ok) {
+            throw new Error(`SkillMemoryStore.record: replayArtifacts[${i}] invalid: ${v.error}`);
+          }
+        }
+        replayArtifacts = skill.replayArtifacts.slice();
+      } else if (existing?.replayArtifacts) {
+        replayArtifacts = existing.replayArtifacts.slice();
+      }
+      // Final pad to the new `steps.length` — additive resize when caller
+      // grew the step list, truncate when they shrank it.
+      if (Array.isArray(skill.steps)) {
+        const want = skill.steps.length;
+        if (!replayArtifacts) {
+          replayArtifacts = new Array<ReplayArtifact | null>(want).fill(null);
+        } else if (replayArtifacts.length !== want) {
+          const next: Array<ReplayArtifact | null> = new Array(want).fill(null);
+          for (let i = 0; i < Math.min(replayArtifacts.length, want); i++) {
+            next[i] = replayArtifacts[i] ?? null;
+          }
+          replayArtifacts = next;
+        }
+      }
       const next: SkillRecord = {
         skillId,
         domain: this.domain,
@@ -312,6 +403,7 @@ export class SkillMemoryStore {
         // writeFrozenSnapshot; re-record without an explicit override
         // keeps the previously-recorded value.
         frozenSnapshotPath: skill.frozenSnapshotPath ?? existing?.frozenSnapshotPath ?? null,
+        ...(replayArtifacts !== undefined ? { replayArtifacts } : {}),
       };
       // Preserve replay-outcome fields across idempotent re-record. The
       // recorder owns `steps`/`contractId`; the replay path owns the

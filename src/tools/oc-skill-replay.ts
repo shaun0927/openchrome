@@ -22,6 +22,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { SkillMemoryStore, type SkillRecord } from '../core/skill-memory';
 import { getSessionManager } from '../session-manager';
 import {
@@ -53,6 +54,7 @@ const definition: MCPToolDefinition = {
     'Deterministic — no retries, no heuristics, no LLM. ' +
     'Persists last_replay_passed_at / last_replay_failed_at so that ' +
     'oc_skill_recall can demote skills whose latest replay failed.',
+  annotations: TOOL_ANNOTATIONS.oc_skill_replay,
   inputSchema: {
     type: 'object',
     properties: {

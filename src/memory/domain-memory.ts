@@ -31,6 +31,7 @@ export class DomainMemory {
   private filePath: string | null = null;
   private dirty = false;
   private savePromise: Promise<void> | null = null;
+  private saveAgain = false;
 
   static readonly MAX_ENTRIES = 200;
   static readonly STALE_DAYS = 30;
@@ -183,10 +184,22 @@ export class DomainMemory {
   save(): void {
     if (!this.filePath || !this.dirty) return;
     // Fire-and-forget: callers don't await this.
-    // Coalesce: if a save is already in flight, don't start another.
-    if (this.savePromise) return;
+    // Coalesce concurrent saves, but do not drop mutations that happen while
+    // the current write is in flight. A second save request records that the
+    // latest in-memory state must be flushed after the active write completes.
+    if (this.savePromise) {
+      this.saveAgain = true;
+      return;
+    }
+
+    this.dirty = false;
     this.savePromise = this.saveAsync().finally(() => {
       this.savePromise = null;
+      if (this.saveAgain || this.dirty) {
+        this.saveAgain = false;
+        this.dirty = true;
+        this.save();
+      }
     });
   }
 
@@ -201,8 +214,8 @@ export class DomainMemory {
         updatedAt: Date.now(),
       };
       await fsPromises.writeFile(this.filePath, JSON.stringify(store, null, 2));
-      this.dirty = false;
     } catch {
+      this.dirty = true;
       // Best-effort
     }
   }

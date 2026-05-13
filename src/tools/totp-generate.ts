@@ -5,6 +5,7 @@
 import { generateTOTP } from '../auth/totp-manager';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 
 const definition: MCPToolDefinition = {
   name: 'oc_totp_generate',
@@ -20,6 +21,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['domain'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_totp_generate,
 };
 
 /**

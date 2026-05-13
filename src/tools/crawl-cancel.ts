@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { assertValidJobId, loadJob, setStatus } from '../core/crawl/job-store';
 import { emitCrawlTrace } from '../core/crawl/trace-emit';
 
@@ -16,6 +17,7 @@ const definition: MCPToolDefinition = {
     'Mark a crawl job as cancelled. Returns immediately. Subsequent ' +
     'crawl_status calls on this jobId will skip the runner and report ' +
     'status "cancelled".',
+  annotations: TOOL_ANNOTATIONS.crawl_cancel,
   inputSchema: {
     type: 'object',
     properties: {

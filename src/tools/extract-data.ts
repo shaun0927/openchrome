@@ -4,6 +4,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
@@ -56,6 +57,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'schema'],
   },
+  annotations: TOOL_ANNOTATIONS.extract_data,
 };
 
 function mergeResults(base: Record<string, unknown>, overlay: Record<string, unknown>): Record<string, unknown> {

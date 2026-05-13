@@ -5,6 +5,7 @@
 import { HTTPRequest } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getMetricsCollector } from '../metrics/collector';
 
@@ -220,6 +221,7 @@ function estimatedStaticAssetResponseBytes(resourceType: string): number {
 
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
+  annotations: TOOL_ANNOTATIONS.request_intercept,
   description:
     'Intercept network requests (log, block, modify). ' +
     'preset="optimize-bandwidth" blocks Image/Media/Font/Stylesheet; ' +
