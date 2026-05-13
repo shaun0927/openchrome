@@ -802,9 +802,11 @@ const handler: ToolHandler = async (
       } catch {
         // Non-critical — proceed without count
       }
+      const backUrl = page.url();
+      const backDomainSkills = await autoRecallForUrl(backUrl, recallArg);
       const backResultText = JSON.stringify({
         action: 'back',
-        url: page.url(),
+        url: backUrl,
         title: await safeTitle(page),
         elementCount: backElementCount,
         ...(backSummary && { visualSummary: backSummary }),
@@ -812,6 +814,7 @@ const handler: ToolHandler = async (
         ...(backBlocking && { blockingPage: backBlocking }),
         ...blockingDetectionErrorFields(backBlockingDetection),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
+        ...(backDomainSkills !== undefined && { domain_skills: backDomainSkills }),
       });
       return {
         content: [{ type: 'text', text: backResultText }],
@@ -836,9 +839,11 @@ const handler: ToolHandler = async (
       } catch {
         // Non-critical — proceed without count
       }
+      const fwdUrl = page.url();
+      const fwdDomainSkills = await autoRecallForUrl(fwdUrl, recallArg);
       const fwdResultText = JSON.stringify({
         action: 'forward',
-        url: page.url(),
+        url: fwdUrl,
         title: await safeTitle(page),
         elementCount: fwdElementCount,
         ...(fwdSummary && { visualSummary: fwdSummary }),
@@ -846,6 +851,7 @@ const handler: ToolHandler = async (
         ...(fwdBlocking && { blockingPage: fwdBlocking }),
         ...blockingDetectionErrorFields(fwdBlockingDetection),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
+        ...(fwdDomainSkills !== undefined && { domain_skills: fwdDomainSkills }),
       });
       return {
         content: [{ type: 'text', text: fwdResultText }],
