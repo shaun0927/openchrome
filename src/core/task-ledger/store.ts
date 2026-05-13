@@ -299,6 +299,25 @@ export class TaskStore {
     fs.appendFileSync(this.eventsPath(taskId), line, 'utf8');
   }
 
+  readEventsSync(taskId: string): TaskEvent[] {
+    try {
+      assertSafeTaskId(taskId);
+    } catch {
+      return [];
+    }
+    const file = this.eventsPath(taskId);
+    if (!fs.existsSync(file)) return [];
+    try {
+      return fs.readFileSync(file, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as TaskEvent)
+        .filter((event) => typeof event.ts === 'number' && typeof event.kind === 'string');
+    } catch {
+      return [];
+    }
+  }
+
   /** Persist the tool's terminal result blob. Idempotent. */
   async writeResult(taskId: string, result: unknown): Promise<void> {
     assertSafeTaskId(taskId);

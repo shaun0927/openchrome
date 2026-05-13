@@ -37,6 +37,23 @@ export function formatStaleRefError(refId: string): string {
   return `STALE_REF: ref_id="${refId}" — ${STALE_REF_HINT}`;
 }
 
+export interface SnapshotRefMetadata {
+  snapshotId: string;
+  capturedAt: number;
+  url: string;
+  tabId: string;
+}
+
+export interface StaleSnapshotWarning {
+  code: 'stale_snapshot' | 'possibly_stale_snapshot';
+  message: string;
+  ref_id: string;
+  snapshot_id?: string;
+  captured_at?: number;
+  age_ms?: number;
+  hint: string;
+}
+
 export interface RefEntry {
   refId: string;
   backendDOMNodeId: number;
@@ -55,6 +72,8 @@ export interface RefEntry {
    * Refs resolve via backendDOMNodeId; frameId is metadata for clients.
    */
   frameId?: string;
+  /** Snapshot metadata from the page-state-producing call that minted this ref. */
+  snapshot?: SnapshotRefMetadata;
 }
 
 export class RefIdManager {
@@ -76,7 +95,7 @@ export class RefIdManager {
     name?: string,
     tagName?: string,
     textContent?: string,
-    options?: { staleAfterMs?: number; frameId?: string }
+    options?: { staleAfterMs?: number; frameId?: string; snapshot?: SnapshotRefMetadata }
   ): string {
     let sessionRefs = this.refs.get(sessionId);
     if (!sessionRefs) {
@@ -111,6 +130,7 @@ export class RefIdManager {
       createdAt: Date.now(),
       staleAfterMs: options?.staleAfterMs ?? REF_TTL_MS,
       frameId: options?.frameId,
+      snapshot: options?.snapshot,
     };
 
     targetRefs.set(refId, entry);
@@ -168,6 +188,36 @@ export class RefIdManager {
     const entry = this.getRef(sessionId, targetId, refId);
     if (!entry) return true;
     return Date.now() - entry.createdAt > entry.staleAfterMs;
+  }
+
+
+  getRefStalenessWarning(
+    sessionId: string,
+    targetId: string,
+    refId: string,
+    now = Date.now()
+  ): StaleSnapshotWarning | undefined {
+    const entry = this.getRef(sessionId, targetId, refId);
+    if (!entry) {
+      return {
+        code: 'stale_snapshot',
+        message: `Ref ${refId} is no longer present for tab ${targetId}; the page likely navigated, reloaded, or refreshed refs.`,
+        ref_id: refId,
+        hint: STALE_REF_HINT,
+      };
+    }
+
+    const ageMs = now - entry.createdAt;
+    if (ageMs <= entry.staleAfterMs) return undefined;
+    return {
+      code: 'possibly_stale_snapshot',
+      message: `Ref ${refId} is ${ageMs}ms old and exceeds stale_after_ms=${entry.staleAfterMs}.`,
+      ref_id: refId,
+      snapshot_id: entry.snapshot?.snapshotId,
+      captured_at: entry.snapshot?.capturedAt ?? entry.createdAt,
+      age_ms: ageMs,
+      hint: STALE_REF_HINT,
+    };
   }
 
   /**
@@ -411,7 +461,7 @@ export class RefIdManager {
         entry.name,
         entry.tagName,
         entry.textContent,
-        { staleAfterMs: entry.staleAfterMs, frameId: entry.frameId }
+        { staleAfterMs: entry.staleAfterMs, frameId: entry.frameId, snapshot: entry.snapshot }
       );
 
       return { backendNodeId: node.backendNodeId, newRef };

@@ -29,6 +29,7 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
+import { buildTextMetrics } from '../core/metrics/token-estimate';
 import { buildUrlScoreOptions, scoreUrl, UrlScoreOptions } from '../core/crawl/url-scorer';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { sanitizeContent } from '../security/content-sanitizer';
@@ -99,6 +100,10 @@ const definition: MCPToolDefinition = {
         enum: ['auto', 'static', 'cdp'],
         description:
           'Fetch engine: "cdp" (default, opens a Chrome tab per page), "static" (Node fetch only, fails closed on insufficient pages), or "auto" (static first, fall back to CDP when static is insufficient).',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate output size/token metrics in the JSON result. Default: false.',
       },
       strategy: {
         type: 'string',
@@ -239,7 +244,6 @@ async function fetchRobotsTxt(
 // the caller (auto mode) can fall back to CDP.
 // ---------------------------------------------------------------------------
 
-
 function cleanMarkdownFromHtml(
   html: string,
   cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
@@ -355,7 +359,9 @@ async function fetchPageStatic(
 /** Options for `fetchOnePage`, shared by legacy crawl and host-driven crawl jobs. */
 export interface FetchOnePageOptions {
   outputFormat: string;
+  /** When true (default), strip nav/footer/ads from extracted content. */
   onlyMainContent?: boolean;
+  /** When true, include outgoing links in the result for BFS expansion. */
   includeLinks?: boolean;
 }
 
@@ -614,6 +620,7 @@ const handler: ToolHandler = async (
   const delayMs = args.delay_ms != null ? Number(args.delay_ms) : 1000;
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 
+  const includeMetrics = args.include_metrics === true;
   const engineArg = args.engine as string | undefined;
   let engine: EngineMode = 'cdp';
   if (engineArg === 'static' || engineArg === 'auto' || engineArg === 'cdp') {
@@ -961,10 +968,26 @@ const handler: ToolHandler = async (
       ...(adaptiveDispatcher ? { dispatcher: adaptiveDispatcher.stats() } : {}),
     };
 
-    const output = { summary, pages };
+    const buildOutput = (outputPages: CrawledPage[]) => includeMetrics
+      ? {
+          summary: {
+            ...summary,
+            metrics: {
+              returned_chars: outputPages.reduce((sum, p) => sum + p.content.length, 0),
+              estimated_tokens: outputPages.reduce((sum, p) => sum + buildTextMetrics(p.content).estimated_tokens, 0),
+              truncated_pages: outputPages.filter((p) => p.content.includes('...[truncated]')).length,
+              mode: `crawl:${outputFormat}`,
+            },
+          },
+          pages: outputPages.map((p) => ({
+            ...p,
+            metrics: buildTextMetrics(p.content, { mode: outputFormat }),
+          })),
+        }
+      : { summary, pages: outputPages };
 
     // Ensure output fits within limits
-    let outputJson = JSON.stringify(output, null, 2);
+    let outputJson = JSON.stringify(buildOutput(pages), null, 2);
     if (outputJson.length > MAX_OUTPUT_CHARS) {
       // Truncate page contents progressively to fit
       const truncatedPages = pages.map((p) => ({
@@ -973,7 +996,7 @@ const handler: ToolHandler = async (
           ? p.content.slice(0, 2000) + '...[truncated]'
           : p.content,
       }));
-      outputJson = JSON.stringify({ summary, pages: truncatedPages }, null, 2);
+      outputJson = JSON.stringify(buildOutput(truncatedPages), null, 2);
 
       // If still too large, remove content entirely
       if (outputJson.length > MAX_OUTPUT_CHARS) {
@@ -985,7 +1008,37 @@ const handler: ToolHandler = async (
           content_length: p.content.length,
           error: p.error,
         }));
-        outputJson = JSON.stringify({ summary, pages: minimalPages, note: 'Content omitted due to size constraints' }, null, 2);
+        const minimalOutput = includeMetrics
+          ? {
+              summary: {
+                ...summary,
+                metrics: {
+                  returned_chars: 0,
+                  estimated_tokens: 0,
+                  truncated_pages: minimalPages.length,
+                  mode: `crawl:${outputFormat}`,
+                },
+              },
+              pages: minimalPages.map((p) => ({
+                ...p,
+                metrics: buildTextMetrics('', { mode: outputFormat, truncated: true }),
+              })),
+              note: 'Content omitted due to size constraints',
+            }
+          : { summary, pages: minimalPages, note: 'Content omitted due to size constraints' };
+        outputJson = JSON.stringify(minimalOutput, null, 2);
+        if (outputJson.length > MAX_OUTPUT_CHARS) {
+          outputJson = JSON.stringify({
+            summary: includeMetrics
+              ? {
+                  ...summary,
+                  metrics: { returned_chars: 0, estimated_tokens: 0, truncated_pages: pages.length, mode: `crawl:${outputFormat}` },
+                }
+              : summary,
+            pages: minimalPages.map(({ url, title, depth, links_found, content_length, error }) => ({ url, title, depth, links_found, content_length, error })),
+            note: 'Content omitted due to size constraints',
+          }, null, 2);
+        }
       }
     }
 

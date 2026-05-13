@@ -157,10 +157,16 @@ const handler: ToolHandler = async (
   if (refArg) {
     // Check if the ref is stale (missing or TTL-expired).
     if (refIdManager.isRefStale(sessionId, tabId, refArg)) {
+      const staleWarning = typeof refIdManager.getRefStalenessWarning === 'function'
+        ? refIdManager.getRefStalenessWarning(sessionId, tabId, refArg)
+        : undefined;
+      const warningText = staleWarning
+        ? `\nWarning: ${staleWarning.code}: ${staleWarning.message}`
+        : '';
       return {
-        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" is no longer valid (element may have changed or page navigated). Call read_page to get fresh refs.` }],
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" is no longer valid (element may have changed or page navigated). Call read_page to get fresh refs.${warningText}` }],
         isError: true,
-        error: { code: 'STALE_REF', ref_id: refArg },
+        error: { code: 'STALE_REF', ref_id: refArg, stale_warning: staleWarning },
       } as MCPResult;
     }
 

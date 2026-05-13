@@ -19,6 +19,8 @@ import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { buildTextMetrics } from '../core/metrics/token-estimate';
+import { isStateHeaderEnabled, prependHeaderText } from './_shared/state-header';
 
 interface ConsoleLogEntry {
   type: string;
@@ -105,6 +107,10 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: `How much visible body text to include in the summary. Default: ${DEFAULT_BODY_SAMPLE}, max: ${MAX_BODY_SAMPLE}.`,
       },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate output size/token metrics for the returned summary and body sample. Default: false.',
+      },
     },
     required: ['url'],
   },
@@ -126,6 +132,7 @@ const handler: ToolHandler = async (
     Math.max((args.bodyTextSampleChars as number) ?? DEFAULT_BODY_SAMPLE, 0),
     MAX_BODY_SAMPLE,
   );
+  const includeMetrics = args.include_metrics === true;
 
   if (!rawUrl) {
     return {
@@ -324,8 +331,12 @@ const handler: ToolHandler = async (
         ? `validate_page auth_redirect_required — redirected to ${authRedirect?.host ?? 'unknown'}`
         : `validate_page ${status}${navError ? ': ' + navError : ''}`;
 
+  const state = { url: finalUrl, title, mode: 'validate' as const, capturedAt: Date.now(), tabId: tabId! };
+  const stateHeader = isStateHeaderEnabled() ? { state } : {};
+  const text = prependHeaderText(state, summaryLine);
+
   return {
-    content: [{ type: 'text', text: summaryLine }],
+    content: [{ type: 'text', text }],
     tabId,
     created,
     url: finalUrl,
@@ -339,12 +350,19 @@ const handler: ToolHandler = async (
       totalWarnings,
     },
     summary,
+    ...stateHeader,
     ...(authRedirect && {
       authRedirect: true,
       redirectedFrom: authRedirect.from,
       authRedirectHost: authRedirect.host,
     }),
     ...(navError && { error: navError }),
+    ...(includeMetrics && {
+      metrics: {
+        summary: buildTextMetrics(summaryLine, { mode: 'validate_page:summary' }),
+        bodyTextSample: buildTextMetrics(summary.bodyTextSample || '', { mode: 'validate_page:bodyTextSample' }),
+      },
+    }),
   };
 };
 

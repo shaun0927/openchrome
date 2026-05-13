@@ -6,16 +6,18 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager, REF_TTL_MS } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
+import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { getGlobalConfig } from '../config/global';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
 
 /**
  * Build the `[node_refs]` block that surfaces the #844 backend-node uid
@@ -148,6 +150,10 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include structured read_page timing diagnostics in the MCP result metadata. Default: false.',
       },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate returned size/token metrics in the emitted payload. Default: false.',
+      },
     },
     required: ['tabId'],
   },
@@ -207,6 +213,16 @@ interface AXNode {
   value?: { value: string };
   childIds?: number[];
   properties?: Array<{ name: string; value: { value: unknown } }>;
+}
+
+
+function createReadPageSnapshotMetadata(tabId: string, url: string, capturedAt = Date.now()): SnapshotRefMetadata {
+  return {
+    snapshotId: `snap_${capturedAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    capturedAt,
+    url,
+    tabId,
+  };
 }
 
 const handler: ToolHandler = async (
@@ -276,6 +292,42 @@ const handler: ToolHandler = async (
     const withDiagnostics = (result: MCPResult): MCPResult => (
       diagnosticsEnabled ? { ...result, _diagnostics: diagnostics } : result
     );
+    const includeMetrics = args.include_metrics === true;
+    const withTextMetrics = (text: string, emittedMode: string, truncated = hasTruncationMarker(text)): string => {
+      if (!includeMetrics) return text;
+      let baseText = text;
+      let metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+      for (let i = 0; i < 8; i++) {
+        const candidate = appendMetricsFooter(baseText, metrics);
+        const nextMetrics = buildTextMetrics(candidate, { mode: emittedMode, truncated });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) {
+          if (candidate.length <= MAX_OUTPUT_CHARS) return candidate;
+          const reserve = Math.min(512, Math.max(128, candidate.length - baseText.length + 64));
+          baseText = `${baseText.slice(0, Math.max(0, MAX_OUTPUT_CHARS - reserve))}
+
+[Output truncated — metrics footer reserved output budget]`;
+          truncated = true;
+          metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+          continue;
+        }
+        metrics = nextMetrics;
+      }
+      return appendMetricsFooter(baseText, metrics);
+    };
+    const withSemanticMetrics = (view: Record<string, unknown>): string => {
+      if (!includeMetrics) return JSON.stringify(view);
+      const payload: Record<string, unknown> = { ...view };
+      let metrics = buildTextMetrics(JSON.stringify(payload), { mode: 'semantic' });
+      for (let i = 0; i < 8; i++) {
+        payload._metrics = metrics;
+        const text = JSON.stringify(payload);
+        const nextMetrics = buildTextMetrics(text, { mode: 'semantic' });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) return text;
+        metrics = nextMetrics;
+      }
+      payload._metrics = metrics;
+      return JSON.stringify(payload);
+    };
 
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
     const compactAX = args.compact === true;
@@ -324,7 +376,7 @@ const handler: ToolHandler = async (
       }
       const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
       return {
-        content: [{ type: 'text', text: md + suffix }],
+        content: [{ type: 'text', text: withTextMetrics(md + suffix, 'markdown', truncated) }],
       };
     }
 
@@ -486,7 +538,7 @@ const handler: ToolHandler = async (
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: cssText + cssPaginationSection }],
+        content: [{ type: 'text', text: withTextMetrics(cssText + cssPaginationSection, 'css') }],
       };
     }
 
@@ -679,7 +731,7 @@ const handler: ToolHandler = async (
       );
 
       return {
-        content: [{ type: 'text', text: JSON.stringify(view) }],
+        content: [{ type: 'text', text: withSemanticMetrics(view as unknown as Record<string, unknown>) }],
       };
     }
 
@@ -729,7 +781,7 @@ const handler: ToolHandler = async (
               const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
               const compressedText = statsLine + delta.content + nodeRefsBlock + domPaginationSection;
               return withDiagnostics({
-                content: [{ type: 'text', text: compressedText }],
+                content: [{ type: 'text', text: withTextMetrics(compressedText, 'dom') }],
                 _compression: {
                   level: 'delta',
                   originalChars: outputText.length,
@@ -747,7 +799,7 @@ const handler: ToolHandler = async (
         const includePaginationDom = args.includePagination !== false;
         const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
         return withDiagnostics({
-          content: [{ type: 'text', text: outputText + nodeRefsBlock + domPaginationSection }],
+          content: [{ type: 'text', text: withTextMetrics(outputText + nodeRefsBlock + domPaginationSection, 'dom') }],
         });
       } catch (error) {
         if (isExplicitDomMode) {
@@ -873,7 +925,11 @@ const handler: ToolHandler = async (
       frame_id?: string;
       created_at: number;
       stale_after_ms: number;
+      snapshot_id: string;
+      snapshot_captured_at: number;
+      snapshot_url: string;
     }> = {};
+    const snapshotMetadata = createReadPageSnapshotMetadata(tabId, axPageStats.url);
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
@@ -925,7 +981,9 @@ const handler: ToolHandler = async (
           node.backendDOMNodeId,
           role,
           name,
-          tagName
+          tagName,
+          undefined,
+          { snapshot: snapshotMetadata }
         );
 
         // #831: record the structured ref entry for the response `refs` map.
@@ -940,6 +998,9 @@ const handler: ToolHandler = async (
           ...(entry?.frameId ? { frame_id: entry.frameId } : {}),
           created_at: entry?.createdAt ?? Date.now(),
           stale_after_ms: entry?.staleAfterMs ?? REF_TTL_MS,
+          snapshot_id: snapshotMetadata.snapshotId,
+          snapshot_captured_at: snapshotMetadata.capturedAt,
+          snapshot_url: snapshotMetadata.url,
         };
       }
 
@@ -1051,6 +1112,7 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
+          snapshot: snapshotMetadata,
         });
       }
 
@@ -1103,6 +1165,7 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
+          snapshot: snapshotMetadata,
         });
       }
     }
@@ -1110,6 +1173,7 @@ const handler: ToolHandler = async (
     return withDiagnostics({
       content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
       refs: refsMap,
+      snapshot: snapshotMetadata,
     });
   } catch (error) {
     return {
@@ -1236,8 +1300,77 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
  * behavior-preserving seam so the feature can be re-enabled safely later.
  */
 const cachedHandler: ToolHandler = async (sessionId, args, context) => {
-  return sanitizedHandler(sessionId, args, context);
+  const result = await sanitizedHandler(sessionId, args, context);
+  if (!isStateHeaderEnabled() || result.isError || !result.content) return result;
+
+  const tabId = typeof args.tabId === 'string' ? args.tabId : '';
+  if (!tabId) return result;
+
+  let page: Awaited<ReturnType<ReturnType<typeof getSessionManager>['getPage']>> | null = null;
+  try {
+    page = await getSessionManager().getPage(sessionId, tabId);
+  } catch {
+    page = null;
+  }
+  if (!page) return result;
+
+  let url = '';
+  let title = '';
+  try {
+    url = page.url() || '';
+  } catch {
+    url = '';
+  }
+  try {
+    title = await page.title();
+  } catch {
+    title = '';
+  }
+
+  const requestedMode = typeof args.mode === 'string' ? args.mode : 'dom';
+  const mode = ['ax', 'dom', 'css', 'semantic', 'markdown'].includes(requestedMode)
+    ? requestedMode
+    : 'dom';
+  const headerMode = mode === 'markdown' ? 'html' : mode;
+  const header = { url, title, mode: headerMode as 'ax' | 'dom' | 'css' | 'html', capturedAt: Date.now(), tabId };
+  const includeMetrics = args.include_metrics === true;
+  const refreshSemanticMetrics = (payload: Record<string, unknown>): Record<string, unknown> => {
+    if (!includeMetrics || !('_metrics' in payload)) return payload;
+    const next = { ...payload };
+    delete next._metrics;
+    let metrics = buildTextMetrics(JSON.stringify(next), { mode: 'semantic' });
+    for (let i = 0; i < 8; i++) {
+      next._metrics = metrics;
+      const text = JSON.stringify(next);
+      const candidate = buildTextMetrics(text, { mode: 'semantic' });
+      if (candidate.returned_chars === metrics.returned_chars && candidate.estimated_tokens === metrics.estimated_tokens) return next;
+      metrics = candidate;
+    }
+    next._metrics = metrics;
+    return next;
+  };
+
+  return {
+    ...result,
+    content: result.content.map((block) => {
+      if (block.type !== 'text' || typeof block.text !== 'string') return block;
+      if (mode === 'semantic') {
+        try {
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          const merged = mergeHeaderJson(header, parsed) as Record<string, unknown>;
+          return { ...block, text: JSON.stringify(refreshSemanticMetrics(merged)) };
+        } catch {
+          return { ...block, text: prependHeaderText(header, block.text) };
+        }
+      }
+      return { ...block, text: prependHeaderText(header, block.text) };
+    }),
+  };
 };
+
+function hasTruncationMarker(text: string): boolean {
+  return text.includes('...[truncated]') || text.includes('[Output truncated') || text.includes('Content omitted due to size constraints');
+}
 
 export function registerReadPageTool(server: MCPServer): void {
   server.registerTool('read_page', cachedHandler, definition);

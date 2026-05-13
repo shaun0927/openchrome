@@ -204,6 +204,14 @@ export function isConnectionError(error: unknown): boolean {
  *  sleep/wake). Skip session initialization so recovery handlers can always run. */
 const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish', 'oc_progress_status']);
 
+const RUN_HARNESS_LONG_TASK_TOOLS = new Set([
+  'execute_plan',
+  'crawl',
+  'crawl_sitemap',
+  'batch_paginate',
+  'batch_execute',
+]);
+
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
 
@@ -1660,6 +1668,35 @@ export class MCPServer {
     getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
     const toolStartTime = Date.now();
 
+    const runHarnessId = isRunHarnessEnabled() ? extractRunId(toolArgs) : undefined;
+    if (runHarnessId && !toolName.startsWith('oc_run_')) {
+      try {
+        const runStore = getRunStore();
+        const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+        runStore.appendToolStarted({
+          run_id: runHarnessId,
+          session_id: sessionId,
+          tab_id: runTabId,
+          tool: toolName,
+          args: toolArgs,
+        });
+        if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+          runStore.appendRunEvent({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: runTabId,
+            kind: 'progress',
+            tool: toolName,
+            message: 'long task started',
+            metadata: { stage: 'started' },
+          });
+        }
+      } catch {
+        // best-effort run ledger; never alter tool behavior
+      }
+    }
+
+
     // Adaptive heartbeat: switch to heavy mode during tool execution
     try {
       const cdpClient = getCDPClient();
@@ -2028,6 +2065,40 @@ export class MCPServer {
         };
       }
 
+
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          const runStore = getRunStore();
+          const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+          const durationMs = Date.now() - toolStartTime;
+          runStore.appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: runTabId,
+            tool: toolName,
+            args: toolArgs,
+            ok: !result.isError,
+            duration_ms: durationMs,
+          });
+          if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+            runStore.appendRunEvent({
+              run_id: runHarnessId,
+              session_id: sessionId,
+              tab_id: runTabId,
+              kind: 'partial_result',
+              tool: toolName,
+              ok: !result.isError,
+              duration_ms: durationMs,
+              message: result.isError ? 'long task returned an error result' : 'long task returned a synchronous final result',
+              metadata: { stage: 'final_response' },
+            });
+          }
+        } catch {
+          // best-effort run ledger; never alter tool behavior
+        }
+      }
+
+
       // ─── Secrets redaction (#834) ─────────────────────────────────────
       // Last line of defense before the MCP envelope: replace any literal
       // secret value still present in the response (handler may have echoed
@@ -2191,6 +2262,46 @@ export class MCPServer {
             errResult.content.push({ type: 'text', text: `\n${hintResult.hint}` });
           }
         }
+
+        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
+          if (Array.isArray(errResult.content)) {
+            errResult.content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
+          }
+        }
+      }
+
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          const runStore = getRunStore();
+          const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+          const durationMs = Date.now() - toolStartTime;
+          runStore.appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: runTabId,
+            tool: toolName,
+            args: toolArgs,
+            ok: false,
+            duration_ms: durationMs,
+            message: displayMessage,
+          });
+          if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+            runStore.appendRunEvent({
+              run_id: runHarnessId,
+              session_id: sessionId,
+              tab_id: runTabId,
+              kind: 'warning',
+              tool: toolName,
+              ok: false,
+              duration_ms: durationMs,
+              message: displayMessage,
+              metadata: { stage: 'failed_response' },
+            });
+          }
+        } catch {
+          // best-effort run ledger; never alter tool behavior
+        }
+
       }
 
       // Secrets redaction (#834) — see success path. Error messages can
