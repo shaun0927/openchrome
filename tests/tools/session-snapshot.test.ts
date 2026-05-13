@@ -20,6 +20,8 @@ jest.mock('../../src/utils/atomic-file', () => ({
 // fs.promises is mocked selectively per test via jest.spyOn
 import { getSessionManager } from '../../src/session-manager';
 import { writeFileAtomicSafe } from '../../src/utils/atomic-file';
+import { runWithRequestContext } from '../../src/observability/request-id';
+import { clearAllSessionMcpRoots, setSessionMcpRoots } from '../../src/security/mcp-roots';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -106,6 +108,11 @@ describe('oc_session_snapshot', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (writeFileAtomicSafe as jest.Mock).mockResolvedValue(undefined);
+    clearAllSessionMcpRoots();
+  });
+
+  afterEach(() => {
+    clearAllSessionMcpRoots();
   });
 
   // ── Snapshot ID format ───────────────────────────────────────────────────
@@ -521,6 +528,27 @@ describe('oc_session_snapshot', () => {
       // Should succeed with empty tabs
       expect(result.content[0].text).toContain('Tabs: 0');
       expect(result.content[0].text).toContain('Snapshot saved:');
+    });
+
+    test('denies snapshot writes when MCP file roots exclude the snapshot directory', async () => {
+      const mockSM = makeMockSessionManager([]);
+      (getSessionManager as jest.Mock).mockReturnValue(mockSM);
+      setSessionMcpRoots('mcp-snapshot-deny', { roots: [{ uri: 'file:///tmp/allowed-snapshots' }] });
+
+      const handler = await getSnapshotHandler();
+
+      const result = await runWithRequestContext(
+        { requestId: 'req-snapshot-roots-deny', mcpSessionId: 'mcp-snapshot-deny' },
+        () => handler('session-1', {
+          objective: 'Blocked snapshot',
+          currentStep: 'Checking roots',
+          nextActions: [],
+        }),
+      ) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('MCP roots narrowing');
+      expect(writeFileAtomicSafe).not.toHaveBeenCalled();
     });
   });
 });
