@@ -117,6 +117,7 @@ program
           await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
         }
       }
+
       return;
     }
 
