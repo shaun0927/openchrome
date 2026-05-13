@@ -51,6 +51,50 @@ describe('bounded task critic loop', () => {
     expect(terminal.nextSafeAction).toBe('ask_user');
   });
 
+
+  test('non-finite maxAttempts uses the default bounded retry count', async () => {
+    const executeAttempt = jest.fn(async () => ({ tool: 'act', ok: false, evidence: {} }));
+    const result = await runBoundedCriticLoop(
+      { objective: 'x', successCriteria: ['y'], maxAttempts: Number.NaN },
+      {
+        executeAttempt,
+        critique: async () => ({ status: 'retryable_failure', reason: 'not yet', evidence_used: [], missing_evidence: ['y'], next_strategy: 'retry' }),
+      },
+    );
+
+    expect(result.status).toBe('max_attempts_exhausted');
+    expect(executeAttempt).toHaveBeenCalledTimes(3);
+  });
+
+  test('callback errors are returned as terminal verdicts with attempt evidence', async () => {
+    const executeFailure = await runBoundedCriticLoop(
+      { objective: 'x', successCriteria: ['y'], maxAttempts: 3 },
+      {
+        executeAttempt: async () => { throw new Error('browser crashed'); },
+        critique: async () => ({ status: 'success', reason: 'unused', evidence_used: [], missing_evidence: [], next_strategy: 'stop' }),
+      },
+    );
+
+    expect(executeFailure.status).toBe('terminal_failure');
+    expect(executeFailure.attempts).toHaveLength(1);
+    expect(executeFailure.finalVerdict.reason).toContain('executeAttempt failed');
+    expect(executeFailure.finalVerdict.missing_evidence).toContain('attempt_evidence');
+
+    const critiqueFailure = await runBoundedCriticLoop(
+      { objective: 'x', successCriteria: ['y'], maxAttempts: 3 },
+      {
+        executeAttempt: async () => ({ tool: 'act', ok: false, evidence: { text: 'clicked' } }),
+        critique: async () => { throw new Error('critic unavailable'); },
+      },
+    );
+
+    expect(critiqueFailure.status).toBe('terminal_failure');
+    expect(critiqueFailure.attempts).toHaveLength(1);
+    expect(critiqueFailure.attempts[0].tool).toBe('act');
+    expect(critiqueFailure.finalVerdict.reason).toContain('critique failed');
+    expect(critiqueFailure.finalVerdict.missing_evidence).toContain('critic_verdict');
+  });
+
   test('malformed critic output becomes terminal failure', async () => {
     const result = await runBoundedCriticLoop(
       { objective: 'x', successCriteria: ['y'], maxAttempts: 3 },

@@ -33,6 +33,15 @@ export interface CriticLoopResult {
 const STATUSES = new Set<CriticVerdictStatus>(['success', 'retryable_failure', 'terminal_failure', 'needs_user']);
 const DEFAULT_MAX_ATTEMPTS = 3;
 
+function normaliseMaxAttempts(value: number | undefined): number {
+  const raw = typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_MAX_ATTEMPTS;
+  return Math.max(1, Math.min(Math.floor(raw), 10));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function validateCriticVerdict(value: unknown): { ok: true; value: CriticVerdict } | { ok: false; error: string } {
   if (!value || typeof value !== 'object') return { ok: false, error: 'critic verdict must be an object' };
   const row = value as Record<string, unknown>;
@@ -59,20 +68,54 @@ export async function runBoundedCriticLoop(input: CriticLoopInput, opts: {
   executeAttempt: (attempt: number, nextStrategy: string) => Promise<{ tool: string; ok: boolean; evidence: Record<string, unknown> }>;
   critique: (attempt: { attempt: number; tool: string; ok: boolean; evidence: Record<string, unknown>; objective: string; successCriteria: string[] }) => Promise<unknown>;
 }): Promise<CriticLoopResult> {
-  const maxAttempts = Math.max(1, Math.min(input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS, 10));
+  const maxAttempts = normaliseMaxAttempts(input.maxAttempts);
   const attempts: CriticAttempt[] = [];
   let nextStrategy = 'initial_attempt';
 
   for (let attemptNo = 1; attemptNo <= maxAttempts; attemptNo++) {
-    const evidence = await opts.executeAttempt(attemptNo, nextStrategy);
-    const rawVerdict = await opts.critique({
-      attempt: attemptNo,
-      tool: evidence.tool,
-      ok: evidence.ok,
-      evidence: evidence.evidence,
-      objective: input.objective,
-      successCriteria: input.successCriteria,
-    });
+    let evidence: { tool: string; ok: boolean; evidence: Record<string, unknown> };
+    try {
+      evidence = await opts.executeAttempt(attemptNo, nextStrategy);
+    } catch (error) {
+      const verdict: CriticVerdict = {
+        status: 'terminal_failure',
+        reason: bound(`executeAttempt failed: ${errorMessage(error)}`, 500),
+        evidence_used: [],
+        missing_evidence: ['attempt_evidence'],
+        next_strategy: 'stop and inspect tool failure',
+      };
+      attempts.push({
+        attempt: attemptNo,
+        tool: 'unknown',
+        ok: false,
+        evidence: { stage: 'executeAttempt', error: errorMessage(error) },
+        verdict,
+      });
+      return { status: verdict.status, attempts, finalVerdict: verdict, nextSafeAction: nextSafeAction(verdict) };
+    }
+
+    let rawVerdict: unknown;
+    try {
+      rawVerdict = await opts.critique({
+        attempt: attemptNo,
+        tool: evidence.tool,
+        ok: evidence.ok,
+        evidence: evidence.evidence,
+        objective: input.objective,
+        successCriteria: input.successCriteria,
+      });
+    } catch (error) {
+      const verdict: CriticVerdict = {
+        status: 'terminal_failure',
+        reason: bound(`critique failed: ${errorMessage(error)}`, 500),
+        evidence_used: [],
+        missing_evidence: ['critic_verdict'],
+        next_strategy: 'fix critic callback before retrying',
+      };
+      attempts.push({ attempt: attemptNo, tool: evidence.tool, ok: evidence.ok, evidence: evidence.evidence, verdict });
+      return { status: verdict.status, attempts, finalVerdict: verdict, nextSafeAction: nextSafeAction(verdict) };
+    }
+
     const parsed = validateCriticVerdict(rawVerdict);
     const verdict: CriticVerdict = parsed.ok
       ? parsed.value
