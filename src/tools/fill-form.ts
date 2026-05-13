@@ -20,7 +20,7 @@ import { humanType, humanMouseMove } from '../stealth/human-behavior';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
-import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
+import { captureBackendNodeReplayStep, capturePageReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -522,7 +522,7 @@ const handler: ToolHandler = async (
           // `form` attribute while being OUTSIDE that form's DOM subtree. We
           // therefore prefer `el.form` (HTMLFormElement-style API) when
           // present and fall back to `el.closest('form')`.
-          const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number; formHasPassword: boolean } | null => {
+          const submitButton = await withTimeout(page.evaluate((query: string): { x: number; y: number; formHasPassword: boolean; selectors: string[] } | null => {
             const queryLower = query.toLowerCase();
             const selectors = [
               'button[type="submit"]',
@@ -531,6 +531,51 @@ const handler: ToolHandler = async (
               '[role="button"]',
               'a',
             ];
+            const esc = (value: string) => {
+              if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(String(value));
+              return String(value).replace(/[^a-zA-Z0-9_-]/g, (ch) => '\\' + ch);
+            };
+            const selectorsFor = (el: Element): string[] => {
+              const out: string[] = [];
+              const add = (selector: string) => {
+                if (!selector || out.includes(selector)) return;
+                try {
+                  if (document.querySelector(selector) === el) out.push(selector);
+                } catch {}
+              };
+              const tag = String((el as HTMLElement).tagName || '').toLowerCase();
+              const id = (el as HTMLElement).id;
+              if (id) add(`#${esc(id)}`);
+              for (const attr of ['name', 'aria-label', 'data-testid', 'data-test', 'data-cy']) {
+                const value = el.getAttribute(attr);
+                if (tag && value) add(`${tag}[${attr}="${String(value).replace(/"/g, '\\"')}"]`);
+              }
+              const value = (el as HTMLInputElement).value;
+              if (tag === 'input' && value) add(`input[value="${String(value).replace(/"/g, '\\"')}"]`);
+              if (tag) {
+                const parts: string[] = [];
+                let node: Element | null = el;
+                while (node && node.nodeType === 1 && parts.length < 4) {
+                  const nodeTag = String((node as HTMLElement).tagName || '').toLowerCase();
+                  if (!nodeTag) break;
+                  const nodeId = (node as HTMLElement).id;
+                  if (nodeId) {
+                    parts.unshift(`${nodeTag}#${esc(nodeId)}`);
+                    break;
+                  }
+                  let index = 1;
+                  let prev = node.previousElementSibling;
+                  while (prev) {
+                    if (String((prev as HTMLElement).tagName || '').toLowerCase() === nodeTag) index++;
+                    prev = prev.previousElementSibling;
+                  }
+                  parts.unshift(`${nodeTag}:nth-of-type(${index})`);
+                  node = node.parentElement;
+                }
+                add(parts.join(' > '));
+              }
+              return out.slice(0, 3);
+            };
 
             for (const selector of selectors) {
               for (const el of document.querySelectorAll(selector)) {
@@ -553,6 +598,7 @@ const handler: ToolHandler = async (
                       x: rect.x + rect.width / 2,
                       y: rect.y + rect.height / 2,
                       formHasPassword,
+                      selectors: selectorsFor(el),
                     };
                   }
                 }
@@ -571,6 +617,12 @@ const handler: ToolHandler = async (
 
             await page.mouse.click(Math.round(submitButton.x), Math.round(submitButton.y));
             submitted = true;
+            if (captureArtifact && submitButton.selectors.length > 0) {
+              capturePageReplayStep(page, {
+                kind: 'click',
+                selectors: submitButton.selectors.map((value) => ({ type: 'css' as const, value })),
+              });
+            }
             await new Promise(resolve => setTimeout(resolve, DEFAULT_FORM_SUBMIT_SETTLE_MS));
 
             // Run the detector iff (a) caller opted in and (b) the submitted
