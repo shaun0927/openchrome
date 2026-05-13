@@ -156,6 +156,30 @@ describe('perception snapshot schema validation', () => {
     expect(result.errors.join('\n')).toContain('bboxRatio.x');
   });
 
+  test('rejects non-string element type even when string-coercible', () => {
+    const result = validatePerceptionSnapshot({
+      version: 1,
+      provider: 'mock',
+      tabId: 'tab',
+      url: 'https://example.test',
+      capturedAt: 1,
+      viewport: { width: 100, height: 100 },
+      warnings: [],
+      latencyMs: 1,
+      elements: [{
+        id: 'v1',
+        type: { toString: () => 'control' },
+        label: 'OK',
+        interactive: true,
+        source: 'mock',
+        bbox: { x: 0, y: 0, width: 10, height: 10 },
+        bboxRatio: { x: 0, y: 0, width: 0.1, height: 0.1 },
+      }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.join('\n')).toContain('elements[0].type');
+  });
 
   test('limits validation diagnostics for hostile provider output', () => {
     const result = validatePerceptionSnapshot({

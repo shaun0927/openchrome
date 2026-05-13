@@ -185,7 +185,7 @@ export function validatePerceptionSnapshot(
       }
       const el = element as Record<string, unknown>;
       if (typeof el.id !== 'string' || el.id.length === 0) addError(`${prefix}.id is required`);
-      if (!['text', 'icon', 'control', 'image', 'unknown'].includes(String(el.type))) addError(`${prefix}.type is invalid`);
+      if (typeof el.type !== 'string' || !['text', 'icon', 'control', 'image', 'unknown'].includes(el.type)) addError(`${prefix}.type is invalid`);
       if (typeof el.label !== 'string') addError(`${prefix}.label must be a string`);
       if (!(typeof el.interactive === 'boolean' || el.interactive === 'unknown')) addError(`${prefix}.interactive is invalid`);
       if (typeof el.source !== 'string' || el.source.length === 0) addError(`${prefix}.source is required`);
