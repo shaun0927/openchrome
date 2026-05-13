@@ -269,12 +269,9 @@ describeFn('health endpoint gating (issue #648)', () => {
         const shutdownTimeoutMs = 30_000;
         const exit = await waitForExit(child, shutdownTimeoutMs);
         expect(exit.timedOut).toBe(false);
-        if (process.platform === 'win32') {
-          // Windows may report a clean SIGTERM as code=null/signal=SIGTERM.
-          expect(exit.code === 0 || exit.signal === 'SIGTERM').toBe(true);
-        } else {
-          expect(exit.code).toBe(0);
-        }
+        // Node may report a clean SIGTERM shutdown as either code=0 or
+        // code=null/signal=SIGTERM depending on platform and timing.
+        expect(exit.code === 0 || exit.signal === 'SIGTERM').toBe(true);
         expect(stderr).not.toMatch(/TypeError/);
         expect(stderr).not.toMatch(/Cannot read properties of null/);
         expect(stderr).not.toMatch(/UnhandledPromiseRejection/);

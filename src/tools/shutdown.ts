@@ -10,6 +10,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getCDPConnectionPool } from '../cdp/connection-pool';
 import { getCDPClient } from '../cdp/client';
@@ -29,6 +30,7 @@ const definition: MCPToolDefinition = {
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_stop,
 };
 
 const handler: ToolHandler = async (

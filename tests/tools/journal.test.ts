@@ -39,7 +39,7 @@ jest.mock('../../src/chrome/launcher', () => ({
   })),
 }));
 
-import { MCPServer } from '../../src/mcp-server';
+import { MCPServer, summarizeMcpResultForJournal } from '../../src/mcp-server';
 import { registerJournalTool } from '../../src/tools/journal';
 import { JournalEntry } from '../../src/journal/task-journal';
 
@@ -60,6 +60,25 @@ function makeEntry(overrides: Partial<JournalEntry> = {}): JournalEntry {
 }
 
 // ─── parseSince ──────────────────────────────────────────────────────────────
+
+
+
+describe('summarizeMcpResultForJournal', () => {
+  it('excludes MCP-injected hint text from result summaries', () => {
+    const summary = summarizeMcpResultForJournal({
+      isError: true,
+      _hint: 'Try read_page for stale refs, auth redirects, and timeouts.',
+      content: [
+        { type: 'text', text: 'Error: selector missing' },
+        { type: 'text', text: '\nTry read_page for stale refs, auth redirects, and timeouts.' },
+      ],
+    } as any);
+
+    expect(summary).toBe('Error: selector missing');
+    expect(summary).not.toContain('stale refs');
+    expect(summary).not.toContain('auth redirects');
+  });
+});
 
 describe('parseSince', () => {
   beforeEach(() => {
@@ -283,6 +302,44 @@ describe('oc_journal tool', () => {
     });
   });
 
+
+  // ─── action=handoff_summary ─────────────────────────────────────────────
+
+  describe('action=handoff_summary', () => {
+    test('returns structured handoff summary JSON and result field', async () => {
+      const now = Date.parse('2026-05-12T10:00:00.000Z');
+      mockGetRecent.mockReturnValue([
+        makeEntry({ ts: now, sessionId: 'sess-handoff', summary: '✓ → https://example.com' }),
+        makeEntry({
+          ts: now + 1,
+          sessionId: 'sess-handoff',
+          tool: 'find',
+          ok: false,
+          milestone: undefined,
+          summary: '✗ Find "missing"',
+          args: { query: 'missing', apiKey: '[REDACTED]' },
+        }),
+      ]);
+
+      const result = await handler('default', {
+        action: 'handoff_summary',
+        sessionId: 'sess-handoff',
+        since: '2026-05-12T09:00:00.000Z',
+        includeCheckpoint: false,
+      });
+      const text: string = result.content[0].text;
+      const parsed = JSON.parse(text);
+
+      expect(parsed.schemaVersion).toBe(1);
+      expect(parsed.currentState.sessionId).toBe('sess-handoff');
+      expect(parsed.completedMilestones).toHaveLength(1);
+      expect(parsed.recentFailures).toHaveLength(1);
+      expect(parsed.recentFailures[0].signature).toContain('[REDACTED]');
+      expect(parsed.recommendedRecoveryOptions.length).toBeGreaterThan(0);
+      expect(result.handoffSummary).toEqual(parsed);
+    });
+  });
+
   // ─── unknown action ──────────────────────────────────────────────────────
 
   describe('unknown action', () => {
@@ -297,6 +354,7 @@ describe('oc_journal tool', () => {
       expect(result.content[0].text).toContain('Unknown action: invalid');
       expect(result.content[0].text).toContain('"summary"');
       expect(result.content[0].text).toContain('"recent"');
+      expect(result.content[0].text).toContain('"handoff_summary"');
     });
   });
 

@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { ReflectionStore, ReflectionCreateInput } from '../reflection';
 
 const definition: MCPToolDefinition = {
@@ -14,10 +15,11 @@ const definition: MCPToolDefinition = {
   description:
     'Create, get, or list structured task-failure reflection artifacts. ' +
     'Reflections are passive recovery guidance only; OpenChrome never executes nextPlan automatically.',
+  annotations: TOOL_ANNOTATIONS.oc_reflect,
   inputSchema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['create', 'get', 'list'], description: 'REQUIRED Reflection action: create, get, or list.' },
+      action: { type: 'string', enum: ['create', 'get', 'list', 'validate'], description: 'REQUIRED Reflection action: create, get, list, or validate.' },
       id: { type: 'string', description: '(get) Reflection id' },
       scope: { type: 'object', description: '(create/list) domain, taskFingerprint, optional contractId/urlPattern' },
       trigger: { type: 'string', description: '(create) stuck, plan_failed, contract_failed, workflow_partial, or timeout' },
@@ -27,7 +29,9 @@ const definition: MCPToolDefinition = {
       avoid: { type: 'array', items: { type: 'string' }, description: '(create) actions/strategies to avoid repeating' },
       confidence: { type: 'number', description: '(create) confidence 0..1' },
       expiresAt: { type: 'number', description: '(create) optional unix ms expiry' },
-      limit: { type: 'number', description: '(list) max records, default 20, max 100' },
+      limit: { type: 'number', description: '(list) max records, default 3, max 100' },
+      includeExpired: { type: 'boolean', description: '(list) include expired reflections for debugging' },
+      success: { type: 'boolean', description: '(validate) whether using this reflection succeeded' },
     },
     required: ['action'],
   },
@@ -59,6 +63,14 @@ const handler: ToolHandler = async (_sessionId: string, args: Record<string, unk
       return artifact ? jsonResult({ status: 'found', artifact }) : jsonResult({ status: 'not_found', artifact: null });
     }
 
+    if (action === 'validate') {
+      const id = args.id as string | undefined;
+      if (!id) return jsonResult({ status: 'error', error: 'id is required for validate' }, true);
+      if (typeof args.success !== 'boolean') return jsonResult({ status: 'error', error: 'success boolean is required for validate' }, true);
+      const artifact = await store.validate(id, args.success);
+      return artifact ? jsonResult({ status: 'validated', artifact }) : jsonResult({ status: 'pruned_or_not_found', artifact: null });
+    }
+
     if (action === 'list') {
       const scope = (args.scope ?? {}) as { domain?: string; taskFingerprint?: string; contractId?: string };
       const artifacts = store.list({
@@ -66,11 +78,12 @@ const handler: ToolHandler = async (_sessionId: string, args: Record<string, unk
         taskFingerprint: scope.taskFingerprint,
         contractId: scope.contractId,
         limit: args.limit as number | undefined,
+        includeExpired: args.includeExpired as boolean | undefined,
       });
       return jsonResult({ status: 'listed', artifacts });
     }
 
-    return jsonResult({ status: 'error', error: `Unknown action: ${action}. Use create, get, or list.` }, true);
+    return jsonResult({ status: 'error', error: `Unknown action: ${action}. Use create, get, list, or validate.` }, true);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return jsonResult({ status: 'error', error: message }, true);

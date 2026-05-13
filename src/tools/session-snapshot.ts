@@ -8,6 +8,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { writeFileAtomicSafe } from '../utils/atomic-file';
 import { safeTitle } from '../utils/safe-title';
@@ -80,6 +81,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['objective', 'currentStep', 'nextActions'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_session_snapshot,
 };
 
 // ─── Snapshot Directory ────────────────────────────────────────────────────

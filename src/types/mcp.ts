@@ -69,6 +69,21 @@ export interface MCPObjectSchema {
   required?: string[];
 }
 
+
+/**
+ * Tool annotations per MCP spec.
+ *
+ * Semantics are **per-tool, worst-case** — they describe the most destructive /
+ * least pure behavior the tool can produce across all valid input combinations,
+ * not the typical or default behavior.
+ */
+export interface ToolAnnotations {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+}
+
 export interface MCPToolDefinition {
   name: string;
   description: string;
@@ -81,6 +96,8 @@ export interface MCPToolDefinition {
    * Tools without `outputSchema` continue to return free-form `content[]`.
    */
   outputSchema?: MCPObjectSchema;
+  /** Required MCP-spec tool annotations. */
+  annotations: ToolAnnotations;
 }
 
 /**

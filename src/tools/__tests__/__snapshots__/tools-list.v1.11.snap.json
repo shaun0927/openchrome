@@ -1,0 +1,289 @@
+{
+  "tools": [
+    {
+      "name": "act"
+    },
+    {
+      "name": "batch_execute"
+    },
+    {
+      "name": "batch_paginate"
+    },
+    {
+      "name": "computer"
+    },
+    {
+      "name": "console_capture"
+    },
+    {
+      "name": "cookies"
+    },
+    {
+      "name": "crawl"
+    },
+    {
+      "name": "crawl_cancel"
+    },
+    {
+      "name": "crawl_sitemap"
+    },
+    {
+      "name": "crawl_start"
+    },
+    {
+      "name": "crawl_status"
+    },
+    {
+      "name": "drag_drop"
+    },
+    {
+      "name": "emulate_device"
+    },
+    {
+      "name": "execute_plan"
+    },
+    {
+      "name": "extract_data"
+    },
+    {
+      "name": "file_upload"
+    },
+    {
+      "name": "fill_form"
+    },
+    {
+      "name": "find"
+    },
+    {
+      "name": "form_input"
+    },
+    {
+      "name": "geolocation"
+    },
+    {
+      "name": "http_auth"
+    },
+    {
+      "name": "inspect"
+    },
+    {
+      "name": "interact"
+    },
+    {
+      "name": "javascript_tool"
+    },
+    {
+      "name": "lightweight_scroll"
+    },
+    {
+      "name": "list_profiles"
+    },
+    {
+      "name": "memory"
+    },
+    {
+      "name": "navigate"
+    },
+    {
+      "name": "network"
+    },
+    {
+      "name": "network_capture_full"
+    },
+    {
+      "name": "network_capture_lite"
+    },
+    {
+      "name": "oc_assert"
+    },
+    {
+      "name": "oc_checkpoint"
+    },
+    {
+      "name": "oc_connection_health"
+    },
+    {
+      "name": "oc_context_export"
+    },
+    {
+      "name": "oc_context_import"
+    },
+    {
+      "name": "oc_copy_to_clipboard"
+    },
+    {
+      "name": "oc_devtools_url"
+    },
+    {
+      "name": "oc_doctor_report"
+    },
+    {
+      "name": "oc_evidence_bundle"
+    },
+    {
+      "name": "oc_get_connection_info"
+    },
+    {
+      "name": "oc_journal"
+    },
+    {
+      "name": "oc_normalize_action"
+    },
+    {
+      "name": "oc_observe"
+    },
+    {
+      "name": "oc_open_host_settings"
+    },
+    {
+      "name": "oc_performance_analyze"
+    },
+    {
+      "name": "oc_performance_insights"
+    },
+    {
+      "name": "oc_profile_status"
+    },
+    {
+      "name": "oc_progress_status"
+    },
+    {
+      "name": "oc_reap_orphans"
+    },
+    {
+      "name": "oc_recording_export"
+    },
+    {
+      "name": "oc_recording_list"
+    },
+    {
+      "name": "oc_recording_start"
+    },
+    {
+      "name": "oc_recording_status"
+    },
+    {
+      "name": "oc_recording_stop"
+    },
+    {
+      "name": "oc_reflect"
+    },
+    {
+      "name": "oc_run_events"
+    },
+    {
+      "name": "oc_run_finish"
+    },
+    {
+      "name": "oc_run_start"
+    },
+    {
+      "name": "oc_run_status"
+    },
+    {
+      "name": "oc_session_resume"
+    },
+    {
+      "name": "oc_session_snapshot"
+    },
+    {
+      "name": "oc_skill_recall"
+    },
+    {
+      "name": "oc_skill_record"
+    },
+    {
+      "name": "oc_stop"
+    },
+    {
+      "name": "oc_task_cancel"
+    },
+    {
+      "name": "oc_task_get"
+    },
+    {
+      "name": "oc_task_list"
+    },
+    {
+      "name": "oc_task_start"
+    },
+    {
+      "name": "oc_task_wait"
+    },
+    {
+      "name": "oc_totp_generate"
+    },
+    {
+      "name": "page_content"
+    },
+    {
+      "name": "page_pdf"
+    },
+    {
+      "name": "page_reload"
+    },
+    {
+      "name": "page_screenshot"
+    },
+    {
+      "name": "performance_metrics"
+    },
+    {
+      "name": "query_dom"
+    },
+    {
+      "name": "read_page"
+    },
+    {
+      "name": "request_intercept"
+    },
+    {
+      "name": "storage"
+    },
+    {
+      "name": "tabs_close"
+    },
+    {
+      "name": "tabs_context"
+    },
+    {
+      "name": "tabs_create"
+    },
+    {
+      "name": "user_agent"
+    },
+    {
+      "name": "validate_page"
+    },
+    {
+      "name": "vision_find"
+    },
+    {
+      "name": "wait_for"
+    },
+    {
+      "name": "worker"
+    },
+    {
+      "name": "worker_complete"
+    },
+    {
+      "name": "worker_update"
+    },
+    {
+      "name": "workflow_cleanup"
+    },
+    {
+      "name": "workflow_collect"
+    },
+    {
+      "name": "workflow_collect_partial"
+    },
+    {
+      "name": "workflow_init"
+    },
+    {
+      "name": "workflow_status"
+    }
+  ]
+}

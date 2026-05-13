@@ -151,6 +151,7 @@ describe('admin keys CLI', () => {
     const stdoutTokens = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
     expect(stdoutTokens).toHaveLength(1);
     const plaintext = stdoutTokens[0];
+    expect(plaintext).toMatch(/^oc_live_acme_[A-Za-z0-9]+$/);
 
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
@@ -213,6 +214,7 @@ describe('admin keys CLI', () => {
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
     expect(listed.exitCode).toBeNull();
     const parsed = JSON.parse(extractJsonArray(listed.stdout)) as Array<{ keyId: string; tenantId: string }>;
+
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].tenantId).toBe('acme');

@@ -9,12 +9,14 @@ import {
   MCPResult,
   MCPError,
   MCPToolDefinition,
+  ToolCapability,
   ToolHandler,
   ToolContext,
   ToolProgress,
   ToolRegistry,
   MCPErrorCodes,
 } from './types/mcp';
+import { TOOL_ANNOTATIONS } from './types/tool-annotations';
 import { MCPTransport, createTransport } from './transports/index';
 import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
@@ -327,6 +329,12 @@ export interface MCPServerOptions {
   dashboard?: boolean;
   dashboardRefreshInterval?: number;
   initialToolTier?: ToolTier;
+  /**
+   * Capability filter derived from --tools-only / --disable-tools CLI flags.
+   * When set, only tools whose `capability` is in this set are exposed.
+   * When undefined, all capabilities are exposed (default, P2-compliant).
+   */
+  capabilityFilter?: Set<ToolCapability>;
 }
 
 export class MCPServer {
@@ -344,6 +352,8 @@ export class MCPServer {
   private profileWarningShown = false;
   private exposedTier: ToolTier = 1;
   private clientSupportsListChanged = true;
+  /** Active capability filter. undefined = no filter (all capabilities exposed). */
+  private capabilityFilter: Set<ToolCapability> | undefined;
   private clientDetected = false;
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
   private stopPromise: Promise<void> | null = null;
@@ -405,6 +415,10 @@ export class MCPServer {
 
     if (options.initialToolTier) {
       this.exposedTier = options.initialToolTier;
+    }
+
+    if (options.capabilityFilter) {
+      this.capabilityFilter = options.capabilityFilter;
     }
 
     // Release the tenant binding as soon as the underlying session is
@@ -523,6 +537,11 @@ export class MCPServer {
     options?: { timeoutRecoverable?: boolean }
   ): void {
     validateToolSchema(name, definition.inputSchema);
+    // Compile-time enforcement: MCPToolDefinition makes `annotations`
+    // required, so reaching this point guarantees the field is present.
+    // (No runtime guard here — the test suite registers synthetic dummy
+    // tools with dynamic names that don't appear in TOOL_ANNOTATIONS, and
+    // those legitimately bring their own inline annotations.)
     this.tools.set(name, { name, handler, definition, ...options });
     this.manifestVersion++;
   }
@@ -1203,6 +1222,15 @@ export class MCPServer {
   }
 
   /**
+   * Returns true if a tool with the given capability is allowed by the active filter.
+   * When no filter is set, all tools are allowed (P2 default behaviour).
+   */
+  private isCapabilityAllowed(capability: ToolCapability | undefined): boolean {
+    if (!this.capabilityFilter) return true;
+    return this.capabilityFilter.has(capability ?? 'core');
+  }
+
+  /**
    * Handle tools/list request
    */
   private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
@@ -1218,7 +1246,7 @@ export class MCPServer {
     const tools: MCPToolDefinition[] = [];
     for (const registry of this.tools.values()) {
       const tier = getToolTier(registry.definition.name);
-      if (tier <= this.exposedTier) {
+      if (tier <= this.exposedTier && this.isCapabilityAllowed(registry.definition.capability)) {
         tools.push(registry.definition);
       }
     }
@@ -1226,9 +1254,10 @@ export class MCPServer {
     // Add hint about additional tools when not fully expanded.
     // Only inject expand_tools if the client supports notifications/tools/list_changed —
     // otherwise there's no point since the client can't react to the notification.
-    if (this.exposedTier < 3 && this.clientSupportsListChanged) {
+    if (this.exposedTier < 3 && this.clientSupportsListChanged && this.isCapabilityAllowed('core')) {
       const hiddenCount = Array.from(this.tools.values()).filter(
-        r => getToolTier(r.definition.name) > this.exposedTier
+        r => getToolTier(r.definition.name) > this.exposedTier &&
+          this.isCapabilityAllowed(r.definition.capability)
       ).length;
       if (hiddenCount > 0) {
         tools.push({
@@ -1245,6 +1274,7 @@ export class MCPServer {
             },
             required: ['tier'],
           },
+          annotations: TOOL_ANNOTATIONS.expand_tools,
         });
       }
     }
@@ -1415,22 +1445,52 @@ export class MCPServer {
       return forbiddenResult;
     }
 
-    // Handle the expand_tools meta-tool before normal tool lookup
+    // Handle the expand_tools meta-tool before normal tool lookup.
+    // It is classified as a core tool, so capability filters that exclude
+    // core must hide and reject it just like any other core tool.
     if (toolName === 'expand_tools') {
+      if (!this.isCapabilityAllowed('core')) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ code: 'CAPABILITY_DISABLED', capability: 'core' }),
+          }],
+          isError: true,
+        };
+      }
+      // If a specific tool name is requested (capability gate check), verify it is allowed
+      const requestedTool = toolArgs?.name as string | undefined;
+      if (requestedTool) {
+        const registry = this.tools.get(requestedTool);
+        if (registry && !this.isCapabilityAllowed(registry.definition.capability)) {
+          const capability = registry.definition.capability ?? 'core';
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ code: 'CAPABILITY_DISABLED', capability }),
+            }],
+            isError: true,
+          };
+        }
+      }
+
       const oldTier = this.exposedTier;
       const tier = parseInt(String(toolArgs?.tier ?? '2'), 10) || 2;
       this.expandToolTier(Math.min(tier, 3) as ToolTier);
 
       // Collect newly-exposed tool definitions for clients that don't support list_changed
+      // Only include capability-allowed tools
       const newTools = Array.from(this.tools.values())
         .filter(r => {
           const t = getToolTier(r.definition.name);
-          return t <= this.exposedTier && t > oldTier;
+          return t <= this.exposedTier && t > oldTier &&
+            this.isCapabilityAllowed(r.definition.capability);
         })
         .map(r => r.definition);
 
       const toolCount = Array.from(this.tools.values()).filter(
-        r => getToolTier(r.definition.name) <= this.exposedTier
+        r => getToolTier(r.definition.name) <= this.exposedTier &&
+          this.isCapabilityAllowed(r.definition.capability)
       ).length;
 
       let text = `Tool tier expanded to ${this.exposedTier}. Now exposing ${toolCount} tools.`;
@@ -1443,6 +1503,21 @@ export class MCPServer {
       };
       this.recordToolOutputObservability(toolName, expandResult);
       return expandResult;
+    }
+
+    // Capability gate check: reject calls to tools excluded by --tools-only / --disable-tools
+    if (this.capabilityFilter) {
+      const registry = this.tools.get(toolName);
+      if (registry && !this.isCapabilityAllowed(registry.definition.capability)) {
+        const capability = registry.definition.capability ?? 'core';
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ code: 'CAPABILITY_DISABLED', capability }),
+          }],
+          isError: true,
+        };
+      }
     }
 
     const tool = this.tools.get(toolName);
@@ -1845,7 +1920,8 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, true);
+        const toolSucceeded = (result as MCPResult).isError !== true;
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, toolSucceeded);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -1950,7 +2026,7 @@ export class MCPServer {
       // surface, so pushing into content[] guarantees the hint reaches the
       // user. Mirrors the error-path injection below for consistency.
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
+        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId, toolArgs, callId);
         const automation = buildAutomationInsight(toolName, result as Record<string, unknown>, false, hintResult ?? undefined);
         if (automation) {
           (result as Record<string, unknown>)._automation = automation;
@@ -2151,7 +2227,7 @@ export class MCPServer {
 
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId);
+        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId, toolArgs, callId);
         const automation = buildAutomationInsight(toolName, errResult as Record<string, unknown>, true, hintResult ?? undefined);
         if (automation) {
           (errResult as Record<string, unknown>)._automation = automation;
@@ -2739,8 +2815,11 @@ export class MCPServer {
 let mcpServerInstance: MCPServer | null = null;
 let mcpServerOptions: MCPServerOptions = {};
 
-export function setMCPServerOptions(options: MCPServerOptions): void {
-  mcpServerOptions = options;
+export function setMCPServerOptions(options: Partial<MCPServerOptions>): void {
+  // Replace (not merge) — keeps the pre-#829 reset semantics callers rely on:
+  // `setMCPServerOptions({})` must clear previously set flags so that a fresh
+  // singleton picks up defaults, not a stale partial mix.
+  mcpServerOptions = { ...options };
 }
 
 export function getMCPServer(): MCPServer {

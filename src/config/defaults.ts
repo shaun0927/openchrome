@@ -175,6 +175,13 @@ export const DEFAULT_DOM_SETTLE_DELAY_MS = 50;
  *  Longer pause after form submission to allow for potential navigation or re-render. */
 export const DEFAULT_FORM_SUBMIT_SETTLE_MS = 100;
 
+/** Snapshot cache (#879): maximum entries retained per CDP target before LRU eviction. */
+export const DEFAULT_SNAPSHOT_CACHE_MAX_ENTRIES = 32;
+
+/** Snapshot cache (#879): entry TTL in milliseconds. Entries older than this are
+ *  treated as misses on the next `get` regardless of mutation tracking. */
+export const DEFAULT_SNAPSHOT_CACHE_TTL_MS = 30_000;
+
 /** fill_form: Max time to poll for form fields on SPA pages (ms). */
 export const DEFAULT_FILL_FORM_POLL_MS = 1500;
 
