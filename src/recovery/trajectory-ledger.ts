@@ -75,6 +75,7 @@ export class RecoveryTrajectoryLedger {
   private readonly maxFileBytes: number;
   private readonly maxSessionIndexEntries: number;
   private lastNodeBySession = new Map<string, string>();
+  private lastNodeByContext = new Map<string, RecoveryTrajectoryNode>();
   private pendingNodes: RecoveryTrajectoryNode[] = [];
   private writeQueue: Promise<void> = Promise.resolve();
 
@@ -98,6 +99,8 @@ export class RecoveryTrajectoryLedger {
       const serialized = this.serializeBounded(node);
       this.lastNodeBySession.delete(input.sessionId);
       this.lastNodeBySession.set(input.sessionId, node.nodeId);
+      this.lastNodeByContext.delete(contextKey(input.sessionId, node.tabId));
+      this.lastNodeByContext.set(contextKey(input.sessionId, node.tabId), node);
       this.pruneSessionIndex();
       this.pendingNodes.push(node);
       this.prunePendingNodes();
@@ -122,6 +125,11 @@ export class RecoveryTrajectoryLedger {
       const filtered = sessionId ? this.pendingNodes.filter((n) => n.sessionId === sessionId) : this.pendingNodes;
       return filtered.slice(-Math.max(0, limit));
     }
+  }
+
+  /** Return the last in-memory node for this session/tab without touching disk. */
+  getLastNode(sessionId: string, tabId?: string): RecoveryTrajectoryNode | undefined {
+    return this.lastNodeByContext.get(contextKey(sessionId, tabId));
   }
 
   /** Test hook for queued best-effort writes. Not needed by normal callers. */
@@ -266,6 +274,11 @@ export class RecoveryTrajectoryLedger {
       const oldestSessionId = this.lastNodeBySession.keys().next().value;
       if (!oldestSessionId) break;
       this.lastNodeBySession.delete(oldestSessionId);
+      for (const key of this.lastNodeByContext.keys()) {
+        if (key === oldestSessionId || key.startsWith(`${oldestSessionId}\u0000`)) {
+          this.lastNodeByContext.delete(key);
+        }
+      }
     }
   }
 
@@ -277,6 +290,9 @@ export class RecoveryTrajectoryLedger {
       const liveSessions = new Set(nodes.map((node) => node.sessionId));
       for (const sessionId of this.lastNodeBySession.keys()) {
         if (!liveSessions.has(sessionId)) this.lastNodeBySession.delete(sessionId);
+      }
+      for (const [key, node] of this.lastNodeByContext.entries()) {
+        if (!liveSessions.has(node.sessionId)) this.lastNodeByContext.delete(key);
       }
       this.pruneSessionIndex();
     } catch {
@@ -302,6 +318,10 @@ export function summarizeResult(result?: Record<string, unknown>): string | unde
   }
   const summary = readString(result._summary) ?? readString(result.summary) ?? readString(result.message);
   return summarizeText(summary);
+}
+
+function contextKey(sessionId: string, tabId?: string): string {
+  return `${sessionId}\u0000${tabId ?? ''}`;
 }
 
 function sanitizeObject(value: unknown, depth: number, key = ''): unknown {
