@@ -572,6 +572,67 @@ describePlanExecutor('PlanExecutor', () => {
     expect(options['port']).toBe('8080');
   });
 
+  test('substitutes dotted paths from stored query results into later step args', async () => {
+    const queryHandler = makeMockHandler(makeMCPResult(JSON.stringify({
+      matches: {
+        login_form: {
+          email_box: { ref: 'oc_ref_email' },
+          submit_btn: { ref: 'oc_ref_submit' },
+        },
+      },
+    })));
+    const fillHandler = makeMockHandler(makeMCPResult('filled'));
+    const clickHandler = makeMockHandler(makeMCPResult('clicked'));
+    const assertHandler = makeMockHandler(makeMCPResult(JSON.stringify({
+      verdict: 'pass',
+      evidence: { kind: 'dom_text', contains: 'Welcome' },
+    })));
+    const executor = new PlanExecutor(makeResolverWith({
+      oc_query: queryHandler,
+      fill_form: fillHandler,
+      interact: clickHandler,
+      oc_assert: assertHandler,
+    }));
+    const plan = buildPlan({
+      id: 'semantic-login-plan',
+      steps: [
+        buildStep({
+          order: 1,
+          tool: 'oc_query',
+          args: { query: 'login form' },
+          parseResult: { format: 'json', storeAs: 'login' },
+        }),
+        buildStep({
+          order: 2,
+          tool: 'fill_form',
+          args: { ref: '${login.matches.login_form.email_box.ref}', value: 'agent@example.com' },
+        }),
+        buildStep({
+          order: 3,
+          tool: 'interact',
+          args: { ref: '${login.matches.login_form.submit_btn.ref}', action: 'click' },
+        }),
+        buildStep({
+          order: 4,
+          tool: 'oc_assert',
+          args: { assertion: { kind: 'dom_text', contains: 'Welcome' } },
+          parseResult: { format: 'json', storeAs: 'postcondition' },
+        }),
+      ],
+      successCriteria: { requiredFields: ['login', 'postcondition'] },
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.success).toBe(true);
+    expect((fillHandler as jest.Mock).mock.calls[0][1]).toMatchObject({ ref: 'oc_ref_email' });
+    expect((clickHandler as jest.Mock).mock.calls[0][1]).toMatchObject({ ref: 'oc_ref_submit' });
+    expect(result.data?.postcondition).toMatchObject({
+      verdict: 'pass',
+      evidence: { kind: 'dom_text', contains: 'Welcome' },
+    });
+  });
+
   // -----------------------------------------------------------------------
   // Result parsing / storeAs
   // -----------------------------------------------------------------------
@@ -611,6 +672,28 @@ describePlanExecutor('PlanExecutor', () => {
     const step2Args = (step2Handler as jest.Mock).mock.calls[0][1] as Record<string, unknown>;
     // The stored value should be the parsed object (or its stringified form)
     expect(step2Args['data']).toBeDefined();
+  });
+
+  test('extracts dotted JSON paths with parseResult.extractField', async () => {
+    const handler = makeMockHandler(makeMCPResult(JSON.stringify({
+      matches: { login_form: { submit_btn: { ref: 'oc_ref_submit' } } },
+    })));
+    const executor = new PlanExecutor(makeResolverWith({ oc_query: handler }));
+    const plan = buildPlan({
+      id: 'extract-dotted-path-plan',
+      steps: [buildStep({
+        order: 1,
+        tool: 'oc_query',
+        args: {},
+        parseResult: { format: 'json', extractField: 'matches.login_form.submit_btn.ref', storeAs: 'submitRef' },
+      })],
+      successCriteria: { requiredFields: ['submitRef'] },
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.success).toBe(true);
+    expect(result.data?.submitRef).toBe('oc_ref_submit');
   });
 
   // -----------------------------------------------------------------------

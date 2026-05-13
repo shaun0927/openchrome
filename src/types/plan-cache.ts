@@ -16,7 +16,7 @@ export interface CompiledStep {
   order: number;
   /** MCP tool name (e.g. "javascript_tool", "computer") */
   tool: string;
-  /** Tool arguments — supports ${param} template variables */
+  /** Tool arguments — supports ${param} and ${param.path.to.value} template variables */
   args: Record<string, unknown>;
   /** Step-level timeout in milliseconds */
   timeout: number;
@@ -27,7 +27,7 @@ export interface CompiledStep {
   /** How to parse and store the result for subsequent steps */
   parseResult?: {
     format: 'json' | 'text';
-    /** JSON field to extract from result */
+    /** JSON field/path to extract from result */
     extractField?: string;
     /** Variable name to store result for later steps */
     storeAs?: string;
