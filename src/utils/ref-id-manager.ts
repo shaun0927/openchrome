@@ -180,7 +180,8 @@ export class RefIdManager {
     targetId: string,
     refId: string,
     currentNodeName: string,
-    currentTextContent?: string
+    currentTextContent?: string,
+    currentName?: string
   ): { valid: boolean; reason?: string; stale?: boolean } {
     const entry = this.getRef(sessionId, targetId, refId);
     if (!entry) return { valid: false, reason: 'Ref not found' };
@@ -207,6 +208,19 @@ export class RefIdManager {
           valid: false,
           stale: true,
           reason: `Element text changed: expected "${storedPrefix}...", found "${currentPrefix}..."`,
+        };
+      }
+    }
+
+    // Validate accessible/name-like fingerprint if stored and available.
+    if (entry.name && currentName) {
+      const storedPrefix = entry.name.slice(0, 30).trim();
+      const currentPrefix = currentName.slice(0, 30).trim();
+      if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
+        return {
+          valid: false,
+          stale: true,
+          reason: `Element name changed: expected "${storedPrefix}...", found "${currentPrefix}..."`,
         };
       }
     }
