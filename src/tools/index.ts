@@ -447,13 +447,24 @@ export function registerAllTools(
     }
   }
 
-  // Per-tool filtering: every registrar is invoked, but the proxy server
-  // it receives silently drops registerTool() calls whose category is
-  // disabled. This restores the per-category filtering contract for
-  // registrars that emit tools across multiple categories (e.g.
-  // orchestration → `worker_update` is `tabs`, `workflow_*` is `workflow`).
+  // Per-tool filtering: mixed-category registrars still run behind a proxy,
+  // but registrars whose entire advertised surface is disabled are skipped
+  // before their module-level side effects can fire (for example optional
+  // pilot hooks when the pilot category is disabled).
   const filteredServer = makeFilteredServer(server, enabled, disabledEntries);
   for (const entry of REGISTRATION_ENTRIES) {
+    const enabledToolNames = entry.tools.filter((name) => enabled.has(TOOL_TO_CATEGORY[name]));
+    if (enabledToolNames.length === 0) {
+      for (const name of entry.tools) {
+        const category = TOOL_TO_CATEGORY[name];
+        disabledEntries.push({
+          name,
+          category,
+          hint: buildDisabledHint(category),
+        });
+      }
+      continue;
+    }
     entry.register(filteredServer);
   }
 

@@ -310,4 +310,17 @@ describe('registerAllTools — per-tool filter on mixed-category registrars', ()
     expect(byName.has('worker_complete')).toBe(false);
     expect(byName.has('execute_plan')).toBe(false);
   });
+
+  test('fully disabled registrars are skipped but still recorded in disabled snapshot', () => {
+    registerAllTools(server, { enabled: ['navigation'] });
+    const names = new Set(server.getToolNames());
+    const snap = getDisabledToolsSnapshot();
+    const byName = new Map(snap.tools.map((t) => [t.name, t]));
+
+    // oc_proxy_hook is a pilot-only registrar with optional side effects.
+    // A narrow category allow-list must exclude it before invoking the
+    // registrar, while still documenting the skipped tool for operators.
+    expect(names.has('oc_proxy_hook')).toBe(false);
+    expect(byName.get('oc_proxy_hook')?.category).toBe('pilot');
+  });
 });

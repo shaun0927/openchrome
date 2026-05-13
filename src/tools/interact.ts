@@ -19,6 +19,14 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
+import {
+  formatNodeRefToken,
+  formatUidEvictedError,
+  getCurrentLoaderId,
+  isNodeRefEnabled,
+  mintNodeRefSync,
+  resolveNodeRef,
+} from '../core/perception/node-ref';
 import { dispatchCoordinateClick } from '../cdp/input';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
 
@@ -68,6 +76,11 @@ const definition: MCPToolDefinition = {
         },
         required: ['x', 'y'],
       },
+      nodeRef: {
+        type: 'string',
+        description:
+          'Stable backend-node uid (e.g. "n_42") issued by a prior read_page/query_dom/inspect call. When provided, bypasses element discovery. On a uid that was evicted by navigation, returns a structured "uid_evicted" error.',
+      },
       action: {
         type: 'string',
         enum: ['click', 'double_click', 'hover'],
@@ -92,6 +105,10 @@ const definition: MCPToolDefinition = {
         description: 'Poll interval in ms. Default: 200',
       },
     },
+    // `query` is no longer strictly required: a caller can pass `nodeRef`
+    // instead. We validate at runtime so the JSON-schema stays minimal and
+    // P2-stable (the schema does not change shape regardless of the
+    // OPENCHROME_NODE_REF flag value).
     required: ['tabId'],
   },
 };
@@ -105,6 +122,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const mode = (args.mode as string) || 'ref';
   const query = args.query as string;
+  const nodeRefArg = typeof args.nodeRef === 'string' ? (args.nodeRef as string) : undefined;
   const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
@@ -125,9 +143,9 @@ const handler: ToolHandler = async (
 
   // ─── Mode: coordinate ───
   if (mode === 'coordinate') {
-    if (query) {
+    if (query || nodeRefArg) {
       return {
-        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query"/"nodeRef" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
         isError: true,
       };
     }
@@ -226,14 +244,14 @@ const handler: ToolHandler = async (
   }
   if (coordinateArg) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" instead.' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" or "nodeRef" instead.' }],
       isError: true,
     };
   }
 
-  if (!query) {
+  if (!query && !nodeRefArg) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" is required when mode is "ref".' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: either "query" or "nodeRef" is required when mode is "ref".' }],
       isError: true,
     };
   }
@@ -249,6 +267,128 @@ const handler: ToolHandler = async (
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.${availableInfo}` }],
         isError: true,
       };
+    }
+
+    // ─── nodeRef branch (#844) ───
+    // When the caller supplied a stable backend-node uid, resolve it before
+    // any element-discovery work. This bypasses CSS/AX scoring entirely and
+    // turns interact into a near-pure CDP click. On a uid that the registry
+    // no longer knows (because navigation evicted it), we return a
+    // structured `uid_evicted` error rather than a generic stale-ref panic
+    // — the hint engine recognises that prefix and suppresses its
+    // "Refs expire after page changes" hint (see hints/rules/error-recovery.ts).
+    if (nodeRefArg) {
+      const cdpClientForNodeRef = sessionManager.getCDPClient();
+      const resolved = resolveNodeRef(page, nodeRefArg);
+      if (!resolved) {
+        let currentLoaderId = '';
+        try {
+          currentLoaderId = await getCurrentLoaderId(page, cdpClientForNodeRef);
+        } catch {
+          currentLoaderId = '';
+        }
+        if (!isNodeRefEnabled()) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error: nodeRef is not supported when OPENCHROME_NODE_REF is disabled. ${formatNodeRefToken(null)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: formatUidEvictedError(nodeRefArg, currentLoaderId || 'unknown'),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Resolve the box model and click via CDP — single round-trip.
+      try {
+        await cdpClientForNodeRef.send(page, 'DOM.scrollIntoViewIfNeeded', {
+          backendNodeId: resolved.backendNodeId,
+        });
+        await new Promise((r) => setTimeout(r, DEFAULT_DOM_SETTLE_DELAY_MS));
+      } catch {
+        // continue — click attempt may still succeed
+      }
+      let cx = 0;
+      let cy = 0;
+      try {
+        const { model } = await cdpClientForNodeRef.send<{ model: { content: number[] } }>(
+          page,
+          'DOM.getBoxModel',
+          { backendNodeId: resolved.backendNodeId },
+        );
+        if (!model?.content || model.content.length < 8) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error: nodeRef ${nodeRefArg} resolved but element has no box model (hidden or detached).`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const bx = model.content[0];
+        const by = model.content[1];
+        const bw = model.content[2] - bx;
+        const bh = model.content[5] - by;
+        cx = Math.round(bx + bw / 2);
+        cy = Math.round(by + bh / 2);
+      } catch (boxErr) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `nodeRef interact error: getBoxModel failed: ${boxErr instanceof Error ? boxErr.message : String(boxErr)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const isStealthNR = sessionManager.isStealthTarget(tabId);
+      const { delta: nrDelta } = await withDomDelta(
+        page,
+        async () => {
+          if (isStealthNR) await humanMouseMove(page, cx, cy);
+          if (action === 'double_click') {
+            await page.mouse.click(cx, cy, { clickCount: 2 });
+          } else if (action === 'hover') {
+            if (!isStealthNR) await page.mouse.move(cx, cy);
+          } else {
+            await page.mouse.click(cx, cy);
+          }
+        },
+        { settleMs: Math.max(150, waitAfter) },
+      );
+
+      invalidateAXCache(getTargetId(page.target()));
+
+      const verb =
+        action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+      const outcome = classifyOutcome(nrDelta, 'element');
+      const refToken = formatNodeRefToken(nodeRefArg);
+      const line = formatOutcomeLine(
+        outcome,
+        verb,
+        `element via nodeRef`,
+        `[${nodeRefArg}]`,
+        `[${refToken}]`,
+      );
+
+      const lines: string[] = [line, refToken];
+      if (nrDelta) lines.push('', '[DOM Delta]', nrDelta);
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
     }
 
     const queryNorm = normalizeQuery(query);
@@ -324,6 +464,15 @@ const handler: ToolHandler = async (
           ax.role, ax.name, undefined, undefined
         );
 
+        // Mint a stable nodeRef (P2: token always present; null when off).
+        let axNodeRef: string | null = null;
+        try {
+          const loaderId = await getCurrentLoaderId(page, cdpClient);
+          axNodeRef = mintNodeRefSync(page, loaderId, ax.backendDOMNodeId);
+        } catch {
+          axNodeRef = null;
+        }
+
         // Clean up any leftover tags
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
@@ -347,7 +496,7 @@ const handler: ToolHandler = async (
           return { url, title, activeInfo };
         }), 3000, 'state-summary', context).catch(() => ({ url: '', title: '', activeInfo: 'unknown' }));
 
-        const lines: string[] = [axLine];
+        const lines: string[] = [axLine, formatNodeRefToken(axNodeRef)];
         if (axDelta) lines.push('', '[DOM Delta]', axDelta);
         if (axState.activeInfo !== 'none') lines.push('', `[Focused] ${axState.activeInfo}`);
 
@@ -518,6 +667,17 @@ const handler: ToolHandler = async (
       );
     }
 
+    // Mint a stable nodeRef (P2: token always present; null when off).
+    let cssNodeRef: string | null = null;
+    if (bestMatch.backendDOMNodeId) {
+      try {
+        const loaderId = await getCurrentLoaderId(page, cdpClient);
+        cssNodeRef = mintNodeRefSync(page, loaderId, bestMatch.backendDOMNodeId);
+      } catch {
+        cssNodeRef = null;
+      }
+    }
+
     // Clean up discovery tags to prevent stale properties
     await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
@@ -610,7 +770,7 @@ const handler: ToolHandler = async (
     }));
 
     // Build the response — compact success format
-    const lines: string[] = [interactedLine];
+    const lines: string[] = [interactedLine, formatNodeRefToken(cssNodeRef)];
 
     if (returnFormat === 'dom_delta' || returnFormat === 'both') {
       if (delta) {
