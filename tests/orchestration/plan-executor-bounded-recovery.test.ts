@@ -69,4 +69,24 @@ describe('PlanExecutor bounded recovery', () => {
     expect(result.recovery?.exhausted).toBe(true);
     expect(result.recovery?.attempts[0].tool).toBe('read_page');
   });
+  it('lets success criteria judge empty results when no empty-result recovery exists', async () => {
+    const handlers = new Map<string, ToolHandler>([
+      ['read_page', async () => text('')],
+    ]);
+    const emptyPlan = plan();
+    emptyPlan.steps = [
+      { order: 1, tool: 'read_page', args: { tabId: '${tabId}' }, timeout: 1000, parseResult: { format: 'text', storeAs: 'page' } },
+    ];
+    emptyPlan.successCriteria = { requiredFields: ['page'] };
+    const executor = new PlanExecutor((name) => handlers.get(name) ?? null);
+
+    const result = await executor.execute(emptyPlan, 's1', { tabId: 'tab-1' }, {
+      boundedRecovery: { enabled: true, maxCandidates: 2, maxToolCalls: 1, perCandidateTimeoutMs: 1000 },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({ page: '' });
+    expect(result.recovery?.attempts.every((attempt) => attempt.status !== 'success')).toBe(true);
+  });
+
 });

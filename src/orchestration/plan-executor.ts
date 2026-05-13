@@ -274,7 +274,8 @@ export class PlanExecutor {
         const bounded = await this.tryBoundedRecovery(step, 'empty result', sessionId, params, options, recoveryAttempts);
         stepsExecuted += bounded.stepsExecuted;
         if (bounded.recovered) continue;
-        // No handler for empty — treat as non-fatal, just skip storing
+        // Empty results are valid MCP payloads when the plan has no explicit empty-result handler.
+        // Preserve the normal parse/store path below so successCriteria remains the authority.
       }
 
       // f. Parse and store result if requested
