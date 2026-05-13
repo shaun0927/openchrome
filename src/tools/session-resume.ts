@@ -21,6 +21,24 @@ interface SnapshotTab {
   sessionId: string;
   url: string;
   title: string;
+  lastActivityAt?: number;
+  workerLastActivityAt?: number;
+  profileDirectory?: string;
+}
+
+interface SessionLifecycleMetadata {
+  capturedAt: number;
+  recoverySource: 'oc_session_snapshot';
+  profile: {
+    type: string;
+    userDataDir?: string;
+    profileDirectory?: string;
+    cookieCopiedAt?: number;
+  };
+  storageState: {
+    enabled: boolean;
+    dir?: string;
+  };
 }
 
 interface SnapshotMemo {
@@ -38,6 +56,7 @@ interface SessionSnapshot {
   tabs: SnapshotTab[];
   memo: SnapshotMemo;
   label?: string;
+  lifecycle?: SessionLifecycleMetadata;
 }
 
 
@@ -262,6 +281,15 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
   lines.push(`Last step: ${snapshot.memo.currentStep}`);
   lines.push(`Snapshot age: ${ageStr}${snapshot.label ? ` (${snapshot.label})` : ''}`);
 
+  if (snapshot.lifecycle) {
+    const profile = snapshot.lifecycle.profile;
+    lines.push(`Recovery source: ${snapshot.lifecycle.recoverySource}`);
+    lines.push(`Profile/storage identity: profile=${profile.type}${profile.profileDirectory ? `/${profile.profileDirectory}` : ''}; storage-state=${snapshot.lifecycle.storageState.enabled ? 'enabled' : 'disabled'}`);
+    if (profile.cookieCopiedAt) {
+      lines.push(`Cookie sync age: ${formatRelativeAge(Date.now() - profile.cookieCopiedAt)}`);
+    }
+  }
+
   if (age > 24 * 3600000) {
     lines.push('WARNING: Snapshot is over 24 hours old. Tab states may be inaccurate.');
   }
@@ -282,13 +310,19 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
                           'CLOSED  ';
       const url = tab.saved.url;
       const title = tab.saved.title ? ` "${tab.saved.title}"` : '';
+      const workerContext = [
+        `session=${tab.saved.sessionId}`,
+        `worker=${tab.saved.workerId}`,
+        ...(tab.saved.profileDirectory ? [`profile=${tab.saved.profileDirectory}`] : []),
+        ...(tab.saved.workerLastActivityAt ? [`lastActivity=${formatRelativeAge(Date.now() - tab.saved.workerLastActivityAt)} ago`] : []),
+      ].join(', ');
 
       if (tab.status === 'REMAPPED') {
-        lines.push(`  [${statusLabel}] ${tab.saved.targetId} -> ${tab.currentTargetId} ${url}${title}`);
+        lines.push(`  [${statusLabel}] ${tab.saved.targetId} -> ${tab.currentTargetId} ${url}${title} (${workerContext})`);
       } else if (tab.status === 'CLOSED') {
-        lines.push(`  [${statusLabel}] ${url}${title}`);
+        lines.push(`  [${statusLabel}] ${url}${title} (${workerContext}; stale target — open a fresh tab/context before mutating)`);
       } else {
-        lines.push(`  [${statusLabel}] ${tab.currentTargetId} ${url}${title}`);
+        lines.push(`  [${statusLabel}] ${tab.currentTargetId} ${url}${title} (${workerContext})`);
       }
     }
   }
@@ -363,6 +397,16 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
   }
 
   lines.push('');
+  if (closed.length > 0) {
+    lines.push('Recovery guidance: CLOSED targets cannot be reused after restart/reconnect; create a fresh tab with the same URL and profileDirectory/storage-state identity before continuing.');
+  } else if (remapped.length > 0) {
+    lines.push('Recovery guidance: REMAPPED targets survived under a new target id; prefer the currentTargetId shown above.');
+  }
+  if (snapshot.lifecycle?.profile.type === 'temp') {
+    lines.push('Auth guidance: this snapshot used a temporary profile, so cookies/localStorage may not survive process restart. Use a persistent/real profile or storage-state for auth reuse.');
+  } else if (snapshot.lifecycle) {
+    lines.push('Auth guidance: reuse the same profileDirectory and storage-state setting when continuing authenticated work.');
+  }
   lines.push('Recommended next safe action: verify the live tab state with read_page or tabs_context before mutating the page.');
 
   return lines.join('\n');

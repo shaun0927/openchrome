@@ -64,6 +64,7 @@ export const TOOL_ANNOTATIONS = {
   // ── Pure reads ──────────────────────────────────────────────────────────
   inspect: READ_ONLY,
   query_dom: READ_ONLY,
+  oc_query: READ_ONLY,
   find: READ_ONLY,
   read_page: READ_ONLY,
   page_content: READ_ONLY,
@@ -219,7 +220,9 @@ export const TOOL_ANNOTATIONS = {
 
   // ── Run-harness lifecycle (develop-era additions) ──────────────────────
   oc_run_start: MUTATES,
-  oc_run_status: READ_ONLY,
+  // `oc_run_status` is read-only without a budget, but budget-exceeded inputs
+  // finish the run as needs_strategy_change and append ledger evidence.
+  oc_run_status: MUTATES,
   oc_run_events: READ_ONLY,
   oc_run_finish: DESTRUCTIVE,
 

@@ -32,6 +32,7 @@ function makeSnapshot(overrides: Partial<{
   memo: unknown;
   label: string;
   version: number;
+  lifecycle: unknown;
 }> = {}) {
   return {
     version: 1,
@@ -56,6 +57,8 @@ function makeTab(overrides: Partial<{
   sessionId: string;
   url: string;
   title: string;
+  workerLastActivityAt: number;
+  profileDirectory: string;
 }> = {}) {
   return {
     targetId: 'target-aaa',
@@ -358,6 +361,63 @@ describe('generateResumeGuide', () => {
 
     expect(guide).toContain('CLOSED');
     expect(guide).toContain('https://closed.example.com');
+    expect(guide).toContain('stale target');
+    expect(guide).toContain('Recovery guidance: CLOSED targets cannot be reused');
+  });
+
+  test('includes lifecycle profile/storage identity and auth guidance', () => {
+    const snap = makeSnapshot({
+      lifecycle: {
+        capturedAt: Date.now() - 1000,
+        recoverySource: 'oc_session_snapshot',
+        profile: {
+          type: 'persistent',
+          profileDirectory: 'Profile 1',
+          cookieCopiedAt: Date.now() - 60_000,
+        },
+        storageState: {
+          enabled: true,
+          dir: '/tmp/openchrome-storage-state',
+        },
+      },
+    });
+    const tabAnalysis = [
+      {
+        saved: makeTab({
+          profileDirectory: 'Profile 1',
+          workerLastActivityAt: Date.now() - 2000,
+        }),
+        status: 'LIVE' as const,
+        currentTargetId: 'target-aaa',
+        currentUrl: 'https://example.com/form',
+      },
+    ];
+
+    const guide = generateResumeGuide(snap as any, tabAnalysis);
+
+    expect(guide).toContain('Recovery source: oc_session_snapshot');
+    expect(guide).toContain('Profile/storage identity: profile=persistent/Profile 1; storage-state=enabled');
+    expect(guide).toContain('Cookie sync age:');
+    expect(guide).toContain('profile=Profile 1');
+    expect(guide).toContain('lastActivity=');
+    expect(guide).toContain('Auth guidance: reuse the same profileDirectory and storage-state setting');
+  });
+
+  test('warns when auth recovery used a temporary profile', () => {
+    const snap = makeSnapshot({
+      lifecycle: {
+        capturedAt: Date.now(),
+        recoverySource: 'oc_session_snapshot',
+        profile: { type: 'temp' },
+        storageState: { enabled: false },
+      },
+    });
+
+    const guide = generateResumeGuide(snap as any, []);
+
+    expect(guide).toContain('profile=temp; storage-state=disabled');
+    expect(guide).toContain('temporary profile');
+    expect(guide).toContain('may not survive process restart');
   });
 
   test('includes completed steps', () => {

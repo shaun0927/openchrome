@@ -820,6 +820,7 @@ export class SessionManager {
         targetCount: worker.targets.size,
         createdAt: worker.createdAt,
         lastActivityAt: worker.lastActivityAt,
+        ...(worker.profileDirectory && { profileDirectory: worker.profileDirectory }),
       });
     }
 

@@ -15,6 +15,7 @@ import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
 import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
+import { prependHeaderText } from './_shared/state-header';
 import {
   formatNodeRefToken,
   getCurrentLoaderId,
@@ -583,14 +584,14 @@ const handler: ToolHandler = async (
 
     // Footer with page context (always included)
     lines.push(`[Page] ${inspectResult.url} | "${inspectResult.title}"`);
-    const text = lines.join('\n');
-
+    const inspectPayload = lines.join('\n');
+    const headeredText = prependHeaderText({ url: inspectResult.url, title: inspectResult.title, mode: 'inspect', capturedAt: Date.now(), tabId }, inspectPayload);
     return {
       content: [{
         type: 'text',
         text: includeMetrics
-          ? appendMetricsFooter(text, buildTextMetrics(text, { mode: `inspect:${scope}` }))
-          : text,
+          ? appendMetricsFooter(headeredText, buildTextMetrics(headeredText, { mode: `inspect:${scope}` }))
+          : headeredText,
       }],
     };
   } catch (error) {

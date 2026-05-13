@@ -23,6 +23,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_observe: 1,              // src/tools/oc-observe.ts — compact observable action map (#866)
   inspect: 1,
   query_dom: 1,
+  oc_query: 1, // src/tools/oc-query.ts — semantic refs for interaction workflows (#1045)
   javascript_tool: 1,
   tabs_context: 1,
   tabs_create: 1,
@@ -48,6 +49,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_evidence_bundle: 1,      // src/tools/oc-evidence-bundle.ts — Outcome Contracts evidence bundle capture (#792)
   oc_skill_record: 1,         // src/tools/oc-skill-record.ts — skill memory write surface (#785)
   oc_skill_recall: 1,         // src/tools/oc-skill-recall.ts — skill memory read surface (#785)
+  oc_output_fetch: 1,         // src/tools/oc-output-fetch.ts — 2-stage fetch for large-output tools (#887)
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)

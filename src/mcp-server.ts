@@ -29,6 +29,7 @@ import {
 } from './resources/skill-graph';
 import { HintEngine } from './hints';
 import { buildAutomationInsight, formatAutomationFallback, shouldInjectAutomationFallback } from './hints/result-guidance';
+import { getTaskDriftLedger } from './harness/task-ledger';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
@@ -459,6 +460,9 @@ export class MCPServer {
       this.sessionManager.addEventListener((event) => {
         if (event.type === 'session:deleted') {
           this.sessionTenants.delete(event.sessionId);
+          getTaskDriftLedger().cleanupSession(event.sessionId);
+        } else if ((event.type === 'session:target-closed' || event.type === 'session:target-removed') && event.sessionId && event.targetId) {
+          getTaskDriftLedger().cleanupTab(event.sessionId, event.targetId);
         }
       });
     }
@@ -485,6 +489,7 @@ export class MCPServer {
     this.hintEngine = new HintEngine(this.activityTracker);
     this.hintEngine.enableLogging(hintsDir);
     this.hintEngine.enableLearning(hintsDir);
+    this.hintEngine.enableRecoveryFeedback(path.join(process.cwd(), '.openchrome', 'recovery-feedback'));
 
     // Initialize passive recovery trajectory ledger (#1017). Default-on with the
     // existing .openchrome harness logs; set OPENCHROME_RECOVERY_LEDGER=0 to disable.
@@ -2663,7 +2668,7 @@ export class MCPServer {
   private inferToolCategory(toolName: string): ToolCategory {
     if (['navigate', 'page_reload'].includes(toolName)) return 'navigation';
     if (['computer', 'form_input', 'drag_drop'].includes(toolName)) return 'interaction';
-    if (['read_page', 'find', 'page_content', 'query_dom'].includes(toolName)) return 'content';
+    if (['read_page', 'find', 'page_content', 'query_dom', 'oc_query'].includes(toolName)) return 'content';
     if (toolName === 'javascript_tool') return 'javascript';
     if (['network', 'cookies', 'storage', 'request_intercept', 'http_auth'].includes(toolName)) return 'network';
     if (['tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';

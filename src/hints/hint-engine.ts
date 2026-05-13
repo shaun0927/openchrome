@@ -30,6 +30,16 @@ import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
 import { setupHintRules } from './rules/setup-hints';
 import { consoleBufferPressureRules } from './rules/console-buffer-pressure';
+import {
+  mapHintRuleToRecoveryCategory,
+  RecoveryFeedbackWriter,
+} from '../core/trace/recovery-feedback';
+import {
+  getTaskDriftLedger,
+  isTaskDriftLedgerEnabled,
+  type TaskDriftLedgerStore,
+  type TaskLedger,
+} from '../harness/task-ledger';
 
 export interface HintContext {
   toolName: string;
@@ -88,6 +98,7 @@ export class HintEngine {
   private learner: PatternLearner;
   private progressTracker: ProgressTracker;
   private repeatedCallDetector: RepeatedCallDetector;
+  private taskLedger: TaskDriftLedgerStore;
   private logFilePath: string | null = null;
   /** Session IDs for which tools/list has been served — suppresses rules tagged redundant_with_description */
   private toolsListServedSessions: Set<string> = new Set();
@@ -98,12 +109,14 @@ export class HintEngine {
   private logStream: fs.WriteStream | null = null;
   private logBuffer: string[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private recoveryFeedback: RecoveryFeedbackWriter | null = null;
   private static readonly FLUSH_INTERVAL = 200; // ms
 
   constructor(activityTracker: ActivityTracker, progressTracker?: ProgressTracker, repeatedCallDetector?: RepeatedCallDetector) {
     this.activityTracker = activityTracker;
     this.progressTracker = progressTracker ?? new ProgressTracker();
     this.repeatedCallDetector = repeatedCallDetector ?? new RepeatedCallDetector();
+    this.taskLedger = getTaskDriftLedger();
     this.learner = new PatternLearner();
 
     // Collect all rules and sort by priority (ascending = highest priority first)
@@ -146,6 +159,11 @@ export class HintEngine {
    */
   enableLearning(dirPath: string): void {
     this.learner.enablePersistence(dirPath);
+  }
+
+  /** Enable best-effort recovery feedback JSONL bundles (#1048). */
+  enableRecoveryFeedback(dirPath: string): void {
+    this.recoveryFeedback = new RecoveryFeedbackWriter({ dirPath });
   }
 
   /**
@@ -198,6 +216,18 @@ export class HintEngine {
     // for individual rules is intentionally frozen during stuck/stalling phases —
     // we don't want to spuriously reset escalating rule fire counts while the
     // agent is not making progress.
+    const ledger = isTaskDriftLedgerEnabled()
+      ? this.taskLedger.updateFromToolResult({
+          sessionId: hintSessionId,
+          tabId: typeof currentArgs?.tabId === 'string' ? currentArgs.tabId : undefined,
+          toolName,
+          args: currentArgs,
+          resultText,
+          isError,
+          recentCalls,
+        })
+      : null;
+    const ledgerHint = ledger ? this.formatLedgerHint(ledger) : null;
     const status = this.progressTracker.evaluate(recentCalls, toolName, resultText, isError);
 
     // Scope escalation keys by sessionId when available to prevent cross-session pollution
@@ -210,9 +240,11 @@ export class HintEngine {
       this.hintEscalation.set(key, fireCount);
       const rawHintText = 'STOP — you are stuck. The last several tool calls made no meaningful progress ' +
         '(errors, stale refs, auth redirects, or timeouts). ' +
-        'Step back and try a completely different approach, or ask the user for help.';
+        'Step back and try a completely different approach, or ask the user for help.' +
+        (ledgerHint ? ` ${ledgerHint}` : '');
       const severity = fireCount >= 2 ? 'critical' as const : 'warning' as const;
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stuck', hint: rawHintText, severity, fireCount });
+      this.recordRecoveryFeedback('progress-tracker-stuck', rawHintText, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
       return {
         severity,
         rule: 'progress-tracker-stuck',
@@ -227,9 +259,11 @@ export class HintEngine {
       const fireCount = (this.hintEscalation.get(key) || 0) + 1;
       this.hintEscalation.set(key, fireCount);
       const rawHintText = 'Warning: recent tool calls are not making progress. ' +
-        'Consider trying a different approach before getting stuck.';
+        'Consider trying a different approach before getting stuck.' +
+        (ledgerHint ? ` ${ledgerHint}` : '');
       const severity = this.getSeverity(fireCount);
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stalling', hint: rawHintText, severity, fireCount });
+      this.recordRecoveryFeedback('progress-tracker-stalling', rawHintText, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
       return {
         severity,
         rule: 'progress-tracker-stalling',
@@ -294,6 +328,7 @@ export class HintEngine {
         this.hintEscalation.set(key, fireCount);
         const severity = repeated.severity;
         this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'repeated-identical-tool-call', hint: repeated.hint, severity, fireCount });
+        this.recordRecoveryFeedback('repeated-identical-tool-call', repeated.hint, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
         return {
           severity,
           rule: 'repeated-identical-tool-call',
@@ -302,6 +337,23 @@ export class HintEngine {
           rawHint: repeated.hint,
         };
       }
+    }
+
+    if (!rawHint && ledger && ledgerHint) {
+      const key = escalationKey('task-ledger-drift');
+      const fireCount = (this.hintEscalation.get(key) || 0) + 1;
+      this.hintEscalation.set(key, fireCount);
+      const severity = fireCount >= 2 || ledger.stopCondition ? 'warning' as const : 'info' as const;
+      this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'task-ledger-drift', hint: ledgerHint, severity, fireCount });
+      this.recordRecoveryFeedback('task-ledger-drift', ledgerHint, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
+      return {
+        severity,
+        rule: 'task-ledger-drift',
+        fireCount,
+        hint: this.formatHintMessage(severity, ledgerHint, fireCount),
+        rawHint: ledgerHint,
+        ...(ledger.suggestedNextStep && { suggestion: ledger.suggestedNextStep }),
+      };
     }
 
     if (!rawHint) {
@@ -363,8 +415,60 @@ export class HintEngine {
     this.learner.onToolComplete(toolName, isError);
 
     this.log({ timestamp: Date.now(), toolName, isError, matchedRule, hint: formattedHint, severity, fireCount });
+    if (mapHintRuleToRecoveryCategory(matchedRule, resultText) !== 'unknown') {
+      this.recordRecoveryFeedback(matchedRule, rawHint, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
+    }
 
     return hintResult;
+  }
+
+  private recordRecoveryFeedback(
+    rule: string,
+    rawHint: string,
+    severity: HintSeverity,
+    fireCount: number,
+    toolName: string,
+    resultText: string,
+    isError: boolean,
+    sessionId: string,
+    recentCalls: ToolCallEvent[],
+  ): void {
+    if (!this.recoveryFeedback) return;
+    const now = Date.now();
+    const category = mapHintRuleToRecoveryCategory(rule, resultText);
+    this.recoveryFeedback.append({
+      sessionId,
+      startedAt: now,
+      endedAt: now,
+      trigger: {
+        tool: toolName,
+        category,
+        errorFingerprint: resultText,
+        resultExcerpt: resultText,
+      },
+      context: {
+        recentTools: recentCalls.map((call) => call.toolName),
+        nonProgressCalls: category === 'non_progress' ? fireCount : 0,
+      },
+      hints: [{ rule, severity, rawHint }],
+      recovery: {
+        attemptedTools: [],
+        succeeded: false,
+        attempts: 0,
+        durationMs: 0,
+      },
+      outcome: {
+        finalStatus: isError || category === 'non_progress' ? 'failed' : 'escalated',
+        feedback: category === 'blocked_page'
+          ? 'blocked_page detected; no recovery attempted; escalated to host/user'
+          : undefined,
+      },
+      traceRefs: [],
+    });
+  }
+
+  private formatLedgerHint(ledger: TaskLedger): string | null {
+    return this.taskLedger.buildHint(ledger);
   }
 
   private getSeverity(fireCount: number, maxSeverity?: HintSeverity): HintSeverity {

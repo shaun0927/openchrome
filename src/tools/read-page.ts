@@ -17,6 +17,7 @@ import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-est
 import { getGlobalConfig } from '../config/global';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
 
 /**
  * Build the `[node_refs]` block that surfaces the #844 backend-node uid
@@ -1277,7 +1278,72 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
  * behavior-preserving seam so the feature can be re-enabled safely later.
  */
 const cachedHandler: ToolHandler = async (sessionId, args, context) => {
-  return sanitizedHandler(sessionId, args, context);
+  const result = await sanitizedHandler(sessionId, args, context);
+  if (!isStateHeaderEnabled() || result.isError || !result.content) return result;
+
+  const tabId = typeof args.tabId === 'string' ? args.tabId : '';
+  if (!tabId) return result;
+
+  let page: Awaited<ReturnType<ReturnType<typeof getSessionManager>['getPage']>> | null = null;
+  try {
+    page = await getSessionManager().getPage(sessionId, tabId);
+  } catch {
+    page = null;
+  }
+  if (!page) return result;
+
+  let url = '';
+  let title = '';
+  try {
+    url = page.url() || '';
+  } catch {
+    url = '';
+  }
+  try {
+    title = await page.title();
+  } catch {
+    title = '';
+  }
+
+  const requestedMode = typeof args.mode === 'string' ? args.mode : 'dom';
+  const mode = ['ax', 'dom', 'css', 'semantic', 'markdown'].includes(requestedMode)
+    ? requestedMode
+    : 'dom';
+  const headerMode = mode === 'markdown' ? 'html' : mode;
+  const header = { url, title, mode: headerMode as 'ax' | 'dom' | 'css' | 'html', capturedAt: Date.now(), tabId };
+  const includeMetrics = args.include_metrics === true;
+  const refreshSemanticMetrics = (payload: Record<string, unknown>): Record<string, unknown> => {
+    if (!includeMetrics || !('_metrics' in payload)) return payload;
+    const next = { ...payload };
+    delete next._metrics;
+    let metrics = buildTextMetrics(JSON.stringify(next), { mode: 'semantic' });
+    for (let i = 0; i < 8; i++) {
+      next._metrics = metrics;
+      const text = JSON.stringify(next);
+      const candidate = buildTextMetrics(text, { mode: 'semantic' });
+      if (candidate.returned_chars === metrics.returned_chars && candidate.estimated_tokens === metrics.estimated_tokens) return next;
+      metrics = candidate;
+    }
+    next._metrics = metrics;
+    return next;
+  };
+
+  return {
+    ...result,
+    content: result.content.map((block) => {
+      if (block.type !== 'text' || typeof block.text !== 'string') return block;
+      if (mode === 'semantic') {
+        try {
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          const merged = mergeHeaderJson(header, parsed) as Record<string, unknown>;
+          return { ...block, text: JSON.stringify(refreshSemanticMetrics(merged)) };
+        } catch {
+          return { ...block, text: prependHeaderText(header, block.text) };
+        }
+      }
+      return { ...block, text: prependHeaderText(header, block.text) };
+    }),
+  };
 };
 
 function hasTruncationMarker(text: string): boolean {
