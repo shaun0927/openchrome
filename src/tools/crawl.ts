@@ -660,6 +660,13 @@ const handler: ToolHandler = async (
         pages.push(page);
         if (depth > maxDepthReached) maxDepthReached = depth;
 
+        // #869 — emit progress per page (no-op when no progressToken supplied).
+        context?.reportProgress?.({
+          progress: pages.length,
+          total: maxPages,
+          message: page.url,
+        });
+
         // Enqueue discovered links for next depth level
         if (depth < maxDepth && !page.error) {
           const nextDepth = depth + 1;
