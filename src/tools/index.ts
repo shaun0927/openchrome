@@ -286,6 +286,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_pilot_handoff_create: 'pilot',
   oc_pilot_handoff_redeem: 'pilot',
   oc_proxy_hook: 'pilot',
+  oc_react: 'pilot',
 
   // core — develop-era additions (#1062 normalize, #1060 progress, #1019
   // reflect, #855 task ledger, run-harness ledger). All are diagnostics or
