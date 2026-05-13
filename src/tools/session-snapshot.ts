@@ -10,7 +10,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getChromeLauncher } from '../chrome/launcher';
+import { getExistingChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { writeFileAtomicSafe } from '../utils/atomic-file';
 import { safeTitle } from '../utils/safe-title';
@@ -184,7 +184,19 @@ export function collectLifecycleMetadata(): SessionLifecycleMetadata {
   let profile: SessionLifecycleMetadata['profile'] = { type: 'unknown' };
 
   try {
-    const state = getChromeLauncher(config.port).getProfileState();
+    const launcher = getExistingChromeLauncher(config.port);
+    if (!launcher) {
+      return {
+        capturedAt: Date.now(),
+        recoverySource: 'oc_session_snapshot',
+        profile,
+        storageState: {
+          enabled: process.env.OC_PERSIST_STORAGE !== '0',
+          ...(process.env.OC_STORAGE_DIR && { dir: process.env.OC_STORAGE_DIR }),
+        },
+      };
+    }
+    const state = launcher.getProfileState();
     profile = {
       type: state.type,
       ...(state.userDataDir && { userDataDir: state.userDataDir }),

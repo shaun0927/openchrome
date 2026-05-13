@@ -187,7 +187,7 @@ describe('oc_session_snapshot', () => {
 
       expect(lifecycle.recoverySource).toBe('oc_session_snapshot');
       expect(lifecycle.capturedAt).toEqual(expect.any(Number));
-      expect(lifecycle.profile.type).toEqual(expect.any(String));
+      expect(lifecycle.profile.type).toBe('unknown');
       expect(lifecycle.storageState).toMatchObject({
         enabled: true,
         dir: '/tmp/openchrome-storage-state',
