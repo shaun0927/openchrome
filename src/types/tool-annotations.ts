@@ -189,6 +189,37 @@ export const TOOL_ANNOTATIONS = {
   oc_pilot_handoff_create: MUTATES,
   oc_pilot_handoff_redeem: MUTATES,
 
+  // ── Crawl job control (develop-era additions merged after this PR) ─────
+  // `crawl_start` issues network requests, so its worst-case input set
+  // triggers network egress; `crawl_cancel` terminates an in-flight job;
+  // `crawl_status` is a pure read of in-memory job state.
+  crawl_start: OPEN_WORLD,
+  crawl_cancel: DESTRUCTIVE,
+  crawl_status: READ_ONLY,
+
+  // ── Reflection / task ledger (develop-era additions) ────────────────────
+  // `oc_reflect` mutates the reflection store under at least one action
+  // (e.g. set/clear); only `get/list` are observably idempotent, so the
+  // worst-case mark is MUTATES.
+  oc_reflect: MUTATES,
+  oc_task_start: MUTATES,
+  oc_task_cancel: DESTRUCTIVE,
+  oc_task_get: READ_ONLY,
+  oc_task_list: READ_ONLY,
+  oc_task_wait: READ_ONLY,
+
+  // ── Skill replay (develop-era addition) ────────────────────────────────
+  // `oc_skill_replay` performs the recorded CDP step sequence; the contract
+  // gate may issue page.goto, so we mark it OPEN_WORLD_DESTRUCTIVE to match
+  // the safety envelope of `execute_plan` above.
+  oc_skill_replay: OPEN_WORLD_DESTRUCTIVE,
+
+  // ── Run-harness lifecycle (develop-era additions) ──────────────────────
+  oc_run_start: MUTATES,
+  oc_run_status: READ_ONLY,
+  oc_run_events: READ_ONLY,
+  oc_run_finish: DESTRUCTIVE,
+
   // ── Virtual / runtime-only ──────────────────────────────────────────────
   // expand_tools is built inline by mcp-server.ts handleToolsList() and is
   // not registered through registerTool(); annotations declared here are
