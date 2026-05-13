@@ -82,7 +82,7 @@ const updateDefinition: MCPToolDefinition = {
     type: 'object',
     properties: {
       run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
-      status: { type: 'string', enum: ['PENDING', 'RUNNING', 'NEEDS_HELP'] },
+      status: { type: 'string', enum: ['RUNNING'], description: 'Only RUNNING is accepted. Use oc_task_run_needs_help / oc_task_run_complete for other transitions.' },
       resume_reason: { type: 'string', description: 'Required when resuming from NEEDS_HELP to RUNNING.' },
       progress_summary: { type: 'string' },
       completed_items: { type: 'array', items: { type: 'string' } },
