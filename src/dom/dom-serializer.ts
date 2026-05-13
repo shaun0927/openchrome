@@ -119,8 +119,8 @@ function parseAttributes(attrs: string[] | undefined): Map<string, string> {
 }
 
 function escapeAttributeValue(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
+  const escapedAmpersands = value.replace(/&/g, '&amp;');
+  return escapedAmpersands
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
