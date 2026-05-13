@@ -18,6 +18,7 @@ import {
 import { __test__ as taskGetTest } from '../../../src/tools/oc-task-get';
 import { __test__ as taskUpdateTest } from '../../../src/tools/oc-task-update';
 import { __test__ as taskFinishTest } from '../../../src/tools/oc-task-finish';
+import { __test__ as taskCancelTest } from '../../../src/tools/oc-task-cancel';
 import type { MCPResult, ToolHandler } from '../../../src/types/mcp';
 
 function tempRoot(): string {
@@ -85,6 +86,29 @@ describe('oc_task_start handler — happy path', () => {
     expect(meta?.objective).toBe('exercise budgets');
     expect(meta?.policy?.maxObservationStreak).toBe(3);
     expect(meta?.budget_status).toBe('ok');
+  });
+
+  test('oc_task_cancel moves browser_task envelopes directly to CANCELLED', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const started = await handler('sess-1', {
+      objective: 'host-managed browser work',
+      phase: 'act',
+    });
+    const taskId = started.task_id as string;
+
+    const cancelled = await taskCancelTest.handler('sess-1', { task_id: taskId });
+
+    expect(cancelled.isError).not.toBe(true);
+    expect(cancelled.meta).toMatchObject({
+      task_id: taskId,
+      kind: 'browser_task',
+      status: 'CANCELLED',
+      phase: 'done',
+    });
+    const meta = getTaskStore().readMetaSync(taskId);
+    expect(meta?.status).toBe('CANCELLED');
+    expect(meta?.ended_at).toBeDefined();
+    expect(meta?.cancel_requested_at).toBeDefined();
   });
 
   test('returns isError when tool name is not registered', async () => {
