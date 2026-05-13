@@ -483,8 +483,15 @@ function serializeNode(
   const interactive = isInteractive(tagName, attrMap, customHints);
 
   if (ctx.planningProfile === 'stable' && isDecorativeMedia(tagName, attrMap, interactive)) {
-    // Omit the decorative wrapper itself, but still inspect descendants so
-    // meaningful fallback labels inside <picture> or media-only links survive.
+    const fallbackText = getDirectTextContent(node);
+    const indent = '  '.repeat(depth);
+    if (fallbackText) {
+      const line = formatElement(node, attrMap, indent, fallbackText, interactive, ctx.planningProfile, ctx.referencedIds);
+      if (!appendBoundedLine(ctx, line + '\n')) return;
+      ctx.emittedBackendNodeIds.add(node.backendNodeId);
+    }
+    // Omit decorative media wrappers without fallback text, but still inspect
+    // descendants so meaningful labels inside <picture> survive.
     for (const child of node.children || []) {
       serializeNode(child, depth + 1, ctx);
       if (ctx.truncated) return;
