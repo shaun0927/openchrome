@@ -20,6 +20,7 @@ import { getSessionManager } from '../../src/session-manager';
 import { getRefIdManager } from '../../src/utils/ref-id-manager';
 
 describe('ComputerTool', () => {
+  const mockDetectPagination = jest.fn();
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
   let mockRefIdManager: ReturnType<typeof createMockRefIdManager>;
   let testSessionId: string;
@@ -32,6 +33,9 @@ describe('ComputerTool', () => {
     }));
     jest.doMock('../../src/utils/ref-id-manager', () => ({
       getRefIdManager: () => mockRefIdManager,
+    }));
+    jest.doMock('../../src/utils/pagination-detector', () => ({
+      detectPagination: mockDetectPagination,
     }));
 
     const { registerComputerTool } = await import('../../src/tools/computer');
@@ -48,6 +52,13 @@ describe('ComputerTool', () => {
   };
 
   beforeEach(async () => {
+    mockDetectPagination.mockReset();
+    mockDetectPagination.mockResolvedValue({
+      type: 'none',
+      hasNext: false,
+      hasPrev: false,
+      suggestedStrategy: 'No pagination detected',
+    });
     mockSessionManager = createMockSessionManager();
     mockRefIdManager = createMockRefIdManager();
     (getSessionManager as jest.Mock).mockReturnValue(mockSessionManager);
@@ -469,6 +480,40 @@ describe('ComputerTool', () => {
       }) as { content: Array<{ type: string; mimeType?: string }> };
 
       expect(result.content[0].mimeType).toBe('image/webp');
+    });
+
+    test('appends batch_paginate guidance when screenshot detects pagination', async () => {
+      mockDetectPagination.mockResolvedValueOnce({
+        type: 'infinite_scroll',
+        hasNext: true,
+        hasPrev: false,
+        suggestedStrategy: 'Use batch_paginate',
+      });
+      const handler = await getComputerHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; data?: string; text?: string }> };
+
+      expect(result.content[0]).toMatchObject({ type: 'image', data: 'base64-screenshot-data' });
+      expect(result.content[1]).toMatchObject({ type: 'text' });
+      expect(result.content[1].text).toContain('[Pagination Detected]');
+      expect(result.content[1].text).toContain('batch_paginate');
+      expect(result.content[1].text).toContain('manual next/scroll loops');
+    });
+
+    test('ignores pagination detection failures during screenshot', async () => {
+      mockDetectPagination.mockRejectedValueOnce(new Error('detector failed'));
+      const handler = await getComputerHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; data?: string }> };
+
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0]).toMatchObject({ type: 'image', data: 'base64-screenshot-data' });
     });
 
     test('uses CDP Page.captureScreenshot', async () => {
