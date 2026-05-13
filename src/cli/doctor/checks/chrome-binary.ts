@@ -79,10 +79,11 @@ function findChromeHeadlessShell(): string | null {
 
 function probeChromeVersion(chromePath: string): { major: number; raw: string } | null {
   try {
-    const output = execFileSync(chromePath, ['--version'], {
+    const outputRaw = execFileSync(chromePath, ['--version'], {
       encoding: 'utf8',
       timeout: 4000,
-    }).trim();
+    });
+    const output = String(outputRaw).trim();
     const match = output.match(/\d+/);
     if (!match) return null;
     return { major: parseInt(match[0], 10), raw: output };

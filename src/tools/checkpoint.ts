@@ -12,10 +12,11 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
+import { getActiveActionRecorder } from '../recording/action-recorder';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-interface AutomationCheckpoint {
+export interface AutomationCheckpoint {
   version: 1;
   timestamp: number;
   taskDescription: string;
@@ -121,8 +122,14 @@ async function collectTabStates(): Promise<Array<{ tabId: string; url: string; t
 
 // ─── Handler ───────────────────────────────────────────────────────────────
 
+export async function readCurrentCheckpoint(): Promise<AutomationCheckpoint | null> {
+  const checkpointPath = path.join(CHECKPOINT_DIR, CHECKPOINT_FILE);
+  const result = await readFileSafe<AutomationCheckpoint>(checkpointPath);
+  return result.success && result.data ? result.data : null;
+}
+
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const checkpointPath = path.join(CHECKPOINT_DIR, CHECKPOINT_FILE);
@@ -147,6 +154,12 @@ const handler: ToolHandler = async (
     await fs.promises.mkdir(CHECKPOINT_DIR, { recursive: true });
     await writeFileAtomicSafe(checkpointPath, checkpoint);
 
+    try {
+      await getActiveActionRecorder(sessionId)?.appendCheckpoint(checkpoint as unknown as Record<string, unknown>);
+    } catch {
+      // Best-effort trajectory linkage must never fail checkpoint save.
+    }
+
     return {
       content: [
         {
@@ -168,8 +181,8 @@ const handler: ToolHandler = async (
   }
 
   if (action === 'load') {
-    const result = await readFileSafe<AutomationCheckpoint>(checkpointPath);
-    if (!result.success || !result.data) {
+    const cp = await readCurrentCheckpoint();
+    if (!cp) {
       return {
         content: [
           {
@@ -180,7 +193,6 @@ const handler: ToolHandler = async (
       };
     }
 
-    const cp = result.data;
     const ageMs = Date.now() - cp.timestamp;
     const ageHours = Math.round((ageMs / 3600000) * 10) / 10;
 
