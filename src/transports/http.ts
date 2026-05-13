@@ -1153,9 +1153,10 @@ export class HTTPTransport implements MCPTransport {
       // The per-socket idle timeout is meant to protect header/body receive and
       // truly idle keepalive sockets. Once the full request body has been read,
       // valid MCP tool calls may legitimately run longer than that idle window,
-      // so disable the request-level socket timer and let tool deadlines govern
+      // so disable both request and socket timers and let tool deadlines govern
       // execution. keepAliveTimeout still applies after the response finishes.
       req.setTimeout(0);
+      req.socket.setTimeout(0);
 
       // Session tracking via Mcp-Session-Id header
       let sessionId = req.headers['mcp-session-id'] as string | undefined;
