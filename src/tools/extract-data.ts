@@ -16,9 +16,12 @@ import {
   buildMicrodataExtractor,
   buildOpenGraphExtractor,
   buildCssHeuristicExtractor,
+  buildStandardDomExtractor,
   buildMultipleItemExtractor,
   parseExtractionMode,
+  EXTRACTION_MODE_BUDGETS,
 } from '../extraction';
+import type { ExtractionMode } from '../extraction';
 import type { ExtractionSchema, SchemaProperty } from '../extraction';
 
 const definition: MCPToolDefinition = {
@@ -84,10 +87,12 @@ export const extractDataHandler: ToolHandler = async (
   _context?: ToolContext
 ): Promise<MCPResult> => {
   // Mode validation (#989): validate before any browser/session interaction.
-  const modeResult = parseExtractionMode(args.mode);
-  if (!modeResult.ok) {
-    return { content: [{ type: 'text', text: `Error: ${modeResult.error}` }], isError: true };
+  const modeCheck = parseExtractionMode(args.mode);
+  if (!modeCheck.ok) {
+    return { content: [{ type: 'text', text: `Error: ${modeCheck.error}` }], isError: true };
   }
+  const mode = modeCheck.mode;
+  const budget = EXTRACTION_MODE_BUDGETS[mode];
 
   const tabId = args.tabId as string;
   const schema = args.schema as ExtractionSchema;
@@ -98,14 +103,6 @@ export const extractDataHandler: ToolHandler = async (
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
-  }
-
-  // Validate the extraction mode before reaching for the session — an invalid
-  // mode is a deterministic input error and should never trigger a Chrome
-  // session lookup.
-  const modeCheck = parseExtractionMode(args.mode);
-  if (!modeCheck.ok) {
-    return { content: [{ type: 'text', text: `Error: ${modeCheck.error}` }], isError: true };
   }
 
   const schemaCheck = validateSchema(schema);
@@ -180,40 +177,54 @@ export const extractDataHandler: ToolHandler = async (
 
     // Strategy 1: JSON-LD
     try {
-      const r = await withTimeout(page.evaluate(buildJsonLdExtractor(fieldNames)) as Promise<Record<string, unknown>>, 5000, 'extract_data:jsonld');
+      const r = await withTimeout(page.evaluate(buildJsonLdExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.jsonLdTimeoutMs, 'extract_data:jsonld');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('json-ld'); }
     } catch { /* non-fatal */ }
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, readiness);
+      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, readiness);
     }
 
     // Strategy 2: Microdata
     try {
-      const r = await withTimeout(page.evaluate(buildMicrodataExtractor(fieldNames)) as Promise<Record<string, unknown>>, 5000, 'extract_data:microdata');
+      const r = await withTimeout(page.evaluate(buildMicrodataExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.microdataTimeoutMs, 'extract_data:microdata');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('microdata'); }
     } catch { /* non-fatal */ }
 
     // Strategy 3: OpenGraph
     try {
-      const r = await withTimeout(page.evaluate(buildOpenGraphExtractor(fieldNames)) as Promise<Record<string, unknown>>, 5000, 'extract_data:opengraph');
+      const r = await withTimeout(page.evaluate(buildOpenGraphExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.openGraphTimeoutMs, 'extract_data:opengraph');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('opengraph'); }
     } catch { /* non-fatal */ }
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, readiness);
+      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, readiness);
     }
 
     // Strategy 4: CSS heuristic
     try {
-      const r = await withTimeout(page.evaluate(buildCssHeuristicExtractor(fieldNames, schemaProps, selector)) as Promise<Record<string, unknown>>, 10000, 'extract_data:css');
+      const r = await withTimeout(page.evaluate(buildCssHeuristicExtractor(fieldNames, schemaProps, selector)) as Promise<Record<string, unknown>>, budget.cssTimeoutMs, 'extract_data:css');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('css-heuristic'); }
     } catch { /* non-fatal */ }
 
+    if (mode === 'standard' && countFields(merged) < fieldNames.length) {
+      try {
+        const r = await withTimeout(
+          page.evaluate(buildStandardDomExtractor(fieldNames, schemaProps, selector, budget.maxStandardDomNodes)) as Promise<Record<string, unknown>>,
+          budget.standardDomTimeoutMs,
+          'extract_data:standard-dom'
+        );
+        if (r && typeof r === 'object') {
+          merged = mergeResults(merged, r);
+          if (countFields(r) > 0) strategies.push('standard-dom');
+        }
+      } catch { /* non-fatal */ }
+    }
+
     const { result, validation } = validateAndCoerce(merged, schema);
-    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, readiness);
+    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, mode, readiness);
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -221,7 +232,7 @@ export const extractDataHandler: ToolHandler = async (
 
 function buildResponse(
   data: Record<string, unknown>, errors: string[], url: string,
-  strategies: string[], domain: string, fieldNames: string[], readiness?: PageReadyResult
+  strategies: string[], domain: string, fieldNames: string[], mode: ExtractionMode, readiness?: PageReadyResult
 ): MCPResult {
   const fieldsFound = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k]) => k);
   const fieldsMissing = fieldNames.filter(f => !fieldsFound.includes(f));
@@ -235,6 +246,7 @@ function buildResponse(
 
   const response: Record<string, unknown> = {
     action: 'extract_data', url, data, fieldsFound: fieldsFound.length, fieldsTotal: fieldNames.length, strategies,
+    modeUsed: mode,
   };
   if (readiness) response.readiness = readiness;
   if (fieldsMissing.length > 0) response.fieldsMissing = fieldsMissing;
@@ -243,6 +255,8 @@ function buildResponse(
     response.message = 'No data extracted. Try: (1) read_page to verify content, (2) provide a CSS selector, (3) wait_for before extracting.';
   }
 
+  const textWithoutMetrics = JSON.stringify(response);
+  response.metrics = { mode, outputChars: textWithoutMetrics.length };
   return { content: [{ type: 'text', text: JSON.stringify(response) }] };
 }
 
