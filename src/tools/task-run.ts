@@ -1,5 +1,6 @@
 import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import {
   CompleteInput,
   NeedsHelpInput,
@@ -62,6 +63,7 @@ const failedItemsSchema = {
 const startDefinition: MCPToolDefinition = {
   name: 'oc_task_run_start',
   description: 'Start an opt-in goal-level TaskRun. Tracks user goal, success criteria, progress summary, item progress, and evidence across multiple OpenChrome tool calls without changing existing browser tools.',
+  annotations: TOOL_ANNOTATIONS.oc_task_run_start,
   inputSchema: {
     type: 'object',
     properties: {
@@ -78,6 +80,7 @@ const startDefinition: MCPToolDefinition = {
 const updateDefinition: MCPToolDefinition = {
   name: 'oc_task_run_update',
   description: 'Update a non-terminal TaskRun with progress, item results, cursor, evidence, or explicit NEEDS_HELP resume back to RUNNING. Existing browser tools are unaffected.',
+  annotations: TOOL_ANNOTATIONS.oc_task_run_update,
   inputSchema: {
     type: 'object',
     properties: {
@@ -99,6 +102,7 @@ const updateDefinition: MCPToolDefinition = {
 const checkpointDefinition: MCPToolDefinition = {
   name: 'oc_task_run_checkpoint',
   description: 'Write a compact caller-provided checkpoint summary for a non-terminal TaskRun and return the checkpoint metadata.',
+  annotations: TOOL_ANNOTATIONS.oc_task_run_checkpoint,
   inputSchema: {
     type: 'object',
     properties: {
@@ -114,6 +118,7 @@ const checkpointDefinition: MCPToolDefinition = {
 const needsHelpDefinition: MCPToolDefinition = {
   name: 'oc_task_run_needs_help',
   description: 'Move a non-terminal TaskRun to NEEDS_HELP with a secret-safe reason, optional resume hint, cursor, and evidence pointer.',
+  annotations: TOOL_ANNOTATIONS.oc_task_run_needs_help,
   inputSchema: {
     type: 'object',
     properties: {
@@ -130,6 +135,7 @@ const needsHelpDefinition: MCPToolDefinition = {
 const completeDefinition: MCPToolDefinition = {
   name: 'oc_task_run_complete',
   description: 'Enter a terminal TaskRun state (COMPLETED, FAILED, or CANCELLED). Terminal TaskRuns are immutable.',
+  annotations: TOOL_ANNOTATIONS.oc_task_run_complete,
   inputSchema: {
     type: 'object',
     properties: {
@@ -147,6 +153,7 @@ const completeDefinition: MCPToolDefinition = {
 const getDefinition: MCPToolDefinition = {
   name: 'oc_task_run_get',
   description: 'Read a TaskRun meta record and optionally its event log.',
+  annotations: TOOL_ANNOTATIONS.oc_task_run_get,
   inputSchema: {
     type: 'object',
     properties: {
@@ -160,6 +167,7 @@ const getDefinition: MCPToolDefinition = {
 const listDefinition: MCPToolDefinition = {
   name: 'oc_task_run_list',
   description: 'List recent TaskRuns sorted by created_at descending. Read-only.',
+  annotations: TOOL_ANNOTATIONS.oc_task_run_list,
   inputSchema: {
     type: 'object',
     properties: {

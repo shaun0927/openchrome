@@ -5,18 +5,21 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getTaskJournal } from '../journal/task-journal';
+import { buildHandoffSummary } from '../journal/handoff-summary';
+import { readCurrentCheckpoint } from './checkpoint';
 
 const definition: MCPToolDefinition = {
   name: 'oc_journal',
   description:
-    'Query the tool call journal. Actions: "summary" (milestone-based overview for context restoration), "recent" (last N entries with full detail).\n\nWhen to use: Reviewing session history, restoring context after a long task, or auditing what tools ran.\nWhen NOT to use: Use read_page or inspect to check the current live page state rather than past actions.',
+    'Query the tool call journal. Actions: "summary" (milestone overview), "recent" (last N entries), "handoff_summary" (compact JSON resume handoff).\nWhen to use: Reviewing session history, restoring context, or auditing past tool calls.\nWhen NOT to use: Use read_page or inspect to check the current live page state.',
   inputSchema: {
     type: 'object',
     properties: {
       action: {
         type: 'string',
-        enum: ['summary', 'recent'],
+        enum: ['summary', 'recent', 'handoff_summary'],
         description: 'Query type',
       },
       count: {
@@ -27,6 +30,18 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Filter by tool name',
       },
+      sessionId: {
+        type: 'string',
+        description: '(handoff_summary) Limit journal evidence to one session id',
+      },
+      checkpointId: {
+        type: 'string',
+        description: '(handoff_summary) Source checkpoint id. Only "current" is backed by the existing checkpoint store.',
+      },
+      includeCheckpoint: {
+        type: 'boolean',
+        description: '(handoff_summary) Include the current checkpoint file when available. Default: true',
+      },
       since: {
         type: 'string',
         description: 'ISO timestamp or relative ("1h", "30m")',
@@ -34,6 +49,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['action'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_journal,
 };
 
 export function parseSince(since?: string): number | undefined {
@@ -134,6 +150,23 @@ const handler: ToolHandler = async (
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
+
+  if (action === 'handoff_summary') {
+    const includeCheckpoint = args.includeCheckpoint !== false;
+    const checkpoint = includeCheckpoint ? await readCurrentCheckpoint() : null;
+    const handoff = buildHandoffSummary(journal, {
+      since,
+      sessionId: args.sessionId as string | undefined,
+      checkpointId: args.checkpointId as string | undefined,
+      checkpoint,
+    });
+
+    return {
+      content: [{ type: 'text', text: JSON.stringify(handoff, null, 2) }],
+      handoffSummary: handoff,
+    };
+  }
+
   if (action === 'recent') {
     const count = Math.min(Math.max((args.count as number) || 20, 1), 100);
     let entries = journal.getRecent(count);
@@ -160,7 +193,7 @@ const handler: ToolHandler = async (
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
-  return { content: [{ type: 'text', text: `Unknown action: ${action}. Use "summary" or "recent".` }] };
+  return { content: [{ type: 'text', text: `Unknown action: ${action}. Use "summary", "recent", or "handoff_summary".` }] };
 };
 
 export function registerJournalTool(server: MCPServer): void {

@@ -1,5 +1,6 @@
 import type { MCPServer } from '../mcp-server.js';
 import type { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp.js';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations.js';
 import { getRunStore } from './store.js';
 import { RUN_STATUSES, TERMINAL_RUN_STATUSES, type RunRecord, type RunStatus } from './types.js';
 
@@ -11,6 +12,7 @@ const runIdProperty = {
 const startDefinition: MCPToolDefinition = {
   name: 'oc_run_start',
   description: 'Start an opt-in OpenChrome run ledger. Returns {run_id,status,pathless metadata}.',
+  annotations: TOOL_ANNOTATIONS.oc_run_start,
   inputSchema: {
     type: 'object',
     properties: {
@@ -26,12 +28,14 @@ const startDefinition: MCPToolDefinition = {
 const statusDefinition: MCPToolDefinition = {
   name: 'oc_run_status',
   description: 'Return the current status and summary for an opt-in OpenChrome run ledger.',
+  annotations: TOOL_ANNOTATIONS.oc_run_status,
   inputSchema: { type: 'object', properties: { run_id: runIdProperty }, required: ['run_id'] },
 };
 
 const eventsDefinition: MCPToolDefinition = {
   name: 'oc_run_events',
   description: 'Return recent events for an opt-in OpenChrome run ledger.',
+  annotations: TOOL_ANNOTATIONS.oc_run_events,
   inputSchema: {
     type: 'object',
     properties: {
@@ -45,6 +49,7 @@ const eventsDefinition: MCPToolDefinition = {
 const finishDefinition: MCPToolDefinition = {
   name: 'oc_run_finish',
   description: 'Finish an opt-in OpenChrome run ledger with a terminal or needs_user_input status.',
+  annotations: TOOL_ANNOTATIONS.oc_run_finish,
   inputSchema: {
     type: 'object',
     properties: {

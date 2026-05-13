@@ -21,6 +21,7 @@
 
 import { MCPServer } from '../../mcp-server.js';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../../types/mcp.js';
+import { TOOL_ANNOTATIONS } from '../../types/tool-annotations.js';
 import { isHandoffPersistEnabled } from '../../harness/flags.js';
 import { logAuditEntry } from '../../security/audit-logger.js';
 import { HandoffManager } from './manager.js';
@@ -124,6 +125,7 @@ const createDefinition: MCPToolDefinition = {
     },
     required: ['session_id', 'scope'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_pilot_handoff_create,
 };
 
 const redeemDefinition: MCPToolDefinition = {
@@ -143,6 +145,7 @@ const redeemDefinition: MCPToolDefinition = {
     },
     required: ['token'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_pilot_handoff_redeem,
 };
 
 const createHandler: ToolHandler = async (

@@ -20,6 +20,7 @@ import { CDPSession } from 'puppeteer-core';
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import {
   buildSummaryMarkdown,
@@ -60,6 +61,7 @@ const definition: MCPToolDefinition = {
     'oc_performance_analyze. Core-tier; trace handles are ' +
     'session-scoped and evicted on session close. Disable via ' +
     'OPENCHROME_PERF_INSIGHTS=0.',
+  annotations: TOOL_ANNOTATIONS.oc_performance_insights,
   inputSchema: {
     type: 'object',
     properties: {

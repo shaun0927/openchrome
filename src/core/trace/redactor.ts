@@ -67,6 +67,21 @@ const SENSITIVE_HEADER_NAMES = new Set(
   ),
 );
 
+/**
+ * Replay-telemetry fields allow-list (#875). These keys are emitted by
+ * `oc_skill_replay` per-step telemetry and contain only non-sensitive
+ * descriptors (skill identifiers, indices, resolution strategy names,
+ * elapsed milliseconds, ok flag). Listed explicitly here so future audits of
+ * `SENSITIVE_KEY_NAMES` know these fields are intentionally NOT redacted —
+ * they must round-trip verbatim for the curator promote-pass signal.
+ *
+ *   skill_id, step_index, resolved_via, selector_attempts, elapsed_ms, ok
+ *
+ * No code change is required: none of the names overlap with
+ * `SENSITIVE_KEY_NAMES` or any credential pattern. This comment is the
+ * contract anchor.
+ */
+
 /** Patterns scanned in every string-typed value across the event tree. */
 const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
   // JWT — three base64url segments separated by dots

@@ -15,11 +15,13 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { createNetworkCaptureHandler, NETWORK_CAPTURE_INPUT_SCHEMA } from './network-capture-shared';
 
 const definition: MCPToolDefinition = {
   name: 'network_capture_full',
   description: 'Capture network requests with response bodies (capped). Actions: start, stop, getLogs, clear. Bodies over maxBodyBytes are omitted with reason="over_cap".',
+  annotations: TOOL_ANNOTATIONS.network_capture_full,
   inputSchema: NETWORK_CAPTURE_INPUT_SCHEMA,
 };
 

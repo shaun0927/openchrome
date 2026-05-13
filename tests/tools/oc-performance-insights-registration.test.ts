@@ -61,8 +61,8 @@ describe('oc_performance_insights tool registration', () => {
     const indexPath = path.join(__dirname, '..', '..', 'src', 'tools', 'index.ts');
     const src = fs.readFileSync(indexPath, 'utf8');
     expect(src).toMatch(/OPENCHROME_PERF_INSIGHTS\s*!==\s*'0'/);
-    expect(src).toMatch(/registerOcPerformanceInsightsTool\(server\)/);
-    expect(src).toMatch(/registerOcPerformanceAnalyzeTool\(server\)/);
+    expect(src).toMatch(/registerOcPerformanceInsightsTool\((server|proxy)\)/);
+    expect(src).toMatch(/registerOcPerformanceAnalyzeTool\((server|proxy)\)/);
     // TODO(#844) marker is preserved at the gate.
     expect(src).toMatch(/TODO\(#844\)/);
   });
