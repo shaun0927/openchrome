@@ -1276,6 +1276,72 @@ describe('ComputerTool', () => {
       expect(result.content[0].text).not.toContain('Hit:');
     });
 
+    test('ref-based left_click returns STALE_REF on explicit ref_N identity mismatch without relocation', async () => {
+      const handler = await getComputerHandler();
+      const refId = mockRefIdManager.generateRef(
+        testSessionId,
+        testTargetId,
+        42,
+        'button',
+        'Submit',
+        'button',
+        'Submit'
+      );
+
+      mockSessionManager.mockCDPClient.cdpResponses.set(
+        `DOM.describeNode:${JSON.stringify({ backendNodeId: 42, depth: 1 })}`,
+        {
+          node: {
+            localName: 'button',
+            attributes: ['aria-label', 'Cancel'],
+            children: [{ nodeType: 3, nodeValue: 'Cancel' }],
+          },
+        }
+      );
+      mockRefIdManager.tryRelocateRef.mockResolvedValue({ backendNodeId: 99, newRef: 'ref_2' });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'left_click',
+        ref: refId,
+      }) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+        error?: { code: string; ref_id: string };
+      };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('STALE_REF');
+      expect(result.error).toEqual(expect.objectContaining({ code: 'STALE_REF', ref_id: refId }));
+      expect(mockRefIdManager.validateRef).toHaveBeenCalledWith(
+        testSessionId,
+        testTargetId,
+        refId,
+        'button',
+        'Cancel',
+        'Cancel',
+      );
+      expect(mockRefIdManager.tryRelocateRef).not.toHaveBeenCalled();
+    });
+
+    test('ref-based left_click returns STALE_REF when explicit ref_N entry is missing', async () => {
+      const handler = await getComputerHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'left_click',
+        ref: 'ref_404',
+      }) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+        error?: { code: string; ref_id: string };
+      };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('STALE_REF');
+      expect(result.error).toEqual(expect.objectContaining({ code: 'STALE_REF', ref_id: 'ref_404' }));
+    });
+
     test('double_click includes hit element info', async () => {
       const cdpClient = mockSessionManager.mockCDPClient;
       cdpClient.cdpResponses.set(
