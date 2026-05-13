@@ -315,8 +315,12 @@ const handler: ToolHandler = async (
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       const cssPayload = cssText + cssPaginationSection;
+      // Best-effort title: avoid letting a late page.title() throw discard the
+      // already-assembled CSS payload (e.g. if the tab closes mid-response).
+      let cssTitle = '';
+      try { cssTitle = await page.title(); } catch { /* use empty fallback */ }
       return {
-        content: [{ type: 'text', text: isStateHeaderEnabled() ? prependHeaderText({ url: page.url(), title: await page.title(), mode: 'css', capturedAt: Date.now(), tabId }, cssPayload) : cssPayload }],
+        content: [{ type: 'text', text: isStateHeaderEnabled() ? prependHeaderText({ url: page.url(), title: cssTitle, mode: 'css', capturedAt: Date.now(), tabId }, cssPayload) : cssPayload }],
       };
     }
 

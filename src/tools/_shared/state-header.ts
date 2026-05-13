@@ -33,9 +33,13 @@ export function isStateHeaderEnabled(): boolean {
  */
 export function formatHeaderText(h: PageStateHeader): string {
   const capturedAtIso = new Date(h.capturedAt).toISOString();
+  // Escape control characters so a crafted title/url cannot split the fixed
+  // 4-line header into extra lines and spoof subsequent fields.
+  const safeUrl = h.url.replace(/[\r\n]/g, ' ');
+  const safeTitle = h.title.replace(/[\r\n]/g, ' ');
   return (
-    `- Page URL: ${h.url}\n` +
-    `- Page Title: ${h.title}\n` +
+    `- Page URL: ${safeUrl}\n` +
+    `- Page Title: ${safeTitle}\n` +
     `- Page Mode: ${h.mode}\n` +
     `- Captured At: ${capturedAtIso}\n`
   );
