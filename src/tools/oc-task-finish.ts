@@ -16,7 +16,11 @@ const definition: MCPToolDefinition = {
     properties: {
       task_id: { type: 'string' },
       taskId: { type: 'string', description: 'Alias for task_id.' },
-      outcome: { type: 'string', enum: ['completed', 'failed', 'cancelled'] },
+      outcome: {
+        type: 'string',
+        enum: ['completed', 'failed', 'cancelled'],
+        description: 'REQUIRED Terminal task outcome: completed, failed, or cancelled.',
+      },
       note: { type: 'string' },
     },
     required: ['outcome'],
