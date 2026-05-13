@@ -324,8 +324,17 @@ function contextKey(sessionId: string, tabId?: string): string {
   return `${sessionId}\u0000${tabId ?? ''}`;
 }
 
+
+function isSensitiveKey(key: string): boolean {
+  if (SENSITIVE_KEY_RE.test(key)) return true;
+  const normalized = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^A-Za-z0-9_-]+/g, '_');
+  return SENSITIVE_KEY_RE.test(normalized);
+}
+
 function sanitizeObject(value: unknown, depth: number, key = ''): unknown {
-  if (SENSITIVE_KEY_RE.test(key)) return REDACTED;
+  if (isSensitiveKey(key)) return REDACTED;
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
     if (LARGE_VALUE_KEY_RE.test(key) || value.length > 200) return hashValue(value);
