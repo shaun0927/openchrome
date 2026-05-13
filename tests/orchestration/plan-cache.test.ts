@@ -1043,6 +1043,23 @@ describe('Plan failure taxonomy (#1012)', () => {
     expect(result.failure?.class).toBe('empty_result');
   });
 
+
+  test('executor classifies unauthorized token as auth redirect', async () => {
+    const handlers: Record<string, ToolHandler> = {
+      boom: jest.fn().mockRejectedValue(new Error('HTTP 401 unauthorized')),
+    };
+    const executor = new PlanExecutor((tool) => handlers[tool] || null);
+    const plan = buildPlan({
+      id: 'unauthorized-taxonomy-plan',
+      steps: [buildStep({ order: 1, tool: 'boom', timeout: 100 })],
+    });
+
+    const result = await executor.execute(plan, 'sess', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure?.class).toBe('auth_redirect');
+  });
+
   test('registry persists failure-class counts without changing aggregate stats', () => {
     const tmpDir = makeTempDir();
     try {
