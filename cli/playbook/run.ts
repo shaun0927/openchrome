@@ -45,6 +45,37 @@ export interface RunOptions {
   client?: Pick<StdioMcpClient, 'connect' | 'callTool' | 'disconnect'>;
 }
 
+const VERBS_THAT_CAN_REUSE_CURRENT_TAB = new Set<string>([
+  'interact',
+  'act',
+  'fill_form',
+  'wait_for',
+  'page_screenshot',
+  'read_page',
+  'javascript_tool',
+]);
+
+function maybeInjectCurrentTab(
+  step: Step,
+  args: Record<string, unknown>,
+  currentTabId: string | undefined,
+): Record<string, unknown> {
+  if (
+    currentTabId &&
+    VERBS_THAT_CAN_REUSE_CURRENT_TAB.has(step.verb) &&
+    typeof args.tabId !== 'string'
+  ) {
+    return { ...args, tabId: currentTabId };
+  }
+  return args;
+}
+
+function extractTabId(result: unknown): string | undefined {
+  if (!result || typeof result !== 'object') return undefined;
+  const tabId = (result as Record<string, unknown>).tabId;
+  return typeof tabId === 'string' && tabId.length > 0 ? tabId : undefined;
+}
+
 export async function runPlaybook(playbook: Playbook, options: RunOptions): Promise<RunResult> {
   const client = options.client ?? new StdioMcpClient();
 
@@ -58,6 +89,7 @@ export async function runPlaybook(playbook: Playbook, options: RunOptions): Prom
 
   const stepResults: StepResult[] = [];
   let failed = false;
+  let currentTabId: string | undefined;
 
   try {
     for (let i = 0; i < playbook.steps.length; i++) {
@@ -77,9 +109,10 @@ export async function runPlaybook(playbook: Playbook, options: RunOptions): Prom
 
       // Substitute vars in args
       const substitutedArgs = substituteValue(step.args, options.varMap, i) as Record<string, unknown>;
+      const callArgs = maybeInjectCurrentTab(step, substitutedArgs, currentTabId);
 
       // Expand to MCP tool call
-      const expanded = expandStep(step.verb, substitutedArgs);
+      const expanded = expandStep(step.verb, callArgs);
 
       const start = Date.now();
       let status: StepStatus = 'ok';
@@ -97,6 +130,7 @@ export async function runPlaybook(playbook: Playbook, options: RunOptions): Prom
             error = `Step ${i} (${step.verb}): assert verdict="${callResult.verdict}"`;
           }
         }
+        currentTabId = extractTabId(callResult.result) ?? currentTabId;
       } catch (err) {
         // P1 codex fix: distinguish transport-class failures from step/assertion
         // failures. TransportError indicates the MCP client could not deliver
