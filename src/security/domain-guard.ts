@@ -28,6 +28,16 @@ export class DomainPolicyError extends Error {
   }
 }
 
+export function isInternalBrowserUrl(url: string): boolean {
+  return (
+    url === 'about:blank' ||
+    url.startsWith('about:') ||
+    url.startsWith('chrome:') ||
+    url.startsWith('chrome-extension:') ||
+    url.startsWith('devtools:')
+  );
+}
+
 function formatBlockedMessage(blocked: DomainBlockedResult): string {
   if (blocked.reason === 'scheme-not-allowed') {
     return `Navigation blocked by host allowlist: unsupported URL scheme for ${blocked.attemptedUrl}`;
@@ -95,10 +105,7 @@ function parseUrl(url: string): URL | null {
  */
 function extractHostname(url: string): string | null {
   if (
-    url === 'about:blank' ||
-    url.startsWith('about:') ||
-    url.startsWith('chrome:') ||
-    url.startsWith('chrome-extension:')
+    isInternalBrowserUrl(url)
   ) {
     return null;
   }

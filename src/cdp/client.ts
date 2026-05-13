@@ -34,7 +34,7 @@ import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
 import { getIdleState } from '../utils/idle-state';
-import { assertDomainAllowed } from '../security/domain-guard';
+import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -801,6 +801,19 @@ export class CDPClient {
       // Inbound CDP event — reset idle window (issue #649 Part A).
       getIdleState().notifyActive();
       if (target.type() !== 'page') return;
+      const url = target.url();
+      if (!isInternalBrowserUrl(url)) {
+        try {
+          assertDomainAllowed(url);
+        } catch (err) {
+          const targetId = getTargetId(target);
+          if (targetId) {
+            await this.closePage(targetId).catch(() => {});
+          }
+          console.error(`[CDPClient] Blocked changed target by domain policy (URL: ${url}): ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+      }
       const targetId = getTargetId(target);
       if (this.targetIdIndex.has(targetId)) {
         console.error(`[CDPClient] Target changed: ${targetId}`);
@@ -823,6 +836,10 @@ export class CDPClient {
       if (target.type() !== 'page') return;
 
       const url = target.url();
+      // New Chrome pages are commonly born as about:blank before createPage()
+      // or popup scripts navigate them. Do not close these provisional targets;
+      // targetchanged enforces the allowlist once they reach a real URL.
+      if (isInternalBrowserUrl(url)) return;
       try {
         assertDomainAllowed(url);
       } catch (err) {
@@ -834,9 +851,6 @@ export class CDPClient {
         return;
       }
       // Filter out Chrome internal pages and blank pages
-      if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
-          url.startsWith('devtools://') || url === 'about:blank') return;
-
       // Check if this target was opened by a tracked page (popup/window.open)
       const opener = target.opener();
       if (!opener) return; // Not a popup - skip to avoid ghost tabs

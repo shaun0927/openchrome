@@ -4,6 +4,7 @@ import {
   assertDomainAllowed,
   getDomainPolicyBlockedResult,
   isDomainBlocked,
+  isInternalBrowserUrl,
 } from '../../src/security/domain-guard';
 
 describe('domain guard allow-host policy (#835)', () => {
@@ -47,6 +48,12 @@ describe('domain guard allow-host policy (#835)', () => {
       attemptedUrl: 'file:///etc/passwd',
       matchedPattern: null,
     });
+  });
+
+  test('identifies provisional browser targets that CDP should not close before navigation', () => {
+    expect(isInternalBrowserUrl('about:blank')).toBe(true);
+    expect(isInternalBrowserUrl('devtools://devtools/bundled/inspector.html')).toBe(true);
+    expect(isInternalBrowserUrl('https://example.com')).toBe(false);
   });
 
   test('normalizes IDN allowlist patterns to punycode', () => {
