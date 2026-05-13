@@ -36,6 +36,9 @@ export function parseArgAssignments(assignments: string[] = []): Record<string, 
     if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key)) {
       throw new UsageError(`Invalid --arg key "${key}".`);
     }
+    if (isUnsafeArgKey(key)) {
+      throw new UsageError(`Unsafe --arg key "${key}".`);
+    }
     try {
       out[key] = parseArgValue(raw);
     } catch (err) {
@@ -43,6 +46,12 @@ export function parseArgAssignments(assignments: string[] = []): Record<string, 
     }
   }
   return out;
+}
+
+function isUnsafeArgKey(key: string): boolean {
+  return key
+    .split(/[.-]/)
+    .some((part) => part === '__proto__' || part === 'prototype' || part === 'constructor');
 }
 
 export function mergeArgs(positional: Record<string, unknown>, options: RunOptions): Record<string, unknown> {
