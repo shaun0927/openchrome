@@ -273,8 +273,12 @@ const handler: ToolHandler = async (
     if (refIdManager.isRefStale(sessionId, tabId, refArg)) {
       const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact').catch(() => null);
       if (page) {
-        const fallback = await runLocatorFallbackForPage(page, 'STALE_REF');
-        if (fallback) return fallback;
+        try {
+          const fallback = await runLocatorFallbackForPage(page, 'STALE_REF');
+          if (fallback && (fallback as MCPResult & { locatorFallback?: { accepted?: boolean } }).locatorFallback?.accepted === true) return fallback;
+        } catch {
+          // Preserve the STALE_REF contract when the optional fallback provider itself fails.
+        }
       }
       const staleWarning = typeof refIdManager.getRefStalenessWarning === 'function'
         ? refIdManager.getRefStalenessWarning(sessionId, tabId, refArg)
@@ -293,8 +297,12 @@ const handler: ToolHandler = async (
     if (!backendDOMNodeId) {
       const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact').catch(() => null);
       if (page) {
-        const fallback = await runLocatorFallbackForPage(page, 'STALE_REF');
-        if (fallback) return fallback;
+        try {
+          const fallback = await runLocatorFallbackForPage(page, 'STALE_REF');
+          if (fallback && (fallback as MCPResult & { locatorFallback?: { accepted?: boolean } }).locatorFallback?.accepted === true) return fallback;
+        } catch {
+          // Preserve the STALE_REF contract when the optional fallback provider itself fails.
+        }
       }
       return {
         content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" could not be resolved to a DOM node.` }],

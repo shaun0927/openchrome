@@ -274,6 +274,53 @@ describe('Snapshot Refs (#831)', () => {
       expect(result.error?.code).toBe('STALE_REF');
       expect(result.error?.stale_warning?.code).toBe('stale_snapshot');
     });
+
+    test('stale ref preserves STALE_REF when opt-in locator fallback misses or throws', async () => {
+      const handler = await getInteractHandler();
+      const { setLocatorFallbackProviderForTests } = await import('../../src/core/perception/locator-fallback');
+      const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 4242, 'button', 'Submit');
+      (mockRefIdManager.isRefStale as jest.Mock).mockImplementation(
+        (_sid: string, _tid: string, r: string) => r === refId,
+      );
+      setLocatorFallbackProviderForTests({
+        name: 'throwing-provider',
+        async locate() {
+          throw new Error('provider unavailable');
+        },
+      });
+
+      const thrown = await handler(testSessionId, {
+        tabId: testTargetId,
+        ref: refId,
+        action: 'click',
+        query: 'Submit',
+        locatorFallback: { enabled: true },
+      }) as { content: Array<{ text: string }>; error?: { code: string }; isError?: boolean };
+
+      expect(thrown.isError).toBe(true);
+      expect(thrown.content[0].text).toContain('STALE_REF');
+      expect(thrown.error?.code).toBe('STALE_REF');
+
+      setLocatorFallbackProviderForTests({
+        name: 'empty-provider',
+        async locate() {
+          return { provider: 'empty-provider', candidates: [] };
+        },
+      });
+
+      const missed = await handler(testSessionId, {
+        tabId: testTargetId,
+        ref: refId,
+        action: 'click',
+        query: 'Submit',
+        locatorFallback: { enabled: true },
+      }) as { content: Array<{ text: string }>; error?: { code: string }; isError?: boolean };
+
+      expect(missed.isError).toBe(true);
+      expect(missed.content[0].text).toContain('STALE_REF');
+      expect(missed.error?.code).toBe('STALE_REF');
+    });
+
   });
 
 
