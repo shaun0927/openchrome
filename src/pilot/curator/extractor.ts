@@ -247,7 +247,7 @@ function withSkillLock<T>(lockDir: string, fn: () => T): T {
         stale = Date.now() - stat.mtimeMs > SKILL_LOCK_STALE_MS;
       } catch (statErr) {
         const statCode = (statErr as NodeJS.ErrnoException).code;
-        if (statCode === 'ENOENT') continue;
+        if (statCode === 'ENOENT' || statCode === 'EPERM') continue;
         throw statErr;
       }
 
