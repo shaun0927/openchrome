@@ -13,6 +13,10 @@ import { getPlanRegistry } from '../orchestration/plan-registry';
 import { PlanExecutor } from '../orchestration/plan-executor';
 import { formatError } from '../utils/format-error';
 import { validateBrowserTaskSignature } from '../contracts/task-signature';
+import {
+  buildReflectionStrategyMetadata,
+  parseReflectionStrategy,
+} from '../orchestration/reflection-strategy';
 
 const dnsResolve = promisify(dns.resolve);
 
@@ -687,6 +691,17 @@ const executePlanDefinition: MCPToolDefinition = {
         properties: {},
         additionalProperties: true,
       },
+      reflectionStrategy: {
+        type: 'string',
+        enum: ['none', 'last_attempt', 'reflection', 'last_attempt_and_reflection'],
+        description: 'Opt-in bounded reflection metadata strategy. Default omitted path preserves legacy output.',
+      },
+      reflectionScope: {
+        type: 'object',
+        description: 'Optional reflection recall scope: domain, taskFingerprint, contractId.',
+        properties: {},
+        additionalProperties: true,
+      },
     },
     required: ['planId', 'tabId'],
   },
@@ -701,10 +716,19 @@ const executePlanHandler: ToolHandler = async (
   const tabId = args.tabId as string;
   const runtimeParams = (args.params as Record<string, unknown>) || {};
   const rawTaskSignature = args.taskSignature;
+  const rawReflectionStrategy = args.reflectionStrategy;
 
   if (!planId || !tabId) {
     return {
       content: [{ type: 'text', text: 'Error: planId and tabId are required' }],
+      isError: true,
+    };
+  }
+
+  const reflectionStrategyResult = parseReflectionStrategy(rawReflectionStrategy);
+  if (!reflectionStrategyResult.ok) {
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ status: 'INVALID_REFLECTION_STRATEGY', error: reflectionStrategyResult.error }) }],
       isError: true,
     };
   }
@@ -793,6 +817,14 @@ const executePlanHandler: ToolHandler = async (
 
     // Update stats
     registry.updateStats(planId, result.success, result.durationMs);
+    const reflectionStrategy = rawReflectionStrategy === undefined
+      ? undefined
+      : buildReflectionStrategyMetadata({
+          strategy: reflectionStrategyResult.value,
+          planId,
+          params: runtimeParams,
+          scope: args.reflectionScope as { domain?: string; taskFingerprint?: string; contractId?: string } | undefined,
+        });
 
     return {
       content: [{
@@ -806,6 +838,7 @@ const executePlanHandler: ToolHandler = async (
           data: result.data,
           error: result.error,
           ...(result.taskSignature ? { taskSignature: result.taskSignature } : {}),
+          ...(reflectionStrategy ? { reflectionStrategy } : {}),
           message: result.success
             ? `Plan "${planId}" executed successfully in ${result.durationMs}ms (${result.stepsExecuted}/${result.totalSteps} steps)`
             : `Plan "${planId}" failed: ${result.error}. Consider manual execution.`,
