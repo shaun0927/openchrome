@@ -26,7 +26,6 @@ const definition: MCPToolDefinition = {
         description: 'Reserved for #1036; currently returns the same task envelope summary fields.',
       },
     },
-    required: ['task_id'],
   },
 };
 
@@ -70,3 +69,5 @@ const handler: ToolHandler = async (
 export function registerOcTaskGetTool(server: MCPServer): void {
   server.registerTool(definition.name, handler, definition);
 }
+
+export const __test__ = { definition, handler };

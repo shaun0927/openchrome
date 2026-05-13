@@ -15,6 +15,7 @@ import {
   getTaskStore,
   setTaskStoreForTests,
 } from '../../../src/tools/oc-task-start';
+import { __test__ as taskGetTest } from '../../../src/tools/oc-task-get';
 import type { MCPResult, ToolHandler } from '../../../src/types/mcp';
 
 function tempRoot(): string {
@@ -95,5 +96,22 @@ describe('oc_task_start handler — happy path', () => {
     const out = await handler('sess-1', { args: {} });
     expect(out.isError).not.toBe(true);
     expect(out.kind).toBe('browser_task');
+  });
+
+  test('oc_task_get accepts taskId alias through schema and handler', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const started = await handler('sess-1', {
+      objective: 'poll through alias',
+      phase: 'explore',
+    });
+
+    expect(taskGetTest.definition.inputSchema.required).toBeUndefined();
+
+    const fetched = await taskGetTest.handler('sess-1', {
+      taskId: started.task_id,
+    });
+
+    expect(fetched.isError).not.toBe(true);
+    expect(fetched.meta).toMatchObject({ task_id: started.task_id, objective: 'poll through alias' });
   });
 });
