@@ -1,0 +1,107 @@
+/**
+ * Persistent async task ledger — public types.
+ *
+ * The task ledger turns long-running tools (`crawl`, `crawl_sitemap`,
+ * `recording`, `oc_evidence_bundle`, `oc_session_snapshot`) into
+ * fire-and-forget background jobs with `start / list / get / cancel /
+ * wait` verbs. See `docs/architecture/task-ledger.md` (TBD) and issue
+ * #855 for the full contract.
+ *
+ * These types are JSON-serialisable so meta.json files can be read back
+ * by any runtime without depending on this module.
+ */
+
+/**
+ * State machine: PENDING -> RUNNING -> (COMPLETED | FAILED | CANCELLED).
+ * Terminal states (COMPLETED / FAILED / CANCELLED) are immutable once
+ * committed to meta.json.
+ */
+export type TaskStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+/**
+ * The set of registered MCP tools the ledger knows how to launch. The
+ * runner looks up the underlying handler in the MCPServer's registry
+ * (`getToolHandler(kind)`); any tool name registered on the server can
+ * in principle be wrapped, but the canonical set documented for issue
+ * #855 is enumerated here so the schema is explicit.
+ *
+ * NOTE: this is a *type alias only* — the runner does not enforce that
+ * the requested kind is a member of this union at runtime. The MCP
+ * server's tool registry is the source of truth.
+ */
+export type TaskKind =
+  | 'crawl'
+  | 'crawl_sitemap'
+  | 'recording'
+  | 'oc_evidence_bundle'
+  | 'oc_session_snapshot'
+  | string;
+
+export interface TaskError {
+  message: string;
+  code?: string;
+}
+
+export interface TaskOwner {
+  session_id: string;
+  tenant_id?: string;
+  key_id?: string;
+  mode?: string;
+}
+
+export interface TaskMeta {
+  /** 16-hex SHA-256(kind\x00args_json\x00created_at) */
+  task_id: string;
+  kind: TaskKind;
+  status: TaskStatus;
+  /** Owner process id; reaper checks `process.kill(pid, 0)` aliveness. */
+  pid: number;
+  created_at: number;
+  started_at?: number;
+  ended_at?: number;
+  /** Redacted snapshot of the launch arguments. <=2 KiB after JSON.stringify. */
+  args_summary: Record<string, unknown>;
+  /** Caller ownership boundary for tenant/session-scoped task APIs. */
+  owner?: TaskOwner;
+  /** Per-start entropy used only to avoid same-ms id collisions. */
+  task_nonce?: string;
+  /** Resolves to "<root>/<task_id>/result.json" iff status === COMPLETED. */
+  result_path?: string;
+  error?: TaskError;
+  cancel_requested_at?: number;
+}
+
+/**
+ * A single event appended to the per-task `events.jsonl` file. Events
+ * are advisory — meta.json is the source of truth for status. The
+ * runner emits `started`, `completed`, `failed`, `cancel_requested`,
+ * and `cancelled` events at the obvious transitions. Tool integrations
+ * may emit `progress` / `log` events; the base runner does not.
+ */
+export interface TaskEvent {
+  ts: number;
+  kind:
+    | 'started'
+    | 'progress'
+    | 'log'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'cancel_requested';
+  data?: Record<string, unknown>;
+}
+
+/** Filter shape for `TaskStore.list`. */
+export interface TaskListFilter {
+  status?: TaskStatus | TaskStatus[];
+  kind?: TaskKind | TaskKind[];
+  /** Maximum rows to return (default: 50). */
+  limit?: number;
+  /** Only tasks created >= this ms epoch. */
+  since?: number;
+}

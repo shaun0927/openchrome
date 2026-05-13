@@ -1708,6 +1708,7 @@ export class MCPServer {
           startTime: Date.now(),
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
           signal,
+          principal,
           reportProgress,
         };
         let tid: ReturnType<typeof setTimeout>;
@@ -1745,6 +1746,7 @@ export class MCPServer {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
+              principal,
               reportProgress,
             };
             let tid2: ReturnType<typeof setTimeout>;
@@ -1788,6 +1790,7 @@ export class MCPServer {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
+              principal,
               reportProgress,
             };
             result = await Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext));
@@ -2424,6 +2427,28 @@ export class MCPServer {
    */
   getToolNames(): string[] {
     return Array.from(this.tools.keys());
+  }
+
+  /**
+   * Invoke a registered tool through the normal MCP tool-call pipeline for
+   * internal background dispatchers. This preserves the same wrappers as a
+   * client tools/call (secret substitution, scope/rate gates when present,
+   * session setup, activity/journal/metrics, timeouts, and reconnect retry)
+   * instead of calling the raw handler directly.
+   */
+  async invokeRegisteredToolForTask(
+    sessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    principal?: Principal,
+  ): Promise<MCPResult> {
+    return this.handleToolsCall(
+      { name: toolName, arguments: { ...args, sessionId } },
+      undefined,
+      principal,
+      signal,
+    );
   }
 
   /**
