@@ -72,6 +72,25 @@ export interface SkillRecord {
    * array on write — the store leaves the field absent in that case.
    */
   replayArtifacts?: Array<ReplayArtifact | null>;
+  /**
+   * Wall-clock ms epoch of the most recent replay that passed (steps +
+   * contract). Undefined / 0 means no successful replay has been recorded.
+   * Used by `oc_skill_recall` to compute the per-skill `replay_signal`
+   * ranking bucket (#856).
+   */
+  lastReplayPassedAt?: number;
+  /**
+   * Wall-clock ms epoch of the most recent replay that failed (any non-PASS
+   * outcome). Undefined / 0 means no failed replay has been recorded.
+   * Used by `oc_skill_recall` ranking.
+   */
+  lastReplayFailedAt?: number;
+  /**
+   * Most recent replay-failure error string (truncated for the JSON file).
+   * Cleared on a subsequent successful replay. Diagnostic only.
+   */
+  lastReplayError?: string;
+
 }
 
 /** On-disk shape for `<rootDir>/<encodedDomain>/skills.json` (v2). */

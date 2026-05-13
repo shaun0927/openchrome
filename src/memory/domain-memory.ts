@@ -215,6 +215,7 @@ export class DomainMemory {
       };
       await fsPromises.writeFile(this.filePath, JSON.stringify(store, null, 2));
     } catch {
+      this.dirty = true;
       // Best-effort
     }
   }

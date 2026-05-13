@@ -615,8 +615,10 @@ export class MCPServer {
     let pending: ToolProgress | null = null;
     let pendingTimer: ReturnType<typeof setTimeout> | null = null;
     let highestProgress = -Infinity;
+    let closed = false;
 
     const send = (update: ToolProgress): void => {
+      if (closed) return;
       try {
         this.sendNotification('notifications/progress', {
           progressToken,
@@ -632,6 +634,7 @@ export class MCPServer {
     };
 
     const reporter = (update: ToolProgress): void => {
+      if (closed) return;
       // Enforce monotonic non-decreasing `progress`.
       if (update.progress < highestProgress) return;
       highestProgress = update.progress;
@@ -651,7 +654,7 @@ export class MCPServer {
         if (!pendingTimer) {
           pendingTimer = setTimeout(() => {
             pendingTimer = null;
-            if (pending) {
+            if (!closed && pending) {
               const p = pending;
               pending = null;
               send(p);
@@ -671,6 +674,7 @@ export class MCPServer {
         pending = null;
         send(p);
       }
+      closed = true;
     };
 
     return { reporter, flush };
@@ -2419,4 +2423,10 @@ export function getMCPServer(): MCPServer {
     mcpServerInstance = new MCPServer(undefined, mcpServerOptions);
   }
   return mcpServerInstance;
+}
+
+/** Reset the MCP server singleton — for testing and programmatic server lifecycle only. */
+export function _resetMCPServerForTesting(): void {
+  mcpServerInstance = null;
+  mcpServerOptions = {};
 }

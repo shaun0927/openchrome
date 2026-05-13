@@ -21,6 +21,21 @@
 
 export const REDACTED = '[REDACTED]';
 
+/**
+ * Explicit allow-list of keys introduced by issue #844 (`TraceTarget`
+ * envelope written under `args.target`). None of these are sensitive — the
+ * uid is opaque and synthetic, the backendNodeId is a Chrome-internal
+ * counter, and the loaderId is a navigation epoch identifier. We document
+ * the non-redaction decision here so a future audit does not need to
+ * re-derive the rationale from the absence of a rule.
+ *
+ * The redactor's `isSensitiveKey` check uses substring containment against
+ * `SENSITIVE_KEY_NAMES`; none of these three keys match any entry on that
+ * list, so they pass through unchanged today. The constant exists so a
+ * regression test can pin the contract.
+ */
+export const TRACE_TARGET_ALLOWLIST = ['nodeRef', 'backendNodeId', 'loaderId'] as const;
+
 const SENSITIVE_KEY_NAMES = [
   'password',
   'passwd',

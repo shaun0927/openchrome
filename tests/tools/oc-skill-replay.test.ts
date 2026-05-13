@@ -182,7 +182,7 @@ describe('oc_skill_replay — artifact handling', () => {
     expect((r.failure as { step_index: number }).step_index).toBe(0);
   });
 
-  test('navigate-only artifact does not require a live page', async () => {
+  test('navigate-only artifact requires a live page to drive', async () => {
     const store = new SkillMemoryStore({ domain: 'localhost' });
     const recorded = await store.record({
       domain: 'localhost',
@@ -200,10 +200,8 @@ describe('oc_skill_replay — artifact handling', () => {
         domain: 'localhost',
       }),
     );
-    expect(r.ok).toBe(true);
-    expect(r.steps_executed).toBe(1);
-    expect(r.steps_total).toBe(1);
-    expect((r.step_results as Array<{ resolved_via: string | null }>)[0].resolved_via).toBeNull();
+    expect(r.ok).toBe(false);
+    expect((r.failure as { code: string }).code).toBe('TARGET_NAVIGATED_AWAY');
   });
 
   test('uses the active session tab when tabId is omitted and dispatches click', async () => {

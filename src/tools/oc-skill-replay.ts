@@ -217,8 +217,6 @@ async function resolveSelector(
         el = document.querySelector(`[aria-label="${escaped}"],[alt="${escaped}"],[title="${escaped}"]`);
       } else if (sel.type === 'role_name') {
         el = roleCandidates(sel.role).find(matches) ?? null;
-      } else if (sel.type === 'node_ref') {
-        return false;
       }
       return el !== null;
     }, selector);
@@ -234,13 +232,45 @@ async function dispatchStep(step: ReplayArtifactStep, selector: ReplaySelector |
     if (step.kind === 'navigate') {
       const url = step.args?.url;
       if (typeof url !== 'string' || url.length === 0) return { ok: false, detail: 'navigate step requires args.url' };
-      if (p?.goto) await withDeadline(Promise.resolve(p.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs })), timeoutMs);
+      if (!p?.goto) return { ok: false, detail: 'navigate step requires a live page with goto support' };
+      await withDeadline(Promise.resolve(p.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs })), timeoutMs);
       return { ok: true };
     }
     if (!p || !selector) return { ok: false, detail: 'no live page or resolved selector available for action dispatch' };
     if (step.kind === 'press' && p.keyboard) {
       const key = step.args?.key;
       if (typeof key !== 'string' || key.length === 0) return { ok: false, detail: 'press step requires args.key' };
+      const focused = await withDeadline(Promise.resolve(p.evaluate((sel: ReplaySelector) => {
+        const cssEscape = (value: string): string => {
+          const esc = (globalThis as unknown as { CSS?: { escape?: (v: string) => string } }).CSS?.escape;
+          if (esc) return esc(value);
+          return value.replace(/\\/g, '\\\\').replace(/"/g, '\"');
+        };
+        let el: Element | null = null;
+        if (sel.type === 'xpath') {
+          const r = document.evaluate(sel.value, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          el = r.singleNodeValue as Element | null;
+        } else if (sel.type === 'css') {
+          el = document.querySelector(sel.value);
+        } else if (sel.type === 'accessible_name') {
+          const escaped = cssEscape(sel.value);
+          el = document.querySelector(`[aria-label="${escaped}"],[alt="${escaped}"],[title="${escaped}"]`);
+        } else if (sel.type === 'text') {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let n: Node | null;
+          while ((n = walker.nextNode())) { if (n.nodeValue && n.nodeValue.includes(sel.value)) { el = n.parentElement; break; } }
+        } else if (sel.type === 'role_name') {
+          el = Array.from(document.querySelectorAll(`[role="${cssEscape(sel.role)}"],button,a[href],input,textarea`)).find((candidate) => {
+            const text = (candidate.textContent || '').replace(/\s+/g, ' ').trim();
+            const name = candidate.getAttribute('aria-label') || text;
+            return sel.name === '' || name === sel.name;
+          }) ?? null;
+        }
+        if (!el) return false;
+        (el as HTMLElement).focus();
+        return document.activeElement === el;
+      }, selector)), timeoutMs) as boolean;
+      if (!focused) return { ok: false, detail: 'press target could not be focused' };
       await withDeadline(Promise.resolve(p.keyboard.press(key)), timeoutMs);
       return { ok: true };
     }
@@ -332,7 +362,10 @@ async function dispatchStep(step: ReplayArtifactStep, selector: ReplaySelector |
         else htmlEl.scrollIntoView({ block: 'center', inline: 'center' });
         return { ok: true };
       }
-      if (kind === 'press') return { ok: false, detail: 'press requires page.keyboard support' };
+      if (kind === 'press') {
+        htmlEl.focus();
+        return { ok: true };
+      }
       return { ok: false, detail: `unsupported step kind: ${kind}` };
     }, selector, step.kind, step.args)), timeoutMs) as { ok: boolean; detail?: string };
     return result.ok ? { ok: true } : { ok: false, detail: result.detail ?? 'action dispatch failed' };
@@ -507,6 +540,18 @@ const handler: ToolHandler = async (
         ),
       );
     }
+    if (artifact.steps.length !== 1) {
+      return jsonResult(
+        failure(
+          'ARTIFACT_MISSING',
+          i,
+          `step ${i} artifact must contain exactly one embedded step (got ${artifact.steps.length})`,
+          totalSteps,
+          stepResults,
+          executed,
+        ),
+      );
+    }
     const step = artifact.steps[0]; // each per-step artifact carries one step
     if (!step) {
       return jsonResult(
@@ -594,8 +639,16 @@ const handler: ToolHandler = async (
     // and needs caller-supplied evidence). When the host wants enforcement
     // it can chain oc_skill_replay → oc_assert deterministically.
     if (step.post_assert && stopOnContractFailure) {
-      // Intentionally not failing here — the host owns the assert call.
-      // We attach the contract id in step_results downstream via index.
+      return jsonResult(
+        failure(
+          'CONTRACT_FAILED',
+          i,
+          `post_assert ${step.post_assert.contract_id} requires an assertion evaluator before replay can report success`,
+          totalSteps,
+          stepResults,
+          executed,
+        ),
+      );
     }
   }
 

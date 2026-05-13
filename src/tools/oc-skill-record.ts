@@ -19,6 +19,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import {
   SkillMemoryStore,
   flushRecorderBuffer,
+  peekRecorderBuffer,
   validateReplayArtifact,
   type ReplayArtifact,
   REPLAY_ARTIFACT_SCHEMA_VERSION,
@@ -197,7 +198,7 @@ const handler: ToolHandler = async (
       }
       replayArtifacts = padded;
     } else if (targetId) {
-      const flushed = flushRecorderBuffer(targetId);
+      const flushed = peekRecorderBuffer(targetId);
       // Wrap each captured ReplayArtifactStep in a single-step ReplayArtifact
       // so the on-disk shape is uniform. Pad to `steps.length`.
       const wrapped = flushed.map((step: ReplayArtifactStep) =>
@@ -270,6 +271,10 @@ const handler: ToolHandler = async (
       replay_artifacts: null,
       error: `failed to record skill: ${message}`,
     } as OcSkillRecordOutput & { error: string });
+  }
+
+  if (replayEnabled && targetId) {
+    flushRecorderBuffer(targetId);
   }
 
   const output: OcSkillRecordOutput = {

@@ -240,6 +240,9 @@ export function validateReplaySelector(value: unknown): ValidationResult {
       error: `type must be one of ${REPLAY_SELECTOR_TYPES.join('|')} (got ${String(s.type)})`,
     };
   }
+  if (s.type === 'node_ref') {
+    return { ok: false, error: 'node_ref selectors are not replayable until the node-ref resolver can return a live element handle' };
+  }
   if (s.type === 'role_name') {
     const r = value as { role?: unknown; name?: unknown };
     if (typeof r.role !== 'string' || r.role.length === 0) {
