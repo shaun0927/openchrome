@@ -1,0 +1,8 @@
+{
+  "globalTimeoutMs": 60000,
+  "scenarioTimeoutMs": 10000,
+  "maxNonProgressCalls": 3,
+  "maxStuckEvents": 1,
+  "maxP99ToolLatencyMs": 5000,
+  "maxToolCalls": 12
+}
