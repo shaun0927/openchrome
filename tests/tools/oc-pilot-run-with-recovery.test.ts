@@ -84,6 +84,35 @@ describe('oc_pilot_run_with_recovery', () => {
     expect(out.status).toBe('failed');
     expect(out.recovery).toEqual([]);
   });
+
+  it('redacts sensitive action arguments and tool errors in recovery reports', async () => {
+    const server = makeServer({
+      fill_form: jest.fn(async () => result('password: hunter2 token=abc123 stale ref', true)),
+      read_page: jest.fn(async () => result('fresh dom')),
+    });
+    registerOcPilotRunWithRecoveryTool(server as any);
+
+    const response = await server.call({
+      action: {
+        tool: 'fill_form',
+        arguments: { password: 'hunter2', nested: { apiKey: 'abc123' }, note: 'token=raw-secret stale ref' },
+      },
+      allowedRecipes: ['refresh_dom_state'],
+      maxRecoveryAttempts: 1,
+    });
+    const out = parse(response);
+    const text = JSON.stringify(out);
+
+    expect(text).not.toContain('hunter2');
+    expect(text).not.toContain('abc123');
+    expect(text).not.toContain('raw-secret');
+    expect(out.original.arguments).toMatchObject({
+      password: '[REDACTED]',
+      nested: { apiKey: '[REDACTED]' },
+      note: 'token=[REDACTED] stale ref',
+    });
+    expect(out.original.error).toContain('[REDACTED]');
+  });
 });
 
 describe('oc_pilot_run_with_recovery registration gate', () => {

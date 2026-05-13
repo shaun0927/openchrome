@@ -50,6 +50,30 @@ function textOf(result: MCPResult): string {
   return result.content?.map((item) => item.text || '').join('\n') || '';
 }
 
+function redactString(value: string): string {
+  return value
+    .replace(/(password|passcode|token|secret|credential|api[_-]?key|authorization|cookie)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+    .slice(0, 1000);
+}
+
+function redactValue(value: unknown, depth = 0): unknown {
+  if (depth > 4) return '[depth-limit]';
+  if (typeof value === 'string') return redactString(value);
+  if (Array.isArray(value)) return value.slice(0, 50).map((item) => redactValue(item, depth + 1));
+  if (!value || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+    out[key] = /password|passcode|token|secret|credential|api[_-]?key|authorization|cookie/i.test(key)
+      ? '[REDACTED]'
+      : redactValue(child, depth + 1);
+  }
+  return out;
+}
+
+function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
+  return redactValue(args) as Record<string, unknown>;
+}
+
 function classifyFailure(tool: string, text: string): { reason: string; recipes: RecoveryRecipeId[] } | null {
   const haystack = `${tool} ${text}`.toLowerCase();
   if (/stale[_ -]?ref|node.*evicted|element.*not found|no elements found/.test(haystack)) {
@@ -78,12 +102,12 @@ function allowedRecipeSet(raw: unknown): Set<RecoveryRecipeId> {
 
 async function callTool(server: MCPServer, sessionId: string, tool: string, args: Record<string, unknown>): Promise<RecoveryActionResult> {
   const handler = server.getToolHandler(tool);
-  if (!handler) return { tool, arguments: args, ok: false, error: `unknown tool: ${tool}` };
+  if (!handler) return { tool, arguments: redactArgs(args), ok: false, error: `unknown tool: ${tool}` };
   try {
     const result = await handler(sessionId, args);
-    return { tool, arguments: args, ok: !result.isError, ...(result.isError ? { error: textOf(result) || 'tool returned error' } : {}) };
+    return { tool, arguments: redactArgs(args), ok: !result.isError, ...(result.isError ? { error: redactString(textOf(result) || 'tool returned error') } : {}) };
   } catch (error) {
-    return { tool, arguments: args, ok: false, error: error instanceof Error ? error.message : String(error) };
+    return { tool, arguments: redactArgs(args), ok: false, error: redactString(error instanceof Error ? error.message : String(error)) };
   }
 }
 
