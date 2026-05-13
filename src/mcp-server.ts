@@ -395,6 +395,30 @@ export interface MCPServerOptions {
   capabilityFilter?: Set<ToolCapability>;
 }
 
+
+const TASK_ENVELOPE_BROWSER_TOOLS = new Set([
+  'navigate',
+  'read_page',
+  'find',
+  'interact',
+  'act',
+  'fill_form',
+  'form_input',
+  'computer',
+  'page_screenshot',
+  'tabs_context',
+  'tabs_list',
+  'tabs_get',
+  'inspect',
+  'vision_find',
+  'oc_assert',
+]);
+
+function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>): string | undefined {
+  if (!TASK_ENVELOPE_BROWSER_TOOLS.has(toolName)) return undefined;
+  return extractTaskId(args);
+}
+
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
   private resources: Map<string, MCPResourceDefinition> = new Map();
@@ -1734,7 +1758,7 @@ export class MCPServer {
       // CDPClient may not be initialized — proceed with normal flow
     }
 
-    const taskEnvelopeId = toolName.startsWith('oc_task_') ? undefined : extractTaskId(toolArgs);
+    const taskEnvelopeId = taskEnvelopeIdForTool(toolName, toolArgs);
 
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
@@ -2355,7 +2379,7 @@ export class MCPServer {
         principalMode: principal?.mode,
         args: toolArgs,
         durationMs: Date.now() - toolStartTime,
-        ok: false,
+        ok: !errorIsError,
       });
 
       // Secrets redaction (#834) — see success path. Error messages can

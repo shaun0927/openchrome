@@ -142,7 +142,10 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
     _ctx?: ToolContext,
   ): Promise<MCPResult> => {
     const rawKind = params.kind;
-    const kind = typeof rawKind === 'string' && rawKind.length > 0 ? rawKind : 'browser_task';
+    if (rawKind !== undefined && (typeof rawKind !== 'string' || rawKind.trim().length === 0)) {
+      return errorResult('oc_task_start: kind must be a non-empty string when provided');
+    }
+    const kind = typeof rawKind === 'string' ? rawKind.trim() : 'browser_task';
     const args = (params.args ?? {}) as Record<string, unknown>;
     const objective = typeof params.objective === 'string' ? params.objective : undefined;
     const phase = normalizeTaskPhase(params.phase);

@@ -19,7 +19,12 @@ const OBSERVATION_TOOLS = new Set([
   'read_page',
   'find',
   'tabs_context',
+  'tabs_list',
+  'tabs_get',
+  'inspect',
   'page_screenshot',
+  'vision_find',
+  'oc_assert',
 ]);
 
 export function isObservationTool(tool: string, args: Record<string, unknown>): boolean {

@@ -42,6 +42,17 @@ describe('task envelope budget evaluation', () => {
     expect(meta.recommended_next).toBe('change_strategy_or_verify');
   });
 
+
+  test('expanded read-only browser tools count as observations', () => {
+    let meta = makeMeta();
+    meta = applyToolCallToTask(meta, call('inspect'));
+    meta = applyToolCallToTask(meta, call('tabs_list'));
+
+    expect(meta.counters?.observationCalls).toBe(2);
+    expect(meta.counters?.observationStreak).toBe(2);
+    expect(meta.counters?.actionCalls).toBe(0);
+  });
+
   test('action calls reset observation streak while incrementing action count', () => {
     let meta = makeMeta();
     meta = applyToolCallToTask(meta, call('read_page'));

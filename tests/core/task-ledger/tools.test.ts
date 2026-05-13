@@ -111,6 +111,16 @@ describe('oc_task_start handler — happy path', () => {
     expect(meta?.cancel_requested_at).toBeDefined();
   });
 
+
+  test('rejects malformed kind instead of creating a browser_task envelope', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+
+    const out = await handler('sess-1', { kind: 42 });
+
+    expect(out.isError).toBe(true);
+    expect(out.content?.[0]?.text).toContain('kind must be a non-empty string');
+  });
+
   test('returns isError when tool name is not registered', async () => {
     const handler = __test__.makeHandler({ resolveTool: () => null });
     const out = await handler('sess-1', { kind: 'nope', args: {} });

@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
 import { getTaskStore } from '../core/task-ledger';
 import type { TaskStatus } from '../core/task-ledger';
-import { canAccessTask, taskAccessDeniedResult } from './oc-task-start';
+import { canAccessTask, taskAccessDeniedResult, waitForTaskStartupReap } from './oc-task-start';
 
 const definition: MCPToolDefinition = {
   name: 'oc_task_finish',
@@ -33,6 +33,7 @@ const handler: ToolHandler = async (sessionId, params, context): Promise<MCPResu
   const status = statusFrom(params.outcome);
   if (!status) return errorResult('oc_task_finish: outcome must be completed, failed, or cancelled');
   const note = typeof params.note === 'string' ? params.note : undefined;
+  await waitForTaskStartupReap();
   const store = getTaskStore();
   const meta = store.readMetaSync(taskId);
   if (!meta) return errorResult(`oc_task_finish: unknown task ${taskId}`);
