@@ -3,12 +3,27 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { MCPClient } from '../harness/mcp-client';
+import { MCPClient, MCPToolResult } from '../harness/mcp-client';
 
 function getFixturePort(): number {
   const stateFile = path.join(process.cwd(), '.e2e-state.json');
   const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
   return state.port;
+}
+
+function extractTabId(result: MCPToolResult): string {
+  for (const item of result.content) {
+    if (!item.text) continue;
+    try {
+      const parsed = JSON.parse(item.text) as { tabId?: string };
+      if (parsed.tabId) return parsed.tabId;
+    } catch {
+      // Some environments prepend browser fallback warnings before the JSON;
+      // fall through to the regex extraction below.
+    }
+  }
+  const match = result.text.match(/"tabId"\s*:\s*"([^"]+)"/);
+  return match?.[1] || '';
 }
 
 describe('E2E: repeated identical tool-call loop hints', () => {
@@ -28,8 +43,7 @@ describe('E2E: repeated identical tool-call loop hints', () => {
     const url = `http://localhost:${port}/site-a`;
 
     const nav = await mcp.callTool('navigate', { sessionId: 'loop-a', url });
-    const navPayload = JSON.parse(nav.content[0].text || '{}') as { tabId: string };
-    const tabId = navPayload.tabId;
+    const tabId = extractTabId(nav);
     expect(tabId).toBeTruthy();
 
     const args = { sessionId: 'loop-a', tabId, query: 'definitely-missing-loop-target', waitForMs: 0 };
@@ -49,7 +63,7 @@ describe('E2E: repeated identical tool-call loop hints', () => {
     expect((afterReset.raw._hintMeta as { rule?: string } | undefined)?.rule).not.toBe('repeated-identical-tool-call');
 
     const navB = await mcp.callTool('navigate', { sessionId: 'loop-b', url });
-    const tabIdB = (JSON.parse(navB.content[0].text || '{}') as { tabId: string }).tabId;
+    const tabIdB = extractTabId(navB);
     const otherSession = await mcp.callTool('find', { sessionId: 'loop-b', tabId: tabIdB, query: 'definitely-missing-loop-target', waitForMs: 0 });
     expect((otherSession.raw._hintMeta as { rule?: string } | undefined)?.rule).not.toBe('repeated-identical-tool-call');
   }, 120_000);
