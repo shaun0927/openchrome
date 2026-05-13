@@ -315,10 +315,10 @@ export async function waitForDebugPort(
       throw new DebugPortTimeoutError(port, timeout, attempts);
     }
 
-    // Fast-fail if the spawned Chrome process has already exited
-    if (chromeProcess && chromeProcess.exitCode !== null) {
+    // Fast-fail if the spawned Chrome process has already exited or was killed
+    if (chromeProcess && (chromeProcess.exitCode !== null || chromeProcess.signalCode !== null)) {
       throw new Error(
-        `Chrome exited with code ${chromeProcess.exitCode} before debug port ${port} became available. ` +
+        `Chrome exited with code ${chromeProcess.exitCode} signal ${chromeProcess.signalCode} before debug port ${port} became available. ` +
         `Likely cause: --user-data-dir is locked by another Chrome instance.`
       );
     }

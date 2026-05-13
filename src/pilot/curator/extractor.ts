@@ -230,6 +230,21 @@ function sleepSync(ms: number): void {
   Atomics.wait(view, 0, 0, ms);
 }
 
+function removeLockDir(lockDir: string): void {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.rmSync(lockDir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      if (code !== 'EPERM' && code !== 'ENOTEMPTY' && code !== 'EBUSY') throw err;
+      sleepSync(SKILL_LOCK_POLL_MS);
+    }
+  }
+  fs.rmSync(lockDir, { recursive: true, force: true });
+}
+
 function withSkillLock<T>(lockDir: string, fn: () => T): T {
   const started = Date.now();
 
@@ -248,11 +263,15 @@ function withSkillLock<T>(lockDir: string, fn: () => T): T {
       } catch (statErr) {
         const statCode = (statErr as NodeJS.ErrnoException).code;
         if (statCode === 'ENOENT') continue;
+        if (statCode === 'EPERM' || statCode === 'EBUSY') {
+          sleepSync(SKILL_LOCK_POLL_MS);
+          continue;
+        }
         throw statErr;
       }
 
       if (stale) {
-        fs.rmSync(lockDir, { recursive: true, force: true });
+        removeLockDir(lockDir);
         continue;
       }
       if (Date.now() - started >= SKILL_LOCK_WAIT_MS) {
@@ -266,7 +285,7 @@ function withSkillLock<T>(lockDir: string, fn: () => T): T {
     fs.writeFileSync(path.join(lockDir, 'owner'), `${process.pid}\n`, { mode: 0o644 });
     return fn();
   } finally {
-    fs.rmSync(lockDir, { recursive: true, force: true });
+    removeLockDir(lockDir);
   }
 }
 

@@ -28,6 +28,7 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
+import { AdaptiveCrawlDispatcher, DispatcherMode, parseAdaptiveDispatcherOptions } from '../core/crawl/dispatcher';
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
@@ -85,6 +86,15 @@ const definition: MCPToolDefinition = {
         enum: ['auto', 'static', 'cdp'],
         description:
           'Fetch engine: "cdp" (default, opens a Chrome tab per page), "static" (Node fetch only, fails closed on insufficient pages), or "auto" (static first, fall back to CDP when static is insufficient).',
+      },
+      dispatcher: {
+        type: 'string',
+        enum: ['fixed', 'adaptive'],
+        description: 'Crawl concurrency dispatcher. Default: fixed. adaptive reduces concurrency on memory/error pressure and records origin backoff for 429/503 responses.',
+      },
+      dispatcher_options: {
+        type: 'object',
+        description: 'dispatcher=adaptive options: min_concurrency, max_concurrency, memory_pressure_mb, origin_backoff_ms, rate_limit_statuses.',
       },
     },
     required: ['url'],
@@ -498,6 +508,20 @@ const handler: ToolHandler = async (
   }
   const engineExplicit = engineArg !== undefined;
 
+  const dispatcherArg = args.dispatcher as string | undefined;
+  let dispatcherMode: DispatcherMode = 'fixed';
+  if (dispatcherArg === 'fixed' || dispatcherArg === 'adaptive') {
+    dispatcherMode = dispatcherArg;
+  } else if (dispatcherArg !== undefined) {
+    return {
+      content: [{ type: 'text', text: 'Error: dispatcher must be one of "fixed", "adaptive"' }],
+      isError: true,
+    };
+  }
+  const adaptiveDispatcher = dispatcherMode === 'adaptive'
+    ? new AdaptiveCrawlDispatcher(concurrency, parseAdaptiveDispatcherOptions(args.dispatcher_options, concurrency))
+    : null;
+
   const startTime = Date.now();
   const tracker = new CrawlTracker();
   const pages: CrawledPage[] = [];
@@ -590,6 +614,7 @@ const handler: ToolHandler = async (
       const batchResults = await Promise.all(
         batch.map((item) =>
           limiter(async () => {
+            const runFetch = async () => {
             // Check robots.txt before fetching
             const allowed = await isRobotsAllowed(item.url);
             if (!allowed) {
@@ -676,6 +701,16 @@ const handler: ToolHandler = async (
             }
 
             return { page: result, links, depth: item.depth };
+            };
+            const origin = new URL(item.url).origin;
+            const output = adaptiveDispatcher
+              ? await adaptiveDispatcher.run(origin, runFetch)
+              : await runFetch();
+            if (adaptiveDispatcher) {
+              const statusMatch = output.page.error?.match(/status\s+(\d{3})/i);
+              adaptiveDispatcher.recordResponse(origin, statusMatch ? Number(statusMatch[1]) : undefined);
+            }
+            return output;
           }),
         ),
       );
@@ -722,6 +757,7 @@ const handler: ToolHandler = async (
       max_depth_reached: maxDepthReached,
       duration_ms: durationMs,
       scope,
+      ...(adaptiveDispatcher ? { dispatcher: adaptiveDispatcher.stats() } : {}),
     };
 
     const output = { summary, pages };
