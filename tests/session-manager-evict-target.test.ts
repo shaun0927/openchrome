@@ -89,4 +89,24 @@ describe('SessionManager.evictTarget', () => {
     });
     expect(sm.evictTarget('missing-target')).toBe(false);
   });
+
+  test('registerExternalTarget enforces maxTargetsPerWorker and evicts oldest ownership', async () => {
+    const sm = new SessionManager(undefined, {
+      autoCleanup: false,
+      useConnectionPool: false,
+      useDefaultContext: true,
+      maxTargetsPerWorker: 2,
+    });
+
+    await sm.createSession({ id: 's1' });
+    sm.registerExternalTarget('target-1', 's1', 'default');
+    sm.registerExternalTarget('target-2', 's1', 'default');
+    sm.registerExternalTarget('target-3', 's1', 'default');
+
+    expect(sm.getTargetOwner('target-1')).toBeUndefined();
+    expect(sm.getTargetOwner('target-2')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getTargetOwner('target-3')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getSessionInfo('s1')?.targetCount).toBe(2);
+    expect(sm.getSessionInfo('s1')?.workers[0].targetCount).toBe(2);
+  });
 });

@@ -110,14 +110,14 @@ program
       const server = new MCPServer(undefined, { initialToolTier: 3 });
       registerAllTools(server);
       const manifest = server.getToolManifest();
-      const json = JSON.stringify(manifest.tools) + '\n';
-      // Let Node drain stdout fully before exiting. process.exit() called
-      // before the OS pipe buffer is consumed truncates output at 64 KB on
-      // Linux/macOS. Writing via end() and waiting for the 'finish' event
-      // (which fires after the last byte leaves the OS pipe buffer) is the
-      // only reliable cross-platform approach.
-      process.stdout.end(json);
-      process.stdout.once('finish', () => process.exit(0));
+      const output = Buffer.from(JSON.stringify(manifest.tools) + '\n', 'utf8');
+      for (let offset = 0; offset < output.length; offset += 16_384) {
+        const chunk = output.subarray(offset, Math.min(offset + 16_384, output.length));
+        if (!process.stdout.write(chunk)) {
+          await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+        }
+      }
+      return;
     }
 
     let port = parseInt(options.port, 10);
@@ -400,7 +400,28 @@ program
     resetReadinessMachine();
 
     const server = getMCPServer();
-    registerAllTools(server);
+    await registerAllTools(server);
+
+// Pilot dynamic-skills (#889): lazy attach only when explicitly enabled.
+    {
+      const { isDynamicSkillsEnabled } = await import('./harness/flags.js');
+      if (isDynamicSkillsEnabled()) {
+        try {
+          const mod = await import('./pilot/dynamic-skills/index.js');
+          const defaults = await import('./pilot/dynamic-skills/attachment-defaults.js');
+          mod.attachDynamicSkillsToServer(server, {
+            resolveCurrentTab: defaults.defaultResolveCurrentTab,
+            runStep: defaults.defaultRunStep,
+            assertContract: defaults.defaultAssertContract,
+          });
+          console.error('[openchrome] Pilot family: dynamic_skills attached');
+        } catch (err) {
+          console.error(
+            `[openchrome] Pilot family dynamic_skills attach failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
 
     // Dev-only hook: artificial delay for the tools component transition.
     // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
@@ -415,6 +436,7 @@ program
     } else {
       setComponent('tools', 'ok');
     }
+
 
     // Write PID file for zombie process detection
     writePidFile(port);

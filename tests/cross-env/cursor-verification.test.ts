@@ -135,16 +135,17 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
   describe('C2: Tool Discovery & Listing', () => {
     let tier1Tools: any[];
 
-    test('Initial tools/list returns Tier 1 tools only (45 tools) + expand_tools', async () => {
+    test('Initial tools/list returns Tier 1 tools plus expand_tools', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       tier1Tools = response.result.tools;
-      // 45 Tier 1 tools (includes lifecycle, assertion, evidence, skill, observability,
-      // token-budget, and connection/request utility tools) + 1 expand_tools virtual tool = 46
+      // Tier 1 grows as core recovery/crawl/task tools graduate, so this
+      // verifies the Cursor contract without pinning a stale exact count.
       const toolNames = tier1Tools.map((t: any) => t.name);
       expect(toolNames).toContain('expand_tools');
 
       const nonExpandTools = tier1Tools.filter((t: any) => t.name !== 'expand_tools');
-      expect(nonExpandTools.length).toBe(45);
+      expect(nonExpandTools.length).toBeGreaterThanOrEqual(48);
+      expect(nonExpandTools.length).toBeLessThan(70);
     });
 
     test('expand_tools virtual tool present in initial list', () => {
