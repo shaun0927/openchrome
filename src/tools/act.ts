@@ -32,6 +32,82 @@ import {
   WorkflowPageSignature,
 } from '../actions/action-cache';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+} from './_shared/return-after-state';
+
+
+const VARIABLE_RE = /%([A-Za-z_][A-Za-z0-9_]*)%/g;
+
+function normalizeVariables(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      out[key] = String(value);
+    }
+  }
+  return out;
+}
+
+function findMissingVariables(instruction: string, variables: Record<string, string>): string[] {
+  const names = new Set<string>();
+  for (const match of instruction.matchAll(VARIABLE_RE)) names.add(match[1]);
+  return Array.from(names).filter((name) => !(name in variables));
+}
+
+function substituteVariableText(text: string | undefined, variables: Record<string, string>): string | undefined {
+  if (text === undefined) return undefined;
+  return text.replace(VARIABLE_RE, (_m, name: string) => variables[name] ?? _m);
+}
+
+function substituteActionVariables(action: ParsedAction, variables: Record<string, string>): ParsedAction {
+  return {
+    ...action,
+    target: substituteVariableText(action.target, variables),
+    value: substituteVariableText(action.value, variables),
+    condition: substituteVariableText(action.condition, variables),
+  };
+}
+
+function redactVariableValues(text: string, variables: Record<string, string>): string {
+  const matches: Array<{ start: number; end: number; label: string }> = [];
+  for (const [name, value] of Object.entries(variables)) {
+    if (value.length === 0) continue;
+    let start = text.indexOf(value);
+    while (start !== -1) {
+      matches.push({ start, end: start + value.length, label: `%${name}%` });
+      start = text.indexOf(value, start + 1);
+    }
+  }
+  if (matches.length === 0) return text;
+
+  matches.sort((a, b) => a.start - b.start || b.end - a.end);
+  const chunks: Array<{ start: number; end: number; label: string; ambiguous: boolean }> = [];
+  for (const match of matches) {
+    const last = chunks[chunks.length - 1];
+    if (!last || match.start >= last.end) {
+      chunks.push({ ...match, ambiguous: false });
+      continue;
+    }
+    if (match.end <= last.end) continue;
+    last.end = match.end;
+    last.ambiguous = true;
+  }
+
+  let redacted = '';
+  let offset = 0;
+  for (const chunk of chunks) {
+    redacted += text.slice(offset, chunk.start);
+    redacted += chunk.ambiguous ? '[REDACTED_VARIABLE]' : chunk.label;
+    offset = chunk.end;
+  }
+  redacted += text.slice(offset);
+  return redacted;
+}
 
 // ─── Types ───
 
@@ -43,6 +119,41 @@ interface StepResult {
   delta?: string;
   message?: string;
   error?: string;
+}
+
+type ActSource = 'template' | 'cache' | 'parsed';
+
+type RecoveryReason =
+  | 'target_not_found'
+  | 'ambiguous_target'
+  | 'stale_ref_or_selector'
+  | 'navigation_timeout'
+  | 'page_not_ready'
+  | 'actionability_failed'
+  | 'sequence_timeout'
+  | 'exception';
+
+interface SuggestedNextCall {
+  tool: 'read_page' | 'query_dom' | 'wait_for';
+  arguments: Record<string, unknown>;
+  why: string;
+}
+
+interface NearMatch {
+  ref?: string;
+  label?: string;
+  text?: string;
+  role?: string;
+  tag?: string;
+  score: number;
+}
+
+interface ActRecovery {
+  reason: RecoveryReason;
+  safeToRetry: boolean;
+  suggestedNextCalls: SuggestedNextCall[];
+  nearMatches: NearMatch[];
+  cacheAction?: 'decrement_confidence';
 }
 
 // ─── Tool Definition ───
@@ -70,6 +181,7 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Max time in ms for entire sequence. Default: 30000',
       },
+<<<<<<< HEAD
       use_workflow_cache: {
         type: 'boolean',
         description: 'Opt-in: try guarded structured workflow cache before legacy action cache. Default: false',
@@ -86,6 +198,13 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include concise workflow cache accept/reject metadata in the response. Default: false',
       },
+=======
+      variables: {
+        type: 'object',
+        description: 'Optional runtime values for %name% placeholders. Values are injected only at execution time and redacted from responses/cache.',
+      },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
+>>>>>>> origin/develop
     },
     required: ['tabId', 'instruction'],
   },
@@ -93,6 +212,7 @@ const definition: MCPToolDefinition = {
 
 // ─── Element resolution helper ───
 
+<<<<<<< HEAD
 async function collectWorkflowPageSignature(page: any): Promise<WorkflowPageSignature | null> {
   try {
     const projection = await page.evaluate(() => {
@@ -109,6 +229,81 @@ async function collectWorkflowPageSignature(page: any): Promise<WorkflowPageSign
         const rect = element.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) continue;
 
+=======
+function classifyFailureReason(step: StepResult): RecoveryReason {
+  if (step.outcome === 'TIMEOUT') return 'sequence_timeout';
+  if (step.outcome === 'ELEMENT_NOT_FOUND') return 'target_not_found';
+
+  const message = (step.error || step.message || '').toLowerCase();
+  if (message.includes('timeout') && step.action === 'navigate') return 'navigation_timeout';
+  if (message.includes('timeout')) return 'page_not_ready';
+  if (message.includes('stale') || message.includes('selector')) return 'stale_ref_or_selector';
+  if (message.includes('not visible') || message.includes('not clickable') || message.includes('disabled')) return 'actionability_failed';
+  if (message.includes('ambiguous') || message.includes('multiple')) return 'ambiguous_target';
+  return 'exception';
+}
+
+function buildSuggestedNextCalls(tabId: string, reason: RecoveryReason, target?: string): SuggestedNextCall[] {
+  const calls: SuggestedNextCall[] = [];
+
+  if (reason === 'page_not_ready' || reason === 'navigation_timeout' || reason === 'sequence_timeout') {
+    calls.push({
+      tool: 'wait_for',
+      arguments: { tabId, type: 'function', value: 'document.readyState !== "loading"', timeout: 10000 },
+      why: 'Wait for the page to settle before retrying the deterministic action sequence.',
+    });
+  }
+
+  calls.push({
+    tool: 'read_page',
+    arguments: { tabId, mode: 'dom', filter: 'interactive', depth: 5 },
+    why: 'Refresh the compact interactive DOM before retrying target resolution.',
+  });
+
+  calls.push({
+    tool: 'query_dom',
+    arguments: {
+      tabId,
+      method: 'css',
+      selector: target && target.trim().length > 0
+        ? 'button, a, input, select, textarea, [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="radio"], [aria-label], [placeholder]'
+        : 'button, a, input, select, textarea, [role]',
+      multiple: true,
+      limit: 50,
+    },
+    why: 'Inspect common interactive controls with labels/placeholders for a narrower retry.',
+  });
+
+  return calls.slice(0, 3);
+}
+
+function scoreNearMatch(target: string, candidate: string, role?: string): number {
+  const t = normalizeQuery(target || '');
+  const c = normalizeQuery(candidate || '');
+  if (!t || !c) return 0;
+  if (t === c) return 1;
+
+  let score = 0;
+  if (c.includes(t) || t.includes(c)) score = Math.max(score, 0.72);
+  const tTokens = new Set(t.split(/\s+/).filter(Boolean));
+  const cTokens = new Set(c.split(/\s+/).filter(Boolean));
+  const overlap = [...tTokens].filter(tok => cTokens.has(tok)).length;
+  if (tTokens.size > 0) score = Math.max(score, (overlap / tTokens.size) * 0.65);
+  if (role && /button|link|textbox|checkbox|radio|combobox/.test(role.toLowerCase())) score += 0.08;
+  return Math.min(1, Math.round(score * 100) / 100);
+}
+
+async function collectNearMatches(page: any, target?: string): Promise<NearMatch[]> {
+  if (!target || !target.trim()) return [];
+  try {
+    const candidates = await page.evaluate((wanted: string) => {
+      void wanted;
+      const controls = Array.from(document.querySelectorAll(
+        'button, a, input, select, textarea, [role], [aria-label], [placeholder]'
+      )).slice(0, 250);
+      return controls.map((el) => {
+        const element = el as HTMLElement;
+>>>>>>> origin/develop
         const tag = element.tagName.toLowerCase();
         const input = element as HTMLInputElement;
         const type = (input.getAttribute?.('type') || '').toLowerCase();
@@ -116,6 +311,7 @@ async function collectWorkflowPageSignature(page: any): Promise<WorkflowPageSign
         const label = element.getAttribute('aria-label')
           || element.getAttribute('title')
           || element.getAttribute('placeholder')
+<<<<<<< HEAD
           || (type === 'password' ? '' : (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim())
           || (type === 'password' ? '' : (input.name || input.id || ''));
 
@@ -143,6 +339,71 @@ function formatWorkflowDebug(decision: WorkflowCacheDecision): string {
     parts.push(`destructiveRisk=${decision.safety.destructiveRisk}`);
   }
   return `[WorkflowCache] ${parts.join(' ')}`;
+=======
+          || '';
+        const rawText = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+        const text = type === 'password' ? '' : rawText.slice(0, 120);
+        const name = type === 'password' ? '' : (input.name || input.id || '');
+        const candidate = [label, text, name, role, tag].filter(Boolean).join(' ');
+        const rect = element.getBoundingClientRect();
+        const visible = rect.width > 0 && rect.height > 0;
+        return { label: label || undefined, text: text || undefined, role, tag, candidate, visible };
+      }).filter((item) => item.visible && item.candidate.length > 0);
+    }, target) as Array<{ label?: string; text?: string; role?: string; tag?: string; candidate: string; visible: boolean }> | undefined;
+
+    if (!Array.isArray(candidates)) return [];
+    return candidates
+      .map((candidate) => ({
+        label: candidate.label,
+        text: candidate.text,
+        role: candidate.role,
+        tag: candidate.tag,
+        score: scoreNearMatch(target, candidate.candidate, candidate.role),
+      }))
+      .filter((candidate) => candidate.score >= 0.2)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+async function buildRecovery(page: any, tabId: string, failedStep: StepResult, source: ActSource): Promise<ActRecovery> {
+  const reason = classifyFailureReason(failedStep);
+  const nearMatches = reason === 'target_not_found' || reason === 'ambiguous_target'
+    ? await collectNearMatches(page, failedStep.target)
+    : [];
+
+  return {
+    reason,
+    safeToRetry: reason !== 'exception' && reason !== 'actionability_failed',
+    suggestedNextCalls: buildSuggestedNextCalls(tabId, reason, failedStep.target),
+    nearMatches,
+    ...(source === 'cache' ? { cacheAction: 'decrement_confidence' as const } : {}),
+  };
+}
+
+function buildFailurePayload(params: {
+  source: ActSource;
+  executed: number;
+  total: number;
+  failedAt: number | null;
+  failedStep: StepResult | undefined;
+  recovery: ActRecovery;
+  text: string;
+}): string {
+  return JSON.stringify({
+    action: 'act',
+    success: false,
+    source: params.source,
+    executed: Math.max(0, params.failedAt ? params.failedAt - 1 : params.executed),
+    total: params.total,
+    failedAt: params.failedAt,
+    failedStep: params.failedStep,
+    recovery: params.recovery,
+    text: params.text,
+  }, null, 2);
+>>>>>>> origin/develop
 }
 
 /**
@@ -152,11 +413,12 @@ async function resolveElement(
   page: Parameters<typeof resolveElementsByAXTree>[0],
   cdpClient: Parameters<typeof resolveElementsByAXTree>[1],
   query: string,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<AXResolvedElement | null> {
   try {
     const matches = await withTimeout(
-      resolveElementsByAXTree(page, cdpClient, normalizeQuery(query), { useCenter: true, maxResults: 3 }),
+      resolveElementsByAXTree(page, cdpClient, normalizeQuery(query), { useCenter: true, maxResults: 3, contextHint }),
       8000,
       'ax-resolution',
       context
@@ -200,14 +462,15 @@ async function executeClick(
   parsedAction: ParsedAction,
   stepIndex: number,
   isStealth: boolean,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const target = parsedAction.target;
   if (!target) {
     return { step: stepIndex, action: 'click', outcome: 'ELEMENT_NOT_FOUND', error: 'No target specified for click' };
   }
 
-  const el = await resolveElement(page, cdpClient, target, context);
+  const el = await resolveElement(page, cdpClient, target, context, contextHint);
   if (!el) {
     return { step: stepIndex, action: 'click', target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${target}"` };
   }
@@ -238,7 +501,8 @@ async function executeType(
   parsedAction: ParsedAction,
   stepIndex: number,
   isStealth: boolean,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const value = parsedAction.value;
   if (!value) {
@@ -247,7 +511,7 @@ async function executeType(
 
   // If a target is specified, find and focus it
   if (parsedAction.target) {
-    const el = await resolveElement(page, cdpClient, parsedAction.target, context);
+    const el = await resolveElement(page, cdpClient, parsedAction.target, context, contextHint);
     if (!el) {
       return { step: stepIndex, action: 'type', target: parsedAction.target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${parsedAction.target}"` };
     }
@@ -286,14 +550,15 @@ async function executeSelect(
   tabId: string,
   parsedAction: ParsedAction,
   stepIndex: number,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const query = parsedAction.target || parsedAction.value;
   if (!query) {
     return { step: stepIndex, action: 'select', outcome: 'EXCEPTION', error: 'No target specified for select' };
   }
 
-  const el = await resolveElement(page, cdpClient, query, context);
+  const el = await resolveElement(page, cdpClient, query, context, contextHint);
   if (!el) {
     return { step: stepIndex, action: 'select', target: query, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${query}"` };
   }
@@ -337,14 +602,15 @@ async function executeHover(
   cdpClient: any,
   parsedAction: ParsedAction,
   stepIndex: number,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const target = parsedAction.target;
   if (!target) {
     return { step: stepIndex, action: 'hover', outcome: 'EXCEPTION', error: 'No target specified for hover' };
   }
 
-  const el = await resolveElement(page, cdpClient, target, context);
+  const el = await resolveElement(page, cdpClient, target, context, contextHint);
   if (!el) {
     return { step: stepIndex, action: 'hover', target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${target}"` };
   }
@@ -361,10 +627,11 @@ async function executeScroll(
   cdpClient: any,
   parsedAction: ParsedAction,
   stepIndex: number,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   if (parsedAction.target) {
-    const el = await resolveElement(page, cdpClient, parsedAction.target, context);
+    const el = await resolveElement(page, cdpClient, parsedAction.target, context, contextHint);
     if (!el) {
       return { step: stepIndex, action: 'scroll', target: parsedAction.target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${parsedAction.target}"` };
     }
@@ -440,14 +707,15 @@ async function executeCheckUncheck(
   parsedAction: ParsedAction,
   stepIndex: number,
   isStealth: boolean,
-  context?: ToolContext
+  context?: ToolContext,
+  contextHint?: string
 ): Promise<StepResult> {
   const target = parsedAction.target;
   if (!target) {
     return { step: stepIndex, action: parsedAction.action, outcome: 'EXCEPTION', error: `No target specified for ${parsedAction.action}` };
   }
 
-  const el = await resolveElement(page, cdpClient, target, context);
+  const el = await resolveElement(page, cdpClient, target, context, contextHint);
   if (!el) {
     return { step: stepIndex, action: parsedAction.action, target, outcome: 'ELEMENT_NOT_FOUND', error: `Could not find "${target}"` };
   }
@@ -496,17 +764,30 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const verifyTextSummary =
     args.verify === undefined ? true : verifyMode !== 'none';
+  const actionContext = typeof args.context === 'string' ? args.context.slice(0, 240) : undefined;
   const timeoutMs = Math.min(Math.max((args.timeout as number) || 30000, 1000), 120000);
+<<<<<<< HEAD
   const useWorkflowCache = args.use_workflow_cache === true;
   const recordWorkflowCache = args.record_workflow_cache === true;
   const allowRiskyReplay = args.allow_risky_replay === true;
   const workflowDebug = args.workflow_debug === true;
+=======
+  const variables = normalizeVariables(args.variables);
+  const missingVariables = findMissingVariables(instruction || '', variables);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+>>>>>>> origin/develop
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
   }
   if (!instruction || instruction.trim().length === 0) {
     return { content: [{ type: 'text', text: 'Error: instruction is required' }], isError: true };
+  }
+  if (missingVariables.length > 0) {
+    return {
+      content: [{ type: 'text', text: `Error: Missing variable(s): ${missingVariables.map((name) => `%${name}%`).join(', ')}` }],
+      isError: true,
+    };
   }
 
   const sessionManager = getSessionManager();
@@ -535,7 +816,11 @@ const handler: ToolHandler = async (
   // 1. Try template match first (no page URL needed)
   const templateMatch = matchTemplate(instruction);
   let actions: ParsedAction[];
+<<<<<<< HEAD
   let source: 'template' | 'cache' | 'workflow_cache' | 'parsed' = 'parsed';
+=======
+  let source: ActSource = 'parsed';
+>>>>>>> origin/develop
   let parseWarning: string | undefined;
   let workflowSignature: WorkflowPageSignature | null = null;
   let workflowDecision: WorkflowCacheDecision | null = null;
@@ -583,6 +868,8 @@ const handler: ToolHandler = async (
     }
   }
 
+  const executionActions = actions.map((action) => substituteActionVariables(action, variables));
+
   const cdpClient = sessionManager.getCDPClient();
   const isStealth = sessionManager.isStealthTarget(tabId);
   const stepResults: StepResult[] = [];
@@ -595,32 +882,32 @@ const handler: ToolHandler = async (
   // this returns `verify: undefined` and the result is byte-identical to
   // pre-#827 develop.
   const verifyOutcome = await runVerify(page, verifyMode, async () => {
-  for (let i = 0; i < actions.length; i++) {
+  for (let i = 0; i < executionActions.length; i++) {
     if (Date.now() >= deadline) {
       failedAt = i + 1;
-      stepResults.push({ step: i + 1, action: actions[i].action, outcome: 'TIMEOUT', error: 'Sequence timeout exceeded' });
+      stepResults.push({ step: i + 1, action: executionActions[i].action, outcome: 'TIMEOUT', error: 'Sequence timeout exceeded' });
       break;
     }
 
-    const parsedAction: ParsedAction = actions[i];
+    const parsedAction: ParsedAction = executionActions[i];
     let result: StepResult;
 
     try {
       switch (parsedAction.action) {
         case 'click':
-          result = await executeClick(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context);
+          result = await executeClick(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context, actionContext);
           break;
         case 'type':
-          result = await executeType(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context);
+          result = await executeType(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context, actionContext);
           break;
         case 'select':
-          result = await executeSelect(page, cdpClient, sessionId, tabId, parsedAction, i + 1, context);
+          result = await executeSelect(page, cdpClient, sessionId, tabId, parsedAction, i + 1, context, actionContext);
           break;
         case 'hover':
-          result = await executeHover(page, cdpClient, parsedAction, i + 1, context);
+          result = await executeHover(page, cdpClient, parsedAction, i + 1, context, actionContext);
           break;
         case 'scroll':
-          result = await executeScroll(page, cdpClient, parsedAction, i + 1, context);
+          result = await executeScroll(page, cdpClient, parsedAction, i + 1, context, actionContext);
           break;
         case 'wait':
           result = await executeWait(page, parsedAction, i + 1, context);
@@ -630,7 +917,7 @@ const handler: ToolHandler = async (
           break;
         case 'check':
         case 'uncheck':
-          result = await executeCheckUncheck(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context);
+          result = await executeCheckUncheck(page, cdpClient, sessionId, tabId, parsedAction, i + 1, isStealth, context, actionContext);
           break;
         default:
           result = { step: i + 1, action: parsedAction.action, outcome: 'EXCEPTION', error: `Unknown action: ${parsedAction.action}` };
@@ -661,7 +948,7 @@ const handler: ToolHandler = async (
   await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
   // Build response
-  const total = actions.length;
+  const total = executionActions.length;
   const executed = stepResults.length;
   const success = failedAt === null;
 
@@ -723,7 +1010,7 @@ const handler: ToolHandler = async (
     const isFailed = r.outcome === 'ELEMENT_NOT_FOUND' || r.outcome === 'EXCEPTION' || r.outcome === 'TIMEOUT';
     const symbol = isFailed ? '\u2717' : '\u2713';
     const label = r.message || r.error || `${r.action}${r.target ? ` "${r.target}"` : ''}`;
-    stepLines.push(`Step ${r.step}: ${symbol} ${label}`);
+    stepLines.push(`Step ${r.step}: ${symbol} ${redactVariableValues(label, variables)}`);
   }
 
   const lines: string[] = [headerLine, '', ...stepLines];
@@ -736,7 +1023,7 @@ const handler: ToolHandler = async (
         url: window.location.href,
         title: document.title,
       })), 3000, 'verify', context).catch(() => ({ url: '', title: '' })) as { url: string; title: string };
-      lines.push('', `[Verification] url: ${state.url} | title: ${state.title}`);
+      lines.push('', redactVariableValues(`[Verification] url: ${state.url} | title: ${state.title}`, variables));
     } catch { /* non-fatal */ }
   }
 
@@ -745,15 +1032,40 @@ const handler: ToolHandler = async (
     lines.push('', `[Warning] ${parseWarning}`);
   }
 
+<<<<<<< HEAD
   if (workflowDebug && workflowDecision) {
     lines.push('', formatWorkflowDebug(workflowDecision));
   }
 
   const baseResult: MCPResult = {
     content: [{ type: 'text', text: lines.join('\n') }],
+=======
+  const text = lines.join('\n');
+  let responseText = text;
+  if (!success) {
+    const failedStep = failedAt !== null ? stepResults[failedAt - 1] : stepResults[stepResults.length - 1];
+    const recovery = await buildRecovery(page, tabId, failedStep, source);
+    responseText = buildFailurePayload({
+      source,
+      executed,
+      total,
+      failedAt,
+      failedStep,
+      recovery,
+      text,
+    });
+  }
+
+  const actResult: MCPResult = {
+    content: [{ type: 'text', text: responseText }],
+>>>>>>> origin/develop
     isError: !success,
+    ...(actVerifyReport ? { verify: actVerifyReport } : {}),
   };
-  return actVerifyReport ? { ...baseResult, verify: actVerifyReport } : baseResult;
+  if (success) {
+    await appendReturnAfterState(actResult, page, sessionId, tabId, returnAfterState, context);
+  }
+  return actResult;
 };
 
 // ─── Registration ───

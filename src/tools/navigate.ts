@@ -11,6 +11,7 @@ import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { isDynamicSkillsEnabled } from '../harness/flags';
 import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { handleCaptcha } from '../captcha/handler';
 import { getSolverRegistry } from '../captcha/solver-registry';
@@ -18,6 +19,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
 import { getHeadedFallback } from '../chrome/headed-fallback';
 import { getGlobalConfig } from '../config/global';
+import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import type { Page } from 'puppeteer-core';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
@@ -302,10 +304,10 @@ async function headedAutoRetry(
         // Get the live Page object from HeadedFallbackManager and register it
         const page = headedFallback.getPage(result.targetId);
         if (page) {
-          sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
+          await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
         } else {
           // Fallback: register without page injection (navigation-only, no tool access)
-          sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
+          await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
         }
 
         tabId = result.targetId;
@@ -377,9 +379,9 @@ async function headedNavigateDirect(
 
         const page = headedFallback.getPage(result.targetId);
         if (page) {
-          sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
+          await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
         } else {
-          sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
+          await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
         }
 
         tabId = result.targetId;
@@ -407,6 +409,29 @@ async function headedNavigateDirect(
     return null;
   }
 }
+
+async function withDomainSkillsResult(
+  result: MCPResult,
+  recallArg: boolean | undefined,
+): Promise<MCPResult> {
+  if (result.isError) return result;
+  const first = result.content?.[0];
+  if (!first || first.type !== 'text' || typeof first.text !== 'string') return result;
+
+  try {
+    const payload = JSON.parse(first.text) as Record<string, unknown>;
+    if (payload.domain_skills !== undefined || typeof payload.url !== 'string') return result;
+    const domainSkills = await autoRecallForUrl(payload.url, recallArg);
+    if (domainSkills === undefined) return result;
+    return {
+      ...result,
+      content: [{ ...first, text: JSON.stringify({ ...payload, domain_skills: domainSkills }) }],
+    };
+  } catch {
+    return result;
+  }
+}
+
 
 const definition: MCPToolDefinition = {
   name: 'navigate',
@@ -446,6 +471,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Chrome profile directory name (e.g., "Profile 1"). Use list_profiles to see available profiles. Launches a separate Chrome instance for each profile. If omitted, uses the server default. Cannot be combined with workerId.',
       },
+      recall: {
+        type: 'boolean',
+        description: 'Override OPENCHROME_AUTO_RECALL for this call. true forces domain skill injection; false suppresses it even when the flag is on.',
+      },
     },
     required: ['url'],
   },
@@ -460,6 +489,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string | undefined;
   const url = args.url as string;
   const profileDirectory = args.profileDirectory as string | undefined;
+  const recallArg = args.recall as boolean | undefined;
   // P1-6: reject workerId + profileDirectory combination
   if (args.workerId && profileDirectory) {
     return {
@@ -542,7 +572,7 @@ const handler: ToolHandler = async (
       // Uses headedNavigateDirect() which does NOT fabricate a BlockingInfo. (#560, #561, #562)
       if (headed) {
         const headedResult = await headedNavigateDirect(targetUrl, sessionId, { profileDirectory });
-        if (headedResult) return headedResult;
+        if (headedResult) return await withDomainSkillsResult(headedResult, recallArg);
         return {
           content: [{ type: 'text', text: 'Error: headed mode requested but no display available for headed Chrome.' }],
           isError: true,
@@ -564,7 +594,7 @@ const handler: ToolHandler = async (
             , context);
             if (authRedirect) {
               AdaptiveScreenshot.getInstance().reset(existingTabId);
-              return {
+              return await withDomainSkillsResult({
                 content: [{
                   type: 'text',
                   text: JSON.stringify({
@@ -583,7 +613,7 @@ const handler: ToolHandler = async (
                   }),
                 }],
                 isError: false,
-              };
+              }, recallArg);
             }
             AdaptiveScreenshot.getInstance().reset(existingTabId);
             const [summary, reuseBlockingDetection] = await Promise.all([
@@ -605,12 +635,16 @@ const handler: ToolHandler = async (
 
             // Auto-fallback: if reused tab hit a CDN/WAF block, retry with stealth in a new tab (#459)
             if (reuseBlocking && autoFallback && RETRYABLE_BLOCK_TYPES.has(reuseBlocking.type)) {
-              return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context);
+              return await withDomainSkillsResult(
+                await stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context),
+                recallArg,
+              );
             }
 
             const reuseUrl = page.url();
             const reuseTitle = await safeTitle(page);
             const reuseAuthGuidance = sameSiteAuthRedirectGuidance(targetUrl, reuseUrl, reuseTitle);
+            const reuseDomainSkills = await autoRecallForUrl(reuseUrl, recallArg);
             const reuseResultText = JSON.stringify({
               action: 'navigate',
               url: reuseUrl,
@@ -625,6 +659,7 @@ const handler: ToolHandler = async (
               ...(reuseBlocking && { blockingPage: reuseBlocking }),
               ...blockingDetectionErrorFields(reuseBlockingDetection),
               ...(reuseAuthGuidance ?? {}),
+              ...(reuseDomainSkills !== undefined && { domain_skills: reuseDomainSkills }),
             });
             return {
               content: [{ type: 'text', text: reuseResultText }],
@@ -665,19 +700,23 @@ const handler: ToolHandler = async (
 
       // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
       if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
-        return stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context);
+        return await withDomainSkillsResult(
+          await stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context),
+          recallArg,
+        );
       }
 
       // When explicit stealth hits a block, escalate directly to tier 3 (headed Chrome)
       // since tier 2 (stealth) is already being used. (#453)
       if (newTabBlocking && stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
         const headedResult = await headedAutoRetry(targetUrl, newTabBlocking, sessionId, profileDirectory);
-        if (headedResult) return headedResult;
+        if (headedResult) return await withDomainSkillsResult(headedResult, recallArg);
       }
 
       const newTabUrl = page.url();
       const newTabTitle = await safeTitle(page);
       const newTabAuthGuidance = sameSiteAuthRedirectGuidance(targetUrl, newTabUrl, newTabTitle);
+      const newTabDomainSkills = await autoRecallForUrl(newTabUrl, recallArg);
       const newTabResultText = JSON.stringify({
         action: 'navigate',
         url: newTabUrl,
@@ -693,6 +732,7 @@ const handler: ToolHandler = async (
         ...(newTabBlocking && { blockingPage: newTabBlocking }),
         ...blockingDetectionErrorFields(newTabBlockingDetection),
         ...(newTabAuthGuidance ?? {}),
+        ...(newTabDomainSkills !== undefined && { domain_skills: newTabDomainSkills }),
       });
       return {
         content: [{ type: 'text', text: newTabResultText }],
@@ -762,9 +802,11 @@ const handler: ToolHandler = async (
       } catch {
         // Non-critical — proceed without count
       }
+      const backUrl = page.url();
+      const backDomainSkills = await autoRecallForUrl(backUrl, recallArg);
       const backResultText = JSON.stringify({
         action: 'back',
-        url: page.url(),
+        url: backUrl,
         title: await safeTitle(page),
         elementCount: backElementCount,
         ...(backSummary && { visualSummary: backSummary }),
@@ -772,6 +814,7 @@ const handler: ToolHandler = async (
         ...(backBlocking && { blockingPage: backBlocking }),
         ...blockingDetectionErrorFields(backBlockingDetection),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
+        ...(backDomainSkills !== undefined && { domain_skills: backDomainSkills }),
       });
       return {
         content: [{ type: 'text', text: backResultText }],
@@ -796,9 +839,11 @@ const handler: ToolHandler = async (
       } catch {
         // Non-critical — proceed without count
       }
+      const fwdUrl = page.url();
+      const fwdDomainSkills = await autoRecallForUrl(fwdUrl, recallArg);
       const fwdResultText = JSON.stringify({
         action: 'forward',
-        url: page.url(),
+        url: fwdUrl,
         title: await safeTitle(page),
         elementCount: fwdElementCount,
         ...(fwdSummary && { visualSummary: fwdSummary }),
@@ -806,6 +851,7 @@ const handler: ToolHandler = async (
         ...(fwdBlocking && { blockingPage: fwdBlocking }),
         ...blockingDetectionErrorFields(fwdBlockingDetection),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
+        ...(fwdDomainSkills !== undefined && { domain_skills: fwdDomainSkills }),
       });
       return {
         content: [{ type: 'text', text: fwdResultText }],
@@ -883,7 +929,7 @@ const handler: ToolHandler = async (
     // Auth redirect = fail-fast with clear error
     if (authRedirect) {
       AdaptiveScreenshot.getInstance().reset(tabId);
-      return {
+      return await withDomainSkillsResult({
         content: [{
           type: 'text',
           text: JSON.stringify({
@@ -900,7 +946,7 @@ const handler: ToolHandler = async (
           }),
         }],
         isError: false,
-      };
+      }, recallArg);
     }
 
     AdaptiveScreenshot.getInstance().reset(tabId);
@@ -920,10 +966,13 @@ const handler: ToolHandler = async (
       // Non-critical — proceed without count
     }
     const navReadiness = await getReadiness(page, context);
+    const navFinalUrl = page.url();
+    const navFinalTitle = await safeTitle(page);
+    const navDomainSkills = await autoRecallForUrl(navFinalUrl, recallArg);
     const navResultText = JSON.stringify({
       action: 'navigate',
-      url: page.url(),
-      title: await safeTitle(page),
+      url: navFinalUrl,
+      title: navFinalTitle,
       elementCount: navElementCount,
       readiness: navReadiness,
       ...(navSummary && { visualSummary: navSummary }),
@@ -931,6 +980,7 @@ const handler: ToolHandler = async (
       ...(navBlocking && { blockingPage: navBlocking }),
       ...blockingDetectionErrorFields(navBlockingDetection),
       ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
+      ...(navDomainSkills !== undefined && { domain_skills: navDomainSkills }),
     });
     return {
       content: [{ type: 'text', text: navResultText }],
@@ -955,7 +1005,7 @@ const handler: ToolHandler = async (
 
           const hasContent = (timeoutReadiness.readyState === 'interactive' || timeoutReadiness.readyState === 'complete') && timeoutElementCount > 10;
           if (hasContent) {
-            return {
+            return await withDomainSkillsResult({
               content: [{
                 type: 'text',
                 text: JSON.stringify({
@@ -968,7 +1018,7 @@ const handler: ToolHandler = async (
                   warning: 'Navigation load event timed out, but page has usable content. Proceed with caution.',
                 }),
               }],
-            };
+            }, recallArg);
           }
         }
       } catch { /* page might be gone — fall through to error */ }
@@ -988,6 +1038,108 @@ const handler: ToolHandler = async (
   }
 };
 
+/**
+ * Wrap the core navigate handler so a successful navigation also emits
+ * `domain_entered` on the dynamic-skills event bus. The wrapper is a
+ * no-op when `isDynamicSkillsEnabled()` returns false, so the core
+ * navigate response path is byte-identical to v1.11.0 unless the
+ * operator explicitly opts in (portability-harness P2).
+ */
+const wrappedHandler: ToolHandler = async (sessionId, args, context) => {
+  const result = await handler(sessionId, args, context);
+  if (result.isError !== true && isDynamicSkillsEnabled()) {
+    // Best-effort: parse the response payload to recover the final
+    // URL. We do not throw on parse failure — the navigate response
+    // is already on its way back to the client.
+    try {
+      const text = Array.isArray(result.content) && result.content[0]?.text;
+      if (typeof text === 'string') {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        const finalUrl = typeof parsed.url === 'string' ? parsed.url : undefined;
+        // Suppress emission on auth-redirect responses (the user has
+        // not actually landed on the target domain yet) and on
+        // history navigations (back/forward — same-domain by
+        // construction, no new synthesis surface to gain).
+        const isAuthRedirect = parsed.authRedirect === true;
+        const action = typeof parsed.action === 'string' ? parsed.action : undefined;
+        if (finalUrl && !isAuthRedirect && action !== 'back' && action !== 'forward') {
+          void emitDomainEnteredIfActive(sessionId, finalUrl);
+        }
+      }
+    } catch (err) {
+      console.error(
+        `[navigate] dynamic-skills emit wrapper parse failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return result;
+};
+
 export function registerNavigateTool(server: MCPServer): void {
-  server.registerTool('navigate', handler, definition, { timeoutRecoverable: true });
+  server.registerTool('navigate', wrappedHandler, definition, { timeoutRecoverable: true });
 }
+
+/**
+ * Emit `domain_entered` on the dynamic-skills event bus when the
+ * dynamic-skills pilot family is active. The lazy `require()` keeps
+ * the pilot tree out of the core navigate path when the flag is off
+ * (P2: zero-impact-when-off). Errors in the synthesis hook must never
+ * fail the navigate response.
+ */
+const COMMON_MULTI_LABEL_PUBLIC_SUFFIXES = new Set([
+  'co.uk',
+  'com.au',
+  'com.br',
+  'com.cn',
+  'com.mx',
+  'com.tr',
+  'co.jp',
+  'co.kr',
+  'co.nz',
+  'co.in',
+]);
+
+function domainForDynamicSkillLookup(hostname: string): string {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  if (host.length === 0 || host === 'localhost' || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+    return host;
+  }
+  const parts = host.split('.').filter(Boolean);
+  if (parts.length <= 2) return host;
+  const suffix2 = parts.slice(-2).join('.');
+  const labelCount = COMMON_MULTI_LABEL_PUBLIC_SUFFIXES.has(suffix2) ? 3 : 2;
+  return parts.slice(-labelCount).join('.');
+}
+
+async function emitDomainEnteredIfActive(sessionId: string, url: string): Promise<void> {
+  if (!isDynamicSkillsEnabled()) return;
+  try {
+    // Use dynamic import so the pilot module is not loaded under
+    // `--pilot` unless the dynamic-skills env var is also set. The
+    // built output of TypeScript-compiled `import()` resolves at call
+    // time, not module-load time.
+    const events = await import('../pilot/dynamic-skills/events.js');
+    const host = new URL(url).hostname.toLowerCase();
+    const domain = domainForDynamicSkillLookup(host);
+    if (domain.length === 0) return;
+    events.dynamicSkillEvents.emit('domain_entered', {
+      domain,
+      url,
+      sessionId,
+    });
+  } catch (err) {
+    console.error(
+      `[navigate] dynamic-skills event emit failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+// The emitDomainEnteredIfActive helper is invoked by callers after a
+// successful navigation; see registerNavigateTool() and the in-handler
+// success paths below. The export is here for the pilot dynamic-skills
+// integration tests to exercise the hook without driving the full
+// browser stack.
+export {
+  emitDomainEnteredIfActive as _emitDomainEnteredForTesting,
+  domainForDynamicSkillLookup as _domainForDynamicSkillLookupForTesting,
+};

@@ -593,3 +593,53 @@ describe('registerSessionResumeTool', () => {
     );
   });
 });
+
+describe('generateResumeGuide supplemental artifacts', () => {
+  test('includes checkpoint completed and pending steps', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      checkpoint: {
+        version: 1,
+        timestamp: Date.now() - 60_000,
+        taskDescription: 'Research product prices',
+        completedSteps: ['Opened dashboard', 'Collected first page'],
+        pendingSteps: ['Collect second page', 'Export CSV'],
+        currentUrl: 'https://example.com/dashboard',
+        tabStates: [],
+        extractedData: {},
+      },
+    } as any);
+
+    expect(guide).toContain('Checkpoint:');
+    expect(guide).toContain('Research product prices');
+    expect(guide).toContain('Opened dashboard');
+    expect(guide).toContain('Collect second page');
+    expect(guide).toContain('https://example.com/dashboard');
+  });
+
+  test('includes recent success and failure with avoid guidance', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      recentJournal: [
+        { ts: Date.now() - 2000, tool: 'navigate', ok: true, summary: '✓ → https://example.com' },
+        { ts: Date.now() - 1000, tool: 'interact', ok: false, summary: '✗ Click "missing"' },
+      ],
+    });
+
+    expect(guide).toContain('Recent tool activity:');
+    expect(guide).toContain('Last success: ✓ → https://example.com');
+    expect(guide).toContain('Last failure: ✗ Click "missing"');
+    expect(guide).toContain('Avoid: repeating the last failed call');
+  });
+
+  test('links evidence bundles without embedding blobs', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      evidenceBundles: [{ id: 'bundle-1', path: '/tmp/openchrome/bundle-1' }],
+    });
+
+    expect(guide).toContain('Evidence bundles:');
+    expect(guide).toContain('bundle-1: /tmp/openchrome/bundle-1');
+    expect(guide).toContain('Recommended next safe action');
+  });
+});

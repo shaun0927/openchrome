@@ -135,16 +135,17 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
   describe('C2: Tool Discovery & Listing', () => {
     let tier1Tools: any[];
 
-    test('Initial tools/list returns Tier 1 tools only (39 tools) + expand_tools', async () => {
+    test('Initial tools/list returns Tier 1 tools plus expand_tools', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       tier1Tools = response.result.tools;
-      // 39 Tier 1 tools (includes oc_reap_orphans lifecycle sweep, oc_assert,
-      // oc_evidence_bundle, oc_skill_record, oc_skill_recall, oc_observe) + 1 expand_tools virtual tool = 40
+      // Tier 1 grows as core recovery/crawl/task tools graduate, so this
+      // verifies the Cursor contract without pinning a stale exact count.
       const toolNames = tier1Tools.map((t: any) => t.name);
       expect(toolNames).toContain('expand_tools');
 
       const nonExpandTools = tier1Tools.filter((t: any) => t.name !== 'expand_tools');
-      expect(nonExpandTools.length).toBe(39);
+      expect(nonExpandTools.length).toBeGreaterThanOrEqual(48);
+      expect(nonExpandTools.length).toBeLessThan(70);
     });
 
     test('expand_tools virtual tool present in initial list', () => {
@@ -199,7 +200,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
         'console_capture', 'performance_metrics', 'file_upload',
         'batch_execute', 'batch_paginate',
-        'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
+        'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
       ];
       for (const tool of expectedTier2) {
         expect(toolNames).toContain(tool);
@@ -293,7 +294,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
       'console_capture', 'performance_metrics', 'file_upload',
       'batch_execute', 'batch_paginate',
-      'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
+      'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
       'crawl', 'crawl_sitemap', 'vision_find', 'extract_data', 'oc_totp_generate',
     ];
     tier2Tools.forEach(tool => {
