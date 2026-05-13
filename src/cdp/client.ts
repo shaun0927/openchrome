@@ -35,6 +35,7 @@ import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
 import { getIdleState } from '../utils/idle-state';
 import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
+import { TargetPageIndex } from './target-page-index';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -111,7 +112,7 @@ export class CDPClient {
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
-  private targetIdIndex: Map<string, Page> = new Map();
+  private targetIdIndex = new TargetPageIndex();
   private targetActivityAt: Map<string, number> = new Map();
   private inFlightCookieScans: Map<string, Promise<CookieScanResult>> = new Map();
   private lastCookieScanResult: CookieScanResult | null = null;
@@ -2095,7 +2096,7 @@ export class CDPClient {
   async rebuildTargetIdIndex(): Promise<number> {
     // Build into a fresh Map, then swap atomically to avoid a window
     // where concurrent getPageByTargetId() calls miss the fast path.
-    const newIndex = new Map<string, Page>();
+    const newIndex = new TargetPageIndex();
     let indexed = 0;
     try {
       const browser = this.getBrowser();

@@ -18,7 +18,8 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      task_id: { type: 'string', description: 'REQUIRED task_id returned by oc_task_start.' },
+      task_id: { type: 'string', description: 'task_id returned by oc_task_start.' },
+      taskId: { type: 'string', description: 'Alias for task_id.' },
       include_result: {
         type: 'boolean',
         description: 'When true, also returns the persisted result.json contents.',
@@ -32,7 +33,6 @@ const definition: MCPToolDefinition = {
         description: 'Alias for includeDigest.',
       },
     },
-    required: ['task_id'],
   },
 };
 
@@ -41,7 +41,7 @@ const handler: ToolHandler = async (
   params: Record<string, unknown>,
   context?: ToolContext,
 ): Promise<MCPResult> => {
-  const taskId = String(params.task_id ?? '');
+  const taskId = String(params.task_id ?? params.taskId ?? '');
   if (!taskId) {
     return { isError: true, content: [{ type: 'text', text: 'oc_task_get: task_id is required' }] };
   }
@@ -67,6 +67,13 @@ const handler: ToolHandler = async (
       },
     ],
     meta,
+    counters: meta.counters,
+    budget_status: meta.budget_status,
+    budget_exceeded: meta.budget_exceeded,
+    recommended_next: meta.recommended_next,
+    recent_events: meta.recent_events ?? [],
+    phase: meta.phase,
+    objective: meta.objective,
     ...(includeResult ? { result } : {}),
     ...(includeDigest ? { digest } : {}),
   };
@@ -75,3 +82,5 @@ const handler: ToolHandler = async (
 export function registerOcTaskGetTool(server: MCPServer): void {
   server.registerTool(definition.name, handler, definition);
 }
+
+export const __test__ = { definition, handler };
