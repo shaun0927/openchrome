@@ -61,11 +61,13 @@ import { extractRunId, getRunStore } from './run-harness/store';
 import {
   substituteSecrets,
   redactSecrets,
+  redactSecretString,
   MissingSecretError,
   getSecretStore,
 } from './core/secrets';
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
+import { RecoveryTrajectoryLedger, type RecoveryResultStatus } from './recovery';
 
 
 function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
@@ -335,6 +337,7 @@ export class MCPServer {
   private activityTracker: ActivityTracker | null = null;
   private operationController: OperationController | null = null;
   private hintEngine: HintEngine | null = null;
+  private recoveryLedger: RecoveryTrajectoryLedger | null = null;
   private options: MCPServerOptions;
   private profileWarningShown = false;
   private exposedTier: ToolTier = 1;
@@ -437,6 +440,14 @@ export class MCPServer {
     this.hintEngine = new HintEngine(this.activityTracker);
     this.hintEngine.enableLogging(hintsDir);
     this.hintEngine.enableLearning(hintsDir);
+
+    // Initialize passive recovery trajectory ledger (#1017). Default-on with the
+    // existing .openchrome harness logs; set OPENCHROME_RECOVERY_LEDGER=0 to disable.
+    if (process.env.OPENCHROME_RECOVERY_LEDGER !== '0') {
+      this.recoveryLedger = new RecoveryTrajectoryLedger({
+        dirPath: path.join(process.cwd(), '.openchrome', 'recovery'),
+      });
+    }
 
     // Initialize task journal
     getTaskJournal().init().catch((err: unknown) => {
@@ -1815,6 +1826,8 @@ export class MCPServer {
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
+      result = redactSecrets(result);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');
 
       // Record Prometheus metrics
@@ -2002,11 +2015,13 @@ export class MCPServer {
       return finalResult;
     } catch (error) {
       const message = formatError(error);
+      const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
       const aborted = abortReason !== null;
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
       getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
 
       // Audit log failed invocation — same correlation fields as success path.
@@ -2455,6 +2470,53 @@ export class MCPServer {
    * Get a tool handler by name (for internal server-side plan execution).
    * Returns null if the tool is not registered.
    */
+
+  private recordRecoveryTrajectory(
+    callId: string,
+    toolName: string,
+    sessionId: string,
+    toolArgs: Record<string, unknown>,
+    resultStatus: RecoveryResultStatus,
+    result?: MCPResult,
+    error?: string,
+  ): void {
+    if (!this.recoveryLedger || !this.activityTracker) return;
+
+    try {
+      const recent = this.activityTracker.getRecentCalls(3, sessionId);
+      const current = recent.find((call) => call.id === callId);
+      const tabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+      const previousTrajectory = this.recoveryLedger.getLastNode(sessionId, tabId);
+      const previousFailed =
+        previousTrajectory?.resultStatus === 'error' ||
+        previousTrajectory?.resultStatus === 'no_progress' ||
+        previousTrajectory?.resultStatus === 'aborted';
+      const recovered =
+        resultStatus === 'success' &&
+        previousTrajectory !== undefined &&
+        previousFailed &&
+        previousTrajectory.toolName !== toolName;
+      const progressStatus =
+        resultStatus === 'error' || resultStatus === 'no_progress' || current?.result === 'error'
+          ? 'stuck'
+          : 'unknown';
+
+      this.recoveryLedger.record({
+        sessionId,
+        tabId,
+        toolName,
+        args: toolArgs,
+        resultStatus: recovered ? 'recovered' : resultStatus,
+        progressStatus,
+        error,
+        result,
+        recoveryTool: recovered ? toolName : undefined,
+      });
+    } catch {
+      // Recovery telemetry is best-effort and must not affect tool behavior.
+    }
+  }
+
   getToolHandler(toolName: string): ToolHandler | null {
     const registry = this.tools.get(toolName);
     return registry ? registry.handler : null;
