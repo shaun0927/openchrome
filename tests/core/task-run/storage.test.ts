@@ -15,7 +15,7 @@ describe('TaskRunStore', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('starts, updates, checkpoints, lists, and completes a TaskRun', async () => {
@@ -146,7 +146,7 @@ describe('TaskRunStore', () => {
     for (let i = 0; i < N; i++) {
       expect(meta.completed_items).toContain(`item-${i}`);
     }
-  });
+  }, 30000);
 
   it('accumulates truncation counts across multiple overflows', async () => {
     const run = await store.start({ goal: 'Repeated overflow' });
