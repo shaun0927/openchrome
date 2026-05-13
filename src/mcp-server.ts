@@ -1728,18 +1728,22 @@ export class MCPServer {
         previous.result === 'error' &&
         previous.toolName !== toolName;
 
+      const tabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+      const priorNoProgressCount = resultStatus === 'no_progress'
+        ? this.countConsecutiveNoProgress(this.recoveryLedger.readRecent(8, sessionId), toolName, tabId)
+        : 0;
       const score = scoreFromToolResult({
         toolName,
-        isError: resultStatus === 'error' || resultStatus === 'aborted',
+        isError: resultStatus === 'error' || resultStatus === 'aborted' || result?.isError === true,
         resultText: summarizeResult(result),
         errorText: error,
         repeatedFailureCount: previous?.result === 'error' ? 1 : 0,
-        repeatedNoProgressCount: resultStatus === 'no_progress' ? 1 : 0,
+        repeatedNoProgressCount: priorNoProgressCount,
       });
 
       this.recoveryLedger.record({
         sessionId,
-        tabId: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+        tabId,
         toolName,
         args: toolArgs,
         resultStatus: recovered ? 'recovered' : resultStatus,
@@ -1752,6 +1756,23 @@ export class MCPServer {
     } catch {
       // Recovery telemetry is best-effort and must not affect tool behavior.
     }
+  }
+
+
+  private countConsecutiveNoProgress(
+    nodes: Array<{ toolName: string; tabId?: string; resultStatus: RecoveryResultStatus }>,
+    toolName: string,
+    tabId?: string,
+  ): number {
+    let count = 0;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i];
+      if (node.toolName !== toolName) break;
+      if (tabId !== undefined && node.tabId !== tabId) break;
+      if (node.resultStatus !== 'no_progress') break;
+      count += 1;
+    }
+    return count;
   }
 
   getToolHandler(toolName: string): ToolHandler | null {
