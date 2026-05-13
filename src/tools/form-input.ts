@@ -7,11 +7,10 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
-  description: 'Set one form element value by ref.\n\nWhen to use: Filling a single known input, textarea, select, or checkbox by ref.\nWhen NOT to use: Use fill_form({fields:{...}}) for multiple fields or optional submit.',
+  description: 'Set one form element value by ref. Pass intent="..." (≤120 chars) to label this action in audit logs.\n\nWhen to use: Filling a single known input, textarea, select, or checkbox by ref.\nWhen NOT to use: Use fill_form({fields:{...}}) for multiple fields or optional submit.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -27,6 +26,11 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Value to set. Checkboxes: "true"/"false"',
       },
+      intent: {
+        type: 'string',
+        description: 'Human-readable label for this action in audit logs (≤120 chars)',
+        maxLength: 120,
+      },
     },
     required: ['ref', 'value', 'tabId'],
   },
@@ -40,6 +44,23 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const ref = args.ref as string;
   const value = args.value;
+  const intent = args.intent as string | undefined;
+
+  // Validate intent when provided — use typeof guard for null-safety
+  if (typeof intent === 'string') {
+    if (intent === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must not be an empty string' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: `INVALID_INTENT: intent exceeds 120 characters (got ${intent.length})` }],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -433,10 +454,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerFormInputTool(server: MCPServer): void {
-  // Snapshot-cache (#879): bump docEpoch after every successful set.
-  const sm = getSessionManager();
-  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
-  );
-  server.registerTool('form_input', wrapped, definition);
+  server.registerTool('form_input', handler, definition);
 }
