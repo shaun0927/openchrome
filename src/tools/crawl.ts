@@ -293,6 +293,10 @@ async function fetchPageStatic(
 /** Options for `fetchOnePage`, shared by legacy crawl and host-driven crawl jobs. */
 export interface FetchOnePageOptions {
   outputFormat: string;
+  /** When true (default), strip nav/footer/ads from extracted content. */
+  onlyMainContent?: boolean;
+  /** When true, include outgoing links in the result for BFS expansion. */
+  includeLinks?: boolean;
 }
 
 /** Single-page crawl result plus transient links for BFS/job queue expansion. */
