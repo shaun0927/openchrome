@@ -247,6 +247,23 @@ describe('action-cache', () => {
       expect(decision.actions).toBeUndefined();
     });
 
+    it('ignores low-confidence v2 rows when deciding stale state', () => {
+      const cache = getCache();
+      const keyParts = cache.buildActionCacheKeyV2Parts(keyInput)!;
+      const entry = cache.cacheSequenceV2(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS, keyParts)!;
+      cache.validateCachedSequenceV2(TEST_URL, TEST_INSTRUCTION, entry.keyHash, false);
+
+      const drifted = cache.buildActionCacheKeyV2Parts({
+        ...keyInput,
+        pageFingerprint: JSON.stringify({ title: 'Login', nodes: [{ role: 'button', name: 'Cancel', tag: 'button' }] }),
+      })!;
+      const decision = cache.getCachedSequenceV2(TEST_URL, TEST_INSTRUCTION, drifted);
+
+      expect(decision.status).toBe('MISS');
+      expect(decision.reason).toBe('no_candidate');
+      expect(decision.actions).toBeUndefined();
+    });
+
     it('keeps v1 entries readable as migration fallback when no v2 candidate exists', () => {
       const cache = getCache();
       cache.cacheSequence(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS);

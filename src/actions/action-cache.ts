@@ -175,8 +175,8 @@ export function getCachedSequenceV2(
   for (const knowledge of entries) {
     const entry = parseCachedSequenceV2(knowledge.value);
     if (!entry) continue;
+    if (knowledge.confidence < MIN_CONFIDENCE) continue;
     sawCandidate = true;
-    if (Math.min(knowledge.confidence, MIN_CONFIDENCE + 0.4) < MIN_CONFIDENCE) continue;
     if (entry.keyHash === keyHash) {
       return { status: 'HIT', keyVersion: 2, reason: 'key_match', keyHash, entry, actions: entry.actions };
     }

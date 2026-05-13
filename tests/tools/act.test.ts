@@ -416,6 +416,64 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('[cache] status=');
     });
 
+    test('stores action-cache v2 entries under the pre-action page URL', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
+        backendDOMNodeId: 302,
+        role: 'button',
+        name: 'Navigation target',
+        matchLevel: 1,
+        rect: { x: 10, y: 10, width: 50, height: 20 },
+        properties: {},
+        source: 'ax',
+      }]);
+      mockSessionManager.mockCDPClient.send.mockResolvedValue({ model: { content: [0, 0, 50, 0, 50, 20, 0, 20] } });
+
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      const preActionUrl = 'https://example.com/start';
+      const postActionUrl = 'https://example.com/after-click';
+      let currentUrl = preActionUrl;
+      (page!.url as jest.Mock).mockImplementation(() => currentUrl);
+      (page!.mainFrame as jest.Mock).mockReturnValue({ url: jest.fn(() => currentUrl) });
+      (page!.evaluate as jest.Mock).mockResolvedValue({
+        title: 'Start',
+        path: '/start',
+        locale: 'en-US',
+        userAgent: 'Chrome/120',
+        viewport: { width: 1280, height: 720 },
+        nodes: [{ role: 'button', name: 'Navigation target', tag: 'button', type: '', disabled: false, visible: true }],
+      });
+      (page!.mouse.click as jest.Mock).mockImplementation(async () => {
+        currentUrl = postActionUrl;
+      });
+
+      const handler = await getActHandler();
+      const instruction = 'click navigation target';
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction,
+        verify: false,
+      }) as any;
+
+      expect(result.isError).toBeFalsy();
+
+      const cache = await import('../../src/actions/action-cache');
+      const preActionKey = cache.buildActionCacheKeyV2Parts({
+        url: preActionUrl,
+        instruction,
+        actionKinds: ['click'],
+        viewport: { width: 1280, height: 720 },
+        pageFingerprint: JSON.stringify({ title: 'Start', path: '/start', nodes: [{ role: 'button', name: 'Navigation target', tag: 'button', type: '', disabled: false, visible: true }] }),
+        optionFingerprint: 'verify=none',
+        locale: 'en-US',
+        userAgent: 'Chrome/120',
+      })!;
+
+      const hit = cache.getCachedSequenceV2(preActionUrl, instruction, preActionKey);
+      expect(hit.status).toBe('HIT');
+      expect(hit.keyVersion).toBe(2);
+      expect(hit.actions).toEqual([{ action: 'click', target: 'navigation target' }]);
+    });
+
     test('verify=true (default) calls page.evaluate for state summary', async () => {
       (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
         backendDOMNodeId: 301,

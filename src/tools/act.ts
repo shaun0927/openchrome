@@ -614,6 +614,7 @@ const handler: ToolHandler = async (
   let workflowSignature: WorkflowPageSignature | null = null;
   let workflowDecision: WorkflowCacheDecision | null = null;
   let actionCacheKeyParts: ActionCacheKeyV2Parts | null = null;
+  let actionCacheUrl: string | null = null;
   let actionCacheDecision: ActionCacheV2LookupDecision | null = null;
 
   if (templateMatch) {
@@ -655,6 +656,7 @@ Suggestion: ${suggestion}`,
       actions = parseResult.actions;
       parseWarning = parseResult.suggestion;
       actionCacheKeyParts = await collectActionCacheKeyParts(page, pageUrl, instruction, actions, `verify=${verifyMode}`);
+      actionCacheUrl = actionCacheKeyParts ? pageUrl : null;
       actionCacheDecision = actionCacheKeyParts
         ? getCachedSequenceV2(pageUrl, instruction, actionCacheKeyParts, { allowLegacyFallback: true })
         : { status: 'BYPASS', keyVersion: 2, reason: 'fingerprint_unavailable' };
@@ -752,7 +754,7 @@ Suggestion: ${suggestion}`,
   if (success && source === 'parsed') {
     try {
       cacheSequence(page.url(), instruction, actions);
-      if (actionCacheKeyParts) cacheSequenceV2(page.url(), instruction, actions, actionCacheKeyParts);
+      if (actionCacheKeyParts && actionCacheUrl) cacheSequenceV2(actionCacheUrl, instruction, actions, actionCacheKeyParts);
       // Boost confidence above MIN_CONFIDENCE so the entry is retrievable immediately
       validateCachedSequence(page.url(), instruction, true);
     } catch { /* non-fatal */ }
