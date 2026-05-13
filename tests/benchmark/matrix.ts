@@ -14,7 +14,7 @@ export interface BenchmarkMatrixScenario {
   name: string;
   category: BenchmarkCategory;
   description: string;
-  steps: Array<{ tool: string; args: Record<string, unknown> }>;
+  steps: Array<{ tool: string; args: Record<string, unknown>; tabAlias?: string }>;
 }
 
 export interface MatrixFilter {
@@ -57,11 +57,9 @@ function extractTabId(result: MCPToolResult): string | undefined {
 }
 
 function tabPlaceholders(scenario: BenchmarkMatrixScenario): string[] {
-  return Array.from(new Set(
-    scenario.steps
-      .map((step) => step.args.tabId)
-      .filter((tabId): tabId is string => typeof tabId === 'string' && /^tab\d+$/.test(tabId)),
-  ));
+  return Array.from(new Set(scenario.steps
+    .map((step) => step.tabAlias)
+    .filter((tabAlias): tabAlias is string => typeof tabAlias === 'string' && tabAlias.length > 0)));
 }
 
 function setupUrlForScenario(scenario: BenchmarkMatrixScenario): string {
@@ -82,52 +80,52 @@ export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
       name: 'warm-read-page-dom',
       category: 'read-page',
       description: 'Warm DOM read_page latency and payload size',
-      steps: [{ tool: 'read_page', args: { tabId: 'tab1', mode: 'dom' } }],
+      steps: [{ tool: 'read_page', tabAlias: 'primary', args: { mode: 'dom' } }],
     },
     {
       name: 'warm-read-page-ax',
       category: 'read-page',
       description: 'Warm AX read_page latency and payload size',
-      steps: [{ tool: 'read_page', args: { tabId: 'tab1', mode: 'ax' } }],
+      steps: [{ tool: 'read_page', tabAlias: 'primary', args: { mode: 'ax' } }],
     },
     {
       name: 'warm-read-page-dom-delta',
       category: 'read-page',
       description: 'Warm DOM delta read_page latency and payload size',
       steps: [
-        { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom' } },
-        { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom', compression: 'delta' } },
+        { tool: 'read_page', tabAlias: 'primary', args: { mode: 'dom' } },
+        { tool: 'read_page', tabAlias: 'primary', args: { mode: 'dom', compression: 'delta' } },
       ],
     },
     {
       name: 'interactive-discovery',
       category: 'interactive',
       description: 'Interactive-only discovery payload and latency',
-      steps: [{ tool: 'read_page', args: { tabId: 'tab1', mode: 'dom', filter: 'interactive' } }],
+      steps: [{ tool: 'read_page', tabAlias: 'primary', args: { mode: 'dom', filter: 'interactive' } }],
     },
     {
       name: 'click-fill-action-latency',
       category: 'action',
       description: 'Click/fill action latency in a simple action loop',
       steps: [
-        { tool: 'act', args: { tabId: 'tab1', instruction: 'click Submit' } },
-        { tool: 'act', args: { tabId: 'tab1', instruction: 'type benchmark into Email' } },
+        { tool: 'act', tabAlias: 'primary', args: { instruction: 'click Submit' } },
+        { tool: 'act', tabAlias: 'primary', args: { instruction: 'type benchmark into Email' } },
       ],
     },
     {
       name: 'screenshot-inline-payload',
       category: 'screenshot',
       description: 'Screenshot latency and inline base64 payload size',
-      steps: [{ tool: 'page_screenshot', args: { tabId: 'tab1', fullPage: false } }],
+      steps: [{ tool: 'page_screenshot', tabAlias: 'primary', args: { fullPage: false } }],
     },
     {
       name: 'agent-loop-read-action-delta',
       category: 'agent-loop',
       description: 'Representative read_page -> action -> read_page(delta) loop',
       steps: [
-        { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom' } },
-        { tool: 'act', args: { tabId: 'tab1', instruction: 'click Submit' } },
-        { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom', compression: 'delta' } },
+        { tool: 'read_page', tabAlias: 'primary', args: { mode: 'dom' } },
+        { tool: 'act', tabAlias: 'primary', args: { instruction: 'click Submit' } },
+        { tool: 'read_page', tabAlias: 'primary', args: { mode: 'dom', compression: 'delta' } },
       ],
     },
     ...[1, 5, 20].map((tabs) => ({
@@ -136,7 +134,8 @@ export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
       description: `Parallel tab read smoke with ${tabs} tab(s)`,
       steps: Array.from({ length: tabs }, (_, i) => ({
         tool: 'read_page',
-        args: { tabId: `tab${i + 1}`, mode: 'dom' },
+        tabAlias: `parallel-${i + 1}`,
+        args: { mode: 'dom' },
       })),
     })),
   ];
@@ -178,8 +177,12 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
 
         const runStep = async (step: BenchmarkMatrixScenario['steps'][number]) => {
           const args = { ...step.args };
-          if (typeof args.tabId === 'string') {
-            args.tabId = tabIds.get(args.tabId) ?? args.tabId;
+          if (typeof step.tabAlias === 'string') {
+            const tabId = tabIds.get(step.tabAlias);
+            if (!tabId) {
+              throw new Error(`Benchmark scenario ${scenario.name} did not create tab alias: ${step.tabAlias}`);
+            }
+            args.tabId = tabId;
           }
           const result = await adapter.callTool(step.tool, args);
           if (result.isError) {

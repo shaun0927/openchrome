@@ -9,7 +9,7 @@ import {
   BenchmarkReport,
 } from './benchmark-runner';
 import { OpenChromeRealAdapter } from './adapters/openchrome-real-adapter';
-import { writeCiOutput } from './run';
+import { main, writeCiOutput } from './run';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -380,6 +380,20 @@ describe('BenchmarkRunner', () => {
     expect(JSON.parse(stdout)).toEqual(reports);
     expect(stdout).not.toContain('No regressions detected');
     expect(output.stderr.write).toHaveBeenCalledWith('\nNo regressions detected.\n');
+  });
+
+  test('benchmark CLI rejects unknown matrix categories before running adapters', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await expect(main(['--category', 'typo-category'], output as never)).rejects.toThrow(
+      'Unknown benchmark category or scenario: typo-category'
+    );
+
+    expect(output.stdout.write).not.toHaveBeenCalled();
+    expect(output.stderr.write).not.toHaveBeenCalled();
   });
 
   test('run computes latency distribution and payload stats', async () => {

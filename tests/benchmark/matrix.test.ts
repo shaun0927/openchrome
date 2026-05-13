@@ -80,7 +80,8 @@ describe('benchmark matrix', () => {
       .filter((step) => step.tool === 'act');
     expect(actionSteps.length).toBeGreaterThan(0);
     for (const step of actionSteps) {
-      expect(step.args).toHaveProperty('tabId');
+      expect(step).toHaveProperty('tabAlias', 'primary');
+      expect(step.args).not.toHaveProperty('tabId');
       expect(typeof step.args.instruction).toBe('string');
       expect(step.args).not.toHaveProperty('action');
     }
