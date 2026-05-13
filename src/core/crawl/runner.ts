@@ -235,6 +235,8 @@ export async function advanceJob(
   const includePatterns = state.config.include_patterns;
   const excludePatterns = state.config.exclude_patterns;
   const outputFormat = state.config.output_format;
+  const onlyMainContent = state.config.onlyMainContent;
+  const includeLinks = state.config.includeLinks;
   const delayMs = state.config.delay_ms;
   const respectRobots = state.config.respect_robots;
   const robotsCache = new Map<string, RobotsRules | null>();
@@ -305,7 +307,13 @@ export async function advanceJob(
 
       let result: FetchOnePageResult;
       try {
-        result = await fetcher(sessionId, fetchUrl, next.depth, { outputFormat }, context);
+        result = await fetcher(
+          sessionId,
+          fetchUrl,
+          next.depth,
+          { outputFormat, onlyMainContent, includeLinks },
+          context,
+        );
       } catch (err) {
         const rawMessage = err instanceof Error ? err.message : String(err);
         // Scrub the error message: a fetch failure can quote a URL with

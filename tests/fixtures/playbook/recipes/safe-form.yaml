@@ -1,0 +1,26 @@
+name: local fixture safe form
+vars:
+  base_url: http://127.0.0.1:8765
+steps:
+  - navigate:
+      url: ${base_url}/index.html
+  # Some local Chrome profiles return a one-time headed-fallback notice instead
+  # of the tab metadata on first launch. The second local navigation establishes
+  # the reusable tabId that same-tab verbs need without leaving the fixture site.
+  - navigate:
+      url: ${base_url}/index.html
+  - fill_form:
+      fields:
+        name: OpenChrome
+  - navigate:
+      url: ${base_url}/submit.html?name=OpenChrome
+  - assert:
+      contract:
+        kind: dom_text
+        selector: h1
+        contains: Submitted Locally
+      evidence:
+        snapshot:
+          url: ${base_url}/submit.html?name=OpenChrome
+          dom_text:
+            h1: Submitted Locally

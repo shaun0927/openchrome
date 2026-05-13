@@ -35,6 +35,10 @@ export interface AXNodeFlat {
   name: string;
   value?: string;
   properties: Record<string, unknown>;
+  /** Bounded surrounding text/attributes used only for optional context tie-breaks. */
+  contextText?: string;
+  /** True when the element intersects the viewport, when known. */
+  inViewport?: boolean;
 }
 
 /**
@@ -66,6 +70,8 @@ export interface AXResolveOptions {
   useCenter?: boolean;
   maxResults?: number;
   depth?: number;
+  /** Optional caller-supplied context, e.g. act.context. Used only within the best cascade level. */
+  contextHint?: string;
 }
 
 /** Parsed query with optional role hint */
@@ -196,7 +202,8 @@ export function cascadeFilter(
   roleHint: string | null,
   nameHint: string,
   maxResults: number = 5,
-): Array<{ node: AXNodeFlat; matchLevel: MatchLevel }> {
+  contextHint?: string,
+): Array<{ node: AXNodeFlat; matchLevel: MatchLevel; contextScore: number }> {
   // Pre-filter: remove disabled and non-interactive nodes
   const candidates = nodes.filter(n =>
     n.properties['disabled'] !== true &&
@@ -208,12 +215,16 @@ export function cascadeFilter(
 
   const eq = (nodeName: string) => nodeName.normalize('NFC').toLowerCase().trim() === nameLower;
   const includes = (nodeName: string) => nodeName.normalize('NFC').toLowerCase().trim().includes(nameLower);
+  const rank = (levelNodes: AXNodeFlat[], matchLevel: MatchLevel) =>
+    rankByContext(levelNodes, contextHint)
+      .slice(0, maxResults)
+      .map(({ node, contextScore }) => ({ node, matchLevel, contextScore }));
 
   // Level 1: exact role + exact name
   if (roleHint) {
     const level1 = candidates.filter(n => n.role.toLowerCase() === roleHint && eq(n.name));
     if (level1.length > 0) {
-      return level1.slice(0, maxResults).map(node => ({ node, matchLevel: 1 as MatchLevel }));
+      return rank(level1, 1);
     }
   }
 
@@ -221,23 +232,70 @@ export function cascadeFilter(
   if (roleHint) {
     const level2 = candidates.filter(n => n.role.toLowerCase() === roleHint && includes(n.name));
     if (level2.length > 0) {
-      return level2.slice(0, maxResults).map(node => ({ node, matchLevel: 2 as MatchLevel }));
+      return rank(level2, 2);
     }
   }
 
   // Level 3: exact name (any interactive role)
   const level3 = candidates.filter(n => eq(n.name));
   if (level3.length > 0) {
-    return level3.slice(0, maxResults).map(node => ({ node, matchLevel: 3 as MatchLevel }));
+    return rank(level3, 3);
   }
 
   // Level 4: name contains (any interactive role)
   const level4 = candidates.filter(n => includes(n.name));
   if (level4.length > 0) {
-    return level4.slice(0, maxResults).map(node => ({ node, matchLevel: 4 as MatchLevel }));
+    return rank(level4, 4);
   }
 
   return [];
+}
+
+
+function tokenizeContext(text?: string): string[] {
+  return (text || '')
+    .normalize('NFC')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}_-]+/u)
+    .map(t => t.trim())
+    .filter(t => t.length >= 2)
+    .slice(0, 12);
+}
+
+function scoreNodeContext(node: AXNodeFlat, contextHint?: string): number {
+  const tokens = tokenizeContext(contextHint);
+  if (tokens.length === 0) return 0;
+
+  const haystack = [
+    node.contextText,
+    node.properties['description'],
+    node.properties['container'],
+    node.properties['formLabel'],
+    node.properties['data-testid'],
+    node.properties['aria-label'],
+    node.properties['title'],
+    node.properties['placeholder'],
+    node.properties['name'],
+    node.properties['id'],
+  ]
+    .filter(v => typeof v === 'string')
+    .join(' ')
+    .normalize('NFC')
+    .toLowerCase();
+
+  if (!haystack) return 0;
+  let score = 0;
+  for (const token of tokens) {
+    if (haystack.includes(token)) score += 1;
+  }
+  if (node.inViewport === true) score += 0.1;
+  return score;
+}
+
+function rankByContext(nodes: AXNodeFlat[], contextHint?: string): Array<{ node: AXNodeFlat; contextScore: number }> {
+  return nodes
+    .map((node, index) => ({ node, index, contextScore: scoreNodeContext(node, contextHint) }))
+    .sort((a, b) => (b.contextScore - a.contextScore) || (a.index - b.index));
 }
 
 // ─── AX Tree Cache ───
@@ -288,6 +346,7 @@ export async function getCachedAXTree(
       name: node.name?.value || '',
       value: node.value?.value,
       properties: props,
+      contextText: typeof props['description'] === 'string' ? String(props['description']).slice(0, 240) : undefined,
     });
   }
 
@@ -322,7 +381,7 @@ export async function resolveElementsByAXTree(
   query: string,
   options?: AXResolveOptions,
 ): Promise<AXResolvedElement[]> {
-  const { useCenter = true, maxResults = 5, depth = -1 } = options || {};
+  const { useCenter = true, maxResults = 5, depth = -1, contextHint } = options || {};
 
   // 1. Parse query
   const parsed = parseQueryForAX(query);
@@ -332,12 +391,12 @@ export async function resolveElementsByAXTree(
   if (nodes.length === 0) return [];
 
   // 3. Cascading filter
-  const matches = cascadeFilter(nodes, parsed.roleHint, parsed.nameHint, maxResults);
+  const matches = cascadeFilter(nodes, parsed.roleHint, parsed.nameHint, maxResults, contextHint);
   if (matches.length === 0) return [];
 
   // 4. Resolve coordinates for matches
   const resolved: AXResolvedElement[] = [];
-  for (const { node, matchLevel } of matches) {
+  for (const { node, matchLevel, contextScore } of matches) {
     if (resolved.length >= maxResults) break;
 
     try {
@@ -367,7 +426,7 @@ export async function resolveElementsByAXTree(
           width,
           height,
         },
-        properties: node.properties,
+        properties: { ...node.properties, ...(contextScore > 0 ? { contextScore } : {}) },
         source: 'ax',
       });
     } catch {

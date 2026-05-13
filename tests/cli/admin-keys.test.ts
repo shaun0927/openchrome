@@ -39,13 +39,19 @@ function extractToken(stdout: string): string {
 }
 
 function extractJsonArray(stdout: string): string {
-  for (const line of stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
-    if (!line.startsWith('[')) continue;
-    try {
-      const parsed = JSON.parse(line);
-      if (Array.isArray(parsed)) return line;
-    } catch {
-      // Ignore unrelated bracket-prefixed test noise such as [WorkflowEngine].
+  const starts: number[] = [];
+  for (let i = 0; i < stdout.length; i++) {
+    if (stdout[i] === '[') starts.push(i);
+  }
+  for (const start of starts) {
+    for (let end = stdout.lastIndexOf(']'); end > start; end = stdout.lastIndexOf(']', end - 1)) {
+      const candidate = stdout.slice(start, end + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        if (Array.isArray(parsed)) return candidate;
+      } catch {
+        // Ignore unrelated log prefixes such as [WorkflowEngine] captured by the shared stdout hook.
+      }
     }
   }
   throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);

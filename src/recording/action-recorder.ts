@@ -16,6 +16,7 @@ import {
   NetworkEntry,
   ConsoleEntry,
 } from './types';
+import { TrajectoryBundleWriter, type TrajectoryReport } from '../trajectory/bundle-writer';
 
 /** Arg keys that are always redacted */
 const REDACT_KEYS = /password|token|secret|credential|api[_-]?key|authorization|auth[_-]token/i;
@@ -47,6 +48,10 @@ export interface StartRecordingOptions {
   label?: string;
   /** Browser profile name */
   profile?: string;
+  /** Enable default-off episode trajectory bundle capture (#1059). */
+  trajectoryBundle?: boolean;
+  /** Test/internal override for the trajectory bundle root directory. */
+  trajectoryRootDir?: string;
 }
 
 /**
@@ -89,6 +94,8 @@ export class ActionRecorder {
    * never interleave with an in-flight recordAction().
    */
   private _writeChain: Promise<void> = Promise.resolve();
+  private _trajectoryBundle: TrajectoryBundleWriter | null = null;
+  private _lastTrajectoryReport: TrajectoryReport | null = null;
 
   constructor(store?: RecordingStore, configOverrides?: Partial<RecordingConfig>) {
     this.store = store ?? getRecordingStore();
@@ -114,6 +121,16 @@ export class ActionRecorder {
   /** The active recording ID, or null if not recording */
   get activeRecordingId(): string | null {
     return this._activeRecordingId;
+  }
+
+  /** A snapshot of the active trajectory bundle, if enabled for the current recording. */
+  get activeTrajectoryBundle(): { enabled: true; trajectory_id: string; dir: string } | null {
+    return this._trajectoryBundle ? this._trajectoryBundle.snapshot : null;
+  }
+
+  /** The last finalized trajectory report, if the just-stopped recording had one. */
+  get lastTrajectoryReport(): TrajectoryReport | null {
+    return this._lastTrajectoryReport ? { ...this._lastTrajectoryReport } : null;
   }
 
   /** A snapshot copy of the active recording metadata, or null if not recording */
@@ -145,6 +162,23 @@ export class ActionRecorder {
     await this.store.init();
     await this.store.createRecording(metadata);
 
+    this._trajectoryBundle = null;
+    this._lastTrajectoryReport = null;
+    if (opts?.trajectoryBundle === true) {
+      try {
+        this._trajectoryBundle = await TrajectoryBundleWriter.create({
+          sessionId,
+          recordingId: id,
+          rootDir: opts.trajectoryRootDir,
+        });
+        metadata.trajectoryBundle = this._trajectoryBundle.snapshot;
+        await this.store.writeMetadata(metadata);
+      } catch (err) {
+        console.error('[ActionRecorder] Trajectory bundle disabled:', err instanceof Error ? err.message : err);
+        metadata.trajectoryBundle = { enabled: false };
+      }
+    }
+
     this._activeMetadata = metadata;
     this._activeRecordingId = id;
     this._isRecording = true;
@@ -175,12 +209,19 @@ export class ActionRecorder {
       stoppedAt: new Date().toISOString(),
     };
 
+    if (this._trajectoryBundle) {
+      const report = await this._trajectoryBundle.finalize();
+      this._lastTrajectoryReport = report;
+      metadata.trajectoryBundle = { ...this._trajectoryBundle.snapshot, report: report as unknown as Record<string, unknown> };
+    }
+
     await this.store.writeMetadata(metadata);
 
     // Reset state
     this._isRecording = false;
     this._activeMetadata = null;
     this._activeRecordingId = null;
+    this._trajectoryBundle = null;
     this._seq = 0;
 
     return metadata;
@@ -228,6 +269,19 @@ export class ActionRecorder {
         };
 
         await this.store.appendAction(id, action);
+        if (this._trajectoryBundle) {
+          await this._trajectoryBundle.appendToolCall({
+            tool,
+            args: sanitizedArgs,
+            durationMs,
+            ok,
+            tabId: action.tabId,
+            url: action.url,
+            error: action.error,
+            screenshotBefore: action.screenshotBefore,
+            screenshotAfter: action.screenshotAfter,
+          });
+        }
 
         // Only advance seq and actionCount after successful write
         this._seq = seq;
@@ -266,9 +320,25 @@ export class ActionRecorder {
       const actionIndex = this._seq;
       try {
         await this.store.appendContractResultRow(id, actionIndex, entry);
+        if (this._trajectoryBundle) {
+          await this._trajectoryBundle.appendContract(entry);
+        }
       } catch (err) {
         console.error('[ActionRecorder] Failed to append contract result:', err instanceof Error ? err.message : err);
       }
+    });
+  }
+
+
+  /**
+   * Append a checkpoint artifact to the active trajectory bundle.
+   * No-op when recording or trajectory capture is disabled.
+   */
+  async appendCheckpoint(checkpoint: Record<string, unknown>): Promise<void> {
+    if (!this._isRecording || !this._trajectoryBundle) return;
+    return this.enqueueWrite(async () => {
+      if (!this._isRecording || !this._trajectoryBundle) return;
+      await this._trajectoryBundle.appendCheckpoint(checkpoint);
     });
   }
 
