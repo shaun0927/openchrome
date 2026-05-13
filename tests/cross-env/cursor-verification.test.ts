@@ -200,7 +200,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
         'console_capture', 'performance_metrics', 'file_upload',
         'batch_execute', 'batch_paginate',
-        'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
+        'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
       ];
       for (const tool of expectedTier2) {
         expect(toolNames).toContain(tool);
@@ -294,7 +294,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
       'console_capture', 'performance_metrics', 'file_upload',
       'batch_execute', 'batch_paginate',
-      'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
+      'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
       'crawl', 'crawl_sitemap', 'vision_find', 'extract_data', 'oc_totp_generate',
     ];
     tier2Tools.forEach(tool => {
