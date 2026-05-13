@@ -69,7 +69,7 @@ const KEEP_ATTRS = new Set([
   'selected', 'required', 'class', 'for',
   // Common data attributes for testing and automation
   'data-cy', 'data-qa', 'data-id', 'data-value', 'data-state',
-  'tabindex', 'controls',
+  'tabindex',
 ]);
 
 // Interactive tag names
@@ -204,11 +204,25 @@ function getDirectTextContent(node: DOMNode): string {
  */
 function isVolatileStableAttr(name: string, value: string): boolean {
   if (name === 'id') {
-    return /(?:^|[-_])(uuid|random|nonce|session|generated|ember|react-aria)[-_]?[a-z0-9]*$/i.test(value)
-      || /[0-9a-f]{12,}/i.test(value);
+    const hasRandomKeyword = /(?:^|[-_])(uuid|random|nonce|session|generated|ember|react-aria)[-_]?[a-z0-9]*$/i.test(value);
+    const hasUuidShape = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i.test(value);
+    const longHex = value.match(/[0-9a-f]{16,}/i)?.[0];
+    const hasMixedLongHex = !!longHex && /[a-f]/i.test(longHex) && /\d/.test(longHex);
+    return hasRandomKeyword || hasUuidShape || hasMixedLongHex;
   }
   if (name === 'class') {
     return false;
+  }
+  return false;
+}
+
+function hasMeaningfulStableDescendant(node: DOMNode): boolean {
+  for (const child of node.children || []) {
+    if (child.nodeType !== NODE_TYPE_ELEMENT) continue;
+    const childTag = child.localName || child.nodeName.toLowerCase();
+    const childAttrs = parseAttributes(child.attributes);
+    if (!isDecorativeMedia(childTag, childAttrs, isInteractive(childTag, childAttrs))) return true;
+    if (hasMeaningfulStableDescendant(child)) return true;
   }
   return false;
 }
@@ -218,6 +232,7 @@ function isDecorativeMedia(tagName: string, attrMap: Map<string, string>, intera
   if (!['img', 'picture', 'source', 'video', 'canvas'].includes(tagName)) return false;
   if (
     attrMap.has('alt') ||
+    attrMap.has('title') ||
     attrMap.has('aria-label') ||
     attrMap.has('role') ||
     attrMap.has('data-testid') ||
@@ -231,7 +246,8 @@ function isDecorativeMediaNode(node: DOMNode): boolean {
   if (node.nodeType !== NODE_TYPE_ELEMENT) return false;
   const tagName = node.localName || node.nodeName.toLowerCase();
   const attrMap = parseAttributes(node.attributes);
-  return isDecorativeMedia(tagName, attrMap, isInteractive(tagName, attrMap));
+  return isDecorativeMedia(tagName, attrMap, isInteractive(tagName, attrMap))
+    && !hasMeaningfulStableDescendant(node);
 }
 
 function formatElement(
@@ -249,7 +265,7 @@ function formatElement(
   // Build attribute string with only kept attrs
   const attrParts: string[] = [];
   for (const [k, v] of attrMap) {
-    if (KEEP_ATTRS.has(k)) {
+    if (KEEP_ATTRS.has(k) || (planningProfile === 'stable' && k === 'controls')) {
       if (
         planningProfile === 'stable'
         && isVolatileStableAttr(k, v)
@@ -470,7 +486,7 @@ function serializeNode(
     // Omit the decorative wrapper itself, but still inspect descendants so
     // meaningful fallback labels inside <picture> or media-only links survive.
     for (const child of node.children || []) {
-      serializeNode(child, depth, ctx);
+      serializeNode(child, depth + 1, ctx);
       if (ctx.truncated) return;
     }
     return;
@@ -596,10 +612,9 @@ function serializeNode(
       if (ctx.truncated) return;
 
       if (ctx.planningProfile === 'stable' && group.nodes.every(isDecorativeMediaNode)) {
-        for (const groupNode of group.nodes) {
-          serializeNode(groupNode, depth + 1, ctx);
-          if (ctx.truncated) return;
-        }
+        // A purely decorative media run contributes no planning signal. Skip it
+        // as a group instead of visiting every omitted leaf and exhausting the
+        // serializer node budget on ad/image-heavy pages.
         continue;
       }
 
@@ -840,7 +855,9 @@ export async function serializeDOM(
   );
 
   const referencedIds = new Set<string>();
-  collectReferencedIds(root, referencedIds);
+  if (planningProfile === 'stable') {
+    collectReferencedIds(root, referencedIds);
+  }
 
   const ctx: SerializeContext = {
     lines: [],
