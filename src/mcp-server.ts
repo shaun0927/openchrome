@@ -69,6 +69,8 @@ import {
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
+import { isRunHarnessEnabled } from './run-harness/flags';
+import { extractRunId, getRunStore } from './run-harness/store';
 
 function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
   if (toolName !== 'act' || !('variables' in args)) {
@@ -1910,7 +1912,7 @@ export class MCPServer {
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
       result = redactSecrets(result);
-      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, result.isError ? 'no_progress' : 'success', result);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');
 
       // Record Prometheus metrics
@@ -2116,7 +2118,7 @@ export class MCPServer {
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
-      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
       getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
 
       // Audit log failed invocation — same correlation fields as success path.
