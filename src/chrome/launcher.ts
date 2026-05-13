@@ -1395,3 +1395,8 @@ export function getChromeLauncher(port?: number): ChromeLauncher {
   }
   return launcherInstance;
 }
+
+/** Reset the launcher singleton — for testing and programmatic server lifecycle only. */
+export function _resetChromeLauncherForTesting(): void {
+  launcherInstance = null;
+}
