@@ -17,10 +17,10 @@ describe('getVisionMode', () => {
     jest.resetModules();
   });
 
-  it('returns fallback by default when env is not set', async () => {
+  it('returns off by default when env is not set (#831 default flipped)', async () => {
     delete process.env.OPENCHROME_VISION_MODE;
     const { getVisionMode } = await import('../../src/vision/config');
-    expect(getVisionMode()).toBe('fallback');
+    expect(getVisionMode()).toBe('off');
   });
 
   it('returns off when env is off', async () => {
@@ -35,10 +35,10 @@ describe('getVisionMode', () => {
     expect(getVisionMode()).toBe('auto');
   });
 
-  it('returns fallback for invalid values', async () => {
+  it('returns off for invalid values (#831 default flipped)', async () => {
     process.env.OPENCHROME_VISION_MODE = 'invalid-value';
     const { getVisionMode } = await import('../../src/vision/config');
-    expect(getVisionMode()).toBe('fallback');
+    expect(getVisionMode()).toBe('off');
   });
 });
 

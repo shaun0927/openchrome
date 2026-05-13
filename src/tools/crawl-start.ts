@@ -20,7 +20,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      url: { type: 'string', description: 'REQUIRED Starting URL to crawl.' },
+      url: { type: 'string', description: 'REQUIRED Starting URL to crawl' },
       max_depth: { type: 'number', description: 'Max link-follow depth. Default: 2' },
       max_pages: { type: 'number', description: 'Max pages to crawl. Default: 20' },
       scope: { type: 'string', description: 'URL glob limiting which URLs to follow. Default: same origin.' },
