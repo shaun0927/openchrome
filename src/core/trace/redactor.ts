@@ -21,6 +21,21 @@
 
 export const REDACTED = '[REDACTED]';
 
+/**
+ * Explicit allow-list of keys introduced by issue #844 (`TraceTarget`
+ * envelope written under `args.target`). None of these are sensitive — the
+ * uid is opaque and synthetic, the backendNodeId is a Chrome-internal
+ * counter, and the loaderId is a navigation epoch identifier. We document
+ * the non-redaction decision here so a future audit does not need to
+ * re-derive the rationale from the absence of a rule.
+ *
+ * The redactor's `isSensitiveKey` check uses substring containment against
+ * `SENSITIVE_KEY_NAMES`; none of these three keys match any entry on that
+ * list, so they pass through unchanged today. The constant exists so a
+ * regression test can pin the contract.
+ */
+export const TRACE_TARGET_ALLOWLIST = ['nodeRef', 'backendNodeId', 'loaderId'] as const;
+
 const SENSITIVE_KEY_NAMES = [
   'password',
   'passwd',
@@ -194,12 +209,24 @@ function walk(value: unknown, siblingName?: string): unknown {
 /**
  * Top-level entry: redact a captured trace event's `body`. The wrapper
  * envelope (`ts`, `seq`, `kind`) is preserved as-is.
+ *
+ * Composition (#834): the body is first walked through the credential
+ * pattern matcher (this file), then through the loaded-secrets redactor
+ * (`src/core/secrets/redactor.ts`). The secrets pass is a no-op when
+ * `--secrets` was not provided.
  */
 export function redactTraceEvent<T extends { body: unknown }>(event: T): T {
-  return { ...event, body: walk(event.body) } as T;
+  // Lazy import keeps the credential-pattern redactor self-contained for
+  // callers that pull the trace module in isolation (no implicit
+  // dependency cycle with the secrets module's own redactor walk).
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactSecrets } = require('../secrets/redactor') as typeof import('../secrets/redactor');
+  return { ...event, body: redactSecrets(walk(event.body)) } as T;
 }
 
 /** Convenience for tests: redact an arbitrary value tree. */
 export function redactValue(value: unknown): unknown {
-  return walk(value);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactSecrets } = require('../secrets/redactor') as typeof import('../secrets/redactor');
+  return redactSecrets(walk(value));
 }

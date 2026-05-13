@@ -86,17 +86,17 @@ describe('TaskStore — create / readMeta / list', () => {
     await store.create(pendingMeta('2222222222222222', { created_at: t0 + 1, kind: 'recording', status: 'COMPLETED' }));
     await store.create(pendingMeta('3333333333333333', { created_at: t0 + 2, kind: 'crawl', status: 'FAILED' }));
 
-    expect(store.list({ status: 'PENDING' }).map((r) => r.task_id)).toEqual([
+    expect((await store.list({ status: 'PENDING' })).map((r) => r.task_id)).toEqual([
       '1111111111111111',
     ]);
-    expect(store.list({ kind: 'crawl' }).map((r) => r.task_id)).toEqual([
+    expect((await store.list({ kind: 'crawl' })).map((r) => r.task_id)).toEqual([
       '3333333333333333',
       '1111111111111111',
     ]);
-    expect(store.list({ since: t0 + 2 }).map((r) => r.task_id)).toEqual([
+    expect((await store.list({ since: t0 + 2 })).map((r) => r.task_id)).toEqual([
       '3333333333333333',
     ]);
-    expect(store.list({ limit: 1 }).map((r) => r.task_id)).toEqual([
+    expect((await store.list({ limit: 1 })).map((r) => r.task_id)).toEqual([
       '3333333333333333',
     ]);
   });
@@ -197,6 +197,18 @@ describe('TaskStore — reapOrphans', () => {
     expect(back?.error?.code).toBe('orphaned');
   });
 
+
+  test('PENDING task whose pid is dead transitions to FAILED with code "orphaned"', async () => {
+    const deadPid = 2_000_000_000;
+    const meta = pendingMeta('eeeeeeeeeeeeeeef', { status: 'PENDING', pid: deadPid });
+    await store.create(meta);
+    const reaped = await store.reapOrphans();
+    expect(reaped).toContain(meta.task_id);
+    const back = store.readMetaSync(meta.task_id);
+    expect(back?.status).toBe('FAILED');
+    expect(back?.error?.code).toBe('orphaned');
+  });
+
   test('RUNNING task whose pid is alive is left untouched', async () => {
     const meta = pendingMeta('ffffffffffffffff', { status: 'RUNNING', pid: process.pid });
     await store.create(meta);
@@ -229,6 +241,20 @@ describe('TaskStore — helpers', () => {
     expect(out.password).toBe('[redacted]');
     expect(out.token).toBe('[redacted]');
   });
+
+  test('summariseArgs redacts nested and case-variant credential keys', () => {
+    const out = summariseArgs({
+      headers: { Authorization: 'Bearer secret', 'X-API-Key': 'abc' },
+      auth: { TOKEN: 'xyz' },
+      safe: { value: 'kept' },
+    });
+
+    expect((out.headers as Record<string, unknown>).Authorization).toBe('[redacted]');
+    expect((out.headers as Record<string, unknown>)['X-API-Key']).toBe('[redacted]');
+    expect((out.auth as Record<string, unknown>).TOKEN).toBe('[redacted]');
+    expect((out.safe as Record<string, unknown>).value).toBe('kept');
+  });
+
 
   test('summariseArgs clamps payloads larger than ~2 KiB', () => {
     const big = 'x'.repeat(8192);

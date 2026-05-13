@@ -6,7 +6,10 @@ import {
   BenchmarkTask,
   TaskResult,
   BenchmarkRunnerOptions,
+  BenchmarkReport,
 } from './benchmark-runner';
+import { OpenChromeRealAdapter } from './adapters/openchrome-real-adapter';
+import { writeCiOutput } from './run';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -326,5 +329,56 @@ describe('BenchmarkRunner', () => {
     expect(report.summary.totalInputChars).toBe(0);
     expect(report.summary.totalOutputChars).toBe(0);
     expect(report.summary.totalToolCalls).toBe(0);
+  });
+
+  test('real adapter rejects tool results marked isError', async () => {
+    const adapter = new OpenChromeRealAdapter({ mode: 'dom' });
+    (adapter as unknown as { send: jest.Mock }).send = jest.fn().mockResolvedValue({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        isError: true,
+        content: [{ type: 'text', text: 'tool failed' }],
+      },
+    });
+
+    await expect(adapter.callTool('read_page', {})).rejects.toThrow(
+      'MCP read_page returned an error: tool failed'
+    );
+  });
+
+  test('real adapter rejects JSON-RPC error responses', async () => {
+    const adapter = new OpenChromeRealAdapter({ mode: 'ax' });
+    (adapter as unknown as { send: jest.Mock }).send = jest.fn().mockResolvedValue({
+      jsonrpc: '2.0',
+      id: 1,
+      error: { code: -32000, message: 'server failed' },
+    });
+
+    await expect(adapter.callTool('navigate', {})).rejects.toThrow(
+      'MCP navigate failed: server failed'
+    );
+  });
+
+  test('CI output writes only JSON to stdout and progress to stderr', () => {
+    const reports: BenchmarkReport[] = [{
+      adapter: 'OpenChrome',
+      mode: 'dom',
+      tasks: [],
+      summary: { totalInputChars: 0, totalOutputChars: 0, totalToolCalls: 0 },
+    }];
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    writeCiOutput(reports, { passed: true, regressions: [] }, output as never);
+
+    expect(output.stdout.write).toHaveBeenCalledTimes(1);
+    const stdout = output.stdout.write.mock.calls[0][0];
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect(JSON.parse(stdout)).toEqual(reports);
+    expect(stdout).not.toContain('No regressions detected');
+    expect(output.stderr.write).toHaveBeenCalledWith('\nNo regressions detected.\n');
   });
 });

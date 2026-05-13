@@ -116,24 +116,29 @@ describe('StorageStateManager', () => {
     });
 
     test('3. prevents concurrent saves — only executes once', async () => {
-      // Make CDP send slow so both calls overlap
+      // Make the first capture step slow so both calls overlap. save() now
+      // evaluates the active origin before reading cookies.
       let resolveFirst!: () => void;
-      const slowSend = jest.fn().mockImplementation(() =>
-        new Promise<{ cookies: StorageState['cookies'] }>(resolve => {
-          resolveFirst = () => resolve({ cookies: [] });
-        })
-      );
-      const cdpClient = { send: slowSend } as unknown as CDPClientLike;
-      const page = makeMockPage({});
+      const page = {
+        evaluate: jest.fn()
+          .mockImplementationOnce(() =>
+            new Promise<string>(resolve => {
+              resolveFirst = () => resolve('https://example.com');
+            })
+          )
+          .mockResolvedValue({}),
+      } as unknown as Page;
+      const cdpClient = makeMockCdpClient({ cookies: [] });
 
-      const p1 = manager.save(page as unknown as Page, cdpClient, '/tmp/state.json');
-      const p2 = manager.save(page as unknown as Page, cdpClient, '/tmp/state.json');
+      const p1 = manager.save(page, cdpClient, '/tmp/state.json');
+      await Promise.resolve();
+      const p2 = manager.save(page, cdpClient, '/tmp/state.json');
 
       resolveFirst();
       await Promise.all([p1, p2]);
 
       // CDP send should only be called once (second save was blocked)
-      expect(slowSend).toHaveBeenCalledTimes(1);
+      expect(cdpClient.send).toHaveBeenCalledTimes(1);
       expect(mockWriteFileAtomicSafe).toHaveBeenCalledTimes(1);
     });
 

@@ -39,6 +39,7 @@ export const READ_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   'oc_get_connection_info',
   'oc_connection_health',
   'oc_journal',
+  'oc_devtools_url',
 
   // Diagnostics / metrics
   'performance_metrics',

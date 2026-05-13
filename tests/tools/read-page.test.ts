@@ -535,7 +535,9 @@ describe('ReadPageTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid mode "html"');
-      expect(result.content[0].text).toContain('Must be "ax", "dom", or "css"');
+      // Updated for #934 to reflect the new `semantic` mode listed in the
+      // diagnostic message alongside ax/dom/css.
+      expect(result.content[0].text).toContain('Must be "ax", "dom", "css", or "semantic"');
     });
   });
 
@@ -587,8 +589,13 @@ describe('ReadPageTool', () => {
       const handler = await getReadPageHandler();
       mockSessionManager.mockCDPClient.send.mockRejectedValueOnce(new Error('CDP error'));
 
+      // Use AX mode to exercise the top-level CDP error path. DOM mode now
+      // fails closed with its own dedicated message ("Read page DOM
+      // serialization error: …") covered by other tests, so steering this
+      // case through AX keeps the original assertion meaningful.
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
@@ -606,7 +613,7 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
-      expect(text).toMatch(/^\[page_stats\]/);
+      expect(text).toMatch(/(?:^|\n)\[page_stats\]/);
     });
 
     test('AX mode page_stats includes url and title', async () => {

@@ -15,6 +15,7 @@ export type {
   RecordedToolCall,
   TaskListFilter,
   TaskMeta,
+  TaskOwner,
   TaskStatus,
 } from './types';
 export {

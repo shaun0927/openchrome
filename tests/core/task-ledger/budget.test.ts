@@ -72,7 +72,7 @@ describe('task envelope store integration', () => {
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
   test('absent task id path is a no-op for normal tool calls', async () => {
-    expect(store.list()).toEqual([]);
+    await expect(store.list()).resolves.toEqual([]);
   });
 
   test('task ids for browser_task envelopes are 16-hex and deterministic inputs vary by created_at', () => {

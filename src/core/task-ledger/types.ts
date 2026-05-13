@@ -96,6 +96,13 @@ export interface RecordedToolCall {
   ok: boolean;
 }
 
+export interface TaskOwner {
+  session_id: string;
+  tenant_id?: string;
+  key_id?: string;
+  mode?: string;
+}
+
 export interface TaskMeta {
   /** 16-hex SHA-256(kind\x00args_json\x00created_at) */
   task_id: string;
@@ -108,6 +115,10 @@ export interface TaskMeta {
   ended_at?: number;
   /** Redacted snapshot of the launch arguments. <=2 KiB after JSON.stringify. */
   args_summary: Record<string, unknown>;
+  /** Caller ownership boundary for tenant/session-scoped task APIs. */
+  owner?: TaskOwner;
+  /** Per-start entropy used only to avoid same-ms id collisions. */
+  task_nonce?: string;
   /** Resolves to "<root>/<task_id>/result.json" iff status === COMPLETED. */
   result_path?: string;
   error?: TaskError;
