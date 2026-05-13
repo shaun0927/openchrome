@@ -55,13 +55,13 @@ const definition: MCPToolDefinition = {
     properties: {
       skill_id: {
         type: 'string',
-        description: 'The skill_id returned by oc_skill_record.',
+        description: 'REQUIRED The skill_id returned by oc_skill_record.',
       },
       format: {
         type: 'string',
         enum: ['puppeteer', 'playwright', 'mcp-replay'],
         description:
-          'Output format. "puppeteer" / "playwright" produce a runnable TS file; ' +
+          'REQUIRED Output format. "puppeteer" / "playwright" produce a runnable TS file; ' +
           '"mcp-replay" produces a JSONL log of MCP tool-call envelopes.',
       },
       domain: {
