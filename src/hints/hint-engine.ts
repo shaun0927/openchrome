@@ -17,6 +17,7 @@ import * as path from 'path';
 import type { ToolCallEvent } from '../dashboard/types';
 import type { ActivityTracker } from '../dashboard/activity-tracker';
 import { PatternLearner } from './pattern-learner';
+import { buildFailureEpisodeContext, type FailureEpisodeContext } from './failure-episode-store';
 import { ProgressTracker } from './progress-tracker.js';
 import { RepeatedCallDetector } from './repeated-call-detector.js';
 import { errorRecoveryRules } from './rules/error-recovery';
@@ -47,6 +48,7 @@ export interface HintContext {
   isError: boolean;
   recentCalls: ToolCallEvent[];
   fireCounts: Map<string, number>;
+  episodeContext?: FailureEpisodeContext;
 }
 
 export interface HintRule {
@@ -201,6 +203,7 @@ export class HintEngine {
     currentCallId?: string,
   ): HintResult | null {
     const resultText = this.extractText(result);
+    const episodeContext = buildFailureEpisodeContext({ args: currentArgs, resultText });
     const hintSessionId = sessionId ?? 'default';
     const recentCalls = this.activityTracker
       .getRecentCalls(6, sessionId)
@@ -273,7 +276,14 @@ export class HintEngine {
       };
     }
 
-    const ctx: HintContext = { toolName, resultText, isError, recentCalls, fireCounts: this.hintEscalation };
+    const ctx: HintContext = {
+      toolName,
+      resultText,
+      isError,
+      recentCalls,
+      fireCounts: this.hintEscalation,
+      episodeContext,
+    };
 
     let matchedRule: string | null = null;
     let rawHint: string | null = null;
@@ -365,9 +375,9 @@ export class HintEngine {
 
     if (!rawHint || !matchedRule) {
       // Feed the learner even on miss
-      this.learner.onToolComplete(toolName, isError);
+      this.learner.onToolComplete(toolName, isError, episodeContext);
       if (isError) {
-        this.learner.onMiss(toolName, resultText);
+        this.learner.onMiss(toolName, resultText, episodeContext);
       }
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: null, hint: null, severity: null, fireCount: 0 });
       return null;
@@ -411,8 +421,13 @@ export class HintEngine {
       ...(context && { context }),
     };
 
-    // Feed the learner
-    this.learner.onToolComplete(toolName, isError);
+    // Feed the learner. Learned episode hints are advisory, so keep watching
+    // whether the caller's next different successful tool verifies that
+    // recovery path again. Static rules remain non-authoritative hints only.
+    this.learner.onToolComplete(toolName, isError, episodeContext);
+    if (isError && matchedRule === 'learned-pattern') {
+      this.learner.onMiss(toolName, resultText, episodeContext);
+    }
 
     this.log({ timestamp: Date.now(), toolName, isError, matchedRule, hint: formattedHint, severity, fireCount });
     if (mapHintRuleToRecoveryCategory(matchedRule, resultText) !== 'unknown') {

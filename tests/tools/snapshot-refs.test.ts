@@ -274,6 +274,92 @@ describe('Snapshot Refs (#831)', () => {
       expect(result.error?.code).toBe('STALE_REF');
       expect(result.error?.stale_warning?.code).toBe('stale_snapshot');
     });
+
+    test('locator fallback rejects backend-node candidates that are not clickable', async () => {
+      const { setLocatorFallbackProviderForTests } = await import('../../src/core/perception/locator-fallback');
+      const handler = await getInteractHandler();
+      const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 4242, 'button', 'Submit');
+      (mockRefIdManager.isRefStale as jest.Mock).mockImplementation(
+        (_sid: string, _tid: string, r: string) => r === refId,
+      );
+      setLocatorFallbackProviderForTests({
+        name: 'backend-provider',
+        async locate() {
+          return {
+            provider: 'backend-provider',
+            candidates: [{ provider: 'backend-provider', backendNodeId: 4242, confidence: 0.95, reason: 'semantic match' }],
+          };
+        },
+      });
+      mockSessionManager.mockCDPClient.send.mockImplementation(async (_page: unknown, method: string) => {
+        if (method === 'DOM.scrollIntoViewIfNeeded') return {};
+        if (method === 'DOM.resolveNode') return { object: { objectId: 'node-4242' } };
+        if (method === 'Runtime.callFunctionOn') return { result: { value: { clickable: false } } };
+        if (method === 'DOM.getBoxModel') return { model: { content: [0, 0, 50, 0, 50, 20, 0, 20] } };
+        return {};
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        ref: refId,
+        action: 'click',
+        query: 'Submit',
+        locatorFallback: { enabled: true },
+      }) as { content: Array<{ text: string }>; error?: { code: string }; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('STALE_REF');
+      expect(result.error?.code).toBe('STALE_REF');
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(expect.anything(), 'Runtime.callFunctionOn', expect.objectContaining({ objectId: 'node-4242' }));
+      expect(mockSessionManager.mockCDPClient.send).not.toHaveBeenCalledWith(expect.anything(), 'DOM.getBoxModel', expect.anything());
+    });
+
+    test('stale ref preserves STALE_REF when opt-in locator fallback misses or throws', async () => {
+      const handler = await getInteractHandler();
+      const { setLocatorFallbackProviderForTests } = await import('../../src/core/perception/locator-fallback');
+      const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 4242, 'button', 'Submit');
+      (mockRefIdManager.isRefStale as jest.Mock).mockImplementation(
+        (_sid: string, _tid: string, r: string) => r === refId,
+      );
+      setLocatorFallbackProviderForTests({
+        name: 'throwing-provider',
+        async locate() {
+          throw new Error('provider unavailable');
+        },
+      });
+
+      const thrown = await handler(testSessionId, {
+        tabId: testTargetId,
+        ref: refId,
+        action: 'click',
+        query: 'Submit',
+        locatorFallback: { enabled: true },
+      }) as { content: Array<{ text: string }>; error?: { code: string }; isError?: boolean };
+
+      expect(thrown.isError).toBe(true);
+      expect(thrown.content[0].text).toContain('STALE_REF');
+      expect(thrown.error?.code).toBe('STALE_REF');
+
+      setLocatorFallbackProviderForTests({
+        name: 'empty-provider',
+        async locate() {
+          return { provider: 'empty-provider', candidates: [] };
+        },
+      });
+
+      const missed = await handler(testSessionId, {
+        tabId: testTargetId,
+        ref: refId,
+        action: 'click',
+        query: 'Submit',
+        locatorFallback: { enabled: true },
+      }) as { content: Array<{ text: string }>; error?: { code: string }; isError?: boolean };
+
+      expect(missed.isError).toBe(true);
+      expect(missed.content[0].text).toContain('STALE_REF');
+      expect(missed.error?.code).toBe('STALE_REF');
+    });
+
   });
 
 

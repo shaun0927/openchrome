@@ -44,6 +44,7 @@ import {
   type QueueEntry,
 } from './job-store';
 import { redactValue } from '../trace/redactor';
+import { canReadCache, canWriteCache, CrawlContentCache } from './content-cache';
 
 /** Default `advance` value when callers omit it. */
 export function defaultAdvance(): number {
@@ -239,6 +240,10 @@ export async function advanceJob(
   const includeLinks = state.config.includeLinks;
   const delayMs = state.config.delay_ms;
   const respectRobots = state.config.respect_robots;
+  const cacheMode = state.config.cache_mode ?? 'disabled';
+  const cacheScope = state.config.cache_scope ?? 'public';
+  const cacheTtlMs = state.config.cache_ttl_ms;
+  const crawlCache = new CrawlContentCache<FetchOnePageResult>();
   const robotsCache = new Map<string, RobotsRules | null>();
 
   let fetched = 0;
@@ -305,8 +310,30 @@ export async function advanceJob(
         }
       }
 
+      const cacheKey = crawlCache.key({
+        url: fetchUrl,
+        outputFormat,
+        engine: 'crawl_job',
+        cacheScope,
+        sessionFingerprint: sessionId,
+        dimensions: { onlyMainContent, includeLinks, scope, includePatterns, excludePatterns },
+      });
+
       let result: FetchOnePageResult;
-      try {
+      const cached = canReadCache(cacheMode) ? crawlCache.read(cacheKey, cacheTtlMs) : null;
+      if (cached && !cached.stale) {
+        result = {
+          ...cached.entry.page,
+          depth: next.depth,
+          cache: crawlCache.metadata('hit', {
+            key: cacheKey,
+            scope: cacheScope,
+            hit: true,
+            createdAt: cached.entry.createdAt,
+            content_length: cached.entry.contentLength,
+          }),
+        };
+      } else try {
         result = await fetcher(
           sessionId,
           fetchUrl,
@@ -341,6 +368,23 @@ export async function advanceJob(
       }
 
       const links = result._links ?? [];
+      if (cacheMode !== 'disabled' && !(cached && !cached.stale)) {
+        const cacheStatus = cacheMode === 'write_only' ? 'write_only' : cacheMode === 'bypass' ? 'bypass' : 'miss';
+        let cacheMeta = crawlCache.metadata(cacheStatus, { key: cacheKey, scope: cacheScope, hit: false, write: 'disabled' });
+        if (canWriteCache(cacheMode) && !result.error) {
+          const written = crawlCache.write({ key: cacheKey, sourceUrl: fetchUrl, finalUrl: result.url, page: result, links, cacheScope });
+          cacheMeta = crawlCache.metadata(cacheStatus, {
+            key: cacheKey,
+            scope: cacheScope,
+            hit: false,
+            write: written.stored ? 'stored' : 'skipped',
+            write_skipped_reason: written.reason,
+            createdAt: written.entry?.createdAt,
+            content_length: result.content.length,
+          });
+        }
+        result.cache = cacheMeta;
+      }
       // Redact url/title/content before they hit disk: page bodies routinely
       // contain Bearer tokens, JWTs, AWS keys, etc. The redactor also runs at
       // the job-store boundary (defence-in-depth), but doing it here keeps
@@ -358,6 +402,7 @@ export async function advanceJob(
         links_found: result.links_found,
         ...(truncated ? { truncated: true } : {}),
         ...(result.error !== undefined ? { error: scrubString(result.error) } : {}),
+        ...(result.cache ? { cache: result.cache } : {}),
       };
       appendEventUnlocked(jobId, {
         kind: 'fetched',
