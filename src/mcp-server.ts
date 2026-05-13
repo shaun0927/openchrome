@@ -515,6 +515,44 @@ export class MCPServer {
   }
 
   /**
+   * Remove a previously-registered tool by name.
+   *
+   * Mirrors {@link registerTool} for the pilot dynamic-skill synthesis
+   * family (issue #889): when a session ends or a skill is removed, the
+   * synthesized tool must disappear from `tools/list`. Returns true
+   * iff a matching tool existed and was removed. The
+   * `list_changed` notification fires only when the client supports it
+   * (mirrors `expandToolTier`'s gate at line 302 above) so unknown
+   * clients — which already have every tool — are not spammed with
+   * notifications they would otherwise ignore.
+   */
+  unregisterTool(name: string): boolean {
+    if (typeof name !== 'string' || name.length === 0) return false;
+    const removed = this.tools.delete(name);
+    if (removed) {
+      this.manifestVersion++;
+      if (this.clientSupportsListChanged) {
+        this.sendNotification('notifications/tools/list_changed');
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Emit a single `notifications/tools/list_changed` frame iff the
+   * client supports it. Used by the pilot dynamic-skills bootstrap
+   * (issue #889) after a synthesis batch lands so the agent re-fetches
+   * `tools/list` and sees the new synthesized tool(s). The check
+   * mirrors {@link expandToolTier} so behavior is consistent across
+   * the two notification sources.
+   */
+  emitListChanged(): void {
+    if (this.clientSupportsListChanged) {
+      this.sendNotification('notifications/tools/list_changed');
+    }
+  }
+
+  /**
    * Expand tool exposure to include a higher tier.
    * Sends tools/list_changed notification so clients re-fetch the tool list.
    */
