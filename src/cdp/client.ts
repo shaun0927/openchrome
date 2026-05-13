@@ -1574,15 +1574,18 @@ export class CDPClient {
           );
         }
         if (cookieScan.targetId) {
+          let cookieCopyTid: ReturnType<typeof setTimeout> | undefined;
           await Promise.race([
             this.copyCookiesViaCDP(cookieScan.targetId, page),
-            new Promise<void>((resolve) =>
-              setTimeout(() => {
+            new Promise<void>((resolve) => {
+              cookieCopyTid = setTimeout(() => {
                 console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
                 resolve();
-              }, DEFAULT_COOKIE_COPY_TIMEOUT_MS),
-            ),
-          ]);
+              }, DEFAULT_COOKIE_COPY_TIMEOUT_MS);
+            }),
+          ]).finally(() => {
+            if (cookieCopyTid) clearTimeout(cookieCopyTid);
+          });
         }
       }
     }
@@ -1597,10 +1600,15 @@ export class CDPClient {
     this.configurePageDefenses(page);
 
     // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
+    let pageConfigTid: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       page.setViewport(CDPClient.DEFAULT_VIEWPORT),
-      new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS)),
-    ]);
+      new Promise<void>((resolve) => {
+        pageConfigTid = setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS);
+      }),
+    ]).finally(() => {
+      if (pageConfigTid) clearTimeout(pageConfigTid);
+    });
 
     if (url) {
       try {
@@ -2077,10 +2085,15 @@ export class CDPClient {
 
     for (const target of targets) {
       if (getTargetId(target) === targetId && target.type() === 'page') {
+        let targetPageTid: ReturnType<typeof setTimeout> | undefined;
         const page = await Promise.race([
           target.page(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
-        ]);
+          new Promise<null>((resolve) => {
+            targetPageTid = setTimeout(() => resolve(null), 5000);
+          }),
+        ]).finally(() => {
+          if (targetPageTid) clearTimeout(targetPageTid);
+        });
         if (page) {
           // Populate index for future lookups
           this.targetIdIndex.set(targetId, page);
