@@ -75,6 +75,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   // Session recording tools (#572) — opt-in, not needed for every session
   oc_recording_start: 2,
   oc_recording_stop: 2,
+  oc_recording_status: 2,
   oc_recording_list: 2,
   oc_recording_export: 2,
 
