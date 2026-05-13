@@ -254,6 +254,8 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerHistogram('openchrome_tool_compression_saved_bytes', 'Estimated response bytes saved by response compression or delta modes',
       [128, 512, 1024, 4096, 16384, 65536, 262144]);
     instance.registerCounter('openchrome_cache_status_total', 'Cache status observations by tool and key version');
+    instance.registerCounter('openchrome_batch_items_total', 'batch_execute item outcomes by result');
+    instance.registerCounter('openchrome_batch_idempotency_evictions_total', 'batch_execute idempotency cache evictions by reason');
     instance.registerCounter('openchrome_reconnect_total', 'Total successful CDP reconnections');
     instance.registerGauge('openchrome_heap_bytes', 'Node.js heap usage in bytes');
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');
