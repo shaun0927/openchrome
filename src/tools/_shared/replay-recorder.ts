@@ -9,6 +9,14 @@ interface ElementCaptureInput {
   args?: Record<string, unknown>;
 }
 
+interface BackendNodeCaptureInput {
+  cdpClient: { send: <T = unknown>(page: any, method: string, params?: Record<string, unknown>) => Promise<T> };
+  page: any;
+  backendNodeId: number;
+  kind: ReplayStepKind;
+  args?: Record<string, unknown>;
+}
+
 /**
  * Default-off gate for #988 replay-artifact capture hooks. Only literal true
  * enables side effects so omitted / false remains byte-identical to the old
@@ -16,6 +24,30 @@ interface ElementCaptureInput {
  */
 export function shouldCaptureReplayArtifact(value: unknown): boolean {
   return value === true;
+}
+
+/**
+ * Capture a replay step for a DOM node addressed by backendNodeId.
+ */
+export async function captureBackendNodeReplayStep(input: BackendNodeCaptureInput): Promise<void> {
+  try {
+    const resolved = await input.cdpClient.send<{ object?: { objectId?: string } }>(
+      input.page,
+      'DOM.resolveNode',
+      { backendNodeId: input.backendNodeId },
+    );
+    const objectId = resolved.object?.objectId;
+    if (!objectId) return;
+    await captureElementReplayStep({
+      cdpClient: input.cdpClient,
+      page: input.page,
+      objectId,
+      kind: input.kind,
+      ...(input.args ? { args: input.args } : {}),
+    });
+  } catch {
+    // Best-effort recorder hook: never change action tool behaviour.
+  }
 }
 
 /**
