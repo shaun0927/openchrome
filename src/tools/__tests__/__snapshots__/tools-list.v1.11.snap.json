@@ -24,7 +24,16 @@
       "name": "crawl"
     },
     {
+      "name": "crawl_cancel"
+    },
+    {
       "name": "crawl_sitemap"
+    },
+    {
+      "name": "crawl_start"
+    },
+    {
+      "name": "crawl_status"
     },
     {
       "name": "drag_drop"
