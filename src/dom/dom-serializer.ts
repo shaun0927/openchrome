@@ -131,8 +131,11 @@ const ID_REFERENCE_ATTRS = new Set([
   'for',
   'aria-labelledby',
   'aria-describedby',
+  'aria-activedescendant',
   'aria-controls',
   'aria-owns',
+  'aria-flowto',
+  'aria-details',
 ]);
 
 function collectReferencedIds(node: DOMNode, referencedIds: Set<string>): void {
@@ -486,7 +489,7 @@ function serializeNode(
     const fallbackText = getDirectTextContent(node);
     const indent = '  '.repeat(depth);
     if (fallbackText) {
-      const line = formatElement(node, attrMap, indent, fallbackText, interactive, ctx.planningProfile, ctx.referencedIds);
+      const line = formatElement(node, attrMap, indent, fallbackText, interactive, customHints, ctx.planningProfile, ctx.referencedIds);
       if (!appendBoundedLine(ctx, line + '\n')) return;
       ctx.emittedBackendNodeIds.add(node.backendNodeId);
     }

@@ -136,4 +136,36 @@ describe('DOM serializer planningProfile=stable', () => {
 
     expect(result.content).toContain('[planning_profile] stable');
   });
+
+  test('preserves volatile IDs referenced by ARIA IDREF attrs in stable output', async () => {
+    const doc = {
+      nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: '#document', localName: '',
+      children: [el(2, 'html', [], [el(3, 'body', [], [
+        // combobox with aria-activedescendant pointing to a react-aria volatile id
+        el(10, 'div', ['role', 'combobox', 'aria-activedescendant', 'react-aria-abc123def456'], []),
+        el(11, 'div', ['id', 'react-aria-abc123def456', 'role', 'option'], [txt(12, 'Option A')]),
+        // unreferenced generated id should be stripped
+        el(13, 'div', ['id', 'react-aria-xyz999888777'], [txt(14, 'Noise')]),
+      ])])],
+    };
+
+    const result = await serializeDOM(page() as never, cdp(doc) as never, {
+      includePageStats: false,
+      compression: 'none',
+      planningProfile: 'stable',
+    });
+
+    // referenced id must survive volatile-id pruning
+    expect(result.content).toContain('id="react-aria-abc123def456"');
+    // unreferenced generated id must be stripped
+    expect(result.content).not.toContain('id="react-aria-xyz999888777"');
+    // default mode must strip nothing
+    const defaultResult = await serializeDOM(page() as never, cdp(doc) as never, {
+      includePageStats: false,
+      compression: 'none',
+      planningProfile: 'default',
+    });
+    expect(defaultResult.content).toContain('id="react-aria-abc123def456"');
+    expect(defaultResult.content).toContain('id="react-aria-xyz999888777"');
+  });
 });
