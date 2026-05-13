@@ -103,6 +103,28 @@ describe('ExtractDataTool query mode', () => {
     expect(payload.fieldsFound).toBe(2);
   });
 
+
+  test('records bounded query debug after extraction', async () => {
+    const handler = await getExtractDataHandler();
+    const { clearQueryDebug, getLatestQueryDebug } = await import('../../src/query-debug/store');
+    clearQueryDebug();
+    const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+    (page.evaluate as jest.Mock).mockResolvedValueOnce({ title: 'Debug Title' });
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      query: '{ title missing_field }',
+    }) as { content: Array<{ text: string }> };
+
+    const debug = getLatestQueryDebug(testSessionId, testTargetId, 'extract');
+    expect(debug).not.toBeNull();
+    expect(debug?.normalized).toBe('{ title missing_field }');
+    expect(debug?.schemaSummary?.fields).toEqual(['title', 'missing_field']);
+    expect(debug?.fieldsFound).toEqual(['title']);
+    expect(debug?.fieldsMissing).toEqual(['missing_field']);
+    expect(debug?.durations?.totalMs).toEqual(expect.any(Number));
+  });
+
   test('infers multiple extraction from list query', async () => {
     const handler = await getExtractDataHandler();
     const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
@@ -150,6 +172,23 @@ describe('ExtractDataTool query mode', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('supports only mode="fast"');
+  });
+
+
+
+  test('records parser failure in query debug', async () => {
+    const handler = await getExtractDataHandler();
+    const { clearQueryDebug, getLatestQueryDebug } = await import('../../src/query-debug/store');
+    clearQueryDebug();
+
+    await handler(testSessionId, {
+      tabId: testTargetId,
+      query: '{ products[] { } }',
+    }) as { isError?: boolean; content: Array<{ text: string }> };
+
+    const debug = getLatestQueryDebug(testSessionId, testTargetId, 'extract');
+    expect(debug?.notes?.[0]).toContain('parser failure');
+    expect(debug?.strategies).toEqual([]);
   });
 
   test('returns parser error with example for invalid query', async () => {
