@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import type { TaskKind, TaskListFilter, TaskStatus } from '../core/task-ledger';
 import { canAccessTask, getTaskStore, waitForTaskStartupReap } from './oc-task-start';
 
@@ -23,6 +24,7 @@ const definition: MCPToolDefinition = {
   description:
     'List background tasks in the ledger. Default limit=50, sorted by ' +
     'created_at descending. Supports status/kind/since/limit filters.',
+  annotations: TOOL_ANNOTATIONS.oc_task_list,
   inputSchema: {
     type: 'object',
     properties: {

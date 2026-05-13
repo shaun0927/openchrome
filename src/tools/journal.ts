@@ -5,6 +5,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getTaskJournal } from '../journal/task-journal';
 import { buildHandoffSummary } from '../journal/handoff-summary';
 import { readCurrentCheckpoint } from './checkpoint';
@@ -48,6 +49,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['action'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_journal,
 };
 
 export function parseSince(since?: string): number | undefined {

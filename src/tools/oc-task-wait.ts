@@ -9,6 +9,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { TaskWaitTimeoutError, waitForTerminal } from '../core/task-ledger';
 import { canAccessTask, getTaskStore, taskAccessDeniedResult, waitForTaskStartupReap } from './oc-task-start';
 
@@ -17,6 +18,7 @@ const definition: MCPToolDefinition = {
   description:
     'Block until the task reaches a terminal state (COMPLETED / FAILED / ' +
     'CANCELLED) or timeout_ms elapses. Default timeout_ms is 60000.',
+  annotations: TOOL_ANNOTATIONS.oc_task_wait,
   inputSchema: {
     type: 'object',
     properties: {

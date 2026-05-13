@@ -104,6 +104,7 @@ describe('expand_tools schema (Gemini compatibility)', () => {
       name: 'drag_drop',
       description: 'Drag and drop an element',
       inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     });
 
     // @ts-expect-error - accessing private method for testing

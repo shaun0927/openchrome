@@ -16,6 +16,7 @@ import {
   ToolRegistry,
   MCPErrorCodes,
 } from './types/mcp';
+import { TOOL_ANNOTATIONS } from './types/tool-annotations';
 import { MCPTransport, createTransport } from './transports/index';
 import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
@@ -104,6 +105,35 @@ const SKIP_RECORDING_TOOLS = new Set([
 export function estimateOutputTokensFromChars(chars: number): number {
   // Heuristic only; intentionally avoids provider-specific tokenizer deps.
   return Math.max(0, Math.ceil(chars / 4));
+}
+
+/**
+ * Summarize an MCPResult for journal recording, stripping injected hint text.
+ *
+ * The MCP server injects proactive hint text into both `_hint` and
+ * `content[]`. This function returns only the "real" content text (the first
+ * non-hint item), so the journal entry accurately reflects what the tool
+ * actually returned rather than the augmented hint.
+ */
+export function summarizeMcpResultForJournal(result: MCPResult): string | undefined {
+  const content = result.content;
+  if (!Array.isArray(content)) return undefined;
+  const injectedHint = typeof (result as Record<string, unknown>)._hint === 'string'
+    ? String((result as Record<string, unknown>)._hint).trim()
+    : undefined;
+
+  const textItems = content
+    .filter((c) => c.type === 'text' && typeof c.text === 'string')
+    .map((c) => c.text!.trim());
+
+  if (textItems.length === 0) return undefined;
+
+  // If a hint was injected, skip any content item whose trimmed text matches it.
+  const filtered = injectedHint
+    ? textItems.filter((t) => t !== injectedHint)
+    : textItems;
+
+  return filtered[0] ?? textItems[0];
 }
 
 function stringifyResultPayload(result: MCPResult): string {
@@ -536,6 +566,11 @@ export class MCPServer {
     options?: { timeoutRecoverable?: boolean }
   ): void {
     validateToolSchema(name, definition.inputSchema);
+    // Compile-time enforcement: MCPToolDefinition makes `annotations`
+    // required, so reaching this point guarantees the field is present.
+    // (No runtime guard here — the test suite registers synthetic dummy
+    // tools with dynamic names that don't appear in TOOL_ANNOTATIONS, and
+    // those legitimately bring their own inline annotations.)
     this.tools.set(name, { name, handler, definition, ...options });
     this.manifestVersion++;
   }
@@ -1268,6 +1303,7 @@ export class MCPServer {
             },
             required: ['tier'],
           },
+          annotations: TOOL_ANNOTATIONS.expand_tools,
         });
       }
     }

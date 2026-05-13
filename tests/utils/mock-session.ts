@@ -198,11 +198,6 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       return Array.from(worker.targets);
     }),
 
-    // #946: real SessionManager returns the BrowserContext name for tabs
-    // created with isolatedContext, or undefined for the default context.
-    // Tests don't exercise the named-context path, so always return undefined.
-    getTargetContextName: jest.fn().mockImplementation((_targetId: string) => 'default'),
-
     registerExternalTarget: jest.fn().mockImplementation((targetId: string, sessionId: string, workerId: string) => {
       const session = sessions.get(sessionId);
       if (!session) return;
@@ -230,7 +225,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       targetToWorker.set(targetId, { sessionId, workerId: worker.id });
       pages.set(targetId, page);
 
-      return { targetId, page, workerId: worker.id };
+      return { targetId, page, workerId: worker.id, contextName: 'default', isolated: false };
     }),
 
     getPage: jest.fn().mockImplementation(async (sessionId: string, targetId: string, workerId?: string) => {
@@ -281,6 +276,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       return targetToWorker.get(targetId)?.workerId;
     }),
 
+    getTargetContextName: jest.fn().mockImplementation((_targetId: string) => 'default'),
 
     isTargetValid: jest.fn().mockImplementation(async (targetId: string) => {
       const page = pages.get(targetId);
@@ -456,7 +452,7 @@ export function createMockRefIdManager() {
       return Date.now() - entry.createdAt > 30_000;
     }),
 
-    validateRef: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string, currentNodeName: string, currentTextContent?: string, currentName?: string) => {
+    validateRef: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string, currentNodeName: string, currentTextContent?: string) => {
       const entry = refs.get(sessionId)?.get(targetId)?.get(refId);
       if (!entry) return { valid: false, reason: 'Ref not found' };
 
@@ -471,14 +467,6 @@ export function createMockRefIdManager() {
         const currentPrefix = currentTextContent.slice(0, 30).trim();
         if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
           return { valid: false, stale: true, reason: `Element text changed` };
-        }
-      }
-
-      if (entry.name && currentName) {
-        const storedPrefix = entry.name.slice(0, 30).trim();
-        const currentPrefix = currentName.slice(0, 30).trim();
-        if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
-          return { valid: false, stale: true, reason: `Element name changed` };
         }
       }
 
