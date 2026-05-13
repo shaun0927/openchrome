@@ -322,7 +322,7 @@ export class TaskJournal {
 
   classifyFailure(entry: JournalEntry): JournalFailureClass | null {
     const text =
-      `${entry.tool} ${entry.summary} ${entry.resultSummary ?? ""}`.toLowerCase();
+      `${entry.tool} ${stripUrls(entry.summary)} ${entry.resultSummary ?? ""}`.toLowerCase();
     if (entry.ok && !hasOkNonProgressSignal(text)) return null;
 
     if (
@@ -471,6 +471,10 @@ function emptyFailureClassCounts(): Record<JournalFailureClass, number> {
     non_progress_loop: 0,
     unknown: 0,
   };
+}
+
+function stripUrls(text: string): string {
+  return text.replace(/https?:\/\/[^\s)]+/gi, '[url]');
 }
 
 function hasOkNonProgressSignal(text: string): boolean {

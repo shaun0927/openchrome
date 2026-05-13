@@ -306,12 +306,18 @@ export interface MCPServerOptions {
 }
 
 
-function summarizeMcpResultForJournal(result: MCPResult): string | undefined {
+export function summarizeMcpResultForJournal(result: MCPResult): string | undefined {
   const content = result.content;
   if (!Array.isArray(content)) return undefined;
+  const injectedHint = typeof (result as Record<string, unknown>)._hint === 'string'
+    ? String((result as Record<string, unknown>)._hint).trim()
+    : undefined;
   const text = content
     .map((part) => (part && part.type === 'text' ? part.text : ''))
-    .filter(Boolean)
+    .filter((textPart) => {
+      if (!textPart) return false;
+      return injectedHint === undefined || textPart.trim() !== injectedHint;
+    })
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();

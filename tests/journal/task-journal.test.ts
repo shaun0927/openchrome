@@ -574,6 +574,19 @@ describe('TaskJournal failure summaries', () => {
     expect(entry.resultSummary).not.toContain('secret-token');
   });
 
+  it('does not derive auth_redirect solely from destination URL path', () => {
+    const entry = journal.createEntry(
+      'navigate',
+      'sess',
+      { url: 'https://example.com/sign-in-help' },
+      10,
+      false,
+      'Navigation timeout after 100ms',
+    );
+
+    expect(entry.failureClass).toBe('timeout');
+  });
+
   it('does not classify benign ok summaries that mention broad failure words', () => {
     const entry: JournalEntry = {
       ts: Date.now(),
