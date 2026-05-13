@@ -42,7 +42,9 @@
     "harness:evaluate-candidates": "ts-node tests/harness/candidates/evaluator.ts",
     "bench:episode": "ts-node tests/benchmark/episode-harness/cli.ts",
     "bench:episode:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock",
-    "bench:visual-grounding": "node scripts/bench/visual-grounding/run.mjs"
+    "bench:visual-grounding": "node scripts/bench/visual-grounding/run.mjs",
+    "docs:capability-map": "ts-node scripts/gen-capability-map.ts",
+    "docs:capability-map:check": "ts-node scripts/gen-capability-map.ts --check"
   },
   "keywords": [
     "openchrome",
