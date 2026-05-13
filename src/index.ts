@@ -21,7 +21,6 @@ import { installIdleTimeout, IdleTimeoutHandle, parseDuration } from './utils/id
 import { getIdleState } from './utils/idle-state';
 import { getVersion } from './version';
 import { bootstrapPilot, logActiveFlags } from './harness/flags';
-import { setDefaultTtlHours, getHandleStore } from './core/output/handle-store';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
@@ -99,12 +98,29 @@ program
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
+  .option('--introspect-tools-list', 'Print tools/list as compact JSON to stdout and exit (no Chrome/CDP startup). Used by lint-tool-schemas.mjs.')
   .option('--auto-connect [userDataDir]', 'Attach to a Chrome you started yourself by reading <userDataDir>/DevToolsActivePort (#849). When omitted, uses the platform-default Chrome user-data dir. Also: OPENCHROME_AUTO_CONNECT=<dir> env var. Implies --launch-mode=attach.')
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
-  .option('--output-handle-ttl-hours <hours>', 'TTL for output handles in hours (default: 24)', '24')
-  .option('--output-handle-sweep-interval-seconds <seconds>', 'Sweep interval for expired output handles in seconds (default: 300)', '300')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; outputHandleTtlHours?: string; outputHandleSweepIntervalSeconds?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string }) => {
+    // --introspect-tools-list: print tools/list JSON and exit, NO Chrome/CDP/transport startup.
+    if (options.introspectToolsList) {
+      const { MCPServer } = await import('./mcp-server');
+      const { registerAllTools } = await import('./tools');
+      const server = new MCPServer(undefined, { initialToolTier: 3 });
+      registerAllTools(server);
+      const manifest = server.getToolManifest();
+      const output = Buffer.from(JSON.stringify(manifest.tools) + '\n', 'utf8');
+      for (let offset = 0; offset < output.length; offset += 16_384) {
+        const chunk = output.subarray(offset, Math.min(offset + 16_384, output.length));
+        if (!process.stdout.write(chunk)) {
+          await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+        }
+      }
+
+      return;
+    }
+
     let port = parseInt(options.port, 10);
     let autoLaunch = options.autoLaunch || false;
 
@@ -385,27 +401,28 @@ program
     resetReadinessMachine();
 
     const server = getMCPServer();
-    registerAllTools(server);
+    await registerAllTools(server);
 
-    // Output handle TTL and sweep-interval configuration (#887)
-    const outputHandleTtlHours = parseInt(options.outputHandleTtlHours || '24', 10);
-    const outputHandleSweepIntervalSeconds = parseInt(options.outputHandleSweepIntervalSeconds || '300', 10);
-    setDefaultTtlHours(Number.isFinite(outputHandleTtlHours) && outputHandleTtlHours > 0 ? outputHandleTtlHours : 24);
-    const handleStore = getHandleStore();
-    // Start a periodic sweep to evict expired handles
-    const handleSweepIntervalMs = Math.max(1000, (Number.isFinite(outputHandleSweepIntervalSeconds) && outputHandleSweepIntervalSeconds > 0 ? outputHandleSweepIntervalSeconds : 300) * 1000);
-    const handleSweepTimer = setInterval(() => {
-      try {
-        const purged = handleStore.purgeExpired();
-        if (purged > 0) {
-          console.error(`[HandleStore] Purged ${purged} expired output handle(s)`);
+// Pilot dynamic-skills (#889): lazy attach only when explicitly enabled.
+    {
+      const { isDynamicSkillsEnabled } = await import('./harness/flags.js');
+      if (isDynamicSkillsEnabled()) {
+        try {
+          const mod = await import('./pilot/dynamic-skills/index.js');
+          const defaults = await import('./pilot/dynamic-skills/attachment-defaults.js');
+          mod.attachDynamicSkillsToServer(server, {
+            resolveCurrentTab: defaults.defaultResolveCurrentTab,
+            runStep: defaults.defaultRunStep,
+            assertContract: defaults.defaultAssertContract,
+          });
+          console.error('[openchrome] Pilot family: dynamic_skills attached');
+        } catch (err) {
+          console.error(
+            `[openchrome] Pilot family dynamic_skills attach failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-      } catch (err) {
-        console.error('[HandleStore] Sweep error:', err);
       }
-    }, handleSweepIntervalMs);
-    handleSweepTimer.unref();
-    console.error(`[HandleStore] TTL: ${outputHandleTtlHours}h, sweep interval: ${outputHandleSweepIntervalSeconds}s`);
+    }
 
     // Dev-only hook: artificial delay for the tools component transition.
     // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
