@@ -17,3 +17,13 @@ describe('TaskRun tool registration', () => {
     ]));
   });
 });
+
+describe('TaskRun checkpoint tool schema', () => {
+  it('accepts include_checkpoint on oc_task_run_get', () => {
+    const server = new MCPServer(undefined as any);
+    registerAllTools(server);
+    const definition = server.getToolManifest().tools.find(tool => tool.name === 'oc_task_run_get');
+    expect(definition).toBeDefined();
+    expect(definition?.inputSchema.properties.include_checkpoint).toBeDefined();
+  });
+});

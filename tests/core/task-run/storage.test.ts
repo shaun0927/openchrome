@@ -42,6 +42,7 @@ describe('TaskRunStore', () => {
       evidence: [{ kind: 'journal', ref: 'journal-1' }],
     });
     expect(checkpoint.checkpoint_id).toMatch(/^[a-f0-9]{16}$/);
+    expect(checkpoint.source_event_range).toEqual({ from: 1, to: 2 });
 
     const listed = await store.list({ status: 'RUNNING' });
     expect(listed.map(r => r.run_id)).toContain(started.run_id);
@@ -119,5 +120,57 @@ describe('TaskRunStore', () => {
     const loaded = await reopened.get(run.run_id);
     expect(loaded.goal).toBe('Restart-safe run');
     expect(loaded.completed_items).toEqual(['one']);
+  });
+
+  it('creates deterministic source-linked rolling checkpoints', async () => {
+    const run = await store.start({ goal: 'Collect titles' });
+    await store.update(run.run_id, {
+      current_cursor: 'https://example.com/?token=abcdefabcdefabcdefabcdefabcdef12',
+      completed_items: ['https://example.com'],
+      last_evidence: [{ kind: 'url', ref: 'https://example.com/?token=abcdefabcdefabcdefabcdefabcdef12' }],
+    });
+
+    const checkpoint = await store.checkpoint(run.run_id);
+    expect(checkpoint.source_event_range).toEqual({ from: 1, to: 2 });
+    expect(checkpoint.completed_count).toBe(1);
+    expect(checkpoint.failed_count).toBe(0);
+    expect(checkpoint.event_count).toBe(2);
+    expect(checkpoint.summary).toContain('completed=1');
+    expect(checkpoint.summary).toContain('range=1-2');
+    expect(checkpoint.summary).not.toContain('abcdefabcdefabcdefabcdefabcdef12');
+    expect(checkpoint.summary).toContain('[REDACTED]');
+
+    const latest = await store.latestCheckpoint(run.run_id);
+    expect(latest?.checkpoint_id).toBe(checkpoint.checkpoint_id);
+
+    const reopened = new TaskRunStore({ rootDir: dir });
+    expect((await reopened.latestCheckpoint(run.run_id))?.summary).toBe(checkpoint.summary);
+  });
+
+  it('produces byte-identical deterministic checkpoint fields except ids and timestamps', async () => {
+    const build = async (root: string) => {
+      let localNow = 1_700_000_000_000;
+      const localStore = new TaskRunStore({ rootDir: root, now: () => localNow++ });
+      const run = await localStore.start({ goal: 'Fixture run' });
+      await localStore.update(run.run_id, {
+        current_cursor: 'https://example.com/a',
+        completed_items: ['a'],
+        failed_items: [{ item: 'b', reason: 'not found' }],
+      });
+      return localStore.checkpoint(run.run_id, 'same caller note');
+    };
+    const first = await build(path.join(dir, 'first'));
+    const second = await build(path.join(dir, 'second'));
+    expect({
+      ...first,
+      checkpoint_id: 'ignored',
+      run_id: 'ignored',
+      created_at: 0,
+    }).toEqual({
+      ...second,
+      checkpoint_id: 'ignored',
+      run_id: 'ignored',
+      created_at: 0,
+    });
   });
 });

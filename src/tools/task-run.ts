@@ -103,11 +103,11 @@ const checkpointDefinition: MCPToolDefinition = {
     type: 'object',
     properties: {
       run_id: { type: 'string' },
-      summary: { type: 'string', description: 'Caller-provided summary, redacted and capped at 8 KiB.' },
+      summary: { type: 'string', description: 'Optional caller note. The persisted summary is deterministic and source-linked.' },
       current_cursor: { type: 'string' },
       evidence: evidenceSchema,
     },
-    required: ['run_id', 'summary'],
+    required: ['run_id'],
   },
 };
 
@@ -152,6 +152,7 @@ const getDefinition: MCPToolDefinition = {
     properties: {
       run_id: { type: 'string' },
       include_events: { type: 'boolean', description: 'When true, include events.jsonl entries.' },
+      include_checkpoint: { type: 'boolean', description: 'When true, include the latest deterministic rolling checkpoint.' },
     },
     required: ['run_id'],
   },
@@ -230,6 +231,9 @@ const getHandler: ToolHandler = async (_sessionId, args) => {
     const result: Json = { task_run: meta };
     if (args.include_events === true) {
       result.events = await store.readEvents(runId);
+    }
+    if (args.include_checkpoint === true) {
+      result.checkpoint = await store.latestCheckpoint(runId);
     }
     return jsonResult(result);
   } catch (error) {
