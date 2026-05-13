@@ -1396,6 +1396,13 @@ export function getChromeLauncher(port?: number): ChromeLauncher {
   return launcherInstance;
 }
 
+
+export function getExistingChromeLauncher(port?: number): ChromeLauncher | null {
+  const resolvedPort = port || DEFAULT_PORT;
+  if (!launcherInstance || launcherInstance.getPort() !== resolvedPort) return null;
+  return launcherInstance;
+}
+
 /** Reset the launcher singleton — for testing and programmatic server lifecycle only. */
 export function _resetChromeLauncherForTesting(): void {
   launcherInstance = null;

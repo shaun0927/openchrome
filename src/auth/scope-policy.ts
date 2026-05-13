@@ -28,6 +28,7 @@ export const READ_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   'page_screenshot',
   'page_pdf',
   'query_dom',
+  'oc_query',
   'find',
   'vision_find',
   'inspect',
@@ -38,6 +39,7 @@ export const READ_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   'oc_profile_status',
   'oc_get_connection_info',
   'oc_connection_health',
+  'oc_policy',
   'oc_journal',
   'oc_devtools_url',
 

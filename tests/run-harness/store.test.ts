@@ -80,6 +80,45 @@ describe('RunStore', () => {
   });
 });
 
+describe('run budget guard', () => {
+  it('detects same-tool retry budget without flagging batch-exempt tools', () => {
+    const { store } = ((): ReturnType<typeof tempStoreForBudget> => tempStoreForBudget())();
+    store.startRun({ run_id: 'run-budget-retry' });
+    for (let i = 0; i < 3; i++) store.appendToolFinished({ run_id: 'run-budget-retry', tool: 'interact', ok: false, message: 'element not found' });
+    for (let i = 0; i < 5; i++) store.appendToolFinished({ run_id: 'run-budget-retry', tool: 'batch_execute', ok: true });
+    const { evaluateRunBudget } = require('../../src/run-harness/budget') as typeof import('../../src/run-harness/budget');
+    const verdict = evaluateRunBudget(store.getRun('run-budget-retry')!, { max_same_tool_retries: 2 });
+    expect(verdict.exceeded).toBe(true);
+    expect(verdict.category).toBe('LLM_WANDERING');
+  });
+
+  it('detects observation-only and no-progress budgets', () => {
+    const { store } = tempStoreForBudget();
+    store.startRun({ run_id: 'run-budget-observe' });
+    for (const tool of ['read_page', 'tabs_context', 'oc_progress_status']) store.appendToolFinished({ run_id: 'run-budget-observe', tool, ok: true, message: 'snapshot only' });
+    const { evaluateRunBudget } = require('../../src/run-harness/budget') as typeof import('../../src/run-harness/budget');
+    const verdict = evaluateRunBudget(store.getRun('run-budget-observe')!, { max_observation_only_calls: 2, max_no_progress_streak: 2 });
+    expect(verdict.exceeded).toBe(true);
+    expect(verdict.category).toBe('NO_PROGRESS');
+  });
+
+  it('detects wall-clock budget', () => {
+    const { store } = tempStoreForBudget();
+    store.startRun({ run_id: 'run-budget-wall' });
+    const { evaluateRunBudget } = require('../../src/run-harness/budget') as typeof import('../../src/run-harness/budget');
+    const verdict = evaluateRunBudget(store.getRun('run-budget-wall')!, { max_wall_ms: 10 }, 5000);
+    expect(verdict.exceeded).toBe(true);
+    expect(verdict.category).toBe('MAX_STEPS_EXCEEDED');
+  });
+});
+
+function tempStoreForBudget() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-budget-'));
+  let now = 1000;
+  let seq = 0;
+  const store = new RunStore({ rootDir: dir, now: () => now++, idFactory: () => `budget-${seq++}` });
+  return { dir, store };
+}
 describe('run evidence auto-capture', () => {
   it('captures evidence metadata for failed tool calls and redacts secrets', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-evidence-store-'));

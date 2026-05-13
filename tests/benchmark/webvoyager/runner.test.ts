@@ -10,6 +10,11 @@
  * `/^[0-9a-f]{7,40}$/` and fall back to `'unknown'`.
  */
 
+import {
+  argsDigestSha256,
+  deterministicStringify,
+  validateToolCallDigests,
+} from './transcript-digest';
 import { gitSha } from './runner';
 
 describe('gitSha', () => {
@@ -73,5 +78,57 @@ describe('gitSha', () => {
     // Throw path is silent — no console.error — because "not a git repo"
     // is a legitimate dev-machine state (e.g. running from a tarball).
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebVoyager transcript tool-call digests', () => {
+  test('deterministicStringify sorts object keys recursively without changing array order', () => {
+    expect(
+      deterministicStringify({ z: 1, a: { y: 2, b: 3 }, list: [{ c: 1, a: 2 }, 'x'] }),
+    ).toBe('{"a":{"b":3,"y":2},"list":[{"a":2,"c":1},"x"],"z":1}');
+  });
+
+  test('argsDigestSha256 is stable for semantically identical argument objects', () => {
+    const left = argsDigestSha256({ url: 'https://example.com/', options: { waitUntil: 'load', retries: 1 } });
+    const right = argsDigestSha256({ options: { retries: 1, waitUntil: 'load' }, url: 'https://example.com/' });
+    expect(left).toBe(right);
+    expect(left).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test('validateToolCallDigests accepts matching recorded digests', () => {
+    const args = { mode: 'text', includeLinks: false };
+    expect(
+      validateToolCallDigests([
+        {
+          kind: 'tool_call',
+          tool: 'read_page',
+          args,
+          args_digest_sha256: argsDigestSha256(args),
+          response_kind: 'text_tree',
+        },
+      ]),
+    ).toBeUndefined();
+  });
+
+  test('validateToolCallDigests reports structured replay_drift for argument mutation', () => {
+    const expectedArgs = { url: 'https://example.com/' };
+    const actualArgs = { url: 'https://example.org/' };
+    expect(
+      validateToolCallDigests([
+        {
+          kind: 'tool_call',
+          tool: 'navigate',
+          args: actualArgs,
+          args_digest_sha256: argsDigestSha256(expectedArgs),
+          response_kind: 'ok',
+        },
+      ]),
+    ).toEqual({
+      expected: argsDigestSha256(expectedArgs),
+      actual: argsDigestSha256(actualArgs),
+      tool: 'navigate',
+      step_index: 0,
+      reason: 'digest_mismatch',
+    });
   });
 });

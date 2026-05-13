@@ -145,10 +145,16 @@
       "name": "oc_performance_insights"
     },
     {
+      "name": "oc_policy"
+    },
+    {
       "name": "oc_profile_status"
     },
     {
       "name": "oc_progress_status"
+    },
+    {
+      "name": "oc_query"
     },
     {
       "name": "oc_reap_orphans"
