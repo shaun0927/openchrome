@@ -13,6 +13,7 @@ import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
 import { humanScroll } from '../stealth/human-behavior';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',
@@ -371,5 +372,9 @@ const handler: ToolHandler = async (
 };
 
 export function registerLightweightScrollTool(server: MCPServer): void {
-  server.registerTool('lightweight_scroll', handler, definition);
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid, undefined, 'lightweight_scroll') : Promise.resolve(null),
+  );
+  server.registerTool('lightweight_scroll', wrapped, definition);
 }

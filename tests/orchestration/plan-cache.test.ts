@@ -784,64 +784,60 @@ describeIntegration('Integration: PlanRegistry + PlanExecutor', () => {
   });
 });
 
-describe('PlanExecutor known-good prefix ledger', () => {
-  const SESSION_ID = 'ledger-session';
-
-  function handler(text: string, isError = false): ToolHandler {
-    return jest.fn(async () => ({ content: [{ type: 'text' as const, text }], isError }));
-  }
+describe('PlanExecutor task signatures', () => {
+  const signature = {
+    version: 1 as const,
+    id: 'fixture.plan.boundary',
+    description: 'Plan boundary fixture',
+    inputs: {},
+    allowedTools: ['mock_tool'],
+    success: { kind: 'dom_text' as const, contains: 'ok' },
+    loopGuards: [{ kind: 'max_same_tool' as const, limit: 2, window: 2 }],
+    budgets: { maxToolCalls: 5, maxWallMs: 30_000 },
+  };
 
   function resolver(handlers: Record<string, ToolHandler>) {
     return (toolName: string): ToolHandler | null => handlers[toolName] ?? null;
   }
 
-  test('records all-success known-good prefix', async () => {
-    const executor = new PlanExecutor(resolver({ a: handler('A'), b: handler('B') }));
+  test('preflights disallowed tools without invoking handlers', async () => {
+    const handler = jest.fn(async () => makeMCPResult('ok'));
+    const executor = new PlanExecutor(resolver({ javascript_tool: handler }));
     const plan = buildPlan({
-      id: 'ledger-success',
-      steps: [buildStep({ order: 1, tool: 'a', args: { b: 2, a: 1 } }), buildStep({ order: 2, tool: 'b', args: {} })],
+      id: 'disallowed-plan',
+      steps: [buildStep({ tool: 'javascript_tool' })],
       successCriteria: {},
     });
 
-    const result = await executor.execute(plan, SESSION_ID, {});
-
-    expect(result.success).toBe(true);
-    expect(result.ledger?.knownGoodPrefixLength).toBe(2);
-    expect(result.ledger?.frontierStepOrder).toBeUndefined();
-    expect(result.ledger?.steps.map((s) => s.status)).toEqual(['success', 'success']);
-    expect(result.ledger?.steps[0].argsHash).toMatch(/^[a-f0-9]{64}$/);
-  });
-
-  test('records failed frontier after known-good prefix', async () => {
-    const executor = new PlanExecutor(resolver({ a: handler('A'), b: jest.fn(async () => { throw new Error('boom'); }) }));
-    const plan = buildPlan({
-      id: 'ledger-fail',
-      steps: [buildStep({ order: 1, tool: 'a', args: {} }), buildStep({ order: 2, tool: 'b', args: {} })],
-      successCriteria: {},
-    });
-
-    const result = await executor.execute(plan, SESSION_ID, {});
+    const result = await executor.execute(plan, 'session', {}, { taskSignature: signature });
 
     expect(result.success).toBe(false);
-    expect(result.ledger?.knownGoodPrefixLength).toBe(1);
-    expect(result.ledger?.frontierStepOrder).toBe(2);
-    expect(result.ledger?.invalidationReason).toContain('boom');
+    expect(result.taskSignature?.status).toBe('failure');
+    expect(result.error).toMatch(/disallows tool/);
+    expect(handler).not.toHaveBeenCalled();
   });
 
-  test('records recovery handler metadata for empty result', async () => {
-    const executor = new PlanExecutor(resolver({ empty: handler('{}'), recover: handler('{"ok":true}') }));
+  test('stops signature-bound plans on loop guards while no-signature path is unchanged', async () => {
+    const handler = jest.fn(async () => makeMCPResult('ok'));
+    const executor = new PlanExecutor(resolver({ mock_tool: handler }));
     const plan = buildPlan({
-      id: 'ledger-recovery',
-      steps: [buildStep({ order: 1, tool: 'empty', args: {} })],
-      errorHandlers: [{ condition: 'step1_empty_result', action: 'recover', steps: [buildStep({ order: 1, tool: 'recover', args: {} })] }],
+      id: 'loop-plan',
+      steps: [
+        buildStep({ order: 1, tool: 'mock_tool' }),
+        buildStep({ order: 2, tool: 'mock_tool' }),
+      ],
       successCriteria: {},
     });
 
-    const result = await executor.execute(plan, SESSION_ID, {});
+    const unsigned = await executor.execute(plan, 'session', {});
+    expect(unsigned.success).toBe(true);
+    expect(unsigned.taskSignature).toBeUndefined();
 
-    expect(result.ledger?.steps).toEqual(expect.arrayContaining([
-      expect.objectContaining({ phase: 'main', status: 'empty_result' }),
-      expect.objectContaining({ phase: 'recovery', recoveryCondition: 'step1_empty_result', status: 'success' }),
-    ]));
+    const signed = await executor.execute(plan, 'session', {}, { taskSignature: signature });
+    expect(signed.success).toBe(false);
+    expect(signed.taskSignature).toEqual({
+      status: 'stop',
+      reasons: ['max_same_tool exceeded for mock_tool: 2/2'],
+    });
   });
 });
