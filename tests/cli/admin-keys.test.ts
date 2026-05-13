@@ -40,9 +40,9 @@ function extractToken(stdout: string): string {
 
 /**
  * Extract the JSON array emitted by `admin keys list --json` while ignoring
- * unrelated Jest worker noise captured by the shared stdout hook on CI. The
- * command output contract is a single top-level array, so the parser scans for
- * the first balanced array that decodes successfully instead of accepting
+ * unrelated Jest worker noise captured by the shared stdout hook on CI.
+ * The command output contract is a single top-level array, so the parser scans
+ * for the first balanced array that decodes successfully instead of accepting
  * arbitrary prefixes as JSON.
  */
 function parseJsonArrayFromStdout<T>(stdout: string): T[] {

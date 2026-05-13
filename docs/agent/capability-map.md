@@ -2,7 +2,7 @@
 
 > Generated from `src/tools/index.ts`. Do not edit by hand; run `npm run docs:capability-map`.
 
-Total tools: 105
+Total tools: 107
 
 ## core
 
@@ -11,7 +11,7 @@ Total tools: 105
 - `console_capture` — Capture browser console output (start, stop, get, clear).
 - `drag_drop` — Drag and drop by selector or coordinates.
 - `emulate_device` — Emulate device viewport and UA via preset or custom.
-- `extract_data` — Extract structured data with a JSON Schema from JSON-LD, Microdata, OpenGraph, or CSS.
+- `extract_data` — Extract JSON-schema data from JSON-LD, Microdata, OpenGraph, or CSS.
 - `file_upload` — Upload files to a file input element on the page.
 - `fill_form` — Fill form fields and optionally submit.
 - `find` — Find elements by query.
@@ -28,7 +28,7 @@ Total tools: 105
 - `network_capture_full` — Capture network requests with response bodies (capped).
 - `network_capture_lite` — Capture network request metadata + headers (no bodies).
 - `oc_assert` — Evaluate a single Outcome Contract assertion against caller-supplied evidence (snapshot).
-- `oc_checkpoint` — Save or load an automation checkpoint for long-running session continuity.
+- `oc_checkpoint` — Save, load, list, or delete automation checkpoints for long-running session continuity.
 - `oc_connection_health` — Get CDP connection health metrics including heartbeat mode, reconnect count, ping latency, connection state, and live reconnection progress.
 - `oc_context_export` — Export the active tab's auth-relevant state (cookies + local/sessionStorage + optional UA/viewport/HTTP-auth) as a portable plaintext envelope.
 - `oc_context_import` — Strict-replace import of a `ContextEnvelope` produced by `oc_context_export`.
@@ -59,6 +59,7 @@ Total tools: 105
 - `oc_skill_record` — Record a skill (domain, name, steps, contract_id) into the JSON skill memory store.
 - `oc_stop` — Shut down OpenChrome and close Chrome.
 - `oc_task_cancel` — Request cancellation of a background task.
+- `oc_task_finish` — Finish a host-driven task envelope as completed, failed, or cancelled.
 - `oc_task_get` — Fetch a single task by task_id.
 - `oc_task_list` — List background tasks in the ledger.
 - `oc_task_run_checkpoint` — Write a compact caller-provided checkpoint summary for a non-terminal TaskRun and return the checkpoint metadata.
@@ -68,7 +69,8 @@ Total tools: 105
 - `oc_task_run_needs_help` — Move a non-terminal TaskRun to NEEDS_HELP with a secret-safe reason, optional resume hint, cursor, and evidence pointer.
 - `oc_task_run_start` — Start an opt-in goal-level TaskRun.
 - `oc_task_run_update` — Update a non-terminal TaskRun with progress, item results, cursor, evidence, or explicit NEEDS_HELP resume back to RUNNING.
-- `oc_task_start` — Launch a long-running tool as a background task.
+- `oc_task_start` — Create a task-level browser harness envelope, or launch a long-running tool as a background task.
+- `oc_task_update` — Update a task envelope phase or note.
 - `oc_task_wait` — Block until the task reaches a terminal state (COMPLETED / FAILED / CANCELLED) or timeout_ms elapses.
 - `page_content` — Get HTML content from page or element.
 - `page_pdf` — Generate PDF from page.

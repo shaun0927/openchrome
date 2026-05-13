@@ -62,6 +62,17 @@ const handler: ToolHandler = async (
           status: 'CANCELLED' as TaskStatus,
           cancel_requested_at: now,
           ended_at: now,
+          last_activity_at: now,
+        };
+      }
+      if (cur.kind === 'browser_task') {
+        return {
+          ...cur,
+          status: 'CANCELLED' as TaskStatus,
+          phase: 'done',
+          cancel_requested_at: now,
+          ended_at: now,
+          last_activity_at: now,
         };
       }
       // RUNNING — set the cancel flag; the runner finishes the
@@ -100,3 +111,5 @@ const handler: ToolHandler = async (
 export function registerOcTaskCancelTool(server: MCPServer): void {
   server.registerTool(definition.name, handler, definition);
 }
+
+export const __test__ = { definition, handler };
