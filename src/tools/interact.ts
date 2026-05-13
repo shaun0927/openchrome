@@ -124,6 +124,30 @@ const definition: MCPToolDefinition = {
   },
 };
 
+async function validateBackendNodeClickability(
+  page: any,
+  backendNodeId: number,
+  cdpClient: { send: (page: any, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+): Promise<boolean> {
+  const resolved = await cdpClient.send(page, 'DOM.resolveNode', { backendNodeId }) as { object?: { objectId?: string } };
+  const objectId = resolved.object?.objectId;
+  if (!objectId) return false;
+
+  const checked = await cdpClient.send(page, 'Runtime.callFunctionOn', {
+    objectId,
+    returnByValue: true,
+    functionDeclaration: `function () {
+      if (!(this instanceof HTMLElement)) return { clickable: false };
+      const box = this.getBoundingClientRect();
+      const style = window.getComputedStyle(this);
+      const disabled = this.disabled === true || this.getAttribute('aria-disabled') === 'true';
+      const visible = box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.pointerEvents !== 'none';
+      return { clickable: visible && !disabled };
+    }`,
+  }) as { result?: { value?: { clickable?: boolean } } };
+  return checked.result?.value?.clickable === true;
+}
+
 async function validateLocatorCandidate(
   page: any,
   candidate: LocatorFallbackCandidate,
@@ -134,6 +158,9 @@ async function validateLocatorCandidate(
   if (typeof backendNodeId === 'number' && cdpClient) {
     try {
       await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
+      if (!(await validateBackendNodeClickability(page, backendNodeId, cdpClient))) {
+        throw new Error('backend node is not clickable');
+      }
       const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId }) as { model?: { content?: number[] } };
       const content = boxModel.model?.content;
       if (!content || content.length < 8) throw new Error('invalid box model');
