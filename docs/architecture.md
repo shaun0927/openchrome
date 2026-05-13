@@ -86,6 +86,10 @@ The contract that governs every PR landing on `develop`:
   native runtime dep. Future native deps go into `optionalDependencies`
   with a documented fallback.
 
+## Transport surfaces
+
+OpenChrome supports `stdio`, `http`, and `both` transport modes over the same deterministic MCP tool server. Use [`docs/getting-started/http-daemon.md`](getting-started/http-daemon.md) for the operator-focused HTTP daemon walkthrough, including multi-client topology, auth, `/health`, `/metrics`, and idle-timeout behavior. Use [`docs/transport-lifecycle.md`](transport-lifecycle.md) for stability commitments and deprecation policy.
+
 ## Data flow for a typical agent loop
 
 ```
