@@ -143,7 +143,7 @@ import { getPerfTraceStore } from '../core/performance/insights/trace-store';
 // are set. The pilot module is loaded via `require()` only when the gate is
 // open — this preserves P2 (no module from `src/pilot/**` is loaded into the
 // process when `--pilot` is unset) while keeping `registerAllTools()` sync.
-import { isContractRuntimeEnabled, isProxyHookEnabled, isSkillReplayEnabled } from '../harness/flags';
+import { isContractRuntimeEnabled, isProxyHookEnabled, isSkillReplayEnabled, isTruthy } from '../harness/flags';
 // oc_observe (#866) — deterministic actionable-element enumeration
 import { registerOcObserveTool } from './oc-observe';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
@@ -494,7 +494,7 @@ export function registerAllTools(server: MCPServer): void {
   }
 
   // Pilot contract runtime (#1061) — off unless --pilot and OPENCHROME_CONTRACT_RUNTIME are active.
-  if (isContractRuntimeEnabled()) {
+  if (isContractRuntimeEnabled() && isTruthy(process.env.OPENCHROME_CONTRACT_RUNTIME)) {
     registerOcPilotRunWithRecoveryTool(proxy);
   }
 

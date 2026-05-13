@@ -64,6 +64,10 @@ describe('oc_pilot_run_with_recovery', () => {
     expect(unsafe.isError).toBe(true);
     expect(unsafe.content?.[0]?.text).toContain('UNSAFE_ACTION');
 
+    const recursive = await server.call({ action: { tool: 'oc_pilot_run_with_recovery', arguments: { action: { tool: 'interact', arguments: {} } } } });
+    expect(recursive.isError).toBe(true);
+    expect(recursive.content?.[0]?.text).toContain('UNSAFE_ACTION');
+
     const tooMany = await server.call({ action: { tool: 'interact', arguments: {} }, maxRecoveryAttempts: 99 });
     expect(tooMany.isError).toBe(true);
     expect(tooMany.content?.[0]?.text).toContain('maxRecoveryAttempts must be <= 3');
@@ -100,6 +104,17 @@ describe('oc_pilot_run_with_recovery registration gate', () => {
     let tools = await import('../../src/tools');
     let { MCPServer } = await import('../../src/mcp-server');
     let server = new MCPServer(undefined as any);
+    tools.registerAllTools(server);
+    expect(server.getToolNames()).not.toContain('oc_pilot_run_with_recovery');
+
+    jest.resetModules();
+    process.env.OPENCHROME_PILOT = '1';
+    delete process.env.OPENCHROME_CONTRACT_RUNTIME;
+    mod = await import('../../src/harness/flags');
+    mod.resetFlagsCache();
+    tools = await import('../../src/tools');
+    ({ MCPServer } = await import('../../src/mcp-server'));
+    server = new MCPServer(undefined as any);
     tools.registerAllTools(server);
     expect(server.getToolNames()).not.toContain('oc_pilot_run_with_recovery');
 

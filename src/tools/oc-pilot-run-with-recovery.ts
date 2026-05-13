@@ -9,7 +9,7 @@ const FUTURE_RECIPES = ['reacquire_ref', 'switch_to_programmatic_click'] as cons
 type SafeRecipeId = typeof SAFE_RECIPES[number];
 type RecoveryRecipeId = SafeRecipeId | typeof FUTURE_RECIPES[number];
 
-const UNSAFE_TOOLS = new Set(['cookies', 'storage', 'http_auth', 'file_upload', 'tabs_close', 'oc_stop']);
+const UNSAFE_TOOLS = new Set(['cookies', 'storage', 'http_auth', 'file_upload', 'tabs_close', 'oc_stop', 'oc_pilot_run_with_recovery']);
 const MAX_ATTEMPTS = 3;
 
 const definition: MCPToolDefinition = {
