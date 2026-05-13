@@ -9,6 +9,7 @@ model composes them into prose.
 | Recipe | Goal | Tools touched |
 |---|---|---|
 | [multi-source-news-digest.md](multi-source-news-digest.md) | Pull headlines from several news sources and produce a one-screen daily digest. | `navigate`, `read_page`, `crawl` |
+| [fit-markdown.md](fit-markdown.md) | Return raw and fit markdown with deterministic prune/BM25 filters. | `read_page`, `crawl`, `crawl_sitemap` |
 | [docs-changelog-diff.md](docs-changelog-diff.md) | Compare two snapshots of a docs page (e.g. before/after a release) and explain what changed. | `navigate`, `read_page` |
 | [competitive-feature-matrix.md](competitive-feature-matrix.md) | Build a structured feature-matrix table across several vendor pages. | `navigate`, `extract_data`, `read_page` |
 
