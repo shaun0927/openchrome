@@ -32,6 +32,22 @@ interface RunResult {
  * block ahead of the CLI's own single-line token emission. The CLI only ever
  * emits exactly one token, so a regex match is both sufficient and robust.
  */
+
+/**
+ * Parse a JSON array emitted by `admin keys list --json` while tolerating
+ * unrelated Jest/worker console noise captured by the shared stdout hook on
+ * Windows CI. The command contract is still exactly one JSON array; the
+ * harness strips only bytes before the first `[` and after the last `]`.
+ */
+function parseJsonArrayFromStdout<T>(stdout: string): T[] {
+  const start = stdout.indexOf('[');
+  const end = stdout.lastIndexOf(']');
+  if (start < 0 || end < start) {
+    throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
+  }
+  return JSON.parse(stdout.slice(start, end + 1)) as T[];
+}
+
 function extractToken(stdout: string): string {
   const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
   if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
@@ -191,7 +207,7 @@ describe('admin keys CLI', () => {
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
     expect(listed.exitCode).toBeNull();
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; tenantId: string }>;
+    const parsed = parseJsonArrayFromStdout<{ keyId: string; tenantId: string }>(listed.stdout);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].tenantId).toBe('acme');
@@ -212,7 +228,7 @@ describe('admin keys CLI', () => {
     expect(revoked.stderr).toContain('Revoked');
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; revokedAt?: number }>;
+    const parsed = parseJsonArrayFromStdout<{ keyId: string; revokedAt?: number }>(listed.stdout);
     const row = parsed.find((r) => r.keyId === keyId);
     expect(row).toBeDefined();
     expect(typeof row!.revokedAt).toBe('number');
@@ -238,7 +254,7 @@ describe('admin keys CLI', () => {
     expect(rotated.stdout + rotated.stderr).not.toContain(firstPlaintext);
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; revokedAt?: number }>;
+    const parsed = parseJsonArrayFromStdout<{ keyId: string; revokedAt?: number }>(listed.stdout);
     const oldRow = parsed.find((r) => r.keyId === firstKeyId);
     expect(oldRow).toBeDefined();
     expect(typeof oldRow!.revokedAt).toBe('number');
