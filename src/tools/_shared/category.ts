@@ -157,6 +157,7 @@ export const TOOL_TO_CATEGORY: Readonly<Record<string, ToolCategory>> = {
   page_pdf: 'capture',
   oc_recording_start: 'capture',
   oc_recording_stop: 'capture',
+  oc_recording_status: 'capture',
   oc_recording_list: 'capture',
   oc_recording_export: 'capture',
 
