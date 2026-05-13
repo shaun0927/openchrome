@@ -51,15 +51,6 @@ if (!inputFile) {
   process.exit(2);
 }
 
-// ── read stdin fully (avoids 64 KB readFileSync(0) truncation on Linux/macOS) ──
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
-  }
-  return chunks.join('');
-}
-
 // ── load tools list ────────────────────────────────────────────────────────
 let tools;
 try {
