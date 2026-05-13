@@ -51,14 +51,20 @@ describe('RecoveryTrajectoryLedger', () => {
       password: 'super-secret',
       authorization: 'Bearer token',
       html: '<html>' + 'x'.repeat(500) + '</html>',
-      nested: { apiKey: 'key-123', visible: 'ok' },
+      nested: { apiKey: 'key-123', accessToken: 'tok-123', sessionId: 'sid-123', authHeader: 'Bearer x', visible: 'ok' },
     });
 
     expect(args).toMatchObject({
       username: 'alice',
       password: '[REDACTED]',
       authorization: '[REDACTED]',
-      nested: { apiKey: '[REDACTED]', visible: 'ok' },
+      nested: {
+        apiKey: '[REDACTED]',
+        accessToken: '[REDACTED]',
+        sessionId: '[REDACTED]',
+        authHeader: '[REDACTED]',
+        visible: 'ok',
+      },
     });
     expect(String(args?.html)).toMatch(/^sha256:/);
   });
