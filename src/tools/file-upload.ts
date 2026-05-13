@@ -59,7 +59,7 @@ export interface UploadPathValidationResult {
 
 const definition: MCPToolDefinition = {
   name: 'file_upload',
-  description: 'Upload files to a file input element on the page.',
+  description: 'Upload files to a file input element on the page. Pass intent="..." (≤120 chars) to label this action in audit logs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -75,6 +75,11 @@ const definition: MCPToolDefinition = {
         type: 'array',
         items: { type: 'string' },
         description: 'File paths to upload. Paths must resolve under configured file_upload roots.',
+      },
+      intent: {
+        type: 'string',
+        description: 'Human-readable label for this action in audit logs (≤120 chars)',
+        maxLength: 120,
       },
     },
     required: ['tabId', 'selector', 'filePaths'],
@@ -244,6 +249,23 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const selector = args.selector as string;
   const filePaths = args.filePaths as string[];
+  const intent = args.intent as string | undefined;
+
+  // Validate intent when provided — use typeof guard for null-safety
+  if (typeof intent === 'string') {
+    if (intent === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must not be an empty string' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: `INVALID_INTENT: intent exceeds 120 characters (got ${intent.length})` }],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
 
