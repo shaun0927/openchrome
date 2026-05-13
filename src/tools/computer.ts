@@ -7,7 +7,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
@@ -771,6 +771,20 @@ async function resolveRefToCoordinates(
 ): Promise<{ coord: [number, number]; error?: never } | { coord?: never; error: MCPResult }> {
   const refIdManager = getRefIdManager();
   let backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+  const isRefIdFormat = /^ref_\d+$/.test(ref);
+
+  if (isRefIdFormat) {
+    const entry = refIdManager.getRef(sessionId, tabId, ref);
+    if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
+      return {
+        error: {
+          content: [{ type: 'text', text: formatStaleRefError(ref) }],
+          isError: true,
+          error: makeStaleRefError(ref),
+        },
+      };
+    }
+  }
 
   if (backendNodeId === undefined) {
     return {
@@ -786,17 +800,44 @@ async function resolveRefToCoordinates(
     // Validate ref identity before clicking (only for ref_N refs with stored fingerprint)
     const refEntry = refIdManager.getRef(sessionId, tabId, ref);
     if (refEntry && refEntry.tagName) {
+      let nodeLocalName: string | undefined;
+      let nodeTextContent: string | undefined;
+      let nodeName: string | undefined;
       try {
         const { node } = await cdpClient.send<{
-          node: { localName: string };
-        }>(page, 'DOM.describeNode', { backendNodeId });
+          node: {
+            localName: string;
+            nodeValue?: string;
+            attributes?: string[];
+            children?: Array<{ nodeType?: number; nodeValue?: string }>;
+          };
+        }>(page, 'DOM.describeNode', { backendNodeId, depth: 1 });
+        nodeLocalName = node?.localName;
+        nodeTextContent = getDescribeNodeTextContent(node);
+        nodeName = getDescribeNodeName(node);
+      } catch {
+        // If validation CDP calls fail, proceed with the click
+      }
 
+      if (nodeLocalName !== undefined) {
         const validation = refIdManager.validateRef(
           sessionId, tabId, ref,
-          node.localName
+          nodeLocalName,
+          nodeTextContent,
+          nodeName,
         );
 
         if (!validation.valid && validation.stale) {
+          if (isRefIdFormat) {
+            return {
+              error: {
+                content: [{ type: 'text', text: formatStaleRefError(ref) }],
+                isError: true,
+                error: makeStaleRefError(ref),
+              },
+            };
+          }
+
           // Attempt transparent recovery: re-find the element using stored metadata
           const relocated = await refIdManager.tryRelocateRef(
             sessionId, tabId, ref, page, cdpClient
@@ -817,8 +858,6 @@ async function resolveRefToCoordinates(
             };
           }
         }
-      } catch {
-        // If validation CDP calls fail, proceed with the click
       }
     }
 
@@ -849,6 +888,34 @@ async function resolveRefToCoordinates(
       },
     };
   }
+}
+
+function getDescribeNodeAttributes(node?: { attributes?: string[] }): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const raw = node?.attributes || [];
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    attrs[raw[i]] = raw[i + 1];
+  }
+  return attrs;
+}
+
+function getDescribeNodeName(node?: { attributes?: string[] }): string | undefined {
+  const attrs = getDescribeNodeAttributes(node);
+  return attrs['aria-label'] || attrs.title || attrs.placeholder || attrs.alt || attrs.name || undefined;
+}
+
+function getDescribeNodeTextContent(node?: {
+  nodeValue?: string;
+  children?: Array<{ nodeType?: number; nodeValue?: string }>;
+}): string | undefined {
+  const ownValue = node?.nodeValue?.trim();
+  if (ownValue) return ownValue;
+  const childText = (node?.children || [])
+    .filter((child) => child.nodeType === 3 && child.nodeValue)
+    .map((child) => child.nodeValue)
+    .join('')
+    .trim();
+  return childText || undefined;
 }
 
 /**
