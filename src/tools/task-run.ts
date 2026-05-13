@@ -39,7 +39,7 @@ const evidenceSchema = {
   items: {
     type: 'object',
     properties: {
-      kind: { type: 'string', enum: ['journal', 'screenshot', 'contract', 'ledger_task', 'workflow', 'url'] },
+      kind: { type: 'string', enum: ['journal', 'screenshot', 'contract', 'ledger_task', 'workflow', 'url', 'handoff'] },
       ref: { type: 'string' },
       summary: { type: 'string' },
     },
@@ -53,7 +53,7 @@ const failedItemsSchema = {
     type: 'object',
     properties: {
       item: { type: 'string' },
-      reason: { type: 'string', description: 'REQUIRED Secret-safe reason this TaskRun needs user help.' },
+      reason: { type: 'string' },
     },
     required: ['item', 'reason'],
   },
@@ -65,7 +65,7 @@ const startDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      goal: { type: 'string', description: 'REQUIRED User-level goal to track, redacted and capped at 4 KiB.' },
+      goal: { type: 'string', description: 'User-level goal to track, redacted and capped at 4 KiB.' },
       success_criteria: { type: 'array', items: { type: 'string' }, description: 'Optional concrete success criteria.' },
       session_id: { type: 'string', description: 'Optional OpenChrome session id to associate.' },
       workflow_id: { type: 'string', description: 'Optional workflow id to associate.' },
@@ -81,8 +81,8 @@ const updateDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
-      status: { type: 'string', enum: ['RUNNING'], description: 'Only RUNNING is accepted. Use oc_task_run_needs_help / oc_task_run_complete for other transitions.' },
+      run_id: { type: 'string' },
+      status: { type: 'string', enum: ['PENDING', 'RUNNING', 'NEEDS_HELP'] },
       resume_reason: { type: 'string', description: 'Required when resuming from NEEDS_HELP to RUNNING.' },
       progress_summary: { type: 'string' },
       completed_items: { type: 'array', items: { type: 'string' } },
@@ -102,8 +102,8 @@ const checkpointDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
-      summary: { type: 'string', description: 'REQUIRED Caller-provided summary, redacted and capped at 8 KiB.' },
+      run_id: { type: 'string' },
+      summary: { type: 'string', description: 'Caller-provided summary, redacted and capped at 8 KiB.' },
       current_cursor: { type: 'string' },
       evidence: evidenceSchema,
     },
@@ -117,8 +117,8 @@ const needsHelpDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
-      reason: { type: 'string', description: 'REQUIRED Secret-safe reason this TaskRun needs user help.' },
+      run_id: { type: 'string' },
+      reason: { type: 'string' },
       resume_hint: { type: 'string' },
       current_cursor: { type: 'string' },
       last_evidence: evidenceSchema,
@@ -133,7 +133,7 @@ const completeDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
+      run_id: { type: 'string' },
       status: { type: 'string', enum: ['COMPLETED', 'FAILED', 'CANCELLED'], description: 'Defaults to COMPLETED.' },
       progress_summary: { type: 'string' },
       completed_items: { type: 'array', items: { type: 'string' } },
@@ -150,7 +150,7 @@ const getDefinition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      run_id: { type: 'string', description: 'REQUIRED TaskRun id returned by oc_task_run_start.' },
+      run_id: { type: 'string' },
       include_events: { type: 'boolean', description: 'When true, include events.jsonl entries.' },
     },
     required: ['run_id'],

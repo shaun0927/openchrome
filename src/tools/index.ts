@@ -142,6 +142,9 @@ import { registerOcObserveTool } from './oc-observe';
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
+// Goal-level TaskRun lifecycle (#1039)
+import { registerTaskRunTools } from './task-run';
+import { registerHandoffTools } from './handoff';
 // Action schema normalizer (#1062) — side-effect-free diagnostics.
 import { registerOcNormalizeActionTool } from './oc-normalize-action';
 import { isRunHarnessEnabled } from '../run-harness/flags';
@@ -349,6 +352,10 @@ export function registerAllTools(server: MCPServer): void {
   // Portable context envelope (#873) — oc_context_export / oc_context_import
   registerOcContextTools(server);
 
+  // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
+  registerTaskRunTools(server);
+  // Secret-safe human takeover checkpoints (#1040) — opt-in and storage-only.
+  registerHandoffTools(server);
   // Run harness (#1021) — opt-in tool-call event ledger.
   if (isRunHarnessEnabled()) {
     registerRunHarnessTools(server);

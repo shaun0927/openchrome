@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { acquireLock, writeFileAtomicSafe, readFileSafe } from '../../utils/atomic-file';
+import { writeFileAtomicSafe, readFileSafe } from '../../utils/atomic-file';
 import { redactValue } from '../trace/redactor';
 import {
   EvidencePointer,
@@ -128,153 +128,128 @@ export class TaskRunStore {
   }
 
   async update(runId: string, input: UpdateTaskRunInput): Promise<TaskRunMeta> {
-    return this.withRunLock(runId, async () => {
-      const current = await this.get(runId);
-      this.assertMutable(current);
-      const ts = this.now();
+    const current = await this.get(runId);
+    this.assertMutable(current);
+    const ts = this.now();
 
-      const nextStatus = input.status || current.status;
-      if (!isTaskRunStatus(nextStatus)) {
-        throw new TaskRunTransitionError(`Unknown TaskRun status: ${String(nextStatus)}`);
-      }
-      if (current.status === 'NEEDS_HELP' && nextStatus === 'RUNNING' && !optionalString(input.resume_reason)) {
-        throw new TaskRunTransitionError('Resuming a NEEDS_HELP TaskRun requires resume_reason');
-      }
-      if (TERMINAL_TASK_RUN_STATUSES.has(nextStatus)) {
-        throw new TaskRunTransitionError('Use oc_task_run_complete to enter a terminal state');
-      }
-      if (nextStatus === 'PENDING') {
-        throw new TaskRunTransitionError('TaskRun cannot transition back to PENDING');
-      }
-      // NEEDS_HELP requires a reason + requested_at payload; route callers
-      // through oc_task_run_needs_help instead of an unguarded update().
-      if (nextStatus === 'NEEDS_HELP' && current.status !== 'NEEDS_HELP') {
-        throw new TaskRunTransitionError('Use oc_task_run_needs_help to enter NEEDS_HELP');
-      }
+    const nextStatus = input.status || current.status;
+    if (!isTaskRunStatus(nextStatus)) {
+      throw new TaskRunTransitionError(`Unknown TaskRun status: ${String(nextStatus)}`);
+    }
+    if (current.status === 'NEEDS_HELP' && nextStatus === 'RUNNING' && !optionalString(input.resume_reason)) {
+      throw new TaskRunTransitionError('Resuming a NEEDS_HELP TaskRun requires resume_reason');
+    }
+    if (TERMINAL_TASK_RUN_STATUSES.has(nextStatus)) {
+      throw new TaskRunTransitionError('Use oc_task_run_complete to enter a terminal state');
+    }
+    if (nextStatus === 'PENDING') {
+      throw new TaskRunTransitionError('TaskRun cannot transition back to PENDING');
+    }
 
-      const merged = mergeItems(current, input.completed_items, input.failed_items);
-      const meta: TaskRunMeta = pruneUndefined({
-        ...current,
-        status: nextStatus,
-        workflow_id: optionalString(input.workflow_id) || current.workflow_id,
-        ledger_task_ids: uniqueStrings([...(current.ledger_task_ids || []), ...(input.ledger_task_ids || [])]),
-        progress_summary: input.progress_summary !== undefined
-          ? limit(scrub(input.progress_summary), MAX_SUMMARY_CHARS)
-          : current.progress_summary,
-        completed_items: merged.completed,
-        failed_items: merged.failed,
-        completed_items_truncated: merged.completedTruncated || undefined,
-        failed_items_truncated: merged.failedTruncated || undefined,
-        current_cursor: input.current_cursor !== undefined ? scrub(input.current_cursor) : current.current_cursor,
-        last_evidence: sanitizeEvidence(input.last_evidence) || current.last_evidence,
-        needs_help: nextStatus === 'RUNNING' ? undefined : current.needs_help,
-        updated_at: ts,
-      });
-      await this.writeMeta(meta);
-      await this.appendEvent(runId, { ts, kind: 'updated', data: redactValue({ status: meta.status, resume_reason: input.resume_reason }) as Record<string, unknown> });
-      return meta;
+    const merged = mergeItems(current, input.completed_items, input.failed_items);
+    const meta: TaskRunMeta = pruneUndefined({
+      ...current,
+      status: nextStatus,
+      workflow_id: optionalString(input.workflow_id) || current.workflow_id,
+      ledger_task_ids: uniqueStrings([...(current.ledger_task_ids || []), ...(input.ledger_task_ids || [])]),
+      progress_summary: input.progress_summary !== undefined
+        ? limit(scrub(input.progress_summary), MAX_SUMMARY_CHARS)
+        : current.progress_summary,
+      completed_items: merged.completed,
+      failed_items: merged.failed,
+      completed_items_truncated: merged.completedTruncated || current.completed_items_truncated,
+      failed_items_truncated: merged.failedTruncated || current.failed_items_truncated,
+      current_cursor: input.current_cursor !== undefined ? scrub(input.current_cursor) : current.current_cursor,
+      last_evidence: sanitizeEvidence(input.last_evidence) || current.last_evidence,
+      needs_help: nextStatus === 'RUNNING' ? undefined : current.needs_help,
+      updated_at: ts,
     });
+    await this.writeMeta(meta);
+    await this.appendEvent(runId, { ts, kind: 'updated', data: redactValue({ status: meta.status, resume_reason: input.resume_reason }) as Record<string, unknown> });
+    return meta;
   }
 
   async checkpoint(runId: string, summary: string, opts: { current_cursor?: string; evidence?: EvidencePointer[] } = {}): Promise<TaskRunCheckpoint> {
-    return this.withRunLock(runId, async () => {
-      const meta = await this.get(runId);
-      this.assertMutable(meta);
-      const ts = this.now();
-      const checkpoint: TaskRunCheckpoint = pruneUndefined({
-        checkpoint_id: this.createRunId(`${runId}\0checkpoint\0${ts}`, ts),
-        run_id: runId,
-        summary: limit(scrub(summary), MAX_SUMMARY_CHARS),
-        current_cursor: opts.current_cursor ? scrub(opts.current_cursor) : undefined,
-        evidence: sanitizeEvidence(opts.evidence),
-        created_at: ts,
-      });
-      const checkpointPath = path.join(this.runDir(runId), 'checkpoints', `${checkpoint.checkpoint_id}.json`);
-      await writeFileAtomicSafe(checkpointPath, checkpoint);
-      const updated = pruneUndefined({
-        ...meta,
-        progress_summary: checkpoint.summary,
-        current_cursor: checkpoint.current_cursor ?? meta.current_cursor,
-        last_evidence: checkpoint.evidence ?? meta.last_evidence,
-        updated_at: ts,
-      });
-      await this.writeMeta(updated);
-      await this.appendEvent(runId, { ts, kind: 'checkpointed', data: { checkpoint_id: checkpoint.checkpoint_id } });
-      return checkpoint;
+    const meta = await this.get(runId);
+    this.assertMutable(meta);
+    const ts = this.now();
+    const checkpoint: TaskRunCheckpoint = pruneUndefined({
+      checkpoint_id: this.createRunId(`${runId}\0checkpoint\0${ts}`, ts),
+      run_id: runId,
+      summary: limit(scrub(summary), MAX_SUMMARY_CHARS),
+      current_cursor: opts.current_cursor ? scrub(opts.current_cursor) : undefined,
+      evidence: sanitizeEvidence(opts.evidence),
+      created_at: ts,
     });
+    const checkpointPath = path.join(this.runDir(runId), 'checkpoints', `${checkpoint.checkpoint_id}.json`);
+    await writeFileAtomicSafe(checkpointPath, checkpoint);
+    const updated = pruneUndefined({
+      ...meta,
+      progress_summary: checkpoint.summary,
+      current_cursor: checkpoint.current_cursor ?? meta.current_cursor,
+      last_evidence: checkpoint.evidence ?? meta.last_evidence,
+      updated_at: ts,
+    });
+    await this.writeMeta(updated);
+    await this.appendEvent(runId, { ts, kind: 'checkpointed', data: { checkpoint_id: checkpoint.checkpoint_id } });
+    return checkpoint;
   }
 
   async needsHelp(runId: string, input: NeedsHelpInput): Promise<TaskRunMeta> {
-    return this.withRunLock(runId, async () => {
-      const current = await this.get(runId);
-      this.assertMutable(current);
-      const ts = this.now();
-      const needs_help: NeedsHelpState = pruneUndefined({
-        reason: limit(scrub(input.reason), MAX_HELP_CHARS),
-        requested_at: ts,
-        resume_hint: input.resume_hint ? limit(scrub(input.resume_hint), MAX_HELP_CHARS) : undefined,
-      });
-      const meta = pruneUndefined({
-        ...current,
-        status: 'NEEDS_HELP' as const,
-        needs_help,
-        current_cursor: input.current_cursor !== undefined ? scrub(input.current_cursor) : current.current_cursor,
-        last_evidence: sanitizeEvidence(input.last_evidence) || current.last_evidence,
-        updated_at: ts,
-      });
-      await this.writeMeta(meta);
-      await this.appendEvent(runId, { ts, kind: 'needs_help', data: redactValue(needs_help) as Record<string, unknown> });
-      return meta;
+    const current = await this.get(runId);
+    this.assertMutable(current);
+    const ts = this.now();
+    const needs_help: NeedsHelpState = pruneUndefined({
+      reason: limit(scrub(input.reason), MAX_HELP_CHARS),
+      requested_at: ts,
+      resume_hint: input.resume_hint ? limit(scrub(input.resume_hint), MAX_HELP_CHARS) : undefined,
     });
+    const meta = pruneUndefined({
+      ...current,
+      status: 'NEEDS_HELP' as const,
+      needs_help,
+      current_cursor: input.current_cursor !== undefined ? scrub(input.current_cursor) : current.current_cursor,
+      last_evidence: sanitizeEvidence(input.last_evidence) || current.last_evidence,
+      updated_at: ts,
+    });
+    await this.writeMeta(meta);
+    await this.appendEvent(runId, { ts, kind: 'needs_help', data: redactValue(needs_help) as Record<string, unknown> });
+    return meta;
   }
 
   async complete(runId: string, input: CompleteInput = {}): Promise<TaskRunMeta> {
-    return this.withRunLock(runId, async () => {
-      const current = await this.get(runId);
-      this.assertMutable(current);
-      const ts = this.now();
-      const status = input.status || 'COMPLETED';
-      if (!isTaskRunStatus(status) || !TERMINAL_TASK_RUN_STATUSES.has(status)) {
-        throw new TaskRunTransitionError('Completion status must be COMPLETED, FAILED, or CANCELLED');
-      }
-      const merged = mergeItems(current, input.completed_items, input.failed_items);
-      const meta: TaskRunMeta = pruneUndefined({
-        ...current,
-        status,
-        progress_summary: input.progress_summary !== undefined ? limit(scrub(input.progress_summary), MAX_SUMMARY_CHARS) : current.progress_summary,
-        completed_items: merged.completed,
-        failed_items: merged.failed,
-        completed_items_truncated: merged.completedTruncated || undefined,
-        failed_items_truncated: merged.failedTruncated || undefined,
-        last_evidence: sanitizeEvidence(input.last_evidence) || current.last_evidence,
-        needs_help: undefined,
-        updated_at: ts,
-        completed_at: ts,
-      });
-      await this.writeMeta(meta);
-      const kind = status === 'COMPLETED' ? 'completed' : status === 'FAILED' ? 'failed' : 'cancelled';
-      await this.appendEvent(runId, { ts, kind, data: { status } });
-      return meta;
+    const current = await this.get(runId);
+    this.assertMutable(current);
+    const ts = this.now();
+    const status = input.status || 'COMPLETED';
+    if (!isTaskRunStatus(status) || !TERMINAL_TASK_RUN_STATUSES.has(status)) {
+      throw new TaskRunTransitionError('Completion status must be COMPLETED, FAILED, or CANCELLED');
+    }
+    const merged = mergeItems(current, input.completed_items, input.failed_items);
+    const meta: TaskRunMeta = pruneUndefined({
+      ...current,
+      status,
+      progress_summary: input.progress_summary !== undefined ? limit(scrub(input.progress_summary), MAX_SUMMARY_CHARS) : current.progress_summary,
+      completed_items: merged.completed,
+      failed_items: merged.failed,
+      completed_items_truncated: merged.completedTruncated || current.completed_items_truncated,
+      failed_items_truncated: merged.failedTruncated || current.failed_items_truncated,
+      last_evidence: sanitizeEvidence(input.last_evidence) || current.last_evidence,
+      needs_help: undefined,
+      updated_at: ts,
+      completed_at: ts,
     });
+    await this.writeMeta(meta);
+    const kind = status === 'COMPLETED' ? 'completed' : status === 'FAILED' ? 'failed' : 'cancelled';
+    await this.appendEvent(runId, { ts, kind, data: { status } });
+    return meta;
   }
 
   async readEvents(runId: string): Promise<TaskRunEvent[]> {
     const eventsPath = this.eventsPath(runId);
     if (!fs.existsSync(eventsPath)) return [];
     const text = await fs.promises.readFile(eventsPath, 'utf8');
-    const events: TaskRunEvent[] = [];
-    for (const line of text.split('\n')) {
-      if (!line) continue;
-      try {
-        events.push(JSON.parse(line) as TaskRunEvent);
-      } catch (err) {
-        // Skip malformed JSONL lines so a single corrupt entry does not
-        // fail the whole read. Surface diagnostics via stderr; stdout is
-        // reserved for MCP JSON-RPC.
-        console.error(`[TaskRunStore] Skipping malformed event line in ${eventsPath}: ${(err as Error).message}`);
-      }
-    }
-    return events;
+    return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as TaskRunEvent);
   }
 
   private createRunId(seed: string, ts: number): string {
@@ -303,26 +278,6 @@ export class TaskRunStore {
     await fs.promises.mkdir(dir, { recursive: true });
     const safeEvent = redactValue(event) as TaskRunEvent;
     await fs.promises.appendFile(this.eventsPath(runId), `${JSON.stringify(safeEvent)}\n`, 'utf8');
-  }
-
-  /**
-   * Per-run advisory file lock. Serializes mutating operations against the
-   * same `run_id` so concurrent update / checkpoint / needs_help / complete
-   * calls cannot read-modify-write past each other.
-   */
-  private async withRunLock<T>(runId: string, fn: () => Promise<T>): Promise<T> {
-    assertSafeId(runId);
-    await fs.promises.mkdir(this.runDir(runId), { recursive: true });
-    const release = await acquireLock(this.lockPath(runId));
-    try {
-      return await fn();
-    } finally {
-      await release();
-    }
-  }
-
-  private lockPath(runId: string): string {
-    return path.join(this.runDir(runId), 'meta.lock');
   }
 
   private runDir(runId: string): string {
@@ -399,14 +354,8 @@ function mergeItems(current: TaskRunMeta, completedInput?: string[], failedInput
     failedByItem.set(item.item, item);
   }
   const failed = Array.from(failedByItem.values());
-  // Accumulate truncation counts. The merged arrays already include the
-  // previously-retained tail (post-truncation), so this overflow count
-  // reflects only new spillover; we add it to whatever the caller has
-  // already shed historically.
-  const completedOverflow = Math.max(0, completed.length - MAX_ITEMS);
-  const failedOverflow = Math.max(0, failed.length - MAX_ITEMS);
-  const completedTruncated = (current.completed_items_truncated || 0) + completedOverflow;
-  const failedTruncated = (current.failed_items_truncated || 0) + failedOverflow;
+  const completedTruncated = Math.max(0, completed.length - MAX_ITEMS);
+  const failedTruncated = Math.max(0, failed.length - MAX_ITEMS);
   return {
     completed: completed.slice(-MAX_ITEMS),
     failed: failed.slice(-MAX_ITEMS),
