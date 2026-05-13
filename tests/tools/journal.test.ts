@@ -39,7 +39,7 @@ jest.mock('../../src/chrome/launcher', () => ({
   })),
 }));
 
-import { MCPServer } from '../../src/mcp-server';
+import { MCPServer, summarizeMcpResultForJournal } from '../../src/mcp-server';
 import { registerJournalTool } from '../../src/tools/journal';
 import { JournalEntry } from '../../src/journal/task-journal';
 
@@ -60,6 +60,25 @@ function makeEntry(overrides: Partial<JournalEntry> = {}): JournalEntry {
 }
 
 // ─── parseSince ──────────────────────────────────────────────────────────────
+
+
+
+describe('summarizeMcpResultForJournal', () => {
+  it('excludes MCP-injected hint text from result summaries', () => {
+    const summary = summarizeMcpResultForJournal({
+      isError: true,
+      _hint: 'Try read_page for stale refs, auth redirects, and timeouts.',
+      content: [
+        { type: 'text', text: 'Error: selector missing' },
+        { type: 'text', text: '\nTry read_page for stale refs, auth redirects, and timeouts.' },
+      ],
+    } as any);
+
+    expect(summary).toBe('Error: selector missing');
+    expect(summary).not.toContain('stale refs');
+    expect(summary).not.toContain('auth redirects');
+  });
+});
 
 describe('parseSince', () => {
   beforeEach(() => {

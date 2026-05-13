@@ -129,6 +129,11 @@ const definition: MCPToolDefinition = {
         enum: ['none', 'delta'],
         description: 'Compression mode. "delta" returns only changes since last read.',
       },
+      planningProfile: {
+        type: 'string',
+        enum: ['default', 'stable'],
+        description: 'DOM mode only: stable omits decorative/noisy serialization details without mutating the live page. Default: default.',
+      },
       fallback: {
         type: 'string',
         enum: ['none', 'dom'],
@@ -680,10 +685,12 @@ const handler: ToolHandler = async (
       try {
         const refId = args.ref_id as string | undefined;
         const depth = args.depth as number | undefined;
+        const planningProfile = (args.planningProfile as 'default' | 'stable' | undefined) ?? 'default';
         const result = await measure('domGetDocumentMs', () => serializeDOM(page, cdpClient, {
           maxDepth: depth ?? -1,
           filter: filter,
           interactiveOnly: filter === 'interactive',
+          planningProfile,
         }));
         diagnostics.formatMs = diagnostics.domGetDocumentMs;
 
