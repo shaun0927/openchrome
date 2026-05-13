@@ -15,6 +15,10 @@ export async function recordTaskToolCall(
   if (!taskId) return;
   const meta = store.readMetaSync(taskId);
   if (!meta) return;
+  if (meta.owner) {
+    if (meta.owner.session_id !== call.sessionId) return;
+    if ((call.principalMode === 'api-key' || call.principalMode === 'jwt') && meta.owner.tenant_id !== call.tenantId) return;
+  }
   if (meta.status === 'COMPLETED' || meta.status === 'FAILED' || meta.status === 'CANCELLED') return;
   try {
     const updated = await store.update(taskId, (cur) => {

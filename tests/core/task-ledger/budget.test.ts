@@ -1,5 +1,6 @@
 import { TaskStore, computeTaskId } from '../../../src/core/task-ledger';
 import { applyToolCallToTask, initialCounters, normalizeTaskPolicy } from '../../../src/core/task-ledger';
+import { recordTaskToolCall } from '../../../src/core/task-ledger/envelope';
 import type { TaskMeta, RecordedToolCall } from '../../../src/core/task-ledger';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -80,5 +81,25 @@ describe('task envelope store integration', () => {
     const b = computeTaskId('browser_task', { objective: 'x' }, 2);
     expect(a).toMatch(/^[0-9a-f]{16}$/);
     expect(a).not.toBe(b);
+  });
+
+  test('recordTaskToolCall ignores cross-owner task ids', async () => {
+    const meta = makeMeta({
+      owner: { session_id: 'sess-a', tenant_id: 'tenant-a', key_id: 'key-a', mode: 'api-key' },
+    });
+    await store.create(meta);
+
+    await recordTaskToolCall(store, meta.task_id, {
+      ts: Date.now(),
+      tool: 'read_page',
+      sessionId: 'sess-a',
+      tenantId: 'tenant-b',
+      principalMode: 'api-key',
+      args: {},
+      durationMs: 1,
+      ok: true,
+    });
+
+    expect(store.readMetaSync(meta.task_id)?.counters?.toolCalls).toBe(0);
   });
 });

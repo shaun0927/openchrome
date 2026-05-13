@@ -91,6 +91,9 @@ export interface RecordedToolCall {
   ts: number;
   tool: string;
   sessionId: string;
+  tenantId?: string;
+  keyId?: string;
+  principalMode?: string;
   args: Record<string, unknown>;
   durationMs: number;
   ok: boolean;
