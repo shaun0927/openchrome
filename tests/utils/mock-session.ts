@@ -198,6 +198,11 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
       return Array.from(worker.targets);
     }),
 
+    // #946: real SessionManager returns the BrowserContext name for tabs
+    // created with isolatedContext, or undefined for the default context.
+    // Tests don't exercise the named-context path, so always return undefined.
+    getTargetContextName: jest.fn().mockImplementation((_targetId: string) => 'default'),
+
     registerExternalTarget: jest.fn().mockImplementation((targetId: string, sessionId: string, workerId: string) => {
       const session = sessions.get(sessionId);
       if (!session) return;
@@ -275,6 +280,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
     getTargetWorkerId: jest.fn().mockImplementation((targetId: string) => {
       return targetToWorker.get(targetId)?.workerId;
     }),
+
 
     isTargetValid: jest.fn().mockImplementation(async (targetId: string) => {
       const page = pages.get(targetId);

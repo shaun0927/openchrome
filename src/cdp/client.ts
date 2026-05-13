@@ -2236,6 +2236,10 @@ export function getCDPClient(options?: CDPClientOptions): CDPClient {
   return clientInstance;
 }
 
+export function _resetCDPClientForTesting(): void {
+  clientInstance = null;
+}
+
 /**
  * Factory for managing multiple CDPClient instances (one per Chrome port)
  */
@@ -2290,4 +2294,8 @@ export function getCDPClientFactory(): CDPClientFactory {
     factoryInstance = new CDPClientFactory();
   }
   return factoryInstance;
+}
+
+export function _resetCDPClientFactoryForTesting(): void {
+  factoryInstance = null;
 }

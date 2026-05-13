@@ -17,20 +17,42 @@ import { createSearchTask } from './tasks/search';
 import { createAllParallelTasks } from './tasks/parallel';
 import { createMatrixTasks } from './matrix';
 
-async function main(): Promise<void> {
-  const ciMode = process.argv.includes('--ci');
-  const jsonMode = process.argv.includes('--json') || ciMode;
-  const modeIndex = process.argv.indexOf('--mode');
-  const mode = modeIndex !== -1 && modeIndex + 1 < process.argv.length
-    ? process.argv[modeIndex + 1]
+export interface BenchmarkCliOutput {
+  stdout: Pick<NodeJS.WriteStream, 'write'>;
+  stderr: Pick<NodeJS.WriteStream, 'write'>;
+}
+
+export function writeCiOutput(
+  reports: BenchmarkReport[],
+  regression: ReturnType<typeof BenchmarkRunner.checkRegression>,
+  output: BenchmarkCliOutput
+): void {
+  output.stdout.write(JSON.stringify(reports, null, 2) + '\n');
+
+  if (!regression.passed) {
+    output.stderr.write('\nRegression detected:\n');
+    for (const r of regression.regressions) {
+      output.stderr.write(`  - ${r}\n`);
+    }
+    return;
+  }
+
+  output.stderr.write('\nNo regressions detected.\n');
+}
+
+export async function main(args = process.argv.slice(2), output: BenchmarkCliOutput = process): Promise<void> {
+  const ciMode = args.includes('--ci');
+  const modeIndex = args.indexOf('--mode');
+  const mode = modeIndex !== -1 && modeIndex + 1 < args.length
+    ? args[modeIndex + 1]
     : 'stub';
-  const categoryIndex = process.argv.indexOf('--category');
-  const category = categoryIndex !== -1 && categoryIndex + 1 < process.argv.length
-    ? process.argv[categoryIndex + 1]
+  const categoryIndex = args.indexOf('--category');
+  const category = categoryIndex !== -1 && categoryIndex + 1 < args.length
+    ? args[categoryIndex + 1]
     : undefined;
-  const runsIndex = process.argv.indexOf('--runs');
-  const parsedRuns = runsIndex !== -1 && runsIndex + 1 < process.argv.length
-    ? Number(process.argv[runsIndex + 1])
+  const runsIndex = args.indexOf('--runs');
+  const parsedRuns = runsIndex !== -1 && runsIndex + 1 < args.length
+    ? Number(args[runsIndex + 1])
     : undefined;
 
   const runner = new BenchmarkRunner({
@@ -62,37 +84,31 @@ async function main(): Promise<void> {
     ? new OpenChromeRealAdapter({ mode: 'dom' })
     : new OpenChromeAdapter({ mode: 'dom' });
 
-  console.log(`Running benchmarks in AX mode (${mode})...`);
+  const progress = ciMode ? output.stderr : output.stdout;
+
+  progress.write(`Running benchmarks in AX mode (${mode})...\n`);
   const axReport = await runner.run(axAdapter);
 
-  console.log(`Running benchmarks in DOM mode (${mode})...`);
+  progress.write(`Running benchmarks in DOM mode (${mode})...\n`);
   const domReport = await runner.run(domAdapter);
 
   const reports: BenchmarkReport[] = [axReport, domReport];
 
-  if (jsonMode) {
-    // JSON/CI mode: machine-readable output for before/after comparisons.
-    console.log(JSON.stringify(reports, null, 2));
-
-    // Check for regressions (DOM vs AX baseline)
+  if (ciMode) {
     const regression = BenchmarkRunner.checkRegression(axReport, domReport, 0.1);
+    writeCiOutput(reports, regression, output);
     if (!regression.passed) {
-      console.error('\nRegression detected:');
-      for (const r of regression.regressions) {
-        console.error(`  - ${r}`);
-      }
       process.exit(1);
     }
-
-    console.log('\nNo regressions detected.');
   } else {
     // Interactive mode: formatted report
-    console.log(BenchmarkRunner.formatReport(reports));
+    output.stdout.write(BenchmarkRunner.formatReport(reports) + '\n');
   }
-
 }
 
-main().catch((err) => {
-  console.error('Benchmark failed:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Benchmark failed:', err);
+    process.exit(1);
+  });
+}
