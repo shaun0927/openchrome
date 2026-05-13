@@ -47,6 +47,7 @@ import {
 } from './totp-store';
 import { registerAdminKeysCommand } from './admin-keys';
 import { registerContractCommand } from './contract-teach';
+import { registerPlaybookCommand } from './playbook/index';
 import { registerReplayCommand } from './replay';
 import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell } from './claude-cli';
 
@@ -1302,6 +1303,8 @@ registerAdminKeysCommand(program);
 // Outcome contract authoring helpers (issue #705).
 registerContractCommand(program);
 
+// Declarative YAML/JSON scenario runner (issue #854).
+registerPlaybookCommand(program);
 // Session recording replay subcommands (issue #852).
 registerReplayCommand(program);
 

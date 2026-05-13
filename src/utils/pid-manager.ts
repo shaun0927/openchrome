@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { listMarkers, deleteMarkerFile, verifyChromePidIdentity, OwnershipMarker } from "../chrome/ownership-marker";
 import { listAllTokens } from "./session-resume-token";
+import { getLifecycleBus } from "../core/lifecycle";
 import { cleanupAllStaleSessionsSync as cleanupNetworkBodiesSync } from "../core/network-capture/body-store";
 
 const LOG_PREFIX = "[openchrome:pid]";
@@ -198,6 +199,19 @@ export function cleanOrphanedChromeProcesses(basePorts: number[]): number {
     try {
       killProcessTree(chromePid, 'SIGTERM');
       killed++;
+      // #857: announce the orphan-reap exit on the lifecycle bus so
+      // recorder/journal consumers can see this is an automated cleanup
+      // distinct from a user-driven close or crash. emit() is no-throw.
+      try {
+        getLifecycleBus().emit({
+          kind: 'chrome:exit',
+          pid: chromePid,
+          reason: 'orphan-reap',
+          ts: Date.now(),
+        });
+      } catch {
+        /* bus is no-throw; defence in depth */
+      }
     } catch {
       // Process may have died between check and kill
     }
@@ -263,6 +277,19 @@ export function reapOrphanMarkers(): number {
         try {
           killProcessTree(marker.pid, 'SIGTERM');
           killed++;
+          // #857: mirror the orphan-reap on the lifecycle bus. Same
+          // rationale as the PID-file path above — consumers need to tell
+          // automated cleanup apart from user-driven close / crash.
+          try {
+            getLifecycleBus().emit({
+              kind: 'chrome:exit',
+              pid: marker.pid,
+              reason: 'orphan-reap',
+              ts: Date.now(),
+            });
+          } catch {
+            /* bus is no-throw; defence in depth */
+          }
         } catch {
           /* ignore */
         }
