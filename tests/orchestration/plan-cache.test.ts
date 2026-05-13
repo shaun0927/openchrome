@@ -1026,6 +1026,23 @@ describe('Plan failure taxonomy (#1012)', () => {
     expect(result.recoveryCandidates).toBeUndefined();
   });
 
+
+  test('executor requires token boundaries for auth failure classification', async () => {
+    const handlers: Record<string, ToolHandler> = {
+      boom: jest.fn().mockRejectedValue(new Error('authoritative content missing selector')),
+    };
+    const executor = new PlanExecutor((tool) => handlers[tool] || null);
+    const plan = buildPlan({
+      id: 'auth-boundary-taxonomy-plan',
+      steps: [buildStep({ order: 1, tool: 'boom', timeout: 100 })],
+    });
+
+    const result = await executor.execute(plan, 'sess', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure?.class).toBe('empty_result');
+  });
+
   test('registry persists failure-class counts without changing aggregate stats', () => {
     const tmpDir = makeTempDir();
     try {

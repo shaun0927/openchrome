@@ -127,7 +127,7 @@ function classifyPlanFailure(message: string, fallback: PlanFailureClass): PlanF
   const text = message.toLowerCase();
   if (/timeout|timed out|deadline/.test(text)) return 'timeout';
   if (/stale_ref|stale ref|stale-ref/.test(text)) return 'stale_ref';
-  if (/auth|login|sign in|access denied|forbidden/.test(text)) return 'auth_redirect';
+  if (/\b(?:auth|authentication|authorization|login|sign[ -]?in|access denied|forbidden)\b/.test(text)) return 'auth_redirect';
   if (/empty|no data|not found|missing selector/.test(text)) return 'empty_result';
   return fallback;
 }
