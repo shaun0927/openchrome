@@ -155,6 +155,19 @@ describe('createProgressReporter (#869)', () => {
     expect((ev.params as Record<string, unknown>).progressToken).toBe(12345);
   });
 
+
+  test('reports after flush are ignored', () => {
+    const { server, transport } = makeServer();
+    const { reporter, flush } = getReporter(server, 'tok-closed');
+    reporter!({ progress: 1 });
+    flush();
+    reporter!({ progress: 2 });
+    flush();
+    const events = progressNotifications(transport);
+    expect(events).toHaveLength(1);
+    expect((events[0].params as Record<string, unknown>).progress).toBe(1);
+  });
+
   test('repeated flush is idempotent — does not double-emit', () => {
     const { server, transport } = makeServer();
     const { reporter, flush } = getReporter(server, 'tok-flush2');

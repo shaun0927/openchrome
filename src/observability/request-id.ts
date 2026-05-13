@@ -81,6 +81,8 @@ export interface RequestContext {
   tenantId?: string;
   /** keyId (hashed) when per-tenant auth identifies a specific API key. */
   keyId?: string;
+  /** HTTP MCP session id when the transport provides one. */
+  mcpSessionId?: string;
 }
 
 const requestStore = new AsyncLocalStorage<RequestContext>();
