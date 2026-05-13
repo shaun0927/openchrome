@@ -88,7 +88,7 @@ const handler: ToolHandler = async (
       lines.push(`Tools: ${sorted.map(([t, c]) => `${t}(${c})`).join(', ')}`);
     }
 
-    const failureClasses = Object.entries(summary.failureClasses)
+    const failureClasses = Object.entries(summary.failureClasses ?? {})
       .filter(([, count]) => count > 0)
       .sort((a, b) => b[1] - a[1]);
     if (failureClasses.length > 0) {
@@ -101,24 +101,27 @@ const handler: ToolHandler = async (
       lines.push(`Last progress: ${time} ${summary.lastProgressTool.summary}`);
     }
 
-    if (summary.recentNonProgressTools.length > 0) {
+    const recentNonProgressTools = summary.recentNonProgressTools ?? [];
+    if (recentNonProgressTools.length > 0) {
       lines.push('Recent non-progress:');
-      for (const item of summary.recentNonProgressTools) {
+      for (const item of recentNonProgressTools) {
         const time = new Date(item.ts).toLocaleTimeString();
         lines.push(`  ${time} [${item.failureClass}] ${item.summary}`);
       }
     }
 
-    if (summary.repeatedErrorFingerprints.length > 0) {
+    const repeatedErrorFingerprints = summary.repeatedErrorFingerprints ?? [];
+    if (repeatedErrorFingerprints.length > 0) {
       lines.push('Repeated error fingerprints:');
-      for (const item of summary.repeatedErrorFingerprints) {
+      for (const item of repeatedErrorFingerprints) {
         lines.push(`  ${item.fingerprint} ×${item.count} (${item.failureClass})`);
       }
     }
 
-    if (summary.candidateRecoveryHints.length > 0) {
+    const candidateRecoveryHints = summary.candidateRecoveryHints ?? [];
+    if (candidateRecoveryHints.length > 0) {
       lines.push('Candidate recovery hints:');
-      for (const hint of summary.candidateRecoveryHints) {
+      for (const hint of candidateRecoveryHints) {
         lines.push(`  - ${hint}`);
       }
     }
