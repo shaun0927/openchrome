@@ -29,6 +29,7 @@ import {
 } from '../utils/static-fetch';
 import { buildTextMetrics } from '../core/metrics/token-estimate';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { applyContentFilter, ContentFilterMetrics, parseContentFilterType, ContentFilterType } from '../core/extract/content-filter';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
 
@@ -67,6 +68,23 @@ const definition: MCPToolDefinition = {
       includeLinks: {
         type: 'boolean',
         description: 'markdown-clean only: preserve <a> as markdown links. Default: true.',
+      },
+      query: {
+        type: 'string',
+        description: 'markdown-clean content_filter="bm25" query terms.',
+      },
+      content_filter: {
+        type: 'string',
+        enum: ['none', 'prune', 'bm25'],
+        description: 'markdown-clean only: deterministic fit_markdown filter. Default: none.',
+      },
+      return_raw: {
+        type: 'boolean',
+        description: 'markdown-clean only: include raw_markdown in each page. Default: false.',
+      },
+      return_fit: {
+        type: 'boolean',
+        description: 'markdown-clean only: include fit_markdown and use it as content when filtering. Default: true when filtered.',
       },
       concurrency: {
         type: 'number',
@@ -121,6 +139,9 @@ interface CrawledPage {
   url: string;
   title: string;
   content: string;
+  raw_markdown?: string;
+  fit_markdown?: string;
+  filter?: ContentFilterMetrics;
   links_found: number;
   error?: string;
   engine_used?: 'static' | 'cdp';
@@ -270,8 +291,8 @@ async function resolveSitemapPageUrls(
 
 function cleanMarkdownFromHtml(
   html: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
-): string {
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
+): { content: string; raw_markdown?: string; fit_markdown?: string; filter?: ContentFilterMetrics } {
   const { html: cleaned } = extractMainContent(html, { onlyMainContent: cleanOpts.onlyMainContent });
   let cleanMd = toMarkdown(cleaned, { includeLinks: cleanOpts.includeLinks });
   const cfg = getGlobalConfig();
@@ -279,7 +300,16 @@ function cleanMarkdownFromHtml(
     const sanitized = sanitizeContent(cleanMd);
     cleanMd = sanitized.text + sanitized.sanitizationNote;
   }
-  return cleanMd;
+  const filterType = cleanOpts.contentFilter ?? 'none';
+  if (filterType !== 'none' || cleanOpts.returnRaw || cleanOpts.returnFit === true) {
+    return applyContentFilter(cleanMd, {
+      type: filterType,
+      query: cleanOpts.query,
+      returnRaw: cleanOpts.returnRaw,
+      returnFit: cleanOpts.returnFit !== false,
+    });
+  }
+  return { content: cleanMd };
 }
 
 function staticBuildContent(html: string): { title: string; content: string } {
@@ -318,7 +348,7 @@ function staticCountLinks(html: string, baseUrl: string): number {
 async function fetchPageStatic(
   url: string,
   outputFormat: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
   context?: ToolContext,
 ): Promise<
   | { ok: true; page: CrawledPage }
@@ -335,6 +365,7 @@ async function fetchPageStatic(
 
     let title = '';
     let content = '';
+    let cleanExtra: { raw_markdown?: string; fit_markdown?: string; filter?: ContentFilterMetrics } = {};
     if (outputFormat === 'structured') {
       const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
       title = titleMatch ? titleMatch[1].trim() : '';
@@ -343,7 +374,15 @@ async function fetchPageStatic(
     } else if (outputFormat === 'markdown-clean') {
       const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
       title = titleMatch ? titleMatch[1].trim() : '';
-      content = cleanMarkdownFromHtml(html, cleanOpts);
+      {
+        const cleanResult = cleanMarkdownFromHtml(html, cleanOpts);
+        content = cleanResult.content;
+        cleanExtra = {
+          ...(cleanResult.raw_markdown ? { raw_markdown: cleanResult.raw_markdown } : {}),
+          ...(cleanResult.fit_markdown ? { fit_markdown: cleanResult.fit_markdown } : {}),
+          ...(cleanResult.filter ? { filter: cleanResult.filter } : {}),
+        };
+      }
     } else {
       const built = staticBuildContent(html);
       title = built.title;
@@ -360,6 +399,7 @@ async function fetchPageStatic(
         url,
         title,
         content,
+        ...cleanExtra,
         links_found: staticCountLinks(html, finalUrl),
       },
     };
@@ -382,7 +422,7 @@ async function fetchPage(
   sessionId: string,
   url: string,
   outputFormat: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
   context?: ToolContext,
 ): Promise<CrawledPage> {
   const sessionManager = getSessionManager();
@@ -421,7 +461,8 @@ async function fetchPage(
       await sessionManager.closeTarget(sessionId, tid);
       targetId = null;
 
-      let cleanMd = cleanMarkdownFromHtml(fullHtml, cleanOpts);
+      const cleanResult = cleanMarkdownFromHtml(fullHtml, cleanOpts);
+      let cleanMd = cleanResult.content;
       if (cleanMd.length > MAX_OUTPUT_CHARS) {
         cleanMd = cleanMd.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
       }
@@ -429,6 +470,9 @@ async function fetchPage(
         url,
         title: linkResult.title,
         content: cleanMd,
+        ...(cleanResult.raw_markdown ? { raw_markdown: cleanResult.raw_markdown } : {}),
+        ...(cleanResult.fit_markdown ? { fit_markdown: cleanResult.fit_markdown } : {}),
+        ...(cleanResult.filter ? { filter: cleanResult.filter } : {}),
         links_found: linkResult.linksCount,
       };
     }
@@ -582,6 +626,10 @@ const handler: ToolHandler = async (
   const cleanOpts = {
     onlyMainContent: args.onlyMainContent !== false,
     includeLinks: args.includeLinks !== false,
+    contentFilter: parseContentFilterType(args.content_filter),
+    query: args.query as string | undefined,
+    returnRaw: args.return_raw === true,
+    returnFit: args.return_fit !== false,
   };
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 

@@ -621,6 +621,55 @@ describe('ReadPageTool', () => {
       expect(text).toContain('Pages: 1 / 3');
     });
 
+
+
+    test('markdown contentFilter=prune returns raw and fit markdown with metrics', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId);
+      (page!.content as jest.Mock).mockResolvedValue(`
+        <main>
+          <h1>Article</h1>
+          <p>Home Login Cookie settings Privacy Policy</p>
+          <p>Enterprise pricing includes annual discounts and support.</p>
+          <table><tr><th>Plan</th><th>Price</th></tr><tr><td>Enterprise</td><td>Contact us</td></tr></table>
+        </main>
+      `);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        contentFilter: 'prune',
+        returnRaw: true,
+        returnFit: true,
+        includePagination: false,
+      }) as { content: Array<{ type: string; text: string }> };
+      const jsonStart = result.content[0].text.indexOf('{');
+      const body = JSON.parse(result.content[0].text.slice(jsonStart));
+
+      expect(body.content).toContain('Enterprise pricing');
+      expect(body.raw_markdown).toContain('Cookie settings');
+      expect(body.fit_markdown).toContain('Enterprise pricing');
+      expect(body.fit_markdown).not.toContain('Cookie settings');
+      expect(body.filter.type).toBe('prune');
+      expect(body.filter.raw_chars).toBeGreaterThan(body.filter.fit_chars);
+    });
+
+    test('markdown contentFilter=bm25 requires query', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId);
+      (page!.content as jest.Mock).mockResolvedValue('<main><h1>Article</h1></main>');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        contentFilter: 'bm25',
+        includePagination: false,
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('requires a non-empty query');
+    });
+
     test('can suppress markdown pagination metadata', async () => {
       const handler = await getReadPageHandler();
       const page = mockSessionManager.pages.get(testTargetId)!;
