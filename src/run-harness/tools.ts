@@ -5,7 +5,7 @@ import { RUN_STATUSES, TERMINAL_RUN_STATUSES, type RunRecord, type RunStatus } f
 
 const runIdProperty = {
   type: 'string',
-  description: 'Run identifier returned by oc_run_start.',
+  description: 'REQUIRED Run identifier returned by oc_run_start.',
 };
 
 const startDefinition: MCPToolDefinition = {
@@ -49,7 +49,7 @@ const finishDefinition: MCPToolDefinition = {
     type: 'object',
     properties: {
       run_id: runIdProperty,
-      status: { type: 'string', enum: RUN_STATUSES.filter((s) => s !== 'created' && s !== 'running') as unknown as string[] },
+      status: { type: 'string', enum: RUN_STATUSES.filter((s) => s !== 'created' && s !== 'running') as unknown as string[], description: 'REQUIRED Terminal or needs_user_input run status.' },
       message: { type: 'string', description: 'Optional finish reason.' },
       metadata: { type: 'object', description: 'Optional finish metadata.' },
     },
