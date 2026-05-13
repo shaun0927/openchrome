@@ -297,6 +297,11 @@ export class TaskJournal {
   sanitizeResultSummary(text: string): string {
     return text
       .replace(
+        /(["'])(password|token|secret|credential|api[_-]?key)\1\s*:\s*(["'])(?:\\.|(?!\3).)*\3/gi,
+        (_match, keyQuote: string, key: string, valueQuote: string) =>
+          `${keyQuote}${key}${keyQuote}:${valueQuote}[REDACTED]${valueQuote}`,
+      )
+      .replace(
         /(password|token|secret|credential|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi,
         "$1=[REDACTED]",
       )

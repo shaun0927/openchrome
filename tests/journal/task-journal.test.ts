@@ -574,6 +574,22 @@ describe('TaskJournal failure summaries', () => {
     expect(entry.resultSummary).not.toContain('secret-token');
   });
 
+  it('redacts quoted JSON-style sensitive fields from result summaries', () => {
+    const entry = journal.createEntry(
+      'extract_data',
+      'sess',
+      {},
+      10,
+      false,
+      'payload {"token":"abc123", "password":"hunter2", "ok":true}',
+    );
+
+    expect(entry.resultSummary).toContain('"token":"[REDACTED]"');
+    expect(entry.resultSummary).toContain('"password":"[REDACTED]"');
+    expect(entry.resultSummary).not.toContain('abc123');
+    expect(entry.resultSummary).not.toContain('hunter2');
+  });
+
   it('does not classify unrelated stale wording as stale_ref', () => {
     const entry = journal.createEntry(
       'extract_data',
