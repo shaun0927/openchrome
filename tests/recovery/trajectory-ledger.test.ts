@@ -86,11 +86,44 @@ describe('RecoveryTrajectoryLedger', () => {
     expect(nodes.map((n) => n.toolName)).toEqual(['tool-5', 'tool-6', 'tool-7']);
   });
 
-  it('returns null instead of throwing when writes fail', () => {
+  it('queues disk writes asynchronously while immediate reads include pending nodes', async () => {
+    const ledger = new RecoveryTrajectoryLedger({ dirPath: dir, maxNodes: 10, maxNodeBytes: 2048 });
+
+    const node = ledger.record({ sessionId: 's1', toolName: 'read_page', resultStatus: 'success' });
+
+    expect(node).not.toBeNull();
+    expect(ledger.readRecent(10, 's1').map((n) => n.nodeId)).toContain(node!.nodeId);
+
+    await ledger.flush();
+
+    const persisted = fs.readFileSync(ledger.getPath(), 'utf8');
+    expect(persisted).toContain(node!.nodeId);
+  });
+
+  it('bounds the session parent index and prunes it after trimming', async () => {
+    const ledger = new RecoveryTrajectoryLedger({ dirPath: dir, maxNodes: 3, maxNodeBytes: 2048 });
+
+    for (let i = 0; i < 40; i++) {
+      ledger.record({ sessionId: `s${i}`, toolName: `tool-${i}`, resultStatus: 'success' });
+      expect((ledger as unknown as { lastNodeBySession: Map<string, string> }).lastNodeBySession.size).toBeLessThanOrEqual(16);
+    }
+
+    await ledger.flush();
+
+    expect((ledger as unknown as { lastNodeBySession: Map<string, string> }).lastNodeBySession.size).toBeLessThanOrEqual(3);
+    expect(ledger.readRecent(10).map((n) => n.sessionId)).toEqual(['s37', 's38', 's39']);
+  });
+
+  it('does not throw when queued writes fail', async () => {
     const filePath = path.join(dir, 'not-a-dir');
     fs.writeFileSync(filePath, 'block mkdir');
     const ledger = new RecoveryTrajectoryLedger({ dirPath: filePath });
 
-    expect(ledger.record({ sessionId: 's1', toolName: 'read_page', resultStatus: 'success' })).toBeNull();
+    const node = ledger.record({ sessionId: 's1', toolName: 'read_page', resultStatus: 'success' });
+    expect(node).not.toBeNull();
+    expect(ledger.readRecent(10, 's1')).toHaveLength(1);
+
+    await expect(ledger.flush()).resolves.toBeUndefined();
+    expect(ledger.readRecent(10, 's1')).toHaveLength(0);
   });
 });

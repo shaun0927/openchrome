@@ -32,6 +32,8 @@ import { registerPageScreenshotTool } from './page-screenshot';
 import { registerConsoleCaptureTool } from './console-capture';
 import { registerPerformanceMetricsTool } from './performance-metrics';
 import { registerRequestInterceptTool } from './request-intercept';
+import { registerNetworkCaptureLiteTool } from './network-capture-lite';
+import { registerNetworkCaptureFullTool } from './network-capture-full';
 
 // Phase 3 tools
 import { registerFileUploadTool } from './file-upload';
@@ -85,6 +87,11 @@ import { registerRecordingTools } from './recording';
 import { registerCrawlTool } from './crawl';
 import { registerCrawlSitemapTool } from './crawl-sitemap';
 
+// Resumable host-driven crawl jobs (#886)
+import { registerCrawlStartTool } from './crawl-start';
+import { registerCrawlStatusTool } from './crawl-status';
+import { registerCrawlCancelTool } from './crawl-cancel';
+
 // Natural language action API (#578)
 import { registerActTool } from './act';
 
@@ -106,6 +113,28 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
+
+// Doctor report tool (#898) — read cached `openchrome doctor` output
+import { registerOcDoctorReportTool } from './oc-doctor-report';
+// Performance insights two-step API (#846)
+// TODO(#844): use isCoreFeatureEnabled() helper once #844 lands
+import { registerOcPerformanceInsightsTool } from './oc-performance-insights';
+import { registerOcPerformanceAnalyzeTool } from './oc-performance-analyze';
+import { getSessionManager } from '../session-manager';
+import { getPerfTraceStore } from '../core/performance/insights/trace-store';
+// Pilot-tier: user-supplied proxy hook (#874).
+// Registration is gated at runtime by `isProxyHookEnabled()` so the tool is
+// absent from `tools/list` unless BOTH `--pilot` AND `OPENCHROME_PROXY_HOOK=1`
+// are set. The pilot module is loaded via `require()` only when the gate is
+// open — this preserves P2 (no module from `src/pilot/**` is loaded into the
+// process when `--pilot` is unset) while keeping `registerAllTools()` sync.
+import { isProxyHookEnabled, isSkillReplayEnabled } from '../harness/flags';
+// oc_observe (#866) — deterministic actionable-element enumeration
+import { registerOcObserveTool } from './oc-observe';
+// DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
+import { registerOcDevToolsUrlTool } from './oc-devtools-url';
+// Portable context envelope (#873) — export/import surface
+import { registerOcContextTools } from './oc-context';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -134,6 +163,11 @@ export function registerAllTools(server: MCPServer): void {
   registerConsoleCaptureTool(server);
   registerPerformanceMetricsTool(server);
   registerRequestInterceptTool(server);
+
+  // Passive network capture (#896) — lite=headers-only, full=bodies-with-cap.
+  // Coexists with request_intercept (which owns setRequestInterception(true)).
+  registerNetworkCaptureLiteTool(server);
+  registerNetworkCaptureFullTool(server);
 
   // Phase 3: Advanced tools
   registerFileUploadTool(server);
@@ -196,6 +230,11 @@ export function registerAllTools(server: MCPServer): void {
   registerCrawlTool(server);
   registerCrawlSitemapTool(server);
 
+  // Resumable host-driven crawl jobs (#886)
+  registerCrawlStartTool(server);
+  registerCrawlStatusTool(server);
+  registerCrawlCancelTool(server);
+
   // Natural language action API (#578)
   registerActTool(server);
 
@@ -217,6 +256,55 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+  // Skill replay (#856) — pilot-tier. Dynamically imported so no
+  // `src/pilot/**` dependency is loaded unless --pilot and
+  // OPENCHROME_SKILL_REPLAY=1 are both active.
+  if (isSkillReplayEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcSkillReplayTool } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
+    registerOcSkillReplayTool(server);
+  }
+
+  // Doctor report tool (#898) — read cached `openchrome doctor` output
+  registerOcDoctorReportTool(server);
+  // Performance insights two-step API (#846).
+  // TODO(#844): use isCoreFeatureEnabled() helper once #844 lands.
+  // Off-switch: when OPENCHROME_PERF_INSIGHTS=0 the two tools are NOT
+  // registered, preserving v1.10.4 tools/list parity (P2). Default on.
+  if (process.env.OPENCHROME_PERF_INSIGHTS !== '0') {
+    registerOcPerformanceInsightsTool(server);
+    registerOcPerformanceAnalyzeTool(server);
+    // Wire session-scoped trace eviction once. The store keeps an
+    // in-memory map of session_id -> trace_ids; on session deletion we
+    // delete every trace file owned by that session.
+    const sm = getSessionManager();
+    const store = getPerfTraceStore();
+    sm.addEventListener((event) => {
+      if (event.type === 'session:deleted' && event.sessionId) {
+        const removed = store.evictSession(event.sessionId);
+        if (removed > 0) {
+          console.error(
+            `[PerfInsights] Evicted ${removed} trace handle(s) for session ${event.sessionId}`,
+          );
+        }
+      }
+    });
+  }
+  // Pilot-tier: user-supplied proxy hook (#874). Loaded lazily so v1.11
+  // behaviour is byte-identical when the family is off — no code from
+  // `src/pilot/**` is reached unless both `--pilot` and
+  // `OPENCHROME_PROXY_HOOK=1` are set.
+  if (isProxyHookEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcProxyHookTool } = require('../pilot/proxy/hook') as typeof import('../pilot/proxy/hook');
+    registerOcProxyHookTool(server);
+  }
+  // oc_observe (#866) — deterministic actionable-element enumeration
+  registerOcObserveTool(server);
+  // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
+  registerOcDevToolsUrlTool(server);
+  // Portable context envelope (#873) — oc_context_export / oc_context_import
+  registerOcContextTools(server);
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
