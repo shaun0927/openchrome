@@ -21,6 +21,7 @@ import { getHeadedFallback } from '../chrome/headed-fallback';
 import { getGlobalConfig } from '../config/global';
 import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import type { Page } from 'puppeteer-core';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
 const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
@@ -1076,7 +1077,14 @@ const wrappedHandler: ToolHandler = async (sessionId, args, context) => {
 };
 
 export function registerNavigateTool(server: MCPServer): void {
-  server.registerTool('navigate', wrappedHandler, definition, { timeoutRecoverable: true });
+  // Snapshot-cache (#879): bump docEpoch after a successful navigation
+  // (loaderId change) so the next read recomputes against the new page.
+  // Wrap the dynamic-skills `wrappedHandler` so both behaviours layer.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(wrappedHandler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid, undefined, 'navigate') : Promise.resolve(null),
+  );
+  server.registerTool('navigate', wrapped, definition, { timeoutRecoverable: true });
 }
 
 /**

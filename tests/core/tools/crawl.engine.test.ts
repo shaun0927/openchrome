@@ -102,6 +102,26 @@ beforeAll(async () => {
       contentType: 'text/html; charset=utf-8',
       body: RICH_HTML('Page B', `<h1>Page B</h1><p>${PARA}</p>`),
     },
+    '/best-start.html': {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML(
+        'Best Start',
+        `<h1>Best Start</h1><p>${PARA}</p>` +
+          `<a href="/blog/company-update.html">Blog first</a>` +
+          `<a href="/pricing/enterprise-limits.html">Pricing second</a>`,
+      ),
+    },
+    '/blog/company-update.html': {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Company Update', `<h1>Company Update</h1><p>${PARA}</p>`),
+    },
+    '/pricing/enterprise-limits.html': {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Enterprise Limits', `<h1>Enterprise Limits</h1><p>${PARA}</p>`),
+    },
     '/spa.html': {
       status: 200,
       contentType: 'text/html',
@@ -320,6 +340,64 @@ describe('crawl default behavior (no engine arg)', () => {
     const parsed = parseResult(result);
     expect(parsed.pages[0].engine_used).toBeUndefined();
     expect(parsed.pages[0].static_reason).toBeUndefined();
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// crawl({ strategy: 'best_first' }) — URL scoring orders discovered links.
+// ---------------------------------------------------------------------------
+
+describe('crawl strategy=best_first', () => {
+  test('visits higher-scoring discovered URLs before lower-scoring URLs', async () => {
+    const handler = await loadHandler('crawl');
+    const result = await handler('s-best', {
+      url: `${server.origin}/best-start.html`,
+      max_pages: 3,
+      max_depth: 1,
+      delay_ms: 0,
+      concurrency: 1,
+      engine: 'static',
+      respect_robots: false,
+      strategy: 'best_first',
+      query: 'enterprise pricing limits',
+      url_score: {
+        keywords: ['pricing', 'enterprise', 'limits'],
+        prefer_paths: ['/pricing'],
+        exclude_paths: ['/blog'],
+      },
+    });
+    const parsed = parseResult(result);
+    expect(parsed.summary.strategy).toBe('best_first');
+    expect(parsed.summary.scored_urls).toBeGreaterThanOrEqual(3);
+    expect(parsed.pages.map((p) => p.url)).toEqual([
+      `${server.origin}/best-start.html`,
+      `${server.origin}/pricing/enterprise-limits.html`,
+      `${server.origin}/blog/company-update.html`,
+    ]);
+    expect(parsed.pages[1].score).toBeGreaterThan(parsed.pages[2].score as number);
+    expect(parsed.pages[1].score_reasons).toEqual(expect.arrayContaining([
+      'keyword:pricing',
+      'keyword:enterprise',
+      'keyword:limits',
+      'path:/pricing',
+    ]));
+  });
+
+  test('keeps default crawl output free of strategy metadata', async () => {
+    const handler = await loadHandler('crawl');
+    const result = await handler('s-best-default', {
+      url: `${server.origin}/best-start.html`,
+      max_pages: 2,
+      max_depth: 1,
+      delay_ms: 0,
+      concurrency: 1,
+      engine: 'static',
+      respect_robots: false,
+    });
+    const parsed = parseResult(result);
+    expect(parsed.summary.strategy).toBeUndefined();
+    expect(parsed.pages[0].score).toBeUndefined();
   });
 });
 
