@@ -223,6 +223,18 @@ export const TOOL_ANNOTATIONS = {
   oc_run_events: READ_ONLY,
   oc_run_finish: DESTRUCTIVE,
 
+  // ── TaskRun goal-level lifecycle (#1039) ───────────────────────────────
+  // `start` mutates by creating a new run row; update/checkpoint/needs_help
+  // are bookkeeping mutations; complete is terminal (DESTRUCTIVE).
+  // get/list are pure reads.
+  oc_task_run_start: MUTATES,
+  oc_task_run_update: MUTATES,
+  oc_task_run_checkpoint: MUTATES,
+  oc_task_run_needs_help: MUTATES,
+  oc_task_run_complete: DESTRUCTIVE,
+  oc_task_run_get: READ_ONLY,
+  oc_task_run_list: READ_ONLY,
+
   // ── Virtual / runtime-only ──────────────────────────────────────────────
   // expand_tools is built inline by mcp-server.ts handleToolsList() and is
   // not registered through registerTool(); annotations declared here are
