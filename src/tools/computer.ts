@@ -21,6 +21,11 @@ import {
   validateCaptureArea,
   validateInlineImagePayload,
 } from '../utils/screenshot-guards';
+import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+} from './_shared/return-after-state';
 
 function formatPaginationGuidance(pagination: PaginationInfo): string {
   const detail = pagination.type === 'none'
@@ -110,12 +115,13 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Only for action "screenshot". Force full screenshot, bypassing adaptive degradation. Default: false.',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['action', 'tabId'],
   },
 };
 
-const handler: ToolHandler = async (
+const innerHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
@@ -779,6 +785,30 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+};
+
+/**
+ * Outer handler — runs the inner action, then optionally appends a fresh
+ * page snapshot per the `returnAfterState` chaining option. The snapshot is
+ * captured by reusing `read_page` so this stays a thin wrapper.
+ */
+const handler: ToolHandler = async (
+  sessionId: string,
+  args: Record<string, unknown>,
+  context?: ToolContext,
+): Promise<MCPResult> => {
+  const result = await innerHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+  const sessionManager = getSessionManager();
+  const page = await sessionManager.getPage(sessionId, tabId).catch(() => null);
+  if (!page) return result;
+
+  await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+  return result;
 };
 
 /**
