@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
 import { getTaskStore } from '../core/task-ledger';
 import type { TaskStatus } from '../core/task-ledger';
+import { canAccessTask, taskAccessDeniedResult } from './oc-task-start';
 
 const definition: MCPToolDefinition = {
   name: 'oc_task_finish',
@@ -22,7 +23,7 @@ const definition: MCPToolDefinition = {
   },
 };
 
-const handler: ToolHandler = async (_sessionId, params): Promise<MCPResult> => {
+const handler: ToolHandler = async (sessionId, params, context): Promise<MCPResult> => {
   const taskId = taskIdFrom(params);
   if (!taskId) return errorResult('oc_task_finish: task_id is required');
   const status = statusFrom(params.outcome);
@@ -31,6 +32,7 @@ const handler: ToolHandler = async (_sessionId, params): Promise<MCPResult> => {
   const store = getTaskStore();
   const meta = store.readMetaSync(taskId);
   if (!meta) return errorResult(`oc_task_finish: unknown task ${taskId}`);
+  if (!canAccessTask(meta, sessionId, context?.principal)) return taskAccessDeniedResult(taskId);
   if (meta.kind !== 'browser_task') return errorResult('oc_task_finish: only host-driven browser_task envelopes can be finished directly');
   const endedAt = Date.now();
   const updated = await store.update(taskId, (cur) => {
@@ -75,3 +77,5 @@ function errorResult(message: string): MCPResult {
 export function registerOcTaskFinishTool(server: MCPServer): void {
   server.registerTool(definition.name, handler, definition);
 }
+
+export const __test__ = { definition, handler };

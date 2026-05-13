@@ -17,7 +17,11 @@ export async function recordTaskToolCall(
   if (!meta) return;
   if (meta.status === 'COMPLETED' || meta.status === 'FAILED' || meta.status === 'CANCELLED') return;
   try {
-    await store.update(taskId, (cur) => applyToolCallToTask(cur, call));
+    const updated = await store.update(taskId, (cur) => {
+      if (cur.status === 'COMPLETED' || cur.status === 'FAILED' || cur.status === 'CANCELLED') return undefined;
+      return applyToolCallToTask(cur, call);
+    });
+    if (!updated) return;
     store.appendEvent(taskId, {
       ts: call.ts,
       kind: 'tool_call',

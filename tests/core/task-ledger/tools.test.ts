@@ -16,6 +16,8 @@ import {
   setTaskStoreForTests,
 } from '../../../src/tools/oc-task-start';
 import { __test__ as taskGetTest } from '../../../src/tools/oc-task-get';
+import { __test__ as taskUpdateTest } from '../../../src/tools/oc-task-update';
+import { __test__ as taskFinishTest } from '../../../src/tools/oc-task-finish';
 import type { MCPResult, ToolHandler } from '../../../src/types/mcp';
 
 function tempRoot(): string {
@@ -179,5 +181,38 @@ describe('oc_task_start handler — happy path', () => {
       if (latest?.status === 'COMPLETED' || latest?.status === 'FAILED') break;
       await new Promise((r) => setTimeout(r, 10));
     }
+  });
+
+  test('oc_task_update and oc_task_finish enforce task ownership', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const principal = { mode: 'api-key' as const, tenantId: 'tenant-a', keyId: 'key-a', scopes: ['write' as const] };
+    const started = await handler('sess-owned', { objective: 'owned task' }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal,
+    });
+    const taskId = started.task_id as string;
+    const otherPrincipal = { mode: 'api-key' as const, tenantId: 'tenant-b', keyId: 'key-b', scopes: ['write' as const] };
+
+    const deniedUpdate = await taskUpdateTest.handler('sess-owned', { taskId, phase: 'act' }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal: otherPrincipal,
+    });
+    const deniedFinish = await taskFinishTest.handler('sess-owned', { taskId, outcome: 'completed' }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal: otherPrincipal,
+    });
+    const allowedUpdate = await taskUpdateTest.handler('sess-owned', { taskId, phase: 'act' }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal,
+    });
+
+    expect(deniedUpdate.isError).toBe(true);
+    expect(deniedFinish.isError).toBe(true);
+    expect(allowedUpdate.isError).not.toBe(true);
+    expect(allowedUpdate.meta).toMatchObject({ task_id: taskId, phase: 'act' });
   });
 });
