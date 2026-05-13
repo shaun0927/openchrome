@@ -8,6 +8,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { withTimeout } from '../utils/with-timeout';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
@@ -397,5 +398,13 @@ const handler: ToolHandler = async (
 };
 
 export function registerJavascriptTool(server: MCPServer): void {
-  server.registerTool('javascript_tool', handler, definition);
+  // Snapshot-cache (#879): conservative bump — `javascript_tool` cannot
+  // statically know whether the eval mutated the DOM, so we bump
+  // docEpoch unconditionally on a successful eval. A subsequent
+  // `read_page` therefore always recomputes.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid, undefined, 'javascript_tool') : Promise.resolve(null),
+  );
+  server.registerTool('javascript_tool', wrapped, definition);
 }
