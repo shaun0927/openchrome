@@ -1,10 +1,6 @@
 export type TaskRunStatus = 'PENDING' | 'RUNNING' | 'NEEDS_HELP' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
-<<<<<<< HEAD
 export type EvidenceKind = 'journal' | 'screenshot' | 'contract' | 'ledger_task' | 'workflow' | 'url' | 'handoff';
-=======
-export type EvidenceKind = 'journal' | 'screenshot' | 'contract' | 'ledger_task' | 'workflow' | 'url';
->>>>>>> origin/feat/1039-task-run-lifecycle
 
 export interface EvidencePointer {
   kind: EvidenceKind;
