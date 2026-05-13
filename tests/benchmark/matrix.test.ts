@@ -66,4 +66,41 @@ describe('benchmark matrix', () => {
     expect(result.estimatedOutputTokens).toBe(2);
     expect(result.nodeRssBytes).toBeGreaterThan(0);
   });
+
+  test('matrix uses registered tool names and act instruction contract', () => {
+    const scenarios = createBenchmarkMatrix();
+    const coldStart = scenarios.find((scenario) => scenario.name === 'cold-start-first-tab')!;
+    expect(coldStart.steps[0].tool).toBe('tabs_create');
+
+    const screenshot = scenarios.find((scenario) => scenario.name === 'screenshot-inline-payload')!;
+    expect(screenshot.steps[0].tool).toBe('page_screenshot');
+
+    const actionSteps = scenarios
+      .flatMap((scenario) => scenario.steps)
+      .filter((step) => step.tool === 'act');
+    expect(actionSteps.length).toBeGreaterThan(0);
+    for (const step of actionSteps) {
+      expect(step.args).toHaveProperty('tabId');
+      expect(typeof step.args.instruction).toBe('string');
+      expect(step.args).not.toHaveProperty('action');
+    }
+  });
+
+  test('matrix tasks fail when a tool result isError', async () => {
+    const task = createMatrixTasks({ category: 'agent-loop' })[0];
+    const adapter = {
+      name: 'stub',
+      mode: 'dom',
+      callTool: jest
+        .fn()
+        .mockResolvedValueOnce({ content: [{ type: 'text', text: 'ok' }] })
+        .mockResolvedValueOnce({ content: [{ type: 'text', text: 'Error: invalid instruction' }], isError: true }),
+    };
+
+    const result = await task.run(adapter);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Benchmark step failed: act');
+    expect(result.toolCallCount).toBe(2);
+  });
 });

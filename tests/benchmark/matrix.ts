@@ -49,7 +49,7 @@ export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
       name: 'cold-start-first-tab',
       category: 'cold-start',
       description: 'Session/server init to first usable tab',
-      steps: [{ tool: 'open_tabs', args: {} }],
+      steps: [{ tool: 'tabs_create', args: { url: 'about:blank' } }],
     },
     {
       name: 'warm-read-page-dom',
@@ -83,15 +83,15 @@ export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
       category: 'action',
       description: 'Click/fill action latency in a simple action loop',
       steps: [
-        { tool: 'act', args: { tabId: 'tab1', action: 'click', ref: 'ref_1' } },
-        { tool: 'act', args: { tabId: 'tab1', action: 'fill', ref: 'ref_2', text: 'benchmark' } },
+        { tool: 'act', args: { tabId: 'tab1', instruction: 'click ref_1' } },
+        { tool: 'act', args: { tabId: 'tab1', instruction: 'type benchmark into ref_2' } },
       ],
     },
     {
       name: 'screenshot-inline-payload',
       category: 'screenshot',
       description: 'Screenshot latency and inline base64 payload size',
-      steps: [{ tool: 'screenshot', args: { tabId: 'tab1', mode: 'inline' } }],
+      steps: [{ tool: 'page_screenshot', args: { tabId: 'tab1', fullPage: false } }],
     },
     {
       name: 'agent-loop-read-action-delta',
@@ -99,7 +99,7 @@ export function createBenchmarkMatrix(): BenchmarkMatrixScenario[] {
       description: 'Representative read_page -> action -> read_page(delta) loop',
       steps: [
         { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom' } },
-        { tool: 'act', args: { tabId: 'tab1', action: 'click', ref: 'ref_1' } },
+        { tool: 'act', args: { tabId: 'tab1', instruction: 'click ref_1' } },
         { tool: 'read_page', args: { tabId: 'tab1', mode: 'dom', compression: 'delta' } },
       ],
     },
@@ -140,6 +140,10 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
           const payload = responsePayloadSize(result);
           responseChars += payload.responseChars;
           screenshotBytes += payload.screenshotBytes;
+          if (result.isError) {
+            const text = result.content?.find((item) => typeof item.text === 'string')?.text;
+            throw new Error(`Benchmark step failed: ${step.tool}${text ? ` — ${text.slice(0, 160)}` : ''}`);
+          }
         }
 
         const nodeRssBytes = process.memoryUsage().rss;
