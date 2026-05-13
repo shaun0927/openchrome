@@ -4,8 +4,18 @@ import {
   parseResourceSubscriptionLimit,
   ResourceRpcError,
   assertLiveResourceAccess,
+  readLiveResource,
   RESOURCE_FORBIDDEN_CODE,
 } from '../../src/resources/live-state';
+
+jest.mock('../../src/journal/task-journal', () => ({
+  getTaskJournal: () => ({
+    getRecent: () => [
+      { ts: 1, tool: 'navigate', sessionId: 'missing-session', args: {}, durationMs: 1, ok: true, summary: 'hidden' },
+      { ts: 2, tool: 'read_page', sessionId: 'owned-session', args: {}, durationMs: 1, ok: true, summary: 'visible' },
+    ],
+  }),
+}));
 
 describe('live MCP resources (#872)', () => {
   test('advertises the five live URI templates', () => {
@@ -37,6 +47,21 @@ describe('live MCP resources (#872)', () => {
     } catch (err) {
       expect((err as ResourceRpcError).code).toBe(RESOURCE_FORBIDDEN_CODE);
     }
+  });
+
+  test('does not expose journal entries after the owner session is gone', async () => {
+    const sessionManager = {
+      getSession: (id: string) => (id === 'owned-session' ? { id, tenantId: 'default' } : undefined),
+    } as any;
+
+    await expect(readLiveResource(sessionManager, 'oc://journal/owned-session')).resolves.toMatchObject({
+      mimeType: 'application/json',
+      text: expect.stringContaining('visible'),
+    });
+    await expect(readLiveResource(sessionManager, 'oc://journal/missing-session')).resolves.toEqual({
+      mimeType: 'application/json',
+      text: JSON.stringify({ taskId: 'missing-session', entries: [], count: 0 }),
+    });
   });
 
   test('bounds subscription limit env parsing', () => {

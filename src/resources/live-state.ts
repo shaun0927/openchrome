@@ -165,7 +165,7 @@ export async function readLiveResource(sessionManager: SessionManager, uri: stri
     case 'session-state':
       return json(readSessionState(sessionManager, parsed.id!));
     case 'journal':
-      return json(readJournal(parsed.id!));
+      return json(readJournal(sessionManager, parsed.id!));
     case 'recording':
       return json(await readRecording(sessionManager, parsed.id!));
     case 'dashboard-state':
@@ -222,7 +222,11 @@ function readSessionState(sessionManager: SessionManager, sessionId: string): Re
   };
 }
 
-function readJournal(taskId: string): Record<string, unknown> {
+function readJournal(sessionManager: SessionManager, taskId: string): Record<string, unknown> {
+  const session = sessionManager.getSession(taskId);
+  if (!session) {
+    return { taskId, entries: [], count: 0 };
+  }
   const entries = getTaskJournal().getRecent(1000)
     .filter((entry) => entry.sessionId === taskId)
     .slice(-100);
