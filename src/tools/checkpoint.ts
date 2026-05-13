@@ -320,6 +320,18 @@ const handler: ToolHandler = async (
   const action = args.action as string;
 
   if (action === 'save') {
+    if (args.completedSteps !== undefined && !isStringArray(args.completedSteps)) {
+      return { content: [{ type: 'text', text: 'completedSteps must be an array of strings.' }], isError: true };
+    }
+    if (args.pendingSteps !== undefined && !isStringArray(args.pendingSteps)) {
+      return { content: [{ type: 'text', text: 'pendingSteps must be an array of strings.' }], isError: true };
+    }
+    if (args.extractedData !== undefined && (!args.extractedData || typeof args.extractedData !== 'object' || Array.isArray(args.extractedData))) {
+      return { content: [{ type: 'text', text: 'extractedData must be an object.' }], isError: true };
+    }
+    const completedSteps = args.completedSteps === undefined ? [] : args.completedSteps;
+    const pendingSteps = args.pendingSteps === undefined ? [] : args.pendingSteps;
+    const extractedData = (args.extractedData as Record<string, unknown> | undefined) ?? {};
     const tabStates = await collectTabStates();
     const currentUrl = tabStates.length > 0 ? tabStates[0].url : null;
     const timestamp = Date.now();
@@ -335,12 +347,12 @@ const handler: ToolHandler = async (
       sessionId,
       ...(typeof args.label === 'string' && args.label.trim() ? { label: args.label.trim().slice(0, 120) } : {}),
       taskDescription: (args.taskDescription as string) || '',
-      completedSteps: (args.completedSteps as string[]) || [],
-      pendingSteps: (args.pendingSteps as string[]) || [],
+      completedSteps,
+      pendingSteps,
       currentUrl,
       tabStates,
       journalRange: { fromTs: previous?.timestamp ?? timestamp, toTs: timestamp },
-      extractedData: (args.extractedData as Record<string, unknown>) || {},
+      extractedData,
     };
 
     await fs.promises.mkdir(getCheckpointDir(), { recursive: true });

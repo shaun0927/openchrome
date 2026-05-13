@@ -135,6 +135,27 @@ describe('oc_checkpoint timeline (#1025)', () => {
     expect(listed.warnings.join('\n')).toContain('Skipped invalid checkpoint timeline entry');
   });
 
+  test('save rejects schema-invalid step and data payloads before writing checkpoints', async () => {
+    const handler = await loadHandler();
+
+    const badSteps = await handler('sess-1', {
+      action: 'save',
+      taskDescription: 'bad save',
+      completedSteps: 'done',
+    });
+    const badData = await handler('sess-1', {
+      action: 'save',
+      taskDescription: 'bad save',
+      extractedData: ['not-object'],
+    });
+
+    expect(badSteps.isError).toBe(true);
+    expect(badSteps.content?.[0]?.text).toContain('completedSteps must be an array of strings');
+    expect(badData.isError).toBe(true);
+    expect(badData.content?.[0]?.text).toContain('extractedData must be an object');
+    expect(fs.existsSync(path.join(tmpDir, 'current-checkpoint.json'))).toBe(false);
+  });
+
   test('load falls back to newest timeline entry when current checkpoint is missing', async () => {
     const handler = await loadHandler();
 
