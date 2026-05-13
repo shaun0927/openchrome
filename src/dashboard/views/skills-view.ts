@@ -158,8 +158,11 @@ export async function readSkillsSnapshot(): Promise<SkillsViewData> {
     const rows: SkillRow[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const encodedDomain = entry.name;
-      const domain = encodedDomain;
+      // entry.name is the filesystem-encoded directory basename produced by
+      // encodeDomain() inside SkillMemoryStore. Decode it back to the raw
+      // domain string before constructing the store, which re-encodes
+      // internally — passing an already-encoded name would double-encode it.
+      const domain = decodeURIComponent(entry.name);
       try {
         const store = new SkillMemoryStore({ domain });
         for (const skill of store.list({})) {
