@@ -69,6 +69,8 @@ import {
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
+export { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
+import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
 import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
 
@@ -87,15 +89,6 @@ const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_status',
   'oc_recording_export',
 ]);
-
-/**
- * Detect if an error is a Chrome/CDP connection error that may be recoverable
- * by reconnecting to the browser.
- */
-export function estimateOutputTokensFromChars(chars: number): number {
-  // Heuristic only; intentionally avoids provider-specific tokenizer deps.
-  return Math.max(0, Math.ceil(chars / 4));
-}
 
 /**
  * Summarize an MCPResult for journal recording, stripping injected hint text.
@@ -136,47 +129,10 @@ function stringifyResultPayload(result: MCPResult): string {
   }
 }
 
-const CACHE_STATUS_LABELS = new Set(['HIT', 'MISS', 'BYPASS', 'ERROR']);
-const CACHE_KEY_VERSION_LABEL_RE = /^v?\d{1,3}$/i;
-
-function normalizeCacheStatusLabel(raw: string): string {
-  const normalized = raw.trim().toUpperCase();
-  return CACHE_STATUS_LABELS.has(normalized) ? normalized : 'UNKNOWN';
-}
-
-function normalizeCacheKeyVersionLabel(raw: unknown): string {
-  if (raw === undefined || raw === null || raw === '') return 'unknown';
-  const normalized = String(raw).trim();
-  if (normalized === '') return 'unknown';
-  return CACHE_KEY_VERSION_LABEL_RE.test(normalized) ? normalized : 'other';
-}
-
-export function extractCacheStatus(result: MCPResult): { status: string; keyVersion: string } | null {
-  const raw = (result as Record<string, unknown>)._cache
-    ?? (result as Record<string, unknown>).cache
-    ?? (result as Record<string, unknown>).cacheStatus;
-  if (typeof raw === 'string') {
-    return { status: normalizeCacheStatusLabel(raw), keyVersion: 'unknown' };
-  }
-  if (raw && typeof raw === 'object') {
-    const obj = raw as Record<string, unknown>;
-    const status = typeof obj.status === 'string' ? obj.status : typeof obj.cacheStatus === 'string' ? obj.cacheStatus : null;
-    if (!status) return null;
-    const keyVersion = obj.keyVersion ?? obj.version ?? 'unknown';
-    return {
-      status: normalizeCacheStatusLabel(status),
-      keyVersion: normalizeCacheKeyVersionLabel(keyVersion),
-    };
-  }
-  if (result.structuredContent && typeof result.structuredContent.cacheStatus === 'string') {
-    return {
-      status: normalizeCacheStatusLabel(result.structuredContent.cacheStatus),
-      keyVersion: normalizeCacheKeyVersionLabel(result.structuredContent.cacheKeyVersion),
-    };
-  }
-  return null;
-}
-
+/**
+ * Detect if an error is a Chrome/CDP connection error that may be recoverable
+ * by reconnecting to the browser.
+ */
 export function isConnectionError(error: unknown): boolean {
   if (error instanceof OpenChromeConnectionError) return true;
   const message = formatError(error);
