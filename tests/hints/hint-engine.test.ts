@@ -900,3 +900,40 @@ describe('HintEngine', () => {
     });
   });
 });
+
+describe('failure episode memory', () => {
+  it('records a verified recovery episode and emits a future advisory hint', () => {
+    const tracker = new ActivityTracker();
+    const engine = new HintEngine(tracker);
+
+    const first = engine.getHint(
+      'custom_action',
+      makeResult('opaque widget failure on https://example.test/form', true),
+      true,
+      's-episode',
+      { url: 'https://example.test/form', description: 'submit contact form' },
+    );
+    expect(first).toBeNull();
+
+    engine.getHint(
+      'read_page',
+      makeResult('success banner visible after dismiss overlay'),
+      false,
+      's-episode',
+      { url: 'https://example.test/form', description: 'inspect page and dismiss overlay' },
+    );
+
+    const hint = engine.getHint(
+      'custom_action',
+      makeResult('opaque widget failure on https://example.test/form', true),
+      true,
+      's-episode',
+      { url: 'https://example.test/form', description: 'submit contact form' },
+    );
+
+    expect(hint?.rule).toBe('learned-pattern');
+    expect(hint?.hint).toContain('Similar failure episode');
+    expect(hint?.hint).toContain('no recovery was auto-executed');
+    expect(engine.getLearner().getFailureEpisodes()).toHaveLength(1);
+  });
+});

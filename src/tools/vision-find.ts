@@ -16,6 +16,7 @@ import { formatElementMapAsText } from '../vision/screenshot-analyzer';
 import { formatPerceptionSnapshotAsText } from '../vision/perception-provider';
 import { DomAnnotatorPerceptionProvider } from '../vision/providers/dom-annotator-provider';
 import { trackVisionUsage } from '../vision/config';
+import { recordVisualTrajectory } from '../observability/visual-trajectory';
 
 const definition: MCPToolDefinition = {
   name: 'vision_find',
@@ -68,6 +69,10 @@ const definition: MCPToolDefinition = {
         enum: ['viewport', 'tiled'],
         default: 'viewport',
         description: 'viewport: today\'s single-shot capture. tiled: full document scrolled in viewport-tall steps; returns per-tile screenshots and a unified element map.',
+      },
+      recordTrajectory: {
+        type: 'boolean',
+        description: 'Opt-in visual trajectory artifact capture for this call. Also enabled by OPENCHROME_VISUAL_TRAJECTORY=1.',
       },
     },
     required: ['tabId'],
@@ -145,6 +150,24 @@ const handler: ToolHandler = async (
     trackVisionUsage(result.annotationTimeMs);
     const textMap = formatElementMapAsText(result.elementMap);
     console.error(`[vision_find] Analyzed tab ${tabId}: ${result.elementCount} elements in ${result.annotationTimeMs}ms`);
+    const trajectory = await recordVisualTrajectory({
+      enabled: args.recordTrajectory === true,
+      sessionId,
+      tabId,
+      url: page.url(),
+      toolName: 'vision_find',
+      instruction: typeof args.instruction === 'string' ? args.instruction : undefined,
+      provider: 'dom-annotator',
+      elementCount: result.elementCount,
+      latencyMs: result.annotationTimeMs,
+      warnings: snapshot.warnings,
+      outcome: 'success',
+      annotatedImageBase64: result.screenshot,
+      mimeType: result.mimeType,
+    }).catch((err) => {
+      console.error('[vision_find] visual trajectory capture failed:', err instanceof Error ? err.message : err);
+      return null;
+    });
 
     const tiles = mode === 'tiled' ? (result.tiling?.tiles ?? []) : [];
     const tileNote =
@@ -163,6 +186,7 @@ Tiled mode: ${tiles.length} tile screenshot(s) attached below in document-Y orde
       content.push({
         type: 'text',
         text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)${tileNote}
+${trajectory ? `\nTrajectory: ${trajectory.traceId} (${trajectory.dir})\n` : ''}
 
 ${textMap}`,
       });
