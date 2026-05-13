@@ -19,6 +19,7 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import {
   appendReturnAfterState,
   parseReturnAfterState,
@@ -50,7 +51,7 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find an element by natural language, perform click/hover/double_click, wait for DOM settle, and return a state summary.\n\nWhen to use: Single element click/hover by text or label; use mode:"coordinate" only after screenshot when Shadow DOM/canvas/iframe blocks refs.\nWhen NOT to use: Use computer for general coordinates, or act for multi-step flows.',
+  description: 'Click/hover/double_click an element by natural language; waits for DOM to settle, returns a state summary.\n\nWhen to use: single-call click on an element described in plain language. For Shadow DOM / canvas / cross-origin iframes, screenshot first and pass mode:"coordinate".\nWhen NOT to use: prefer computer for generic coordinate clicks, or act for multi-step sequences.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1220,5 +1221,11 @@ const handler: ToolHandler = async (
 };
 
 export function registerInteractTool(server: MCPServer): void {
-  server.registerTool('interact', handler, definition);
+  // Snapshot-cache (#879): bump the active frame's docEpoch after a
+  // successful interaction so any later read sees a miss.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid, undefined, 'interact') : Promise.resolve(null),
+  );
+  server.registerTool('interact', wrapped, definition);
 }
