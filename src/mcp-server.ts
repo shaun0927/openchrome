@@ -58,6 +58,7 @@ import { getActionRecorder } from './recording/action-recorder';
 import {
   substituteSecrets,
   redactSecrets,
+  redactSecretString,
   MissingSecretError,
   getSecretStore,
 } from './core/secrets';
@@ -1920,6 +1921,7 @@ export class MCPServer {
       return finalResult;
     } catch (error) {
       const message = formatError(error);
+      const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
       const aborted = abortReason !== null;
 
@@ -1964,7 +1966,7 @@ export class MCPServer {
           toolArgs,
           Date.now() - toolStartTime,
           false,
-          message,
+          redactedMessage,
         );
         journal.record(entry);
       } catch {
