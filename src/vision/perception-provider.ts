@@ -138,7 +138,9 @@ export interface PerceptionValidationResult {
 
 
 function sanitizePositiveInteger(value: unknown, fallback: number, cap: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  if (typeof value !== 'number') return fallback;
+  if (value === Number.POSITIVE_INFINITY) return cap;
+  if (!Number.isFinite(value)) return fallback;
   return Math.min(cap, Math.max(1, Math.floor(value)));
 }
 
@@ -147,6 +149,9 @@ export function validatePerceptionSnapshot(
   options: PerceptionValidationOptions = {}
 ): PerceptionValidationResult {
   const maxErrors = sanitizePositiveInteger(options.maxErrors, 25, 100);
+  const maxElements = options.maxElements === undefined
+    ? undefined
+    : sanitizePositiveInteger(options.maxElements, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER);
   const errors: string[] = [];
   const addError = (message: string): void => {
     if (errors.length < maxErrors) errors.push(message);
@@ -170,8 +175,8 @@ export function validatePerceptionSnapshot(
 
   if (!Array.isArray(row.elements)) {
     addError('elements must be an array');
-  } else if (options.maxElements !== undefined && row.elements.length > options.maxElements) {
-    addError(`elements length must be <= ${options.maxElements}`);
+  } else if (maxElements !== undefined && row.elements.length > maxElements) {
+    addError(`elements length must be <= ${maxElements}`);
   }
 
   if (!Array.isArray(row.warnings) || row.warnings.some((warning) => typeof warning !== 'string')) {
@@ -182,7 +187,8 @@ export function validatePerceptionSnapshot(
   }
 
   if (Array.isArray(row.elements)) {
-    for (let index = 0; index < row.elements.length && errors.length < maxErrors; index += 1) {
+    const validationLimit = maxElements === undefined ? row.elements.length : Math.min(row.elements.length, maxElements);
+    for (let index = 0; index < validationLimit && errors.length < maxErrors; index += 1) {
       const element = row.elements[index];
       const prefix = `elements[${index}]`;
       if (!element || typeof element !== 'object') {

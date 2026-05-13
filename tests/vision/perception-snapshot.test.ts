@@ -208,6 +208,43 @@ describe('perception snapshot schema validation', () => {
   });
 
 
+
+  test('does not validate elements beyond the configured element cap', () => {
+    const result = validatePerceptionSnapshot({
+      version: 1,
+      provider: 'mock',
+      tabId: 'tab',
+      url: 'https://example.test',
+      capturedAt: 1,
+      viewport: { width: 100, height: 100 },
+      warnings: [],
+      latencyMs: 1,
+      elements: [
+        {
+          id: 'v1',
+          type: 'control',
+          label: 'OK',
+          interactive: true,
+          source: 'mock',
+          bbox: { x: 0, y: 0, width: 10, height: 10 },
+          bboxRatio: { x: 0, y: 0, width: 0.1, height: 0.1 },
+        },
+        {
+          id: '',
+          type: 'bad-after-cap',
+          label: 123,
+          interactive: 'maybe',
+          source: '',
+          bbox: { x: -1, y: -1, width: -1, height: -1 },
+          bboxRatio: { x: 2, y: 2, width: 2, height: 2 },
+        },
+      ],
+    }, { maxElements: 1, maxErrors: 25 });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual(['elements length must be <= 1']);
+  });
+
   test('sanitizes hostile maxErrors bounds before collecting diagnostics', () => {
     const malformed = {
       version: 'bad',
