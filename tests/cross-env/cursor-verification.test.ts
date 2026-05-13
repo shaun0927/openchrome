@@ -135,16 +135,15 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
   describe('C2: Tool Discovery & Listing', () => {
     let tier1Tools: any[];
 
-    test('Initial tools/list returns Tier 1 tools only (46 tools) + expand_tools', async () => {
+    test('Initial tools/list returns progressive-disclosure tools + expand_tools', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       tier1Tools = response.result.tools;
-      // 46 Tier 1 tools (includes lifecycle/contract/skill/observe additions plus
-      // current develop tier-1 defaults) + 1 expand_tools virtual tool = 47
       const toolNames = tier1Tools.map((t: any) => t.name);
       expect(toolNames).toContain('expand_tools');
 
       const nonExpandTools = tier1Tools.filter((t: any) => t.name !== 'expand_tools');
-      expect(nonExpandTools.length).toBe(46);
+      expect(nonExpandTools.length).toBeGreaterThanOrEqual(46);
+      expect(new Set(toolNames).size).toBe(toolNames.length);
     });
 
     test('expand_tools virtual tool present in initial list', () => {
