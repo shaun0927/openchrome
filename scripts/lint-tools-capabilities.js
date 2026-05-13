@@ -46,7 +46,7 @@ function parseCapabilityMap(src) {
 
 // ---------------------------------------------------------------------------
 // Parse the list of tools that are actually registered by scanning for
-// server.registerTool( calls in all src/tools/*.ts files.
+// server.registerTool( calls in all src/**/*.ts production sources.
 //
 // Two call patterns exist:
 //   1. server.registerTool('literal_name', ...)
@@ -55,9 +55,24 @@ function parseCapabilityMap(src) {
 // For pattern 2 we also scan the file for MCPToolDefinition `name:` fields.
 // ---------------------------------------------------------------------------
 
+function collectRegisteredSourceFiles(dir, out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'index.ts') continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectRegisteredSourceFiles(full, out);
+    } else if (entry.isFile() && entry.name.endsWith('.ts')) {
+      const src = fs.readFileSync(full, 'utf8');
+      if (/\.registerTool\(/.test(src)) {
+        out.push({ file: full, src });
+      }
+    }
+  }
+  return out;
+}
+
 function collectRegisteredToolNames() {
-  const toolsDir = path.join(ROOT, 'src', 'tools');
-  const files = fs.readdirSync(toolsDir).filter(f => f.endsWith('.ts') && f !== 'index.ts');
+  const files = collectRegisteredSourceFiles(path.join(ROOT, 'src'));
 
   const names = new Set();
 
@@ -68,8 +83,7 @@ function collectRegisteredToolNames() {
   // We capture all name: 'value' assignments in files that also call registerTool
   const nameFieldRe = /^\s+name:\s*['"](\w+)['"]/gm;
 
-  for (const file of files) {
-    const src = fs.readFileSync(path.join(toolsDir, file), 'utf8');
+  for (const { src } of files) {
 
     // Pattern 1: direct `name: 'value'` inside a registerTool() definition.
     literalRe.lastIndex = 0;

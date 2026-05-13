@@ -241,6 +241,45 @@ describe('capability-filter: expand_tools respects capability gate', () => {
     expect(payload.capability).toBe('workflow');
   });
 
+
+  test('expand_tools is hidden and rejected when core capability is excluded', async () => {
+    const filter: Set<ToolCapability> = new Set(['workflow']);
+    const coreExcludedServer = makeServer({ capabilityFilter: filter });
+    registerAllTools(coreExcludedServer);
+    await coreExcludedServer.handleRequest({
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        clientInfo: { name: 'test', version: '0.0.0' },
+        capabilities: { tools: { listChanged: true } },
+      },
+    });
+
+    const listResp = (await coreExcludedServer.handleRequest({
+      jsonrpc: '2.0',
+      id: 11,
+      method: 'tools/list',
+      params: {},
+    })) as unknown as TestResponse;
+    const names = (listResp.result?.tools ?? []).map(t => t.name);
+    expect(names).not.toContain('expand_tools');
+
+    const callResp = (await coreExcludedServer.handleRequest({
+      jsonrpc: '2.0',
+      id: 12,
+      method: 'tools/call',
+      params: { name: 'expand_tools', arguments: { tier: '2' } },
+    })) as unknown as TestResponse;
+    expect(callResp.result?.isError).toBe(true);
+    const payload = JSON.parse(callResp.result?.content?.[0].text ?? '{}') as {
+      code: string;
+      capability: string;
+    };
+    expect(payload).toEqual({ code: 'CAPABILITY_DISABLED', capability: 'core' });
+  });
+
   test('workflow_init is not in tools/list after expand_tools rejection', async () => {
     // Try to expand with an excluded tool
     await server.handleRequest({
