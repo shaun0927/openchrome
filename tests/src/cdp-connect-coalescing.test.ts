@@ -423,4 +423,39 @@ describe('CDPClient – forceReconnect invalidates pending connects', () => {
     expect(staleBrowser.disconnect).toHaveBeenCalled();
     stopHeartbeat(client);
   });
+
+  test('stale disconnect reconnect abort clears reconnecting flags', async () => {
+    const client = new CDPClient({ port: 9222, maxReconnectAttempts: 1 });
+    const oldBrowser = createMockBrowser('ws://old');
+    const staleBrowser = createMockBrowser('ws://stale');
+
+    let resolveStaleConnect: (() => void) | null = null;
+    mockPuppeteerConnect.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStaleConnect = () => resolve(staleBrowser);
+    }));
+
+    (client as any).browser = oldBrowser;
+    (client as any).connectionState = 'connected';
+
+    const staleReconnectPromise = (client as any).handleDisconnect();
+    for (let i = 0; i < 5 && mockPuppeteerConnect.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(mockPuppeteerConnect).toHaveBeenCalledTimes(1);
+    expect(client.isReconnecting()).toBe(true);
+    expect((client as any).reconnectingAttempt).toBe(1);
+
+    (client as any).reconnectNextRetryAt = Date.now() + 1000;
+    (client as any).connectionGeneration += 1;
+
+    resolveStaleConnect!();
+    await staleReconnectPromise;
+
+    expect(client.isReconnecting()).toBe(false);
+    expect((client as any).reconnectingAttempt).toBe(0);
+    expect((client as any).reconnectNextRetryAt).toBe(0);
+    expect((client as any).browser).toBeNull();
+    expect(staleBrowser.disconnect).toHaveBeenCalled();
+    stopHeartbeat(client);
+  });
 });
