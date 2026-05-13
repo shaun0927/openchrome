@@ -6,6 +6,13 @@
 export type {
   TaskEvent,
   TaskKind,
+  TaskPhase,
+  BudgetStatus,
+  TaskEnvelopePolicy,
+  TaskCounters,
+  TaskRecentEvent,
+  TaskBudgetDecision,
+  RecordedToolCall,
   TaskListFilter,
   TaskMeta,
   TaskOwner,
@@ -36,3 +43,7 @@ export {
   waitForTerminal,
   TaskWaitTimeoutError,
 } from './runner';
+
+export { getTaskStore, setTaskStoreForTests } from './singleton';
+export * from './budget';
+export * from './envelope';
