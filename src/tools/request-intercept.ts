@@ -222,11 +222,10 @@ const definition: MCPToolDefinition = {
   name: 'request_intercept',
   description:
     'Intercept network requests (log, block, modify). ' +
-    'Pass preset="optimize-bandwidth" to block Image, Media, Font, and Stylesheet resources in one call ' +
-    '(70-90 % bandwidth reduction on typical content pages). ' +
-    'Pass preset="optimize-bandwidth-light" to block Image, Media, and Font only (keeps CSS for layout-sensitive pages). ' +
-    'User-supplied block/allow/modify rules are applied after preset rules; explicit allow rules always win. ' +
-    'Set env OPENCHROME_OPTIMIZE_BANDWIDTH=<preset> to auto-apply to every new target.',
+    'preset="optimize-bandwidth" blocks Image/Media/Font/Stylesheet; ' +
+    'preset="optimize-bandwidth-light" blocks Image/Media/Font. ' +
+    'User block/allow/modify rules run after presets; explicit allow rules win. ' +
+    'OPENCHROME_OPTIMIZE_BANDWIDTH=<preset> can auto-apply to new targets.',
   inputSchema: {
     type: 'object',
     properties: {

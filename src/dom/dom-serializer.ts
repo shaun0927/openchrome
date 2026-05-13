@@ -104,6 +104,14 @@ function parseAttributes(attrs: string[] | undefined): Map<string, string> {
   return map;
 }
 
+function escapeAttributeValue(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /**
  * Check if a node is interactive
  */
@@ -163,7 +171,7 @@ function formatElement(
   const attrParts: string[] = [];
   for (const [k, v] of attrMap) {
     if (KEEP_ATTRS.has(k)) {
-      attrParts.push(`${k}="${v}"`);
+      attrParts.push(`${k}="${escapeAttributeValue(v)}"`);
     }
   }
   const attrStr = attrParts.length > 0 ? ' ' + attrParts.join(' ') : '';
@@ -278,6 +286,12 @@ interface SerializeContext {
   includeUserAgentShadowDOM: boolean;
   nodesVisited: number;
   maxNodes: number;
+  /**
+   * Tracks every backendNodeId emitted in the output so the caller can mint
+   * a `[node_refs]` block for the #844 backend-node uid contract. Insertion
+   * order is preserved so the output map mirrors the visual order of lines.
+   */
+  emittedBackendNodeIds: Set<number>;
 }
 
 function appendTruncationMarker(ctx: SerializeContext): void {
@@ -370,6 +384,11 @@ function serializeNode(
 
       ctx.lines.push(fullLine);
       ctx.totalChars += fullLine.length;
+      // Track every backendNodeId emitted in this collapsed chain so the
+      // #844 [node_refs] block can mint stable uids for the entire visible
+      // DOM tree (chain ancestors + leaf), not just leaves.
+      for (const chainNode of chain) ctx.emittedBackendNodeIds.add(chainNode.backendNodeId);
+      ctx.emittedBackendNodeIds.add(leaf.backendNodeId);
 
       // Recurse into leaf's children
       if (leaf.children) {
@@ -394,6 +413,9 @@ function serializeNode(
 
     ctx.lines.push(lineWithNewline);
     ctx.totalChars += lineWithNewline.length;
+    // #844: track this node's backendNodeId so the [node_refs] block can
+    // mint a stable uid for it.
+    ctx.emittedBackendNodeIds.add(node.backendNodeId);
   }
 
   // Handle iframe content document
@@ -470,6 +492,11 @@ function serializeNode(
         if (ctx.totalChars + summaryLine.length <= ctx.maxOutputChars) {
           ctx.lines.push(summaryLine);
           ctx.totalChars += summaryLine.length;
+          // #844: the summary line surfaces the first/last backendNodeIds of
+          // the dedup'd run; mint stable uids for both endpoints so callers
+          // can refer to the range bounds without a fresh DOM read.
+          ctx.emittedBackendNodeIds.add(firstRef);
+          ctx.emittedBackendNodeIds.add(lastRef);
         }
 
         // Emit last node if not already shown
@@ -509,7 +536,17 @@ export async function serializeDOM(
   page: Page,
   cdpClient: CDPClientLike,
   options?: DOMSerializerOptions,
-): Promise<{ content: string; pageStats: PageStats; truncated: boolean }> {
+): Promise<{
+  content: string;
+  pageStats: PageStats;
+  truncated: boolean;
+  /**
+   * Backend node ids emitted into `content`, in insertion order. Callers
+   * use this to mint the #844 backend-node uid contract `[node_refs]`
+   * mapping block for the response.
+   */
+  emittedBackendNodeIds: number[];
+}> {
   const maxDepth = options?.maxDepth ?? -1;
   const maxOutputChars = options?.maxOutputChars ?? MAX_OUTPUT_CHARS;
   const includePageStats = options?.includePageStats ?? true;
@@ -564,6 +601,7 @@ export async function serializeDOM(
     includeUserAgentShadowDOM,
     nodesVisited: 0,
     maxNodes: DEFAULT_MAX_SERIALIZER_NODES,
+    emittedBackendNodeIds: new Set<number>(),
   };
 
   // Add page stats header through the same bounded append path as DOM lines.
@@ -583,5 +621,6 @@ export async function serializeDOM(
     content,
     pageStats,
     truncated: ctx.truncated,
+    emittedBackendNodeIds: Array.from(ctx.emittedBackendNodeIds),
   };
 }
