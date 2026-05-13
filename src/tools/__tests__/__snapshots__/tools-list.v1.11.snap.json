@@ -1,6 +1,4 @@
 {
-  "version": "1.11.0",
-  "description": "Baseline snapshot of all registered default tool names for the current develop surface. Used by capability-filter tests to assert P2 compliance (capability filtering does not change the default surface).",
   "tools": [
     {
       "name": "act"
@@ -160,6 +158,9 @@
     },
     {
       "name": "oc_recording_start"
+    },
+    {
+      "name": "oc_recording_status"
     },
     {
       "name": "oc_recording_stop"

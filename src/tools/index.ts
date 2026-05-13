@@ -258,6 +258,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_recording_export: 'recording',
   oc_recording_list: 'recording',
   oc_recording_start: 'recording',
+  oc_recording_status: 'recording',
   oc_recording_stop: 'recording',
 
   // workflow — Chrome-Sisyphus orchestration
