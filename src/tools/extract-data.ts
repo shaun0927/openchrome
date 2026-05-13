@@ -16,11 +16,8 @@ import {
   buildCssHeuristicExtractor,
   buildMultipleItemExtractor,
   buildExtractionPlan,
-<<<<<<< HEAD
   buildExtractionQueryPlan,
   ExtractionQueryParseError,
-=======
->>>>>>> origin/feat/974-schema-aware-extract
 } from '../extraction';
 import type { ExtractionSchema, SchemaProperty } from '../extraction';
 
@@ -74,7 +71,7 @@ const definition: MCPToolDefinition = {
 };
 
 function mergeResults(base: Record<string, unknown>, overlay: Record<string, unknown>): Record<string, unknown> {
-  const merged = Object.assign(Object.create(null), base) as Record<string, unknown>;
+  const merged = { ...base };
   for (const [key, value] of Object.entries(overlay)) {
     if ((merged[key] === null || merged[key] === undefined || merged[key] === '') && value !== null && value !== undefined && value !== '') {
       merged[key] = value;
@@ -96,12 +93,8 @@ const handler: ToolHandler = async (
   let schema = args.schema as ExtractionSchema | undefined;
   const query = args.query as string | undefined;
   const selector = args.selector as string | undefined;
-<<<<<<< HEAD
   const mode = (args.mode as string | undefined) || 'fast';
   let multiple = (args.multiple as boolean) ?? false;
-=======
-  const multiple = (args.multiple as boolean) ?? false;
->>>>>>> origin/feat/974-schema-aware-extract
   const debug = (args.debug as boolean) ?? false;
 
   if (!tabId) {
@@ -228,11 +221,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-<<<<<<< HEAD
       return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, queryPlan?.normalizedQuery, debug ? fieldDiagnostics : undefined);
-=======
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
->>>>>>> origin/feat/974-schema-aware-extract
     }
 
     // Strategy 2: Microdata
@@ -249,11 +238,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-<<<<<<< HEAD
       return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, queryPlan?.normalizedQuery, debug ? fieldDiagnostics : undefined);
-=======
-      return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
->>>>>>> origin/feat/974-schema-aware-extract
     }
 
     // Strategy 4: CSS heuristic
@@ -263,11 +248,7 @@ const handler: ToolHandler = async (
     } catch { /* non-fatal */ }
 
     const { result, validation } = validateAndCoerce(merged, schema);
-<<<<<<< HEAD
     return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, queryPlan?.normalizedQuery, debug ? fieldDiagnostics : undefined);
-=======
-    return buildResponse(result, validation.errors, pageUrl, strategies, domain, fieldNames, debug ? fieldDiagnostics : undefined);
->>>>>>> origin/feat/974-schema-aware-extract
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -275,11 +256,7 @@ const handler: ToolHandler = async (
 
 function buildResponse(
   data: Record<string, unknown>, errors: string[], url: string,
-<<<<<<< HEAD
   strategies: string[], domain: string, fieldNames: string[], normalizedQuery?: string,
-=======
-  strategies: string[], domain: string, fieldNames: string[],
->>>>>>> origin/feat/974-schema-aware-extract
   fieldDiagnostics?: Record<string, { resolvedVia?: string; aliasesTried: string[] }>
 ): MCPResult {
   const fieldsFound = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k]) => k);
