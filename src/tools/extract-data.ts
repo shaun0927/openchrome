@@ -37,7 +37,7 @@ import {
 const definition: MCPToolDefinition = {
   name: 'extract_data',
   description:
-    'Extract structured data from page using a JSON Schema. Tries JSON-LD, Microdata, OpenGraph, and CSS heuristics. Use multiple:true for listings. Use mode="semantic" with query for bounded host-side semantic extraction chunks.\n\nWhen to use: Extracting typed structured data (products, articles, prices) from a page into a schema.\nWhen NOT to use: Use javascript_tool for ad-hoc extraction, or read_page to read raw page content.',
+    'Extract structured data with a JSON Schema from JSON-LD, Microdata, OpenGraph, or CSS. Use multiple:true for listings; mode="semantic" plus query for bounded host-side semantic chunks.\n\nWhen to use: Typed products, articles, prices, or semantic facts into a schema.\nWhen NOT to use: Use read_page for raw content or javascript_tool for ad-hoc scraping.',
   inputSchema: {
     type: 'object',
     properties: {
