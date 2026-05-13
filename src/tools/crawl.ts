@@ -28,13 +28,7 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
-<<<<<<< HEAD
 import { buildTextMetrics } from '../core/metrics/token-estimate';
-=======
-import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
-import { sanitizeContent } from '../security/content-sanitizer';
-import { getGlobalConfig } from '../config/global';
->>>>>>> origin/develop
 import { AdaptiveCrawlDispatcher, DispatcherMode, parseAdaptiveDispatcherOptions } from '../core/crawl/dispatcher';
 
 const definition: MCPToolDefinition = {
@@ -73,16 +67,8 @@ const definition: MCPToolDefinition = {
       },
       output_format: {
         type: 'string',
-        enum: ['markdown', 'text', 'structured', 'markdown-clean'],
-        description: 'Content format per page. "markdown-clean" uses cheerio+turndown to strip nav/footer/ads. Default: markdown',
-      },
-      onlyMainContent: {
-        type: 'boolean',
-        description: 'markdown-clean only: strip nav/header/footer/aside/ads. Default: true.',
-      },
-      includeLinks: {
-        type: 'boolean',
-        description: 'markdown-clean only: preserve <a> as markdown links. Default: true.',
+        enum: ['markdown', 'text', 'structured'],
+        description: 'Content format per page. Default: markdown',
       },
       respect_robots: {
         type: 'boolean',
@@ -211,21 +197,6 @@ async function fetchRobotsTxt(
 // the caller (auto mode) can fall back to CDP.
 // ---------------------------------------------------------------------------
 
-
-function cleanMarkdownFromHtml(
-  html: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
-): string {
-  const { html: cleaned } = extractMainContent(html, { onlyMainContent: cleanOpts.onlyMainContent });
-  let cleanMd = toMarkdown(cleaned, { includeLinks: cleanOpts.includeLinks });
-  const cfg = getGlobalConfig();
-  if (cfg.security?.sanitize_content !== false) {
-    const sanitized = sanitizeContent(cleanMd);
-    cleanMd = sanitized.text + sanitized.sanitizationNote;
-  }
-  return cleanMd;
-}
-
 function buildMarkdownFromHtml(html: string): { title: string; content: string } {
   const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
   const title = titleMatch ? titleMatch[1].trim() : '';
@@ -263,7 +234,6 @@ async function fetchPageStatic(
   url: string,
   depth: number,
   outputFormat: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
   context?: ToolContext,
 ): Promise<
   | { ok: true; page: CrawledPage & { _links?: string[] } }
@@ -287,10 +257,6 @@ async function fetchPageStatic(
       title = titleMatch ? titleMatch[1].trim() : '';
       const bodyMatch = html.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i);
       content = bodyMatch ? bodyMatch[1] : html;
-    } else if (outputFormat === 'markdown-clean') {
-      const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
-      title = titleMatch ? titleMatch[1].trim() : '';
-      content = cleanMarkdownFromHtml(html, cleanOpts);
     } else {
       const built = buildMarkdownFromHtml(html);
       title = built.title;
@@ -327,8 +293,6 @@ async function fetchPageStatic(
 /** Options for `fetchOnePage`, shared by legacy crawl and host-driven crawl jobs. */
 export interface FetchOnePageOptions {
   outputFormat: string;
-  onlyMainContent?: boolean;
-  includeLinks?: boolean;
 }
 
 /** Single-page crawl result plus transient links for BFS/job queue expansion. */
@@ -347,11 +311,7 @@ export async function fetchOnePage(
   opts: FetchOnePageOptions,
   context?: ToolContext,
 ): Promise<FetchOnePageResult> {
-  const cleanOpts = {
-    onlyMainContent: opts.onlyMainContent !== false,
-    includeLinks: opts.includeLinks !== false,
-  };
-  return fetchPage(sessionId, url, depth, opts.outputFormat, cleanOpts, context) as Promise<FetchOnePageResult>;
+  return fetchPage(sessionId, url, depth, opts.outputFormat, context) as Promise<FetchOnePageResult>;
 }
 
 async function fetchPage(
@@ -359,7 +319,6 @@ async function fetchPage(
   url: string,
   depth: number,
   outputFormat: string,
-  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
   context?: ToolContext,
 ): Promise<CrawledPage> {
   const sessionManager = getSessionManager();
@@ -379,46 +338,6 @@ async function fetchPage(
 
     // Small settle delay for dynamic content
     await new Promise((r) => setTimeout(r, 500));
-
-    if (outputFormat === 'markdown-clean') {
-      const fullHtml = await withTimeout(
-        page.content(),
-        15000,
-        'crawl.page.content',
-        context,
-      );
-      const linkResult = await withTimeout(
-        page.evaluate(() => {
-          const title = document.title || '';
-          const links: string[] = [];
-          document.querySelectorAll('a[href]').forEach((a) => {
-            const href = (a as HTMLAnchorElement).href;
-            if (href && !href.startsWith('javascript:') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
-              links.push(href);
-            }
-          });
-          return { title, links };
-        }),
-        15000,
-        'crawl.page.linkScan',
-        context,
-      );
-      await sessionManager.closeTarget(sessionId, tid);
-      targetId = null;
-
-      let cleanMd = cleanMarkdownFromHtml(fullHtml, cleanOpts);
-      if (cleanMd.length > MAX_OUTPUT_CHARS) {
-        cleanMd = cleanMd.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
-      }
-      return {
-        url,
-        title: linkResult.title,
-        content: cleanMd,
-        depth,
-        links_found: linkResult.links.length,
-        ...(linkResult.links.length > 0 ? { _links: linkResult.links } as Record<string, unknown> : {}),
-      } as CrawledPage & { _links?: string[] };
-    }
 
     // Extract content and links in one page.evaluate call
     const result = await withTimeout(
@@ -578,10 +497,6 @@ const handler: ToolHandler = async (
   const includePatterns = args.include_patterns as string[] | undefined;
   const excludePatterns = args.exclude_patterns as string[] | undefined;
   const outputFormat = (args.output_format as string) || 'markdown';
-  const cleanOpts = {
-    onlyMainContent: args.onlyMainContent !== false,
-    includeLinks: args.includeLinks !== false,
-  };
   const respectRobots = args.respect_robots !== false;
   const delayMs = args.delay_ms != null ? Number(args.delay_ms) : 1000;
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
@@ -736,7 +651,6 @@ const handler: ToolHandler = async (
                 item.url,
                 item.depth,
                 outputFormat,
-                cleanOpts,
                 context,
               );
               if (staticResult.ok) {
@@ -760,7 +674,6 @@ const handler: ToolHandler = async (
                   item.url,
                   item.depth,
                   outputFormat,
-                  cleanOpts,
                   context,
                 );
                 engineUsed = 'cdp';
@@ -772,7 +685,6 @@ const handler: ToolHandler = async (
                 item.url,
                 item.depth,
                 outputFormat,
-                cleanOpts,
                 context,
               );
               if (engineExplicit) engineUsed = 'cdp';
