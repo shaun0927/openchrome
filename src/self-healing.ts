@@ -16,3 +16,20 @@ export type { EventLoopMonitorOptions, BlockEvent } from './watchdog/event-loop-
 
 export { HealthEndpoint } from './watchdog/health-endpoint';
 export type { HealthData, HealthDataProvider } from './watchdog/health-endpoint';
+
+export {
+  buildAutoSnapshotArgs,
+  markAutoSnapshotRecorded,
+  normalizeAutoSnapshotPolicy,
+  redactSnapshotText,
+  shouldTakeAutoSnapshot,
+} from './session-snapshot-policy';
+export type {
+  AutoSnapshotPolicyConfig,
+  NormalizedAutoSnapshotPolicy,
+  SessionSnapshotArgs,
+  SnapshotDecision,
+  SnapshotMemoInput,
+  SnapshotPolicyState,
+  SnapshotTrigger,
+} from './session-snapshot-policy';

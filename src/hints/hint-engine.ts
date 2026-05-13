@@ -375,7 +375,7 @@ export class HintEngine {
    * Write a log entry via buffered async stream (best-effort, non-blocking).
    */
   private log(entry: HintLogEntry): void {
-    if (!this.logStream) return;
+    if (!this.logFilePath) return;
     this.logBuffer.push(JSON.stringify(entry) + '\n');
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => {
@@ -385,12 +385,16 @@ export class HintEngine {
   }
 
   /**
-   * Flush buffered log entries to the write stream.
+   * Flush buffered log entries to disk.
+   *
+   * Use a synchronous append for the tiny buffered JSONL payloads so destroy()
+   * is deterministic for shutdown and tests. A WriteStream may acknowledge
+   * end() asynchronously, which can leave readers racing an empty/missing file.
    */
   private flushBuffer(): void {
-    if (this.logBuffer.length > 0 && this.logStream) {
+    if (this.logBuffer.length > 0 && this.logFilePath) {
       const data = this.logBuffer.join('');
-      this.logStream.write(data);
+      fs.appendFileSync(this.logFilePath, data, 'utf-8');
       this.logBuffer = [];
     }
     this.flushTimer = null;
