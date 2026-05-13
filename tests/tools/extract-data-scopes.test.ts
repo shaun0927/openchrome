@@ -54,6 +54,7 @@ describe('extract_data scoped extraction', () => {
     jest.clearAllMocks();
     (getRefIdManager as jest.Mock).mockReturnValue({
       isRefStale: jest.fn(() => false),
+      getRef: jest.fn((_sessionId: string, _tabId: string, refId: string) => refId === 'ref_7' ? { backendDOMNodeId: 321, frameId: 'frame-1' } : undefined),
       resolveToBackendNodeId: jest.fn(() => 321),
     });
   });
@@ -143,13 +144,14 @@ describe('extract_data scoped extraction', () => {
     const result = await extractDataHandler('s1', { tabId: 't1', schema, ref_id: 'ref_7' });
     const body = responseJson(result);
 
-    expect(getRefIdManager().resolveToBackendNodeId).toHaveBeenCalledWith('s1', 't1', 'ref_7');
+    expect(getRefIdManager().getRef).toHaveBeenCalledWith('s1', 't1', 'ref_7');
+    expect(getRefIdManager().resolveToBackendNodeId).not.toHaveBeenCalled();
     expect(send).toHaveBeenNthCalledWith(1, expect.anything(), 'DOM.resolveNode', { backendNodeId: 321 });
     expect(send).toHaveBeenNthCalledWith(2, expect.anything(), 'Runtime.callFunctionOn', expect.objectContaining({
       objectId: 'obj-1',
       returnByValue: true,
     }));
-    expect(body.scope).toEqual({ type: 'ref_id', resolved: true, ref_id: 'ref_7', backendNodeId: 321 });
+    expect(body.scope).toEqual({ type: 'ref_id', resolved: true, ref_id: 'ref_7', backendNodeId: 321, frameId: 'frame-1' });
     expect((body.data as Record<string, unknown>).title).toBe('Scoped ref title');
     expect((evaluate.mock.calls[0][0] as string)).toContain('data-openchrome-extract-scope');
   });
@@ -183,6 +185,21 @@ describe('extract_data scoped extraction', () => {
     expect(result.content?.[0]?.text).toContain('STALE_REF');
     expect(result.content?.[0]?.text).toContain('read_page');
     expect(result.content?.[0]?.text).toContain('oc_observe');
+  });
+
+
+  it('does not fall back to document extraction when a scoped marker is unavailable', async () => {
+    installPage(async (script: string) => {
+      if (script.includes('data-openchrome-extract-scope')) return {};
+      if (script.includes('application/ld+json')) return { title: 'Global leaked title', price: '$99' };
+      return { title: 'Global leaked title' };
+    });
+
+    const result = await extractDataHandler('s1', { tabId: 't1', schema, backendNodeId: 654 });
+    const body = responseJson(result);
+
+    expect(body.scope).toEqual({ type: 'backendNodeId', resolved: true, backendNodeId: 654 });
+    expect(body.data).toEqual({ title: null, price: null });
   });
 
   it('resolves backendNodeId scopes without document-level structured-data leakage', async () => {

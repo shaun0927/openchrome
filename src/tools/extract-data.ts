@@ -91,7 +91,7 @@ function countFields(data: Record<string, unknown>): number {
 type ExtractionScope =
   | { type: 'document'; resolved: true }
   | { type: 'selector'; resolved: true; selector: string }
-  | { type: 'ref_id'; resolved: true; ref_id: string; backendNodeId: number }
+  | { type: 'ref_id'; resolved: true; ref_id: string; backendNodeId: number; frameId?: string }
   | { type: 'backendNodeId'; resolved: true; backendNodeId: number };
 
 function parseBackendNodeId(value: unknown): number | undefined {
@@ -221,7 +221,8 @@ const handler: ToolHandler = async (
           isError: true,
         };
       }
-      const backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, refId);
+      const refEntry = typeof refIdManager.getRef === 'function' ? refIdManager.getRef(sessionId, tabId, refId) : undefined;
+      const backendNodeId = refEntry?.backendDOMNodeId ?? refIdManager.resolveToBackendNodeId(sessionId, tabId, refId);
       if (!backendNodeId) {
         return {
           content: [{ type: 'text', text: `Error: ${formatStaleRefError(refId)}; alternatively call oc_observe to get fresh refs.` }],
@@ -232,7 +233,7 @@ const handler: ToolHandler = async (
         const selectorFromRef = await createBackendNodeScopeSelector(page, sessionManager.getCDPClient(), backendNodeId);
         if (!selectorFromRef) throw new Error('CDP did not return a resolvable Element');
         scopeSelector = selectorFromRef;
-        scope = { type: 'ref_id', resolved: true, ref_id: refId, backendNodeId };
+        scope = { type: 'ref_id', resolved: true, ref_id: refId, backendNodeId, ...(refEntry?.frameId ? { frameId: refEntry.frameId } : {}) };
       } catch (error) {
         return {
           content: [{
