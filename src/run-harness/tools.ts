@@ -137,7 +137,6 @@ export function registerRunHarnessTools(server: MCPServer): void {
 function recordSummary(record: RunRecord): Record<string, unknown> {
   return {
     run_id: record.run_id,
-    resource_uri: `openchrome://runs/${encodeURIComponent(record.run_id)}`,
     status: record.status,
     created_at: record.created_at,
     updated_at: record.updated_at,
