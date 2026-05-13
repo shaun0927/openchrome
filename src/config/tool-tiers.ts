@@ -23,6 +23,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_observe: 1,              // src/tools/oc-observe.ts — compact observable action map (#866)
   inspect: 1,
   query_dom: 1,
+  oc_query: 1, // src/tools/oc-query.ts — semantic refs for interaction workflows (#1045)
   javascript_tool: 1,
   tabs_context: 1,
   tabs_create: 1,
