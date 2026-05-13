@@ -25,11 +25,6 @@ describe('check: chrome-binary', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    // Note: `jest.resetModules()` is intentionally NOT called here.
-    // The `mockExistsSync` / `mockExecFileSync` references are bound at
-    // module-load time; resetting the module cache would force the source
-    // (re-imported via dynamic `await import(...)`) to receive a fresh fs
-    // mock whose return values are unset, defeating the per-test setup.
     process.env = { ...originalEnv };
     delete process.env.CHROME_PATH;
   });
@@ -41,7 +36,7 @@ describe('check: chrome-binary', () => {
   test('ok when Chrome found and returns valid version', async () => {
     process.env.CHROME_PATH = '/usr/bin/chrome';
     mockExistsSync.mockReturnValue(true);
-    mockExecFileSync.mockReturnValue('Google Chrome 120.0.0.0' as never);
+    mockExecFileSync.mockReturnValue('Google Chrome 120.0.0.0');
 
     const { checkChromeBinary } = await import('../../../../src/cli/doctor/checks/chrome-binary');
     const result = await checkChromeBinary();
@@ -66,7 +61,7 @@ describe('check: chrome-binary', () => {
   test('fail when Chrome version is too old', async () => {
     process.env.CHROME_PATH = '/usr/bin/chrome';
     mockExistsSync.mockReturnValue(true);
-    mockExecFileSync.mockReturnValue('Google Chrome 50.0.0.0' as never);
+    mockExecFileSync.mockReturnValue('Google Chrome 50.0.0.0');
 
     const { checkChromeBinary } = await import('../../../../src/cli/doctor/checks/chrome-binary');
     const result = await checkChromeBinary();

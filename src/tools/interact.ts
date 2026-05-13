@@ -7,9 +7,8 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
-import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
+import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
@@ -20,23 +19,9 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
-import {
-  appendReturnAfterState,
-  parseReturnAfterState,
-  RETURN_AFTER_STATE_SCHEMA,
-  type ReturnAfterState,
-} from './_shared/return-after-state';
-import {
-  formatNodeRefToken,
-  formatUidEvictedError,
-  getCurrentLoaderId,
-  isNodeRefEnabled,
-  mintNodeRefSync,
-  resolveNodeRef,
-} from '../core/perception/node-ref';
 import { dispatchCoordinateClick } from '../cdp/input';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
-import { guardIrreversibleBrowserAction } from '../harness/irreversible-action';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 
 /**
  * Inject the structured {@link VerifyReport} onto an MCPResult under
@@ -51,7 +36,8 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find an element by natural language and click/hover/double_click; returns state summary after DOM settles.\n\nWhen to use: clicking/hovering an element you can describe in plain language. For Shadow DOM / canvas / cross-origin iframes, screenshot first and call with mode:"coordinate".\nWhen NOT to use: computer for plain-DOM coordinate clicks, or act for multi-step sequences.', 
+  description: 'Find element by natural language; click/hover/double_click it; wait for DOM settle; return state.\n\nWhen to use: One described element action, with coordinate fallback for Shadow DOM/canvas/iframes.\nWhen NOT to use: Use act for multi-step flows; computer for general coordinate clicks.',
+  annotations: TOOL_ANNOTATIONS.interact,
   inputSchema: {
     type: 'object',
     properties: {
@@ -84,11 +70,6 @@ const definition: MCPToolDefinition = {
         },
         required: ['x', 'y'],
       },
-      nodeRef: {
-        type: 'string',
-        description:
-          'Stable backend-node uid (e.g. "n_42") issued by a prior read_page/query_dom/inspect call. When provided, bypasses element discovery. On a uid that was evicted by navigation, returns a structured "uid_evicted" error.',
-      },
       action: {
         type: 'string',
         enum: ['click', 'double_click', 'hover'],
@@ -112,222 +93,19 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
-      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
       ref: {
         type: 'string',
-        description:
-          'Optional element ref from a recent read_page(mode="ax") snapshot. ' +
-          'When supplied and fresh, the tool skips DOM/AX re-resolution. ' +
-          'Stale or unknown refs return a STALE_REF error — call read_page again.',
+        description: 'Snapshot ref ID (from read_page refs map). When provided, skips AX re-resolution and clicks the element directly via its cached backendDOMNodeId.',
+      },
+      intent: {
+        type: 'string',
+        maxLength: 120,
+        description: 'Optional short label (≤120 chars) describing the user-facing goal of this action, e.g. "submit login form". Recorded in the task journal for observability.',
       },
     },
-    // `query` is no longer strictly required: a caller can pass `nodeRef`
-    // instead. We validate at runtime so the JSON-schema stays minimal and
-    // P2-stable (the schema does not change shape regardless of the
-    // OPENCHROME_NODE_REF flag value).
     required: ['tabId'],
   },
-  annotations: TOOL_ANNOTATIONS.interact,
 };
-
-/**
- * Shared post-action response builder.
- *
- * Both the ref fast-path and the AX/CSS resolution paths funnel through this
- * helper so that `verify`, `returnFormat`, state-summary, and DOM-delta
- * output behave identically regardless of which path produced the action.
- *
- * #948 codex P1: this was previously inlined in the AX/CSS branches only, so
- * the ref path silently dropped `verify=true` screenshots and
- * `returnFormat='state_summary' | 'both'` summaries.
- */
-type PostActionInput = {
-  page: any;
-  context: ToolContext | undefined;
-  headerLine: string;
-  delta: string | null | undefined;
-  returnFormat: string;
-  verify: boolean | undefined;
-  verifyReport?: VerifyReport;
-  extraTopLevel?: Record<string, unknown>;
-  sessionId?: string;
-  tabId?: string;
-  returnAfterState?: ReturnAfterState;
-};
-
-async function buildPostActionResponse(input: PostActionInput): Promise<MCPResult> {
-  const {
-    page,
-    context,
-    headerLine,
-    delta,
-    returnFormat,
-    verify,
-    verifyReport,
-    extraTopLevel,
-    sessionId,
-    tabId,
-    returnAfterState = 'none',
-  } = input;
-
-  const lines: string[] = [headerLine];
-
-  if ((returnFormat === 'dom_delta' || returnFormat === 'both') && delta) {
-    lines.push(delta);
-  }
-
-  if (returnFormat === 'state_summary' || returnFormat === 'both') {
-    type StateSummary = {
-      url: string;
-      title: string;
-      scrollX: number;
-      scrollY: number;
-      activeInfo: string;
-      panels: string[];
-      headings: string[];
-    };
-    const stateSummary = (await withTimeout(page.evaluate(() => {
-      const url = window.location.href;
-      const title = document.title;
-      const scrollX = Math.round(window.scrollX);
-      const scrollY = Math.round(window.scrollY);
-
-      const active = document.activeElement;
-      let activeInfo = 'none';
-      if (active && active !== document.body) {
-        const inputEl = active as HTMLInputElement;
-        const role =
-          active.getAttribute('role') ||
-          (active.tagName === 'BUTTON'
-            ? 'button'
-            : active.tagName === 'INPUT'
-              ? inputEl.type || 'textbox'
-              : active.tagName.toLowerCase());
-        const name =
-          active.getAttribute('aria-label') ||
-          active.getAttribute('title') ||
-          active.textContent?.trim().slice(0, 40) ||
-          '';
-        activeInfo = `${role}${name ? ` "${name}"` : ''}`;
-      }
-
-      const panels: string[] = [];
-      const panelSelectors = [
-        '[role="tabpanel"]',
-        '[role="dialog"]',
-        '[role="main"]',
-        'main',
-        '.panel',
-        '[class*="panel"]',
-        '[class*="content"]',
-      ];
-      for (const sel of panelSelectors) {
-        if (panels.length >= 3) break;
-        try {
-          const els = document.querySelectorAll(sel);
-          for (const el of els) {
-            if (panels.length >= 3) break;
-            const rect = el.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) continue;
-            const style = window.getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden') continue;
-            const text = el.textContent?.trim().slice(0, 80) || '';
-            if (text.length > 10) {
-              panels.push(text);
-            }
-          }
-        } catch {
-          // skip bad selectors
-        }
-      }
-
-      const headings: string[] = [];
-      for (const hEl of document.querySelectorAll('h1, h2, h3, [role="heading"]')) {
-        const rect = hEl.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) continue;
-        const style = window.getComputedStyle(hEl);
-        if (style.display === 'none' || style.visibility === 'hidden') continue;
-        const text = hEl.textContent?.trim().slice(0, 60) || '';
-        if (text) headings.push(text);
-        if (headings.length >= 3) break;
-      }
-
-      return { url, title, scrollX, scrollY, activeInfo, panels, headings };
-    }), 10000, 'interact', context).catch(() => ({
-      url: '', title: '', scrollX: 0, scrollY: 0,
-      activeInfo: 'unknown', panels: [] as string[], headings: [] as string[],
-    }))) as StateSummary;
-
-    lines.push(
-      `[State Summary] url: ${stateSummary.url} | scroll: ${stateSummary.scrollX},${stateSummary.scrollY} | active: ${stateSummary.activeInfo}`
-    );
-    const headings = Array.isArray(stateSummary.headings) ? stateSummary.headings : [];
-    const panels = Array.isArray(stateSummary.panels) ? stateSummary.panels : [];
-    if (headings.length > 0) {
-      lines.push(`[Headings] ${headings.map((h: string) => `"${h}"`).join(' | ')}`);
-    }
-    if (panels.length > 0) {
-      const panelParts = panels.map((p: string, i: number) => `Panel ${i + 1}: "${p}"`);
-      lines.push(`[Visible] ${panelParts.join(' | ')}`);
-    }
-  }
-
-  // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG.
-  let screenshotContent: { type: 'image'; data: string; mimeType: string } | null = null;
-  if (verify) {
-    try {
-      const screenshotResult = await Promise.race([
-        (async () => {
-          const cdpSession = await (page as any).target().createCDPSession();
-          try {
-            const { data } = await cdpSession.send('Page.captureScreenshot', {
-              format: 'webp',
-              quality: 60,
-              optimizeForSpeed: true,
-            });
-            return { data: data as string, mimeType: 'image/webp' };
-          } finally {
-            await cdpSession.detach().catch(() => {});
-          }
-        })(),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
-      ]);
-
-      if (screenshotResult) {
-        screenshotContent = { type: 'image' as const, ...screenshotResult };
-      } else {
-        throw new Error('CDP screenshot timed out');
-      }
-    } catch {
-      try {
-        let fallbackTimer: NodeJS.Timeout;
-        const screenshot = await Promise.race([
-          page.screenshot({ encoding: 'base64', type: 'png', fullPage: false }).finally(() => clearTimeout(fallbackTimer)),
-          new Promise<never>((_, reject) => {
-            fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
-          }),
-        ]);
-        screenshotContent = { type: 'image' as const, data: screenshot as unknown as string, mimeType: 'image/png' };
-      } catch {
-        // Screenshot failure is non-fatal
-      }
-    }
-  }
-
-  const responseContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
-    { type: 'text', text: lines.join('\n') },
-  ];
-  if (screenshotContent) responseContent.push(screenshotContent);
-
-  const result = attachVerifyReport({
-    content: responseContent,
-    ...(extraTopLevel || {}),
-  } as MCPResult, verifyReport);
-  if (sessionId && tabId) {
-    await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
-  }
-  return result;
-}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -337,9 +115,7 @@ const handler: ToolHandler = async (
   throwIfAborted(context);
   const tabId = args.tabId as string;
   const mode = (args.mode as string) || 'ref';
-  const query = args.query as string | undefined;
-  const ref = args.ref as string | undefined;
-  const nodeRefArg = typeof args.nodeRef === 'string' ? (args.nodeRef as string) : undefined;
+  const query = args.query as string;
   const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
@@ -347,7 +123,9 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
-  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+
+  const intent = args.intent as string | undefined;
+  const refArg = args.ref as string | undefined;
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -359,11 +137,88 @@ const handler: ToolHandler = async (
     };
   }
 
+  // ─── intent validation (#894) ───
+  if (intent !== undefined) {
+    if (typeof intent !== 'string' || intent.trim() === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must be a non-empty string with at most 120 characters.' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must be at most 120 characters.' }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Ref fast-path (#831) ───
+  if (refArg) {
+    // Check if the ref is stale (missing or TTL-expired).
+    if (refIdManager.isRefStale(sessionId, tabId, refArg)) {
+      return {
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" is no longer valid (element may have changed or page navigated). Call read_page to get fresh refs.` }],
+        isError: true,
+        error: { code: 'STALE_REF', ref_id: refArg },
+      } as MCPResult;
+    }
+
+    const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refArg);
+    if (!backendDOMNodeId) {
+      return {
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" could not be resolved to a DOM node.` }],
+        isError: true,
+        error: { code: 'STALE_REF', ref_id: refArg },
+      } as MCPResult;
+    }
+
+    try {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+      if (!page) {
+        return {
+          content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.` }],
+          isError: true,
+        };
+      }
+
+      const cdpClient = sessionManager.getCDPClient();
+      // Scroll into view then get bounding box
+      await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: backendDOMNodeId });
+      const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId: backendDOMNodeId }) as
+        { model: { content: number[] } };
+      const [x1, y1,, , x2,, , y2] = boxModel.model.content;
+      const cx = Math.round((x1 + x2) / 2);
+      const cy = Math.round((y1 + y2) / 2);
+
+      if (action === 'double_click') {
+        await page.mouse.click(cx, cy, { clickCount: 2 });
+      } else if (action === 'hover') {
+        await page.mouse.move(cx, cy);
+      } else {
+        await page.mouse.click(cx, cy);
+      }
+
+      const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+      const lines = [`${actionVerb} [${refArg}] [via ref]`];
+
+      return {
+        content: [{ type: 'text', text: lines.join('\n') }],
+        via: 'ref',
+      } as MCPResult;
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Interact error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  }
+
   // ─── Mode: coordinate ───
   if (mode === 'coordinate') {
-    if (query || ref || nodeRefArg) {
+    if (query) {
       return {
-        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query"/"ref"/"nodeRef" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
         isError: true,
       };
     }
@@ -444,9 +299,7 @@ const handler: ToolHandler = async (
         } catch { /* screenshot failed, non-fatal */ }
       }
 
-      const coordinateResult = { content: resultContent } as MCPResult;
-      await appendReturnAfterState(coordinateResult, page, sessionId, tabId, returnAfterState, context);
-      return coordinateResult;
+      return { content: resultContent };
     } catch (error) {
       return {
         content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
@@ -464,17 +317,14 @@ const handler: ToolHandler = async (
   }
   if (coordinateArg) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query", "ref", or "nodeRef" instead.' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" instead.' }],
       isError: true,
     };
   }
 
-  // Either query, ref, or nodeRef must be supplied for mode=ref. ref/nodeRef
-  // provide fast paths that skip DOM re-resolution; query falls back to AX → CSS
-  // discovery (#831/#844).
-  if (!query && !ref && !nodeRefArg) {
+  if (!query) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: either "query", "ref", or "nodeRef" is required when mode is "ref".' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" is required when mode is "ref".' }],
       isError: true,
     };
   }
@@ -492,243 +342,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    // ─── Ref Fast-Path (#831) ───
-    // When the caller provides an explicit `ref`, skip discovery entirely.
-    // A fresh ref → click via cached backendDOMNodeId.
-    // A stale/missing ref → STALE_REF (no silent coordinate fallback).
-    //
-    // Codex P1 (PR #948): the ref path now joins the same response-construction
-    // path as the AX/CSS paths so that callers requesting `verify: true` or
-    // `returnFormat: 'state_summary' | 'both'` still receive the screenshot /
-    // state-summary output. Previously the ref path returned early, dropping
-    // verify and returnFormat handling.
-    if (ref) {
-      const entry = refIdManager.getRef(sessionId, tabId, ref);
-      if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
-        return {
-          content: [{ type: 'text', text: formatStaleRefError(ref) }],
-          isError: true,
-          error: makeStaleRefError(ref),
-        };
-      }
-
-      const cdpClientForRef = sessionManager.getCDPClient();
-      try {
-        try {
-          await cdpClientForRef.send(page, 'DOM.scrollIntoViewIfNeeded', {
-            backendNodeId: entry.backendDOMNodeId,
-          });
-          await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
-        } catch {
-          // Detached nodes are surfaced as STALE_REF by box-model resolution.
-        }
-
-        let rectX = 0, rectY = 0;
-        try {
-          const { model } = await cdpClientForRef.send<{ model: { content: number[] } }>(
-            page, 'DOM.getBoxModel', { backendNodeId: entry.backendDOMNodeId }
-          );
-          if (model?.content && model.content.length >= 8) {
-            const bx = model.content[0], by = model.content[1];
-            const bw = model.content[2] - bx, bh = model.content[5] - by;
-            if (bw > 0 && bh > 0) {
-              rectX = Math.round(bx + bw / 2);
-              rectY = Math.round(by + bh / 2);
-            }
-          }
-        } catch {
-          return {
-            content: [{ type: 'text', text: formatStaleRefError(ref) }],
-            isError: true,
-            error: makeStaleRefError(ref),
-          };
-        }
-
-        if (rectX === 0 && rectY === 0) {
-          return {
-            content: [{ type: 'text', text: formatStaleRefError(ref) }],
-            isError: true,
-            error: makeStaleRefError(ref),
-          };
-        }
-
-        const isStealthRef = sessionManager.isStealthTarget(tabId);
-        const { result: refActionResult, verify: refVerifyReport } = await runVerify(
-          page,
-          verifyMode,
-          async () =>
-            withDomDelta(page, async () => {
-              if (isStealthRef) await humanMouseMove(page, rectX, rectY);
-              if (action === 'double_click') await page.mouse.click(rectX, rectY, { clickCount: 2 });
-              else if (action === 'hover') {
-                if (!isStealthRef) await page.mouse.move(rectX, rectY);
-              } else {
-                await page.mouse.click(rectX, rectY);
-              }
-            }, { settleMs: Math.max(150, waitAfter) }),
-        );
-        const refDelta = refActionResult.delta;
-
-        invalidateAXCache(getTargetId(page.target()));
-        await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
-
-        const refVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
-        const refOutcome = classifyOutcome(refDelta, entry.role);
-        const refLabel = `${entry.role}${entry.name ? ` "${entry.name}"` : ''}`;
-        const refLine = formatOutcomeLine(refOutcome, refVerb, refLabel, `[${ref}]`, '[via ref]');
-
-        // Build response using the same shared post-action handler as the
-        // AX/CSS paths — preserves `verify` and `returnFormat` behavior.
-        return await buildPostActionResponse({
-          page,
-          context,
-          headerLine: refLine,
-          delta: refDelta,
-          returnFormat,
-          verify: verifyMode === 'screenshot' || verifyMode === 'both',
-          verifyReport: refVerifyReport,
-          extraTopLevel: { via: 'ref' },
-          sessionId,
-          tabId,
-          returnAfterState,
-        });
-      } catch (refErr) {
-        throwIfAborted(context);
-        console.error(`[interact] ref fast-path failed for ${ref}: ${refErr instanceof Error ? refErr.message : String(refErr)}`);
-        return {
-          content: [{ type: 'text', text: formatStaleRefError(ref) }],
-          isError: true,
-          error: makeStaleRefError(ref),
-        };
-      }
-    }
-
-    // ─── nodeRef branch (#844) ───
-    // When the caller supplied a stable backend-node uid, resolve it before
-    // any element-discovery work. This bypasses CSS/AX scoring entirely and
-    // turns interact into a near-pure CDP click. On a uid that the registry
-    // no longer knows (because navigation evicted it), we return a
-    // structured `uid_evicted` error rather than a generic stale-ref panic
-    // — the hint engine recognises that prefix and suppresses its
-    // "Refs expire after page changes" hint (see hints/rules/error-recovery.ts).
-    if (nodeRefArg) {
-      const cdpClientForNodeRef = sessionManager.getCDPClient();
-      const resolved = resolveNodeRef(page, nodeRefArg);
-      if (!resolved) {
-        let currentLoaderId = '';
-        try {
-          currentLoaderId = await getCurrentLoaderId(page, cdpClientForNodeRef);
-        } catch {
-          currentLoaderId = '';
-        }
-        if (!isNodeRefEnabled()) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: nodeRef is not supported when OPENCHROME_NODE_REF is disabled. ${formatNodeRefToken(null)}`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        return {
-          content: [
-            {
-              type: 'text',
-              text: formatUidEvictedError(nodeRefArg, currentLoaderId || 'unknown'),
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      // Resolve the box model and click via CDP — single round-trip.
-      try {
-        await cdpClientForNodeRef.send(page, 'DOM.scrollIntoViewIfNeeded', {
-          backendNodeId: resolved.backendNodeId,
-        });
-        await new Promise((r) => setTimeout(r, DEFAULT_DOM_SETTLE_DELAY_MS));
-      } catch {
-        // continue — click attempt may still succeed
-      }
-      let cx = 0;
-      let cy = 0;
-      try {
-        const { model } = await cdpClientForNodeRef.send<{ model: { content: number[] } }>(
-          page,
-          'DOM.getBoxModel',
-          { backendNodeId: resolved.backendNodeId },
-        );
-        if (!model?.content || model.content.length < 8) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: nodeRef ${nodeRefArg} resolved but element has no box model (hidden or detached).`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        const bx = model.content[0];
-        const by = model.content[1];
-        const bw = model.content[2] - bx;
-        const bh = model.content[5] - by;
-        cx = Math.round(bx + bw / 2);
-        cy = Math.round(by + bh / 2);
-      } catch (boxErr) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `nodeRef interact error: getBoxModel failed: ${boxErr instanceof Error ? boxErr.message : String(boxErr)}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const isStealthNR = sessionManager.isStealthTarget(tabId);
-      const { delta: nrDelta } = await withDomDelta(
-        page,
-        async () => {
-          if (isStealthNR) await humanMouseMove(page, cx, cy);
-          if (action === 'double_click') {
-            await page.mouse.click(cx, cy, { clickCount: 2 });
-          } else if (action === 'hover') {
-            if (!isStealthNR) await page.mouse.move(cx, cy);
-          } else {
-            await page.mouse.click(cx, cy);
-          }
-        },
-        { settleMs: Math.max(150, waitAfter) },
-      );
-
-      invalidateAXCache(getTargetId(page.target()));
-
-      const verb =
-        action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
-      const outcome = classifyOutcome(nrDelta, 'element');
-      const refToken = formatNodeRefToken(nodeRefArg);
-      const line = formatOutcomeLine(
-        outcome,
-        verb,
-        `element via nodeRef`,
-        `[${nodeRefArg}]`,
-        `[${refToken}]`,
-      );
-
-      const lines: string[] = [line, refToken];
-      if (nrDelta) lines.push('', '[DOM Delta]', nrDelta);
-
-      const nodeRefResult = { content: [{ type: 'text', text: lines.join('\n') }] } as MCPResult;
-      await appendReturnAfterState(nodeRefResult, page, sessionId, tabId, returnAfterState, context);
-      return nodeRefResult;
-    }
-
-    const queryString = query as string;
-    const queryNorm = normalizeQuery(queryString);
+    const queryNorm = normalizeQuery(query);
     const queryLower = queryNorm;
     const queryTokens = tokenizeQuery(queryNorm);
 
@@ -742,7 +356,7 @@ const handler: ToolHandler = async (
     // Try AX tree first — the browser's accessibility engine understands all UI frameworks
     try {
       const axMatches = await withTimeout(
-        resolveElementsByAXTree(page, cdpClient, queryString, {
+        resolveElementsByAXTree(page, cdpClient, query, {
           useCenter: true,
           maxResults: 3,
         }),
@@ -778,28 +392,18 @@ const handler: ToolHandler = async (
         // Perform action with DOM delta — wrapped in runVerify so the per-action
         // verify report (AX-hash + pHash) is captured around the actual click.
         const isStealth = sessionManager.isStealthTarget(tabId);
-        const axGuard = await guardIrreversibleBrowserAction(
-          {
-            toolName: 'interact',
-            action,
-            labelText: `${query} ${ax.role} ${ax.name}`,
-            pageUrl: page.url(),
-          },
-          () => runVerify(
-            page,
-            verifyMode,
-            async () =>
-              withDomDelta(page, async () => {
-                // Stealth: use Bézier curve mouse path to avoid bot detection
-                if (isStealth) await humanMouseMove(page, axX, axY);
-                if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
-                else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
-                else await page.mouse.click(axX, axY);
-              }, { settleMs: Math.max(150, waitAfter) }),
-          ),
+        const { verify: axVerifyReport, result: axActionResult } = await runVerify(
+          page,
+          verifyMode,
+          async () =>
+            withDomDelta(page, async () => {
+              // Stealth: use Bézier curve mouse path to avoid bot detection
+              if (isStealth) await humanMouseMove(page, axX, axY);
+              if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
+              else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
+              else await page.mouse.click(axX, axY);
+            }, { settleMs: Math.max(150, waitAfter) }),
         );
-        if (axGuard.blocked) return axGuard.blocked;
-        const { verify: axVerifyReport, result: axActionResult } = axGuard.value!;
         const axDelta = axActionResult.delta;
 
         // Invalidate AX cache after interaction
@@ -810,15 +414,6 @@ const handler: ToolHandler = async (
           sessionId, tabId, ax.backendDOMNodeId,
           ax.role, ax.name, undefined, undefined
         );
-
-        // Mint a stable nodeRef (P2: token always present; null when off).
-        let axNodeRef: string | null = null;
-        try {
-          const loaderId = await getCurrentLoaderId(page, cdpClient);
-          axNodeRef = mintNodeRefSync(page, loaderId, ax.backendDOMNodeId);
-        } catch {
-          axNodeRef = null;
-        }
 
         // Clean up any leftover tags
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
@@ -843,7 +438,7 @@ const handler: ToolHandler = async (
           return { url, title, activeInfo };
         }), 3000, 'state-summary', context).catch(() => ({ url: '', title: '', activeInfo: 'unknown' }));
 
-        const lines: string[] = [axLine, formatNodeRefToken(axNodeRef)];
+        const lines: string[] = [axLine];
         if (axDelta) lines.push('', '[DOM Delta]', axDelta);
         if (axState.activeInfo !== 'none') lines.push('', `[Focused] ${axState.activeInfo}`);
 
@@ -865,9 +460,7 @@ const handler: ToolHandler = async (
           } catch { /* screenshot failed, non-fatal */ }
         }
 
-        const axResult = attachVerifyReport({ content: resultContent }, axVerifyReport);
-        await appendReturnAfterState(axResult, page, sessionId, tabId, returnAfterState, context);
-        return axResult;
+        return attachVerifyReport({ content: resultContent }, axVerifyReport);
       }
     } catch (axError) {
       throwIfAborted(context);
@@ -878,7 +471,7 @@ const handler: ToolHandler = async (
     // Budget check before expensive CSS discovery path
     if (context && !hasBudget(context, 15_000)) {
       return {
-        content: [{ type: 'text', text: `interact: deadline approaching — skipped CSS fallback for "${queryString}"` }],
+        content: [{ type: 'text', text: `interact: deadline approaching — skipped CSS fallback for "${query}"` }],
         isError: true,
       };
     }
@@ -915,7 +508,7 @@ const handler: ToolHandler = async (
           continue;
         }
         return {
-          content: [{ type: 'text', text: `No elements found matching "${queryString}"` }],
+          content: [{ type: 'text', text: `No elements found matching "${query}"` }],
           isError: true,
         };
       }
@@ -948,7 +541,7 @@ const handler: ToolHandler = async (
         content: [
           {
             type: 'text',
-            text: `No good match found for "${queryString}". Best candidate was "${bestMatch?.name || 'unknown'}" with low confidence.`,
+            text: `No good match found for "${query}". Best candidate was "${bestMatch?.name || 'unknown'}" with low confidence.`,
           },
         ],
         isError: true,
@@ -980,36 +573,26 @@ const handler: ToolHandler = async (
     // Perform the action with DOM delta capture, wrapped in runVerify so the
     // structured verify report (AX-hash + pHash) covers the actual click.
     const isStealthCSS = sessionManager.isStealthTarget(tabId);
-    const cssGuard = await guardIrreversibleBrowserAction(
-      {
-        toolName: 'interact',
-        action,
-        labelText: `${query} ${bestMatch.role} ${bestMatch.name} ${bestMatch.textContent ?? ''}`,
-        pageUrl: page.url(),
-      },
-      () => runVerify(
-        page,
-        verifyMode,
-        async () =>
-          withDomDelta(
-            page,
-            async () => {
-              // Stealth: use Bézier curve mouse path to avoid bot detection
-              if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
-              if (action === 'double_click') {
-                await page.mouse.click(finalX, finalY, { clickCount: 2 });
-              } else if (action === 'hover') {
-                if (!isStealthCSS) await page.mouse.move(finalX, finalY);
-              } else {
-                await page.mouse.click(finalX, finalY);
-              }
-            },
-            { settleMs: Math.max(150, waitAfter) }
-          ),
-      ),
+    const { result: cssDomResult, verify: cssVerifyReport } = await runVerify(
+      page,
+      verifyMode,
+      async () =>
+        withDomDelta(
+          page,
+          async () => {
+            // Stealth: use Bézier curve mouse path to avoid bot detection
+            if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
+            if (action === 'double_click') {
+              await page.mouse.click(finalX, finalY, { clickCount: 2 });
+            } else if (action === 'hover') {
+              if (!isStealthCSS) await page.mouse.move(finalX, finalY);
+            } else {
+              await page.mouse.click(finalX, finalY);
+            }
+          },
+          { settleMs: Math.max(150, waitAfter) }
+        ),
     );
-    if (cssGuard.blocked) return cssGuard.blocked;
-    const { result: cssDomResult, verify: cssVerifyReport } = cssGuard.value!;
     const { delta } = cssDomResult;
 
     // Generate ref for the interacted element
@@ -1024,17 +607,6 @@ const handler: ToolHandler = async (
         bestMatch.tagName,
         bestMatch.textContent
       );
-    }
-
-    // Mint a stable nodeRef (P2: token always present; null when off).
-    let cssNodeRef: string | null = null;
-    if (bestMatch.backendDOMNodeId) {
-      try {
-        const loaderId = await getCurrentLoaderId(page, cdpClient);
-        cssNodeRef = mintNodeRefSync(page, loaderId, bestMatch.backendDOMNodeId);
-      } catch {
-        cssNodeRef = null;
-      }
     }
 
     // Clean up discovery tags to prevent stale properties
@@ -1129,7 +701,7 @@ const handler: ToolHandler = async (
     }));
 
     // Build the response — compact success format
-    const lines: string[] = [interactedLine, formatNodeRefToken(cssNodeRef)];
+    const lines: string[] = [interactedLine];
 
     if (returnFormat === 'dom_delta' || returnFormat === 'both') {
       if (delta) {
@@ -1205,9 +777,7 @@ const handler: ToolHandler = async (
       responseContent.push(screenshotContent);
     }
 
-    const cssResult = attachVerifyReport({ content: responseContent }, cssVerifyReport);
-    await appendReturnAfterState(cssResult, page, sessionId, tabId, returnAfterState, context);
-    return cssResult;
+    return attachVerifyReport({ content: responseContent }, cssVerifyReport);
   } catch (error) {
     return {
       content: [
