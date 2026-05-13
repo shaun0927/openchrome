@@ -34,6 +34,7 @@ import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
 import { getIdleState } from '../utils/idle-state';
+import { assertDomainAllowed } from '../security/domain-guard';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -822,6 +823,16 @@ export class CDPClient {
       if (target.type() !== 'page') return;
 
       const url = target.url();
+      try {
+        assertDomainAllowed(url);
+      } catch (err) {
+        const targetId = getTargetId(target);
+        if (targetId) {
+          await this.closePage(targetId).catch(() => {});
+        }
+        console.error(`[CDPClient] Blocked popup target by domain policy (URL: ${url}): ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
       // Filter out Chrome internal pages and blank pages
       if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
           url.startsWith('devtools://') || url === 'about:blank') return;
@@ -1623,7 +1634,9 @@ export class CDPClient {
 
     if (url) {
       try {
+        assertDomainAllowed(url);
         await smartGoto(page, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+        assertDomainAllowed(page.url());
       } catch (err) {
         // Close the page to prevent about:blank ghost tabs on navigation failure
         const targetId = getTargetId(page.target());
@@ -1737,6 +1750,7 @@ export class CDPClient {
     await page.evaluateOnNewDocument(stackScript).catch(() => {});
 
     // Step 4: Navigate to the real URL — all defenses now fire at document_start
+    assertDomainAllowed(url);
     console.error(`[CDPClient] Stealth tab ${targetId}: navigating to ${url} with defenses pre-registered`);
     try {
       await page.goto(url, {
@@ -1753,6 +1767,14 @@ export class CDPClient {
     // The page has loaded with defenses active; this extra wait lets async challenges finish.
     const postNavSettleMs = Math.max(settleMs - 5000, 2000); // At least 2s, reduced from total settle
     await new Promise<void>(resolve => setTimeout(resolve, postNavSettleMs));
+
+    try {
+      assertDomainAllowed(page.url());
+    } catch (err) {
+      this.targetIdIndex.delete(targetId);
+      await page.close().catch(() => {});
+      throw err;
+    }
 
     // Step 6: Defense-in-depth — apply patches directly to the current page.
     // evaluateOnNewDocument should have handled this at document_start, but we

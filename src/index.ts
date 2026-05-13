@@ -88,6 +88,7 @@ program
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
   .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
+  .option('--allow-host <patterns>', 'Comma-separated host allowlist. When set, only http(s) hosts matching exact or leading-wildcard patterns may be opened (also: OPENCHROME_ALLOW_HOSTS).')
   .option('--audit-log', 'Enable security audit logging (default: false)')
   .option('--no-sanitize-content', 'Disable content sanitization for prompt injection defense (default: enabled)')
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
@@ -358,6 +359,18 @@ program
         security: { ...existing, blocked_domains: blockedList },
       });
       console.error(`[openchrome] Blocked domains: ${blockedList.join(', ')}`);
+    }
+
+    // Configure host allowlist if provided. Env is read by the guard at enforcement time
+    // so CLI and OPENCHROME_ALLOW_HOSTS compose without overwriting each other.
+    const allowHostOption = (options as { allowHost?: string }).allowHost;
+    if (allowHostOption) {
+      const allowHosts = allowHostOption.split(',').map((d: string) => d.trim()).filter(Boolean);
+      const existing = getGlobalConfig().security || {};
+      setGlobalConfig({
+        security: { ...existing, allow_hosts: allowHosts },
+      });
+      console.error(`[openchrome] Allowed hosts: ${allowHosts.join(', ')}`);
     }
 
     // Configure audit logging if enabled
