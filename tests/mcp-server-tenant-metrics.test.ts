@@ -19,6 +19,7 @@ describe('MCPServer tenant-aware metric emission', () => {
         name: toolName,
         description: 'tenant metric test',
         inputSchema: { type: 'object', properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       },
     );
 

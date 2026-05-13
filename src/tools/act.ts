@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -89,6 +90,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'instruction'],
   },
+  annotations: TOOL_ANNOTATIONS.act,
 };
 
 // ─── Element resolution helper ───

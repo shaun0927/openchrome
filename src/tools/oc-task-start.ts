@@ -17,6 +17,7 @@ import {
   ToolContext,
   ToolHandler,
 } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import {
   TaskStore,
   computeTaskId,
@@ -52,6 +53,7 @@ const definition: MCPToolDefinition = {
     'that can be polled with oc_task_get / oc_task_list / oc_task_wait, ' +
     'or aborted with oc_task_cancel. The result is persisted to disk and ' +
     'survives MCP-session loss.',
+  annotations: TOOL_ANNOTATIONS.oc_task_start,
   inputSchema: {
     type: 'object',
     properties: {
