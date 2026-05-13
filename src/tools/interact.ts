@@ -21,6 +21,15 @@ import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
 import { dispatchCoordinateClick } from '../cdp/input';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import {
+  getLocatorFallbackProvider,
+  isLocatorFallbackEnabled,
+  locatorFallbackThreshold,
+  resolveLocatorFallback,
+  type LocatorFallbackCandidate,
+  type LocatorFallbackTrigger,
+  type ValidatedLocatorFallbackCandidate,
+} from '../core/perception/locator-fallback';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { isPilotEnabled } from '../harness/flags';
 
@@ -126,10 +135,88 @@ const definition: MCPToolDefinition = {
         maxLength: 120,
         description: 'Optional short label (≤120 chars) describing the user-facing goal of this action, e.g. "submit login form". Recorded in the task journal for observability.',
       },
+      locatorFallback: {
+        type: 'object',
+        description: 'Opt-in AI locator fallback extension point. Disabled by default; when enabled, provider candidates are validated before any action.',
+        properties: {
+          enabled: { type: 'boolean', description: 'Enable locator fallback for stale/missing/ambiguous targets.' },
+          minConfidence: { type: 'number', minimum: 0, maximum: 1, description: 'Minimum provider confidence before validation. Default: 0.7.' },
+        },
+      },
     },
     required: ['tabId'],
   },
 };
+
+async function validateBackendNodeClickability(
+  page: any,
+  backendNodeId: number,
+  cdpClient: { send: (page: any, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+): Promise<boolean> {
+  const resolved = await cdpClient.send(page, 'DOM.resolveNode', { backendNodeId }) as { object?: { objectId?: string } };
+  const objectId = resolved.object?.objectId;
+  if (!objectId) return false;
+
+  const checked = await cdpClient.send(page, 'Runtime.callFunctionOn', {
+    objectId,
+    returnByValue: true,
+    functionDeclaration: `function () {
+      if (!(this instanceof HTMLElement)) return { clickable: false };
+      const box = this.getBoundingClientRect();
+      const style = window.getComputedStyle(this);
+      const disabled = this.disabled === true || this.getAttribute('aria-disabled') === 'true';
+      const visible = box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.pointerEvents !== 'none';
+      return { clickable: visible && !disabled };
+    }`,
+  }) as { result?: { value?: { clickable?: boolean } } };
+  return checked.result?.value?.clickable === true;
+}
+
+async function validateLocatorCandidate(
+  page: any,
+  candidate: LocatorFallbackCandidate,
+  resolveBackendNodeId?: (ref: string) => number | undefined,
+  cdpClient?: { send: (page: any, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+): Promise<ValidatedLocatorFallbackCandidate | null> {
+  const backendNodeId = candidate.backendNodeId ?? (candidate.ref ? resolveBackendNodeId?.(candidate.ref) : undefined);
+  if (typeof backendNodeId === 'number' && cdpClient) {
+    try {
+      await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
+      if (!(await validateBackendNodeClickability(page, backendNodeId, cdpClient))) {
+        throw new Error('backend node is not clickable');
+      }
+      const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId }) as { model?: { content?: number[] } };
+      const content = boxModel.model?.content;
+      if (!content || content.length < 8) throw new Error('invalid box model');
+      const [x1, y1,, , x2,, , y2] = content;
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      if (width <= 0 || height <= 0) throw new Error('invalid box dimensions');
+      return {
+        ...candidate,
+        selector: candidate.selector ?? candidate.ref ?? `backendNodeId:${backendNodeId}`,
+        backendNodeId,
+        rect: { x: (x1 + x2) / 2, y: (y1 + y2) / 2, width, height },
+      };
+    } catch {
+      // Fall through to selector validation when a provider supplied both selector and backendNodeId.
+    }
+  }
+
+  if (!candidate.selector) return null;
+  const rect = await page.evaluate((selector: string) => {
+    const el = document.querySelector(selector) as HTMLElement | null;
+    if (!el) return null;
+    const box = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    const visible = box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    const disabled = (el as HTMLButtonElement | HTMLInputElement).disabled === true || el.getAttribute('aria-disabled') === 'true';
+    if (!visible || disabled) return null;
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2, width: box.width, height: box.height };
+  }, candidate.selector).catch(() => null);
+  if (!rect) return null;
+  return { ...candidate, selector: candidate.selector, rect };
+}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -154,12 +241,66 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
+  const locatorFallbackArg = args.locatorFallback;
+  const locatorFallbackEnabled = isLocatorFallbackEnabled(locatorFallbackArg);
+  const locatorMinConfidence = locatorFallbackThreshold(locatorFallbackArg);
 
   const intent = args.intent as string | undefined;
   const refArg = args.ref as string | undefined;
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
+
+  const runLocatorFallbackForPage = async (page: any, trigger: LocatorFallbackTrigger): Promise<MCPResult | null> => {
+    if (!locatorFallbackEnabled || !query) return null;
+    const pageInfo = await page.evaluate(() => ({ url: window.location.href, title: document.title })).catch(() => ({ url: '', title: '' }));
+    const cdpClient = sessionManager.getCDPClient();
+    const resolved = await resolveLocatorFallback(
+      { trigger, query, action, tabId, sessionId, pageUrl: pageInfo.url, pageTitle: pageInfo.title, maxCandidates: 5 },
+      (candidate) => validateLocatorCandidate(
+        page,
+        candidate,
+        (ref) => refIdManager.getBackendDOMNodeId(sessionId, tabId, ref),
+        cdpClient,
+      ),
+      { minConfidence: locatorMinConfidence, provider: getLocatorFallbackProvider() },
+    );
+    if (!resolved.accepted) {
+      return {
+        content: [{ type: 'text', text: `Locator fallback (${resolved.provider}) found no validated candidate for "${query}".` }],
+        isError: true,
+        locatorFallback: { trigger, provider: resolved.provider, accepted: false },
+      } as MCPResult;
+    }
+    const candidate = resolved.accepted;
+    const x = Math.round(candidate.rect.x);
+    const y = Math.round(candidate.rect.y);
+    const isStealthFallback = sessionManager.isStealthTarget(tabId);
+    const { result: fallbackDomResult, verify: fallbackVerifyReport } = await runVerify(
+      page,
+      verifyMode,
+      async () =>
+        withDomDelta(page, async () => {
+          if (isStealthFallback) await humanMouseMove(page, x, y);
+          if (action === 'double_click') await page.mouse.click(x, y, { clickCount: 2 });
+          else if (action === 'hover') { if (!isStealthFallback) await page.mouse.move(x, y); }
+          else await page.mouse.click(x, y);
+        }, { settleMs: Math.max(150, waitAfter) }),
+    );
+    invalidateAXCache(getTargetId(page.target()));
+    const verb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+    const lines = [`${verb} locator fallback candidate "${candidate.label ?? candidate.selector}" [provider=${candidate.provider} confidence=${candidate.confidence}]`];
+    if (fallbackDomResult.delta) lines.push('', '[DOM Delta]', fallbackDomResult.delta);
+    return attachVerifyReport({
+      content: [{ type: 'text', text: lines.join('\n') }],
+      locatorFallback: {
+        trigger,
+        provider: resolved.provider,
+        accepted: true,
+        selected: { selector: candidate.selector, confidence: candidate.confidence, reason: candidate.reason, provider: candidate.provider },
+      },
+    } as MCPResult, fallbackVerifyReport);
+  };
 
   if (!tabId) {
     return {
@@ -188,6 +329,15 @@ const handler: ToolHandler = async (
   if (refArg) {
     // Check if the ref is stale (missing or TTL-expired).
     if (refIdManager.isRefStale(sessionId, tabId, refArg)) {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact').catch(() => null);
+      if (page) {
+        try {
+          const fallback = await runLocatorFallbackForPage(page, 'STALE_REF');
+          if (fallback && (fallback as MCPResult & { locatorFallback?: { accepted?: boolean } }).locatorFallback?.accepted === true) return fallback;
+        } catch {
+          // Preserve the STALE_REF contract when the optional fallback provider itself fails.
+        }
+      }
       const staleWarning = typeof refIdManager.getRefStalenessWarning === 'function'
         ? refIdManager.getRefStalenessWarning(sessionId, tabId, refArg)
         : undefined;
@@ -203,6 +353,15 @@ const handler: ToolHandler = async (
 
     const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refArg);
     if (!backendDOMNodeId) {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact').catch(() => null);
+      if (page) {
+        try {
+          const fallback = await runLocatorFallbackForPage(page, 'STALE_REF');
+          if (fallback && (fallback as MCPResult & { locatorFallback?: { accepted?: boolean } }).locatorFallback?.accepted === true) return fallback;
+        } catch {
+          // Preserve the STALE_REF contract when the optional fallback provider itself fails.
+        }
+      }
       return {
         content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" could not be resolved to a DOM node.` }],
         isError: true,
@@ -561,6 +720,15 @@ const handler: ToolHandler = async (
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           continue;
         }
+        let fallback: MCPResult | null = null;
+        if (locatorFallbackEnabled) {
+          try {
+            fallback = await runLocatorFallbackForPage(page, 'ELEMENT_NOT_FOUND');
+          } catch {
+            fallback = null;
+          }
+        }
+        if (fallback) return fallback;
         return {
           content: [{ type: 'text', text: `No elements found matching "${query}"` }],
           isError: true,
@@ -591,6 +759,15 @@ const handler: ToolHandler = async (
     const bestMatch = bestElement;
 
     if (!bestMatch || bestMatch.score < 10) {
+      let fallback: MCPResult | null = null;
+      if (locatorFallbackEnabled) {
+        try {
+          fallback = await runLocatorFallbackForPage(page, 'AMBIGUOUS_SELECTOR');
+        } catch {
+          fallback = null;
+        }
+      }
+      if (fallback) return fallback;
       return {
         content: [
           {

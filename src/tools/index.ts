@@ -144,7 +144,7 @@ import { getPerfTraceStore } from '../core/performance/insights/trace-store';
 // are set. The pilot module is loaded via `require()` only when the gate is
 // open — this preserves P2 (no module from `src/pilot/**` is loaded into the
 // process when `--pilot` is unset) while keeping `registerAllTools()` sync.
-import { isProxyHookEnabled, isSkillReplayEnabled } from '../harness/flags';
+import { isContractRuntimeEnabled, isProxyHookEnabled, isSkillReplayEnabled, isTruthy } from '../harness/flags';
 // oc_observe (#866) — deterministic actionable-element enumeration
 import { registerOcObserveTool } from './oc-observe';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
@@ -161,6 +161,7 @@ import { registerTaskRunTools } from './task-run';
 import { registerOcProgressStatusTool } from './oc-progress-status';
 // 2-stage large-output fetch (#887) — store + paging tool.
 import { registerOcOutputFetchTool } from './oc-output-fetch';
+import { registerOcPilotRunWithRecoveryTool } from './oc-pilot-run-with-recovery';
 import { getHandleStore } from '../core/output/handle-store';
 
 
@@ -286,6 +287,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   // pilot — experimental pilot-tier tools
   oc_credentials: 'pilot',
   oc_pilot_handoff_create: 'pilot',
+  oc_pilot_run_with_recovery: 'pilot',
   oc_pilot_handoff_redeem: 'pilot',
   oc_proxy_hook: 'pilot',
 
@@ -491,6 +493,11 @@ export function registerAllTools(server: MCPServer): void {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { registerOcSkillReplayTool: _reg } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
     _reg(proxy);
+  }
+
+  // Pilot contract runtime (#1061) — off unless --pilot and OPENCHROME_CONTRACT_RUNTIME are active.
+  if (isContractRuntimeEnabled() && isTruthy(process.env.OPENCHROME_CONTRACT_RUNTIME)) {
+    registerOcPilotRunWithRecoveryTool(proxy);
   }
 
   // P2 fix (#887): purge expired output handles every 5 minutes.
