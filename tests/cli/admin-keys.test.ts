@@ -38,6 +38,56 @@ function extractToken(stdout: string): string {
   return m[0];
 }
 
+/**
+ * Extract the JSON array emitted by `admin keys list --json` while ignoring
+ * unrelated Jest worker noise captured by the shared stdout hook on Windows CI.
+ * The command output contract is a single top-level array, so the parser scans
+ * for the first balanced array that decodes successfully instead of accepting
+ * arbitrary prefixes as JSON.
+ */
+function parseJsonArrayFromStdout<T>(stdout: string): T[] {
+  for (let start = stdout.indexOf('['); start !== -1; start = stdout.indexOf('[', start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < stdout.length; i++) {
+      const ch = stdout[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '[') depth++;
+      if (ch === ']') {
+        depth--;
+        if (depth === 0) {
+          const candidate = stdout.slice(start, i + 1);
+          try {
+            const parsed = JSON.parse(candidate);
+            if (Array.isArray(parsed)) return parsed as T[];
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
+}
+
 async function runCli(argv: string[]): Promise<RunResult> {
   const program = new Command();
   program.exitOverride((err) => {
@@ -191,7 +241,7 @@ describe('admin keys CLI', () => {
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
     expect(listed.exitCode).toBeNull();
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; tenantId: string }>;
+    const parsed = parseJsonArrayFromStdout<{ keyId: string; tenantId: string }>(listed.stdout);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].tenantId).toBe('acme');
@@ -212,7 +262,7 @@ describe('admin keys CLI', () => {
     expect(revoked.stderr).toContain('Revoked');
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; revokedAt?: number }>;
+    const parsed = parseJsonArrayFromStdout<{ keyId: string; revokedAt?: number }>(listed.stdout);
     const row = parsed.find((r) => r.keyId === keyId);
     expect(row).toBeDefined();
     expect(typeof row!.revokedAt).toBe('number');
@@ -238,7 +288,7 @@ describe('admin keys CLI', () => {
     expect(rotated.stdout + rotated.stderr).not.toContain(firstPlaintext);
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; revokedAt?: number }>;
+    const parsed = parseJsonArrayFromStdout<{ keyId: string; revokedAt?: number }>(listed.stdout);
     const oldRow = parsed.find((r) => r.keyId === firstKeyId);
     expect(oldRow).toBeDefined();
     expect(typeof oldRow!.revokedAt).toBe('number');
