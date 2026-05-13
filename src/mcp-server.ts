@@ -2664,7 +2664,7 @@ export class MCPServer {
   private inferToolCategory(toolName: string): ToolCategory {
     if (['navigate', 'page_reload'].includes(toolName)) return 'navigation';
     if (['computer', 'form_input', 'drag_drop'].includes(toolName)) return 'interaction';
-    if (['read_page', 'find', 'page_content', 'query_dom'].includes(toolName)) return 'content';
+    if (['read_page', 'find', 'page_content', 'query_dom', 'oc_query'].includes(toolName)) return 'content';
     if (toolName === 'javascript_tool') return 'javascript';
     if (['network', 'cookies', 'storage', 'request_intercept', 'http_auth'].includes(toolName)) return 'network';
     if (['tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';

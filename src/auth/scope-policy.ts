@@ -28,6 +28,7 @@ export const READ_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   'page_screenshot',
   'page_pdf',
   'query_dom',
+  'oc_query',
   'find',
   'vision_find',
   'inspect',

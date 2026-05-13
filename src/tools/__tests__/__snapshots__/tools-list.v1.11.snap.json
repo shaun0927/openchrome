@@ -151,6 +151,9 @@
       "name": "oc_progress_status"
     },
     {
+      "name": "oc_query"
+    },
+    {
       "name": "oc_reap_orphans"
     },
     {
