@@ -66,6 +66,8 @@ jest.mock('../../src/chrome/launcher', () => ({
 
 import { MCPServer } from '../../src/mcp-server';
 import { registerRecordingTools } from '../../src/tools/recording';
+import { runWithRequestContext } from '../../src/observability/request-id';
+import { clearAllSessionMcpRoots, setSessionMcpRoots } from '../../src/security/mcp-roots';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -116,9 +118,14 @@ describe('recording tools', () => {
     mockGetRecordingSize.mockResolvedValue(0);
     mockGetRecordingDir.mockReturnValue('/tmp/recordings/rec-test');
     mockReadScreenshot.mockResolvedValue(null);
+    clearAllSessionMcpRoots();
 
     server = new MCPServer();
     registerRecordingTools(server);
+  });
+
+  afterEach(() => {
+    clearAllSessionMcpRoots();
   });
 
   // ─── Registration ──────────────────────────────────────────────────────────
@@ -375,6 +382,26 @@ describe('recording tools', () => {
       expect(html).toContain('<!DOCTYPE html>');
       expect(html).toContain('rec-20240101-120000-abcd');
       expect(html).toContain('navigate');
+    });
+
+    test('HTML export is denied when MCP file roots exclude the report path', async () => {
+      const metadata = makeMetadata();
+      const actions = [makeAction()];
+      mockReadMetadata.mockResolvedValue(metadata);
+      mockReadActions.mockReturnValue(actions);
+      setSessionMcpRoots('mcp-rec-deny', { roots: [{ uri: 'file:///tmp/allowed-recordings' }] });
+
+      const result = await runWithRequestContext(
+        { requestId: 'req-recording-roots-deny', mcpSessionId: 'mcp-rec-deny' },
+        () => handler('default', {
+          recordingId: 'rec-20240101-120000-abcd',
+          format: 'html',
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('MCP roots narrowing');
+      expect(fs.existsSync(path.join(tmpDir, 'report.html'))).toBe(false);
     });
 
     test('HTML includes action details', async () => {
