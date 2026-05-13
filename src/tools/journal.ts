@@ -12,7 +12,7 @@ import { readCurrentCheckpoint } from './checkpoint';
 const definition: MCPToolDefinition = {
   name: 'oc_journal',
   description:
-    'Query the tool call journal. Actions: "summary" (milestone overview), "recent" (last N entries), "handoff_summary" (compact JSON resume).\n\nWhen to use: Reviewing session history, restoring context, or auditing past tools.\nWhen NOT to use: Use read_page/inspect for the current page state, not past actions.',
+    'Query the tool call journal. Actions: "summary" (milestone overview), "recent" (last N entries), "handoff_summary" (compact JSON resume handoff).\nWhen to use: Reviewing session history, restoring context, or auditing past tool calls.\nWhen NOT to use: Use read_page or inspect to check the current live page state.',
   inputSchema: {
     type: 'object',
     properties: {
