@@ -42,6 +42,10 @@ export * as voting from './voting/index.js';
 // `src/harness/flags.ts` before invoking any export from this namespace.
 export * as curator from './curator/index.js';
 
+// Phase 4 (issue #889): dynamic skill→tool synthesis. Gate call sites on
+// `isDynamicSkillsEnabled()` from `src/harness/flags.ts` before invoking.
+export * as dynamicSkills from './dynamic-skills/index.js';
+
 // Phase 5 (issue #874): user-supplied proxy lifecycle binding. Pilot-tier
 // MCP tool that lets the host declare origin→upstream rules without
 // openchrome ever contacting the upstream proxy. Gate call sites on

@@ -172,6 +172,37 @@ describe('crawl engine=static', () => {
     expect(mockSessionManager.createTarget).not.toHaveBeenCalled();
   });
 
+
+  test('dispatcher=adaptive includes dispatcher stats without changing fixed default', async () => {
+    const handler = await loadHandler('crawl');
+    const adaptive = await handler('s-adaptive', {
+      url: `${server.origin}/index.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      dispatcher: 'adaptive',
+      dispatcher_options: { min_concurrency: 1, max_concurrency: 3 },
+    });
+    const parsedAdaptive = parseResult(adaptive);
+    expect(parsedAdaptive.summary.dispatcher).toMatchObject({
+      mode: 'adaptive',
+      min_concurrency: 1,
+    });
+
+    const fixed = await handler('s-fixed', {
+      url: `${server.origin}/index.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+    });
+    const parsedFixed = parseResult(fixed);
+    expect(parsedFixed.summary.dispatcher).toBeUndefined();
+  });
+
   test('respect_robots:true does not open a Chrome tab for robots.txt', async () => {
     const handler = await loadHandler('crawl');
     await handler('s2', {

@@ -26,6 +26,11 @@ export interface TaskResult {
   success: boolean;
   inputChars: number;
   outputChars: number;
+  responseChars?: number;
+  estimatedOutputTokens?: number;
+  screenshotBytes?: number;
+  nodeRssBytes?: number;
+  chromeRssBytes?: number | null;
   toolCallCount: number;
   wallTimeMs: number;
   error?: string;
@@ -72,6 +77,14 @@ export interface TaskStats {
   meanOutputChars: number;
   meanToolCalls: number;
   meanWallTimeMs: number;
+  p50WallTimeMs?: number;
+  minWallTimeMs?: number;
+  maxWallTimeMs?: number;
+  stddevWallTimeMs?: number;
+  meanResponseChars?: number;
+  meanEstimatedOutputTokens?: number;
+  meanScreenshotBytes?: number;
+  meanNodeRssBytes?: number;
   successRate: number;
   ci95InputChars: [number, number];
   ci95OutputChars: [number, number];
@@ -100,6 +113,19 @@ export interface BenchmarkRunnerOptions {
 function mean(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx];
+}
+
+function stddev(values: number[]): number {
+  if (values.length === 0) return 0;
+  const avg = mean(values);
+  return Math.sqrt(mean(values.map((value) => (value - avg) ** 2)));
 }
 
 export class BenchmarkRunner {
@@ -176,12 +202,24 @@ export class BenchmarkRunner {
     const outputCharsValues = runs.map((r) => r.outputChars);
     const toolCallValues = runs.map((r) => r.toolCallCount);
     const wallTimeValues = runs.map((r) => r.wallTimeMs);
+    const responseCharValues = runs.map((r) => r.responseChars ?? r.outputChars);
+    const estimatedTokenValues = runs.map((r) => r.estimatedOutputTokens ?? Math.ceil((r.responseChars ?? r.outputChars) / 4));
+    const screenshotByteValues = runs.map((r) => r.screenshotBytes ?? 0);
+    const nodeRssValues = runs.map((r) => r.nodeRssBytes ?? 0).filter((value) => value > 0);
 
     const stats: TaskStats = {
       meanInputChars: mean(inputCharsValues),
       meanOutputChars: mean(outputCharsValues),
       meanToolCalls: mean(toolCallValues),
       meanWallTimeMs: mean(wallTimeValues),
+      p50WallTimeMs: percentile(wallTimeValues, 50),
+      minWallTimeMs: wallTimeValues.length > 0 ? Math.min(...wallTimeValues) : 0,
+      maxWallTimeMs: wallTimeValues.length > 0 ? Math.max(...wallTimeValues) : 0,
+      stddevWallTimeMs: stddev(wallTimeValues),
+      meanResponseChars: mean(responseCharValues),
+      meanEstimatedOutputTokens: mean(estimatedTokenValues),
+      meanScreenshotBytes: mean(screenshotByteValues),
+      meanNodeRssBytes: mean(nodeRssValues),
       successRate,
       ci95InputChars: BenchmarkRunner.bootstrapCI(inputCharsValues),
       ci95OutputChars: BenchmarkRunner.bootstrapCI(outputCharsValues),

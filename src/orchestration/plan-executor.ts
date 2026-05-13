@@ -11,7 +11,9 @@ import {
   CompiledStep,
   PlanErrorHandler,
   PlanExecutionResult,
+  PlanStepExecutionRecord,
 } from '../types/plan-cache';
+import * as crypto from 'node:crypto';
 import { withTimeout } from '../utils/with-timeout';
 
 /**
@@ -39,6 +41,53 @@ function substituteParams(value: unknown, params: Record<string, unknown>): unkn
     return result;
   }
   return value;
+}
+
+
+function stableHash(value: unknown): string {
+  return crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortKeys(value));
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      out[key] = sortKeys((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function computeKnownGoodPrefix(ledger: PlanStepExecutionRecord[]): number {
+  let prefix = 0;
+  for (const entry of ledger.filter((step) => step.phase === 'main').sort((a, b) => a.order - b.order)) {
+    if (entry.order !== prefix + 1 || entry.status !== 'success') break;
+    prefix = entry.order;
+  }
+  return prefix;
+}
+
+function withLedger(
+  result: Omit<PlanExecutionResult, 'ledger'>,
+  ledger: PlanStepExecutionRecord[],
+  frontierStepOrder?: number,
+  invalidationReason?: string,
+): PlanExecutionResult {
+  return {
+    ...result,
+    ledger: {
+      steps: ledger,
+      knownGoodPrefixLength: computeKnownGoodPrefix(ledger),
+      ...(frontierStepOrder !== undefined && { frontierStepOrder }),
+      ...(invalidationReason && { invalidationReason }),
+    },
+  };
 }
 
 
@@ -144,6 +193,7 @@ export class PlanExecutor {
   ): Promise<PlanExecutionResult> {
     const startTime = Date.now();
     let stepsExecuted = 0;
+    const ledger: PlanStepExecutionRecord[] = [];
 
     // 1. Build params map: plan defaults first, runtime overrides on top
     const params: Record<string, unknown> = {};
@@ -154,14 +204,14 @@ export class PlanExecutor {
     }
     Object.assign(params, runtimeParams);
 
-    const failure = (error: string): PlanExecutionResult => ({
+    const failure = (error: string, frontierStepOrder?: number): PlanExecutionResult => withLedger({
       success: false,
       planId: plan.id,
       error,
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
-    });
+    }, ledger, frontierStepOrder, error);
 
     // 2. Execute each step sequentially
     for (const step of plan.steps) {
@@ -172,11 +222,14 @@ export class PlanExecutor {
       if (!handler) {
         const msg = `No handler found for tool "${step.tool}" at ${stepLabel}`;
         console.error(`[PlanExecutor] ${msg}`);
-        return failure(msg);
+        ledger.push({ order: step.order, tool: step.tool, argsHash: stableHash(step.args), phase: 'main', status: 'failed', durationMs: 0, reason: msg });
+        return failure(msg, step.order);
       }
 
       // b. Substitute template variables in args
       const substitutedArgs = substituteParams(step.args, params) as Record<string, unknown>;
+      const stepStartedAt = Date.now();
+      const argsHash = stableHash(substitutedArgs);
 
       // c. Call handler with timeout
       let mcpResult: MCPResult;
@@ -190,6 +243,7 @@ export class PlanExecutor {
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error(`[PlanExecutor] Step failed at ${stepLabel}: ${errMsg}`);
+        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'main', status: 'failed', durationMs: Date.now() - stepStartedAt, reason: errMsg });
 
         // Check for a matching error handler
         const conditionKey = `step${step.order}_error`;
@@ -198,7 +252,8 @@ export class PlanExecutor {
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted
+          stepsExecuted,
+          ledger
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
@@ -207,13 +262,14 @@ export class PlanExecutor {
           continue;
         }
 
-        return failure(`Step ${step.order} (${step.tool}) failed: ${errMsg}`);
+        return failure(`Step ${step.order} (${step.tool}) failed: ${errMsg}`, step.order);
       }
 
       // d. Check for error result
       if (mcpResult.isError) {
         const errMsg = mcpResult.content?.[0]?.text ?? 'Unknown tool error';
         console.error(`[PlanExecutor] Tool returned error at ${stepLabel}: ${errMsg}`);
+        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'main', status: 'failed', durationMs: Date.now() - stepStartedAt, reason: errMsg });
 
         const conditionKey = `step${step.order}_error`;
         const recovered = await this.tryRecovery(
@@ -221,7 +277,8 @@ export class PlanExecutor {
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted
+          stepsExecuted,
+          ledger
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
@@ -229,18 +286,20 @@ export class PlanExecutor {
           continue;
         }
 
-        return failure(`Step ${step.order} (${step.tool}) returned error: ${errMsg}`);
+        return failure(`Step ${step.order} (${step.tool}) returned error: ${errMsg}`, step.order);
       }
 
       // e. Check for empty result (before storing) — may trigger empty_result handler
       if (isEmptyResult(mcpResult)) {
+        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'main', status: 'empty_result', durationMs: Date.now() - stepStartedAt, reason: 'empty result' });
         const conditionKey = `step${step.order}_empty_result`;
         const recovered = await this.tryRecovery(
           conditionKey,
           plan.errorHandlers,
           sessionId,
           params,
-          stepsExecuted
+          stepsExecuted,
+          ledger
         );
         if (recovered !== null) {
           stepsExecuted = recovered.stepsExecuted;
@@ -251,10 +310,12 @@ export class PlanExecutor {
       }
 
       // f. Parse and store result if requested
+      let storedAs: string | undefined;
       if (step.parseResult && step.parseResult.storeAs) {
         try {
           const extracted = extractResult(mcpResult, step.parseResult);
           params[step.parseResult.storeAs] = extracted;
+          storedAs = step.parseResult.storeAs;
         } catch (err) {
           console.error(
             `[PlanExecutor] Failed to extract result at ${stepLabel}: ${
@@ -264,31 +325,34 @@ export class PlanExecutor {
           // Non-fatal: continue without storing
         }
       }
+      if (!isEmptyResult(mcpResult)) {
+        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'main', status: 'success', durationMs: Date.now() - stepStartedAt, storedAs });
+      }
     }
 
     // 3. Validate success criteria
     const criteriaError = validateSuccessCriteria(plan.successCriteria, params);
     if (criteriaError) {
       console.error(`[PlanExecutor] Success criteria failed for plan=${plan.id}: ${criteriaError}`);
-      return {
+      return withLedger({
         success: false,
         planId: plan.id,
         error: `Success criteria not met: ${criteriaError}`,
         durationMs: Date.now() - startTime,
         stepsExecuted,
         totalSteps: plan.steps.length,
-      };
+      }, ledger, computeKnownGoodPrefix(ledger) + 1, `Success criteria not met: ${criteriaError}`);
     }
 
     // 4. Return success with all collected params as data
-    return {
+    return withLedger({
       success: true,
       planId: plan.id,
       data: params,
       durationMs: Date.now() - startTime,
       stepsExecuted,
       totalSteps: plan.steps.length,
-    };
+    }, ledger);
   }
 
   /**
@@ -300,7 +364,8 @@ export class PlanExecutor {
     errorHandlers: PlanErrorHandler[],
     sessionId: string,
     params: Record<string, unknown>,
-    currentStepsExecuted: number
+    currentStepsExecuted: number,
+    ledger: PlanStepExecutionRecord[]
   ): Promise<{ stepsExecuted: number; params: Record<string, unknown> } | null> {
     const handler = errorHandlers.find((h) => h.condition === conditionKey);
     if (!handler) return null;
@@ -321,6 +386,8 @@ export class PlanExecutor {
       }
 
       const substitutedArgs = substituteParams(step.args, params) as Record<string, unknown>;
+      const recoveryStartedAt = Date.now();
+      const argsHash = stableHash(substitutedArgs);
 
       let mcpResult: MCPResult;
       try {
@@ -331,27 +398,29 @@ export class PlanExecutor {
         );
         stepsExecuted++;
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         console.error(
-          `[PlanExecutor] Recovery step failed at ${stepLabel}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `[PlanExecutor] Recovery step failed at ${stepLabel}: ${errMsg}`
         );
+        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'recovery', recoveryCondition: conditionKey, status: 'failed', durationMs: Date.now() - recoveryStartedAt, reason: errMsg });
         continue;
       }
 
       if (mcpResult.isError) {
+        const errMsg = mcpResult.content?.[0]?.text ?? 'unknown';
         console.error(
-          `[PlanExecutor] Recovery step returned error at ${stepLabel}: ${
-            mcpResult.content?.[0]?.text ?? 'unknown'
-          }`
+          `[PlanExecutor] Recovery step returned error at ${stepLabel}: ${errMsg}`
         );
+        ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'recovery', recoveryCondition: conditionKey, status: 'failed', durationMs: Date.now() - recoveryStartedAt, reason: errMsg });
         continue;
       }
 
+      let storedAs: string | undefined;
       if (step.parseResult && step.parseResult.storeAs) {
         try {
           const extracted = extractResult(mcpResult, step.parseResult);
           params[step.parseResult.storeAs] = extracted;
+          storedAs = step.parseResult.storeAs;
         } catch (err) {
           console.error(
             `[PlanExecutor] Recovery: failed to extract result at ${stepLabel}: ${
@@ -360,6 +429,7 @@ export class PlanExecutor {
           );
         }
       }
+      ledger.push({ order: step.order, tool: step.tool, argsHash, phase: 'recovery', recoveryCondition: conditionKey, status: isEmptyResult(mcpResult) ? 'empty_result' : 'success', durationMs: Date.now() - recoveryStartedAt, storedAs });
     }
 
     return { stepsExecuted, params };

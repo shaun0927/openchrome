@@ -26,6 +26,9 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { sanitizeContent } from '../security/content-sanitizer';
+import { getGlobalConfig } from '../config/global';
 
 const definition: MCPToolDefinition = {
   name: 'crawl_sitemap',
@@ -52,8 +55,16 @@ const definition: MCPToolDefinition = {
       },
       output_format: {
         type: 'string',
-        enum: ['markdown', 'text', 'structured'],
-        description: 'Content format per page. Default: markdown',
+        enum: ['markdown', 'text', 'structured', 'markdown-clean'],
+        description: 'Content format per page. "markdown-clean" uses cheerio+turndown to strip nav/footer/ads. Default: markdown',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'markdown-clean only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'markdown-clean only: preserve <a> as markdown links. Default: true.',
       },
       concurrency: {
         type: 'number',
@@ -250,6 +261,21 @@ async function resolveSitemapPageUrls(
 // the caller (auto mode) can fall back to CDP.
 // ---------------------------------------------------------------------------
 
+
+function cleanMarkdownFromHtml(
+  html: string,
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
+): string {
+  const { html: cleaned } = extractMainContent(html, { onlyMainContent: cleanOpts.onlyMainContent });
+  let cleanMd = toMarkdown(cleaned, { includeLinks: cleanOpts.includeLinks });
+  const cfg = getGlobalConfig();
+  if (cfg.security?.sanitize_content !== false) {
+    const sanitized = sanitizeContent(cleanMd);
+    cleanMd = sanitized.text + sanitized.sanitizationNote;
+  }
+  return cleanMd;
+}
+
 function staticBuildContent(html: string): { title: string; content: string } {
   const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
   const title = titleMatch ? titleMatch[1].trim() : '';
@@ -286,6 +312,7 @@ function staticCountLinks(html: string, baseUrl: string): number {
 async function fetchPageStatic(
   url: string,
   outputFormat: string,
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
   context?: ToolContext,
 ): Promise<
   | { ok: true; page: CrawledPage }
@@ -307,6 +334,10 @@ async function fetchPageStatic(
       title = titleMatch ? titleMatch[1].trim() : '';
       const bodyMatch = html.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i);
       content = bodyMatch ? bodyMatch[1] : html;
+    } else if (outputFormat === 'markdown-clean') {
+      const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+      title = titleMatch ? titleMatch[1].trim() : '';
+      content = cleanMarkdownFromHtml(html, cleanOpts);
     } else {
       const built = staticBuildContent(html);
       title = built.title;
@@ -345,6 +376,7 @@ async function fetchPage(
   sessionId: string,
   url: string,
   outputFormat: string,
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean },
   context?: ToolContext,
 ): Promise<CrawledPage> {
   const sessionManager = getSessionManager();
@@ -356,6 +388,44 @@ async function fetchPage(
 
     // Small settle delay for dynamic content
     await new Promise((r) => setTimeout(r, 500));
+
+    if (outputFormat === 'markdown-clean') {
+      const fullHtml = await withTimeout(
+        page.content(),
+        15000,
+        'crawl_sitemap.page.content',
+        context,
+      );
+      const linkResult = await withTimeout(
+        page.evaluate(() => {
+          const title = document.title || '';
+          let linksCount = 0;
+          document.querySelectorAll('a[href]').forEach((a) => {
+            const href = (a as HTMLAnchorElement).href;
+            if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+              linksCount += 1;
+            }
+          });
+          return { title, linksCount };
+        }),
+        15000,
+        'crawl_sitemap.page.linkScan',
+        context,
+      );
+      await sessionManager.closeTarget(sessionId, tid);
+      targetId = null;
+
+      let cleanMd = cleanMarkdownFromHtml(fullHtml, cleanOpts);
+      if (cleanMd.length > MAX_OUTPUT_CHARS) {
+        cleanMd = cleanMd.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
+      }
+      return {
+        url,
+        title: linkResult.title,
+        content: cleanMd,
+        links_found: linkResult.linksCount,
+      };
+    }
 
     const result = await withTimeout(
       page.evaluate((format: string) => {
@@ -503,6 +573,10 @@ const handler: ToolHandler = async (
   const filterPattern = args.filter as string | undefined;
   const maxPages = args.max_pages != null ? Number(args.max_pages) : 50;
   const outputFormat = (args.output_format as string) || 'markdown';
+  const cleanOpts = {
+    onlyMainContent: args.onlyMainContent !== false,
+    includeLinks: args.includeLinks !== false,
+  };
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 
   const engineArg = args.engine as string | undefined;
@@ -639,7 +713,7 @@ const handler: ToolHandler = async (
             let engineUsed: 'static' | 'cdp' | undefined;
 
             if (engine === 'static' || engine === 'auto') {
-              const staticResult = await fetchPageStatic(pageUrl, outputFormat, context);
+              const staticResult = await fetchPageStatic(pageUrl, outputFormat, cleanOpts, context);
               if (staticResult.ok) {
                 page = staticResult.page;
                 engineUsed = 'static';
@@ -654,12 +728,12 @@ const handler: ToolHandler = async (
                 engineUsed = 'static';
                 staticReason = staticResult.reason;
               } else {
-                page = await fetchPage(sessionId, pageUrl, outputFormat, context);
+                page = await fetchPage(sessionId, pageUrl, outputFormat, cleanOpts, context);
                 engineUsed = 'cdp';
                 staticReason = staticResult.reason;
               }
             } else {
-              page = await fetchPage(sessionId, pageUrl, outputFormat, context);
+              page = await fetchPage(sessionId, pageUrl, outputFormat, cleanOpts, context);
               if (engineExplicit) engineUsed = 'cdp';
             }
 
