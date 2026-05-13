@@ -78,7 +78,7 @@ const SECRET_VALUE_PATTERNS: RegExp[] = [
   /\b(authorization)\s*[:=]\s*bearer\s+([a-z0-9._~+/-]+=*)/gi,
   /\b(bearer)\s+([a-z0-9._~+/-]+=*)/gi,
   /\b(password|passwd|pwd)\s*[:=]\s*([^\s,;]+)/gi,
-  /\b(api[_-]?key|token|secret|authorization)\s*[:=]\s*([^\s,;]+)/gi,
+  /\b(api[_\s-]?key|token|secret|authorization)\s*[:=]\s*([^\s,;]+)/gi,
 ];
 
 /**
