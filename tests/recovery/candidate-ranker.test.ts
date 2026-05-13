@@ -30,6 +30,45 @@ describe('rankRecoveryCandidates', () => {
     expect(blocked?.blockedReason).toBe('blocking/auth signal present');
   });
 
+
+  it('does not block read-only retries on blocking pages', () => {
+    const candidates = rankRecoveryCandidates({
+      toolName: 'find',
+      resultText: 'Login page detected',
+      isError: false,
+      recentCalls: [{ toolName: 'find', result: 'success', error: 'Login page detected' }],
+    });
+
+    expect(candidates.find((c) => c.tool === 'find')).toBeUndefined();
+    expect(candidates.every((c) => !c.blockedReason)).toBe(true);
+    expect(candidates.map((c) => c.tool)).toEqual(expect.arrayContaining(['read_page', 'tabs_context']));
+  });
+
+  it('penalizes repeated failures without counting prior successes', () => {
+    const mostlySuccessful = rankRecoveryCandidates({
+      toolName: 'interact',
+      resultText: 'Error: ref is stale',
+      isError: true,
+      recentCalls: [
+        { toolName: 'interact', result: 'success' },
+        { toolName: 'interact', result: 'success' },
+        { toolName: 'interact', result: 'error', error: 'ref is stale' },
+      ],
+    });
+    const repeatedlyFailing = rankRecoveryCandidates({
+      toolName: 'interact',
+      resultText: 'Error: ref is stale',
+      isError: true,
+      recentCalls: [
+        { toolName: 'interact', result: 'error', error: 'ref is stale' },
+        { toolName: 'interact', result: 'error', error: 'ref is stale' },
+        { toolName: 'interact', result: 'error', error: 'ref is stale' },
+      ],
+    });
+
+    expect(mostlySuccessful[0].score).toBeGreaterThan(repeatedlyFailing[0].score);
+  });
+
   it('falls back to read-only state checks for ambiguous no-progress loops', () => {
     const candidates = rankRecoveryCandidates({
       toolName: 'wait_for',

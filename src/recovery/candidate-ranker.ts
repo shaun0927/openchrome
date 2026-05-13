@@ -50,7 +50,7 @@ export function rankRecoveryCandidates(input: RecoveryCandidateRankInput): Recov
       resultText: input.resultText,
       freshRefsDiscovered: candidate.tool === 'read_page' && isStaleOrElementFailure(text),
       observationOnly: READ_TOOLS.has(candidate.tool),
-      repeatedFailureCount: repeatedToolCount(input.recentCalls, input.toolName),
+      repeatedFailureCount: repeatedFailureCount(input.recentCalls, input.toolName),
     });
     const learnedBoost = policyRankBoost(input.policies, candidate.tool, candidate.risk);
     const score = clamp(candidate.baseScore + evidence.score * 0.25 + learnedBoost - repeatedPenalty - sameFailedPenalty - riskPenalty);
@@ -70,13 +70,15 @@ export function rankRecoveryCandidates(input: RecoveryCandidateRankInput): Recov
       risk: 'read_only',
       baseScore: 0.62,
     });
-    add({
-      tool: input.toolName,
-      reason: 'Blind retry is unsafe on auth, CAPTCHA, or blocking pages.',
-      risk: 'side_effect_possible',
-      baseScore: -0.2,
-      blockedReason: 'blocking/auth signal present',
-    });
+    if (BLIND_INTERACTION_TOOLS.has(input.toolName)) {
+      add({
+        tool: input.toolName,
+        reason: 'Blind retry is unsafe on auth, CAPTCHA, or blocking pages.',
+        risk: 'side_effect_possible',
+        baseScore: -0.2,
+        blockedReason: 'blocking/auth signal present',
+      });
+    }
     return topCandidates(candidates, input.maxCandidates);
   }
 
@@ -163,6 +165,10 @@ function topCandidates(candidates: RecoveryCandidate[], max = 3): RecoveryCandid
 
 function repeatedToolCount(calls: RecentToolCallLike[], tool: string): number {
   return calls.filter((call) => call.toolName === tool).length;
+}
+
+function repeatedFailureCount(calls: RecentToolCallLike[], tool: string): number {
+  return calls.filter((call) => call.toolName === tool && (call.result === 'error' || call.result === 'aborted')).length;
 }
 
 function isStaleOrElementFailure(text: string): boolean {

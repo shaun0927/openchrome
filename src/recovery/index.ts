@@ -18,8 +18,6 @@ export type {
   RecoveryTrajectoryNodeInput,
 } from './trajectory-ledger';
 
-export { scoreRecoveryOutcome, scoreFromToolResult } from './reward-scorer';
-export type { RecoveryRewardClassification, RecoveryRewardInput, RecoveryRewardScore } from './reward-scorer';
 
 export { formatCandidateHint, rankRecoveryCandidates } from './candidate-ranker';
 export type { RecoveryCandidate, RecoveryCandidateRankInput, RecoveryCandidateRisk, RecentToolCallLike } from './candidate-ranker';
