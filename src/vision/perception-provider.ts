@@ -124,3 +124,98 @@ export function buildPerceptionSnapshotFromAnnotatedResult(
 export function formatPerceptionSnapshotAsText(snapshot: PerceptionSnapshot): string {
   return JSON.stringify(snapshot, null, 2);
 }
+
+export interface PerceptionValidationOptions {
+  maxErrors?: number;
+  maxElements?: number;
+}
+
+export interface PerceptionValidationResult {
+  ok: boolean;
+  errors: string[];
+  truncated: boolean;
+}
+
+export function validatePerceptionSnapshot(
+  snapshot: unknown,
+  options: PerceptionValidationOptions = {}
+): PerceptionValidationResult {
+  const maxErrors = Math.max(1, options.maxErrors ?? 25);
+  const errors: string[] = [];
+  const addError = (message: string): void => {
+    if (errors.length < maxErrors) errors.push(message);
+  };
+
+  if (!snapshot || typeof snapshot !== 'object') {
+    return { ok: false, errors: ['snapshot must be an object'], truncated: false };
+  }
+
+  const row = snapshot as Record<string, unknown>;
+  if (row.version !== 1) addError('version must be 1');
+  if (typeof row.provider !== 'string' || row.provider.length === 0) addError('provider is required');
+  if (typeof row.tabId !== 'string' || row.tabId.length === 0) addError('tabId is required');
+  if (typeof row.url !== 'string') addError('url must be a string');
+  if (typeof row.capturedAt !== 'number' || !Number.isFinite(row.capturedAt)) addError('capturedAt must be a finite number');
+
+  const viewport = row.viewport as Record<string, unknown> | undefined;
+  if (!viewport || !isPositiveFinite(viewport.width) || !isPositiveFinite(viewport.height)) {
+    addError('viewport width/height must be positive finite numbers');
+  }
+
+  if (!Array.isArray(row.elements)) {
+    addError('elements must be an array');
+  } else if (options.maxElements !== undefined && row.elements.length > options.maxElements) {
+    addError(`elements length must be <= ${options.maxElements}`);
+  }
+
+  if (!Array.isArray(row.warnings) || row.warnings.some((warning) => typeof warning !== 'string')) {
+    addError('warnings must be an array of strings');
+  }
+  if (typeof row.latencyMs !== 'number' || !Number.isFinite(row.latencyMs) || row.latencyMs < 0) {
+    addError('latencyMs must be a non-negative finite number');
+  }
+
+  if (Array.isArray(row.elements)) {
+    for (let index = 0; index < row.elements.length && errors.length < maxErrors; index += 1) {
+      const element = row.elements[index];
+      const prefix = `elements[${index}]`;
+      if (!element || typeof element !== 'object') {
+        addError(`${prefix} must be an object`);
+        continue;
+      }
+      const el = element as Record<string, unknown>;
+      if (typeof el.id !== 'string' || el.id.length === 0) addError(`${prefix}.id is required`);
+      if (!['text', 'icon', 'control', 'image', 'unknown'].includes(String(el.type))) addError(`${prefix}.type is invalid`);
+      if (typeof el.label !== 'string') addError(`${prefix}.label must be a string`);
+      if (!(typeof el.interactive === 'boolean' || el.interactive === 'unknown')) addError(`${prefix}.interactive is invalid`);
+      if (typeof el.source !== 'string' || el.source.length === 0) addError(`${prefix}.source is required`);
+      validateBox(el.bbox, `${prefix}.bbox`, addError, false);
+      validateBox(el.bboxRatio, `${prefix}.bboxRatio`, addError, true);
+      if (el.confidence !== undefined && (typeof el.confidence !== 'number' || !Number.isFinite(el.confidence) || el.confidence < 0 || el.confidence > 1)) {
+        addError(`${prefix}.confidence must be 0..1`);
+      }
+    }
+  }
+
+  return { ok: errors.length === 0, errors, truncated: errors.length >= maxErrors };
+}
+
+function validateBox(value: unknown, prefix: string, addError: (message: string) => void, ratio: boolean): void {
+  if (!value || typeof value !== 'object') {
+    addError(`${prefix} is required`);
+    return;
+  }
+  const box = value as Record<string, unknown>;
+  for (const key of ['x', 'y', 'width', 'height']) {
+    const n = box[key];
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+      addError(`${prefix}.${key} must be a non-negative finite number`);
+    } else if (ratio && n > 1) {
+      addError(`${prefix}.${key} must be <= 1`);
+    }
+  }
+}
+
+function isPositiveFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
