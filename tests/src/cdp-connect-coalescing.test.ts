@@ -345,4 +345,40 @@ describe('CDPClient – forceReconnect invalidates pending connects', () => {
     expect((client as any).browser).toBe(newBrowser);
     stopHeartbeat(client);
   });
+
+  test('stale connectInternal result cannot resurrect old browser after forceReconnect', async () => {
+    const client = new CDPClient({ port: 9222 });
+    const staleBrowser = createMockBrowser('ws://stale');
+    const newBrowser = createMockBrowser('ws://new');
+
+    let resolveStaleConnect: (() => void) | null = null;
+    let resolveNewConnect: (() => void) | null = null;
+
+    mockPuppeteerConnect
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveStaleConnect = () => resolve(staleBrowser);
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveNewConnect = () => resolve(newBrowser);
+      }));
+
+    const connectPromise = client.connect();
+    await Promise.resolve();
+    expect(mockPuppeteerConnect).toHaveBeenCalledTimes(1);
+
+    const reconnectPromise = client.forceReconnect();
+    await Promise.resolve();
+    expect(mockPuppeteerConnect).toHaveBeenCalledTimes(2);
+
+    resolveNewConnect!();
+    await reconnectPromise;
+    expect((client as any).browser).toBe(newBrowser);
+
+    resolveStaleConnect!();
+    await connectPromise;
+
+    expect((client as any).browser).toBe(newBrowser);
+    expect(staleBrowser.disconnect).toHaveBeenCalled();
+    stopHeartbeat(client);
+  });
 });
