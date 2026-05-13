@@ -16,6 +16,7 @@ import {
   buildOpenGraphExtractor,
   buildCssHeuristicExtractor,
   buildMultipleItemExtractor,
+  parseExtractionMode,
 } from '../extraction';
 import type { ExtractionSchema, SchemaProperty } from '../extraction';
 
@@ -89,6 +90,14 @@ export const extractDataHandler: ToolHandler = async (
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
+  }
+
+  // Validate the extraction mode before reaching for the session — an invalid
+  // mode is a deterministic input error and should never trigger a Chrome
+  // session lookup.
+  const modeCheck = parseExtractionMode(args.mode);
+  if (!modeCheck.ok) {
+    return { content: [{ type: 'text', text: `Error: ${modeCheck.error}` }], isError: true };
   }
 
   const schemaCheck = validateSchema(schema);
