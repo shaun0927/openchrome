@@ -90,9 +90,11 @@ const handler: ToolHandler = async (
 
   let skills: SkillRecord[];
   try {
+    // Fetch un-capped so the replay_signal re-rank applies across the full
+    // candidate set; cap afterwards. The store's own list cap would
+    // otherwise truncate before the demote-on-fail buckets are computed.
     skills = store.list({
       contract_id: contractId,
-      limit,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -103,8 +105,37 @@ const handler: ToolHandler = async (
     return jsonResult(output);
   }
 
-  return jsonResult({ skills });
+  // Replay-aware ranking (#856 invariant #4): bucket each skill into
+  // replay_signal ∈ {+1, 0, -1} and sort
+  //   (signal desc, lastUsedAt desc, skillId asc)
+  // so passed-replay skills surface first, never-replayed in the middle,
+  // and failed-replay skills sink to the bottom. Recency breaks within-
+  // bucket ties; skillId provides a deterministic final tiebreak.
+  const ranked = skills.slice().sort((a, b) => {
+    const sa = computeReplaySignal(a);
+    const sb = computeReplaySignal(b);
+    if (sa !== sb) return sb - sa; // signal desc
+    if (b.lastUsedAt !== a.lastUsedAt) return b.lastUsedAt - a.lastUsedAt;
+    return a.skillId < b.skillId ? -1 : a.skillId > b.skillId ? 1 : 0;
+  });
+
+  const capped = limit === 0 ? [] : ranked.slice(0, limit);
+  return jsonResult({ skills: capped });
 };
+
+/**
+ * Replay signal for #856 ranking. See SkillRecord.lastReplayPassedAt /
+ * lastReplayFailedAt — the most recent replay wins. Skills with no replay
+ * record produce 0 (neutral).
+ */
+export function computeReplaySignal(s: SkillRecord): -1 | 0 | 1 {
+  const passedAt = s.lastReplayPassedAt ?? 0;
+  const failedAt = s.lastReplayFailedAt ?? 0;
+  if (passedAt === 0 && failedAt === 0) return 0;
+  if (passedAt > failedAt) return 1;
+  if (failedAt > passedAt) return -1;
+  return 0;
+}
 
 function jsonResult(payload: OcSkillRecallOutput): MCPResult {
   return {
