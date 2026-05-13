@@ -58,7 +58,7 @@ const definition: MCPToolDefinition = {
 };
 
 function mergeResults(base: Record<string, unknown>, overlay: Record<string, unknown>): Record<string, unknown> {
-  const merged = { ...base };
+  const merged = Object.assign(Object.create(null), base) as Record<string, unknown>;
   for (const [key, value] of Object.entries(overlay)) {
     if ((merged[key] === null || merged[key] === undefined || merged[key] === '') && value !== null && value !== undefined && value !== '') {
       merged[key] = value;
