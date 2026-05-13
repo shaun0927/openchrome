@@ -409,6 +409,111 @@ describePlanExecutor('PlanExecutor', () => {
   }
 
   // -----------------------------------------------------------------------
+
+  describe('safe plan-as-code contract validation', () => {
+    function safePlan(overrides: Partial<CompiledPlan> = {}): CompiledPlan {
+      return buildPlan({
+        id: 'safe-plan',
+        contractVersion: 2,
+        allowedTools: ['mock_tool', 'recovery_tool'],
+        steps: [buildStep({ order: 1, tool: 'mock_tool', timeout: 5000 })],
+        successCriteria: { requiredFields: ['ok'] },
+        ...overrides,
+      });
+    }
+
+    test('rejects tools outside allowedTools before execution', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler, javascript_tool: handler }));
+      const plan = safePlan({ steps: [buildStep({ tool: 'javascript_tool' })] });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not in allowedTools');
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    test('rejects unknown tools, missing timeouts, malformed substitutions, and missing success criteria', async () => {
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: makeMockHandler(makeMCPResult('ok')) }));
+
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'ghost_tool' })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('unknown tool') });
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'mock_tool', timeout: 0 })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('positive timeout') });
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'mock_tool', args: { url: '${bad-name}' } })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('malformed substitution') });
+      await expect(executor.execute(safePlan({ successCriteria: {} }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('explicit successCriteria') });
+    });
+
+    test('bounds recovery handler length for safe contract plans', async () => {
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: makeMockHandler(makeMCPResult('ok')) }));
+      const tooManySteps = Array.from({ length: 11 }, (_, index) => buildStep({ order: index + 1, tool: 'mock_tool' }));
+      const plan = safePlan({ errorHandlers: [{ condition: 'step1_error', action: 'too-much', steps: tooManySteps }] });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('exceeds 10 steps');
+    });
+
+    test('successful safe contract execution includes bounded evidence', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler }));
+      const plan = safePlan();
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(true);
+      expect(result.evidence).toEqual([expect.objectContaining({
+        step: 1,
+        tool: 'mock_tool',
+        source: 'plan',
+        outcome: 'success',
+        summary: 'ok',
+      })]);
+    });
+
+    test('safe contract execution includes recovery evidence', async () => {
+      const failHandler = makeErrorHandler('boom');
+      const recoveryHandler = makeMockHandler(makeMCPResult('recovered'));
+      const executor = new PlanExecutor(makeResolverWith({ fail_tool: failHandler, recovery_tool: recoveryHandler }));
+      const plan = safePlan({
+        allowedTools: ['fail_tool', 'recovery_tool'],
+        steps: [buildStep({ order: 1, tool: 'fail_tool', timeout: 5000 })],
+        errorHandlers: [{
+          condition: 'step1_error',
+          action: 'recover',
+          steps: [buildStep({ order: 1, tool: 'recovery_tool', timeout: 5000 })],
+        }],
+      });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(true);
+      expect(result.evidence).toEqual([
+        expect.objectContaining({ step: 1, tool: 'fail_tool', source: 'plan', outcome: 'error' }),
+        expect.objectContaining({ step: 1, tool: 'recovery_tool', source: 'recovery', outcome: 'success', summary: 'recovered' }),
+      ]);
+    });
+
+    test('legacy plans without contractVersion remain backward compatible', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler }));
+      const legacy = buildPlan({
+        steps: [buildStep({ tool: 'mock_tool', timeout: 0 })],
+        successCriteria: {},
+      });
+
+      const result = await executor.execute(legacy, SESSION_ID, {});
+
+      expect(result.success).toBe(false);
+      expect(result.error).not.toContain('Plan contract validation failed');
+      expect(handler).toHaveBeenCalled();
+    });
+  });
+
   // Basic execution
   // -----------------------------------------------------------------------
 

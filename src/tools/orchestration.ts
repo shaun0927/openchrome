@@ -851,6 +851,7 @@ const executePlanHandler: ToolHandler = async (
           durationMs: result.durationMs,
           data: result.data,
           error: result.error,
+          evidence: result.evidence,
           ...(result.taskSignature ? { taskSignature: result.taskSignature } : {}),
           ...(reflectionStrategy ? { reflectionStrategy } : {}),
           message: result.success
