@@ -227,6 +227,24 @@ describe('extractMainContent security: dangerous href schemes', () => {
     expect(md.toLowerCase()).not.toContain('vbscript:');
   });
 
+
+  it('strips obfuscated dangerous href schemes with ASCII controls before the colon', () => {
+    const html =
+      '<body>' +
+      '<p><a href="java\nscript:alert(1)">a</a></p>' +
+      '<p><a href="vb\tscript:msgbox(1)">b</a></p>' +
+      '<p><a href="da\rta:text/html,x">c</a></p>' +
+      '</body>';
+    const { html: cleaned } = extractMainContent(html, { onlyMainContent: false });
+    const md = toMarkdown(cleaned, { includeLinks: true });
+    expect(md.toLowerCase()).not.toContain('javascript:');
+    expect(md.toLowerCase()).not.toContain('vbscript:');
+    expect(md.toLowerCase()).not.toContain('data:');
+    expect(md).toContain('a');
+    expect(md).toContain('b');
+    expect(md).toContain('c');
+  });
+
   it('preserves safe href schemes (http, https, mailto)', () => {
     const html =
       '<body>' +

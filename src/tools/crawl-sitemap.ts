@@ -399,8 +399,14 @@ async function fetchPage(
       const linkResult = await withTimeout(
         page.evaluate(() => {
           const title = document.title || '';
-          const links = document.querySelectorAll('a[href]').length;
-          return { title, linksCount: links };
+          let linksCount = 0;
+          document.querySelectorAll('a[href]').forEach((a) => {
+            const href = (a as HTMLAnchorElement).href;
+            if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+              linksCount += 1;
+            }
+          });
+          return { title, linksCount };
         }),
         15000,
         'crawl_sitemap.page.linkScan',

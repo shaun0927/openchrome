@@ -220,7 +220,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      tabId: { type: 'string', description: 'Tab ID to observe' },
+      tabId: { type: 'string', description: 'REQUIRED Tab ID to observe' },
       scope: {
         type: 'string',
         enum: ['viewport', 'document'],

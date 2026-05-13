@@ -55,12 +55,10 @@ export function extractMainContent(html: string, opts: ExtractOptions = {}): Ext
   // Strip dangerous href schemes so Turndown cannot emit clickable
   // [text](javascript:...) / data:/ vbscript: markdown links.
   $('a[href]').each((_, el) => {
-    const href = ($(el).attr('href') || '').trim().toLowerCase();
-    if (
-      href.startsWith('javascript:') ||
-      href.startsWith('data:') ||
-      href.startsWith('vbscript:')
-    ) {
+    const rawHref = ($(el).attr('href') || '').trim();
+    const schemeMatch = rawHref.match(/^([^:]{1,64}):/);
+    const canonicalScheme = schemeMatch ? schemeMatch[1].replace(/[\u0000-\u0020]+/g, '').toLowerCase() : '';
+    if (canonicalScheme === 'javascript' || canonicalScheme === 'data' || canonicalScheme === 'vbscript') {
       $(el).removeAttr('href');
     }
   });
