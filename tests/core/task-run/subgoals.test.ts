@@ -54,6 +54,35 @@ describe('bounded subgoal decomposition', () => {
     }
   });
 
+
+  test('malformed arrays return validation errors instead of throwing', () => {
+    const malformedTopLevel = validateSubgoalPlan({
+      objective: 'x',
+      global_stop_conditions: {},
+      subgoals: 3,
+    });
+    expect(malformedTopLevel.ok).toBe(false);
+    if (!malformedTopLevel.ok) {
+      expect(malformedTopLevel.errors.join('\n')).toContain('subgoals must be a non-empty array');
+      expect(malformedTopLevel.errors.join('\n')).toContain('global_stop_conditions must be an array');
+    }
+
+    const malformedSubgoal = validateSubgoalPlan({
+      objective: 'x',
+      global_stop_conditions: ['auth handoff required', 'captcha or bot check', 'destructive confirmation required'],
+      subgoals: [{
+        id: 'bad-domains',
+        goal: 'read site',
+        success_criteria: 'content visible',
+        allowed_tools: ['read_page'],
+        stop_condition: 'content visible',
+        allowed_domains: 'localhost',
+      }],
+    }, { allowedDomains: ['localhost'] });
+    expect(malformedSubgoal.ok).toBe(false);
+    if (!malformedSubgoal.ok) expect(malformedSubgoal.errors.join('\n')).toContain('allowed_domains must be an array');
+  });
+
   test('stop-condition handling halts on auth, captcha, and destructive confirmation', () => {
     const subgoal = buildConservativeSubgoalPlan({ objective: 'x' }).subgoals[0];
     expect(evaluateSubgoalStop({ subgoal, evidenceText: 'Login required' })).toMatchObject({ status: 'stopped', next_safe_action: 'ask_user' });

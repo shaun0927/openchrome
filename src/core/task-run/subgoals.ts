@@ -33,19 +33,21 @@ export function shouldDecomposeTask(input: { objective: string; optIn?: boolean;
 export function validateSubgoalPlan(plan: unknown, opts: { allowedDomains?: string[] } = {}): { ok: true; value: BrowserSubgoalPlan } | { ok: false; errors: string[] } {
   const errors: string[] = [];
   if (!plan || typeof plan !== 'object') return { ok: false, errors: ['plan must be an object'] };
-  const row = plan as BrowserSubgoalPlan;
+  const row = plan as Record<string, unknown>;
   if (typeof row.objective !== 'string' || row.objective.trim() === '') errors.push('objective is required');
-  if (!Array.isArray(row.subgoals) || row.subgoals.length === 0) errors.push('subgoals must be a non-empty array');
-  if (!Array.isArray(row.global_stop_conditions)) errors.push('global_stop_conditions must be an array');
+  const subgoals = Array.isArray(row.subgoals) ? row.subgoals : undefined;
+  const globalStopConditions = Array.isArray(row.global_stop_conditions) ? row.global_stop_conditions : undefined;
+  if (!subgoals || subgoals.length === 0) errors.push('subgoals must be a non-empty array');
+  if (!globalStopConditions) errors.push('global_stop_conditions must be an array');
 
   const seen = new Set<string>();
   for (const stop of REQUIRED_GLOBAL_STOPS) {
-    if (!row.global_stop_conditions?.some(item => String(item).toLowerCase().includes(stop.split(' ')[0]))) {
+    if (!globalStopConditions?.some(item => String(item).toLowerCase().includes(stop.split(' ')[0]))) {
       errors.push(`global_stop_conditions must include ${stop}`);
     }
   }
 
-  for (const [index, subgoal] of (row.subgoals ?? []).entries()) {
+  for (const [index, subgoal] of (subgoals ?? []).entries()) {
     const prefix = `subgoals[${index}]`;
     if (!subgoal || typeof subgoal !== 'object') {
       errors.push(`${prefix} must be an object`);
@@ -61,14 +63,17 @@ export function validateSubgoalPlan(plan: unknown, opts: { allowedDomains?: stri
     if (DESTRUCTIVE_RE.test(`${subgoal.goal} ${subgoal.stop_condition}`) && !/destructive|confirmation|policy/i.test(subgoal.stop_condition)) {
       errors.push(`${prefix} destructive-looking goal must stop on destructive confirmation/policy`);
     }
-    if (opts.allowedDomains && subgoal.allowed_domains) {
-      const outside = subgoal.allowed_domains.filter(domain => !opts.allowedDomains!.includes(domain));
+    if (subgoal.allowed_domains !== undefined && !Array.isArray(subgoal.allowed_domains)) {
+      errors.push(`${prefix}.allowed_domains must be an array`);
+    }
+    if (opts.allowedDomains && Array.isArray(subgoal.allowed_domains)) {
+      const outside = subgoal.allowed_domains.filter((domain: string) => !opts.allowedDomains!.includes(domain));
       if (outside.length > 0) errors.push(`${prefix}.allowed_domains outside allowed scope: ${outside.join(', ')}`);
     }
   }
 
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, value: row };
+  return { ok: true, value: row as unknown as BrowserSubgoalPlan };
 }
 
 export function buildConservativeSubgoalPlan(input: {
