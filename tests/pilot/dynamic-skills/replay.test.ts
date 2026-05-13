@@ -102,6 +102,12 @@ describe('runReplay — domain enforcement', () => {
     if (!out.success) expect(out.code).toBe('skill_domain_mismatch');
   });
 
+  test('allows first-party subdomains for registrable skill domains', async () => {
+    const opts = makeOpts({ resolveCurrentTab: async () => tab('https://www.example.com/account') });
+    const out = await runReplay(makeSkill({ domain: 'example.com' }), {}, opts, "test-session");
+    expect(out.success).toBe(true);
+  });
+
   test('refuses when no active tab is available', async () => {
     const opts = makeOpts({ resolveCurrentTab: async () => null });
     const out = await runReplay(makeSkill(), {}, opts, "test-session");

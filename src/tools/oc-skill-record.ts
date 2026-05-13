@@ -81,7 +81,8 @@ const handler: ToolHandler = async (
   _sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
-  const domain = args.domain as string | undefined;
+  const domainArg = args.domain as string | undefined;
+  const domain = typeof domainArg === 'string' ? domainArg.trim().toLowerCase() : undefined;
   const name = args.name as string | undefined;
   const rawSteps = args.steps as unknown[] | undefined;
   const contractId = args.contract_id as string | undefined;

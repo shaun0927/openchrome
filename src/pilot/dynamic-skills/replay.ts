@@ -261,7 +261,10 @@ export async function runReplay(
   // for a blocked domain still gets refused at replay time.
   const currentHost = hostnameOf(tab.url);
   const skillHost = skill.domain.toLowerCase();
-  if (!currentHost || currentHost !== skillHost) {
+  const hostMatchesSkill =
+    currentHost === skillHost ||
+    (currentHost !== null && currentHost.endsWith(`.${skillHost}`));
+  if (!currentHost || !hostMatchesSkill) {
     return {
       success: false,
       code: 'skill_domain_mismatch',

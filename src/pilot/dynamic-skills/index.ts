@@ -433,9 +433,7 @@ export function detachDynamicSkillsFromServer(): boolean {
       );
     }
   }
-  if (removed > 0) {
-    emitListChanged(state.server);
-  }
+  void removed;
   return true;
 }
 
