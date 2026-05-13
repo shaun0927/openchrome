@@ -113,7 +113,11 @@ program
       const server = new MCPServer(undefined, { initialToolTier: 3 });
       registerAllTools(server);
       const manifest = server.getToolManifest();
-      process.stdout.write(JSON.stringify(manifest.tools) + '\n');
+
+      await new Promise<void>((resolve) => {
+        process.stdout.write(JSON.stringify(manifest.tools) + '\n', () => resolve());
+      });
+
       return;
     }
 
