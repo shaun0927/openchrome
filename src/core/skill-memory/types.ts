@@ -8,18 +8,29 @@
  *
  * with the structure:
  *
- *   { schema_version: 1, skills: { [skill_id]: SkillRecord } }
+ *   { schema_version: 2, skills: { [skill_id]: SkillRecord } }
  *
- * `schema_version: 1` is mandatory. Future field additions bump the
- * value; the store ignores files with an unknown schema rather than
- * crashing the load path.
+ * `schema_version` is mandatory. The store reads both v1 and v2 records
+ * (v1 records are upgraded in memory with `replay_artifact = null` per
+ * step; the file is rewritten as v2 on the next idempotent re-record).
  *
  * The recall *ranking* logic (relevance score, recency weighting,
  * LLM-facing payload sizing) is pilot-tier work and intentionally lives
  * outside this module. Core only owns the storage primitive.
  */
 
-export const SKILL_MEMORY_SCHEMA_VERSION = 1;
+import type { ReplayArtifact } from './replay-artifact';
+
+/**
+ * v2 = v1 + optional `replay_artifact` per step (#875). Reads are
+ * back-compatible: v1 files load and surface `replay_artifact: null`
+ * for every step. Writes always produce v2 so freshly-recorded skills
+ * carry the latest schema even when no artifact is attached.
+ */
+export const SKILL_MEMORY_SCHEMA_VERSION = 2;
+
+/** Pre-#875 schema version. Still readable; promoted to v2 on next write. */
+export const SKILL_MEMORY_SCHEMA_VERSION_V1 = 1;
 
 /**
  * A single stored skill.
@@ -51,6 +62,17 @@ export interface SkillRecord {
   lastUsedAt: number;
   frozenSnapshotPath: string | null;
   /**
+   * Per-step replay artifacts (#875). Parallel-indexed with `steps`. When
+   * read back from a v1 record the entries are all `null`; the replay tool
+   * surfaces `code: "ARTIFACT_MISSING"` rather than synthesizing.
+   *
+   * When omitted on write (e.g. legacy callers), the store normalises this
+   * to an array of nulls sized to `steps.length` so consumers always see a
+   * value-typed field. May still be `undefined` if `steps` is not a JS
+   * array on write — the store leaves the field absent in that case.
+   */
+  replayArtifacts?: Array<ReplayArtifact | null>;
+  /**
    * Wall-clock ms epoch of the most recent replay that passed (steps +
    * contract). Undefined / 0 means no successful replay has been recorded.
    * Used by `oc_skill_recall` to compute the per-skill `replay_signal`
@@ -68,12 +90,23 @@ export interface SkillRecord {
    * Cleared on a subsequent successful replay. Diagnostic only.
    */
   lastReplayError?: string;
+
 }
 
-/** On-disk shape for `<rootDir>/<encodedDomain>/skills.json`. */
+/** On-disk shape for `<rootDir>/<encodedDomain>/skills.json` (v2). */
 export interface SkillMemoryFile {
   schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION;
   skills: Record<string, SkillRecord>;
+}
+
+/**
+ * v1 file shape — read-only. Persisted before #875; the store accepts it
+ * on read, normalises every record to v2 by setting `replayArtifacts` to
+ * an array of nulls, and the next `record()` write promotes the file.
+ */
+export interface SkillMemoryFileV1 {
+  schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION_V1;
+  skills: Record<string, Omit<SkillRecord, 'replayArtifacts'>>;
 }
 
 /**

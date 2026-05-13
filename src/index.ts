@@ -9,6 +9,7 @@
 
 import { Command } from 'commander';
 import { getMCPServer, setMCPServerOptions } from './mcp-server';
+import { TOOL_CAPABILITIES, type ToolCapability } from './types/mcp';
 import { registerAllTools } from './tools';
 import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
@@ -98,11 +99,13 @@ program
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
+  .option('--tools-only <csv>', 'Expose only tools belonging to the specified capability groups (comma-separated). Valid values: core,crawl,recording,workflow,storage,profile,totp,pilot. Default: all groups exposed.')
+  .option('--disable-tools <csv>', 'Remove tools belonging to the specified capability groups (comma-separated). Valid values: core,crawl,recording,workflow,storage,profile,totp,pilot.')
   .option('--introspect-tools-list', 'Print tools/list as compact JSON to stdout and exit (no Chrome/CDP startup). Used by lint-tool-schemas.mjs.')
   .option('--auto-connect [userDataDir]', 'Attach to a Chrome you started yourself by reading <userDataDir>/DevToolsActivePort (#849). When omitted, uses the platform-default Chrome user-data dir. Also: OPENCHROME_AUTO_CONNECT=<dir> env var. Implies --launch-mode=attach.')
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string }) => {
     // --introspect-tools-list: print tools/list JSON and exit, NO Chrome/CDP/transport startup.
     if (options.introspectToolsList) {
       const { MCPServer } = await import('./mcp-server');
@@ -121,7 +124,9 @@ program
       return;
     }
 
+
     let port = parseInt(options.port, 10);
+
     let autoLaunch = options.autoLaunch || false;
 
     // ─── --auto-connect (#849) ──────────────────────────────────────────
@@ -373,15 +378,46 @@ program
       console.error('[openchrome] Content sanitization: disabled');
     }
 
+    const mcpOptions: Parameters<typeof setMCPServerOptions>[0] = {};
+
     // Tool tier configuration
     const envTier = parseInt(process.env.OPENCHROME_TOOL_TIER || '', 10);
     if (options.allTools || envTier >= 3) {
-      setMCPServerOptions({ initialToolTier: 3 as ToolTier });
+      mcpOptions.initialToolTier = 3 as ToolTier;
       console.error('[openchrome] All tools exposed from startup');
     } else if (envTier === 2) {
-      setMCPServerOptions({ initialToolTier: 2 as ToolTier });
+      mcpOptions.initialToolTier = 2 as ToolTier;
       console.error('[openchrome] Tier 2 tools exposed from startup');
     }
+
+    // Capability filter configuration (#829)
+    const allCapabilities: readonly ToolCapability[] = TOOL_CAPABILITIES;
+    if (options.toolsOnly && options.disableTools) {
+      console.error('[openchrome] Error: --tools-only and --disable-tools are mutually exclusive');
+      process.exit(2);
+    }
+    if (options.toolsOnly) {
+      const requested = options.toolsOnly.split(',').map(s => s.trim()).filter(Boolean) as ToolCapability[];
+      const invalid = requested.filter(c => !allCapabilities.includes(c));
+      if (invalid.length > 0) {
+        console.error(`[openchrome] Error: unknown capability group(s): ${invalid.join(', ')}. Valid: ${allCapabilities.join(', ')}`);
+        process.exit(2);
+      }
+      mcpOptions.capabilityFilter = new Set(requested);
+      console.error(`[openchrome] Capability filter (tools-only): ${requested.join(', ')}`);
+    } else if (options.disableTools) {
+      const disabled = options.disableTools.split(',').map(s => s.trim()).filter(Boolean) as ToolCapability[];
+      const invalid = disabled.filter(c => !allCapabilities.includes(c));
+      if (invalid.length > 0) {
+        console.error(`[openchrome] Error: unknown capability group(s): ${invalid.join(', ')}. Valid: ${allCapabilities.join(', ')}`);
+        process.exit(2);
+      }
+      const allowed = allCapabilities.filter(c => !disabled.includes(c));
+      mcpOptions.capabilityFilter = new Set(allowed);
+      console.error(`[openchrome] Capability filter (disable-tools): disabled=${disabled.join(', ')}`);
+    }
+
+    setMCPServerOptions(mcpOptions);
 
     // Set infinite reconnection for HTTP daemon mode BEFORE creating CDPClient singleton.
     // getMCPServer() → SessionManager → getCDPClient() reads this env var at construction.
