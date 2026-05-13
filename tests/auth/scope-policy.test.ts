@@ -25,6 +25,14 @@ describe('requiredScope', () => {
     expect(requiredScope('memory')).toBe('write');
   });
 
+  it('TaskRun read-only queries are classified read (#1039)', () => {
+    // oc_task_run_get and oc_task_run_list never mutate browser or run state.
+    expect(requiredScope('oc_task_run_get')).toBe('read');
+    expect(requiredScope('oc_task_run_list')).toBe('read');
+    expect(isAllowed('oc_task_run_get', ['read'])).toBe(true);
+    expect(isAllowed('oc_task_run_list', ['read'])).toBe(true);
+  });
+
   it('admin tools -> admin (empty set returns read for now)', () => {
     // ADMIN_TOOLS is empty in PR2; any call falls through to write/read
     expect(ADMIN_TOOLS.size).toBe(0);
