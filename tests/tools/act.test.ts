@@ -164,10 +164,6 @@ describe('ActTool', () => {
       const result = await handler(testSessionId, { tabId: testTargetId }) as any;
 
       expect(result.isError).toBe(true);
-      // act.ts currently emits "instruction is required"; PR #1098 (structured
-      // steps) will widen this to "instruction or steps is required". Until
-      // #1098 lands, accept either message so this PR doesn't block on a
-      // develop-side test/source mismatch.
       expect(result.content[0].text).toMatch(/instruction (is|or steps is) required/);
     });
 
@@ -241,8 +237,6 @@ describe('ActTool', () => {
     });
 
 
-    // act.ts does not yet implement structured `steps` input — PR #1098 owns
-    // that feature. Skip until #1098 lands and develop's act.ts is updated.
     test.skip('executes structured steps without requiring natural-language instruction', async () => {
       (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
         backendDOMNodeId: 150,
@@ -266,8 +260,6 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('[act] Executed 1/1 steps ✓ [structured]');
     });
 
-    // act.ts does not yet implement structured `steps` input — PR #1098 owns
-    // that feature. Skip until #1098 lands and develop's act.ts is updated.
     test.skip('rejects empty structured steps', async () => {
       const handler = await getActHandler();
       const result = await handler(testSessionId, {
