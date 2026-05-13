@@ -96,6 +96,25 @@ describe('bounded subgoal decomposition', () => {
 
     expect(second.global_stop_conditions).not.toContain('mutated');
     expect(first.subgoals.every((subgoal) => subgoal.allowed_tools.length > 0)).toBe(true);
+    expect(first.subgoals[0].allowed_tools).toEqual(['interact']);
+  });
+
+
+  test('schema rejects non-string allowed tools without throwing', () => {
+    const result = validateSubgoalPlan({
+      objective: 'x',
+      global_stop_conditions: ['auth handoff required', 'captcha or bot check', 'destructive confirmation required'],
+      subgoals: [{
+        id: 'bad-tools',
+        goal: 'read site',
+        success_criteria: 'content visible',
+        allowed_tools: ['read_page', 42],
+        stop_condition: 'content visible',
+      }],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join('\n')).toContain('allowed_tools must contain only strings');
   });
 
   test('schema rejects non-string allowed domains without throwing', () => {

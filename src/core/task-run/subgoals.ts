@@ -60,6 +60,7 @@ export function validateSubgoalPlan(plan: unknown, opts: { allowedDomains?: stri
     if (typeof subgoal.success_criteria !== 'string' || subgoal.success_criteria.trim() === '') errors.push(`${prefix}.success_criteria is required`);
     if (typeof subgoal.stop_condition !== 'string' || subgoal.stop_condition.trim() === '') errors.push(`${prefix}.stop_condition is required`);
     if (!Array.isArray(subgoal.allowed_tools) || subgoal.allowed_tools.length === 0) errors.push(`${prefix}.allowed_tools must be non-empty`);
+    else if (!subgoal.allowed_tools.every((tool: unknown) => typeof tool === 'string' && tool.length > 0)) errors.push(`${prefix}.allowed_tools must contain only strings`);
     if (DESTRUCTIVE_RE.test(`${subgoal.goal} ${subgoal.stop_condition}`) && !/destructive|confirmation|policy/i.test(subgoal.stop_condition)) {
       errors.push(`${prefix} destructive-looking goal must stop on destructive confirmation/policy`);
     }
@@ -83,7 +84,8 @@ export function buildConservativeSubgoalPlan(input: {
   allowedDomains?: string[];
   allowedTools?: string[];
 }): BrowserSubgoalPlan {
-  const allowedTools = input.allowedTools?.length ? input.allowedTools : ['navigate', 'read_page', 'find', 'interact', 'oc_assert'];
+  const callerAllowedTools = input.allowedTools?.filter((tool): tool is string => typeof tool === 'string' && tool.length > 0);
+  const allowedTools = callerAllowedTools?.length ? callerAllowedTools : ['navigate', 'read_page', 'find', 'interact', 'oc_assert'];
   const allowed_domains = input.allowedDomains?.length ? input.allowedDomains : undefined;
   return {
     objective: input.objective,
@@ -120,7 +122,7 @@ export function buildConservativeSubgoalPlan(input: {
 
 function pickStageTools(allowedTools: string[], stageTools: string[]): string[] {
   const filtered = allowedTools.filter((tool) => stageTools.includes(tool));
-  return filtered.length > 0 ? filtered : [stageTools[0]];
+  return filtered.length > 0 ? filtered : [...allowedTools];
 }
 
 export function evaluateSubgoalStop(input: { subgoal: BrowserSubgoal; evidenceText: string; passed?: boolean }): SubgoalExecutionState {
