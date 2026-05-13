@@ -19,9 +19,9 @@ describe('pilot React inspection helpers (#838)', () => {
   });
 
   test('redacts sensitive props', () => {
-    expect(redactSensitive({ apiKey: 'secret', nested: { token: 'abc', ok: true } })).toEqual({
+    expect(redactSensitive({ apiKey: 'secret', nested: { token: 'abc', ok: true, note: 'password=hunter2' } })).toEqual({
       apiKey: '[REDACTED]',
-      nested: { token: '[REDACTED]', ok: true },
+      nested: { token: '[REDACTED]', ok: true, note: 'password=[REDACTED]' },
     });
   });
 });

@@ -62,11 +62,28 @@ const handler: ToolHandler = async (sessionId, args): Promise<MCPResult> => {
     return textResult({ available: true, tabId: targetId, durationMs, total, renders: redactSensitive(renders) as Record<string, unknown> });
   }
 
-  const snapshot = await page.evaluate(() => {
+  const snapshot = await page.evaluate((command: string) => {
     const hook = (window as any).__REACT_DEVTOOLS_GLOBAL_HOOK__;
     const roots = hook?._openchromeRoots || [];
     const refs: any[] = [];
     const seen = new Set<any>();
+    const includeDetails = command === 'inspect';
+    function sanitize(value: any, depth = 0): any {
+      if (depth > 4) return '[depth-limit]';
+      if (Array.isArray(value)) return value.slice(0, 50).map((item) => sanitize(item, depth + 1));
+      if (typeof value === 'string') {
+        return value
+          .replace(/(password|token|secret|credential|api[_-]?key)\\s*[:=]\\s*[^\\s,;]+/gi, '$1=[REDACTED]')
+          .slice(0, 500);
+      }
+      if (!value || typeof value !== 'object') return value;
+      const out: any = {};
+      for (const [key, child] of Object.entries(value).slice(0, 80)) {
+        if (/password|token|secret|credential|api[_-]?key/i.test(key)) out[key] = '[REDACTED]';
+        else out[key] = sanitize(child, depth + 1);
+      }
+      return out;
+    }
     function nameOf(f: any) {
       const t = f && f.type;
       return (typeof t === 'string' ? t : (t && (t.displayName || t.name))) || (f && f.elementType && (f.elementType.displayName || f.elementType.name)) || 'Anonymous';
@@ -77,13 +94,21 @@ const handler: ToolHandler = async (sessionId, args): Promise<MCPResult> => {
       let childCount = 0;
       for (let c = f.child; c; c = c.sibling) childCount++;
       const ref = `@e${refs.length + 1}`;
-      refs.push({ ref, name: nameOf(f), key: f.key ?? null, depth, childCount, props: f.memoizedProps, state: f.memoizedState, tag: f.tag });
+      refs.push({
+        ref,
+        name: nameOf(f),
+        key: f.key ?? null,
+        depth,
+        childCount,
+        tag: f.tag,
+        ...(includeDetails ? { props: sanitize(f.memoizedProps), state: sanitize(f.memoizedState) } : {}),
+      });
       for (let c = f.child; c; c = c.sibling) walk(c, depth + 1);
     }
     for (const root of roots) walk(root.current || root, 0);
     (window as any).__OPENCHROME_REACT_REFS__ = refs;
     return refs;
-  });
+  }, subcommand);
 
   if (!Array.isArray(snapshot) || snapshot.length === 0) {
     metric('openchrome_react_unavailable_total', { reason: 'empty-react-tree' });

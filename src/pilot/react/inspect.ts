@@ -45,6 +45,11 @@ export function summarizeFiberTree(root: unknown, limit = 200): ReactSnapshot {
 export function redactSensitive(value: unknown, depth = 0): unknown {
   if (depth > 4) return '[depth-limit]';
   if (Array.isArray(value)) return value.slice(0, 50).map((v) => redactSensitive(v, depth + 1));
+  if (typeof value === 'string') {
+    return value
+      .replace(/(password|token|secret|credential|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+      .slice(0, 500);
+  }
   if (!value || typeof value !== 'object') return value;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>).slice(0, 80)) {
