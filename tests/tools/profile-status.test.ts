@@ -25,6 +25,8 @@ jest.mock('../../src/session-manager', () => ({
 }));
 
 import { getSessionManager } from '../../src/session-manager';
+import { getChromeLauncher } from '../../src/chrome/launcher';
+import { setGlobalConfig } from '../../src/config/global';
 import { MCPServer } from '../../src/mcp-server';
 import { registerProfileStatusTool } from '../../src/tools/profile-status';
 
@@ -42,6 +44,7 @@ describe('oc_profile_status tool', () => {
   });
 
   afterEach(() => {
+    setGlobalConfig({ port: 9222 });
     jest.clearAllMocks();
   });
 
@@ -60,6 +63,18 @@ describe('oc_profile_status tool', () => {
     expect(data.capabilities.savedPasswords).toBe(true);
     expect(data.capabilities.localStorage).toBe(true);
     expect(result.content[1].text).toContain('Real Chrome profile');
+  });
+
+  test('uses configured port when reading profile state', async () => {
+    setGlobalConfig({ port: 9334 });
+    mockGetProfileState.mockReturnValue({
+      type: 'real',
+      extensionsAvailable: true,
+    });
+
+    await handler('default', {});
+
+    expect(getChromeLauncher).toHaveBeenCalledWith(9334);
   });
 
   test('reports persistent profile with cookie age', async () => {
