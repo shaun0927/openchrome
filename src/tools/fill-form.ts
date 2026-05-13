@@ -20,6 +20,7 @@ import { humanType, humanMouseMove } from '../stealth/human-behavior';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
+import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -73,6 +74,11 @@ const definition: MCPToolDefinition = {
         description: 'Human-readable label for this action in audit logs (≤120 chars)',
         maxLength: 120,
       },
+      capture_artifact: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, stage replay artifact steps for oc_skill_record after successfully filled fields. Default false is a strict no-op.',
+      },
     },
     required: ['tabId'],
   },
@@ -96,6 +102,7 @@ const handler: ToolHandler = async (
   const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
   const verifyMode = coerceVerifyMode(args.verify);
   const intent = args.intent as string | undefined;
+  const captureArtifact = shouldCaptureReplayArtifact(args.capture_artifact);
 
   // Validate intent when provided — use typeof guard for null-safety
   if (typeof intent === 'string') {
@@ -243,6 +250,16 @@ const handler: ToolHandler = async (
           } else {
             await page.keyboard.type(stringValue);
           }
+          if (captureArtifact) {
+            await captureBackendNodeReplayStep({
+              cdpClient,
+              page,
+              backendNodeId: entry.backendDOMNodeId,
+              kind: 'fill',
+              args: { value: stringValue },
+            });
+          }
+
           filledFields.push(`${refKey}: "${stringValue.slice(0, 20)}${stringValue.length > 20 ? '...' : ''}" [via ref]`);
         } catch {
           throwIfAborted(context);
@@ -323,6 +340,16 @@ const handler: ToolHandler = async (
               await humanType(page, String(fieldValue));
             } else {
               await page.keyboard.type(String(fieldValue));
+            }
+
+            if (captureArtifact) {
+              await captureBackendNodeReplayStep({
+                cdpClient,
+                page,
+                backendNodeId: axMatch.backendDOMNodeId,
+                kind: 'fill',
+                args: { value: String(fieldValue) },
+              });
             }
 
             invalidateAXCache(getTargetId(page.target()));
@@ -453,6 +480,16 @@ const handler: ToolHandler = async (
             } else {
               await page.keyboard.type(String(fieldValue));
             }
+          }
+
+          if (captureArtifact && bestMatch.backendDOMNodeId) {
+            await captureBackendNodeReplayStep({
+              cdpClient,
+              page,
+              backendNodeId: bestMatch.backendDOMNodeId,
+              kind: bestMatch.tagName === 'select' ? 'select' : 'fill',
+              args: { value: String(fieldValue) },
+            });
           }
 
           filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
