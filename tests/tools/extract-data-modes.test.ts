@@ -35,7 +35,8 @@ describe('extract_data modes', () => {
     expect(parseExtractionMode(undefined)).toEqual({ ok: true, mode: 'fast' });
     expect(parseExtractionMode('fast')).toEqual({ ok: true, mode: 'fast' });
     expect(parseExtractionMode('standard')).toEqual({ ok: true, mode: 'standard' });
-    expect(parseExtractionMode('deep')).toEqual({ ok: false, error: 'Invalid mode. Use "fast" or "standard".' });
+    expect(parseExtractionMode('semantic')).toEqual({ ok: true, mode: 'semantic' });
+    expect(parseExtractionMode('deep')).toEqual({ ok: false, error: 'Invalid mode. Use "fast", "standard", or "semantic".' });
     expect(EXTRACTION_MODE_BUDGETS.fast.maxStandardDomNodes).toBe(0);
     expect(EXTRACTION_MODE_BUDGETS.standard.maxStandardDomNodes).toBeGreaterThan(EXTRACTION_MODE_BUDGETS.fast.maxStandardDomNodes);
   });

@@ -11,3 +11,5 @@ export {
 export type { StrategyResult } from './strategies';
 export { EXTRACTION_MODES, EXTRACTION_MODE_BUDGETS, parseExtractionMode } from './mode';
 export type { ExtractionMode, ExtractionModeBudget } from './mode';
+export { SEMANTIC_DEFAULT_MAX_CHARS, SEMANTIC_HARD_MAX_CHARS, buildSemanticHostExtractionPayload } from './semantic';
+export type { SemanticExtractionPayload } from './semantic';

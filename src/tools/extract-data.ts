@@ -8,6 +8,8 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { waitForPageReady } from '../utils/page-ready-state';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { sanitizeContent } from '../security/content-sanitizer';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import {
   validateSchema,
@@ -20,6 +22,9 @@ import {
   buildMultipleItemExtractor,
   parseExtractionMode,
   EXTRACTION_MODE_BUDGETS,
+  buildSemanticHostExtractionPayload,
+  SEMANTIC_DEFAULT_MAX_CHARS,
+  SEMANTIC_HARD_MAX_CHARS,
 } from '../extraction';
 import type { ExtractionMode } from '../extraction';
 import type { ExtractionSchema, SchemaProperty } from '../extraction';
@@ -32,7 +37,7 @@ import {
 const definition: MCPToolDefinition = {
   name: 'extract_data',
   description:
-    'Extract structured data from page using a JSON Schema. Tries JSON-LD, Microdata, OpenGraph, and CSS heuristics. Use multiple:true for listings.\n\nWhen to use: Extracting typed structured data (products, articles, prices) from a page into a schema.\nWhen NOT to use: Use javascript_tool for ad-hoc extraction, or read_page to read raw page content.',
+    'Extract structured data from page using a JSON Schema. Tries JSON-LD, Microdata, OpenGraph, and CSS heuristics. Use multiple:true for listings. Use mode="semantic" with query for bounded host-side semantic extraction chunks.\n\nWhen to use: Extracting typed structured data (products, articles, prices) from a page into a schema.\nWhen NOT to use: Use javascript_tool for ad-hoc extraction, or read_page to read raw page content.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -49,6 +54,30 @@ const definition: MCPToolDefinition = {
       instruction: {
         type: 'string',
         description: 'Optional natural language hint (e.g., "product details")',
+      },
+      query: {
+        type: 'string',
+        description: 'Required for mode="semantic": query describing the information to extract from a bounded markdown chunk',
+      },
+      maxChars: {
+        type: 'number',
+        description: `Semantic mode only: max chunk chars returned to the host. Default ${SEMANTIC_DEFAULT_MAX_CHARS}, hard cap ${SEMANTIC_HARD_MAX_CHARS}.`,
+      },
+      startFromChar: {
+        type: 'number',
+        description: 'Semantic mode only: continuation offset into filtered markdown. Default: 0.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'Semantic mode only: preserve markdown links. Default: true.',
+      },
+      includeImages: {
+        type: 'boolean',
+        description: 'Semantic mode only: reserved for image markdown inclusion. Default: false.',
+      },
+      alreadyCollected: {
+        type: 'array',
+        description: 'Semantic mode only: values already collected by the host, used for simple chunk dedupe hints.',
       },
       selector: {
         type: 'string',
@@ -95,6 +124,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const schema = args.schema as ExtractionSchema;
   const selector = args.selector as string | undefined;
+  const query = args.query as string | undefined;
   const multiple = (args.multiple as boolean) ?? false;
   const { mode: outputMode, inlineLimit } = parseOutputMode(args);
   const waitForReady = args.waitForReady === true;
@@ -138,6 +168,50 @@ const handler: ToolHandler = async (
 
     const pageUrl = page.url();
     const domain = extractDomainFromUrl(pageUrl);
+
+    if (extractionMode === 'semantic') {
+      if (!query || query.trim().length === 0) {
+        return { content: [{ type: 'text', text: 'Error: mode="semantic" requires a non-empty query' }], isError: true };
+      }
+      if (multiple) {
+        return { content: [{ type: 'text', text: 'Error: mode="semantic" does not support multiple=true; use continuation metadata and alreadyCollected instead.' }], isError: true };
+      }
+      const includeLinks = args.includeLinks !== false;
+      const html = selector
+        ? await withTimeout(page.evaluate((sel: string) => {
+          const el = document.querySelector(sel);
+          return el ? (el as HTMLElement).outerHTML : '';
+        }, selector) as Promise<string>, 15000, 'extract_data:semantic.selector', _context)
+        : await withTimeout(page.content(), 15000, 'extract_data:semantic.content', _context);
+      if (!html) {
+        return { content: [{ type: 'text', text: `Error: selector "${selector}" did not match content for semantic extraction` }], isError: true };
+      }
+      const { html: cleaned } = extractMainContent(html, { onlyMainContent: !selector });
+      const rawMarkdown = toMarkdown(cleaned, { includeLinks });
+      const sanitized = sanitizeContent(rawMarkdown);
+      const semanticPayload = buildSemanticHostExtractionPayload({
+        markdown: sanitized.text + sanitized.sanitizationNote,
+        schema,
+        schemaProps,
+        query,
+        startFromChar: args.startFromChar as number | undefined,
+        maxChars: args.maxChars as number | undefined,
+        alreadyCollected: args.alreadyCollected as unknown[] | undefined,
+      });
+      const payload: Record<string, unknown> = {
+        ...semanticPayload,
+        url: pageUrl,
+        selector: selector || undefined,
+        includeLinks,
+        includeImages: args.includeImages === true,
+        readiness,
+        metrics: { mode: 'semantic', outputChars: 0 },
+      };
+      const textWithoutMetrics = JSON.stringify(payload);
+      payload.metrics = { mode: 'semantic', outputChars: textWithoutMetrics.length };
+      const inlineResult: MCPResult = { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+      return resolveOutputMode(outputMode, inlineLimit, inlineResult, payload, 'extract_data');
+    }
 
     // Multiple items mode
     if (multiple) {
