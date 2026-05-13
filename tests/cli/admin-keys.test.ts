@@ -39,12 +39,22 @@ function extractToken(stdout: string): string {
 }
 
 function extractJsonArray(stdout: string): string {
-  const start = stdout.indexOf('[');
-  const end = stdout.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
+  const starts: number[] = [];
+  for (let i = 0; i < stdout.length; i++) {
+    if (stdout[i] === '[') starts.push(i);
   }
-  return stdout.slice(start, end + 1);
+  for (const start of starts) {
+    for (let end = stdout.lastIndexOf(']'); end > start; end = stdout.lastIndexOf(']', end - 1)) {
+      const candidate = stdout.slice(start, end + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        if (Array.isArray(parsed)) return candidate;
+      } catch {
+        // Ignore unrelated log prefixes such as [WorkflowEngine] captured by the shared stdout hook.
+      }
+    }
+  }
+  throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
 }
 
 async function runCli(argv: string[]): Promise<RunResult> {
