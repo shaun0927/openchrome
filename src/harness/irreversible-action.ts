@@ -31,11 +31,19 @@ function normalize(value: string | undefined): string {
   return (value ?? '').toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsPhrase(text: string, phrase: string): boolean {
+  return new RegExp(`(?:^|\\s)${escapeRegex(phrase)}(?:\\s|$)`).test(text);
+}
+
 export function classifyBrowserActionRisk(input: BrowserActionRiskInput): BrowserActionRisk {
   const text = normalize(`${input.action} ${input.labelText ?? ''}`);
-  const evidence = CRITICAL_ACTION_WORDS.filter((word) => text.includes(word));
-  const negated = SAFE_NEGATIONS.some((word) => text.includes(word));
-  const mutatingClick = ['click', 'double_click'].includes(normalize(input.action));
+  const evidence = CRITICAL_ACTION_WORDS.filter((word) => containsPhrase(text, word));
+  const negated = SAFE_NEGATIONS.some((word) => containsPhrase(text, word));
+  const mutatingClick = ['click', 'double click'].includes(normalize(input.action));
 
   if (!mutatingClick || evidence.length === 0 || negated) {
     return {

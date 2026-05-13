@@ -25,6 +25,18 @@ describe('irreversible browser action guard', () => {
     expect(classifyBrowserActionRisk({ toolName: 'interact', action: 'click', labelText: 'Cancel delete dialog' }).critical).toBe(false);
   });
 
+  it('matches negation tokens on word boundaries (not substring of larger words)', () => {
+    const reviewAndPay = classifyBrowserActionRisk({ toolName: 'interact', action: 'click', labelText: 'Review and pay' });
+    expect(reviewAndPay.critical).toBe(true);
+    expect(reviewAndPay.evidence).toContain('pay');
+  });
+
+  it('treats double_click on critical text as mutating after normalization', () => {
+    const risk = classifyBrowserActionRisk({ toolName: 'interact', action: 'double_click', labelText: 'Delete account permanently' });
+    expect(risk.critical).toBe(true);
+    expect(risk.evidence).toContain('delete');
+  });
+
   it('passes through risky actions when pilot contract runtime is disabled', async () => {
     delete process.env.OPENCHROME_PILOT;
     resetFlagsCache();
