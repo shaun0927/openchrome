@@ -38,6 +38,27 @@ function extractToken(stdout: string): string {
   return m[0];
 }
 
+/**
+ * Extract a JSON array line from captured stdout. The in-process harness can
+ * intermittently see unrelated console.error noise from a prior leaked timer
+ * (e.g. "[WorkflowEngine] …") get rendered into the captured stdout buffer on
+ * macOS workers. The CLI's `list --json` only ever emits exactly one line that
+ * begins with '[' and parses as a JSON array, so scanning line-by-line for
+ * that shape is both sufficient and robust.
+ */
+function extractJsonArray(stdout: string): string {
+  for (const line of stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+    if (!line.startsWith('[')) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (Array.isArray(parsed)) return line;
+    } catch {
+      // Ignore unrelated bracket-prefixed test noise such as [WorkflowEngine].
+    }
+  }
+  throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
+}
+
 async function runCli(argv: string[]): Promise<RunResult> {
   const program = new Command();
   program.exitOverride((err) => {
@@ -191,7 +212,7 @@ describe('admin keys CLI', () => {
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
     expect(listed.exitCode).toBeNull();
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; tenantId: string }>;
+    const parsed = JSON.parse(extractJsonArray(listed.stdout)) as Array<{ keyId: string; tenantId: string }>;
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].tenantId).toBe('acme');
@@ -212,7 +233,7 @@ describe('admin keys CLI', () => {
     expect(revoked.stderr).toContain('Revoked');
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; revokedAt?: number }>;
+    const parsed = JSON.parse(extractJsonArray(listed.stdout)) as Array<{ keyId: string; revokedAt?: number }>;
     const row = parsed.find((r) => r.keyId === keyId);
     expect(row).toBeDefined();
     expect(typeof row!.revokedAt).toBe('number');
@@ -238,7 +259,7 @@ describe('admin keys CLI', () => {
     expect(rotated.stdout + rotated.stderr).not.toContain(firstPlaintext);
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; revokedAt?: number }>;
+    const parsed = JSON.parse(extractJsonArray(listed.stdout)) as Array<{ keyId: string; revokedAt?: number }>;
     const oldRow = parsed.find((r) => r.keyId === firstKeyId);
     expect(oldRow).toBeDefined();
     expect(typeof oldRow!.revokedAt).toBe('number');
