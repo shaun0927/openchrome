@@ -46,13 +46,6 @@ function severityForMs(
   return 'info';
 }
 
-/** Filter helper: events whose category list contains `wanted`. */
-function eventsInCategory(events: TraceEventRecord[], wanted: string): TraceEventRecord[] {
-  return events.filter((e) => {
-    if (!e.cat) return false;
-    return e.cat.split(',').some((c) => c.trim() === wanted);
-  });
-}
 
 /** Filter helper: events with a matching `name`. */
 function eventsByName(events: TraceEventRecord[], name: string): TraceEventRecord[] {

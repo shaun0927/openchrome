@@ -232,7 +232,6 @@ export function buildSemanticView(
   // candidate B AND there is no AX descendant of B outside A's
   // subtree (other than B itself), we drop B. Both can be kept; the
   // outer's `state` and `ref_ids` exclude inner subtrees.
-  const candidateIds = new Set(candidates);
   const droppedOuter = new Set<number>();
   for (let i = 0; i < candidates.length; i++) {
     const outer = candidates[i];
@@ -405,7 +404,7 @@ function classifyKind(
 
   // Pre-compute counts of form fields and microdata for product/article
   // classifiers that need to look inside the subtree.
-  let microItemTypes = new Set<string>();
+  const microItemTypes = new Set<string>();
   let formFieldCount = 0;
   let hasPriceSignal = false;
   let hasMediaTag = false;
