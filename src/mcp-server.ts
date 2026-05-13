@@ -2457,25 +2457,29 @@ export class MCPServer {
     try {
       const recent = this.activityTracker.getRecentCalls(3, sessionId);
       const current = recent.find((call) => call.id === callId);
-      const previous = recent.find((call) => call.id !== callId);
-      const previousTrajectory = this.recoveryLedger
-        .readRecent(1, sessionId)
-        .find((node) => node.toolName !== toolName);
+      const tabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+      const previousTrajectory = this.recoveryLedger.getLastNode(sessionId, tabId);
       const previousFailed =
-        previous?.result === 'error' || previousTrajectory?.resultStatus === 'no_progress';
+        previousTrajectory?.resultStatus === 'error' ||
+        previousTrajectory?.resultStatus === 'no_progress' ||
+        previousTrajectory?.resultStatus === 'aborted';
       const recovered =
         resultStatus === 'success' &&
-        previous !== undefined &&
+        previousTrajectory !== undefined &&
         previousFailed &&
-        previous.toolName !== toolName;
+        previousTrajectory.toolName !== toolName;
+      const progressStatus =
+        resultStatus === 'error' || resultStatus === 'no_progress' || current?.result === 'error'
+          ? 'stuck'
+          : 'unknown';
 
       this.recoveryLedger.record({
         sessionId,
-        tabId: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+        tabId,
         toolName,
         args: toolArgs,
         resultStatus: recovered ? 'recovered' : resultStatus,
-        progressStatus: current?.result === 'error' ? 'stuck' : 'unknown',
+        progressStatus,
         error,
         result,
         recoveryTool: recovered ? toolName : undefined,
