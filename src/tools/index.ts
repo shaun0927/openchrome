@@ -128,7 +128,7 @@ import { getPerfTraceStore } from '../core/performance/insights/trace-store';
 // are set. The pilot module is loaded via `require()` only when the gate is
 // open — this preserves P2 (no module from `src/pilot/**` is loaded into the
 // process when `--pilot` is unset) while keeping `registerAllTools()` sync.
-import { isProxyHookEnabled } from '../harness/flags';
+import { isProxyHookEnabled, isSkillReplayEnabled } from '../harness/flags';
 // oc_observe (#866) — deterministic actionable-element enumeration
 import { registerOcObserveTool } from './oc-observe';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
@@ -256,6 +256,14 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+  // Skill replay (#856) — pilot-tier. Dynamically imported so no
+  // `src/pilot/**` dependency is loaded unless --pilot and
+  // OPENCHROME_SKILL_REPLAY=1 are both active.
+  if (isSkillReplayEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcSkillReplayTool } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
+    registerOcSkillReplayTool(server);
+  }
 
   // Doctor report tool (#898) — read cached `openchrome doctor` output
   registerOcDoctorReportTool(server);
