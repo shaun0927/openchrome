@@ -183,7 +183,10 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const filter = (args.filter as string) || 'all';
   const defaultDepth = filter === 'interactive' ? 5 : 8;
-  const maxDepth = (args.depth as number) || defaultDepth;
+  const requestedDepth = typeof args.depth === 'number' ? args.depth : undefined;
+  const maxDepth = filter === 'interactive'
+    ? Math.min(requestedDepth ?? defaultDepth, defaultDepth)
+    : requestedDepth ?? defaultDepth;
   const fetchDepth = maxDepth;
 
   const sessionManager = getSessionManager();

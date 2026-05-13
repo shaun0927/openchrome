@@ -74,13 +74,6 @@ describe('ReadPageTool', () => {
       sampleAccessibilityTree
     );
 
-    // Set up CDP response for depth 5 (used with interactive filter)
-    mockSessionManager.mockCDPClient.setCDPResponse(
-      'Accessibility.getFullAXTree',
-      { depth: 5 },
-      sampleAccessibilityTree
-    );
-
     // Set up DOM.getDocument response for DOM mode (now the default)
     mockSessionManager.mockCDPClient.setCDPResponse(
       'DOM.getDocument',
@@ -210,6 +203,23 @@ describe('ReadPageTool', () => {
         expect.anything(),
         'Accessibility.getFullAXTree',
         { depth: 3 }
+      );
+    });
+
+    test('caps custom depth above limit for interactive filter', async () => {
+      const handler = await getReadPageHandler();
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        filter: 'interactive',
+        depth: 10,
+      });
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        { depth: 5 }
       );
     });
 
