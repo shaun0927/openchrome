@@ -197,4 +197,80 @@ describe('action-cache', () => {
       expect(result).not.toBeNull();
     });
   });
+
+  describe('guarded workflow cache', () => {
+    const signature = {
+      titleHash: 'title-a',
+      actionLabelsHash: 'labels-a',
+      actionRolesHash: 'roles-a',
+      formShapeHash: 'forms-a',
+    };
+
+    it('records and accepts a matching safe workflow only when requested by caller', () => {
+      const cache = getCache();
+      const entry = cache.cacheWorkflowSequence(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS, signature);
+
+      expect(entry).not.toBeNull();
+      const decision = cache.getWorkflowCachedSequence(TEST_URL, TEST_INSTRUCTION, signature);
+
+      expect(decision.decision).toBe('accepted');
+      expect(decision.actions).toEqual(TEST_ACTIONS);
+      expect(decision.similarity).toBe(1);
+    });
+
+    it('rejects workflow replay when the page signature changes', () => {
+      const cache = getCache();
+      cache.cacheWorkflowSequence(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS, signature);
+
+      const decision = cache.getWorkflowCachedSequence(TEST_URL, TEST_INSTRUCTION, {
+        ...signature,
+        actionLabelsHash: 'labels-b',
+        actionRolesHash: 'roles-b',
+      });
+
+      expect(decision.decision).toBe('rejected');
+      expect(decision.reason).toBe('page_signature_mismatch');
+    });
+
+    it('blocks destructive-looking workflows by default', () => {
+      const cache = getCache();
+      const riskyActions: ParsedAction[] = [{ action: 'click', target: 'delete account' }];
+      cache.cacheWorkflowSequence(TEST_URL, 'click delete account', riskyActions, signature);
+
+      const blocked = cache.getWorkflowCachedSequence(TEST_URL, 'click delete account', signature);
+      const allowed = cache.getWorkflowCachedSequence(TEST_URL, 'click delete account', signature, { allowRiskyReplay: true });
+
+      expect(blocked.decision).toBe('rejected');
+      expect(blocked.reason).toBe('safety_policy_blocked');
+      expect(blocked.safety?.destructiveRisk).toBe('possible');
+      expect(allowed.decision).toBe('accepted');
+    });
+
+    it('does not store secret-looking text values as replay literals', () => {
+      const cache = getCache();
+      const secretActions: ParsedAction[] = [
+        { action: 'type', target: 'password', value: 'hunter2-fixture-value' },
+      ];
+      const entry = cache.cacheWorkflowSequence(TEST_URL, 'type hunter2-fixture-value in password', secretActions, signature);
+
+      const serialized = JSON.stringify(entry);
+      expect(serialized).not.toContain('hunter2-fixture-value');
+      expect(entry!.steps[0]).toMatchObject({ valueKind: 'variable' });
+      expect(entry!.steps[0]).not.toHaveProperty('value');
+      expect(entry!.safety.replayAllowed).toBe(false);
+    });
+
+    it('records failed replay reasons and reports confidence decrement', () => {
+      const cache = getCache();
+      cache.cacheWorkflowSequence(TEST_URL, TEST_INSTRUCTION, TEST_ACTIONS, signature);
+
+      const decision = cache.validateWorkflowCachedSequence(TEST_URL, TEST_INSTRUCTION, false, 'ELEMENT_NOT_FOUND');
+      const lookup = cache.getWorkflowCachedSequence(TEST_URL, TEST_INSTRUCTION, signature);
+
+      expect(decision.cacheAction).toBe('decrement_confidence');
+      expect(decision.entry?.stats.lastFailureReason).toBe('ELEMENT_NOT_FOUND');
+      expect(lookup.decision).toBe('rejected');
+      expect(lookup.reason).toBe('confidence_below_threshold');
+    });
+  });
 });

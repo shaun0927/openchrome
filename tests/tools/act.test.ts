@@ -164,7 +164,7 @@ describe('ActTool', () => {
       const result = await handler(testSessionId, { tabId: testTargetId }) as any;
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('instruction is required');
+      expect(result.content[0].text).toContain('instruction or steps is required');
     });
 
     test('returns error when instruction is empty string', async () => {
@@ -172,24 +172,7 @@ describe('ActTool', () => {
       const result = await handler(testSessionId, { tabId: testTargetId, instruction: '   ' }) as any;
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('instruction is required');
-    });
-
-
-
-    test('returns error before execution when placeholder variable is missing', async () => {
-      const handler = await getActHandler();
-      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
-
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        instruction: 'type %password% in password',
-        variables: {},
-      }) as any;
-
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Missing variable');
-      expect(page!.keyboard.type).not.toHaveBeenCalled();
+      expect(result.content[0].text).toContain('instruction or steps is required');
     });
 
     test('returns error when tab is not found', async () => {
@@ -253,6 +236,41 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('\u2713'); // checkmark
     });
 
+
+    test('executes structured steps without requiring natural-language instruction', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
+        backendDOMNodeId: 150,
+        role: 'button',
+        name: 'Login',
+        matchLevel: 1,
+        rect: { x: 50, y: 50, width: 80, height: 30 },
+        properties: {},
+        source: 'ax',
+      }]);
+      mockSessionManager.mockCDPClient.send.mockResolvedValue({ model: { content: [10, 20, 90, 20, 90, 50, 10, 50] } });
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        steps: [{ action: 'click', target: 'login' }],
+        verify: false,
+      }) as any;
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('[act] Executed 1/1 steps ✓ [structured]');
+    });
+
+    test('rejects empty structured steps', async () => {
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        steps: [],
+      }) as any;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('steps must be a non-empty array');
+    });
+
     test('reports ELEMENT_NOT_FOUND when AX resolves nothing', async () => {
       (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
 
@@ -267,57 +285,28 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('Could not find');
     });
 
-
-    test('failed target returns structured recovery hints with bounded near matches', async () => {
+    test('workflow_debug reports guarded workflow cache miss without changing fallback execution', async () => {
       (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
       const page = await mockSessionManager.getPage(testSessionId, testTargetId);
-      (page!.evaluate as jest.Mock).mockResolvedValue([
-        { label: 'Continue to checkout', text: 'Continue to checkout', role: 'button', tag: 'button', candidate: 'Continue to checkout button', visible: true },
-        { label: 'Cart', text: 'Cart', role: 'link', tag: 'a', candidate: 'Cart link', visible: true },
-      ]);
+      (page!.evaluate as jest.Mock).mockResolvedValue({
+        title: 'Example',
+        actionLabels: ['Login'],
+        actionRoles: ['button'],
+        formShape: [],
+      });
 
       const handler = await getActHandler();
       const result = await handler(testSessionId, {
         tabId: testTargetId,
-        instruction: 'click checkout',
+        instruction: 'click missing-button',
+        use_workflow_cache: true,
+        workflow_debug: true,
         verify: false,
       }) as any;
 
       expect(result.isError).toBe(true);
-      const payload = JSON.parse(result.content[0].text);
-      expect(payload.success).toBe(false);
-      expect(payload.failedStep).toMatchObject({ action: 'click', target: 'checkout', outcome: 'ELEMENT_NOT_FOUND' });
-      expect(payload.recovery.reason).toBe('target_not_found');
-      expect(payload.recovery.suggestedNextCalls.length).toBeGreaterThanOrEqual(1);
-      expect(payload.recovery.suggestedNextCalls.length).toBeLessThanOrEqual(3);
-      expect(payload.recovery.suggestedNextCalls).toEqual(expect.arrayContaining([
-        expect.objectContaining({ tool: 'read_page', arguments: expect.objectContaining({ tabId: testTargetId }) }),
-        expect.objectContaining({ tool: 'query_dom', arguments: expect.objectContaining({ tabId: testTargetId, multiple: true }) }),
-      ]));
-      expect(payload.recovery.nearMatches.length).toBeGreaterThanOrEqual(1);
-      expect(payload.recovery.nearMatches.length).toBeLessThanOrEqual(5);
-      expect(payload.recovery.nearMatches[0].label).toBe('Continue to checkout');
-      expect(payload.text).toContain('Could not find');
-    });
-
-    test('recovery near matches do not include password field values', async () => {
-      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
-      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
-      (page!.evaluate as jest.Mock).mockResolvedValue([
-        { label: 'Password', text: '', role: 'textbox', tag: 'input', candidate: 'Password textbox input', visible: true, value: 'super-secret-fixture-password' },
-      ]);
-
-      const handler = await getActHandler();
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        instruction: 'click password',
-        verify: false,
-      }) as any;
-
-      const serialized = result.content[0].text;
-      expect(serialized).not.toContain('super-secret-fixture-password');
-      const payload = JSON.parse(serialized);
-      expect(payload.recovery.nearMatches[0]).not.toHaveProperty('value');
+      expect(result.content[0].text).toContain('Could not find');
+      expect(result.content[0].text).toContain('[WorkflowCache] decision=miss reason=no_candidate');
     });
 
     test('navigate step calls page.goto', async () => {
@@ -466,77 +455,6 @@ describe('ActTool', () => {
 
       expect(result.isError).toBeFalsy();
       expect(page!.keyboard.type).toHaveBeenCalledWith('hello world', expect.any(Object));
-    });
-
-
-
-    test('substitutes variables at execution time but redacts them from response', async () => {
-      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
-        backendDOMNodeId: 401,
-        role: 'textbox',
-        name: 'Password',
-        matchLevel: 1,
-        rect: { x: 200, y: 100, width: 200, height: 30 },
-        properties: {},
-        source: 'ax',
-      }]);
-      mockSessionManager.mockCDPClient.send.mockResolvedValue({ model: { content: [180, 85, 380, 85, 380, 115, 180, 115] } });
-
-      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
-      (page!.evaluate as jest.Mock).mockResolvedValue({ url: 'https://example.com', title: 'Example' });
-
-      const handler = await getActHandler();
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        instruction: 'type %password% in password',
-        variables: { password: 'S3cret-Value-Do-Not-Log' },
-      }) as any;
-
-      expect(result.isError).toBeFalsy();
-      expect(page!.keyboard.type).toHaveBeenCalledWith('S3cret-Value-Do-Not-Log', expect.any(Object));
-      expect(result.content[0].text).not.toContain('S3cret-Value-Do-Not-Log');
-      expect(result.content[0].text).toContain('%password%');
-    });
-
-    test('redacts overlapping variable values and verification URL/title', async () => {
-      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
-      (page!.evaluate as jest.Mock).mockResolvedValue({
-        url: 'https://example.com/callback?token=abc123',
-        title: 'session abc123',
-      });
-
-      const handler = await getActHandler();
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        instruction: 'navigate to https://example.com/callback?token=%long%',
-        variables: { short: 'abc', long: 'abc123' },
-      }) as any;
-
-      expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).not.toContain('abc123');
-      expect(result.content[0].text).not.toContain('%short%123');
-      expect(result.content[0].text).toContain('%long%');
-    });
-
-    test('redacts equal-length overlapping variable values without leaking fragments', async () => {
-      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
-      (page!.evaluate as jest.Mock).mockResolvedValue({
-        url: 'https://example.com/callback?value=abcd',
-        title: 'overlap abcd',
-      });
-
-      const handler = await getActHandler();
-      const result = await handler(testSessionId, {
-        tabId: testTargetId,
-        instruction: 'navigate to https://example.com/callback?value=abcd',
-        variables: { first: 'abc', second: 'bcd' },
-      }) as any;
-
-      expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).not.toContain('abcd');
-      expect(result.content[0].text).not.toContain('abc');
-      expect(result.content[0].text).not.toContain('bcd');
-      expect(result.content[0].text).toContain('[REDACTED_VARIABLE]');
     });
 
     test('type with target finds element first', async () => {

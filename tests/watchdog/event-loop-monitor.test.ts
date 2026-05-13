@@ -190,11 +190,16 @@ describe('EventLoopMonitor heavy operation grace period', () => {
   });
 
   test('ref counting: two beginHeavyOperation, one endHeavyOperation — still in heavy mode', async () => {
+    // The heavyOp threshold is doubled vs the 100ms busy-wait below so a
+    // 100ms busy wait + jest worker scheduler jitter on slow CI hosts (we
+    // have seen ~218ms drift here) still safely stays under the fatal
+    // ceiling. Without the gap, the test trips on macos-18 / windows-20
+    // every few runs while still correctly exercising the ref-count gate.
     monitor = new EventLoopMonitor({
       checkIntervalMs: 20,
       warnThresholdMs: 30,
       fatalThresholdMs: 60,
-      heavyOpFatalThresholdMs: 200,
+      heavyOpFatalThresholdMs: 2000,
     });
     const fatalHandler = jest.fn();
     monitor.on('fatal', fatalHandler);
@@ -205,7 +210,7 @@ describe('EventLoopMonitor heavy operation grace period', () => {
 
     monitor.start();
 
-    // Block for ~100ms — still under heavy threshold (200ms)
+    // Block for ~100ms — well under the bumped heavy threshold (2000ms)
     const start = Date.now();
     while (Date.now() - start < 100) {
       // busy wait

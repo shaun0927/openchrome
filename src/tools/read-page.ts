@@ -130,6 +130,11 @@ const definition: MCPToolDefinition = {
         enum: ['none', 'delta'],
         description: 'Compression mode. "delta" returns only changes since last read.',
       },
+      planningProfile: {
+        type: 'string',
+        enum: ['default', 'stable'],
+        description: 'DOM mode only: stable omits decorative/noisy serialization details without mutating the live page. Default: default.',
+      },
       fallback: {
         type: 'string',
         enum: ['none', 'dom'],
@@ -685,10 +690,12 @@ const handler: ToolHandler = async (
       try {
         const refId = args.ref_id as string | undefined;
         const depth = args.depth as number | undefined;
+        const planningProfile = (args.planningProfile as 'default' | 'stable' | undefined) ?? 'default';
         const result = await measure('domGetDocumentMs', () => serializeDOM(page, cdpClient, {
           maxDepth: depth ?? -1,
           filter: filter,
           interactiveOnly: filter === 'interactive',
+          planningProfile,
         }));
         diagnostics.formatMs = diagnostics.domGetDocumentMs;
 
@@ -1269,8 +1276,22 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
   return sanitizedResult;
 };
 
+/**
+ * Snapshot-cache wrapper (#879).
+ *
+ * read_page stays uncached for now. AX/semantic responses embed ephemeral
+ * ref_* ids owned by RefIdManager, and DOM/CSS outputs include scroll-sensitive
+ * page stats/content. Until cache identity can include scroll state and ref
+ * mappings can be replayed or made stable, returning cached read_page payloads
+ * risks stale refs or stale post-scroll snapshots. Keep the wrapper as a
+ * behavior-preserving seam so the feature can be re-enabled safely later.
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  return sanitizedHandler(sessionId, args, context);
+};
+
 export function registerReadPageTool(server: MCPServer): void {
-  server.registerTool('read_page', sanitizedHandler, definition);
+  server.registerTool('read_page', cachedHandler, definition);
 }
 
 /**
