@@ -67,7 +67,7 @@ const definition: MCPToolDefinition = {
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to trace. Required.',
+        description: 'REQUIRED Tab ID to trace.',
       },
       url: {
         type: 'string',

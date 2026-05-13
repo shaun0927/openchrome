@@ -282,7 +282,7 @@ const exportDefinition: MCPToolDefinition = {
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to export from (required).',
+        description: 'REQUIRED Tab ID to export from.',
       },
       origin: {
         type: 'string',
@@ -392,12 +392,12 @@ const importDefinition: MCPToolDefinition = {
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to apply the envelope to (required).',
+        description: 'REQUIRED Tab ID to apply the envelope to.',
       },
       envelope: {
         type: 'object',
         description:
-          'A `ContextEnvelope` previously produced by `oc_context_export`.',
+          'REQUIRED A `ContextEnvelope` produced by `oc_context_export`.',
       },
       strictOrigin: {
         type: 'boolean',

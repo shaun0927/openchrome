@@ -39,12 +39,16 @@ function extractToken(stdout: string): string {
 }
 
 function extractJsonArray(stdout: string): string {
-  const start = stdout.indexOf('[');
-  const end = stdout.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
+  for (const line of stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+    if (!line.startsWith('[')) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (Array.isArray(parsed)) return line;
+    } catch {
+      // Ignore unrelated bracket-prefixed test noise such as [WorkflowEngine].
+    }
   }
-  return stdout.slice(start, end + 1);
+  throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
 }
 
 async function runCli(argv: string[]): Promise<RunResult> {
@@ -135,11 +139,13 @@ describe('admin keys CLI', () => {
       '--description', 'test key',
     ]);
     expect(exitCode).toBeNull();
+
     // Plaintext is emitted exactly once even if unrelated Jest worker noise
     // is captured by the shared stdout hook on Windows CI.
     const stdoutTokens = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
     expect(stdoutTokens).toHaveLength(1);
     const plaintext = stdoutTokens[0];
+
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
     // keyId is reported on stderr, not stdout.
