@@ -184,7 +184,11 @@ export class HintEngine {
     const hintSessionId = sessionId ?? 'default';
     const recentCalls = this.activityTracker
       .getRecentCalls(6, sessionId)
-      .filter((call) => call.id !== currentCallId)
+      .filter((call) => {
+        if (currentCallId === undefined) return true;
+        const callId = (call as ToolCallEvent & { callId?: string }).id ?? (call as ToolCallEvent & { callId?: string }).callId;
+        return callId !== currentCallId;
+      })
       .slice(0, 5);
 
     // Priority 50: Progress tracking (highest priority, runs before all rules)
@@ -233,37 +237,18 @@ export class HintEngine {
       };
     }
 
-    // Exact repeated-call detection. This catches syntactic
-    // wandering (same tool + same effective args) even when individual results
-    // look successful enough that ProgressTracker has not yet marked stuck.
-    const repeated = this.repeatedCallDetector.evaluate(recentCalls, toolName, currentArgs);
-    if (repeated) {
-      const key = escalationKey('repeated-identical-tool-call');
-      const fireCount = (this.hintEscalation.get(key) || 0) + 1;
-      this.hintEscalation.set(key, fireCount);
-      const severity = repeated.severity;
-      this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'repeated-identical-tool-call', hint: repeated.hint, severity, fireCount });
-      return {
-        severity,
-        rule: 'repeated-identical-tool-call',
-        fireCount,
-        hint: this.formatHintMessage(severity, repeated.hint, fireCount),
-        rawHint: repeated.hint,
-      };
-    }
-
     const ctx: HintContext = { toolName, resultText, isError, recentCalls, fireCounts: this.hintEscalation };
 
     let matchedRule: string | null = null;
     let rawHint: string | null = null;
     let matchedMaxSeverity: HintSeverity | undefined;
 
-    for (const rule of this.rules) {
+    const evaluateRule = (rule: HintRule): boolean => {
       // Suppress rules whose guidance is duplicated by an embedded tool
       // description "When to use / When NOT to use" block, once the client
       // has consumed tools/list.
       if (rule.redundant_with_description && this.hasServedToolsList(hintSessionId)) {
-        continue;
+        return false;
       }
       const h = rule.match(ctx);
       if (h) {
@@ -272,7 +257,7 @@ export class HintEngine {
         matchedMaxSeverity = rule.maxSeverity;
         // Reset miss count on match
         this.missCounts.set(rule.name, 0);
-        break;
+        return true;
       } else {
         // Increment miss count; after 10 consecutive misses, decay fire count to 0
         const misses = (this.missCounts.get(rule.name) || 0) + 1;
@@ -281,6 +266,46 @@ export class HintEngine {
           this.hintEscalation.set(escalationKey(rule.name), 0);
           this.missCounts.set(rule.name, 0);
         }
+      }
+      return false;
+    };
+
+    // Evaluate higher-signal recovery/composite/repetition rules before exact
+    // repeated-call detection. The exact detector is intentionally inserted
+    // before lower-priority sequence/learned/success hints, but it must not
+    // preempt more specific guidance such as "find then click" or
+    // "repeated read_page -> inspect".
+    const repeatedDetectorPriority = 260;
+    for (const rule of this.rules) {
+      if (rule.priority >= repeatedDetectorPriority) break;
+      if (evaluateRule(rule)) break;
+    }
+
+    if (!rawHint) {
+      // Exact repeated-call detection. This catches syntactic
+      // wandering (same tool + same effective args) even when individual results
+      // look successful enough that ProgressTracker has not yet marked stuck.
+      const repeated = this.repeatedCallDetector.evaluate(recentCalls, toolName, currentArgs);
+      if (repeated) {
+        const key = escalationKey('repeated-identical-tool-call');
+        const fireCount = (this.hintEscalation.get(key) || 0) + 1;
+        this.hintEscalation.set(key, fireCount);
+        const severity = repeated.severity;
+        this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'repeated-identical-tool-call', hint: repeated.hint, severity, fireCount });
+        return {
+          severity,
+          rule: 'repeated-identical-tool-call',
+          fireCount,
+          hint: this.formatHintMessage(severity, repeated.hint, fireCount),
+          rawHint: repeated.hint,
+        };
+      }
+    }
+
+    if (!rawHint) {
+      for (const rule of this.rules) {
+        if (rule.priority < repeatedDetectorPriority) continue;
+        if (evaluateRule(rule)) break;
       }
     }
 
