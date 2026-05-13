@@ -244,6 +244,9 @@
       "name": "oc_totp_generate"
     },
     {
+      "name": "oc_vitals"
+    },
+    {
       "name": "page_content"
     },
     {
