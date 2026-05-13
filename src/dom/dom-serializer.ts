@@ -119,11 +119,22 @@ function parseAttributes(attrs: string[] | undefined): Map<string, string> {
 }
 
 function escapeAttributeValue(value: string): string {
-  const escapedAmpersands = value.replace(/&/g, '&amp;');
-  return escapedAmpersands
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      case "'":
+        return '&apos;';
+      default:
+        return char;
+    }
+  });
 }
 
 /**
