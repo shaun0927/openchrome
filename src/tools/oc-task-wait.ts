@@ -20,7 +20,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      task_id: { type: 'string' },
+      task_id: { type: 'string', description: 'REQUIRED task_id returned by oc_task_start.' },
       timeout_ms: { type: 'number', minimum: 1, maximum: 24 * 60 * 60 * 1000 },
     },
     required: ['task_id'],

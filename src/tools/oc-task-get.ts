@@ -15,7 +15,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      task_id: { type: 'string' },
+      task_id: { type: 'string', description: 'task_id returned by oc_task_start.' },
       taskId: { type: 'string', description: 'Alias for task_id.' },
       include_result: {
         type: 'boolean',
