@@ -24,7 +24,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      jobId: { type: 'string', description: 'Job id returned by crawl_start.' },
+      jobId: { type: 'string', description: 'REQUIRED Job id returned by crawl_start.' },
       advance: {
         type: 'number',
         description: 'Max pages to fetch in this call. Default OC_CRAWL_ADVANCE_DEFAULT (5). Use 0 for read-only.',
