@@ -752,12 +752,22 @@ const handler: ToolHandler = async (
           error: p.error,
           ...(includeMetrics && { metrics: buildTextMetrics('', { mode: outputFormat }) }),
         }));
+        // Per-page metrics are computed from empty strings (content omitted),
+        // so the summary metrics must align with what is actually emitted —
+        // not the original full-content pages.
+        const emptyPageMetrics = buildTextMetrics('', { mode: outputFormat });
         const minimalSummary = includeMetrics
           ? {
               ...summary,
               metrics: {
-                returned_chars: pages.reduce((sum, p) => sum + p.content.length, 0),
-                estimated_tokens: pages.reduce((sum, p) => sum + buildTextMetrics(p.content).estimated_tokens, 0),
+                returned_chars: minimalPages.reduce(
+                  (sum, p) => sum + (p.metrics?.returned_chars ?? 0),
+                  0,
+                ),
+                estimated_tokens: minimalPages.reduce(
+                  (sum, p) => sum + (p.metrics?.estimated_tokens ?? emptyPageMetrics.estimated_tokens),
+                  0,
+                ),
                 truncated_pages: pages.length,
                 mode: `crawl_sitemap:${outputFormat}`,
               },

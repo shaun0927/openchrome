@@ -347,4 +347,62 @@ describe('crawl_sitemap engine=static', () => {
     }
     expect(mockSessionManager.createTarget).not.toHaveBeenCalled();
   });
+
+  test('size-fallback summary metrics align with emitted per-page metrics', async () => {
+    // Force the minimal-pages fallback (content omitted) by serving large pages
+    // that overflow MAX_OUTPUT_CHARS even after the per-page-truncation step.
+    const BIG = 'x'.repeat(60_000); // each page > MAX_OUTPUT_CHARS / 2
+    server.setRoute('/big-a.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Big A', `<h1>Big A</h1><p>${BIG}</p>`),
+    });
+    server.setRoute('/big-b.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Big B', `<h1>Big B</h1><p>${BIG}</p>`),
+    });
+    server.setRoute('/sitemap.xml', {
+      status: 200,
+      contentType: 'application/xml',
+      body:
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' +
+        `<url><loc>${server.origin}/big-a.html</loc></url>` +
+        `<url><loc>${server.origin}/big-b.html</loc></url>` +
+        '</urlset>',
+    });
+
+    const handler = await loadHandler('crawl_sitemap');
+    const result = await handler('s-fallback-metrics', {
+      url: server.origin,
+      max_pages: 5,
+      concurrency: 2,
+      engine: 'static',
+      include_metrics: true,
+    });
+    expect(result.isError).not.toBe(true);
+    const parsed = JSON.parse(result.content[0].text) as {
+      summary: { metrics?: Record<string, number> };
+      pages: Array<{ metrics?: Record<string, number>; content?: string }>;
+      note?: string;
+    };
+    expect(parsed.note).toBe('Content omitted due to size constraints');
+
+    // Per-page content is omitted; per-page metrics are derived from empty
+    // strings — so summary metrics must mirror what is actually emitted.
+    const perPageCharsSum = parsed.pages.reduce(
+      (sum, p) => sum + (p.metrics?.returned_chars ?? 0),
+      0,
+    );
+    const perPageTokensSum = parsed.pages.reduce(
+      (sum, p) => sum + (p.metrics?.estimated_tokens ?? 0),
+      0,
+    );
+    expect(parsed.summary.metrics).toBeDefined();
+    expect(parsed.summary.metrics!.returned_chars).toBe(perPageCharsSum);
+    expect(parsed.summary.metrics!.estimated_tokens).toBe(perPageTokensSum);
+    // Per-page metrics built from empty strings yield 0 returned_chars.
+    expect(parsed.summary.metrics!.returned_chars).toBe(0);
+  });
 });
