@@ -1,12 +1,10 @@
 /**
- * fixture-server — minimal HTTP test fixture used by static-fetch and crawl
- * engine integration tests. No external dependencies, no caching, no global
- * state. Each test should start its own instance and close it in afterAll.
+ * fixture-server — minimal HTTP test fixture used by static-fetch, crawl, and
+ * resumable crawl integration tests. No external dependencies, no caching, no
+ * global state. Each test should start its own instance and close it.
  */
 
-import * as fs from 'fs';
 import * as http from 'http';
-import * as path from 'path';
 import { AddressInfo } from 'net';
 
 export interface FixtureRoute {
@@ -22,57 +20,64 @@ export interface FixtureRoute {
   handler?: (req: http.IncomingMessage, res: http.ServerResponse) => void | Promise<void>;
 }
 
+export interface PageSpec {
+  /** Page name — request path will be `/<name>`. */
+  name: string;
+  /** Names of other pages this page links to. */
+  links?: string[];
+  /** Page title; defaults to name. */
+  title?: string;
+  /** Inline body content; defaults to a single <p>. */
+  body?: string;
+}
+
 export interface FixtureServer {
-  url: string;
+  /** Origin URL, e.g. http://127.0.0.1:<port>. */
   origin: string;
-  port: number;
+  /** Convenience graph URL builder for PageSpec fixtures. */
+  url(name?: string): string;
   server: http.Server;
+  port: number;
   close(): Promise<void>;
   setRoute(path: string, route: FixtureRoute): void;
   removeRoute(path: string): void;
   hitCount(path: string): number;
 }
 
-function serveDirectory(rootDir: string, req: http.IncomingMessage, res: http.ServerResponse): void {
-  const urlPath = (req.url || '/').split('?')[0];
-  const safe = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
-  const resolvedRoot = path.resolve(rootDir);
-  const filePath = path.join(resolvedRoot, safe === '/' ? 'index.html' : safe);
-
-  if (!filePath.startsWith(resolvedRoot)) {
-    res.statusCode = 403;
-    res.end('forbidden');
-    return;
+function routesFromPageSpecs(pages: PageSpec[]): Record<string, FixtureRoute> {
+  const routes: Record<string, FixtureRoute> = {};
+  const firstName = pages[0]?.name;
+  for (const spec of pages) {
+    const title = spec.title ?? spec.name;
+    const body = spec.body ?? `<p>page ${spec.name}</p>`;
+    const links = (spec.links ?? [])
+      .map((l) => `<a href="/${l}">link to ${l}</a>`)
+      .join('\n');
+    routes[`/${spec.name}`] = {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1>${body}\n${links}</body></html>`,
+    };
   }
-
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.statusCode = 404;
-      res.end('not found');
-      return;
-    }
-    res.setHeader('content-type', 'text/html; charset=utf-8');
-    res.end(data);
-  });
+  if (firstName && !routes['/']) {
+    routes['/'] = routes[`/${firstName}`];
+  }
+  return routes;
 }
 
 export async function startFixtureServer(
-  initialRoutesOrRootDir: Record<string, FixtureRoute> | string = {},
+  initialRoutes: Record<string, FixtureRoute> | PageSpec[] = {},
 ): Promise<FixtureServer> {
-  const rootDir = typeof initialRoutesOrRootDir === 'string' ? initialRoutesOrRootDir : undefined;
-  const initialRoutes = typeof initialRoutesOrRootDir === 'string' ? {} : initialRoutesOrRootDir;
-  const routes = new Map<string, FixtureRoute>(Object.entries(initialRoutes));
+  const pageSpecs = Array.isArray(initialRoutes) ? initialRoutes : null;
+  const routes = new Map<string, FixtureRoute>(
+    Object.entries(pageSpecs ? routesFromPageSpecs(pageSpecs) : initialRoutes),
+  );
   const hits = new Map<string, number>();
 
   const server = http.createServer(async (req, res) => {
     const reqUrl = req.url ?? '/';
     const pathOnly = reqUrl.split('?')[0];
     hits.set(pathOnly, (hits.get(pathOnly) ?? 0) + 1);
-
-    if (rootDir) {
-      serveDirectory(rootDir, req, res);
-      return;
-    }
 
     const route = routes.get(pathOnly);
     if (!route) {
@@ -106,13 +111,17 @@ export async function startFixtureServer(
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const addr = server.address() as AddressInfo;
-  const origin = `http://127.0.0.1:${addr.port}`;
+  const port = addr.port;
+  const origin = `http://127.0.0.1:${port}`;
 
   return {
-    url: origin,
     origin,
-    port: addr.port,
     server,
+    port,
+    url(name?: string) {
+      if (!pageSpecs) return origin;
+      return `${origin}/${name ?? pageSpecs[0].name}`;
+    },
     setRoute(path: string, route: FixtureRoute) {
       routes.set(path, route);
     },
