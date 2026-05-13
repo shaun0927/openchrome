@@ -973,6 +973,59 @@ describe('Plan failure taxonomy (#1012)', () => {
     }));
   });
 
+  test('executor exposes empty-result recovery candidate only for empty-result criteria failures', async () => {
+    const handlers: Record<string, ToolHandler> = {
+      empty: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: '[]' }] }),
+    };
+    const executor = new PlanExecutor((tool) => handlers[tool] || null);
+    const plan = buildPlan({
+      id: 'empty-recovery-candidate-plan',
+      steps: [buildStep({
+        order: 1,
+        tool: 'empty',
+        timeout: 100,
+        parseResult: { format: 'json', storeAs: 'items' },
+      })],
+      errorHandlers: [{ condition: 'step1_empty_result', action: 'refresh query', steps: [] }],
+      successCriteria: { minDataItems: 1 },
+    });
+
+    const result = await executor.execute(plan, 'sess', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure?.class).toBe('empty_result');
+    expect(result.recoveryCandidates).toEqual([
+      expect.objectContaining({ condition: 'step1_empty_result', action: 'refresh query' }),
+    ]);
+  });
+
+  test('executor does not classify unrelated criteria failures as empty_result after an empty step', async () => {
+    const handlers: Record<string, ToolHandler> = {
+      empty: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: '[]' }] }),
+    };
+    const executor = new PlanExecutor((tool) => handlers[tool] || null);
+    const plan = buildPlan({
+      id: 'required-field-after-empty-plan',
+      steps: [buildStep({
+        order: 1,
+        tool: 'empty',
+        timeout: 100,
+        parseResult: { format: 'json', storeAs: 'items' },
+      })],
+      errorHandlers: [{ condition: 'step1_empty_result', action: 'refresh query', steps: [] }],
+      successCriteria: { requiredFields: ['missing'] },
+    });
+
+    const result = await executor.execute(plan, 'sess', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toEqual(expect.objectContaining({
+      class: 'contract_failed',
+      message: expect.stringContaining('Required field missing'),
+    }));
+    expect(result.recoveryCandidates).toBeUndefined();
+  });
+
   test('registry persists failure-class counts without changing aggregate stats', () => {
     const tmpDir = makeTempDir();
     try {

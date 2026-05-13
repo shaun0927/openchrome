@@ -331,7 +331,7 @@ export class PlanExecutor {
     }
     Object.assign(params, runtimeParams);
 
-    let lastEmptyStep: { order: number; tool: string } | null = null;
+    let lastEmptyStep: { order: number; tool: string; conditionKey: string } | null = null;
     const failure = (
       error: string,
       taskSignature?: PlanExecutionResult['taskSignature'],
@@ -448,8 +448,8 @@ export class PlanExecutor {
 
       // e. Check for empty result (before storing) — may trigger empty_result handler
       if (isEmptyResult(mcpResult)) {
-        lastEmptyStep = { order: step.order, tool: step.tool };
         const conditionKey = `step${step.order}_empty_result`;
+        lastEmptyStep = { order: step.order, tool: step.tool, conditionKey };
         const recovered = await this.tryRecovery(
           conditionKey,
           plan.errorHandlers,
@@ -497,12 +497,20 @@ export class PlanExecutor {
             toolCount: stepsExecuted,
           })
         : undefined;
+      const emptyResultCausedCriteriaFailure = Boolean(
+        lastEmptyStep && /^minDataItems requirement not met: (got 0|no collection found)/.test(criteriaError),
+      );
       const failureMeta: PlanFailureMetadata = {
-        class: lastEmptyStep ? 'empty_result' : 'contract_failed',
-        ...(lastEmptyStep ? { stepOrder: lastEmptyStep.order, tool: lastEmptyStep.tool } : {}),
+        class: emptyResultCausedCriteriaFailure ? 'empty_result' : 'contract_failed',
+        ...(emptyResultCausedCriteriaFailure ? { stepOrder: lastEmptyStep!.order, tool: lastEmptyStep!.tool } : {}),
         message: criteriaError,
       };
-      return failure(`Success criteria not met: ${criteriaError}`, taskStatus, failureMeta);
+      return failure(
+        `Success criteria not met: ${criteriaError}`,
+        taskStatus,
+        failureMeta,
+        emptyResultCausedCriteriaFailure ? lastEmptyStep!.conditionKey : undefined,
+      );
     }
 
     // 4. Optional final Outcome Contract verification gate
