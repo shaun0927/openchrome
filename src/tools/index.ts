@@ -70,6 +70,7 @@ import { registerListProfilesTool } from './list-profiles';
 import { registerSessionSnapshotTool } from './session-snapshot';
 import { registerSessionResumeTool } from './session-resume';
 import { registerJournalTool } from './journal';
+import { registerOcReflectTool } from './oc-reflect';
 
 // Self-healing tools (#347)
 import { registerConnectionHealthTool } from './connection-health';
@@ -86,6 +87,11 @@ import { registerRecordingTools } from './recording';
 // Crawl tools (#576)
 import { registerCrawlTool } from './crawl';
 import { registerCrawlSitemapTool } from './crawl-sitemap';
+
+// Resumable host-driven crawl jobs (#886)
+import { registerCrawlStartTool } from './crawl-start';
+import { registerCrawlStatusTool } from './crawl-status';
+import { registerCrawlCancelTool } from './crawl-cancel';
 
 // Natural language action API (#578)
 import { registerActTool } from './act';
@@ -123,13 +129,15 @@ import { getPerfTraceStore } from '../core/performance/insights/trace-store';
 // are set. The pilot module is loaded via `require()` only when the gate is
 // open — this preserves P2 (no module from `src/pilot/**` is loaded into the
 // process when `--pilot` is unset) while keeping `registerAllTools()` sync.
-import { isProxyHookEnabled } from '../harness/flags';
+import { isProxyHookEnabled, isSkillReplayEnabled } from '../harness/flags';
 // oc_observe (#866) — deterministic actionable-element enumeration
 import { registerOcObserveTool } from './oc-observe';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
 import { registerOcContextTools } from './oc-context';
+import { isRunHarnessEnabled } from '../run-harness/flags';
+import { registerRunHarnessTools } from '../run-harness/tools';
 
 export function registerAllTools(server: MCPServer): void {
   // Core browser tools
@@ -208,6 +216,7 @@ export function registerAllTools(server: MCPServer): void {
   registerSessionSnapshotTool(server);
   registerSessionResumeTool(server);
   registerJournalTool(server);
+  registerOcReflectTool(server);
 
   // Self-healing tools (#347)
   registerConnectionHealthTool(server);
@@ -224,6 +233,11 @@ export function registerAllTools(server: MCPServer): void {
   // Crawl tools (#576)
   registerCrawlTool(server);
   registerCrawlSitemapTool(server);
+
+  // Resumable host-driven crawl jobs (#886)
+  registerCrawlStartTool(server);
+  registerCrawlStatusTool(server);
+  registerCrawlCancelTool(server);
 
   // Natural language action API (#578)
   registerActTool(server);
@@ -246,6 +260,14 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(server);
   registerOcSkillRecallTool(server);
+  // Skill replay (#856) — pilot-tier. Dynamically imported so no
+  // `src/pilot/**` dependency is loaded unless --pilot and
+  // OPENCHROME_SKILL_REPLAY=1 are both active.
+  if (isSkillReplayEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcSkillReplayTool } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
+    registerOcSkillReplayTool(server);
+  }
 
   // Doctor report tool (#898) — read cached `openchrome doctor` output
   registerOcDoctorReportTool(server);
@@ -287,6 +309,11 @@ export function registerAllTools(server: MCPServer): void {
   registerOcDevToolsUrlTool(server);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
   registerOcContextTools(server);
+
+  // Run harness (#1021) — opt-in tool-call event ledger.
+  if (isRunHarnessEnabled()) {
+    registerRunHarnessTools(server);
+  }
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

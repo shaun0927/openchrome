@@ -17,10 +17,39 @@
  */
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
+const FALSY = new Set(['0', 'false', 'no', 'off']);
 
 export function isTruthy(value: string | undefined): boolean {
   if (value === undefined) return false;
   return TRUTHY.has(value.trim().toLowerCase());
+}
+
+/**
+ * Core-tier feature flag (issue #844 family).
+ *
+ * Unlike pilot family flags (which require `--pilot` to be enabled), core
+ * flags ship unflagged in `openchrome serve` and use the env var to allow
+ * operators to opt out for byte-parity testing.
+ *
+ *   - `defaultOn=true`:  enabled unless the env var is explicitly falsy
+ *                        (`0`, `false`, `no`, `off`).
+ *   - `defaultOn=false`: disabled unless the env var is explicitly truthy
+ *                        (`1`, `true`, `yes`, `on`).
+ *
+ * This helper is purely additive — it does not affect existing pilot helpers.
+ * It is unaffected by `isPilotEnabled()`.
+ *
+ * Used by:
+ *   - `OPENCHROME_NODE_REF` (default ON; backend-node uid contract, #844).
+ */
+export function isCoreFeatureEnabled(envVar: string, defaultOn: boolean): boolean {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw.trim() === '') return defaultOn;
+  const normalized = raw.trim().toLowerCase();
+  if (defaultOn) {
+    return !FALSY.has(normalized);
+  }
+  return TRUTHY.has(normalized);
 }
 
 function pilotFromArgv(argv: readonly string[] = process.argv): boolean {
@@ -58,6 +87,17 @@ function isFamilyEnabled(envVar: string): boolean {
   return isTruthy(raw);
 }
 
+/**
+ * Per-family activation that **defaults to off** even when `--pilot` is set.
+ * Reserved for pilot capabilities that mutate the MCP tool surface or emit
+ * proactive notifications outside the request/response lifetime. Operators
+ * must opt in explicitly via the env var.
+ */
+function isFamilyEnabledOptIn(envVar: string): boolean {
+  if (!isPilotEnabled()) return false;
+  return isTruthy(process.env[envVar]);
+}
+
 export const isTraceEnabled = (): boolean => isFamilyEnabled('OPENCHROME_TRACE');
 export const isStateGraphEnabled = (): boolean => isFamilyEnabled('OPENCHROME_STATE_GRAPH');
 export const isContractRuntimeEnabled = (): boolean => isFamilyEnabled('OPENCHROME_CONTRACT_RUNTIME');
@@ -66,16 +106,28 @@ export const isPerceptionVotingEnabled = (): boolean => isFamilyEnabled('OPENCHR
 export const isSkillCuratorEnabled = (): boolean => isFamilyEnabled('OPENCHROME_SKILL_CURATOR');
 
 /**
- * Proxy hook family (issue #874). Unlike the other pilot families this one
- * does NOT default to active when `--pilot` is set — the operator must
- * additionally export `OPENCHROME_PROXY_HOOK=1`. The extra opt-in reduces
- * blast radius for users who run `--pilot` for other features (per the
- * issue's r2 critic pass).
+ * Dynamic skill → MCP tool synthesis (issue #889, apify-mcp adoption C).
+ * Defaults off even when `--pilot` is set because it mutates the MCP tool
+ * surface mid-session and emits proactive list_changed notifications.
+ */
+export const isDynamicSkillsEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_DYNAMIC_SKILLS');
+
+/**
+ * Pilot-tier skill replay (#856). Off-by-default even when `--pilot` is on:
+ * the operator must explicitly opt in via `OPENCHROME_SKILL_REPLAY=1`.
+ */
+export const isSkillReplayEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_SKILL_REPLAY');
+
+/**
+ * Proxy hook family (issue #874). Explicit opt-in on top of --pilot.
  */
 export function isProxyHookEnabled(): boolean {
   if (!isPilotEnabled()) return false;
   return isTruthy(process.env.OPENCHROME_PROXY_HOOK);
 }
+
 
 const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['trace', isTraceEnabled],
@@ -84,7 +136,9 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['handoff_persist', isHandoffPersistEnabled],
   ['perception_voting', isPerceptionVotingEnabled],
   ['skill_curator', isSkillCuratorEnabled],
-  ['proxy_hook', isProxyHookEnabled],
+  ['dynamic_skills', isDynamicSkillsEnabled],
+  ['skill_replay', isSkillReplayEnabled],
+  ['proxy_hook', isProxyHookEnabled]
 ];
 
 /**

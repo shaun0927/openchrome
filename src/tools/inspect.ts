@@ -14,6 +14,11 @@ import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
 import { prependHeaderText } from './_shared/state-header';
+import {
+  formatNodeRefToken,
+  getCurrentLoaderId,
+  mintNodeRefSync,
+} from '../core/perception/node-ref';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
@@ -452,8 +457,52 @@ const handler: ToolHandler = async (
       console.error('[inspect] CDP shadow pass error (non-fatal):', cdpErr);
     }
 
+    // #844 — resolve a stable backend-node uid for the focused element so
+    // callers can pipe it straight back into `interact({nodeRef})` without
+    // a fresh `read_page`. P2 parity: the `nodeRef=` token is always
+    // emitted (literal `null` when off, when no focused element exists,
+    // when CDP resolution fails, or when the element has no backendNodeId).
+    let focusedNodeRef: string | null = null;
+    if (categories.has('focus') && inspectResult.focusedInfo) {
+      try {
+        const cdpClient = sessionManager.getCDPClient();
+        // Grab the focused element via CDP. `Runtime.evaluate` with the
+        // expression `document.activeElement` lets us resolve it back to a
+        // remote object id, which `DOM.requestNode` (or `DOM.describeNode`
+        // via objectId) converts to a backendNodeId.
+        const evalRes = (await cdpClient.send(page, 'Runtime.evaluate', {
+          expression: 'document.activeElement',
+          returnByValue: false,
+        })) as { result?: { objectId?: string } };
+        const objectId = evalRes?.result?.objectId;
+        if (objectId) {
+          const desc = (await cdpClient.send(page, 'DOM.describeNode', {
+            objectId,
+          })) as { node?: { backendNodeId?: number } };
+          const backendNodeId = desc?.node?.backendNodeId;
+          if (backendNodeId && backendNodeId > 0) {
+            try {
+              const loaderId = await getCurrentLoaderId(page, cdpClient);
+              focusedNodeRef = mintNodeRefSync(page, loaderId, backendNodeId);
+            } catch {
+              focusedNodeRef = null;
+            }
+          }
+          // Best-effort cleanup of the remote object reference so it does
+          // not pin the focused element in V8's heap.
+          try {
+            await cdpClient.send(page, 'Runtime.releaseObject', { objectId });
+          } catch {
+            // non-fatal
+          }
+        }
+      } catch {
+        focusedNodeRef = null;
+      }
+    }
+
     // Format the output — only include sections for requested categories
-    const lines: string[] = [`[Inspect: "${query}"]`];
+    const lines: string[] = [`[Inspect: "${query}"]`, formatNodeRefToken(focusedNodeRef)];
 
     // Tab state
     if (categories.has('tabs') && inspectResult.tabs.length > 0) {

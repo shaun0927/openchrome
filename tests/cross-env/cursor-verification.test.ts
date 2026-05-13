@@ -138,15 +138,14 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
     test('Initial tools/list returns Tier 1 tools plus expand_tools', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       tier1Tools = response.result.tools;
-      // The Tier 1 surface grows as core tools graduate; this assertion
-      // intentionally verifies a stable lower bound rather than a brittle
-      // exact count so feature PRs can add core tools without breaking the
-      // Cursor compatibility smoke test.
+      // Tier 1 grows as core recovery/crawl/task tools graduate, so this
+      // verifies the Cursor contract without pinning a stale exact count.
       const toolNames = tier1Tools.map((t: any) => t.name);
       expect(toolNames).toContain('expand_tools');
 
       const nonExpandTools = tier1Tools.filter((t: any) => t.name !== 'expand_tools');
-      expect(nonExpandTools.length).toBeGreaterThanOrEqual(39);
+      expect(nonExpandTools.length).toBeGreaterThanOrEqual(48);
+      expect(nonExpandTools.length).toBeLessThan(70);
     });
 
     test('expand_tools virtual tool present in initial list', () => {

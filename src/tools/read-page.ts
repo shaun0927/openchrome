@@ -5,7 +5,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
@@ -14,6 +14,51 @@ import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getGlobalConfig } from '../config/global';
 import { prependHeaderText, isStateHeaderEnabled } from './_shared/state-header';
+import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+
+/**
+ * Build the `[node_refs]` block that surfaces the #844 backend-node uid
+ * contract in `read_page` DOM mode responses.
+ *
+ * P2 contract: this section is **always** present in the response shape so
+ * `tools/list` parity holds regardless of the `OPENCHROME_NODE_REF` env var.
+ * When the flag is off (or loaderId resolution fails), every uid is rendered
+ * as the literal `null`, keeping the field present but the runtime value
+ * inert.
+ *
+ * The format is line-oriented JSON-ish, one `<backendNodeId>=<nodeRef>` per
+ * line, so a trace-replay parser can reconstruct the registry state without
+ * bringing along a full JSON parser.
+ */
+async function formatNodeRefsBlock(
+  page: import('puppeteer-core').Page,
+  cdpClient: { send: (page: import('puppeteer-core').Page, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+  backendNodeIds: number[],
+): Promise<string> {
+  if (backendNodeIds.length === 0) {
+    return '\n\n[node_refs]\n(empty)\n';
+  }
+  let loaderId: string | null = null;
+  try {
+    loaderId = await getCurrentLoaderId(page, cdpClient as any);
+  } catch {
+    loaderId = null;
+  }
+  const lines: string[] = ['', '', '[node_refs]'];
+  for (const backendNodeId of backendNodeIds) {
+    let uid: string | null = null;
+    if (loaderId) {
+      try {
+        uid = mintNodeRefSync(page, loaderId, backendNodeId);
+      } catch {
+        uid = null;
+      }
+    }
+    lines.push(`${backendNodeId}=${uid ?? 'null'}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
 import {
   buildSemanticView,
   type SemanticAXNode,
@@ -81,10 +126,44 @@ const definition: MCPToolDefinition = {
         enum: ['none', 'dom'],
         description: 'AX mode only: use "dom" to explicitly fall back to DOM output if AX output exceeds the output budget. Default: none.',
       },
+      compact: {
+        type: 'boolean',
+        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false.',
+      },
     },
     required: ['tabId'],
   },
 };
+
+
+function compactAXLines(lines: string[]): string[] {
+  const keep = new Set<number>();
+  const stack: Array<{ indent: number; index: number }> = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+      stack.pop();
+    }
+
+    const actionableOrValuable =
+      line.includes('[ref_') ||
+      line.includes(' = "') ||
+      /\((focused|disabled|checked|selected|expanded)/.test(line);
+
+    if (actionableOrValuable) {
+      keep.add(i);
+      for (const ancestor of stack) {
+        keep.add(ancestor.index);
+      }
+    }
+
+    stack.push({ indent, index: i });
+  }
+
+  return lines.filter((_, index) => keep.has(index));
+}
 
 interface AXNode {
   nodeId: number;
@@ -105,7 +184,10 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const filter = (args.filter as string) || 'all';
   const defaultDepth = filter === 'interactive' ? 5 : 8;
-  const maxDepth = (args.depth as number) || defaultDepth;
+  const requestedDepth = typeof args.depth === 'number' ? args.depth : undefined;
+  const maxDepth = filter === 'interactive'
+    ? Math.min(requestedDepth ?? defaultDepth, defaultDepth)
+    : requestedDepth ?? defaultDepth;
   const fetchDepth = maxDepth;
 
   const sessionManager = getSessionManager();
@@ -134,7 +216,9 @@ const handler: ToolHandler = async (
     const cdpClient = sessionManager.getCDPClient();
 
     // Mode dispatch
-    const mode = (args.mode as string) || 'dom';
+    const requestedMode = args.mode as string | undefined;
+    const mode = requestedMode || 'dom';
+    const isExplicitDomMode = requestedMode === 'dom';
     if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic') {
       return {
         content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", or "semantic".` }],
@@ -142,6 +226,7 @@ const handler: ToolHandler = async (
       };
     }
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
+    const compactAX = args.compact === true;
     if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
       return {
         content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],
@@ -532,6 +617,15 @@ const handler: ToolHandler = async (
           outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
         }
 
+        // #844: build the [node_refs] block from emitted backendNodeIds.
+        // P2 contract — block is always present (never gated by the flag);
+        // the flag only flips uid values to `null` at runtime.
+        const nodeRefsBlock = await formatNodeRefsBlock(
+          page,
+          cdpClient,
+          result.emittedBackendNodeIds ?? [],
+        );
+
         // Delta compression: cache DOM and return diff if applicable
         const compression = args.compression as string | undefined;
         if (compression === 'delta') {
@@ -549,9 +643,14 @@ const handler: ToolHandler = async (
               const statsLine = `[page_stats] url: ${result.pageStats.url} | title: ${result.pageStats.title} | scroll: ${result.pageStats.scrollX},${result.pageStats.scrollY} | viewport: ${result.pageStats.viewportWidth}x${result.pageStats.viewportHeight} | docSize: ${result.pageStats.scrollWidth}x${result.pageStats.scrollHeight}\n\n`;
               const includePaginationDom = args.includePagination !== false;
               const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
-              const domDeltaPayload = statsLine + delta.content + domPaginationSection;
+              const domDeltaPayload = statsLine + delta.content + nodeRefsBlock + domPaginationSection;
               return {
                 content: [{ type: 'text', text: prependHeaderText({ url: result.pageStats.url, title: result.pageStats.title, mode: 'dom', capturedAt: Date.now(), tabId }, domDeltaPayload) }],
+                _compression: {
+                  level: 'delta',
+                  originalChars: outputText.length,
+                  compressedChars: domDeltaPayload.length,
+                },
               };
             }
             // If not delta (too many changes), fall through to full response
@@ -563,12 +662,22 @@ const handler: ToolHandler = async (
 
         const includePaginationDom = args.includePagination !== false;
         const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
-        const domFullPayload = outputText + domPaginationSection;
+        const domFullPayload = outputText + nodeRefsBlock + domPaginationSection;
         return {
           content: [{ type: 'text', text: prependHeaderText({ url: result.pageStats.url, title: result.pageStats.title, mode: 'dom', capturedAt: Date.now(), tabId }, domFullPayload) }],
         };
-      } catch {
-        // DOM serialization failed — fall through to AX mode as fallback
+      } catch (error) {
+        if (isExplicitDomMode) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Read page DOM serialization error: ${error instanceof Error ? error.message : String(error)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
       }
     }
 
@@ -664,6 +773,21 @@ const handler: ToolHandler = async (
     let charCount = 0;
     const MAX_OUTPUT = MAX_OUTPUT_CHARS;
 
+    /**
+     * Per-snapshot refs map (#831). Populated as the AX tree is walked so that
+     * the final response carries a structured `refs` map alongside the textual
+     * tree. Additive to the existing ax response — `mode='ax'` is unchanged.
+     */
+    const refsMap: Record<string, {
+      role: string;
+      name?: string;
+      tag_name?: string;
+      text_content?: string;
+      frame_id?: string;
+      created_at: number;
+      stale_after_ms: number;
+    }> = {};
+
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
 
@@ -716,6 +840,20 @@ const handler: ToolHandler = async (
           name,
           tagName
         );
+
+        // #831: record the structured ref entry for the response `refs` map.
+        // Fields mirror the RefEntry contract documented in the issue.
+        const entry = refIdManager.getRef(sessionId, tabId, refId);
+        const textContent = value || undefined;
+        refsMap[refId] = {
+          role,
+          ...(name ? { name } : {}),
+          ...(tagName ? { tag_name: tagName } : {}),
+          ...(textContent ? { text_content: textContent } : {}),
+          ...(entry?.frameId ? { frame_id: entry.frameId } : {}),
+          created_at: entry?.createdAt ?? Date.now(),
+          stale_after_ms: entry?.staleAfterMs ?? REF_TTL_MS,
+        };
       }
 
       // Build line
@@ -784,11 +922,31 @@ const handler: ToolHandler = async (
       formatNode(root, 0);
     }
 
-    const output = lines.join('\n');
+    const outputLines = compactAX ? compactAXLines(lines) : lines;
+    const output = outputLines.join('\n');
+    const outputCharCount = output.length;
     const includePaginationAx = args.includePagination !== false;
     const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
 
-    if (charCount > MAX_OUTPUT) {
+    const compression = args.compression as string | undefined;
+    if (compression === 'delta') {
+      const snapshotStore = SnapshotStore.getInstance();
+      const axCacheTabId = `${tabId}:ax${compactAX ? ':compact' : ''}`;
+      const previous = snapshotStore.get(sessionId, axCacheTabId);
+      if (previous) {
+        const delta = snapshotStore.computeDelta(previous, output, axPageStats.url);
+        snapshotStore.set(sessionId, axCacheTabId, output, axPageStats.url);
+        if (delta.isDelta) {
+          return {
+            content: [{ type: 'text', text: pageStatsLine + delta.content.replace('[DOM Delta', '[AX Delta') + axPaginationSection }],
+          };
+        }
+      } else {
+        snapshotStore.set(sessionId, axCacheTabId, output, axPageStats.url);
+      }
+    }
+
+    if (outputCharCount > MAX_OUTPUT) {
       // Large AX output should not trigger a second full DOM traversal unless
       // the caller explicitly opts into that fallback. Otherwise preserve AX
       // intent and return the bounded/truncated AX representation.
@@ -805,6 +963,7 @@ const handler: ToolHandler = async (
               text: prependHeaderText({ url: axPageStats.url, title: axPageStats.title, mode: 'ax', capturedAt: Date.now(), tabId }, axTruncPayload),
             },
           ],
+          refs: refsMap,
         };
       }
 
@@ -817,12 +976,21 @@ const handler: ToolHandler = async (
           interactiveOnly: filter === 'interactive',
         });
 
+        // #844: include the [node_refs] block in the AX-overflow DOM
+        // fallback path too — P2 contract is unconditional across response
+        // shapes that ship DOM content.
+        const fallbackNodeRefsBlock = await formatNodeRefsBlock(
+          page,
+          cdpClient,
+          domResult.emittedBackendNodeIds ?? [],
+        );
+
         const fallbackNote =
           '\n\n[AX tree exceeded output limit (' + charCount + ' chars). ' +
           'Switched to DOM mode because fallback: "dom" was requested. ' +
           'Use mode: "ax" with smaller depth / ref_id to scope specific subtrees for AX format.]';
 
-        const axFallbackPayload = domResult.content + fallbackNote + axPaginationSection;
+        const axFallbackPayload = domResult.content + fallbackNote + fallbackNodeRefsBlock + axPaginationSection;
         return {
           content: [
             {
@@ -845,6 +1013,7 @@ const handler: ToolHandler = async (
               text: prependHeaderText({ url: axPageStats.url, title: axPageStats.title, mode: 'ax', capturedAt: Date.now(), tabId }, axDomFailPayload),
             },
           ],
+          refs: refsMap,
         };
       }
     }
@@ -852,6 +1021,7 @@ const handler: ToolHandler = async (
     const axNormalPayload = pageStatsLine + output + axPaginationSection;
     return {
       content: [{ type: 'text', text: prependHeaderText({ url: axPageStats.url, title: axPageStats.title, mode: 'ax', capturedAt: Date.now(), tabId }, axNormalPayload) }],
+      refs: refsMap,
     };
   } catch (error) {
     return {
