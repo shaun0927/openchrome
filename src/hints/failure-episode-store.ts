@@ -76,8 +76,8 @@ export class FailureEpisodeStore {
     const now = this.now();
     const domain = normalizeDomain(input.failure?.domain ?? input.recovery?.domain);
     const errorFingerprint = sanitizeText(input.errorFingerprint, 120) || UNKNOWN;
-    const failedTool = sanitizeText(input.failedTool, 80) || UNKNOWN;
-    const recoveryTool = sanitizeText(input.recoveryTool, 80) || UNKNOWN;
+    const failedTool = normalizeToolName(input.failedTool);
+    const recoveryTool = normalizeToolName(input.recoveryTool);
     const existing = this.episodes.find((episode) =>
       episode.domain === domain &&
       episode.failed_tool === failedTool &&
@@ -140,6 +140,7 @@ export class FailureEpisodeStore {
     const now = this.now();
     const domain = normalizeDomain(input.domain);
     const errorFingerprint = sanitizeText(input.errorFingerprint, 120) || UNKNOWN;
+    const failedTool = normalizeToolName(input.failedTool);
     const taskTokens = tokenize(input.taskIntent ?? '');
     const stateTokens = tokenize(input.stateFingerprint ?? '');
 
@@ -147,7 +148,7 @@ export class FailureEpisodeStore {
     for (const episode of this.episodes) {
       if (now - episode.updated_at > this.staleAfterMs) continue;
       if (episode.confidence < 0.3) continue;
-      if (episode.failed_tool !== input.failedTool) continue;
+      if (episode.failed_tool !== failedTool) continue;
       if (episode.domain !== UNKNOWN && domain !== UNKNOWN && episode.domain !== domain) continue;
       if (!compatibleFingerprint(episode.error_fingerprint, errorFingerprint)) continue;
 
@@ -230,11 +231,11 @@ function normalizeEpisode(raw: FailureEpisode): FailureEpisode | null {
     domain: normalizeDomain(raw.domain),
     task_intent: sanitizeText(raw.task_intent, 160) || UNKNOWN,
     state_fingerprint: sanitizeText(raw.state_fingerprint, 160) || UNKNOWN,
-    failed_tool: sanitizeText(raw.failed_tool, 80) || UNKNOWN,
+    failed_tool: normalizeToolName(raw.failed_tool),
     failed_action_summary: sanitizeText(raw.failed_action_summary, 160) || UNKNOWN,
     error_fingerprint: sanitizeText(raw.error_fingerprint, 120) || UNKNOWN,
     recovery_summary: sanitizeText(raw.recovery_summary, 160) || UNKNOWN,
-    recovery_tools: Array.isArray(raw.recovery_tools) ? raw.recovery_tools.map((tool) => sanitizeText(tool, 80)).filter(Boolean) : [],
+    recovery_tools: Array.isArray(raw.recovery_tools) ? raw.recovery_tools.map((tool) => normalizeToolName(tool)).filter((tool) => tool !== UNKNOWN) : [],
     success_evidence_summary: sanitizeText(raw.success_evidence_summary, 160) || UNKNOWN,
     confidence: clampConfidence(Number(raw.confidence)),
     attempts: Number.isFinite(raw.attempts) ? Math.max(0, Math.floor(raw.attempts)) : 0,
@@ -277,6 +278,12 @@ function sanitizeText(value: unknown, limit: number): string {
     .replace(/\s+/g, ' ')
     .trim();
   return redacted.slice(0, limit);
+}
+
+function normalizeToolName(value: unknown): string {
+  const sanitized = sanitizeText(value, 80).toLowerCase();
+  const normalized = sanitized.replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  return normalized || UNKNOWN;
 }
 
 function normalizeDomain(value: unknown): string {

@@ -34,6 +34,25 @@ describe('FailureEpisodeStore', () => {
     expect(raw).not.toContain('secret123');
   });
 
+  it('normalizes failed tool names before matching episodes', () => {
+    const store = new FailureEpisodeStore({ now: () => 1000 });
+    const episode = store.recordVerifiedRecovery({
+      failedTool: 'Interact Tool',
+      errorFingerprint: 'element not interactive',
+      recoveryTool: 'Read Page',
+      failure: { domain: 'example.test' },
+      recovery: { actionSummary: 'inspect page' },
+    });
+
+    expect(store.match({
+      failedTool: 'interact_tool',
+      errorFingerprint: 'element not interactive',
+      domain: 'example.test',
+    })?.id).toBe(episode.id);
+    expect(episode.failed_tool).toBe('interact_tool');
+    expect(episode.recovery_tools).toEqual(['read_page']);
+  });
+
   it('matches by domain, tool, error, task/state context and builds advisory hints', () => {
     const store = new FailureEpisodeStore({ now: () => 1000 });
     const episode = store.recordVerifiedRecovery({
