@@ -111,7 +111,7 @@ interface StepResult {
   error?: string;
 }
 
-type ActSource = 'template' | 'cache' | 'parsed';
+type ActSource = 'template' | 'cache' | 'parsed' | 'structured';
 
 type RecoveryReason =
   | 'target_not_found'
@@ -162,6 +162,20 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Natural language description of actions (e.g., "click login, type admin in username, click submit")',
       },
+      steps: {
+        type: 'array',
+        description: 'Structured same-tab action sequence. Use this to skip natural-language parsing for low-latency macros.',
+        items: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'navigate'] },
+            target: { type: 'string' },
+            value: { type: 'string' },
+            condition: { type: 'string' },
+          },
+          required: ['action'],
+        },
+      },
       context: {
         type: 'string',
         description: 'Additional context (e.g., "on the login page")',
@@ -177,7 +191,7 @@ const definition: MCPToolDefinition = {
       },
       returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
-    required: ['tabId', 'instruction'],
+    required: ['tabId'],
   },
 };
 
@@ -665,6 +679,39 @@ async function executeCheckUncheck(
   return { step: stepIndex, action: parsedAction.action, target, outcome: 'SUCCESS', message: `"${target}" already ${parsedAction.action}ed` };
 }
 
+
+function normalizeStructuredSteps(value: unknown): { actions?: ParsedAction[]; error?: string } {
+  if (value === undefined) return {};
+  if (!Array.isArray(value) || value.length === 0) {
+    return { error: 'steps must be a non-empty array when provided' };
+  }
+  if (value.length > 20) {
+    return { error: 'steps is limited to 20 actions per act call' };
+  }
+
+  const allowed = new Set(['click', 'type', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'navigate']);
+  const actions: ParsedAction[] = [];
+
+  for (let i = 0; i < value.length; i++) {
+    const raw = value[i];
+    if (!raw || typeof raw !== 'object') {
+      return { error: `steps[${i}] must be an object` };
+    }
+    const step = raw as Record<string, unknown>;
+    const action = step.action;
+    if (typeof action !== 'string' || !allowed.has(action)) {
+      return { error: `steps[${i}].action must be one of: ${Array.from(allowed).join(', ')}` };
+    }
+    const parsed: ParsedAction = { action: action as ParsedAction['action'] };
+    if (typeof step.target === 'string') parsed.target = step.target;
+    if (typeof step.value === 'string') parsed.value = step.value;
+    if (typeof step.condition === 'string') parsed.condition = step.condition;
+    actions.push(parsed);
+  }
+
+  return { actions };
+}
+
 // ─── Handler ───
 
 const handler: ToolHandler = async (
@@ -673,7 +720,7 @@ const handler: ToolHandler = async (
   context?: ToolContext
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
-  const instruction = args.instruction as string;
+  const instruction = args.instruction as string | undefined;
   // Legacy text-summary verification fires when:
   //   * args.verify is undefined  → pre-#827 default of "always summarize"
   //   * args.verify is any value coercing to a non-'none' mode (true, the
@@ -695,8 +742,12 @@ const handler: ToolHandler = async (
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
   }
-  if (!instruction || instruction.trim().length === 0) {
-    return { content: [{ type: 'text', text: 'Error: instruction is required' }], isError: true };
+  const structured = normalizeStructuredSteps(args.steps);
+  if (structured.error) {
+    return { content: [{ type: 'text', text: `Error: ${structured.error}` }], isError: true };
+  }
+  if (!structured.actions && (!instruction || instruction.trim().length === 0)) {
+    return { content: [{ type: 'text', text: 'Error: instruction or steps is required' }], isError: true };
   }
   if (missingVariables.length > 0) {
     return {
@@ -728,38 +779,48 @@ const handler: ToolHandler = async (
     };
   }
 
-  // 1. Try template match first (no page URL needed)
-  const templateMatch = matchTemplate(instruction);
+  // 1. Prefer structured steps when supplied; this skips parsing/cache lookup for low-latency macros.
   let actions: ParsedAction[];
   let source: ActSource = 'parsed';
   let parseWarning: string | undefined;
 
-  if (templateMatch) {
-    actions = templateMatch.actions;
-    source = 'template';
+  if (structured.actions) {
+    actions = structured.actions;
+    source = 'structured';
   } else {
-    // 2. Try cached sequence for this domain
-    const pageUrl = page.url();
-    const cached = getCachedSequence(pageUrl, instruction);
-    if (cached) {
-      actions = cached.actions;
-      source = 'cache';
+    const safeInstruction = instruction!.trim();
+    // 2. Try template match first (no page URL needed)
+    const templateMatch = matchTemplate(safeInstruction);
+
+    if (templateMatch) {
+      actions = templateMatch.actions;
+      source = 'template';
     } else {
-      // 3. Fall back to NL parsing
-      const parseResult = parseInstruction(instruction);
-      if (!parseResult.success || parseResult.actions.length === 0) {
-        const errMsg = parseResult.error || 'Could not parse instruction';
-        const suggestion = parseResult.suggestion || 'Try individual steps like "click X", "type Y in Z".';
-        return {
-          content: [{
-            type: 'text',
-            text: `[act] Parse error: ${errMsg}\n\nSuggestion: ${suggestion}`,
-          }],
-          isError: true,
-        };
+      // 3. Try cached sequence for this domain
+      const pageUrl = page.url();
+      const cached = getCachedSequence(pageUrl, safeInstruction);
+      if (cached) {
+        actions = cached.actions;
+        source = 'cache';
+      } else {
+        // 4. Fall back to NL parsing
+        const parseResult = parseInstruction(safeInstruction);
+        if (!parseResult.success || parseResult.actions.length === 0) {
+          const errMsg = parseResult.error || 'Could not parse instruction';
+          const suggestion = parseResult.suggestion || 'Try individual steps like "click X", "type Y in Z".';
+          return {
+            content: [{
+              type: 'text',
+              text: `[act] Parse error: ${errMsg}
+
+Suggestion: ${suggestion}`,
+            }],
+            isError: true,
+          };
+        }
+        actions = parseResult.actions;
+        parseWarning = parseResult.suggestion;
       }
-      actions = parseResult.actions;
-      parseWarning = parseResult.suggestion;
     }
   }
 
@@ -848,25 +909,25 @@ const handler: ToolHandler = async (
   const success = failedAt === null;
 
   // Cache successful parsed sequences for future use
-  if (success && source === 'parsed') {
+  if (success && source === 'parsed' && instruction) {
     try {
-      cacheSequence(page.url(), instruction, actions);
+      cacheSequence(page.url(), instruction.trim(), actions);
       // Boost confidence above MIN_CONFIDENCE so the entry is retrievable immediately
-      validateCachedSequence(page.url(), instruction, true);
+      validateCachedSequence(page.url(), instruction.trim(), true);
     } catch { /* non-fatal */ }
   }
 
   // Boost confidence on successful cache hit
   if (success && source === 'cache') {
     try {
-      validateCachedSequence(page.url(), instruction, true);
+      validateCachedSequence(page.url(), instruction!.trim(), true);
     } catch { /* non-fatal */ }
   }
 
   // If cached sequence failed, reduce confidence
   if (!success && source === 'cache') {
     try {
-      validateCachedSequence(page.url(), instruction, false);
+      validateCachedSequence(page.url(), instruction!.trim(), false);
     } catch { /* non-fatal */ }
   }
 
