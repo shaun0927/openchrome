@@ -33,7 +33,8 @@ function makeMockPage(url: string, title: string) {
 
 function makeMockSessionManager(sessions: Array<{
   id: string;
-  workers: Array<{ id: string; targetIds: string[] }>;
+  workers: Array<{ id: string; targetIds: string[]; profileDirectory?: string; lastActivityAt?: number }>;
+  lastActivityAt?: number;
   pages?: Record<string, { url: string; title: string }>;
 }>) {
   const sessionInfos = sessions.map(s => ({
@@ -42,13 +43,14 @@ function makeMockSessionManager(sessions: Array<{
     workerCount: s.workers.length,
     targetCount: s.workers.reduce((sum, w) => sum + w.targetIds.length, 0),
     createdAt: Date.now(),
-    lastActivityAt: Date.now(),
+    lastActivityAt: s.lastActivityAt ?? Date.now(),
     workers: s.workers.map(w => ({
       id: w.id,
       name: `Worker ${w.id}`,
       targetCount: w.targetIds.length,
       createdAt: Date.now(),
-      lastActivityAt: Date.now(),
+      lastActivityAt: w.lastActivityAt ?? Date.now(),
+      ...(w.profileDirectory && { profileDirectory: w.profileDirectory }),
     })),
   }));
 
@@ -136,10 +138,13 @@ describe('oc_session_snapshot', () => {
     });
 
     test('returns tabs for a single session with one worker', async () => {
+      const sessionActivity = Date.now() - 5000;
+      const workerActivity = Date.now() - 3000;
       const mockSM = makeMockSessionManager([
         {
           id: 'session-1',
-          workers: [{ id: 'default', targetIds: ['target-1', 'target-2'] }],
+          lastActivityAt: sessionActivity,
+          workers: [{ id: 'default', targetIds: ['target-1', 'target-2'], profileDirectory: 'Profile 1', lastActivityAt: workerActivity }],
           pages: {
             'target-1': { url: 'https://example.com', title: 'Example' },
             'target-2': { url: 'https://google.com', title: 'Google' },
@@ -158,6 +163,9 @@ describe('oc_session_snapshot', () => {
         sessionId: 'session-1',
         url: 'https://example.com',
         title: 'Example',
+        lastActivityAt: sessionActivity,
+        workerLastActivityAt: workerActivity,
+        profileDirectory: 'Profile 1',
       });
       expect(tabs[1]).toMatchObject({
         targetId: 'target-2',
@@ -166,6 +174,29 @@ describe('oc_session_snapshot', () => {
         url: 'https://google.com',
         title: 'Google',
       });
+    });
+
+    test('captures profile and storage-state lifecycle metadata', async () => {
+      const originalPersist = process.env.OC_PERSIST_STORAGE;
+      const originalStorageDir = process.env.OC_STORAGE_DIR;
+      process.env.OC_PERSIST_STORAGE = '1';
+      process.env.OC_STORAGE_DIR = '/tmp/openchrome-storage-state';
+
+      const { collectLifecycleMetadata } = await import('../../src/tools/session-snapshot');
+      const lifecycle = collectLifecycleMetadata();
+
+      expect(lifecycle.recoverySource).toBe('oc_session_snapshot');
+      expect(lifecycle.capturedAt).toEqual(expect.any(Number));
+      expect(lifecycle.profile.type).toBe('unknown');
+      expect(lifecycle.storageState).toMatchObject({
+        enabled: true,
+        dir: '/tmp/openchrome-storage-state',
+      });
+
+      if (originalPersist === undefined) delete process.env.OC_PERSIST_STORAGE;
+      else process.env.OC_PERSIST_STORAGE = originalPersist;
+      if (originalStorageDir === undefined) delete process.env.OC_STORAGE_DIR;
+      else process.env.OC_STORAGE_DIR = originalStorageDir;
     });
 
     test('returns tabs for multiple sessions and workers', async () => {

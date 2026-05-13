@@ -9,7 +9,9 @@ import * as path from 'path';
 import * as os from 'os';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { CHECKPOINT_DIR, CHECKPOINT_FILE } from './checkpoint';
 
 // ─── Shared Types (same as session-snapshot.ts) ────────────────────────────
 
@@ -19,6 +21,24 @@ interface SnapshotTab {
   sessionId: string;
   url: string;
   title: string;
+  lastActivityAt?: number;
+  workerLastActivityAt?: number;
+  profileDirectory?: string;
+}
+
+interface SessionLifecycleMetadata {
+  capturedAt: number;
+  recoverySource: 'oc_session_snapshot';
+  profile: {
+    type: string;
+    userDataDir?: string;
+    profileDirectory?: string;
+    cookieCopiedAt?: number;
+  };
+  storageState: {
+    enabled: boolean;
+    dir?: string;
+  };
 }
 
 interface SnapshotMemo {
@@ -36,6 +56,32 @@ interface SessionSnapshot {
   tabs: SnapshotTab[];
   memo: SnapshotMemo;
   label?: string;
+  lifecycle?: SessionLifecycleMetadata;
+}
+
+
+interface AutomationCheckpoint {
+  version: 1;
+  timestamp: number;
+  taskDescription: string;
+  completedSteps: string[];
+  pendingSteps: string[];
+  currentUrl: string | null;
+  tabStates: Array<{ tabId: string; url: string; title: string }>;
+  extractedData: Record<string, unknown>;
+}
+
+interface RecentJournalEntry {
+  ts: number;
+  tool: string;
+  ok: boolean;
+  summary: string;
+}
+
+export interface ResumeGuideContext {
+  checkpoint?: AutomationCheckpoint | null;
+  recentJournal?: RecentJournalEntry[];
+  evidenceBundles?: Array<{ id?: string; path: string }>;
 }
 
 // ─── Tab Status Analysis ───────────────────────────────────────────────────
@@ -68,6 +114,7 @@ const definition: MCPToolDefinition = {
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_session_resume,
 };
 
 // ─── Snapshot Loading ──────────────────────────────────────────────────────
@@ -86,6 +133,59 @@ export function loadSnapshot(snapshotId?: string): SessionSnapshot | null {
   } catch {
     return null;
   }
+}
+
+
+// ─── Supplemental Artifact Loading ────────────────────────────────────────
+
+export function loadCheckpoint(): AutomationCheckpoint | null {
+  try {
+    const filepath = path.join(CHECKPOINT_DIR, CHECKPOINT_FILE);
+    const content = fs.readFileSync(filepath, 'utf-8');
+    const checkpoint = JSON.parse(content) as AutomationCheckpoint;
+    if (checkpoint.version !== 1) return null;
+    if (!Array.isArray(checkpoint.completedSteps) || !Array.isArray(checkpoint.pendingSteps)) return null;
+    if (!Array.isArray(checkpoint.tabStates) || typeof checkpoint.timestamp !== 'number') return null;
+    return checkpoint;
+  } catch {
+    return null;
+  }
+}
+
+export function loadRecentJournalEntries(limit = 8): RecentJournalEntry[] {
+  const journalDir = path.join(os.homedir(), '.openchrome', 'journal');
+  const dates = [
+    new Date(Date.now() - 86400000).toISOString().slice(0, 10),
+    new Date().toISOString().slice(0, 10),
+  ];
+  const entries: RecentJournalEntry[] = [];
+
+  for (const date of dates) {
+    try {
+      const content = fs.readFileSync(path.join(journalDir, `journal-${date}.jsonl`), 'utf-8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed) as RecentJournalEntry;
+          if (typeof parsed.ts === 'number' && typeof parsed.tool === 'string') {
+            entries.push({
+              ts: parsed.ts,
+              tool: parsed.tool,
+              ok: parsed.ok !== false,
+              summary: typeof parsed.summary === 'string' ? parsed.summary : parsed.tool,
+            });
+          }
+        } catch {
+          // Skip malformed journal rows.
+        }
+      }
+    } catch {
+      // Missing journal files are normal.
+    }
+  }
+
+  return entries.sort((a, b) => a.ts - b.ts).slice(-limit);
 }
 
 // ─── Tab Analysis ──────────────────────────────────────────────────────────
@@ -161,7 +261,13 @@ export async function analyzeTabs(savedTabs: SnapshotTab[]): Promise<TabAnalysis
 
 // ─── Resume Guide Generation ───────────────────────────────────────────────
 
-export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabAnalysis[]): string {
+function formatRelativeAge(age: number): string {
+  return age < 60000 ? `${Math.round(age / 1000)}s` :
+         age < 3600000 ? `${Math.round(age / 60000)}m` :
+         `${Math.round(age / 3600000)}h`;
+}
+
+export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabAnalysis[], context: ResumeGuideContext = {}): string {
   const lines: string[] = [];
 
   const age = Date.now() - snapshot.timestamp;
@@ -174,6 +280,15 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
   lines.push(`Objective: ${snapshot.memo.objective}`);
   lines.push(`Last step: ${snapshot.memo.currentStep}`);
   lines.push(`Snapshot age: ${ageStr}${snapshot.label ? ` (${snapshot.label})` : ''}`);
+
+  if (snapshot.lifecycle) {
+    const profile = snapshot.lifecycle.profile;
+    lines.push(`Recovery source: ${snapshot.lifecycle.recoverySource}`);
+    lines.push(`Profile/storage identity: profile=${profile.type}${profile.profileDirectory ? `/${profile.profileDirectory}` : ''}; storage-state=${snapshot.lifecycle.storageState.enabled ? 'enabled' : 'disabled'}`);
+    if (profile.cookieCopiedAt) {
+      lines.push(`Cookie sync age: ${formatRelativeAge(Date.now() - profile.cookieCopiedAt)}`);
+    }
+  }
 
   if (age > 24 * 3600000) {
     lines.push('WARNING: Snapshot is over 24 hours old. Tab states may be inaccurate.');
@@ -195,13 +310,19 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
                           'CLOSED  ';
       const url = tab.saved.url;
       const title = tab.saved.title ? ` "${tab.saved.title}"` : '';
+      const workerContext = [
+        `session=${tab.saved.sessionId}`,
+        `worker=${tab.saved.workerId}`,
+        ...(tab.saved.profileDirectory ? [`profile=${tab.saved.profileDirectory}`] : []),
+        ...(tab.saved.workerLastActivityAt ? [`lastActivity=${formatRelativeAge(Date.now() - tab.saved.workerLastActivityAt)} ago`] : []),
+      ].join(', ');
 
       if (tab.status === 'REMAPPED') {
-        lines.push(`  [${statusLabel}] ${tab.saved.targetId} -> ${tab.currentTargetId} ${url}${title}`);
+        lines.push(`  [${statusLabel}] ${tab.saved.targetId} -> ${tab.currentTargetId} ${url}${title} (${workerContext})`);
       } else if (tab.status === 'CLOSED') {
-        lines.push(`  [${statusLabel}] ${url}${title}`);
+        lines.push(`  [${statusLabel}] ${url}${title} (${workerContext}; stale target — open a fresh tab/context before mutating)`);
       } else {
-        lines.push(`  [${statusLabel}] ${tab.currentTargetId} ${url}${title}`);
+        lines.push(`  [${statusLabel}] ${tab.currentTargetId} ${url}${title} (${workerContext})`);
       }
     }
   }
@@ -229,6 +350,64 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
     lines.push('');
     lines.push(`Notes: ${snapshot.memo.notes}`);
   }
+
+  if (context.checkpoint) {
+    const checkpointAge = Date.now() - context.checkpoint.timestamp;
+    lines.push('');
+    lines.push('Checkpoint:');
+    lines.push(`  Task: ${context.checkpoint.taskDescription || '(not specified)'}`);
+    lines.push(`  Age: ${formatRelativeAge(checkpointAge)}`);
+    if (context.checkpoint.currentUrl) lines.push(`  Current URL: ${context.checkpoint.currentUrl}`);
+    if (context.checkpoint.completedSteps.length > 0) {
+      lines.push('  Completed from checkpoint:');
+      context.checkpoint.completedSteps.slice(-5).forEach(step => lines.push(`    - ${step}`));
+    }
+    if (context.checkpoint.pendingSteps.length > 0) {
+      lines.push('  Pending from checkpoint:');
+      context.checkpoint.pendingSteps.slice(0, 5).forEach((step, i) => lines.push(`    ${i + 1}. ${step}`));
+    }
+    if (checkpointAge > 24 * 3600000) {
+      lines.push('  WARNING: Checkpoint is over 24 hours old; verify live browser state before acting.');
+    }
+  }
+
+  const recentJournal = context.recentJournal ?? [];
+  if (recentJournal.length > 0) {
+    const lastFailure = [...recentJournal].reverse().find(entry => !entry.ok);
+    const lastSuccess = [...recentJournal].reverse().find(entry => entry.ok);
+    lines.push('');
+    lines.push('Recent tool activity:');
+    if (lastSuccess) lines.push(`  Last success: ${lastSuccess.summary}`);
+    if (lastFailure) lines.push(`  Last failure: ${lastFailure.summary}`);
+    lines.push('  Recent entries:');
+    recentJournal.slice(-5).forEach(entry => {
+      lines.push(`    ${entry.ok ? '✓' : '✗'} ${entry.tool}: ${entry.summary}`);
+    });
+    if (lastFailure) {
+      lines.push('  Avoid: repeating the last failed call with identical arguments until page state is refreshed or a different strategy is chosen.');
+    }
+  }
+
+  if (context.evidenceBundles && context.evidenceBundles.length > 0) {
+    lines.push('');
+    lines.push('Evidence bundles:');
+    for (const bundle of context.evidenceBundles.slice(-5)) {
+      lines.push(`  - ${bundle.id ? `${bundle.id}: ` : ''}${bundle.path}`);
+    }
+  }
+
+  lines.push('');
+  if (closed.length > 0) {
+    lines.push('Recovery guidance: CLOSED targets cannot be reused after restart/reconnect; create a fresh tab with the same URL and profileDirectory/storage-state identity before continuing.');
+  } else if (remapped.length > 0) {
+    lines.push('Recovery guidance: REMAPPED targets survived under a new target id; prefer the currentTargetId shown above.');
+  }
+  if (snapshot.lifecycle?.profile.type === 'temp') {
+    lines.push('Auth guidance: this snapshot used a temporary profile, so cookies/localStorage may not survive process restart. Use a persistent/real profile or storage-state for auth reuse.');
+  } else if (snapshot.lifecycle) {
+    lines.push('Auth guidance: reuse the same profileDirectory and storage-state setting when continuing authenticated work.');
+  }
+  lines.push('Recommended next safe action: verify the live tab state with read_page or tabs_context before mutating the page.');
 
   return lines.join('\n');
 }
@@ -264,7 +443,10 @@ const handler: ToolHandler = async (
     }));
   }
 
-  const guide = generateResumeGuide(snapshot, tabAnalysis);
+  const guide = generateResumeGuide(snapshot, tabAnalysis, {
+    checkpoint: loadCheckpoint(),
+    recentJournal: loadRecentJournalEntries(),
+  });
 
   return {
     content: [{ type: 'text', text: guide }],

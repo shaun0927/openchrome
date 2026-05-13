@@ -9,6 +9,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
@@ -26,6 +27,11 @@ import {
   StaticFetchError,
   StaticReason,
 } from '../utils/static-fetch';
+import { buildTextMetrics } from '../core/metrics/token-estimate';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { applyContentFilter, ContentFilterMetrics, parseContentFilterType, ContentFilterType } from '../core/extract/content-filter';
+import { sanitizeContent } from '../security/content-sanitizer';
+import { getGlobalConfig } from '../config/global';
 
 const definition: MCPToolDefinition = {
   name: 'crawl_sitemap',
@@ -52,8 +58,33 @@ const definition: MCPToolDefinition = {
       },
       output_format: {
         type: 'string',
-        enum: ['markdown', 'text', 'structured'],
-        description: 'Content format per page. Default: markdown',
+        enum: ['markdown', 'text', 'structured', 'markdown-clean'],
+        description: 'Content format per page. "markdown-clean" uses cheerio+turndown to strip nav/footer/ads. Default: markdown',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'markdown-clean only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'markdown-clean only: preserve <a> as markdown links. Default: true.',
+      },
+      query: {
+        type: 'string',
+        description: 'markdown-clean content_filter="bm25" query terms.',
+      },
+      content_filter: {
+        type: 'string',
+        enum: ['none', 'prune', 'bm25'],
+        description: 'markdown-clean only: deterministic fit_markdown filter. Default: none.',
+      },
+      return_raw: {
+        type: 'boolean',
+        description: 'markdown-clean only: include raw_markdown in each page. Default: false.',
+      },
+      return_fit: {
+        type: 'boolean',
+        description: 'markdown-clean only: include fit_markdown and use it as content when filtering. Default: true when filtered.',
       },
       concurrency: {
         type: 'number',
@@ -65,9 +96,14 @@ const definition: MCPToolDefinition = {
         description:
           'Fetch engine: "cdp" (default, opens a Chrome tab per page), "static" (Node fetch only, fails closed on insufficient pages), or "auto" (static first, fall back to CDP when static is insufficient).',
       },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate output size/token metrics in the JSON result. Default: false.',
+      },
     },
     required: ['url'],
   },
+  annotations: TOOL_ANNOTATIONS.crawl_sitemap,
 };
 
 // ---------------------------------------------------------------------------
@@ -103,6 +139,9 @@ interface CrawledPage {
   url: string;
   title: string;
   content: string;
+  raw_markdown?: string;
+  fit_markdown?: string;
+  filter?: ContentFilterMetrics;
   links_found: number;
   error?: string;
   engine_used?: 'static' | 'cdp';
@@ -250,6 +289,29 @@ async function resolveSitemapPageUrls(
 // the caller (auto mode) can fall back to CDP.
 // ---------------------------------------------------------------------------
 
+function cleanMarkdownFromHtml(
+  html: string,
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
+): { content: string; raw_markdown?: string; fit_markdown?: string; filter?: ContentFilterMetrics } {
+  const { html: cleaned } = extractMainContent(html, { onlyMainContent: cleanOpts.onlyMainContent });
+  let cleanMd = toMarkdown(cleaned, { includeLinks: cleanOpts.includeLinks });
+  const cfg = getGlobalConfig();
+  if (cfg.security?.sanitize_content !== false) {
+    const sanitized = sanitizeContent(cleanMd);
+    cleanMd = sanitized.text + sanitized.sanitizationNote;
+  }
+  const filterType = cleanOpts.contentFilter ?? 'none';
+  if (filterType !== 'none' || cleanOpts.returnRaw || cleanOpts.returnFit === true) {
+    return applyContentFilter(cleanMd, {
+      type: filterType,
+      query: cleanOpts.query,
+      returnRaw: cleanOpts.returnRaw,
+      returnFit: cleanOpts.returnFit !== false,
+    });
+  }
+  return { content: cleanMd };
+}
+
 function staticBuildContent(html: string): { title: string; content: string } {
   const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
   const title = titleMatch ? titleMatch[1].trim() : '';
@@ -286,6 +348,7 @@ function staticCountLinks(html: string, baseUrl: string): number {
 async function fetchPageStatic(
   url: string,
   outputFormat: string,
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
   context?: ToolContext,
 ): Promise<
   | { ok: true; page: CrawledPage }
@@ -302,11 +365,24 @@ async function fetchPageStatic(
 
     let title = '';
     let content = '';
+    let cleanExtra: { raw_markdown?: string; fit_markdown?: string; filter?: ContentFilterMetrics } = {};
     if (outputFormat === 'structured') {
       const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
       title = titleMatch ? titleMatch[1].trim() : '';
       const bodyMatch = html.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i);
       content = bodyMatch ? bodyMatch[1] : html;
+    } else if (outputFormat === 'markdown-clean') {
+      const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+      title = titleMatch ? titleMatch[1].trim() : '';
+      {
+        const cleanResult = cleanMarkdownFromHtml(html, cleanOpts);
+        content = cleanResult.content;
+        cleanExtra = {
+          ...(cleanResult.raw_markdown ? { raw_markdown: cleanResult.raw_markdown } : {}),
+          ...(cleanResult.fit_markdown ? { fit_markdown: cleanResult.fit_markdown } : {}),
+          ...(cleanResult.filter ? { filter: cleanResult.filter } : {}),
+        };
+      }
     } else {
       const built = staticBuildContent(html);
       title = built.title;
@@ -323,6 +399,7 @@ async function fetchPageStatic(
         url,
         title,
         content,
+        ...cleanExtra,
         links_found: staticCountLinks(html, finalUrl),
       },
     };
@@ -345,6 +422,7 @@ async function fetchPage(
   sessionId: string,
   url: string,
   outputFormat: string,
+  cleanOpts: { onlyMainContent: boolean; includeLinks: boolean; contentFilter?: ContentFilterType; query?: string; returnRaw?: boolean; returnFit?: boolean },
   context?: ToolContext,
 ): Promise<CrawledPage> {
   const sessionManager = getSessionManager();
@@ -356,6 +434,48 @@ async function fetchPage(
 
     // Small settle delay for dynamic content
     await new Promise((r) => setTimeout(r, 500));
+
+    if (outputFormat === 'markdown-clean') {
+      const fullHtml = await withTimeout(
+        page.content(),
+        15000,
+        'crawl_sitemap.page.content',
+        context,
+      );
+      const linkResult = await withTimeout(
+        page.evaluate(() => {
+          const title = document.title || '';
+          let linksCount = 0;
+          document.querySelectorAll('a[href]').forEach((a) => {
+            const href = (a as HTMLAnchorElement).href;
+            if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+              linksCount += 1;
+            }
+          });
+          return { title, linksCount };
+        }),
+        15000,
+        'crawl_sitemap.page.linkScan',
+        context,
+      );
+      await sessionManager.closeTarget(sessionId, tid);
+      targetId = null;
+
+      const cleanResult = cleanMarkdownFromHtml(fullHtml, cleanOpts);
+      let cleanMd = cleanResult.content;
+      if (cleanMd.length > MAX_OUTPUT_CHARS) {
+        cleanMd = cleanMd.slice(0, MAX_OUTPUT_CHARS) + '...[truncated]';
+      }
+      return {
+        url,
+        title: linkResult.title,
+        content: cleanMd,
+        ...(cleanResult.raw_markdown ? { raw_markdown: cleanResult.raw_markdown } : {}),
+        ...(cleanResult.fit_markdown ? { fit_markdown: cleanResult.fit_markdown } : {}),
+        ...(cleanResult.filter ? { filter: cleanResult.filter } : {}),
+        links_found: linkResult.linksCount,
+      };
+    }
 
     const result = await withTimeout(
       page.evaluate((format: string) => {
@@ -503,8 +623,17 @@ const handler: ToolHandler = async (
   const filterPattern = args.filter as string | undefined;
   const maxPages = args.max_pages != null ? Number(args.max_pages) : 50;
   const outputFormat = (args.output_format as string) || 'markdown';
+  const cleanOpts = {
+    onlyMainContent: args.onlyMainContent !== false,
+    includeLinks: args.includeLinks !== false,
+    contentFilter: parseContentFilterType(args.content_filter),
+    query: args.query as string | undefined,
+    returnRaw: args.return_raw === true,
+    returnFit: args.return_fit !== false,
+  };
   const concurrency = args.concurrency != null ? Math.max(1, Math.min(10, Number(args.concurrency))) : 3;
 
+  const includeMetrics = args.include_metrics === true;
   const engineArg = args.engine as string | undefined;
   let engine: EngineMode = 'cdp';
   if (engineArg === 'static' || engineArg === 'auto' || engineArg === 'cdp') {
@@ -639,7 +768,7 @@ const handler: ToolHandler = async (
             let engineUsed: 'static' | 'cdp' | undefined;
 
             if (engine === 'static' || engine === 'auto') {
-              const staticResult = await fetchPageStatic(pageUrl, outputFormat, context);
+              const staticResult = await fetchPageStatic(pageUrl, outputFormat, cleanOpts, context);
               if (staticResult.ok) {
                 page = staticResult.page;
                 engineUsed = 'static';
@@ -654,12 +783,12 @@ const handler: ToolHandler = async (
                 engineUsed = 'static';
                 staticReason = staticResult.reason;
               } else {
-                page = await fetchPage(sessionId, pageUrl, outputFormat, context);
+                page = await fetchPage(sessionId, pageUrl, outputFormat, cleanOpts, context);
                 engineUsed = 'cdp';
                 staticReason = staticResult.reason;
               }
             } else {
-              page = await fetchPage(sessionId, pageUrl, outputFormat, context);
+              page = await fetchPage(sessionId, pageUrl, outputFormat, cleanOpts, context);
               if (engineExplicit) engineUsed = 'cdp';
             }
 
@@ -705,10 +834,26 @@ const handler: ToolHandler = async (
       sitemap_source: sitemapSource,
     };
 
-    const output = { summary, pages };
+    const buildOutput = (outputPages: CrawledPage[]) => includeMetrics
+      ? {
+          summary: {
+            ...summary,
+            metrics: {
+              returned_chars: outputPages.reduce((sum, p) => sum + p.content.length, 0),
+              estimated_tokens: outputPages.reduce((sum, p) => sum + buildTextMetrics(p.content).estimated_tokens, 0),
+              truncated_pages: outputPages.filter((p) => p.content.includes('...[truncated]')).length,
+              mode: `crawl_sitemap:${outputFormat}`,
+            },
+          },
+          pages: outputPages.map((p) => ({
+            ...p,
+            metrics: buildTextMetrics(p.content, { mode: outputFormat }),
+          })),
+        }
+      : { summary, pages: outputPages };
 
     // Ensure output fits within limits
-    let outputJson = JSON.stringify(output, null, 2);
+    let outputJson = JSON.stringify(buildOutput(pages), null, 2);
     if (outputJson.length > MAX_OUTPUT_CHARS) {
       // Truncate page contents progressively to fit
       const truncatedPages = pages.map((p) => ({
@@ -718,7 +863,7 @@ const handler: ToolHandler = async (
             ? p.content.slice(0, 2000) + '...[truncated]'
             : p.content,
       }));
-      outputJson = JSON.stringify({ summary, pages: truncatedPages }, null, 2);
+      outputJson = JSON.stringify(buildOutput(truncatedPages), null, 2);
 
       // If still too large, remove content entirely
       if (outputJson.length > MAX_OUTPUT_CHARS) {
@@ -728,12 +873,41 @@ const handler: ToolHandler = async (
           links_found: p.links_found,
           content_length: p.content.length,
           error: p.error,
+          ...(includeMetrics && { metrics: buildTextMetrics('', { mode: outputFormat, truncated: true }) }),
         }));
+        // Per-page metrics are computed from empty strings (content omitted),
+        // so the summary metrics must align with what is actually emitted —
+        // not the original full-content pages.
+        const emptyPageMetrics = buildTextMetrics('', { mode: outputFormat, truncated: true });
+        const minimalSummary = includeMetrics
+          ? {
+              ...summary,
+              metrics: {
+                returned_chars: minimalPages.reduce(
+                  (sum, p) => sum + (p.metrics?.returned_chars ?? 0),
+                  0,
+                ),
+                estimated_tokens: minimalPages.reduce(
+                  (sum, p) => sum + (p.metrics?.estimated_tokens ?? emptyPageMetrics.estimated_tokens),
+                  0,
+                ),
+                truncated_pages: pages.length,
+                mode: `crawl_sitemap:${outputFormat}`,
+              },
+            }
+          : summary;
         outputJson = JSON.stringify(
-          { summary, pages: minimalPages, note: 'Content omitted due to size constraints' },
+          { summary: minimalSummary, pages: minimalPages, note: 'Content omitted due to size constraints' },
           null,
           2,
         );
+        if (outputJson.length > MAX_OUTPUT_CHARS) {
+          outputJson = JSON.stringify({
+            summary: minimalSummary,
+            pages: minimalPages.map(({ url, title, links_found, content_length, error }) => ({ url, title, links_found, content_length, error })),
+            note: 'Content omitted due to size constraints',
+          }, null, 2);
+        }
       }
     }
 

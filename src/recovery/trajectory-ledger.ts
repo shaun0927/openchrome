@@ -117,7 +117,7 @@ export class RecoveryTrajectoryLedger {
       const content = fs.readFileSync(this.filePath, 'utf8');
       const nodes = content.trim().length === 0
         ? []
-        : content.trim().split('\n').map((line) => JSON.parse(line) as RecoveryTrajectoryNode);
+        : parseNodes(content.trim().split('\n'));
       const merged = this.mergePending(nodes);
       const filtered = sessionId ? merged.filter((n) => n.sessionId === sessionId) : merged;
       return filtered.slice(-Math.max(0, limit));
@@ -284,9 +284,7 @@ export class RecoveryTrajectoryLedger {
 
   private async pruneSessionIndexFromDisk(): Promise<void> {
     try {
-      const nodes = (await safeReadLinesAsync(this.filePath))
-        .slice(-this.maxNodes)
-        .map((line) => JSON.parse(line) as RecoveryTrajectoryNode);
+      const nodes = parseNodes((await safeReadLinesAsync(this.filePath)).slice(-this.maxNodes));
       const liveSessions = new Set(nodes.map((node) => node.sessionId));
       for (const sessionId of this.lastNodeBySession.keys()) {
         if (!liveSessions.has(sessionId)) this.lastNodeBySession.delete(sessionId);
@@ -324,10 +322,20 @@ function contextKey(sessionId: string, tabId?: string): string {
   return `${sessionId}\u0000${tabId ?? ''}`;
 }
 
+function isSensitiveKey(key: string): boolean {
+  if (SENSITIVE_KEY_RE.test(key)) return true;
+  const normalized = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^A-Za-z0-9_-]+/g, '_');
+  return SENSITIVE_KEY_RE.test(normalized);
+}
+
 function sanitizeObject(value: unknown, depth: number, key = ''): unknown {
-  if (SENSITIVE_KEY_RE.test(key)) return REDACTED;
+  if (isSensitiveKey(key)) return REDACTED;
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
+    const redacted = redactSensitiveText(value);
+    if (redacted !== value) return redacted;
     if (LARGE_VALUE_KEY_RE.test(key) || value.length > 200) return hashValue(value);
     return value;
   }
@@ -399,6 +407,19 @@ function pruneUndefined<T extends Record<string, unknown>>(value: T): T {
     if (value[key] === undefined) delete value[key];
   }
   return value;
+}
+
+
+function parseNodes(lines: string[]): RecoveryTrajectoryNode[] {
+  const nodes: RecoveryTrajectoryNode[] = [];
+  for (const line of lines) {
+    try {
+      nodes.push(JSON.parse(line) as RecoveryTrajectoryNode);
+    } catch {
+      // Ignore torn JSONL records while preserving the rest of the persisted history.
+    }
+  }
+  return nodes;
 }
 
 async function safeReadLinesAsync(filePath: string): Promise<string[]> {

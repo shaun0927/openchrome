@@ -6,7 +6,9 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
@@ -16,11 +18,12 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { normalizeQuery } from '../utils/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
-  description: 'Fill form fields and optionally submit.',
+  description: 'Fill form fields and optionally submit. Pass intent="..." (≤120 chars) to label this action in audit logs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -56,10 +59,24 @@ const definition: MCPToolDefinition = {
         enum: ['auto', 'off'],
         description: 'After submit, run a generic login-failure detector that flips success → failure when the password form is still mounted. Default: "auto". Set "off" to restore pre-#658 behavior.',
       },
+      refs: {
+        type: 'object',
+        description:
+          'Optional ref→value map (#831). Refs come from a recent read_page(mode="ax") snapshot. ' +
+          'When present, refs are processed before `fields` and skip AX/CSS discovery. ' +
+          'Stale refs produce a STALE_REF error — no silent coordinate fallback.',
+        additionalProperties: { type: 'string' },
+      },
       verify: VERIFY_FIELD_SCHEMA,
+      intent: {
+        type: 'string',
+        description: 'Human-readable label for this action in audit logs (≤120 chars)',
+        maxLength: 120,
+      },
     },
-    required: ['tabId', 'fields'],
+    required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.fill_form,
 };
 
 
@@ -70,13 +87,31 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   throwIfAborted(context);
   const tabId = args.tabId as string;
-  const fields = args.fields as Record<string, string | boolean | number>;
+  const fields = (args.fields as Record<string, string | boolean | number> | undefined) ?? {};
+  const refsArg = (args.refs as Record<string, string | boolean | number> | undefined) ?? {};
   const submit = args.submit as string | undefined;
   const clearFirst = args.clear_first !== false; // Default to true
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 300, 50), 2000);
   const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
   const verifyMode = coerceVerifyMode(args.verify);
+  const intent = args.intent as string | undefined;
+
+  // Validate intent when provided — use typeof guard for null-safety
+  if (typeof intent === 'string') {
+    if (intent === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must not be an empty string' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: `INVALID_INTENT: intent exceeds 120 characters (got ${intent.length})` }],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
 
@@ -87,9 +122,12 @@ const handler: ToolHandler = async (
     };
   }
 
-  if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+  if (
+    (typeof fields !== 'object' || Object.keys(fields).length === 0) &&
+    (typeof refsArg !== 'object' || Object.keys(refsArg).length === 0)
+  ) {
     return {
-      content: [{ type: 'text', text: 'Error: fields is required and must be a non-empty object' }],
+      content: [{ type: 'text', text: 'Error: fields or refs is required and must be a non-empty object' }],
       isError: true,
     };
   }
@@ -103,37 +141,49 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get all form fields on the page, with optional polling for SPAs
+    // Get all form fields on the page, with optional polling for SPAs.
+    //
+    // Codex P2 (PR #948): when every input is supplied as a `ref`
+    // (i.e. `fields` is empty), skip AX/CSS pre-discovery entirely. Discovery
+    // is only needed for label/name-based resolution; refs already carry a
+    // backendDOMNodeId. If even one `fields` entry exists, fall back to the
+    // discovery loop so the legacy path keeps working.
     const maxWait = waitForMs ? Math.min(Math.max(waitForMs, 100), 30000) : 0;
     const startTime = Date.now();
 
     const cdpClient = sessionManager.getCDPClient();
 
+    const refsOnly =
+      Object.keys(refsArg).length > 0 && Object.keys(fields).length === 0;
+
     let formFields: FormField[] = [];
-    do {
-      try {
-        formFields = await discoverFormFields(page, cdpClient, {
-          timeout: 10000,
-          toolName: 'fill_form',
-        });
-      } catch {
-        // CDP evaluate timed out — retry if budget remains
-        if (maxWait > 0 && Date.now() - startTime < maxWait) {
+    if (!refsOnly) {
+      do {
+        try {
+          formFields = await discoverFormFields(page, cdpClient, {
+            timeout: 10000,
+            toolName: 'fill_form',
+          });
+        } catch {
+          // CDP evaluate timed out — retry if budget remains
+          if (maxWait > 0 && Date.now() - startTime < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+            continue;
+          }
+          break;
+        }
+
+        if (formFields.length === 0 && maxWait > 0 && Date.now() - startTime < maxWait) {
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           continue;
         }
         break;
-      }
-
-      if (formFields.length === 0 && maxWait > 0 && Date.now() - startTime < maxWait) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        continue;
-      }
-      break;
-    } while (Date.now() - startTime < maxWait);
+      } while (Date.now() - startTime < maxWait);
+    }
 
     const filledFields: string[] = [];
     const errors: string[] = [];
+    const refIdManager = getRefIdManager();
 
     // Wrap the mutating sequence in runVerify so the structured AX-hash + pHash
     // report (issue #827) brackets the actual page mutations. When verifyMode
@@ -142,6 +192,63 @@ const handler: ToolHandler = async (
     const { result: withDomResult, verify: fillVerifyReport } = await runVerify(page, verifyMode, async () =>
       withDomDelta(page, async () => {
       let submitted = false;
+      // ─── Ref Fast-Path (#831) ───
+      // Process refs first. A fresh ref skips AX/CSS discovery; a stale ref
+      // aborts the entire call with STALE_REF (no silent coordinate fallback).
+      for (const [refKey, refValue] of Object.entries(refsArg)) {
+        if (context && !hasBudget(context, 15_000)) {
+          errors.push(`${refKey}: ⚠ skipped (deadline approaching)`);
+          continue;
+        }
+        const entry = refIdManager.getRef(sessionId, tabId, refKey);
+        if (!entry || refIdManager.isRefStale(sessionId, tabId, refKey)) {
+          return { submitted, loginResult: null, submitErrored: false, staleRef: refKey };
+        }
+        try {
+          await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', {
+            backendNodeId: entry.backendDOMNodeId,
+          });
+          await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+
+          const { model } = await cdpClient.send<{ model: { content: number[] } }>(
+            page, 'DOM.getBoxModel', { backendNodeId: entry.backendDOMNodeId }
+          );
+          let rx = 0, ry = 0;
+          if (model?.content && model.content.length >= 8) {
+            const bx = model.content[0], by = model.content[1];
+            const bw = model.content[2] - bx, bh = model.content[5] - by;
+            if (bw > 0 && bh > 0) {
+              rx = Math.round(bx + bw / 2);
+              ry = Math.round(by + bh / 2);
+            }
+          }
+          if (rx === 0 && ry === 0) {
+            return { submitted, loginResult: null, submitErrored: false, staleRef: refKey };
+          }
+          const isStealth = sessionManager.isStealthTarget(tabId);
+          if (isStealth) await humanMouseMove(page, rx, ry);
+          await page.mouse.click(rx, ry);
+          await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+
+          if (clearFirst) {
+            const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+            await page.keyboard.down(modifier);
+            await page.keyboard.press('KeyA');
+            await page.keyboard.up(modifier);
+            await page.keyboard.press('Backspace');
+          }
+          const stringValue = String(refValue);
+          if (isStealth) {
+            await humanType(page, stringValue);
+          } else {
+            await page.keyboard.type(stringValue);
+          }
+          filledFields.push(`${refKey}: "${stringValue.slice(0, 20)}${stringValue.length > 20 ? '...' : ''}" [via ref]`);
+        } catch {
+          throwIfAborted(context);
+          return { submitted, loginResult: null, submitErrored: false, staleRef: refKey };
+        }
+      }
       // Match and fill each requested field
       for (const [fieldKey, fieldValue] of Object.entries(fields)) {
         // Budget check: skip remaining fields if deadline approaching
@@ -472,10 +579,20 @@ const handler: ToolHandler = async (
           errors.push(`Failed to submit: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      return { submitted, loginResult, submitErrored };
+      return { submitted, loginResult, submitErrored, staleRef: null as string | null };
     }, { settleMs: 200 }),
     );
     const { delta, result: formResult } = withDomResult;
+
+    // #831: surface STALE_REF at the top-level response when a ref-keyed
+    // field could not be resolved. No partial-fill success in this case.
+    if (formResult.staleRef) {
+      return {
+        content: [{ type: 'text', text: formatStaleRefError(formResult.staleRef) }],
+        isError: true,
+        error: makeStaleRefError(formResult.staleRef),
+      };
+    }
 
     // Build compact result message
     const resultParts: string[] = [];
@@ -557,5 +674,10 @@ const handler: ToolHandler = async (
 };
 
 export function registerFillFormTool(server: MCPServer): void {
-  server.registerTool('fill_form', handler, definition);
+  // Snapshot-cache (#879): bump docEpoch after every successful fill.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid, undefined, 'fill_form') : Promise.resolve(null),
+  );
+  server.registerTool('fill_form', wrapped, definition);
 }

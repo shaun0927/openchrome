@@ -10,9 +10,12 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import {
   DEFAULT_CONTEXT_NAME,
   InvalidContextNameError,
@@ -37,6 +40,10 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Chrome profile directory name (e.g., "Profile 1"). Use list_profiles to see available profiles. Launches a separate Chrome instance for each profile. If omitted, uses the server default. Cannot be combined with workerId.',
       },
+      recall: {
+        type: 'boolean',
+        description: 'Override OPENCHROME_AUTO_RECALL for this call. true forces domain skill injection; false suppresses it even when the flag is on.',
+      },
       isolatedContext: {
         type: 'string',
         description:
@@ -47,6 +54,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['url'],
   },
+  annotations: TOOL_ANNOTATIONS.tabs_create,
 };
 
 const handler: ToolHandler = async (
@@ -56,6 +64,7 @@ const handler: ToolHandler = async (
   const sessionManager = getSessionManager();
   const url = args.url as string;
   const profileDirectory = args.profileDirectory as string | undefined;
+  const recallArg = args.recall as boolean | undefined;
   const isolatedContext = args.isolatedContext as string | undefined;
   if (args.workerId && profileDirectory) {
     return {
@@ -117,21 +126,24 @@ const handler: ToolHandler = async (
     );
     const { targetId, page, workerId: assignedWorkerId, contextName, isolated } = result;
 
+    const finalUrl = page.url();
+    const domainSkills = await autoRecallForUrl(finalUrl, recallArg);
+    const payload: Record<string, unknown> = {
+      tabId: targetId,
+      workerId: assignedWorkerId,
+      url: finalUrl,
+      title: await safeTitle(page),
+      context: { name: contextName, isolated },
+    };
+    if (domainSkills !== undefined) {
+      payload.domain_skills = domainSkills;
+    }
+
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify(
-            {
-              tabId: targetId,
-              workerId: assignedWorkerId,
-              url: page.url(),
-              title: await safeTitle(page),
-              context: { name: contextName, isolated },
-            },
-            null,
-            2
-          ),
+          text: JSON.stringify(payload, null, 2),
         },
       ],
     };
@@ -149,5 +161,12 @@ const handler: ToolHandler = async (
 };
 
 export function registerTabsCreateTool(server: MCPServer): void {
-  server.registerTool('tabs_create', handler, definition);
+  // Snapshot-cache (#879): bump docEpoch defensively so a read against a
+  // newly-created tab cannot inherit a stale entry from a recycled
+  // target id.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid, undefined, 'tabs_create') : Promise.resolve(null),
+  );
+  server.registerTool('tabs_create', wrapped, definition);
 }

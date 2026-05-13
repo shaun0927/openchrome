@@ -6,6 +6,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { generateConnectionInfo, generateAllConnectionInfo, getHostIds } from '../connect/index';
 import { copyToClipboard } from '../connect/clipboard';
 import { openInBrowser } from '../connect/open-url';
@@ -14,6 +15,7 @@ import { getAutoConnectState } from '../chrome/auto-connect-state';
 import { getChromePool } from '../chrome/pool';
 import { getDevToolsInstanceInfo } from '../chrome/devtools-info';
 import { getGlobalConfig } from '../config/global';
+import { getRuntimeProfile } from '../config/runtime-profile';
 
 function getServerState(): ServerConnectionState {
   const httpPort = process.env.OPENCHROME_HTTP_PORT || '3100';
@@ -86,6 +88,7 @@ const getConnectionInfoDef: MCPToolDefinition = {
     },
     required: ['host'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_get_connection_info,
 };
 
 const getConnectionInfoHandler: ToolHandler = async (
@@ -111,6 +114,7 @@ const getConnectionInfoHandler: ToolHandler = async (
                 port: autoConnect.port,
                 wsEndpoint: autoConnect.wsEndpoint,
                 attachedAt: new Date(autoConnect.attachedAt).toISOString(),
+                runtimeProfile: getRuntimeProfile(),
               },
               null,
               2,
@@ -123,7 +127,7 @@ const getConnectionInfoHandler: ToolHandler = async (
       content: [
         {
           type: 'text',
-          text: JSON.stringify({ mode: 'managed' }, null, 2),
+          text: JSON.stringify({ mode: 'managed', runtimeProfile: getRuntimeProfile() }, null, 2),
         },
       ],
     };
@@ -167,6 +171,7 @@ const copyToClipboardDef: MCPToolDefinition = {
     },
     required: ['text'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_copy_to_clipboard,
 };
 
 const copyToClipboardHandler: ToolHandler = async (
@@ -199,6 +204,7 @@ const openHostSettingsDef: MCPToolDefinition = {
     },
     required: ['host'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_open_host_settings,
 };
 
 const openHostSettingsHandler: ToolHandler = async (

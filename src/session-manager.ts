@@ -30,6 +30,7 @@ import { getTargetId } from './utils/puppeteer-helpers';
 import { safeTitle } from './utils/safe-title';
 import { getMetricsCollector } from './metrics/collector';
 import { getLifecycleBus } from './core/lifecycle';
+import { flush as flushRecorderBuffer } from './core/skill-memory/recorder-buffer';
 import type { LifecycleEvent, SessionDestroyReason } from './core/lifecycle';
 import { getTenantManager, isStrictTenantIsolationEnabled } from './tenant/registry';
 import type { TenantManager } from './tenant/manager';
@@ -130,6 +131,7 @@ export class SessionManager {
   private storageStateManagers = new Map<string, StorageStateManager>();
   private storageStateConfig: StorageStateConfig | null = null;
   private pendingCreations = new Map<string, Promise<Session>>();
+  private externalTargetRegistrationLocks = new Map<string, Promise<void>>();
 
   // Stealth mode tracking — targets opened via createTargetStealth
   private stealthTargets = new Set<string>();
@@ -818,6 +820,7 @@ export class SessionManager {
         targetCount: worker.targets.size,
         createdAt: worker.createdAt,
         lastActivityAt: worker.lastActivityAt,
+        ...(worker.profileDirectory && { profileDirectory: worker.profileDirectory }),
       });
     }
 
@@ -1416,9 +1419,9 @@ export class SessionManager {
    * Injects the page into the main CDPClient's targetIdIndex so all tools
    * (read_page, interact, screenshot, etc.) work without a separate connection. (#485)
    */
-  registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): void {
+  async registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): Promise<void> {
     // Register target ownership (no parent — headed pages are top-level navigations).
-    this.registerExternalTarget(targetId, sessionId, workerId);
+    await this.registerExternalTarget(targetId, sessionId, workerId);
 
     // Inject the page into the main CDPClient's index so getPageByTargetId()
     // returns it and the stale-target guards in getCDPSession()/send() pass.
@@ -1435,12 +1438,34 @@ export class SessionManager {
    * count is bumped so closing the parent tab cannot trigger
    * `maybeDestroy` on a context that still has popups attached.
    */
-  registerExternalTarget(
+  async registerExternalTarget(
     targetId: string,
     sessionId: string,
     workerId: string,
     opts?: { inheritContextFromTargetId?: string },
-  ): void {
+  ): Promise<void> {
+    const lockKey = `${sessionId}:${workerId}`;
+    const previous = this.externalTargetRegistrationLocks.get(lockKey) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() =>
+      this.registerExternalTargetLocked(targetId, sessionId, workerId, opts),
+    );
+
+    this.externalTargetRegistrationLocks.set(lockKey, next);
+    try {
+      await next;
+    } finally {
+      if (this.externalTargetRegistrationLocks.get(lockKey) === next) {
+        this.externalTargetRegistrationLocks.delete(lockKey);
+      }
+    }
+  }
+
+  private async registerExternalTargetLocked(
+    targetId: string,
+    sessionId: string,
+    workerId: string,
+    opts?: { inheritContextFromTargetId?: string },
+  ): Promise<void> {
     // Don't overwrite existing entries
     if (this.targetToWorker.has(targetId)) return;
 
@@ -1449,6 +1474,20 @@ export class SessionManager {
 
     const worker = session.workers.get(workerId);
     if (!worker) return;
+
+    // Enforce per-worker tab limit for externally-created targets too
+    // (popups, headed fallback pages, and other out-of-band registrations).
+    // Use closeTarget(), not evictTarget(), so the browser tab is actually
+    // closed and cannot leak after the ownership record is removed. The public
+    // wrapper serializes this block per worker so concurrent popups cannot all
+    // close the same oldest target and then overfill the worker.
+    if (worker.targets.size >= this.config.maxTargetsPerWorker) {
+      const oldestTargetId = worker.targets.values().next().value;
+      if (oldestTargetId) {
+        console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest external tab ${oldestTargetId}`);
+        await this.closeTarget(sessionId, oldestTargetId);
+      }
+    }
 
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
@@ -1610,6 +1649,7 @@ export class SessionManager {
    * Handle target closed event
    */
   onTargetClosed(targetId: string): void {
+    flushRecorderBuffer(targetId);
     const ownerInfo = this.targetToWorker.get(targetId);
     if (ownerInfo) {
       const session = this.sessions.get(ownerInfo.sessionId);

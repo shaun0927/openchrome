@@ -19,16 +19,9 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
-import {
-  formatNodeRefToken,
-  formatUidEvictedError,
-  getCurrentLoaderId,
-  isNodeRefEnabled,
-  mintNodeRefSync,
-  resolveNodeRef,
-} from '../core/perception/node-ref';
 import { dispatchCoordinateClick } from '../cdp/input';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 
 /**
  * Inject the structured {@link VerifyReport} onto an MCPResult under
@@ -43,7 +36,8 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find an element by natural language and click/hover/double_click; returns state summary after DOM settles.\n\nWhen to use: clicking/hovering an element you can describe in plain language. For Shadow DOM / canvas / cross-origin iframes, screenshot first and call with mode:"coordinate".\nWhen NOT to use: computer for plain-DOM coordinate clicks, or act for multi-step sequences.',
+  description: 'Find element by natural language; click/hover/double_click it; wait for DOM settle; return state.\n\nWhen to use: One described element action, with coordinate fallback for Shadow DOM/canvas/iframes.\nWhen NOT to use: Use act for multi-step flows; computer for general coordinate clicks.',
+  annotations: TOOL_ANNOTATIONS.interact,
   inputSchema: {
     type: 'object',
     properties: {
@@ -76,11 +70,6 @@ const definition: MCPToolDefinition = {
         },
         required: ['x', 'y'],
       },
-      nodeRef: {
-        type: 'string',
-        description:
-          'Stable backend-node uid (e.g. "n_42") issued by a prior read_page/query_dom/inspect call. When provided, bypasses element discovery. On a uid that was evicted by navigation, returns a structured "uid_evicted" error.',
-      },
       action: {
         type: 'string',
         enum: ['click', 'double_click', 'hover'],
@@ -104,11 +93,16 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      ref: {
+        type: 'string',
+        description: 'Snapshot ref ID (from read_page refs map). When provided, skips AX re-resolution and clicks the element directly via its cached backendDOMNodeId.',
+      },
+      intent: {
+        type: 'string',
+        maxLength: 120,
+        description: 'Optional short label (≤120 chars) describing the user-facing goal of this action, e.g. "submit login form". Recorded in the task journal for observability.',
+      },
     },
-    // `query` is no longer strictly required: a caller can pass `nodeRef`
-    // instead. We validate at runtime so the JSON-schema stays minimal and
-    // P2-stable (the schema does not change shape regardless of the
-    // OPENCHROME_NODE_REF flag value).
     required: ['tabId'],
   },
 };
@@ -122,7 +116,6 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const mode = (args.mode as string) || 'ref';
   const query = args.query as string;
-  const nodeRefArg = typeof args.nodeRef === 'string' ? (args.nodeRef as string) : undefined;
   const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
@@ -130,6 +123,9 @@ const handler: ToolHandler = async (
   const verifyMode = coerceVerifyMode(args.verify);
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
+
+  const intent = args.intent as string | undefined;
+  const refArg = args.ref as string | undefined;
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -141,11 +137,94 @@ const handler: ToolHandler = async (
     };
   }
 
+  // ─── intent validation (#894) ───
+  if (intent !== undefined) {
+    if (typeof intent !== 'string' || intent.trim() === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must be a non-empty string with at most 120 characters.' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must be at most 120 characters.' }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Ref fast-path (#831) ───
+  if (refArg) {
+    // Check if the ref is stale (missing or TTL-expired).
+    if (refIdManager.isRefStale(sessionId, tabId, refArg)) {
+      const staleWarning = typeof refIdManager.getRefStalenessWarning === 'function'
+        ? refIdManager.getRefStalenessWarning(sessionId, tabId, refArg)
+        : undefined;
+      const warningText = staleWarning
+        ? `\nWarning: ${staleWarning.code}: ${staleWarning.message}`
+        : '';
+      return {
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" is no longer valid (element may have changed or page navigated). Call read_page to get fresh refs.${warningText}` }],
+        isError: true,
+        error: { code: 'STALE_REF', ref_id: refArg, stale_warning: staleWarning },
+      } as MCPResult;
+    }
+
+    const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refArg);
+    if (!backendDOMNodeId) {
+      return {
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" could not be resolved to a DOM node.` }],
+        isError: true,
+        error: { code: 'STALE_REF', ref_id: refArg },
+      } as MCPResult;
+    }
+
+    try {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+      if (!page) {
+        return {
+          content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.` }],
+          isError: true,
+        };
+      }
+
+      const cdpClient = sessionManager.getCDPClient();
+      // Scroll into view then get bounding box
+      await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: backendDOMNodeId });
+      const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId: backendDOMNodeId }) as
+        { model: { content: number[] } };
+      const [x1, y1,, , x2,, , y2] = boxModel.model.content;
+      const cx = Math.round((x1 + x2) / 2);
+      const cy = Math.round((y1 + y2) / 2);
+
+      if (action === 'double_click') {
+        await page.mouse.click(cx, cy, { clickCount: 2 });
+      } else if (action === 'hover') {
+        await page.mouse.move(cx, cy);
+      } else {
+        await page.mouse.click(cx, cy);
+      }
+
+      const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+      const lines = [`${actionVerb} [${refArg}] [via ref]`];
+
+      return {
+        content: [{ type: 'text', text: lines.join('\n') }],
+        via: 'ref',
+      } as MCPResult;
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Interact error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  }
+
   // ─── Mode: coordinate ───
   if (mode === 'coordinate') {
-    if (query || nodeRefArg) {
+    if (query) {
       return {
-        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query"/"nodeRef" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
         isError: true,
       };
     }
@@ -244,14 +323,14 @@ const handler: ToolHandler = async (
   }
   if (coordinateArg) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" or "nodeRef" instead.' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" instead.' }],
       isError: true,
     };
   }
 
-  if (!query && !nodeRefArg) {
+  if (!query) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: either "query" or "nodeRef" is required when mode is "ref".' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" is required when mode is "ref".' }],
       isError: true,
     };
   }
@@ -267,128 +346,6 @@ const handler: ToolHandler = async (
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.${availableInfo}` }],
         isError: true,
       };
-    }
-
-    // ─── nodeRef branch (#844) ───
-    // When the caller supplied a stable backend-node uid, resolve it before
-    // any element-discovery work. This bypasses CSS/AX scoring entirely and
-    // turns interact into a near-pure CDP click. On a uid that the registry
-    // no longer knows (because navigation evicted it), we return a
-    // structured `uid_evicted` error rather than a generic stale-ref panic
-    // — the hint engine recognises that prefix and suppresses its
-    // "Refs expire after page changes" hint (see hints/rules/error-recovery.ts).
-    if (nodeRefArg) {
-      const cdpClientForNodeRef = sessionManager.getCDPClient();
-      const resolved = resolveNodeRef(page, nodeRefArg);
-      if (!resolved) {
-        let currentLoaderId = '';
-        try {
-          currentLoaderId = await getCurrentLoaderId(page, cdpClientForNodeRef);
-        } catch {
-          currentLoaderId = '';
-        }
-        if (!isNodeRefEnabled()) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: nodeRef is not supported when OPENCHROME_NODE_REF is disabled. ${formatNodeRefToken(null)}`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        return {
-          content: [
-            {
-              type: 'text',
-              text: formatUidEvictedError(nodeRefArg, currentLoaderId || 'unknown'),
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      // Resolve the box model and click via CDP — single round-trip.
-      try {
-        await cdpClientForNodeRef.send(page, 'DOM.scrollIntoViewIfNeeded', {
-          backendNodeId: resolved.backendNodeId,
-        });
-        await new Promise((r) => setTimeout(r, DEFAULT_DOM_SETTLE_DELAY_MS));
-      } catch {
-        // continue — click attempt may still succeed
-      }
-      let cx = 0;
-      let cy = 0;
-      try {
-        const { model } = await cdpClientForNodeRef.send<{ model: { content: number[] } }>(
-          page,
-          'DOM.getBoxModel',
-          { backendNodeId: resolved.backendNodeId },
-        );
-        if (!model?.content || model.content.length < 8) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: nodeRef ${nodeRefArg} resolved but element has no box model (hidden or detached).`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        const bx = model.content[0];
-        const by = model.content[1];
-        const bw = model.content[2] - bx;
-        const bh = model.content[5] - by;
-        cx = Math.round(bx + bw / 2);
-        cy = Math.round(by + bh / 2);
-      } catch (boxErr) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `nodeRef interact error: getBoxModel failed: ${boxErr instanceof Error ? boxErr.message : String(boxErr)}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const isStealthNR = sessionManager.isStealthTarget(tabId);
-      const { delta: nrDelta } = await withDomDelta(
-        page,
-        async () => {
-          if (isStealthNR) await humanMouseMove(page, cx, cy);
-          if (action === 'double_click') {
-            await page.mouse.click(cx, cy, { clickCount: 2 });
-          } else if (action === 'hover') {
-            if (!isStealthNR) await page.mouse.move(cx, cy);
-          } else {
-            await page.mouse.click(cx, cy);
-          }
-        },
-        { settleMs: Math.max(150, waitAfter) },
-      );
-
-      invalidateAXCache(getTargetId(page.target()));
-
-      const verb =
-        action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
-      const outcome = classifyOutcome(nrDelta, 'element');
-      const refToken = formatNodeRefToken(nodeRefArg);
-      const line = formatOutcomeLine(
-        outcome,
-        verb,
-        `element via nodeRef`,
-        `[${nodeRefArg}]`,
-        `[${refToken}]`,
-      );
-
-      const lines: string[] = [line, refToken];
-      if (nrDelta) lines.push('', '[DOM Delta]', nrDelta);
-
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
     }
 
     const queryNorm = normalizeQuery(query);
@@ -464,15 +421,6 @@ const handler: ToolHandler = async (
           ax.role, ax.name, undefined, undefined
         );
 
-        // Mint a stable nodeRef (P2: token always present; null when off).
-        let axNodeRef: string | null = null;
-        try {
-          const loaderId = await getCurrentLoaderId(page, cdpClient);
-          axNodeRef = mintNodeRefSync(page, loaderId, ax.backendDOMNodeId);
-        } catch {
-          axNodeRef = null;
-        }
-
         // Clean up any leftover tags
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
@@ -496,7 +444,7 @@ const handler: ToolHandler = async (
           return { url, title, activeInfo };
         }), 3000, 'state-summary', context).catch(() => ({ url: '', title: '', activeInfo: 'unknown' }));
 
-        const lines: string[] = [axLine, formatNodeRefToken(axNodeRef)];
+        const lines: string[] = [axLine];
         if (axDelta) lines.push('', '[DOM Delta]', axDelta);
         if (axState.activeInfo !== 'none') lines.push('', `[Focused] ${axState.activeInfo}`);
 
@@ -667,17 +615,6 @@ const handler: ToolHandler = async (
       );
     }
 
-    // Mint a stable nodeRef (P2: token always present; null when off).
-    let cssNodeRef: string | null = null;
-    if (bestMatch.backendDOMNodeId) {
-      try {
-        const loaderId = await getCurrentLoaderId(page, cdpClient);
-        cssNodeRef = mintNodeRefSync(page, loaderId, bestMatch.backendDOMNodeId);
-      } catch {
-        cssNodeRef = null;
-      }
-    }
-
     // Clean up discovery tags to prevent stale properties
     await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
@@ -770,7 +707,7 @@ const handler: ToolHandler = async (
     }));
 
     // Build the response — compact success format
-    const lines: string[] = [interactedLine, formatNodeRefToken(cssNodeRef)];
+    const lines: string[] = [interactedLine];
 
     if (returnFormat === 'dom_delta' || returnFormat === 'both') {
       if (delta) {

@@ -12,7 +12,7 @@
 import { getDomainMemory, extractDomainFromUrl } from '../../memory/domain-memory';
 
 /** Strategy identifiers matching ralph-engine.ts */
-export type StrategyId = 'S1_AX' | 'S2_CSS' | 'S3_CDP_COORD' | 'S4_JS_INJECT' | 'S5_KEYBOARD' | 'S6_CDP_RAW' | 'S7_HITL';
+export type StrategyId = 'S1_AX' | 'S2_CSS' | 'S3_CDP_COORD' | 'S4_JS_INJECT' | 'S5_KEYBOARD' | 'S6_CDP_RAW' | 'S7_VISUAL_GROUNDING' | 'S8_HITL';
 
 /** Key prefix for strategy entries in domain memory */
 const STRATEGY_KEY_PREFIX = 'ralph:strategy';
@@ -29,7 +29,7 @@ const STRATEGY_KEY_PREFIX = 'ralph:strategy';
  */
 export function learnStrategy(url: string, role: string, strategyId: StrategyId): void {
   // Only learn non-default strategies
-  if (strategyId === 'S1_AX' || strategyId === 'S2_CSS' || strategyId === 'S7_HITL') {
+  if (strategyId === 'S1_AX' || strategyId === 'S2_CSS' || strategyId === 'S8_HITL') {
     return;
   }
 

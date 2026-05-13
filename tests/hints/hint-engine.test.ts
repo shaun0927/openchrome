@@ -136,6 +136,29 @@ describe('HintEngine', () => {
     });
   });
 
+  describe('recovery feedback bundles', () => {
+    it('writes a blocked-page feedback bundle when a blocking hint fires', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-feedback-hints-'));
+      const engine = new HintEngine(new ActivityTracker());
+      engine.enableRecoveryFeedback(tmpDir);
+
+      const hint = engine.getHint(
+        'navigate',
+        makeResult(JSON.stringify({ blockingPage: { type: 'access-denied', detail: '403 Forbidden' } })),
+        false,
+        'session-a',
+      );
+
+      expect(hint?.rule).toBe('access-denied-detected');
+      const files = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.jsonl'));
+      expect(files).toHaveLength(1);
+      const parsed = JSON.parse(fs.readFileSync(path.join(tmpDir, files[0]), 'utf8').trim());
+      expect(parsed.sessionId).toBe('session-a');
+      expect(parsed.trigger.category).toBe('blocked_page');
+      expect(parsed.hints[0].rule).toBe('access-denied-detected');
+    });
+  });
+
   describe('composite suggestion rules', () => {
     it('should suggest interact after find+click pattern', () => {
       const tracker = makeTracker([{ toolName: 'find' }]);
@@ -380,6 +403,28 @@ describe('HintEngine', () => {
       expect(hint).not.toBeNull();
       expect(hint?.hint).toContain('empty/null results');
       expect(hint?.hint).toContain('read_page');
+    });
+
+    it('empty-result-streak: treats undefined javascript_tool output as empty', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('javascript_tool', makeResult('undefined'), false);
+      expect(hint).not.toBeNull();
+      expect(hint?.hint).toContain('empty/null results');
+    });
+
+    it('empty-result-streak: treats empty string javascript_tool output as empty', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('javascript_tool', makeResult(''), false);
+      expect(hint).not.toBeNull();
+      expect(hint?.hint).toContain('empty/null results');
     });
 
     it('empty-result-streak: does NOT trigger when current result is non-empty', () => {

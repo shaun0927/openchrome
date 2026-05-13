@@ -51,16 +51,44 @@ describe('RecoveryTrajectoryLedger', () => {
       password: 'super-secret',
       authorization: 'Bearer token',
       html: '<html>' + 'x'.repeat(500) + '</html>',
-      nested: { apiKey: 'key-123', visible: 'ok' },
+      nested: { apiKey: 'key-123', accessToken: 'tok-123', sessionId: 'sid-123', authHeader: 'Bearer x', visible: 'ok' },
     });
 
     expect(args).toMatchObject({
       username: 'alice',
       password: '[REDACTED]',
       authorization: '[REDACTED]',
-      nested: { apiKey: '[REDACTED]', visible: 'ok' },
+      nested: {
+        apiKey: '[REDACTED]',
+        accessToken: '[REDACTED]',
+        sessionId: '[REDACTED]',
+        authHeader: '[REDACTED]',
+        visible: 'ok',
+      },
     });
     expect(String(args?.html)).toMatch(/^sha256:/);
+  });
+
+
+  it('redacts inline secrets inside non-sensitive short strings', () => {
+    const args = summarizeArgs({ note: 'please use token=abc123 and password: hunter2', url: 'https://example.test/?api_key=secret' });
+
+    expect(String(args?.note)).not.toContain('abc123');
+    expect(String(args?.note)).not.toContain('hunter2');
+    expect(String(args?.url)).not.toContain('secret');
+  });
+
+  it('preserves valid JSONL history when one persisted line is malformed', () => {
+    const filePath = path.join(dir, 'trajectory.jsonl');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, [
+      JSON.stringify({ nodeId: 'n1', timestamp: 1, sessionId: 's1', toolName: 'read_page', resultStatus: 'success', progressStatus: 'unknown' }),
+      '{truncated',
+      JSON.stringify({ nodeId: 'n2', timestamp: 2, sessionId: 's1', toolName: 'find', resultStatus: 'success', progressStatus: 'unknown' }),
+    ].join('\n') + '\n');
+
+    const ledger = new RecoveryTrajectoryLedger({ dirPath: dir, maxNodes: 10 });
+    expect(ledger.readRecent(10, 's1').map((node) => node.nodeId)).toEqual(['n1', 'n2']);
   });
 
   it('summarizes result text without storing full content or obvious secrets', () => {

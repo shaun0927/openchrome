@@ -3,6 +3,10 @@
  * Tests for Vision Find Tool and Vision Config (Phase 2: Vision Hybrid Mode #577)
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
 // ─── getVisionMode config tests ───
 
 describe('getVisionMode', () => {
@@ -17,10 +21,10 @@ describe('getVisionMode', () => {
     jest.resetModules();
   });
 
-  it('returns fallback by default when env is not set', async () => {
+  it('returns off by default when env is not set (#831 default flipped)', async () => {
     delete process.env.OPENCHROME_VISION_MODE;
     const { getVisionMode } = await import('../../src/vision/config');
-    expect(getVisionMode()).toBe('fallback');
+    expect(getVisionMode()).toBe('off');
   });
 
   it('returns off when env is off', async () => {
@@ -35,10 +39,10 @@ describe('getVisionMode', () => {
     expect(getVisionMode()).toBe('auto');
   });
 
-  it('returns fallback for invalid values', async () => {
+  it('returns off for invalid values (#831 default flipped)', async () => {
     process.env.OPENCHROME_VISION_MODE = 'invalid-value';
     const { getVisionMode } = await import('../../src/vision/config');
-    expect(getVisionMode()).toBe('fallback');
+    expect(getVisionMode()).toBe('off');
   });
 });
 
@@ -58,6 +62,7 @@ function createMockPage(evaluateResult: unknown[] = [], viewport = { width: 1920
     }),
     screenshot: jest.fn().mockResolvedValue(Buffer.from('fake-screenshot-data')),
     viewport: jest.fn().mockReturnValue(viewport),
+    url: jest.fn().mockReturnValue('https://example.test'),
   };
 }
 
@@ -85,6 +90,8 @@ describe('VisionFindTool', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    delete process.env.OPENCHROME_VISUAL_TRAJECTORY;
+    delete process.env.OPENCHROME_VISUAL_TRAJECTORY_DIR;
   });
 
   it('returns annotated screenshot and element map', async () => {
@@ -110,6 +117,72 @@ describe('VisionFindTool', () => {
     expect(result.content[1].type).toBe('image');
     expect(result.content[1].data).toBeTruthy();
     expect(result.content[1].mimeType).toMatch(/^image\//);
+  });
+
+  it('writes opt-in visual trajectory artifacts without inline images', async () => {
+    const trajectoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-visual-trajectory-'));
+    process.env.OPENCHROME_VISUAL_TRAJECTORY_DIR = trajectoryDir;
+    const mockElements = [
+      { role: 'button', name: 'Submit', x: 100, y: 200, width: 80, height: 30 },
+    ];
+    const page = createMockPage(mockElements);
+    const mockSessionManager = {
+      getPage: jest.fn().mockResolvedValue(page),
+      getAvailableTargets: jest.fn().mockResolvedValue([]),
+    };
+
+    try {
+      const handler = await getVisionFindHandler(mockSessionManager);
+      const context = { startTime: Date.now(), deadlineMs: 60000 };
+      const result = await handler('session-visual', {
+        tabId: 'tab-visual',
+        instruction: 'find submit',
+        recordTrajectory: true,
+      }, context) as any;
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Trajectory: visual-');
+      const traceDirs = fs.readdirSync(trajectoryDir);
+      expect(traceDirs).toHaveLength(1);
+      const eventPath = path.join(trajectoryDir, traceDirs[0], 'events.jsonl');
+      const event = JSON.parse(fs.readFileSync(eventPath, 'utf8').trim());
+      expect(event).toMatchObject({
+        version: 1,
+        sessionId: 'session-visual',
+        tabId: 'tab-visual',
+        toolName: 'vision_find',
+        outcome: 'success',
+        redaction: { inlineImages: false, secretsRedacted: true },
+        perception: { provider: 'dom-annotator', elementCount: 1 },
+      });
+      expect(event.screenshots.annotatedPath).toMatch(/annotated\.(png|jpg|webp)$/);
+      expect(fs.existsSync(event.screenshots.annotatedPath)).toBe(true);
+    } finally {
+      fs.rmSync(trajectoryDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not write visual trajectory artifacts by default', async () => {
+    const trajectoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-visual-trajectory-off-'));
+    process.env.OPENCHROME_VISUAL_TRAJECTORY_DIR = trajectoryDir;
+    const page = createMockPage([
+      { role: 'button', name: 'Submit', x: 100, y: 200, width: 80, height: 30 },
+    ]);
+    const mockSessionManager = {
+      getPage: jest.fn().mockResolvedValue(page),
+      getAvailableTargets: jest.fn().mockResolvedValue([]),
+    };
+
+    try {
+      const handler = await getVisionFindHandler(mockSessionManager);
+      const context = { startTime: Date.now(), deadlineMs: 60000 };
+      const result = await handler('session-visual', { tabId: 'tab-visual' }, context) as any;
+
+      expect(result.isError).toBeUndefined();
+      expect(fs.readdirSync(trajectoryDir)).toEqual([]);
+    } finally {
+      fs.rmSync(trajectoryDir, { recursive: true, force: true });
+    }
   });
 
   it('errors on missing tabId', async () => {

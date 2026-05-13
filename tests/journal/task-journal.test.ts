@@ -237,7 +237,7 @@ describe('TaskJournal', () => {
       const entry = journal.createEntry('navigate', 'sess-1', { url: 'https://example.com' }, 100, true);
       journal.record(entry);
 
-      const recent = journal.getRecent(10);
+      const recent = journal.getRecent(10) as JournalEntry[];
       expect(recent).toHaveLength(1);
       expect(recent[0].tool).toBe('navigate');
       expect(recent[0].sessionId).toBe('sess-1');
@@ -267,7 +267,7 @@ describe('TaskJournal', () => {
         journal.record(journal.createEntry('navigate', 'sess', { url }, 10, true));
       }
 
-      const recent = journal.getRecent(2);
+      const recent = journal.getRecent(2) as JournalEntry[];
       expect(recent).toHaveLength(2);
       // Should be the last 2
       expect(recent[0].args.url).toBe('https://b.com');
@@ -418,6 +418,24 @@ describe('TaskJournal', () => {
       expect(summary.toolCounts['read_page']).toBe(1);
     });
 
+
+    it('excludes output-handle events from tool-call totals', () => {
+      journal.record(journal.createEntry('read_page', 'sess', {}, 10, true));
+      journal.recordOutputHandle({
+        event: 'output_handle_created',
+        handle: 'oh_ABCDEFGHIJKL',
+        source_tool: 'read_page',
+        size_bytes: 1234,
+        mime_type: 'application/json',
+      });
+
+      const summary = journal.getSummary();
+      expect(summary.total).toBe(1);
+      expect(summary.succeeded).toBe(1);
+      expect(summary.failed).toBe(0);
+      expect(summary.toolCounts.read_page).toBe(1);
+    });
+
     it('returns zeros when no entries exist', () => {
       const summary = journal.getSummary();
       expect(summary.total).toBe(0);
@@ -500,5 +518,210 @@ describe('TaskJournal', () => {
     it('returns a TaskJournal instance', () => {
       expect(getTaskJournal()).toBeInstanceOf(TaskJournal);
     });
+  });
+});
+
+describe('TaskJournal failure summaries', () => {
+  let dir: string;
+  let journal: TaskJournal;
+
+  beforeEach(() => {
+    dir = makeTmpDir();
+    journal = new TaskJournal({ dir });
+  });
+
+  afterEach(() => {
+    cleanupDir(dir);
+  });
+
+  it('classifies representative failure classes deterministically', () => {
+    const cases: Array<[string, string, string]> = [
+      ['interact', 'Element ref_12 is stale and no longer available', 'stale_ref'],
+      ['navigate', 'Login page detected after authRedirect', 'auth_redirect'],
+      ['navigate', 'Cloudflare CAPTCHA / Access Denied', 'captcha_or_waf'],
+      ['wait_for', 'Navigation timeout after 100ms', 'timeout'],
+      ['navigate', 'net::ERR_CONNECTION_RESET network error', 'network_error'],
+      ['extract_data', 'empty result: no matches for selector', 'empty_result'],
+      ['oc_assert', 'contract assertion verdict fail', 'contract_failed'],
+      ['interact', 'not making progress; repeated same action', 'non_progress_loop'],
+    ];
+
+    for (const [tool, message, expected] of cases) {
+      const entry = journal.createEntry(tool, 'sess', {}, 10, false, message);
+      expect(entry.failureClass).toBe(expected);
+      expect(entry.errorFingerprint).toBeTruthy();
+    }
+  });
+
+  it('summarizes failure classes, repeated fingerprints, progress, and recovery hints', () => {
+    journal.record(journal.createEntry('navigate', 'sess', { url: 'https://example.com' }, 10, true));
+    journal.record(journal.createEntry('interact', 'sess', { ref: 'ref_1' }, 10, false, 'Element ref_1 is stale'));
+    journal.record(journal.createEntry('interact', 'sess', { ref: 'ref_2' }, 10, false, 'Element ref_2 is stale'));
+    journal.record(journal.createEntry('wait_for', 'sess', {}, 10, false, 'Timed out waiting for text'));
+
+    const summary = journal.getSummary();
+    expect(summary.failureClasses.stale_ref).toBe(2);
+    expect(summary.failureClasses.timeout).toBe(1);
+    expect(summary.lastProgressTool?.tool).toBe('navigate');
+    expect(summary.recentNonProgressTools.map((item) => item.failureClass)).toEqual([
+      'stale_ref',
+      'stale_ref',
+      'timeout',
+    ]);
+    expect(summary.repeatedErrorFingerprints[0]).toMatchObject({
+      count: 2,
+      failureClass: 'stale_ref',
+    });
+    expect(summary.candidateRecoveryHints.join('\n')).toContain('read_page');
+  });
+
+  it('redacts sensitive data from result summaries before persistence', () => {
+    const entry = journal.createEntry(
+      'navigate',
+      'sess',
+      { url: 'https://example.com' },
+      10,
+      false,
+      'request failed token=abc123 password=hunter2 Authorization: Bearer secret-token',
+    );
+
+    expect(entry.resultSummary).toContain('token=[REDACTED]');
+    expect(entry.resultSummary).toContain('password=[REDACTED]');
+    expect(entry.resultSummary).toContain('Bearer [REDACTED]');
+    expect(entry.resultSummary).not.toContain('hunter2');
+    expect(entry.resultSummary).not.toContain('secret-token');
+  });
+
+  it('redacts quoted JSON-style sensitive fields from result summaries', () => {
+    const entry = journal.createEntry(
+      'extract_data',
+      'sess',
+      {},
+      10,
+      false,
+      'payload {"token":"abc123", "password":"hunter2", "ok":true}',
+    );
+
+    expect(entry.resultSummary).toContain('"token":"[REDACTED]"');
+    expect(entry.resultSummary).toContain('"password":"[REDACTED]"');
+    expect(entry.resultSummary).not.toContain('abc123');
+    expect(entry.resultSummary).not.toContain('hunter2');
+  });
+
+  it('does not classify unrelated stale wording as stale_ref', () => {
+    const entry = journal.createEntry(
+      'extract_data',
+      'sess',
+      {},
+      10,
+      false,
+      'empty result; stale cache warning was informational',
+    );
+
+    expect(entry.failureClass).toBe('empty_result');
+  });
+
+  it('does not classify stale_ref failures whose summary mentions a Sign in label as auth_redirect', () => {
+    const entry = journal.createEntry(
+      'interact',
+      'sess',
+      { description: 'Sign in button' },
+      10,
+      false,
+      'Element ref_7 is stale and no longer available',
+    );
+
+    expect(entry.summary).toContain('Sign in');
+    expect(entry.failureClass).toBe('stale_ref');
+  });
+
+  it('classifies auth-flow phrases as auth_redirect', () => {
+    const cases: Array<[string, string]> = [
+      ['navigate', 'redirected to sign in'],
+      ['navigate', 'please sign in to continue'],
+      ['navigate', 'sign-in required before proceeding'],
+    ];
+    for (const [tool, message] of cases) {
+      const entry = journal.createEntry(tool, 'sess', {}, 10, false, message);
+      expect(entry.failureClass).toBe('auth_redirect');
+    }
+  });
+
+  it('does not classify a bare Sign in button label as auth_redirect when there is no auth-flow error', () => {
+    const entry = journal.createEntry(
+      'interact',
+      'sess',
+      { description: 'Sign in' },
+      10,
+      false,
+      'click intercepted by overlay',
+    );
+
+    expect(entry.summary).toContain('Sign in');
+    expect(entry.failureClass).not.toBe('auth_redirect');
+  });
+
+  it('does not derive auth_redirect solely from destination URL path', () => {
+    const entry = journal.createEntry(
+      'navigate',
+      'sess',
+      { url: 'https://example.com/sign-in-help' },
+      10,
+      false,
+      'Navigation timeout after 100ms',
+    );
+
+    expect(entry.failureClass).toBe('timeout');
+  });
+
+  it('does not classify benign ok summaries that mention broad failure words', () => {
+    const entry: JournalEntry = {
+      ts: Date.now(),
+      tool: 'navigate',
+      sessionId: 'sess',
+      args: {},
+      durationMs: 10,
+      ok: true,
+      summary: '✓ navigate to https://example.com/timeout-guide',
+      resultSummary: 'page explains timeout handling but loaded successfully',
+    };
+    expect(journal.classifyFailure(entry)).toBeNull();
+  });
+
+  it('classifies known non-progress signals even when the tool result was ok', () => {
+    for (const [tool, resultSummary, expected] of [
+      ['validate_page', 'auth_redirect_required', 'auth_redirect'],
+      ['oc_assert', 'failed_assertions contained missing text', 'contract_failed'],
+      ['oc_assert', 'assertion inconclusive after retries', 'contract_failed'],
+    ] as const) {
+      const entry: JournalEntry = {
+        ts: Date.now(),
+        tool,
+        sessionId: 'sess',
+        args: {},
+        durationMs: 10,
+        ok: true,
+        summary: `✓ ${tool}`,
+        resultSummary,
+      };
+      expect(journal.classifyFailure(entry)).toBe(expected);
+    }
+  });
+
+  it('derives classes for older entries without stored failureClass fields', () => {
+    const oldEntry: JournalEntry = {
+      ts: Date.now(),
+      tool: 'oc_assert',
+      sessionId: 'sess',
+      args: {},
+      durationMs: 10,
+      ok: false,
+      summary: '✗ oc_assert',
+      resultSummary: 'failed_assertions contained missing text',
+    };
+    journal.record(oldEntry);
+
+    const summary = journal.getSummary();
+    expect(summary.failureClasses.contract_failed).toBe(1);
   });
 });

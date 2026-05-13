@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -20,7 +21,17 @@ import { withTimeout } from '../utils/with-timeout';
 import { cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';
-import { getCachedSequence, cacheSequence, validateCachedSequence } from '../actions/action-cache';
+import {
+  getCachedSequence,
+  cacheSequence,
+  validateCachedSequence,
+  buildWorkflowPageSignature,
+  cacheWorkflowSequence,
+  getWorkflowCachedSequence,
+  validateWorkflowCachedSequence,
+  WorkflowCacheDecision,
+  WorkflowPageSignature,
+} from '../actions/action-cache';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
 
 // ─── Types ───
@@ -60,12 +71,81 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Max time in ms for entire sequence. Default: 30000',
       },
+      use_workflow_cache: {
+        type: 'boolean',
+        description: 'Opt-in: try guarded structured workflow cache before legacy action cache. Default: false',
+      },
+      record_workflow_cache: {
+        type: 'boolean',
+        description: 'Opt-in: record safe successful parsed sequences into the structured workflow cache. Default: false',
+      },
+      allow_risky_replay: {
+        type: 'boolean',
+        description: 'Allow replay of workflow cache entries marked risky. Default: false',
+      },
+      workflow_debug: {
+        type: 'boolean',
+        description: 'Include concise workflow cache accept/reject metadata in the response. Default: false',
+      },
     },
     required: ['tabId', 'instruction'],
   },
+  annotations: TOOL_ANNOTATIONS.act,
 };
 
 // ─── Element resolution helper ───
+
+async function collectWorkflowPageSignature(page: any): Promise<WorkflowPageSignature | null> {
+  try {
+    const projection = await page.evaluate(() => {
+      const controls = Array.from(document.querySelectorAll(
+        'button, a, input, select, textarea, [role], [aria-label], [placeholder]'
+      )).slice(0, 250);
+
+      const actionLabels: string[] = [];
+      const actionRoles: string[] = [];
+      const formShape: string[] = [];
+
+      for (const el of controls) {
+        const element = el as HTMLElement;
+        const rect = element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+
+        const tag = element.tagName.toLowerCase();
+        const input = element as HTMLInputElement;
+        const type = (input.getAttribute?.('type') || '').toLowerCase();
+        const role = element.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' ? 'textbox' : tag);
+        const label = element.getAttribute('aria-label')
+          || element.getAttribute('title')
+          || element.getAttribute('placeholder')
+          || (type === 'password' ? '' : (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim())
+          || (type === 'password' ? '' : (input.name || input.id || ''));
+
+        if (label) actionLabels.push(label.slice(0, 120));
+        if (role) actionRoles.push(role);
+        if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+          formShape.push(`${tag}:${type || role}:${label ? 'label' : 'unlabelled'}`);
+        }
+      }
+
+      return { title: document.title, actionLabels, actionRoles, formShape };
+    });
+
+    return buildWorkflowPageSignature(projection);
+  } catch {
+    return null;
+  }
+}
+
+function formatWorkflowDebug(decision: WorkflowCacheDecision): string {
+  const parts = [`decision=${decision.decision}`, `reason=${decision.reason}`];
+  if (typeof decision.similarity === 'number') parts.push(`similarity=${decision.similarity}`);
+  if (decision.cacheAction) parts.push(`cacheAction=${decision.cacheAction}`);
+  if (decision.safety?.destructiveRisk && decision.safety.destructiveRisk !== 'none') {
+    parts.push(`destructiveRisk=${decision.safety.destructiveRisk}`);
+  }
+  return `[WorkflowCache] ${parts.join(' ')}`;
+}
 
 /**
  * Resolve element coordinates via AX tree. Returns null if resolution fails.
@@ -419,6 +499,10 @@ const handler: ToolHandler = async (
   const verifyTextSummary =
     args.verify === undefined ? true : verifyMode !== 'none';
   const timeoutMs = Math.min(Math.max((args.timeout as number) || 30000, 1000), 120000);
+  const useWorkflowCache = args.use_workflow_cache === true;
+  const recordWorkflowCache = args.record_workflow_cache === true;
+  const allowRiskyReplay = args.allow_risky_replay === true;
+  const workflowDebug = args.workflow_debug === true;
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
@@ -453,35 +537,51 @@ const handler: ToolHandler = async (
   // 1. Try template match first (no page URL needed)
   const templateMatch = matchTemplate(instruction);
   let actions: ParsedAction[];
-  let source: 'template' | 'cache' | 'parsed' = 'parsed';
+  let source: 'template' | 'cache' | 'workflow_cache' | 'parsed' = 'parsed';
   let parseWarning: string | undefined;
+  let workflowSignature: WorkflowPageSignature | null = null;
+  let workflowDecision: WorkflowCacheDecision | null = null;
 
   if (templateMatch) {
     actions = templateMatch.actions;
     source = 'template';
   } else {
-    // 2. Try cached sequence for this domain
     const pageUrl = page.url();
-    const cached = getCachedSequence(pageUrl, instruction);
-    if (cached) {
-      actions = cached.actions;
-      source = 'cache';
+
+    // 2. Try guarded structured workflow cache only when explicitly requested.
+    if (useWorkflowCache) {
+      workflowSignature = await collectWorkflowPageSignature(page);
+      workflowDecision = workflowSignature
+        ? getWorkflowCachedSequence(pageUrl, instruction, workflowSignature, { allowRiskyReplay })
+        : { decision: 'miss', reason: 'signature_unavailable' };
+    }
+
+    if (workflowDecision?.decision === 'accepted' && workflowDecision.actions) {
+      actions = workflowDecision.actions;
+      source = 'workflow_cache';
     } else {
-      // 3. Fall back to NL parsing
-      const parseResult = parseInstruction(instruction);
-      if (!parseResult.success || parseResult.actions.length === 0) {
-        const errMsg = parseResult.error || 'Could not parse instruction';
-        const suggestion = parseResult.suggestion || 'Try individual steps like "click X", "type Y in Z".';
-        return {
-          content: [{
-            type: 'text',
-            text: `[act] Parse error: ${errMsg}\n\nSuggestion: ${suggestion}`,
-          }],
-          isError: true,
-        };
+      // 3. Preserve existing legacy action cache behavior for compatibility.
+      const cached = getCachedSequence(pageUrl, instruction);
+      if (cached) {
+        actions = cached.actions;
+        source = 'cache';
+      } else {
+        // 4. Fall back to NL parsing
+        const parseResult = parseInstruction(instruction);
+        if (!parseResult.success || parseResult.actions.length === 0) {
+          const errMsg = parseResult.error || 'Could not parse instruction';
+          const suggestion = parseResult.suggestion || 'Try individual steps like "click X", "type Y in Z".';
+          return {
+            content: [{
+              type: 'text',
+              text: `[act] Parse error: ${errMsg}\n\nSuggestion: ${suggestion}`,
+            }],
+            isError: true,
+          };
+        }
+        actions = parseResult.actions;
+        parseWarning = parseResult.suggestion;
       }
-      actions = parseResult.actions;
-      parseWarning = parseResult.suggestion;
     }
   }
 
@@ -574,6 +674,18 @@ const handler: ToolHandler = async (
       // Boost confidence above MIN_CONFIDENCE so the entry is retrievable immediately
       validateCachedSequence(page.url(), instruction, true);
     } catch { /* non-fatal */ }
+
+    if (recordWorkflowCache) {
+      try {
+        workflowSignature = workflowSignature || await collectWorkflowPageSignature(page);
+        if (workflowSignature) {
+          const entry = cacheWorkflowSequence(page.url(), instruction, actions, workflowSignature);
+          workflowDecision = entry
+            ? { decision: 'accepted', reason: 'recorded', entry, safety: entry.safety }
+            : { decision: 'miss', reason: 'record_failed' };
+        }
+      } catch { /* non-fatal */ }
+    }
   }
 
   // Boost confidence on successful cache hit
@@ -583,10 +695,23 @@ const handler: ToolHandler = async (
     } catch { /* non-fatal */ }
   }
 
+  if (success && source === 'workflow_cache') {
+    try {
+      workflowDecision = validateWorkflowCachedSequence(page.url(), instruction, true);
+    } catch { /* non-fatal */ }
+  }
+
   // If cached sequence failed, reduce confidence
   if (!success && source === 'cache') {
     try {
       validateCachedSequence(page.url(), instruction, false);
+    } catch { /* non-fatal */ }
+  }
+
+  if (!success && source === 'workflow_cache') {
+    try {
+      const failed = failedAt !== null ? stepResults[failedAt - 1] : stepResults[stepResults.length - 1];
+      workflowDecision = validateWorkflowCachedSequence(page.url(), instruction, false, failed?.outcome || 'replay_failed');
     } catch { /* non-fatal */ }
   }
 
@@ -620,6 +745,10 @@ const handler: ToolHandler = async (
   // Surface parse warning if present
   if (parseWarning) {
     lines.push('', `[Warning] ${parseWarning}`);
+  }
+
+  if (workflowDebug && workflowDecision) {
+    lines.push('', formatWorkflowDebug(workflowDecision));
   }
 
   const baseResult: MCPResult = {
