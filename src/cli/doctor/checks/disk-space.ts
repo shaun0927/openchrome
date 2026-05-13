@@ -78,7 +78,7 @@ export const checkDiskSpace: CheckFn = async () => {
     };
   }
 
-  if (freeMb <= FAIL_THRESHOLD_MB) {
+  if (freeMb < FAIL_THRESHOLD_MB) {
     return {
       id: 'disk-space',
       title: 'Disk space',
