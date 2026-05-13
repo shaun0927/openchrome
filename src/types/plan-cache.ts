@@ -5,6 +5,8 @@
  * bypassing per-step agent LLM round-trips.
  */
 
+import type { BrowserTaskSignature, TaskSignatureStatus } from '../contracts/task-signature';
+
 /** A single step in a compiled plan */
 export interface CompiledStep {
   /** Execution order (1-based) */
@@ -109,41 +111,12 @@ export interface PlanRegistryData {
   updatedAt: number;
 }
 
-
-/** Per-step ledger entry emitted by PlanExecutor for recovery/resume diagnostics. */
-export interface PlanStepExecutionRecord {
-  /** Original plan step order, or recovery step order within a handler. */
-  order: number;
-  /** Tool executed for this step. */
-  tool: string;
-  /** Stable hash of substituted arguments; never stores raw args. */
-  argsHash: string;
-  /** Whether this entry came from the main plan or a recovery handler. */
-  phase: 'main' | 'recovery';
-  /** Recovery condition when phase === 'recovery'. */
-  recoveryCondition?: string;
-  /** Step outcome. */
-  status: 'success' | 'failed' | 'empty_result' | 'skipped';
-  /** Wall-clock time spent in this step. */
-  durationMs: number;
-  /** Optional concise reason for failure/empty/skipped status. */
-  reason?: string;
-  /** Stored output variable name when parseResult.storeAs was applied. */
-  storedAs?: string;
-}
-
-/** Known-good prefix / invalidated frontier summary for a plan run. */
-export interface PlanExecutionLedger {
-  steps: PlanStepExecutionRecord[];
-  /** Count of contiguous successful main-plan steps from the start. */
-  knownGoodPrefixLength: number;
-  /** First main-plan step that invalidated forward progress, if any. */
-  frontierStepOrder?: number;
-  /** Human-readable reason for the frontier. */
-  invalidationReason?: string;
-}
-
 /** Result of plan execution */
+export interface PlanExecutionOptions {
+  /** Optional deterministic boundary for tool allow-list and loop/budget status. */
+  taskSignature?: BrowserTaskSignature;
+}
+
 export interface PlanExecutionResult {
   /** Whether the plan executed successfully */
   success: boolean;
@@ -159,6 +132,6 @@ export interface PlanExecutionResult {
   stepsExecuted: number;
   /** Total steps in plan */
   totalSteps: number;
-  /** Per-step recovery metadata for known-good prefix/frontier diagnostics. */
-  ledger?: PlanExecutionLedger;
+  /** Present only when execution was bound to a BrowserTaskSignature. */
+  taskSignature?: TaskSignatureStatus;
 }

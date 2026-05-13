@@ -13,6 +13,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import {
   DEFAULT_CONTEXT_NAME,
@@ -158,5 +159,12 @@ const handler: ToolHandler = async (
 };
 
 export function registerTabsCreateTool(server: MCPServer): void {
-  server.registerTool('tabs_create', handler, definition);
+  // Snapshot-cache (#879): bump docEpoch defensively so a read against a
+  // newly-created tab cannot inherit a stale entry from a recycled
+  // target id.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid, undefined, 'tabs_create') : Promise.resolve(null),
+  );
+  server.registerTool('tabs_create', wrapped, definition);
 }

@@ -48,6 +48,29 @@ async function readStoreFile(): Promise<{ version: number; entries: unknown[]; u
   return JSON.parse(data);
 }
 
+type PersistedStore = { entries?: unknown[]; updatedAt?: number };
+
+async function waitForPersistedStore(
+  filePath: string,
+  predicate: (store: PersistedStore, byteLength: number) => boolean
+): Promise<{ store: PersistedStore; byteLength: number }> {
+  const deadline = Date.now() + 5_000;
+  let lastState = 'unread';
+  while (Date.now() < deadline) {
+    try {
+      const raw = await fsPromises.readFile(filePath, 'utf-8');
+      const store = JSON.parse(raw) as PersistedStore;
+      const byteLength = Buffer.byteLength(raw);
+      lastState = `count=${store.entries?.length ?? 0}, updatedAt=${store.updatedAt ?? 'missing'}, bytes=${byteLength}`;
+      if (byteLength > 0 && predicate(store, byteLength)) return { store, byteLength };
+    } catch {
+      // File may not exist or may be mid-write; retry until deadline.
+    }
+    await waitForSave(50);
+  }
+  throw new Error(`Timed out waiting for persisted store; lastState=${lastState}`);
+}
+
 describe('Issue #493: Domain Memory Persistence E2E', () => {
   afterAll(async () => {
     // Cleanup temp dir
@@ -382,19 +405,24 @@ describe('Issue #493: Domain Memory Persistence E2E', () => {
       for (let i = 0; i < 200; i++) {
         dm.record(`size-${i}.com`, `key-${i}`, `value-with-some-content-${i}`);
       }
-      await waitForSave(200);
-
       const sizeFile = path.join(sizeDir, 'domain-knowledge.json');
-      const size200 = await waitForNonEmptyFile(sizeFile);
+      const baseline = await waitForPersistedStore(
+        sizeFile,
+        (store) => (store.entries?.length ?? 0) >= 200
+      );
+      const size200 = baseline.byteLength;
 
       // Add 100 more (total 300) and compress
       for (let i = 200; i < 300; i++) {
         dm.record(`size-${i}.com`, `key-${i}`, `value-with-some-content-${i}`);
       }
+      const compressStartedAt = Date.now();
       dm.compress();
-      await waitForSave(200);
-
-      const sizeAfterCompress = await waitForNonEmptyFile(sizeFile);
+      const compressed = await waitForPersistedStore(
+        sizeFile,
+        (store) => (store.updatedAt ?? 0) >= compressStartedAt && (store.entries?.length ?? 0) <= 200
+      );
+      const sizeAfterCompress = compressed.byteLength;
 
       // After compress, file should not be significantly larger than 200 entries
       // Allow 10% tolerance for JSON formatting differences
