@@ -467,6 +467,30 @@ describe('ReadPageTool', () => {
       );
     });
 
+    test('diagnostics.mode reflects DOM when AX-overflow triggers fallback=dom', async () => {
+      const mockSerializeDOM = jest.fn().mockResolvedValue({
+        content: '[page_stats] url: https://example.com\n\n<body></body>',
+      });
+      const handler = await getReadPageHandler(mockSerializeDOM);
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        generateLargeAXTree(600)
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        fallback: 'dom',
+        diagnostics: true,
+      }) as any;
+
+      // effective mode must reflect the actual output format, not the requested one
+      expect(result._diagnostics.mode).toBe('dom');
+      expect(result._diagnostics.requestedMode).toBe('ax');
+    });
+
     test('falls back to truncated AX output when DOM serialization fails', async () => {
       const mockSerializeDOM = jest.fn().mockRejectedValue(new Error('DOM serialization failed'));
       const handler = await getReadPageHandler(mockSerializeDOM);
@@ -548,9 +572,53 @@ describe('ReadPageTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid mode "html"');
-      // Updated for #934 to reflect the new `semantic` mode listed in the
-      // diagnostic message alongside ax/dom/css.
-      expect(result.content[0].text).toContain('Must be "ax", "dom", "css", or "semantic"');
+      expect(result.content[0].text).toContain('Must be "ax", "dom", "css", "semantic", or "markdown"');
+    });
+  });
+
+  describe('Markdown Mode', () => {
+    test('returns clean markdown and pagination metadata by default', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue(
+        '<html><body><nav>Main page</nav><main><h1>Article</h1><p>See <a href="https://example.com">link</a>.</p></main></body></html>'
+      );
+      (page.evaluate as jest.Mock).mockResolvedValueOnce({
+        type: 'numbered',
+        hasNext: true,
+        hasPrev: false,
+        currentPage: 1,
+        totalPages: 3,
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      expect(text).toContain('# Article');
+      expect(text).toContain('[link](https://example.com)');
+      expect(text).not.toContain('Main page');
+      expect(text).toContain('[Pagination Detected]');
+      expect(text).toContain('Type: numbered');
+      expect(text).toContain('Pages: 1 / 3');
+    });
+
+    test('can suppress markdown pagination metadata', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue('<main><h1>Article</h1></main>');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('# Article');
+      expect(result.content[0].text).not.toContain('[Pagination Detected]');
+      expect(page.evaluate).not.toHaveBeenCalled();
     });
   });
 
