@@ -52,7 +52,7 @@
  *     an irreversible action execute by accident.
  */
 
-import type { Evidence } from '../../contracts/types.js';
+import type { Evidence } from '../../contracts/types';
 
 /**
  * Input passed to the hook on every fire.

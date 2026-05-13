@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { redactValue } from '../core/trace/redactor.js';
+import { redactValue } from '../core/trace/redactor';
 import { TERMINAL_RUN_STATUSES, type RunEvent, type RunRecord, type RunStatus } from './types';
 
 export interface RunStoreOptions {

@@ -28,13 +28,13 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { listSkillsForDomain } from './extractor.js';
-import { parseSkillMd, stringifySkillMd } from './skill-md.js';
+import { listSkillsForDomain } from './extractor';
+import { parseSkillMd, stringifySkillMd } from './skill-md';
 import {
   SKILL_SCHEMA_VERSION,
   type SkillRecord,
   type SkillSidecar,
-} from './types.js';
+} from './types';
 
 export type PruneActionKind =
   | 'demote'

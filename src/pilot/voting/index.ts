@@ -16,7 +16,7 @@ export {
   actionsEquivalent,
   type ActionInvocation,
   type EquivalenceContext,
-} from './args-equivalence.js';
+} from './args-equivalence';
 
 export {
   VotingOrchestrator,
@@ -33,4 +33,4 @@ export {
   type VotingPolicy,
   type Voter,
   type VotingProvider,
-} from './orchestrator.js';
+} from './orchestrator';

@@ -10,8 +10,8 @@
  * reference PR #749 for the original taxonomy this re-authors.
  */
 
-import type { Assertion, Evidence } from '../../contracts/types.js';
-import type { ValidationError } from '../../contracts/validator.js';
+import type { Assertion, Evidence } from '../../contracts/types';
+import type { ValidationError } from '../../contracts/validator';
 
 /** Contract definition the runtime evaluates against. */
 export interface Contract {

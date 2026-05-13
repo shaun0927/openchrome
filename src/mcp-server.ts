@@ -17,7 +17,7 @@ import {
 } from './types/mcp';
 import { MCPTransport, createTransport } from './transports/index';
 import { SessionManager, getSessionManager } from './session-manager';
-import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
+import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index';
 import { usageGuideResource, getUsageGuideContent, MCPResourceDefinition } from './resources/usage-guide';
 import {
   skillGraphResourceTemplate,

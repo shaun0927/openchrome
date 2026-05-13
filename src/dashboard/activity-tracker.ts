@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import type { ToolCallEvent, ToolCallResult } from './types.js';
+import type { ToolCallEvent, ToolCallResult } from './types';
 
 export interface ActivityTrackerEvents {
   'call:start': (event: ToolCallEvent) => void;

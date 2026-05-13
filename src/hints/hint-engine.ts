@@ -17,7 +17,7 @@ import * as path from 'path';
 import type { ToolCallEvent } from '../dashboard/types';
 import type { ActivityTracker } from '../dashboard/activity-tracker';
 import { PatternLearner } from './pattern-learner';
-import { ProgressTracker } from './progress-tracker.js';
+import { ProgressTracker } from './progress-tracker';
 import { errorRecoveryRules } from './rules/error-recovery';
 import { blockingPageRules } from './rules/blocking-page';
 import { compositeSuggestionRules } from './rules/composite-suggestions';

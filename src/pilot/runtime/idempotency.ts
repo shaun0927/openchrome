@@ -34,7 +34,7 @@
 
 import * as crypto from 'node:crypto';
 
-import type { TransactionRecord } from './types.js';
+import type { TransactionRecord } from './types';
 
 /** Default TTL for cached success verdicts (5 minutes). */
 export const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;

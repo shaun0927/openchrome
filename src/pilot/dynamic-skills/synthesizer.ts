@@ -39,7 +39,7 @@
 import type { SkillRecord } from '../../core/skill-memory';
 import type { MCPToolDefinition } from '../../types/mcp';
 
-import { synthesizedToolName } from './name.js';
+import { synthesizedToolName } from './name';
 
 export interface SkillParameter {
   readonly name: string;

@@ -46,22 +46,22 @@
  *     transformation of the recorded skill into a tool definition.
  */
 
-import { isDynamicSkillsEnabled } from '../../harness/flags.js';
+import { isDynamicSkillsEnabled } from '../../harness/flags';
 import {
   defaultSkillMemoryRootDir,
   SkillMemoryStore,
   type SkillRecord,
-} from '../../core/skill-memory/index.js';
-import type { MCPServer } from '../../mcp-server.js';
-import type { MCPResult, ToolContext, ToolHandler } from '../../types/mcp.js';
-import { logAuditEntry } from '../../security/audit-logger.js';
+} from '../../core/skill-memory/index';
+import type { MCPServer } from '../../mcp-server';
+import type { MCPResult, ToolContext, ToolHandler } from '../../types/mcp';
+import { logAuditEntry } from '../../security/audit-logger';
 
 import {
   dynamicSkillEvents,
   type DomainEnteredEvent,
   type SkillRecordedEvent,
-} from './events.js';
-import { getDynamicSkillsRegistry, type RegistryEntry } from './registry.js';
+} from './events';
+import { getDynamicSkillsRegistry, type RegistryEntry } from './registry';
 import {
   runReplay,
   type ContractAssertionVerdict,
@@ -69,8 +69,8 @@ import {
   type ReplayActionStep,
   type ReplayHandlerOpts,
   type ActionStepResult,
-} from './replay.js';
-import { synthesizeToolDefinition } from './synthesizer.js';
+} from './replay';
+import { synthesizeToolDefinition } from './synthesizer';
 
 /**
  * Glue object injected by the runtime. Tests substitute a

@@ -14,8 +14,8 @@
  *
  * Example:
  *
- *   import { isSkillCuratorEnabled } from '../../harness/flags.js';
- *   import { startCuratorRunner } from './runner.js';
+ *   import { isSkillCuratorEnabled } from '../../harness/flags';
+ *   import { startCuratorRunner } from './runner';
  *
  *   if (isSkillCuratorEnabled()) {
  *     startCuratorRunner({ rootDir: defaultSkillRootDir() });
@@ -25,9 +25,9 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { CuratorLock, defaultCuratorLockDir, type CuratorLockOptions } from './lock.js';
-import { runPrune, type SkillStatsResolver } from './prune.js';
-import { runPromote } from './promote.js';
+import { CuratorLock, defaultCuratorLockDir, type CuratorLockOptions } from './lock';
+import { runPrune, type SkillStatsResolver } from './prune';
+import { runPromote } from './promote';
 
 /** Default interval: 30 minutes. */
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1_000;

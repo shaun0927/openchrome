@@ -2,9 +2,9 @@
  * Tabs View - Tab list display
  */
 
-import { ANSI, truncate, pad, horizontalLine, BOX } from '../ansi.js';
-import type { TabInfo, ScreenSize } from '../types.js';
-import { Renderer } from '../renderer.js';
+import { ANSI, truncate, pad, horizontalLine, BOX } from '../ansi';
+import type { TabInfo, ScreenSize } from '../types';
+import { Renderer } from '../renderer';
 
 export interface TabsViewData {
   tabs: TabInfo[];

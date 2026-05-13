@@ -26,16 +26,16 @@
 
 import type { Page } from 'puppeteer-core';
 
-import { getSessionManager } from '../../session-manager.js';
-import { assertDomainAllowed } from '../../security/domain-guard.js';
-import type { SkillRecord } from '../../core/skill-memory/index.js';
+import { getSessionManager } from '../../session-manager';
+import { assertDomainAllowed } from '../../security/domain-guard';
+import type { SkillRecord } from '../../core/skill-memory/index';
 
 import type {
   ActionStepResult,
   ContractAssertionVerdict,
   CurrentTabInfo,
   ReplayActionStep,
-} from './replay.js';
+} from './replay';
 
 const DEFAULT_WORKER_ID = 'default';
 

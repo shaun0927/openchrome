@@ -2,9 +2,9 @@
  * Sessions View - Session list display
  */
 
-import { ANSI, formatTime, truncate, pad, horizontalLine, BOX } from '../ansi.js';
-import type { SessionInfo, ScreenSize } from '../types.js';
-import { Renderer } from '../renderer.js';
+import { ANSI, formatTime, truncate, pad, horizontalLine, BOX } from '../ansi';
+import type { SessionInfo, ScreenSize } from '../types';
+import { Renderer } from '../renderer';
 
 export interface SessionsViewData {
   sessions: SessionInfo[];

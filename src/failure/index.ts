@@ -1,2 +1,2 @@
-export * from './categories.js';
-export * from './classifier.js';
+export * from './categories';
+export * from './classifier';

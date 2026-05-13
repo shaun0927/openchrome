@@ -28,8 +28,8 @@
  * {@link HandoffManager.pruneExpired} manually.
  */
 
-import { createHandoffToken, type CreateHandoffTokenArgs, type HandoffTokenResult } from './token.js';
-import type { PersistenceAdapter } from './persistence.js';
+import { createHandoffToken, type CreateHandoffTokenArgs, type HandoffTokenResult } from './token';
+import type { PersistenceAdapter } from './persistence';
 
 export interface HandoffPayload {
   /** Session being transferred. */

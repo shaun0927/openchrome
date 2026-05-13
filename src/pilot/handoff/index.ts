@@ -17,25 +17,25 @@ export {
   DEFAULT_TOKEN_TTL_MS,
   HANDOFF_TOKEN_BYTES,
   HANDOFF_TOKEN_LENGTH,
-} from './token.js';
-export type { CreateHandoffTokenArgs, HandoffTokenResult } from './token.js';
+} from './token';
+export type { CreateHandoffTokenArgs, HandoffTokenResult } from './token';
 
-export { renderHandoffBanner } from './banner.js';
-export type { HandoffBannerPayload } from './banner.js';
+export { renderHandoffBanner } from './banner';
+export type { HandoffBannerPayload } from './banner';
 
-export { HandoffManager } from './manager.js';
+export { HandoffManager } from './manager';
 export type {
   HandoffManagerOptions,
   HandoffPayload,
   HandoffRecord,
   HandoffRedemption,
-} from './manager.js';
+} from './manager';
 
-export { registerOcPilotHandoffTool } from './tool.js';
+export { registerOcPilotHandoffTool } from './tool';
 
 export {
   EphemeralEncryptedPersistence,
   FileBackedKeyEncryptedPersistence,
   autoSelectHandoffPersistence,
-} from './persistence.js';
-export type { PersistenceAdapter, AutoSelectOptions } from './persistence.js';
+} from './persistence';
+export type { PersistenceAdapter, AutoSelectOptions } from './persistence';

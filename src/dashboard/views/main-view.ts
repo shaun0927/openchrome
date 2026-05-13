@@ -2,9 +2,9 @@
  * Main View - Activity log and stats display
  */
 
-import { ANSI, formatTime, formatDuration, formatUptime, formatBytes, truncate, pad, BOX, horizontalLine } from '../ansi.js';
-import type { ToolCallEvent, DashboardStats, ScreenSize } from '../types.js';
-import { Renderer } from '../renderer.js';
+import { ANSI, formatTime, formatDuration, formatUptime, formatBytes, truncate, pad, BOX, horizontalLine } from '../ansi';
+import type { ToolCallEvent, DashboardStats, ScreenSize } from '../types';
+import { Renderer } from '../renderer';
 
 export interface MainViewData {
   stats: DashboardStats;

@@ -19,14 +19,14 @@
  * {@link _resetHandoffManagerForTesting}.
  */
 
-import { MCPServer } from '../../mcp-server.js';
-import { MCPResult, ToolHandler } from '../../types/mcp.js';
-import { isHandoffPersistEnabled } from '../../harness/flags.js';
-import { logAuditEntry } from '../../security/audit-logger.js';
-import { HandoffManager } from './manager.js';
-import { renderHandoffBanner } from './banner.js';
-import { verifyHandoffToken } from './token.js';
-import { createDefinition, redeemDefinition } from './definitions.js';
+import { MCPServer } from '../../mcp-server';
+import { MCPResult, ToolHandler } from '../../types/mcp';
+import { isHandoffPersistEnabled } from '../../harness/flags';
+import { logAuditEntry } from '../../security/audit-logger';
+import { HandoffManager } from './manager';
+import { renderHandoffBanner } from './banner';
+import { verifyHandoffToken } from './token';
+import { createDefinition, redeemDefinition } from './definitions';
 
 /**
  * Best-effort wrapper around {@link logAuditEntry}. Audit emission is

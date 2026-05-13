@@ -30,9 +30,9 @@
  * Gated by `isSkillCuratorEnabled()` — callers MUST check before use.
  */
 
-import { isSkillCuratorEnabled } from '../../harness/flags.js';
-import { SkillMemoryStore } from '../../core/skill-memory/store.js';
-import type { SkillRecord } from '../../core/skill-memory/types.js';
+import { isSkillCuratorEnabled } from '../../harness/flags';
+import { SkillMemoryStore } from '../../core/skill-memory/store';
+import type { SkillRecord } from '../../core/skill-memory/types';
 
 export { isSkillCuratorEnabled };
 

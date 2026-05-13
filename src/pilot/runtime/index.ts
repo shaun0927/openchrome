@@ -14,22 +14,22 @@ export {
   defaultAuditEmitter,
   LogAuditEntryEmitter,
   runWithContract,
-} from './runtime.js';
+} from './runtime';
 
 export {
   defaultBeforeIrreversibleHook,
   getBeforeIrreversibleHook,
   registerBeforeIrreversibleHook,
   resetBeforeIrreversibleHookForTests,
-} from './before-irreversible.js';
+} from './before-irreversible';
 
 export {
   canonicalJson,
   DEFAULT_CACHE_TTL_MS,
   IdempotencyCache,
-} from './idempotency.js';
+} from './idempotency';
 
-export type { IdempotencyCacheOptions } from './idempotency.js';
+export type { IdempotencyCacheOptions } from './idempotency';
 
 export type {
   AuditEmitter,
@@ -38,10 +38,10 @@ export type {
   SkillFn,
   TransactionRecord,
   Verdict,
-} from './types.js';
+} from './types';
 
 export type {
   BeforeIrreversibleDecision,
   BeforeIrreversibleHook,
   BeforeIrreversibleHookInput,
-} from './before-irreversible.js';
+} from './before-irreversible';

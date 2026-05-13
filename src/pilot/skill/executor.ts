@@ -21,13 +21,13 @@
  * `--pilot` open for some families while leaving state-graph closed.
  */
 
-import { SkillGraphStorage } from '../../core/skill/index.js';
-import type { SkillEdge } from '../../core/skill/index.js';
+import { SkillGraphStorage } from '../../core/skill/index';
+import type { SkillEdge } from '../../core/skill/index';
 import type {
   ExecutorAction,
   ExecutorDecision,
   ExecutorInput,
-} from './types.js';
+} from './types';
 
 /**
  * Top-of-distribution count must reach at least this share of the edge's

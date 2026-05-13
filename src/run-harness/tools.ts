@@ -1,5 +1,5 @@
-import type { MCPServer } from '../mcp-server.js';
-import type { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp.js';
+import type { MCPServer } from '../mcp-server';
+import type { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
 import { getRunStore } from './store';
 import { RUN_STATUSES, TERMINAL_RUN_STATUSES, type RunRecord, type RunStatus } from './types';
 

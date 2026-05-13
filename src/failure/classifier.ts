@@ -1,4 +1,4 @@
-import type { FailureCategory, FailureClassification } from './categories.js';
+import type { FailureCategory, FailureClassification } from './categories';
 
 export interface ClassifyFailureInput {
   /** Error object, string, or arbitrary thrown value. */

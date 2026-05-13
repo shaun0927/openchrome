@@ -27,32 +27,32 @@
 // can resolve it without hard-coupling the harness to the runtime entry.
 // Keep this as a namespace export so adding sibling subdirs later does not
 // reorder the public surface and break consumer destructuring.
-export * as runtime from './runtime/index.js';
+export * as runtime from './runtime/index';
 
 // Phase 3 (issue #793): pilot-tier handoff token + manager.
-export * as handoff from './handoff/index.js';
+export * as handoff from './handoff/index';
 
 // Phase 4 (issue #759): voter-agnostic multi-model voting framework.
 // Gated by isPerceptionVotingEnabled() inside orchestrator.runVote().
 // LLM-backed voter HTTP wrappers ship in openchrome-perception-voters (#775).
-export * as voting from './voting/index.js';
+export * as voting from './voting/index';
 
 // Phase 4 (issue #713): verified skill extractor — deterministic transform,
 // no LLM calls. Gate call sites on `isSkillCuratorEnabled()` from
 // `src/harness/flags.ts` before invoking any export from this namespace.
-export * as curator from './curator/index.js';
+export * as curator from './curator/index';
 
 // Phase 4 (issue #889): dynamic skill→tool synthesis. Gate call sites on
 // `isDynamicSkillsEnabled()` from `src/harness/flags.ts` before invoking.
-export * as dynamicSkills from './dynamic-skills/index.js';
+export * as dynamicSkills from './dynamic-skills/index';
 
 // Phase 5 (issue #874): user-supplied proxy lifecycle binding. Pilot-tier
 // MCP tool that lets the host declare origin→upstream rules without
 // openchrome ever contacting the upstream proxy. Gate call sites on
 // `isProxyHookEnabled()` from `src/harness/flags.ts` before invoking any
 // export from this namespace.
-export * as proxy from './proxy/index.js';
+export * as proxy from './proxy/index';
 // Phase 4 (issue #820, blocks #717): pilot-tier skill graph executor.
 // Pure `decide()` function — no I/O, no side effects. Gate call sites on
 // `isStateGraphEnabled()` from `src/harness/flags.ts` before invoking.
-export * as skill from './skill/index.js';
+export * as skill from './skill/index';

@@ -28,8 +28,8 @@
  * Gated by `isPerceptionVotingEnabled()` from `src/harness/flags.ts`.
  */
 
-import { isPerceptionVotingEnabled } from '../../harness/flags.js';
-import { actionsEquivalent, type ActionInvocation, type EquivalenceContext } from './args-equivalence.js';
+import { isPerceptionVotingEnabled } from '../../harness/flags';
+import { actionsEquivalent, type ActionInvocation, type EquivalenceContext } from './args-equivalence';
 
 export type VoterErrorKind =
   | 'timeout'

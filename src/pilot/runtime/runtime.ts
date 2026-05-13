@@ -38,21 +38,21 @@
 
 import * as crypto from 'node:crypto';
 
-import { logAuditEntry } from '../../security/audit-logger.js';
-import type { EvalContext } from '../../contracts/eval-context.js';
-import { evaluate } from '../../contracts/evaluate.js';
-import { validateAssertion, type ValidationError } from '../../contracts/validator.js';
-import { isContractRuntimeEnabled } from '../../harness/flags.js';
-import { getLifecycleBus } from '../../core/lifecycle/index.js';
-import { getBeforeIrreversibleHook } from './before-irreversible.js';
-import { DEFAULT_CACHE_TTL_MS } from './idempotency.js';
+import { logAuditEntry } from '../../security/audit-logger';
+import type { EvalContext } from '../../contracts/eval-context';
+import { evaluate } from '../../contracts/evaluate';
+import { validateAssertion, type ValidationError } from '../../contracts/validator';
+import { isContractRuntimeEnabled } from '../../harness/flags';
+import { getLifecycleBus } from '../../core/lifecycle/index';
+import { getBeforeIrreversibleHook } from './before-irreversible';
+import { DEFAULT_CACHE_TTL_MS } from './idempotency';
 import type {
   AuditEmitter,
   Contract,
   ContractRuntimeArgs,
   TransactionRecord,
   Verdict,
-} from './types.js';
+} from './types';
 
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_FACTOR = 2;

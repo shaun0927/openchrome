@@ -5,17 +5,17 @@
  */
 
 import { EventEmitter } from 'events';
-import { getVersion } from '../version.js';
-import { Renderer, getRenderer } from './renderer.js';
-import { KeyboardHandler, getKeyboardHandler, KeyEvent } from './keyboard-handler.js';
-import { ActivityTracker, getActivityTracker } from './activity-tracker.js';
-import { OperationController, getOperationController } from './operation-controller.js';
-import { MainView, MainViewData } from './views/main-view.js';
-import { SessionsView, SessionsViewData } from './views/sessions-view.js';
-import { TabsView, TabsViewData } from './views/tabs-view.js';
-import { ConnectView, ConnectViewData } from './views/connect-view.js';
-import type { ViewMode, DashboardStats, SessionInfo, TabInfo } from './types.js';
-import type { SessionManager } from '../session-manager.js';
+import { getVersion } from '../version';
+import { Renderer, getRenderer } from './renderer';
+import { KeyboardHandler, getKeyboardHandler, KeyEvent } from './keyboard-handler';
+import { ActivityTracker, getActivityTracker } from './activity-tracker';
+import { OperationController, getOperationController } from './operation-controller';
+import { MainView, MainViewData } from './views/main-view';
+import { SessionsView, SessionsViewData } from './views/sessions-view';
+import { TabsView, TabsViewData } from './views/tabs-view';
+import { ConnectView, ConnectViewData } from './views/connect-view';
+import type { ViewMode, DashboardStats, SessionInfo, TabInfo } from './types';
+import type { SessionManager } from '../session-manager';
 
 export interface DashboardOptions {
   enabled?: boolean;
@@ -493,9 +493,9 @@ export function setDashboard(dashboard: Dashboard): void {
 }
 
 // Re-export components
-export { ActivityTracker, getActivityTracker, setActivityTracker } from './activity-tracker.js';
-export { OperationController, getOperationController, setOperationController } from './operation-controller.js';
-export { KeyboardHandler, getKeyboardHandler } from './keyboard-handler.js';
-export { Renderer, getRenderer } from './renderer.js';
-export * from './types.js';
-export * from './ansi.js';
+export { ActivityTracker, getActivityTracker, setActivityTracker } from './activity-tracker';
+export { OperationController, getOperationController, setOperationController } from './operation-controller';
+export { KeyboardHandler, getKeyboardHandler } from './keyboard-handler';
+export { Renderer, getRenderer } from './renderer';
+export * from './types';
+export * from './ansi';

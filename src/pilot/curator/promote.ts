@@ -22,8 +22,8 @@
 import * as fs from 'node:fs';
 import * as crypto from 'node:crypto';
 
-import { SkillMemoryStore } from '../../core/skill-memory/store.js';
-import { listSkillsForDomain } from './extractor.js';
+import { SkillMemoryStore } from '../../core/skill-memory/store';
+import { listSkillsForDomain } from './extractor';
 
 export interface PromoteOptions {
   rootDir?: string;

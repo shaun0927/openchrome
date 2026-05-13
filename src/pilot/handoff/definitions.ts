@@ -1,4 +1,4 @@
-import type { MCPToolDefinition } from '../../types/mcp.js';
+import type { MCPToolDefinition } from '../../types/mcp';
 
 export const createDefinition: MCPToolDefinition = {
   name: 'oc_pilot_handoff_create',

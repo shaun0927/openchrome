@@ -18,11 +18,11 @@ export {
   DISTRIBUTION_MATCH_THRESHOLD,
   RECOMMEND_RATE_FLOOR,
   SMALL_SAMPLE_TOTAL,
-} from './executor.js';
+} from './executor';
 
 export type {
   ExecutorAction,
   ExecutorDecision,
   ExecutorDecisionKind,
   ExecutorInput,
-} from './types.js';
+} from './types';

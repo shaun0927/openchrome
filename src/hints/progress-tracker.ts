@@ -6,7 +6,7 @@
  * or spinning (auth redirects, stale refs, non-interactive clicks, timeouts).
  */
 
-import type { ToolCallEvent } from '../dashboard/types.js';
+import type { ToolCallEvent } from '../dashboard/types';
 
 export type ProgressStatus = 'progressing' | 'stalling' | 'stuck';
 

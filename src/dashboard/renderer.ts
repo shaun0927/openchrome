@@ -2,8 +2,8 @@
  * Renderer - Screen rendering to stderr
  */
 
-import { ANSI, horizontalLine, BOX, stripAnsi } from './ansi.js';
-import type { ScreenSize } from './types.js';
+import { ANSI, horizontalLine, BOX, stripAnsi } from './ansi';
+import type { ScreenSize } from './types';
 
 export class Renderer {
   private lastFrame: string = '';

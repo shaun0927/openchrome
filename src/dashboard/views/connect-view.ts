@@ -3,12 +3,12 @@
  * Part of #523: Desktop App Web host connection guide.
  */
 
-import { ANSI, truncate, BOX, horizontalLine } from '../ansi.js';
-import type { ScreenSize } from '../types.js';
-import { Renderer } from '../renderer.js';
-import type { WebAIHostId, ConnectionInfo } from '../../connect/types.js';
-import { generateConnectionInfo, getHostIds } from '../../connect/index.js';
-import type { ServerConnectionState } from '../../connect/types.js';
+import { ANSI, truncate, BOX, horizontalLine } from '../ansi';
+import type { ScreenSize } from '../types';
+import { Renderer } from '../renderer';
+import type { WebAIHostId, ConnectionInfo } from '../../connect/types';
+import { generateConnectionInfo, getHostIds } from '../../connect/index';
+import type { ServerConnectionState } from '../../connect/types';
 
 export interface ConnectViewData {
   /** Currently selected host index */
