@@ -15,6 +15,10 @@ import {
   getTaskStore,
   setTaskStoreForTests,
 } from '../../../src/tools/oc-task-start';
+import { __test__ as taskGetTest } from '../../../src/tools/oc-task-get';
+import { __test__ as taskUpdateTest } from '../../../src/tools/oc-task-update';
+import { __test__ as taskFinishTest } from '../../../src/tools/oc-task-finish';
+import { __test__ as taskCancelTest } from '../../../src/tools/oc-task-cancel';
 import type { MCPResult, ToolHandler } from '../../../src/types/mcp';
 
 function tempRoot(): string {
@@ -66,16 +70,100 @@ describe('oc_task_start handler — happy path', () => {
     expect(result.url).toBe('https://example.com');
   });
 
+
+
+  test('creates a host-driven browser_task envelope when kind is omitted', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const out = await handler('sess-1', {
+      objective: 'exercise budgets',
+      phase: 'explore',
+      policy: { maxObservationStreak: 3 },
+    });
+    expect(out.task_id).toMatch(/^[0-9a-f]{16}$/);
+    expect(out.status).toBe('RUNNING');
+    const meta = getTaskStore().readMetaSync(out.task_id as string);
+    expect(meta?.kind).toBe('browser_task');
+    expect(meta?.objective).toBe('exercise budgets');
+    expect(meta?.policy?.maxObservationStreak).toBe(3);
+    expect(meta?.budget_status).toBe('ok');
+  });
+
+  test('oc_task_cancel moves browser_task envelopes directly to CANCELLED', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const started = await handler('sess-1', {
+      objective: 'host-managed browser work',
+      phase: 'act',
+    });
+    const taskId = started.task_id as string;
+
+    const cancelled = await taskCancelTest.handler('sess-1', { task_id: taskId });
+
+    expect(cancelled.isError).not.toBe(true);
+    expect(cancelled.meta).toMatchObject({
+      task_id: taskId,
+      kind: 'browser_task',
+      status: 'CANCELLED',
+      phase: 'done',
+    });
+    const meta = getTaskStore().readMetaSync(taskId);
+    expect(meta?.status).toBe('CANCELLED');
+    expect(meta?.ended_at).toBeDefined();
+    expect(meta?.cancel_requested_at).toBeDefined();
+  });
+
+
+  test('rejects malformed kind instead of creating a browser_task envelope', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+
+    const out = await handler('sess-1', { kind: 42 });
+
+    expect(out.isError).toBe(true);
+    expect(out.content?.[0]?.text).toContain('kind must be a non-empty string');
+  });
+
+  test('rejects missing args when scheduling a non-browser tool task', async () => {
+    const innerTool = jest.fn<Promise<MCPResult>, Parameters<ToolHandler>>(async () => ({
+      content: [{ type: 'text', text: 'should not run' }],
+    }));
+    const handler = __test__.makeHandler({
+      resolveTool: (name) => (name === 'fake_inner' ? innerTool : null),
+    });
+
+    const out = await handler('sess-1', { kind: 'fake_inner' });
+
+    expect(out.isError).toBe(true);
+    expect(out.content?.[0]?.text).toContain('args must be an object');
+    expect(innerTool).not.toHaveBeenCalled();
+  });
+
   test('returns isError when tool name is not registered', async () => {
     const handler = __test__.makeHandler({ resolveTool: () => null });
     const out = await handler('sess-1', { kind: 'nope', args: {} });
     expect(out.isError).toBe(true);
   });
 
-  test('returns isError when kind is missing', async () => {
+  test('omitted kind starts an envelope instead of launching an inner tool', async () => {
     const handler = __test__.makeHandler({ resolveTool: () => null });
     const out = await handler('sess-1', { args: {} });
-    expect(out.isError).toBe(true);
+    expect(out.isError).not.toBe(true);
+    expect(out.kind).toBe('browser_task');
+  });
+
+  test('oc_task_get accepts taskId alias through schema and handler', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const started = await handler('sess-1', {
+      objective: 'poll through alias',
+      phase: 'explore',
+    });
+
+    expect(taskGetTest.definition.inputSchema.required).toBeUndefined();
+
+    const fetched = await taskGetTest.handler('sess-1', {
+      taskId: started.task_id,
+    });
+
+    expect(fetched.isError).not.toBe(true);
+    expect(fetched.meta).toMatchObject({ task_id: started.task_id, objective: 'poll through alias' });
   });
 
   test('rejects recursive task-ledger tool scheduling', async () => {
@@ -91,6 +179,18 @@ describe('oc_task_start handler — happy path', () => {
     expect(out.isError).toBe(true);
     expect(out.content?.[0]?.text).toContain('refusing to schedule');
     expect(innerTool).not.toHaveBeenCalled();
+  });
+
+  test('rejects update and finish task-ledger tools from async scheduling', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => async () => ({ content: [] }) });
+
+    const update = await handler('sess-1', { kind: 'oc_task_update', args: {} });
+    const finish = await handler('sess-1', { kind: 'oc_task_finish', args: {} });
+
+    expect(update.isError).toBe(true);
+    expect(update.content?.[0]?.text).toContain('refusing to schedule');
+    expect(finish.isError).toBe(true);
+    expect(finish.content?.[0]?.text).toContain('refusing to schedule');
   });
 
 
@@ -142,5 +242,52 @@ describe('oc_task_start handler — happy path', () => {
       if (latest?.status === 'COMPLETED' || latest?.status === 'FAILED') break;
       await new Promise((r) => setTimeout(r, 10));
     }
+  });
+
+  test('oc_task_update and oc_task_finish enforce task ownership', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const principal = { mode: 'api-key' as const, tenantId: 'tenant-a', keyId: 'key-a', scopes: ['write' as const] };
+    const started = await handler('sess-owned', { objective: 'owned task' }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal,
+    });
+    const taskId = started.task_id as string;
+    const otherPrincipal = { mode: 'api-key' as const, tenantId: 'tenant-b', keyId: 'key-b', scopes: ['write' as const] };
+
+    const deniedUpdate = await taskUpdateTest.handler('sess-owned', { taskId, phase: 'act' }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal: otherPrincipal,
+    });
+    const deniedFinish = await taskFinishTest.handler('sess-owned', { taskId, outcome: 'completed' }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal: otherPrincipal,
+    });
+    const allowedUpdate = await taskUpdateTest.handler('sess-owned', { taskId, phase: 'act' }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal,
+    });
+
+    expect(deniedUpdate.isError).toBe(true);
+    expect(deniedFinish.isError).toBe(true);
+    expect(allowedUpdate.isError).not.toBe(true);
+    expect(allowedUpdate.meta).toMatchObject({ task_id: taskId, phase: 'act' });
+  });
+
+  test('oc_task_update rejects invalid phases instead of coercing them', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const started = await handler('sess-1', { objective: 'phase validation' });
+
+    const out = await taskUpdateTest.handler('sess-1', {
+      taskId: started.task_id,
+      phase: 'not-a-phase',
+    });
+
+    expect(out.isError).toBe(true);
+    expect(out.content?.[0]?.text).toContain('phase must be');
+    expect(getTaskStore().readMetaSync(started.task_id as string)?.phase).toBe('explore');
   });
 });

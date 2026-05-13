@@ -14,6 +14,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '../core/console-buffer/ring-buffer';
 import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
+import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 
 /**
  * Validate caller-supplied cap values. Used to reject `maxLogs`/`maxBytes`
@@ -209,6 +210,10 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Max total bytes of logs to store. Default: 4194304 (4 MiB)',
       },
+      boundaryMarkers: {
+        type: 'boolean',
+        description: 'Wrap console-origin text in <oc:console>. Default true; false disables.',
+      },
     },
     required: ['tabId', 'action'],
   },
@@ -281,6 +286,7 @@ const handler: ToolHandler = async (
   }
   const maxLogs = (rawMaxLogs as number | undefined) ?? DEFAULT_MAX_LINES;
   const maxBytes = (rawMaxBytes as number | undefined) ?? DEFAULT_MAX_BYTES;
+  const boundaryMarkers = areBoundaryMarkersEnabled(args);
 
   const sessionManager = getSessionManager();
 
@@ -517,7 +523,11 @@ const handler: ToolHandler = async (
           : state.logs.drain();
 
         // Deduplicate consecutive identical log messages
-        const deduplicatedLogs = deduplicateLogs(logs);
+        const deduplicatedLogs = deduplicateLogs(logs).map((log) => ({
+          ...log,
+          text: boundaryMarkers ? wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, log.text) : log.text,
+          args: boundaryMarkers && log.args ? log.args.map((arg) => wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, arg)) : log.args,
+        }));
 
         const bufStats = state.logs.stats();
 
