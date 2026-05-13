@@ -26,6 +26,7 @@ import {
   readSkillGraphResource,
 } from './resources/skill-graph';
 import { HintEngine } from './hints';
+import { buildAutomationInsight, formatAutomationFallback, shouldInjectAutomationFallback } from './hints/result-guidance';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
@@ -55,6 +56,8 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import { isRunHarnessEnabled } from './run-harness/flags';
+import { extractRunId, getRunStore } from './run-harness/store';
 import {
   substituteSecrets,
   redactSecrets,
@@ -63,6 +66,24 @@ import {
 } from './core/secrets';
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
+
+
+function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  if (toolName !== 'act' || !('variables' in args)) {
+    return args;
+  }
+  if (!args.variables || typeof args.variables !== 'object') {
+    return { ...args, variables: '[VARIABLE]' };
+  }
+  if (Array.isArray(args.variables)) {
+    return { ...args, variables: args.variables.map(() => '[VARIABLE]') };
+  }
+  const redactedVariables: Record<string, string> = {};
+  for (const key of Object.keys(args.variables as Record<string, unknown>)) {
+    redactedVariables[key] = '[VARIABLE]';
+  }
+  return { ...args, variables: redactedVariables };
+}
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -159,7 +180,7 @@ export function isConnectionError(error: unknown): boolean {
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
  *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
+const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish']);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
@@ -491,6 +512,44 @@ export class MCPServer {
     validateToolSchema(name, definition.inputSchema);
     this.tools.set(name, { name, handler, definition, ...options });
     this.manifestVersion++;
+  }
+
+  /**
+   * Remove a previously-registered tool by name.
+   *
+   * Mirrors {@link registerTool} for the pilot dynamic-skill synthesis
+   * family (issue #889): when a session ends or a skill is removed, the
+   * synthesized tool must disappear from `tools/list`. Returns true
+   * iff a matching tool existed and was removed. The
+   * `list_changed` notification fires only when the client supports it
+   * (mirrors `expandToolTier`'s gate at line 302 above) so unknown
+   * clients — which already have every tool — are not spammed with
+   * notifications they would otherwise ignore.
+   */
+  unregisterTool(name: string): boolean {
+    if (typeof name !== 'string' || name.length === 0) return false;
+    const removed = this.tools.delete(name);
+    if (removed) {
+      this.manifestVersion++;
+      if (this.clientSupportsListChanged) {
+        this.sendNotification('notifications/tools/list_changed');
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Emit a single `notifications/tools/list_changed` frame iff the
+   * client supports it. Used by the pilot dynamic-skills bootstrap
+   * (issue #889) after a synthesis batch lands so the agent re-fetches
+   * `tools/list` and sees the new synthesized tool(s). The check
+   * mirrors {@link expandToolTier} so behavior is consistent across
+   * the two notification sources.
+   */
+  emitListChanged(): void {
+    if (this.clientSupportsListChanged) {
+      this.sendNotification('notifications/tools/list_changed');
+    }
   }
 
   /**
@@ -1262,6 +1321,7 @@ export class MCPServer {
 
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
+    const telemetryToolArgs = redactActVariablesForTelemetry(toolName, toolArgs);
     // Use 'default' session if no sessionId is provided
     const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
 
@@ -1525,9 +1585,23 @@ export class MCPServer {
     }
 
     // Start activity tracking
-    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
-    getDashboardState().recordToolStart(sessionId || 'default', toolName, toolArgs, callId);
+    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
+    getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
     const toolStartTime = Date.now();
+    const runHarnessId = isRunHarnessEnabled() ? extractRunId(toolArgs) : undefined;
+    if (runHarnessId && !toolName.startsWith('oc_run_')) {
+      try {
+        getRunStore().appendToolStarted({
+          run_id: runHarnessId,
+          session_id: sessionId,
+          tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+          tool: toolName,
+          args: toolArgs,
+        });
+      } catch {
+        // best-effort run ledger; never alter tool behavior
+      }
+    }
 
     // Adaptive heartbeat: switch to heavy mode during tool execution
     try {
@@ -1756,7 +1830,7 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, true);
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, true);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -1768,7 +1842,7 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const summary = (result as Record<string, unknown>)?._summary as string | undefined;
-          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -1862,23 +1936,34 @@ export class MCPServer {
       // user. Mirrors the error-path injection below for consistency.
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
+        const automation = buildAutomationInsight(toolName, result as Record<string, unknown>, false, hintResult ?? undefined);
+        if (automation) {
+          (result as Record<string, unknown>)._automation = automation;
+        }
         if (hintResult) {
           const injectHint =
             verbosity !== 'compact' ||
             hintResult.severity === 'critical';
+          (result as Record<string, unknown>)._hint = hintResult.hint;
+          (result as Record<string, unknown>)._hintMeta = {
+            severity: hintResult.severity,
+            rule: hintResult.rule,
+            fireCount: hintResult.fireCount,
+            ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+            ...(hintResult.context && { context: hintResult.context }),
+            ...(automation && { automation }),
+          };
           if (injectHint) {
-            (result as Record<string, unknown>)._hint = hintResult.hint;
-            (result as Record<string, unknown>)._hintMeta = {
-              severity: hintResult.severity,
-              rule: hintResult.rule,
-              fireCount: hintResult.fireCount,
-              ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
-              ...(hintResult.context && { context: hintResult.context }),
-            };
             const content = (result as Record<string, unknown>).content;
             if (Array.isArray(content)) {
               content.push({ type: 'text', text: `\n${hintResult.hint}` });
             }
+          }
+        }
+        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
+          const content = (result as Record<string, unknown>).content;
+          if (Array.isArray(content)) {
+            content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
           }
         }
       }
@@ -1888,6 +1973,22 @@ export class MCPServer {
           level: compressionConfig.level ?? 'light',
           verbosity,
         };
+      }
+
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          getRunStore().appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+            tool: toolName,
+            args: toolArgs,
+            ok: !result.isError,
+            duration_ms: Date.now() - toolStartTime,
+          });
+        } catch {
+          // best-effort run ledger; never alter tool behavior
+        }
       }
 
       // ─── Secrets redaction (#834) ─────────────────────────────────────
@@ -1939,7 +2040,7 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, false);
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, false);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -1951,7 +2052,7 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const errMsg = message;
-          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -2034,6 +2135,10 @@ export class MCPServer {
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId);
+        const automation = buildAutomationInsight(toolName, errResult as Record<string, unknown>, true, hintResult ?? undefined);
+        if (automation) {
+          (errResult as Record<string, unknown>)._automation = automation;
+        }
         if (hintResult) {
           (errResult as Record<string, unknown>)._hint = hintResult.hint;
           (errResult as Record<string, unknown>)._hintMeta = {
@@ -2042,10 +2147,33 @@ export class MCPServer {
             fireCount: hintResult.fireCount,
             ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
             ...(hintResult.context && { context: hintResult.context }),
+            ...(automation && { automation }),
           };
           if (Array.isArray(errResult.content)) {
             errResult.content.push({ type: 'text', text: `\n${hintResult.hint}` });
           }
+        }
+        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
+          if (Array.isArray(errResult.content)) {
+            errResult.content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
+          }
+        }
+      }
+
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          getRunStore().appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined,
+            tool: toolName,
+            args: toolArgs,
+            ok: false,
+            duration_ms: Date.now() - toolStartTime,
+            message: displayMessage,
+          });
+        } catch {
+          // best-effort run ledger; never alter tool behavior
         }
       }
 

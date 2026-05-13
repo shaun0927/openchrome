@@ -290,7 +290,7 @@ describe('SkillMemoryStore — file layout + schema', () => {
       lastUsedAt: 0,
       frozenSnapshotPath: null,
     });
-    expect(fs.existsSync(path.join(root, '_CON', 'skills.json'))).toBe(true);
+    expect(fs.existsSync(path.join(root, '_con', 'skills.json'))).toBe(true);
   });
 
   test('unsafe domain characters are percent-encoded into the path', async () => {

@@ -327,7 +327,11 @@ export class ActionRecorder {
     for (const [k, v] of Object.entries(args)) {
       if (REDACT_KEYS.test(k)) {
         sanitized[k] = '[REDACTED]';
-      } else if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      } else if (k === 'variables' && v !== null && typeof v === 'object') {
+        sanitized[k] = Object.fromEntries(Object.keys(v as Record<string, unknown>).map((name) => [name, '[VARIABLE]']));
+      } else if (Array.isArray(v)) {
+        sanitized[k] = v.map((item) => item !== null && typeof item === 'object' ? this.sanitizeArgs(item as Record<string, unknown>) : item);
+      } else if (v !== null && typeof v === 'object') {
         sanitized[k] = this.sanitizeArgs(v as Record<string, unknown>);
       } else {
         sanitized[k] = v;
