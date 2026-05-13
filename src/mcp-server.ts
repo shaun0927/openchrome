@@ -92,6 +92,7 @@ const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_start',
   'oc_recording_stop',
   'oc_recording_list',
+  'oc_recording_status',
   'oc_recording_export',
 ]);
 
