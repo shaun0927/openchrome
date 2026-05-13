@@ -107,6 +107,35 @@ export function estimateOutputTokensFromChars(chars: number): number {
   return Math.max(0, Math.ceil(chars / 4));
 }
 
+/**
+ * Summarize an MCPResult for journal recording, stripping injected hint text.
+ *
+ * The MCP server injects proactive hint text into both `_hint` and
+ * `content[]`. This function returns only the "real" content text (the first
+ * non-hint item), so the journal entry accurately reflects what the tool
+ * actually returned rather than the augmented hint.
+ */
+export function summarizeMcpResultForJournal(result: MCPResult): string | undefined {
+  const content = result.content;
+  if (!Array.isArray(content)) return undefined;
+  const injectedHint = typeof (result as Record<string, unknown>)._hint === 'string'
+    ? String((result as Record<string, unknown>)._hint).trim()
+    : undefined;
+
+  const textItems = content
+    .filter((c) => c.type === 'text' && typeof c.text === 'string')
+    .map((c) => c.text!.trim());
+
+  if (textItems.length === 0) return undefined;
+
+  // If a hint was injected, skip any content item whose trimmed text matches it.
+  const filtered = injectedHint
+    ? textItems.filter((t) => t !== injectedHint)
+    : textItems;
+
+  return filtered[0] ?? textItems[0];
+}
+
 function stringifyResultPayload(result: MCPResult): string {
   try {
     return JSON.stringify(result);

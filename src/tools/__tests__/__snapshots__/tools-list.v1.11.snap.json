@@ -205,6 +205,27 @@
       "name": "oc_task_list"
     },
     {
+      "name": "oc_task_run_checkpoint"
+    },
+    {
+      "name": "oc_task_run_complete"
+    },
+    {
+      "name": "oc_task_run_get"
+    },
+    {
+      "name": "oc_task_run_list"
+    },
+    {
+      "name": "oc_task_run_needs_help"
+    },
+    {
+      "name": "oc_task_run_start"
+    },
+    {
+      "name": "oc_task_run_update"
+    },
+    {
       "name": "oc_task_start"
     },
     {
