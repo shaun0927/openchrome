@@ -81,6 +81,7 @@ export const TOOL_ANNOTATIONS = {
   vision_find: READ_ONLY,
   oc_assert: READ_ONLY,
   oc_recording_list: READ_ONLY,
+  oc_recording_status: READ_ONLY,
   workflow_status: READ_ONLY,
   workflow_collect: READ_ONLY,
   workflow_collect_partial: READ_ONLY,
@@ -90,6 +91,8 @@ export const TOOL_ANNOTATIONS = {
   oc_context_export: READ_ONLY,
   oc_observe: READ_ONLY,
   oc_performance_analyze: READ_ONLY,
+  oc_normalize_action: READ_ONLY,
+  oc_progress_status: READ_ONLY,
 
   // ── Network egress (navigation, crawling) ───────────────────────────────
   //

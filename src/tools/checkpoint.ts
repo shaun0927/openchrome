@@ -13,6 +13,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
+import { getActiveActionRecorder } from '../recording/action-recorder';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ async function collectTabStates(): Promise<Array<{ tabId: string; url: string; t
 // ─── Handler ───────────────────────────────────────────────────────────────
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const checkpointPath = path.join(CHECKPOINT_DIR, CHECKPOINT_FILE);
@@ -148,6 +149,12 @@ const handler: ToolHandler = async (
     // Ensure directory exists (writeFileAtomicSafe also does this, but explicit for clarity)
     await fs.promises.mkdir(CHECKPOINT_DIR, { recursive: true });
     await writeFileAtomicSafe(checkpointPath, checkpoint);
+
+    try {
+      await getActiveActionRecorder(sessionId)?.appendCheckpoint(checkpoint as unknown as Record<string, unknown>);
+    } catch {
+      // Best-effort trajectory linkage must never fail checkpoint save.
+    }
 
     return {
       content: [
