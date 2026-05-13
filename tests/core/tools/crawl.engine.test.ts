@@ -192,6 +192,112 @@ describe('crawl engine=static', () => {
     expect(mockSessionManager.createTarget).not.toHaveBeenCalled();
   });
 
+  test('paginates returned pages with crawl cursor metadata', async () => {
+    const links = Array.from({ length: 29 }, (_, i) => {
+      const n = i + 1;
+      server.setRoute(`/many-${n}.html`, {
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: RICH_HTML(`Many ${n}`, `<h1>Many ${n}</h1><p>${PARA}</p>`),
+      });
+      return `<a href="/many-${n}.html">Many ${n}</a>`;
+    }).join('');
+    server.setRoute('/many-start.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Many Start', `<h1>Many Start</h1><p>${PARA}</p>${links}`),
+    });
+
+    const handler = await loadHandler('crawl');
+    const first = await handler('s-cursor-1', {
+      url: `${server.origin}/many-start.html`,
+      max_pages: 30,
+      max_depth: 1,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+    }) as any;
+
+    expect(first.isError).not.toBe(true);
+    expect(first.structuredContent.pages).toHaveLength(25);
+    expect(first.structuredContent.offset).toBe(0);
+    expect(first.structuredContent.total).toBe(30);
+    expect(first.structuredContent.hasMore).toBe(true);
+    expect(first.structuredContent.nextCursor).toEqual(expect.any(String));
+    // Legacy no-cursor text remains the full crawl result.
+    expect(parseResult(first).pages).toHaveLength(30);
+
+    const second = await handler('s-cursor-2', {
+      url: `${server.origin}/many-start.html`,
+      max_pages: 30,
+      max_depth: 1,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cursor: first.structuredContent.nextCursor,
+    }) as any;
+
+    expect(JSON.parse(second.content[0].text)).toEqual(second.structuredContent);
+    expect(second.structuredContent.pages).toHaveLength(5);
+    expect(second.structuredContent.offset).toBe(25);
+    expect(second.structuredContent.total).toBe(30);
+    expect(second.structuredContent.hasMore).toBe(false);
+  });
+
+  test('rejects malformed and stale crawl cursors', async () => {
+    server.setRoute('/stale-start.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Stale Start', `<h1>Stale Start</h1><p>${PARA}</p>${Array.from({ length: 25 }, (_, i) => `<a href="/stale-${i}.html">S${i}</a>`).join('')}`),
+    });
+    for (let i = 0; i < 25; i++) {
+      server.setRoute(`/stale-${i}.html`, {
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: RICH_HTML(`Stale ${i}`, `<h1>Stale ${i}</h1><p>${PARA}</p>`),
+      });
+    }
+
+    const handler = await loadHandler('crawl');
+    const malformed = await handler('s-cursor-bad', {
+      url: `${server.origin}/stale-start.html`,
+      max_pages: 26,
+      max_depth: 1,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cursor: 'bad-cursor',
+    }) as any;
+    expect(malformed.isError).toBe(true);
+    expect(malformed.structuredContent.error.code).toBe('invalid_cursor');
+
+    const first = await handler('s-cursor-stale-1', {
+      url: `${server.origin}/stale-start.html`,
+      max_pages: 26,
+      max_depth: 1,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+    }) as any;
+    server.setRoute('/stale-24.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Stale changed', `<h1>Stale changed</h1><p>${PARA}</p>`),
+    });
+
+    const stale = await handler('s-cursor-stale-2', {
+      url: `${server.origin}/stale-start.html`,
+      max_pages: 26,
+      max_depth: 1,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cursor: first.structuredContent.nextCursor,
+    }) as any;
+    expect(stale.isError).toBe(true);
+    expect(stale.structuredContent.error).toEqual({ code: 'stale_cursor', retry: 'restart_from_no_cursor' });
+  });
+
 
   test('include_metrics adds summary and per-page token estimates without changing default', async () => {
     const handler = await loadHandler('crawl');
