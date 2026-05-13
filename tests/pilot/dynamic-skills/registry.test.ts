@@ -23,6 +23,12 @@ function makeEntry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
     definition: {
       name: 'skill_example-com__login',
       description: 'REPLAY: login. Domain: example.com. Contract: ctr_login_success.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       inputSchema: { type: 'object', properties: {} },
     },
     registeredAt: 1700000000000,

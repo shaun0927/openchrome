@@ -23,6 +23,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { evaluate } from '../contracts/evaluate';
 import { validateAssertion } from '../contracts/validator';
 import { getActiveActionRecorder } from '../recording/action-recorder';
@@ -111,6 +112,7 @@ const definition: MCPToolDefinition = {
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_assert,
 };
 
 function buildEvalContext(snapshot: SnapshotInput | undefined): EvalContext {

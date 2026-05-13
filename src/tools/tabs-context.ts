@@ -3,6 +3,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
@@ -11,6 +12,7 @@ const definition: MCPToolDefinition = {
   name: 'tabs_context',
   category: 'tabs',
   description: 'Get session tab IDs grouped by worker.',
+  annotations: TOOL_ANNOTATIONS.tabs_context,
   inputSchema: {
     type: 'object',
     properties: {

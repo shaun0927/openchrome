@@ -17,7 +17,6 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { normalizeQuery } from '../utils/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
 import {
   appendReturnAfterState,
@@ -666,10 +665,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerFillFormTool(server: MCPServer): void {
-  // Snapshot-cache (#879): bump docEpoch after every successful fill.
-  const sm = getSessionManager();
-  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid, undefined, 'fill_form') : Promise.resolve(null),
-  );
-  server.registerTool('fill_form', wrapped, definition);
+  server.registerTool('fill_form', handler, definition);
 }

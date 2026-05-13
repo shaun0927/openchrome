@@ -6,6 +6,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { generateConnectionInfo, generateAllConnectionInfo, getHostIds } from '../connect/index';
 import { copyToClipboard } from '../connect/clipboard';
 import { openInBrowser } from '../connect/open-url';
@@ -87,6 +88,7 @@ const getConnectionInfoDef: MCPToolDefinition = {
     },
     required: ['host'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_get_connection_info,
 };
 
 const getConnectionInfoHandler: ToolHandler = async (
@@ -169,6 +171,7 @@ const copyToClipboardDef: MCPToolDefinition = {
     },
     required: ['text'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_copy_to_clipboard,
 };
 
 const copyToClipboardHandler: ToolHandler = async (
@@ -202,6 +205,7 @@ const openHostSettingsDef: MCPToolDefinition = {
     },
     required: ['host'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_open_host_settings,
 };
 
 const openHostSettingsHandler: ToolHandler = async (

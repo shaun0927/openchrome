@@ -7,7 +7,11 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+} from './_shared/return-after-state';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
@@ -28,6 +32,7 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Value to set. Checkboxes: "true"/"false"',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['ref', 'value', 'tabId'],
   },
@@ -41,6 +46,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const ref = args.ref as string;
   const value = args.value;
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -406,9 +412,11 @@ const handler: ToolHandler = async (
     const response = result.result.value;
 
     if (response.success) {
-      return {
+      const successResult: MCPResult = {
         content: [{ type: 'text', text: (response.message || 'Value set successfully') + delta }],
       };
+      await appendReturnAfterState(successResult, page, sessionId, tabId, returnAfterState, context);
+      return successResult;
     } else {
       return {
         content: [
@@ -434,10 +442,5 @@ const handler: ToolHandler = async (
 };
 
 export function registerFormInputTool(server: MCPServer): void {
-  // Snapshot-cache (#879): bump docEpoch after every successful set.
-  const sm = getSessionManager();
-  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
-  );
-  server.registerTool('form_input', wrapped, definition);
+  server.registerTool('form_input', handler, definition);
 }
