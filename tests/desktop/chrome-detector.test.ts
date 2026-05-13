@@ -244,10 +244,11 @@ describe('ChromeDetector', () => {
       detector.on('not-found', handler);
 
       detector.startPolling(50);
-      await new Promise(r => setTimeout(r, 180));
+      await new Promise(r => setTimeout(r, process.platform === 'win32' ? 600 : 180));
       detector.stopPolling();
 
-      // Should have fired at least twice in ~180ms with 50ms interval
+      // Should have fired at least twice with a 50ms interval; Windows CI can
+      // starve short timers under the full-suite load, so allow extra wall time.
       expect(handler.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 

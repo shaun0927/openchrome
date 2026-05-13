@@ -73,6 +73,7 @@ export class FixtureServer {
       '/site-c': this.sitePage('Site C', 'Data Dashboard', '<table class="data"><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><tr><td>Row 1</td><td>100</td></tr><tr><td>Row 2</td><td>200</td></tr></tbody></table>'),
       '/login': this.loginPage(),
       '/protected': this.protectedPage(),
+      '/recovery/stale-ref': this.recoveryStaleRefPage(),
     };
 
     // Slow endpoint
@@ -113,6 +114,30 @@ export class FixtureServer {
   private sitePage(title: string, heading: string, content: string): string {
     return `<!DOCTYPE html><html><head><title>${title}</title></head>
 <body><h1>${heading}</h1>${content}</body></html>`;
+  }
+
+
+  private recoveryStaleRefPage(): string {
+    return `<!DOCTYPE html><html><head><title>Recovery Stale Ref</title></head>
+<body><h1>Recovery Stale Ref Fixture</h1>
+<button id="target">Original Action</button>
+<p id="status">initial</p>
+<script>
+const target = document.getElementById('target');
+target.addEventListener('click', () => {
+  document.getElementById('status').textContent = 'original clicked';
+});
+setTimeout(() => {
+  const replacement = document.createElement('button');
+  replacement.id = 'replacement';
+  replacement.textContent = 'Replacement Action';
+  replacement.addEventListener('click', () => {
+    document.getElementById('status').textContent = 'recovered';
+  });
+  target.replaceWith(replacement);
+}, 100);
+</script>
+</body></html>`;
   }
 
   private loginPage(): string {

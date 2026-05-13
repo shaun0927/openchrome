@@ -54,6 +54,8 @@ export interface JobConfig {
   include_patterns?: string[];
   exclude_patterns?: string[];
   output_format: string;
+  onlyMainContent?: boolean;
+  includeLinks?: boolean;
   respect_robots: boolean;
   delay_ms: number;
   concurrency: number;

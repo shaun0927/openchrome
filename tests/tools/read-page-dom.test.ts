@@ -162,6 +162,23 @@ describe('ReadPageTool - DOM Mode', () => {
       expect(text).toContain('Click Me');
     });
 
+    test('diagnostics are omitted by default and exposed only when requested', async () => {
+      const handler = await getReadPageHandler();
+
+      const normal = await handler(testSessionId, { tabId: testTargetId, mode: 'dom' }) as any;
+      expect(normal._diagnostics).toBeUndefined();
+
+      const diagnostic = await handler(testSessionId, { tabId: testTargetId, mode: 'dom', diagnostics: true }) as any;
+      expect(diagnostic._diagnostics).toEqual(expect.objectContaining({
+        mode: 'dom',
+        domGetDocumentMs: expect.any(Number),
+        formatMs: expect.any(Number),
+        paginationMs: expect.any(Number),
+        sanitizeMs: expect.any(Number),
+      }));
+      expect(diagnostic.content[0].text).toContain('[page_stats]');
+    });
+
     test('mode=dom does NOT clear ref IDs', async () => {
       const handler = await getReadPageHandler();
       await handler(testSessionId, { tabId: testTargetId, mode: 'dom' });

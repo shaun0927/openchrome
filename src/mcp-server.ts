@@ -61,11 +61,13 @@ import { extractRunId, getRunStore } from './run-harness/store';
 import {
   substituteSecrets,
   redactSecrets,
+  redactSecretString,
   MissingSecretError,
   getSecretStore,
 } from './core/secrets';
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
+import { RecoveryTrajectoryLedger, type RecoveryResultStatus } from './recovery';
 
 
 function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
@@ -90,6 +92,7 @@ const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_start',
   'oc_recording_stop',
   'oc_recording_list',
+  'oc_recording_status',
   'oc_recording_export',
 ]);
 
@@ -180,7 +183,7 @@ export function isConnectionError(error: unknown): boolean {
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
  *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish']);
+const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish', 'oc_progress_status']);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
@@ -199,6 +202,7 @@ const STATE_STABLE_HIGH_FREQ_TOOLS = new Set([
   'wait_for',
   'page_content',
   'tabs_context',
+  'oc_progress_status',
 ]);
 
 /**
@@ -335,6 +339,7 @@ export class MCPServer {
   private activityTracker: ActivityTracker | null = null;
   private operationController: OperationController | null = null;
   private hintEngine: HintEngine | null = null;
+  private recoveryLedger: RecoveryTrajectoryLedger | null = null;
   private options: MCPServerOptions;
   private profileWarningShown = false;
   private exposedTier: ToolTier = 1;
@@ -437,6 +442,14 @@ export class MCPServer {
     this.hintEngine = new HintEngine(this.activityTracker);
     this.hintEngine.enableLogging(hintsDir);
     this.hintEngine.enableLearning(hintsDir);
+
+    // Initialize passive recovery trajectory ledger (#1017). Default-on with the
+    // existing .openchrome harness logs; set OPENCHROME_RECOVERY_LEDGER=0 to disable.
+    if (process.env.OPENCHROME_RECOVERY_LEDGER !== '0') {
+      this.recoveryLedger = new RecoveryTrajectoryLedger({
+        dirPath: path.join(process.cwd(), '.openchrome', 'recovery'),
+      });
+    }
 
     // Initialize task journal
     getTaskJournal().init().catch((err: unknown) => {
@@ -1708,6 +1721,7 @@ export class MCPServer {
           startTime: Date.now(),
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
           signal,
+          principal,
           reportProgress,
         };
         let tid: ReturnType<typeof setTimeout>;
@@ -1745,6 +1759,7 @@ export class MCPServer {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
+              principal,
               reportProgress,
             };
             let tid2: ReturnType<typeof setTimeout>;
@@ -1788,6 +1803,7 @@ export class MCPServer {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
+              principal,
               reportProgress,
             };
             result = await Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext));
@@ -1812,6 +1828,8 @@ export class MCPServer {
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
+      result = redactSecrets(result);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');
 
       // Record Prometheus metrics
@@ -1999,11 +2017,13 @@ export class MCPServer {
       return finalResult;
     } catch (error) {
       const message = formatError(error);
+      const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
       const aborted = abortReason !== null;
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
       getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
 
       // Audit log failed invocation — same correlation fields as success path.
@@ -2427,9 +2447,78 @@ export class MCPServer {
   }
 
   /**
+   * Invoke a registered tool through the normal MCP tool-call pipeline for
+   * internal background dispatchers. This preserves the same wrappers as a
+   * client tools/call (secret substitution, scope/rate gates when present,
+   * session setup, activity/journal/metrics, timeouts, and reconnect retry)
+   * instead of calling the raw handler directly.
+   */
+  async invokeRegisteredToolForTask(
+    sessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    principal?: Principal,
+  ): Promise<MCPResult> {
+    return this.handleToolsCall(
+      { name: toolName, arguments: { ...args, sessionId } },
+      undefined,
+      principal,
+      signal,
+    );
+  }
+
+  /**
    * Get a tool handler by name (for internal server-side plan execution).
    * Returns null if the tool is not registered.
    */
+
+  private recordRecoveryTrajectory(
+    callId: string,
+    toolName: string,
+    sessionId: string,
+    toolArgs: Record<string, unknown>,
+    resultStatus: RecoveryResultStatus,
+    result?: MCPResult,
+    error?: string,
+  ): void {
+    if (!this.recoveryLedger || !this.activityTracker) return;
+
+    try {
+      const recent = this.activityTracker.getRecentCalls(3, sessionId);
+      const current = recent.find((call) => call.id === callId);
+      const tabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+      const previousTrajectory = this.recoveryLedger.getLastNode(sessionId, tabId);
+      const previousFailed =
+        previousTrajectory?.resultStatus === 'error' ||
+        previousTrajectory?.resultStatus === 'no_progress' ||
+        previousTrajectory?.resultStatus === 'aborted';
+      const recovered =
+        resultStatus === 'success' &&
+        previousTrajectory !== undefined &&
+        previousFailed &&
+        previousTrajectory.toolName !== toolName;
+      const progressStatus =
+        resultStatus === 'error' || resultStatus === 'no_progress' || current?.result === 'error'
+          ? 'stuck'
+          : 'unknown';
+
+      this.recoveryLedger.record({
+        sessionId,
+        tabId,
+        toolName,
+        args: toolArgs,
+        resultStatus: recovered ? 'recovered' : resultStatus,
+        progressStatus,
+        error,
+        result,
+        recoveryTool: recovered ? toolName : undefined,
+      });
+    } catch {
+      // Recovery telemetry is best-effort and must not affect tool behavior.
+    }
+  }
+
   getToolHandler(toolName: string): ToolHandler | null {
     const registry = this.tools.get(toolName);
     return registry ? registry.handler : null;
@@ -2493,7 +2582,7 @@ export class MCPServer {
     warning: string | null;
   } | null {
     try {
-      const launcher = getChromeLauncher();
+      const launcher = getChromeLauncher(getGlobalConfig().port);
       const state = launcher.getProfileState();
 
       const profile: Record<string, unknown> = {
