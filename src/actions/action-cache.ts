@@ -162,10 +162,11 @@ export function cacheWorkflowSequence(
   if (!domain || !urlPattern) return null;
 
   const instructionNormalized = normalizeWorkflowInstruction(instruction, actions);
+  const cacheKeySuffix = normalizeWorkflowKey(instruction);
   const safety = buildWorkflowSafety(instruction, actions);
   const entry: WorkflowCacheEntry = {
     version: 1,
-    id: `wf-${Date.now()}-${stableHash(`${domain}:${instructionNormalized}`).slice(0, 8)}`,
+    id: `wf-${Date.now()}-${stableHash(`${domain}:${cacheKeySuffix}`).slice(0, 8)}`,
     domain,
     urlPattern,
     instructionNormalized,
@@ -177,7 +178,7 @@ export function cacheWorkflowSequence(
     stats: { successes: 1, failures: 0 },
   };
 
-  const key = WORKFLOW_CACHE_KEY_PREFIX + instructionNormalized;
+  const key = WORKFLOW_CACHE_KEY_PREFIX + cacheKeySuffix;
   const memory = getDomainMemory();
   memory.record(domain, key, JSON.stringify(entry));
   memory.validate(memory.query(domain, key)[0]?.id ?? '', true);
@@ -194,7 +195,7 @@ export function getWorkflowCachedSequence(
   const currentPattern = buildUrlPattern(url);
   if (!domain || !currentPattern) return { decision: 'miss', reason: 'invalid_url' };
 
-  const key = WORKFLOW_CACHE_KEY_PREFIX + normalizeWorkflowInstruction(instruction);
+  const key = WORKFLOW_CACHE_KEY_PREFIX + normalizeWorkflowKey(instruction);
   const memory = getDomainMemory();
   const entries = memory.query(domain, key);
   if (entries.length === 0) return { decision: 'miss', reason: 'no_candidate' };
@@ -231,6 +232,15 @@ export function getWorkflowCachedSequence(
       continue;
     }
 
+    // Variable-kind steps store no literal value (secret redaction). Replay
+    // would always fail at executeType/executeSelect because workflowStepToAction
+    // drops the value field. Reject here so callers see a clear reason instead
+    // of a downstream EXCEPTION that decays confidence.
+    if (entry.steps.some(step => step.valueKind === 'variable')) {
+      lastRejected = { decision: 'rejected', reason: 'requires_variable_substitution', similarity, safety: entry.safety, entry };
+      continue;
+    }
+
     return {
       decision: 'accepted',
       reason: 'accepted',
@@ -253,7 +263,7 @@ export function validateWorkflowCachedSequence(
   const domain = extractDomainFromUrl(url);
   if (!domain) return { decision: 'miss', reason: 'invalid_url' };
 
-  const key = WORKFLOW_CACHE_KEY_PREFIX + normalizeWorkflowInstruction(instruction);
+  const key = WORKFLOW_CACHE_KEY_PREFIX + normalizeWorkflowKey(instruction);
   const memory = getDomainMemory();
   const entries = memory.query(domain, key);
   if (entries.length === 0) return { decision: 'miss', reason: 'no_candidate' };
@@ -290,6 +300,22 @@ function normalizeForCache(instruction: string): string {
   return instruction.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+// Cache-key derivation: deterministic, action-agnostic so record/lookup paths
+// always produce the same key. Per-token isSecretLike masks high-entropy
+// tokens; we intentionally do not redact short literal values pulled from
+// action.value here, because lookup callers do not have the action list
+// available and any asymmetry causes guaranteed cache misses.
+function normalizeWorkflowKey(instruction: string): string {
+  return normalizeForCache(instruction)
+    .split(' ')
+    .map(token => isSecretLike(token) ? '{{variable}}' : token)
+    .join(' ');
+}
+
+// Stored-entry normalization: includes action.value-aware redaction so short
+// secret literals (e.g. "hunter2") that survive the per-token entropy check
+// do not leak into the persisted entry. Used only for the recorded display
+// form, not for cache key derivation.
 function normalizeWorkflowInstruction(instruction: string, actions: ParsedAction[] = []): string {
   let normalized = normalizeForCache(instruction);
   for (const action of actions) {
@@ -398,5 +424,5 @@ function isSecretLike(value?: string): boolean {
   if (!value) return false;
   const text = value.toLowerCase();
   if (/password|passcode|mfa|otp|2fa|token|secret|api[_ -]?key|credential/.test(text)) return true;
-  return /^[A-Za-z0-9_\-]{24,}$/.test(value);
+  return /^[A-Za-z0-9_-]{24,}$/.test(value);
 }
