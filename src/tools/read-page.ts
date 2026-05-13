@@ -256,6 +256,9 @@ const handler: ToolHandler = async (
       const onlyMainContent = args.onlyMainContent !== false;
       const includeLinks = args.includeLinks !== false;
       const includePaginationMarkdown = args.includePagination !== false;
+      const refIdNote = args.ref_id
+        ? '[Note: ref_id is not supported in markdown mode — full-page content returned. Use mode "ax" for ref_id subtree scoping.]\n\n'
+        : '';
       const html = await withTimeout(
         page.content(),
         15000,
@@ -263,7 +266,7 @@ const handler: ToolHandler = async (
         context,
       );
       const { html: cleaned } = extractMainContent(html, { onlyMainContent });
-      let md = toMarkdown(cleaned, { includeLinks });
+      let md = refIdNote + toMarkdown(cleaned, { includeLinks });
       const paginationSection = includePaginationMarkdown
         ? formatPaginationSection(await detectPagination(page, tabId))
         : '';
