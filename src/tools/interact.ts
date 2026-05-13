@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -50,7 +51,7 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find an element by natural language, perform click/hover/double_click, wait for DOM settle, and return a state summary.\n\nWhen to use: Single element click/hover by text or label; use mode:"coordinate" only after screenshot when Shadow DOM/canvas/iframe blocks refs.\nWhen NOT to use: Use computer for general coordinates, or act for multi-step flows.',
+  description: 'Find an element by natural language and click/hover/double_click; returns state summary after DOM settles.\n\nWhen to use: clicking/hovering an element you can describe in plain language. For Shadow DOM / canvas / cross-origin iframes, screenshot first and call with mode:"coordinate".\nWhen NOT to use: computer for plain-DOM coordinate clicks, or act for multi-step sequences.', 
   inputSchema: {
     type: 'object',
     properties: {
@@ -126,6 +127,7 @@ const definition: MCPToolDefinition = {
     // OPENCHROME_NODE_REF flag value).
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.interact,
 };
 
 /**

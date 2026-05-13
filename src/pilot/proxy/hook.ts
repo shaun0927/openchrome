@@ -42,6 +42,7 @@
 
 import { MCPServer } from '../../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../../types/mcp';
+import { TOOL_ANNOTATIONS } from '../../types/tool-annotations';
 import { isProxyHookEnabled } from '../../harness/flags';
 
 // ---------------------------------------------------------------------------
@@ -239,6 +240,7 @@ const definition: MCPToolDefinition = {
     'openchrome never picks the next upstream). Missing proxy-auth ' +
     'credentials surface as structured errors rather than silent ' +
     'fallthrough. Default (no flags) behaviour is byte-identical to v1.11.',
+  annotations: TOOL_ANNOTATIONS.oc_proxy_hook,
   inputSchema: {
     type: 'object',
     properties: {

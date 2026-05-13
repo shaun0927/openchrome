@@ -78,7 +78,8 @@ async function runTests() {
     server.registerTool('test_tool', async () => ({ content: [] }), {
       name: 'test_tool',
       description: 'Test tool',
-      inputSchema: { type: 'object', properties: {} }
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     });
     const tools = server.getToolNames();
     assertTrue(tools.includes('test_tool'));
@@ -110,7 +111,8 @@ async function runTests() {
     server.registerTool('my_tool', async () => ({ content: [] }), {
       name: 'my_tool',
       description: 'My test tool',
-      inputSchema: { type: 'object', properties: {} }
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     });
 
     const response = await server.handleRequest({

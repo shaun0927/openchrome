@@ -6,9 +6,11 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
+import { isSnapshotCacheEnabled } from '../utils/snapshot-cache-helper';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 
 // ---------------------------------------------------------------------------
@@ -81,6 +83,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'method'],
   },
+  annotations: TOOL_ANNOTATIONS.query_dom,
 };
 
 // ---------------------------------------------------------------------------
@@ -854,6 +857,21 @@ const handler: ToolHandler = async (
   }
 };
 
+/**
+ * Snapshot-cache wrapper (#879). See `src/tools/read-page.ts` for the
+ * shared rationale.
+ *
+ * Kill-switch short-circuit runs FIRST so the wrapper introduces zero
+ * extra `getPage` calls when the cache is disabled (the 1.12 default).
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  // query_dom returns viewport-relative bounding boxes and runtime ref tokens.
+  // Keep it uncached until scroll position and ref regeneration are part of
+  // the cache identity/side effects; the flag check preserves the future seam.
+  void isSnapshotCacheEnabled();
+  return handler(sessionId, args, context);
+};
+
 export function registerQueryDomTool(server: MCPServer): void {
-  server.registerTool('query_dom', handler, definition);
+  server.registerTool('query_dom', cachedHandler, definition);
 }

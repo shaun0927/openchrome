@@ -5,6 +5,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getCDPClient } from '../cdp/client';
 
 const definition: MCPToolDefinition = {
@@ -16,6 +17,7 @@ const definition: MCPToolDefinition = {
     properties: {},
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_connection_health,
 };
 
 const handler: ToolHandler = async (

@@ -38,6 +38,11 @@ export interface HitlContext {
   suggestion: string;
   /** Total time spent trying */
   totalDurationMs: number;
+  /**
+   * Optional caller-supplied intent label (issue #894, BrowserMCP adoption A-2).
+   * Present only when the originating tool call carried an `intent` arg.
+   */
+  intent?: string;
 }
 
 // ─── Diagnosis Logic ───
@@ -126,8 +131,9 @@ export function buildHitlContext(
   attempts: StrategyAttempt[],
   lastDelta: string | undefined,
   totalDurationMs: number,
+  intent?: string,
 ): HitlContext {
-  return {
+  const ctx: HitlContext = {
     query,
     url,
     tabId,
@@ -137,6 +143,8 @@ export function buildHitlContext(
     suggestion: suggest(attempts, query),
     totalDurationMs,
   };
+  if (intent !== undefined) ctx.intent = intent;
+  return ctx;
 }
 
 /**
@@ -146,6 +154,9 @@ export function formatHitlResponse(ctx: HitlContext): string {
   const lines: string[] = [];
 
   lines.push(`\u26a0 ALL AUTOMATION STRATEGIES EXHAUSTED for "${ctx.query}"`);
+  if (ctx.intent) {
+    lines.push(`Intent: "${ctx.intent}"`);
+  }
   lines.push('');
 
   // Strategy summary

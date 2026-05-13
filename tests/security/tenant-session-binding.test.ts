@@ -48,6 +48,7 @@ describe('tenant-session binding (MCPServer)', () => {
         name: 'noop',
         description: 'test helper',
         inputSchema: { type: 'object', properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       },
     );
   });
