@@ -137,12 +137,14 @@ export function registerRunHarnessTools(server: MCPServer): void {
 function recordSummary(record: RunRecord): Record<string, unknown> {
   return {
     run_id: record.run_id,
+    resource_uri: `openchrome://runs/${encodeURIComponent(record.run_id)}`,
     status: record.status,
     created_at: record.created_at,
     updated_at: record.updated_at,
     session_id: record.session_id,
     tab_id: record.tab_id,
     event_count: record.events.length,
+    retention: { max_records_env: 'OPENCHROME_RUN_MAX_RECORDS', default_max_records: 500 },
     terminal: TERMINAL_RUN_STATUSES.has(record.status),
   };
 }

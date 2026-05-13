@@ -26,6 +26,9 @@ export type RunEventKind =
   | 'run_finished'
   | 'tool_call_started'
   | 'tool_call_finished'
+  | 'progress'
+  | 'warning'
+  | 'partial_result'
   | 'hint'
   | 'evidence'
   | 'failure';
