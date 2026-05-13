@@ -1969,7 +1969,7 @@ export class MCPServer {
       // surface, so pushing into content[] guarantees the hint reaches the
       // user. Mirrors the error-path injection below for consistency.
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
+        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId, toolArgs, callId);
         const automation = buildAutomationInsight(toolName, result as Record<string, unknown>, false, hintResult ?? undefined);
         if (automation) {
           (result as Record<string, unknown>)._automation = automation;
@@ -2195,7 +2195,7 @@ export class MCPServer {
 
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId);
+        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId, toolArgs, callId);
         const automation = buildAutomationInsight(toolName, errResult as Record<string, unknown>, true, hintResult ?? undefined);
         if (automation) {
           (errResult as Record<string, unknown>)._automation = automation;
