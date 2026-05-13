@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>return-after-state fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    .panel { padding: 12px; border: 1px solid #ccc; margin: 12px 0; }
+    button { padding: 6px 12px; }
+  </style>
+</head>
+<body>
+  <h1 id="page-title">return-after-state fixture</h1>
+  <p>This page is checked into the test fixtures so the byte-level token-cost
+  guard for issue #845 stays deterministic. Do not modify without updating
+  <code>tests/e2e/return-after-state.test.ts</code> baselines.</p>
+
+  <div class="panel" role="region" aria-label="Primary">
+    <h2>Primary panel</h2>
+    <button id="primary-action" type="button">Primary action</button>
+    <p>Click the button to flip the status indicator below.</p>
+    <span id="status" data-state="idle">idle</span>
+  </div>
+
+  <div class="panel" role="region" aria-label="Secondary">
+    <h2>Secondary panel</h2>
+    <p>Static text used to pad the snapshot so the byte-savings comparison is
+    meaningful (the savings come from collapsing two MCP envelopes, not from
+    the page content itself).</p>
+    <ul>
+      <li>Item one</li>
+      <li>Item two</li>
+      <li>Item three</li>
+    </ul>
+  </div>
+
+  <script>
+    document.getElementById('primary-action').addEventListener('click', () => {
+      const status = document.getElementById('status');
+      status.dataset.state = 'clicked';
+      status.textContent = 'clicked';
+    });
+  </script>
+</body>
+</html>
