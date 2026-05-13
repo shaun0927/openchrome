@@ -113,7 +113,6 @@ program
       await new Promise<void>((resolve) => {
         process.stdout.write(JSON.stringify(manifest.tools) + '\n', () => resolve());
       });
-      });
       return;
     }
 
