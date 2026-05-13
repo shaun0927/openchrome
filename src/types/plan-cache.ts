@@ -109,6 +109,29 @@ export interface PlanRegistryData {
   updatedAt: number;
 }
 
+/** Bounded recovery telemetry for plan execution. */
+export interface PlanRecoveryAttempt {
+  tool: string;
+  status: 'success' | 'failed' | 'blocked' | 'timeout';
+  reason: string;
+  error?: string;
+}
+
+export interface PlanRecoverySummary {
+  enabled: boolean;
+  attempts: PlanRecoveryAttempt[];
+  exhausted: boolean;
+}
+
+export interface PlanExecutionOptions {
+  boundedRecovery?: {
+    enabled: boolean;
+    maxCandidates?: number;
+    maxToolCalls?: number;
+    perCandidateTimeoutMs?: number;
+  };
+}
+
 /** Result of plan execution */
 export interface PlanExecutionResult {
   /** Whether the plan executed successfully */
@@ -125,4 +148,6 @@ export interface PlanExecutionResult {
   stepsExecuted: number;
   /** Total steps in plan */
   totalSteps: number;
+  /** Optional bounded recovery summary when opt-in recovery is enabled. */
+  recovery?: PlanRecoverySummary;
 }

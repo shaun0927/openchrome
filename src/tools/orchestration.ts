@@ -666,6 +666,10 @@ const executePlanDefinition: MCPToolDefinition = {
         type: 'string',
         description: 'Tab ID to execute the plan against',
       },
+      boundedRecovery: {
+        type: 'boolean',
+        description: 'Opt-in: try a small, safety-gated read-only recovery search when a plan step fails',
+      },
       params: {
         type: 'object',
         description: 'Runtime params merged with plan defaults',
@@ -684,6 +688,7 @@ const executePlanHandler: ToolHandler = async (
   const planId = args.planId as string;
   const tabId = args.tabId as string;
   const runtimeParams = (args.params as Record<string, unknown>) || {};
+  const boundedRecovery = args.boundedRecovery === true;
 
   if (!planId || !tabId) {
     return {
@@ -749,7 +754,11 @@ const executePlanHandler: ToolHandler = async (
 
     // Execute the plan
     const mergedParams = { tabId, ...runtimeParams };
-    const result = await executor.execute(plan, sessionId, mergedParams);
+    const result = await executor.execute(plan, sessionId, mergedParams, {
+      boundedRecovery: boundedRecovery
+        ? { enabled: true, maxCandidates: 3, maxToolCalls: 2, perCandidateTimeoutMs: 5000 }
+        : undefined,
+    });
 
     // Update stats
     registry.updateStats(planId, result.success, result.durationMs);
@@ -765,6 +774,7 @@ const executePlanHandler: ToolHandler = async (
           durationMs: result.durationMs,
           data: result.data,
           error: result.error,
+          recovery: result.recovery,
           message: result.success
             ? `Plan "${planId}" executed successfully in ${result.durationMs}ms (${result.stepsExecuted}/${result.totalSteps} steps)`
             : `Plan "${planId}" failed: ${result.error}. Consider manual execution.`,
