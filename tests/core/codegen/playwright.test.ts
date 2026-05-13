@@ -122,4 +122,26 @@ describe('formatPlaywright', () => {
     expect(snippet).toContain('page = newPage');
   });
 
+  it('wait_for url_match emits waitForURL with RegExp for valid pattern (P2)', () => {
+    const snippet = formatPlaywright('wait_for', {
+      type: 'url_match',
+      value: 'https://example\\.com/success',
+      timeout: 10000,
+    })!;
+    expect(snippet).toContain('waitForURL');
+    expect(snippet).toContain('new RegExp(');
+    expect(snippet).not.toContain('url.href.includes');
+  });
+
+  it('wait_for url_match falls back to substring match for invalid regex (P2)', () => {
+    const snippet = formatPlaywright('wait_for', {
+      type: 'url_match',
+      value: '(unclosed',
+      timeout: 10000,
+    })!;
+    expect(snippet).toContain('waitForURL');
+    expect(snippet).toContain('url.href.includes');
+    expect(snippet).not.toContain('new RegExp(');
+  });
+
 });

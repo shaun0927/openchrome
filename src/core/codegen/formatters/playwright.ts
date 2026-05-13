@@ -154,8 +154,16 @@ function formatWaitFor(args: Record<string, unknown>): string {
       return `  await page.waitForFunction(${jsLiteral(value ?? 'true')}, undefined, { timeout: ${timeout} });`;
     case 'navigation':
       return `  await page.waitForNavigation({ timeout: ${timeout}, waitUntil: "domcontentloaded" });`;
-    case 'url_match':
-      return `  await page.waitForURL(new RegExp(${jsLiteral(value ?? '.*')}), { timeout: ${timeout} });`;
+    case 'url_match': {
+      // Mirror Puppeteer's invalid-regex fallback: if value is not a valid
+      // regex pattern, fall back to a substring match via string argument.
+      let isValidRegex = true;
+      try { new RegExp(value ?? '.*'); } catch { isValidRegex = false; }
+      if (isValidRegex) {
+        return `  await page.waitForURL(new RegExp(${jsLiteral(value ?? '.*')}), { timeout: ${timeout} });`;
+      }
+      return `  await page.waitForURL((url) => url.href.includes(${jsLiteral(value ?? '')}), { timeout: ${timeout} });`;
+    }
     case 'timeout':
       return `  await page.waitForTimeout(${Number(value) || 1000});`;
     default:

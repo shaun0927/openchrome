@@ -65,6 +65,11 @@ export const PUPPETEER_FILE_FOOTER = [
  * newline; the aggregator adds it). Returns `null` when the tool is not
  * one of the nine supported tools — callers that hit `null` fall back
  * to mcp-replay capture.
+ *
+ * When `args.tabId` is present the emitted snippet re-selects the correct
+ * page from the browser's page list before executing the action, so that
+ * multi-tab replays land on the right tab instead of always using the
+ * default active page.
  */
 export function formatPuppeteer(
   tool: string,
@@ -72,29 +77,59 @@ export function formatPuppeteer(
 ): string | null {
   if (!PUPPETEER_SUPPORTED_TOOLS.has(tool)) return null;
 
+  const tabId = args.tabId as string | undefined;
+  // Emit a page re-selection block when a tabId is present so that
+  // multi-tab replays connect to the correct page rather than defaulting
+  // to the first/active page.
+  const pageSelectPrefix = tabId
+    ? [
+        `  {`,
+        `    const _allPages = await browser.pages();`,
+        `    for (const _p of _allPages) {`,
+        `      const _c = await _p.target().createCDPSession();`,
+        `      const { targetInfo } = await _c.send('Target.getTargetInfo');`,
+        `      await _c.detach();`,
+        `      if (targetInfo.targetId === ${jsLiteral(tabId)}) { page = _p; break; }`,
+        `    }`,
+        `  }`,
+      ].join('\n') + '\n'
+    : '';
+
+  let snippet: string | null;
   switch (tool) {
     case 'navigate':
-      return formatNavigate(args);
+      snippet = formatNavigate(args);
+      break;
     case 'interact':
-      return formatInteract(args);
+      snippet = formatInteract(args);
+      break;
     case 'form_input':
-      return formatFormInput(args);
+      snippet = formatFormInput(args);
+      break;
     case 'fill_form':
-      return formatFillForm(args);
+      snippet = formatFillForm(args);
+      break;
     case 'page_screenshot':
-      return formatScreenshot(args);
+      snippet = formatScreenshot(args);
+      break;
     case 'wait_for':
-      return formatWaitFor(args);
+      snippet = formatWaitFor(args);
+      break;
     case 'javascript_tool':
-      return formatJavascript(args);
+      snippet = formatJavascript(args);
+      break;
     case 'tabs_create':
-      return formatTabsCreate(args);
+      snippet = formatTabsCreate(args);
+      break;
     case 'tabs_close':
-      return formatTabsClose(args);
+      snippet = formatTabsClose(args);
+      break;
     default:
       // Unreachable given the gate above, but the compiler insists.
       return null;
   }
+
+  return pageSelectPrefix ? pageSelectPrefix + snippet : snippet;
 }
 
 function formatNavigate(args: Record<string, unknown>): string {

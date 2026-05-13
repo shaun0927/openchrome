@@ -129,4 +129,54 @@ describe('formatPuppeteer', () => {
     expect(snippet).toContain('page = newPage');
   });
 
+  it('threads tabId through navigate — emits page re-selection before goto (P1)', () => {
+    const snippet = formatPuppeteer('navigate', {
+      url: 'https://example.com',
+      tabId: 'target-abc123',
+    })!;
+    // Should contain the CDP-based page re-selection loop before the goto
+    expect(snippet).toContain('Target.getTargetInfo');
+    expect(snippet).toContain('"target-abc123"');
+    expect(snippet).toContain('page = _p');
+    // The navigate goto should still be present
+    expect(snippet).toContain('page.goto');
+    expect(snippet).toContain('example.com');
+  });
+
+  it('omits page re-selection when no tabId is supplied', () => {
+    const snippet = formatPuppeteer('navigate', { url: 'https://example.com' })!;
+    expect(snippet).not.toContain('Target.getTargetInfo');
+    expect(snippet).not.toContain('_allPages');
+  });
+
+  it('produces a complete TS file with tabId snippets that transpiles without diagnostics', () => {
+    const tabCases: ToolCase[] = [
+      { tool: 'navigate', args: { url: 'https://example.com', tabId: 'tab-1' } },
+      { tool: 'interact', args: { action: 'click', query: 'OK', tabId: 'tab-1' } },
+    ];
+    const body = [
+      PUPPETEER_FILE_HEADER,
+      ...tabCases.map(({ tool, args }) => formatPuppeteer(tool, args) as string),
+      PUPPETEER_FILE_FOOTER,
+    ].join('\n');
+
+    const { diagnostics } = ts.transpileModule(body, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        strict: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        noEmit: true,
+      },
+      reportDiagnostics: true,
+    });
+
+    const syntaxErrors = (diagnostics ?? []).filter(
+      (d) => d.category === ts.DiagnosticCategory.Error,
+    );
+    expect(syntaxErrors).toEqual([]);
+  });
+
 });
