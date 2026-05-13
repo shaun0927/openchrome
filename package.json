@@ -37,11 +37,8 @@
     "clean": "rimraf dist",
     "prepare": "npm run build",
     "lint:changed": "node scripts/lint-changed-src.js",
-<<<<<<< HEAD
-    "lint:categories": "node scripts/lint-tool-categories.mjs"
-=======
+    "lint:categories": "node scripts/lint-tool-categories.mjs",
     "harness:parallel-smoke": "ts-node tests/harness/parallel-smoke.ts"
->>>>>>> origin/develop
   },
   "keywords": [
     "openchrome",
