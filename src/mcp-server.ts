@@ -1763,22 +1763,6 @@ export class MCPServer {
         // Best-effort metrics
       }
 
-      // Record to task journal
-      try {
-        const journal = getTaskJournal();
-        const entry = journal.createEntry(
-          toolName,
-          sessionId,
-          toolArgs,
-          Date.now() - toolStartTime,
-          !(result as MCPResult).isError,
-          summarizeMcpResultForJournal(result as MCPResult),
-        );
-        journal.record(entry);
-      } catch {
-        // Best-effort journal recording
-      }
-
       // Record to session recording (best-effort, skip recording tools themselves)
       try {
         const recorder = getActionRecorder();
@@ -1915,6 +1899,24 @@ export class MCPServer {
       // when --secrets was not passed.
       const finalResult = redactSecrets(result);
       this.recordToolOutputObservability(toolName, finalResult);
+
+      // Record to task journal after response redaction so arbitrary literal
+      // secret values cannot be persisted in journal result summaries.
+      try {
+        const journal = getTaskJournal();
+        const entry = journal.createEntry(
+          toolName,
+          sessionId,
+          toolArgs,
+          Date.now() - toolStartTime,
+          !(finalResult as MCPResult).isError,
+          summarizeMcpResultForJournal(finalResult as MCPResult),
+        );
+        journal.record(entry);
+      } catch {
+        // Best-effort journal recording
+      }
+
       return finalResult;
     } catch (error) {
       const message = formatError(error);
