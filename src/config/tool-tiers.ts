@@ -83,6 +83,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
   // Names must match the 'name' field in each tool's definition
   oc_connection_health: 1,  // src/tools/connection-health.ts
+  oc_policy: 1,             // src/tools/oc-policy.ts
   oc_checkpoint: 1,         // src/tools/checkpoint.ts
   list_profiles: 1,         // src/tools/list-profiles.ts
   oc_devtools_url: 1,       // src/tools/oc-devtools-url.ts (#860) — gated by env

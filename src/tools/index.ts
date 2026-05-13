@@ -80,6 +80,7 @@ import { registerOcReflectTool } from './oc-reflect';
 
 // Self-healing tools (#347)
 import { registerConnectionHealthTool } from './connection-health';
+import { registerOcPolicyTool } from './oc-policy';
 
 // AI Agent Continuity tools (#347 Phase 4)
 import { registerCheckpointTool } from './checkpoint';
@@ -206,6 +207,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_context_export: 'core',
   oc_context_import: 'core',
   oc_connection_health: 'core',
+  oc_policy: 'core',
   oc_copy_to_clipboard: 'core',
   oc_devtools_url: 'core',
   oc_doctor_report: 'core',
@@ -425,6 +427,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Self-healing tools (#347)
   registerConnectionHealthTool(proxy);
+  registerOcPolicyTool(proxy);
 
   // AI Agent Continuity tools (#347 Phase 4)
   registerCheckpointTool(proxy);
