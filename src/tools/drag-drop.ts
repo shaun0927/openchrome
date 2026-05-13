@@ -4,6 +4,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 
 interface Position {
@@ -14,7 +15,7 @@ interface Position {
 const definition: MCPToolDefinition = {
   name: 'drag_drop',
   category: 'interact',
-  description: 'Drag and drop by selector or coordinates.',
+  description: 'Drag and drop by selector or coordinates. Pass intent="..." (≤120 chars) to label this action in audit logs.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -54,9 +55,15 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Delay in ms between steps. Default: 10',
       },
+      intent: {
+        type: 'string',
+        description: 'Human-readable label for this action in audit logs (≤120 chars)',
+        maxLength: 120,
+      },
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.drag_drop,
 };
 
 const handler: ToolHandler = async (
@@ -73,6 +80,23 @@ const handler: ToolHandler = async (
   const targetY = args.targetY as number | undefined;
   const steps = (args.steps as number | undefined) ?? 10;
   const delay = (args.delay as number | undefined) ?? 10;
+  const intent = args.intent as string | undefined;
+
+  // Validate intent when provided — use typeof guard for null-safety
+  if (typeof intent === 'string') {
+    if (intent === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must not be an empty string' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: `INVALID_INTENT: intent exceeds 120 characters (got ${intent.length})` }],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
 
