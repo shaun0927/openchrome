@@ -14,7 +14,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-export type RedactionMode = 'redact' | 'hash' | 'truncate' | 'redactIfSensitiveName';
+export type RedactionMode = 'redact' | 'hash' | 'truncate' | 'redactIfSensitiveName' | 'redactScalar';
 
 export interface RedactionRule {
   /** Dot-path into args; `[*]` matches any array index. */
@@ -37,6 +37,7 @@ const VALID_REDACTION_MODES = new Set<RedactionMode>([
   'hash',
   'truncate',
   'redactIfSensitiveName',
+  'redactScalar',
 ]);
 
 /**
@@ -80,6 +81,10 @@ export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
     ],
     form_input: [
       { path: 'value', mode: 'redact' },
+    ],
+    act: [
+      { path: 'variables', mode: 'redactScalar' },
+      { path: 'variables[*]', mode: 'redact' },
     ],
     type: [
       { path: 'text', mode: 'truncate', maxBytes: 200 },
@@ -191,6 +196,8 @@ function applyMode(value: unknown, mode: RedactionMode, opts: { maxBytes?: numbe
       if (text.length <= max) return text;
       return { preview: text.slice(0, max), hash: sha256(text), truncated: true };
     }
+    case 'redactScalar':
+      return value && typeof value === 'object' ? value : REDACTED;
     case 'redactIfSensitiveName': {
       // Check the containing field name first (for rules like {path: 'password'})
       if (opts.name && isSensitiveName(opts.name, opts.sensitiveNames)) {
@@ -228,24 +235,42 @@ function applyRuleAt(target: Record<string, unknown> | unknown[], segments: Arra
   const [seg, ...rest] = segments;
 
   if (seg.index !== undefined) {
-    if (!Array.isArray(target)) return;
-    const indices: number[] = seg.index === '*'
-      ? target.map((_v, i) => i)
-      : (seg.index < target.length ? [seg.index] : []);
-    for (const i of indices) {
-      if (rest.length === 0) {
-        target[i] = applyMode(target[i], rule.mode, {
-          maxBytes: rule.maxBytes,
-          sensitiveNames: cfg.defaultSensitiveFieldNames,
-        });
-      } else if (target[i] && typeof target[i] === 'object') {
-        // Recurse, but stash sibling 'name' for `{name, value}` shapes so
-        // redactIfSensitiveName can consult the form field's declared name.
-        const child = target[i] as Record<string, unknown> | unknown[];
-        const siblingName = (!Array.isArray(child) && 'name' in child)
-          ? (child as Record<string, unknown>).name
-          : undefined;
-        applyRuleAt(child, rest, rule, cfg, siblingName);
+    if (Array.isArray(target)) {
+      const indices: number[] = seg.index === '*'
+        ? target.map((_v, i) => i)
+        : (seg.index < target.length ? [seg.index] : []);
+      for (const i of indices) {
+        if (rest.length === 0) {
+          target[i] = applyMode(target[i], rule.mode, {
+            maxBytes: rule.maxBytes,
+            sensitiveNames: cfg.defaultSensitiveFieldNames,
+          });
+        } else if (target[i] && typeof target[i] === 'object') {
+          // Recurse, but stash sibling 'name' for `{name, value}` shapes so
+          // redactIfSensitiveName can consult the form field's declared name.
+          const child = target[i] as Record<string, unknown> | unknown[];
+          const siblingName = (!Array.isArray(child) && 'name' in child)
+            ? (child as Record<string, unknown>).name
+            : undefined;
+          applyRuleAt(child, rest, rule, cfg, siblingName);
+        }
+      }
+      return;
+    }
+
+    // Support object wildcards for map-shaped args such as act.variables[*].
+    if (seg.index === '*' && target && typeof target === 'object') {
+      const obj = target as Record<string, unknown>;
+      for (const key of Object.keys(obj)) {
+        if (rest.length === 0) {
+          obj[key] = applyMode(obj[key], rule.mode, {
+            maxBytes: rule.maxBytes,
+            sensitiveNames: cfg.defaultSensitiveFieldNames,
+            name: key,
+          });
+        } else if (obj[key] && typeof obj[key] === 'object') {
+          applyRuleAt(obj[key] as Record<string, unknown> | unknown[], rest, rule, cfg);
+        }
       }
     }
     return;

@@ -247,6 +247,13 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerCounter('openchrome_tool_calls_total', 'Total MCP tool calls');
     instance.registerHistogram('openchrome_tool_duration_seconds', 'Tool call duration in seconds',
       [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120]);
+    instance.registerHistogram('openchrome_tool_output_bytes', 'Final MCP tool result payload size in bytes',
+      [128, 512, 1024, 4096, 16384, 65536, 262144, 1048576]);
+    instance.registerHistogram('openchrome_tool_estimated_tokens', 'Estimated MCP tool result output tokens (chars / 4 heuristic)',
+      [32, 128, 256, 1024, 4096, 16384, 65536, 262144]);
+    instance.registerHistogram('openchrome_tool_compression_saved_bytes', 'Estimated response bytes saved by response compression or delta modes',
+      [128, 512, 1024, 4096, 16384, 65536, 262144]);
+    instance.registerCounter('openchrome_cache_status_total', 'Cache status observations by tool and key version');
     instance.registerCounter('openchrome_reconnect_total', 'Total successful CDP reconnections');
     instance.registerGauge('openchrome_heap_bytes', 'Node.js heap usage in bytes');
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');

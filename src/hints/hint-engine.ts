@@ -24,6 +24,7 @@ import { compositeSuggestionRules } from './rules/composite-suggestions';
 import { sequenceDetectionRules } from './rules/sequence-detection';
 import { repetitionDetectionRules } from './rules/repetition-detection';
 import { paginationDetectionRules } from './rules/pagination-detection';
+import { snapshotStaleRules } from './rules/snapshot-stale';
 import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
 import { setupHintRules } from './rules/setup-hints';
@@ -114,6 +115,7 @@ export class HintEngine {
       ...repetitionDetectionRules,   // priority 245-252
       ...sequenceDetectionRules,     // priority 300-304
       ...createLearnedRules(this.learner), // priority 350
+      ...snapshotStaleRules,         // priority 395 (#831)
       ...successHintRules,           // priority 400-403
     ].sort((a, b) => a.priority - b.priority);
 
@@ -373,7 +375,7 @@ export class HintEngine {
    * Write a log entry via buffered async stream (best-effort, non-blocking).
    */
   private log(entry: HintLogEntry): void {
-    if (!this.logStream) return;
+    if (!this.logFilePath) return;
     this.logBuffer.push(JSON.stringify(entry) + '\n');
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => {
@@ -383,12 +385,16 @@ export class HintEngine {
   }
 
   /**
-   * Flush buffered log entries to the write stream.
+   * Flush buffered log entries to disk.
+   *
+   * Use a synchronous append for the tiny buffered JSONL payloads so destroy()
+   * is deterministic for shutdown and tests. A WriteStream may acknowledge
+   * end() asynchronously, which can leave readers racing an empty/missing file.
    */
   private flushBuffer(): void {
-    if (this.logBuffer.length > 0 && this.logStream) {
+    if (this.logBuffer.length > 0 && this.logFilePath) {
       const data = this.logBuffer.join('');
-      this.logStream.write(data);
+      fs.appendFileSync(this.logFilePath, data, 'utf-8');
       this.logBuffer = [];
     }
     this.flushTimer = null;
