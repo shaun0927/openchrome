@@ -140,6 +140,7 @@ function buildSuggestedNextCalls(tabId: string, reason: RecoveryReason, target?:
       selector: target && target.trim().length > 0
         ? 'button, a, input, select, textarea, [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="radio"], [aria-label], [placeholder]'
         : 'button, a, input, select, textarea, [role]',
+      multiple: true,
       limit: 50,
     },
     why: 'Inspect common interactive controls with labels/placeholders for a narrower retry.',

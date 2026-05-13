@@ -275,7 +275,7 @@ describe('ActTool', () => {
       expect(payload.recovery.suggestedNextCalls.length).toBeLessThanOrEqual(3);
       expect(payload.recovery.suggestedNextCalls).toEqual(expect.arrayContaining([
         expect.objectContaining({ tool: 'read_page', arguments: expect.objectContaining({ tabId: testTargetId }) }),
-        expect.objectContaining({ tool: 'query_dom', arguments: expect.objectContaining({ tabId: testTargetId }) }),
+        expect.objectContaining({ tool: 'query_dom', arguments: expect.objectContaining({ tabId: testTargetId, multiple: true }) }),
       ]));
       expect(payload.recovery.nearMatches.length).toBeGreaterThanOrEqual(1);
       expect(payload.recovery.nearMatches.length).toBeLessThanOrEqual(5);
