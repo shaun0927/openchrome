@@ -130,6 +130,35 @@ export function scrubString(value: string): string {
   return out;
 }
 
+
+/**
+ * Redact JavaScript predicate source before it is persisted in trace-like
+ * telemetry. Predicate strings often quote cookies, bearer tokens, or fixture
+ * secrets inline; generic pattern redaction handles known token shapes, while
+ * the cookie/storage guard below redacts quoted literals when the predicate is
+ * explicitly reading browser credential stores.
+ */
+export function redactPredicateSource(value: string): string {
+  let out = scrubString(value);
+  if (/document\.cookie|\bcookie\b|localStorage|sessionStorage/i.test(out)) {
+    out = out.replace(/(['"])([^'"]{4,})\1/g, (_m, quote: string) => `${quote}${REDACTED}${quote}`);
+  }
+  return out;
+}
+function redactWaitForArgs(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return walk(value);
+  const args = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (k === 'value' && args.type === 'function' && typeof v === 'string') {
+      out[k] = redactPredicateSource(v);
+    } else {
+      out[k] = walk(v);
+    }
+  }
+  return out;
+}
+
 /**
  * Redact an HTTP-header bag (record or array-of-`{name, value}`). Sensitive
  * header values are replaced wholesale; non-sensitive headers still pass
@@ -193,6 +222,18 @@ function walk(value: unknown, siblingName?: string): unknown {
   }
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>;
+    const toolName = typeof obj.tool === 'string' ? obj.tool : typeof obj.name === 'string' ? obj.name : typeof obj.toolName === 'string' ? obj.toolName : undefined;
+    if (toolName === 'wait_for') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if ((k === 'args' || k === 'arguments') && v && typeof v === 'object') {
+          out[k] = redactWaitForArgs(v);
+        } else {
+          out[k] = walk(v);
+        }
+      }
+      return out;
+    }
     // Detect form-field shape: an object with both `name` (string) and `value`
     // keys is treated as a key-value pair where `name` controls `value`.
     const formFieldName =

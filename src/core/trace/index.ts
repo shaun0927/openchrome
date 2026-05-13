@@ -5,7 +5,7 @@
  * credential redactor that runs before events hit disk.
  */
 
-export { REDACTED, redactTraceEvent, redactValue, scrubString } from './redactor';
+export { REDACTED, redactPredicateSource, redactTraceEvent, redactValue, scrubString } from './redactor';
 export {
   TraceRecorder,
   startTraceRecorder,
