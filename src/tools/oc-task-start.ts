@@ -146,7 +146,11 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
       return errorResult('oc_task_start: kind must be a non-empty string when provided');
     }
     const kind = typeof rawKind === 'string' ? rawKind.trim() : 'browser_task';
-    const args = (params.args ?? {}) as Record<string, unknown>;
+    const rawArgs = params.args;
+    if (kind !== 'browser_task' && (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs))) {
+      return errorResult('oc_task_start: args must be an object when scheduling a tool task');
+    }
+    const args = (rawArgs ?? {}) as Record<string, unknown>;
     const objective = typeof params.objective === 'string' ? params.objective : undefined;
     const phase = normalizeTaskPhase(params.phase);
     const policy = normalizeTaskPolicy(params.policy);

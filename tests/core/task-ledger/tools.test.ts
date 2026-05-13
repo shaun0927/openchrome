@@ -121,6 +121,21 @@ describe('oc_task_start handler — happy path', () => {
     expect(out.content?.[0]?.text).toContain('kind must be a non-empty string');
   });
 
+  test('rejects missing args when scheduling a non-browser tool task', async () => {
+    const innerTool = jest.fn<Promise<MCPResult>, Parameters<ToolHandler>>(async () => ({
+      content: [{ type: 'text', text: 'should not run' }],
+    }));
+    const handler = __test__.makeHandler({
+      resolveTool: (name) => (name === 'fake_inner' ? innerTool : null),
+    });
+
+    const out = await handler('sess-1', { kind: 'fake_inner' });
+
+    expect(out.isError).toBe(true);
+    expect(out.content?.[0]?.text).toContain('args must be an object');
+    expect(innerTool).not.toHaveBeenCalled();
+  });
+
   test('returns isError when tool name is not registered', async () => {
     const handler = __test__.makeHandler({ resolveTool: () => null });
     const out = await handler('sess-1', { kind: 'nope', args: {} });
