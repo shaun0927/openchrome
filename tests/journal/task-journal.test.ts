@@ -603,6 +603,46 @@ describe('TaskJournal failure summaries', () => {
     expect(entry.failureClass).toBe('empty_result');
   });
 
+  it('does not classify stale_ref failures whose summary mentions a Sign in label as auth_redirect', () => {
+    const entry = journal.createEntry(
+      'interact',
+      'sess',
+      { description: 'Sign in button' },
+      10,
+      false,
+      'Element ref_7 is stale and no longer available',
+    );
+
+    expect(entry.summary).toContain('Sign in');
+    expect(entry.failureClass).toBe('stale_ref');
+  });
+
+  it('classifies auth-flow phrases as auth_redirect', () => {
+    const cases: Array<[string, string]> = [
+      ['navigate', 'redirected to sign in'],
+      ['navigate', 'please sign in to continue'],
+      ['navigate', 'sign-in required before proceeding'],
+    ];
+    for (const [tool, message] of cases) {
+      const entry = journal.createEntry(tool, 'sess', {}, 10, false, message);
+      expect(entry.failureClass).toBe('auth_redirect');
+    }
+  });
+
+  it('does not classify a bare Sign in button label as auth_redirect when there is no auth-flow error', () => {
+    const entry = journal.createEntry(
+      'interact',
+      'sess',
+      { description: 'Sign in' },
+      10,
+      false,
+      'click intercepted by overlay',
+    );
+
+    expect(entry.summary).toContain('Sign in');
+    expect(entry.failureClass).not.toBe('auth_redirect');
+  });
+
   it('does not derive auth_redirect solely from destination URL path', () => {
     const entry = journal.createEntry(
       'navigate',

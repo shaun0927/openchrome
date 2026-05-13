@@ -337,7 +337,7 @@ export class TaskJournal {
     )
       return "stale_ref";
     if (
-      /(authredirect|auth_redirect_required|login page detected|redirected to login|sign in|signin|unauthorized|401)/i.test(
+      /(authredirect|auth_redirect_required|login page detected|redirected to (?:login|sign[- ]?in)|please sign[- ]?in|sign[- ]?in required|sign[- ]?in to continue|must sign[- ]?in|sign[- ]?in to (?:access|view)|unauthorized|\b401\b)/i.test(
         text,
       )
     )
