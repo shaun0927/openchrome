@@ -61,6 +61,21 @@ describe('web-vitals collector helpers', () => {
     expect(resolveVitalsElementLabel({}, '#hero')).toBe('#hero');
   });
 
+
+  test('normalizes TTFB from navigation start rather than request start', () => {
+    const result = normalizeWebVitals({
+      lcp: null,
+      cls: { value: 0, largestShift: null },
+      inp: null,
+      inpNullReason: 'no-interaction',
+      ttfb: { valueMs: 1200.6 },
+      fcp: null,
+      collectedAtMs: 2000,
+    });
+
+    expect(result.ttfb).toEqual({ valueMs: 1201, rating: 'needs-improvement' });
+  });
+
   test('normalizes LCP element alias and CLS largest shift', () => {
     const result = normalizeWebVitals({
       lcp: { valueMs: 1234.4, element: '@e7', occurredAtMs: 1100.2 },

@@ -229,7 +229,7 @@ export async function collectWebVitalsInPage(): Promise<RawWebVitals> {
     : null;
 
   const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
-  const ttfbValue = navigation ? numberOrNull(navigation.responseStart - navigation.requestStart) : null;
+  const ttfbValue = navigation ? numberOrNull(navigation.responseStart - navigation.startTime) : null;
   const fcpEntry = performance.getEntriesByName('first-contentful-paint')[0];
   const fcpValue = numberOrNull(fcpEntry?.startTime);
 
