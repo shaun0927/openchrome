@@ -2236,9 +2236,12 @@ export class MCPServer {
         resultStatus === 'error' || resultStatus === 'no_progress' || current?.result === 'error'
           ? 'stuck'
           : 'unknown';
-      const priorNoProgressCount = resultStatus === 'no_progress'
-        ? this.countConsecutiveNoProgress(this.recoveryLedger.readRecent(8, sessionId), toolName, tabId)
-        : 0;
+      const priorNoProgressCount =
+        resultStatus === 'no_progress' &&
+        previousTrajectory?.toolName === toolName &&
+        previousTrajectory?.resultStatus === 'no_progress'
+          ? 1
+          : 0;
       const score = scoreFromToolResult({
         toolName,
         isError: resultStatus === 'error' || resultStatus === 'aborted' || result?.isError === true,
@@ -2246,6 +2249,7 @@ export class MCPServer {
         errorText: error,
         repeatedFailureCount: previousTrajectory?.resultStatus === 'error' ? 1 : 0,
         repeatedNoProgressCount: priorNoProgressCount,
+        ...this.recoveryProgressEvidence(toolName, resultStatus, result),
       });
 
       this.recoveryLedger.record({
@@ -2265,20 +2269,35 @@ export class MCPServer {
     }
   }
 
-  private countConsecutiveNoProgress(
-    nodes: Array<{ toolName: string; tabId?: string; resultStatus: RecoveryResultStatus }>,
+  private recoveryProgressEvidence(
     toolName: string,
-    tabId?: string,
-  ): number {
-    let count = 0;
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const node = nodes[i];
-      if (node.toolName !== toolName) break;
-      if (tabId !== undefined && node.tabId !== tabId) break;
-      if (node.resultStatus !== 'no_progress') break;
-      count += 1;
+    resultStatus: RecoveryResultStatus,
+    result?: MCPResult,
+  ): {
+    urlChanged?: boolean;
+    domChanged?: boolean;
+    networkChanged?: boolean;
+    dataItemsExtracted?: number;
+    freshRefsDiscovered?: boolean;
+    observationOnly?: boolean;
+  } {
+    if (resultStatus !== 'success' && resultStatus !== 'recovered') return {};
+    const resultText = summarizeResult(result) ?? '';
+    const hasRef = /\bref[_-]?[A-Za-z0-9]+|\[ref[^\]]+\]/.test(resultText);
+    if (toolName === 'navigate' || toolName === 'tabs_create' || toolName === 'page_reload') {
+      return { urlChanged: true, observationOnly: false };
     }
-    return count;
+    if (toolName === 'act' || toolName === 'interact' || toolName === 'form_input' || toolName === 'fill_form') {
+      return { domChanged: true, freshRefsDiscovered: hasRef, observationOnly: false };
+    }
+    if (toolName === 'extract_data') {
+      const content = result?.content;
+      return { dataItemsExtracted: Array.isArray(content) && content.length > 0 ? content.length : 1, observationOnly: false };
+    }
+    if (toolName === 'request_intercept' || toolName === 'network_capture') {
+      return { networkChanged: true, observationOnly: false };
+    }
+    return { freshRefsDiscovered: hasRef };
   }
 
   getToolHandler(toolName: string): ToolHandler | null {
