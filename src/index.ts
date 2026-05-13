@@ -450,6 +450,7 @@ program
     }
     registerAllTools(server, categorySelection);
 
+
     // Dev-only hook: artificial delay for the tools component transition.
     // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
     const isDevHooks = process.env.NODE_ENV !== 'production' && process.env.OPENCHROME_DEV_HOOKS === '1';

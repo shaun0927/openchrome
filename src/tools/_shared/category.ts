@@ -199,6 +199,9 @@ export const TOOL_TO_CATEGORY: Readonly<Record<string, ToolCategory>> = {
   // crawl
   crawl: 'crawl',
   crawl_sitemap: 'crawl',
+  crawl_start: 'crawl',
+  crawl_status: 'crawl',
+  crawl_cancel: 'crawl',
 
   // security
   oc_totp_generate: 'security',
@@ -214,6 +217,7 @@ export const TOOL_TO_CATEGORY: Readonly<Record<string, ToolCategory>> = {
   oc_stop: 'reliability',
   oc_reap_orphans: 'reliability',
   oc_proxy_hook: 'pilot',
+  oc_skill_replay: 'pilot',
 };
 
 /**
