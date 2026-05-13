@@ -17,6 +17,7 @@ export interface QueryFieldNode {
   type?: string;
   description?: string;
   children?: QueryFieldNode[];
+  pos: number;
 }
 
 export interface QueryAst {
@@ -139,7 +140,7 @@ class Parser {
       throw new ExtractionQueryParseError(`List field "${nameToken.value}" must have a child block`, nameToken.pos);
     }
 
-    return { name: nameToken.value, list, type, description, children };
+    return { name: nameToken.value, list, type, description, children, pos: nameToken.pos };
   }
 
   private parseArgs(): { type?: string; description?: string } {
@@ -187,7 +188,7 @@ function assertScalarFields(fields: QueryFieldNode[], context: string): void {
     if (field.list || field.children) {
       throw new ExtractionQueryParseError(
         `Nested field "${field.name}" is not supported in the local query subset (${context}). Use flat fields or one root list block.`,
-        0,
+        field.pos,
       );
     }
   }
@@ -260,6 +261,7 @@ export function buildExtractionQueryPlan(query: string): ExtractionQueryPlan {
       rootListField: root.name,
       schema: {
         type: 'array',
+        ...(root.description ? { description: root.description } : {}),
         items: {
           type: 'object',
           properties: fieldsToProperties(root.children || []),
