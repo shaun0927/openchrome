@@ -75,6 +75,7 @@ Categories below are documentation-only — the runtime source is
 | `validate_page`  | Calls `smartGoto`, may create a new tab, waits on live page state — open-world, mutating, non-idempotent         |
 | `batch_paginate`          | Presses keys / clicks / scrolls; `url` strategy creates tabs and navigates to generated URLs — worst-case egress |
 | `oc_performance_insights` | Captures performance data and may reload/navigate to a URL                                                       |
+| `workflow_init`           | Performs `dnsResolve` and worker calls `page.goto` to non-loopback URLs                                          |
 
 ### Network egress + destructive — `{ readOnly:F, destructive:T, idempotent:F, openWorld:T }`
 
@@ -88,6 +89,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | `batch_execute`     | Batch dispatcher that can invoke arbitrary tools and evaluate arbitrary JS expressions — worst case is its worst sub-call                                                      |
 | `act`               | NL action router — click can trigger irreversible browser-side mutations (Delete-account, payment confirmation, etc.)                                                          |
 | `oc_proxy_hook`     | Pilot proxy hook can alter network/proxy behavior and affect external requests                                                                                                 |
+| `execute_plan`      | Resolves arbitrary tool names at runtime; worst-case set includes destructive tools and non-loopback navigations                                                               |
 
 ### Destructive — `{ readOnly:F, destructive:T, idempotent:F, openWorld:F }`
 
@@ -102,6 +104,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | `workflow_cleanup`  | Removes workflow state                                               |
 | `worker_complete`   | Terminates a worker                                                  |
 | `console_capture`   | `clear` action deletes buffered logs; `start`/`stop` mutate capture state |
+| `memory`            | Validate-prune path deletes memory entries                           |
 
 ### Mutating (not destructive, no network) — `{ readOnly:F, destructive:F, idempotent:F, openWorld:F }`
 
@@ -119,7 +122,6 @@ These tools combine network egress with destructive worst-case capability. They 
 | `emulate_device`        | Switches device emulation                                        |
 | `tabs_create`           | Opens a new tab (state mutation, not destructive)                |
 | `lightweight_scroll`    | Scroll (page state)                                              |
-| `memory`                | Domain-knowledge memory (set/get)                                |
 | `oc_skill_record`       | Skill memory write                                               |
 | `oc_journal`            | Multi-action — read OR write                                     |
 | `oc_session_snapshot`   | Writes snapshot file                                             |
@@ -136,8 +138,6 @@ These tools combine network egress with destructive worst-case capability. They 
 | `extract_data`          | Structured-extraction walk (may persist artifacts)               |
 | `worker`                | Worker control                                                   |
 | `worker_update`         | Worker state update                                              |
-| `workflow_init`         | Initializes workflow state                                       |
-| `execute_plan`          | Workflow plan execution                                          |
 | `network_capture_lite`  | Starts/stops passive network capture state                         |
 | `network_capture_full`  | Starts/stops passive network capture with body retention options    |
 | `oc_context_import`     | Imports cookies/storage/auth context into a tab                     |

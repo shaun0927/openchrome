@@ -156,7 +156,9 @@ export const TOOL_ANNOTATIONS = {
   emulate_device: MUTATES,
   tabs_create: MUTATES,
   lightweight_scroll: MUTATES,
-  memory: MUTATES,
+  // `memory` validate-prune path deletes memory entries — destructive under
+  // the worst-case rule.
+  memory: DESTRUCTIVE,
   oc_skill_record: MUTATES,
   oc_journal: MUTATES,
   oc_session_snapshot: MUTATES,
@@ -173,8 +175,12 @@ export const TOOL_ANNOTATIONS = {
   extract_data: MUTATES,
   worker: MUTATES,
   worker_update: MUTATES,
-  workflow_init: MUTATES,
-  execute_plan: MUTATES,
+  // `workflow_init` performs `dnsResolve` and the worker calls `page.goto` to
+  // non-loopback URLs — at least one valid input triggers network egress.
+  workflow_init: OPEN_WORLD,
+  // `execute_plan` resolves arbitrary tool names at runtime and dispatches them;
+  // its worst-case set includes destructive tools and non-loopback navigations.
+  execute_plan: OPEN_WORLD_DESTRUCTIVE,
   network_capture_lite: MUTATES,
   network_capture_full: MUTATES,
   oc_context_import: MUTATES,
