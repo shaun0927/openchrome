@@ -32,6 +32,8 @@ jest.mock('../src/session-manager', () => ({
 }));
 
 import { getSessionManager } from '../src/session-manager';
+import { getChromeLauncher } from '../src/chrome/launcher';
+import { setGlobalConfig } from '../src/config/global';
 import { MCPServer } from '../src/mcp-server';
 import { MCPRequest, MCPToolDefinition } from '../src/types/mcp';
 
@@ -60,6 +62,7 @@ describe('MCPServer _profile injection', () => {
   });
 
   afterEach(() => {
+    setGlobalConfig({ port: 9222 });
     jest.clearAllMocks();
   });
 
@@ -94,6 +97,20 @@ describe('MCPServer _profile injection', () => {
     expect(response.result._profile).toBeDefined();
     expect(response.result._profile!.type).toBe('real');
     expect(response.result._profile!.extensions).toBe(true);
+  });
+
+  test('uses configured port when reading _profile state', async () => {
+    setGlobalConfig({ port: 9333 });
+    mockGetProfileState.mockReturnValue({
+      type: 'real',
+      extensionsAvailable: true,
+    });
+
+    await registerAndCall('configured_port_tool', () => ({
+      content: [{ type: 'text', text: 'OK' }],
+    }));
+
+    expect(getChromeLauncher).toHaveBeenCalledWith(9333);
   });
 
   test('includes _profile in error tool response', async () => {

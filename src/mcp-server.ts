@@ -2493,7 +2493,7 @@ export class MCPServer {
     warning: string | null;
   } | null {
     try {
-      const launcher = getChromeLauncher();
+      const launcher = getChromeLauncher(getGlobalConfig().port);
       const state = launcher.getProfileState();
 
       const profile: Record<string, unknown> = {

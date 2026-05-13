@@ -382,6 +382,28 @@ describe('HintEngine', () => {
       expect(hint?.hint).toContain('read_page');
     });
 
+    it('empty-result-streak: treats undefined javascript_tool output as empty', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('javascript_tool', makeResult('undefined'), false);
+      expect(hint).not.toBeNull();
+      expect(hint?.hint).toContain('empty/null results');
+    });
+
+    it('empty-result-streak: treats empty string javascript_tool output as empty', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('javascript_tool', makeResult(''), false);
+      expect(hint).not.toBeNull();
+      expect(hint?.hint).toContain('empty/null results');
+    });
+
     it('empty-result-streak: does NOT trigger when current result is non-empty', () => {
       const tracker = makeTracker([
         { toolName: 'javascript_tool' },
