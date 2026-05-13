@@ -2441,3 +2441,9 @@ export function getMCPServer(): MCPServer {
   }
   return mcpServerInstance;
 }
+
+/** Reset the MCP server singleton — for testing and programmatic server lifecycle only. */
+export function _resetMCPServerForTesting(): void {
+  mcpServerInstance = null;
+  mcpServerOptions = {};
+}

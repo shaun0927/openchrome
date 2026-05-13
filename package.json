@@ -3,6 +3,16 @@
   "version": "1.11.0",
   "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./server": {
+      "import": "./dist/core/server.js",
+      "require": "./dist/core/server.js"
+    }
+  },
   "bin": {
     "openchrome": "./dist/cli/index.js",
     "oc": "./dist/cli/index.js"
@@ -23,6 +33,7 @@
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
     "lint:tier": "depcruise --config .dependency-cruiser.cjs src",
+    "lint:tool-schemas": "node dist/index.js serve --introspect-tools-list | node scripts/lint-tool-schemas.mjs -",
     "clean": "rimraf dist",
     "prepare": "npm run build",
     "lint:changed": "node scripts/lint-changed-src.js"
