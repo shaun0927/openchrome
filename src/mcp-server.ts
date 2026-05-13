@@ -26,6 +26,7 @@ import {
   readSkillGraphResource,
 } from './resources/skill-graph';
 import { HintEngine } from './hints';
+import { buildAutomationInsight, formatAutomationFallback, shouldInjectAutomationFallback } from './hints/result-guidance';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
@@ -1859,23 +1860,34 @@ export class MCPServer {
       // user. Mirrors the error-path injection below for consistency.
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
+        const automation = buildAutomationInsight(toolName, result as Record<string, unknown>, false, hintResult ?? undefined);
+        if (automation) {
+          (result as Record<string, unknown>)._automation = automation;
+        }
         if (hintResult) {
           const injectHint =
             verbosity !== 'compact' ||
             hintResult.severity === 'critical';
+          (result as Record<string, unknown>)._hint = hintResult.hint;
+          (result as Record<string, unknown>)._hintMeta = {
+            severity: hintResult.severity,
+            rule: hintResult.rule,
+            fireCount: hintResult.fireCount,
+            ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+            ...(hintResult.context && { context: hintResult.context }),
+            ...(automation && { automation }),
+          };
           if (injectHint) {
-            (result as Record<string, unknown>)._hint = hintResult.hint;
-            (result as Record<string, unknown>)._hintMeta = {
-              severity: hintResult.severity,
-              rule: hintResult.rule,
-              fireCount: hintResult.fireCount,
-              ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
-              ...(hintResult.context && { context: hintResult.context }),
-            };
             const content = (result as Record<string, unknown>).content;
             if (Array.isArray(content)) {
               content.push({ type: 'text', text: `\n${hintResult.hint}` });
             }
+          }
+        }
+        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
+          const content = (result as Record<string, unknown>).content;
+          if (Array.isArray(content)) {
+            content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
           }
         }
       }
@@ -2031,6 +2043,10 @@ export class MCPServer {
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
         const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId);
+        const automation = buildAutomationInsight(toolName, errResult as Record<string, unknown>, true, hintResult ?? undefined);
+        if (automation) {
+          (errResult as Record<string, unknown>)._automation = automation;
+        }
         if (hintResult) {
           (errResult as Record<string, unknown>)._hint = hintResult.hint;
           (errResult as Record<string, unknown>)._hintMeta = {
@@ -2039,9 +2055,15 @@ export class MCPServer {
             fireCount: hintResult.fireCount,
             ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
             ...(hintResult.context && { context: hintResult.context }),
+            ...(automation && { automation }),
           };
           if (Array.isArray(errResult.content)) {
             errResult.content.push({ type: 'text', text: `\n${hintResult.hint}` });
+          }
+        }
+        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
+          if (Array.isArray(errResult.content)) {
+            errResult.content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
           }
         }
       }
