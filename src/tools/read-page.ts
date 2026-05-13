@@ -693,6 +693,7 @@ const handler: ToolHandler = async (
           });
         }
         // DOM serialization failed — fall through to AX mode as fallback
+        diagnostics.mode = 'ax';
       }
     }
 
