@@ -979,11 +979,42 @@ const handler: ToolHandler = async (
  */
 const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
   const result = await handler(sessionId, args, context);
+  const includeMetrics = args.include_metrics === true;
+  const modeForMetrics = typeof args.mode === 'string' ? args.mode : 'dom';
 
-  // Skip sanitization if disabled, if the result is an error, or if no content
+  const addMetricsToText = (text: string): string => {
+    if (modeForMetrics === 'semantic') {
+      try {
+        const payload = JSON.parse(text) as Record<string, unknown>;
+        for (let i = 0; i < 3; i++) {
+          payload['_metrics'] = buildTextMetrics(JSON.stringify(payload), { mode: modeForMetrics });
+        }
+        return JSON.stringify(payload);
+      } catch {
+        // Fall through to footer metrics for non-JSON semantic error/fallback text.
+      }
+    }
+    return appendMetricsFooter(text, buildTextMetrics(text, { mode: modeForMetrics }));
+  };
+
+  // Skip sanitization if disabled, if the result is an error, or if no content.
+  // Metrics are independent of sanitization and remain available when callers
+  // intentionally run with --no-sanitize-content.
   const config = getGlobalConfig();
-  if (config.security?.sanitize_content === false || result.isError || !result.content) {
+  if (result.isError || !result.content) {
     return result;
+  }
+  if (config.security?.sanitize_content === false) {
+    return includeMetrics
+      ? {
+          ...result,
+          content: result.content.map((block) => (
+            block.type === 'text' && typeof block.text === 'string'
+              ? { ...block, text: addMetricsToText(block.text) }
+              : block
+          )),
+        }
+      : result;
   }
 
   // P1 codex fix: semantic mode emits a JSON payload via `JSON.stringify(view)`.
@@ -1032,9 +1063,6 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return value;
   }
 
-  const includeMetrics = args.include_metrics === true;
-  const modeForMetrics = typeof args.mode === 'string' ? args.mode : 'dom';
-
   // Sanitize all text content blocks
   const sanitizedContent = result.content.map((block) => {
     if (block.type === 'text' && typeof block.text === 'string') {
@@ -1050,10 +1078,8 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
             const unique = Array.from(new Set(notes));
             cleaned['_sanitization'] = unique.join('; ');
           }
-          if (includeMetrics) {
-            cleaned['_metrics'] = buildTextMetrics(JSON.stringify(cleaned), { mode: modeForMetrics });
-          }
-          return { ...block, text: JSON.stringify(cleaned) };
+          const text = JSON.stringify(cleaned);
+          return { ...block, text: includeMetrics ? addMetricsToText(text) : text };
         } catch {
           // Parse failed — fall back to string-level sanitization so the
           // security signal is not silently lost.

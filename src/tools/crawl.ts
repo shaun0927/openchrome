@@ -770,7 +770,25 @@ const handler: ToolHandler = async (
           content_length: p.content.length,
           error: p.error,
         }));
-        outputJson = JSON.stringify({ summary, pages: minimalPages, note: 'Content omitted due to size constraints' }, null, 2);
+        const minimalOutput = includeMetrics
+          ? {
+              summary: {
+                ...summary,
+                metrics: {
+                  returned_chars: 0,
+                  estimated_tokens: 0,
+                  truncated_pages: minimalPages.length,
+                  mode: `crawl:${outputFormat}`,
+                },
+              },
+              pages: minimalPages.map((p) => ({
+                ...p,
+                metrics: buildTextMetrics('', { mode: outputFormat }),
+              })),
+              note: 'Content omitted due to size constraints',
+            }
+          : { summary, pages: minimalPages, note: 'Content omitted due to size constraints' };
+        outputJson = JSON.stringify(minimalOutput, null, 2);
       }
     }
 
