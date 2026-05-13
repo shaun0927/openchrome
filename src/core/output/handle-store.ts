@@ -63,6 +63,17 @@ export interface FetchHandleResult {
   eof: boolean;
 }
 
+/**
+ * Returned by fetch() when the caller requested format:'items' but the stored
+ * payload is not a JSON array. Distinct from null (not-found) so the tool can
+ * surface INVALID_FORMAT_FOR_PAYLOAD without conflating it with expiry.
+ */
+export interface FetchHandleFormatError {
+  error: 'INVALID_FORMAT_FOR_PAYLOAD';
+  handle_id: OutputHandle;
+  detail: string;
+}
+
 export interface HandleStoreOptions {
   baseDir?: string;
 }
@@ -189,8 +200,10 @@ export class HandleStore {
   /**
    * Fetch a handle's content with offset/limit pagination.
    * Returns null if the handle does not exist or has expired.
+   * Returns FetchHandleFormatError when format:'items' is requested but the
+   * stored payload is not a JSON array (P2 fix #887 — never silently falls back).
    */
-  fetch(handle: OutputHandle, opts?: FetchHandleOptions): FetchHandleResult | null {
+  fetch(handle: OutputHandle, opts?: FetchHandleOptions): FetchHandleResult | FetchHandleFormatError | null {
     const meta = this.resolveHandle(handle);
     if (!meta) return null;
 
@@ -213,6 +226,18 @@ export class HandleStore {
         parsed = JSON.parse(raw);
       } catch {
         return null;
+      }
+
+      // P2 fix (#887): format:'items' on a non-array payload must be rejected
+      // explicitly — never silently fall back to byte pagination.
+      if (format === 'items' && !Array.isArray(parsed)) {
+        return {
+          error: 'INVALID_FORMAT_FOR_PAYLOAD',
+          handle_id: handle,
+          detail:
+            'format:"items" requires the stored payload to be a JSON array. ' +
+            'Use format:"bytes" or format:"auto" to page through non-array payloads.',
+        };
       }
 
       const useItems = format === 'items' || (format === 'auto' && Array.isArray(parsed));

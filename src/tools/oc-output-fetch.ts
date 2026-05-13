@@ -13,7 +13,11 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getHandleStore } from '../core/output/handle-store';
-import type { OutputHandle } from '../core/output/handle-store.types';
+import type { OutputHandle, FetchHandleFormatError } from '../core/output/handle-store';
+
+function isFetchFormatError(r: unknown): r is FetchHandleFormatError {
+  return typeof r === 'object' && r !== null && (r as FetchHandleFormatError).error === 'INVALID_FORMAT_FOR_PAYLOAD';
+}
 
 const definition: MCPToolDefinition = {
   name: 'oc_output_fetch',
@@ -79,6 +83,23 @@ const handler: ToolHandler = async (
 
   const store = getHandleStore();
   const result = store.fetch(handle, { offset, limit, format });
+
+  if (isFetchFormatError(result)) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            error: {
+              code: 'INVALID_FORMAT_FOR_PAYLOAD',
+              message: result.detail,
+            },
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
 
   if (!result) {
     return {
