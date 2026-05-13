@@ -67,10 +67,11 @@ describe('benchmark matrix', () => {
     const result = await task.run(adapter);
 
     expect(result.success).toBe(true);
-    expect(result.toolCallCount).toBe(4);
-    expect(result.responseChars).toBeGreaterThan(8);
+    expect(result.toolCallCount).toBe(3);
+    expect(result.responseChars).toBe(6);
     expect(result.estimatedOutputTokens).toBe(Math.ceil(result.responseChars! / 4));
     expect(result.nodeRssBytes).toBeGreaterThan(0);
+    expect(adapter.callTool).toHaveBeenLastCalledWith('tabs_close', { tabId: 'real-tab-1' });
   });
 
   test('matrix uses registered tool names and act instruction contract', () => {
@@ -108,7 +109,8 @@ describe('benchmark matrix', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('Benchmark step failed');
-    expect(result.toolCallCount).toBe(1);
+    expect(result.toolCallCount).toBe(0);
+    expect(adapter.callTool).toHaveBeenLastCalledWith('tabs_close', { tabId: 'real-tab-1' });
   });
 
   test('matrix creates and reuses concrete tab ids for placeholders', async () => {
@@ -127,6 +129,33 @@ describe('benchmark matrix', () => {
     expect(result.success).toBe(true);
     expect(adapter.callTool).toHaveBeenNthCalledWith(1, 'tabs_create', { url: expect.any(String) });
     expect(adapter.callTool).toHaveBeenNthCalledWith(2, 'read_page', { tabId: 'real-tab-1', mode: 'dom' });
+    expect(adapter.callTool).toHaveBeenNthCalledWith(3, 'tabs_close', { tabId: 'real-tab-1' });
+  });
+
+  test('parallel matrix waits for all reads before returning a failure', async () => {
+    const task = createMatrixTasks({ category: 'parallel-tabs-5' })[0];
+    const calls: string[] = [];
+    const adapter = {
+      name: 'stub',
+      mode: 'dom',
+      callTool: jest.fn().mockImplementation(async (toolName: string, args: Record<string, unknown>) => {
+        calls.push(`${toolName}:${String(args.tabId ?? args.url ?? '')}`);
+        if (toolName === 'tabs_create') {
+          const tabId = `real-tab-${calls.filter((call) => call.startsWith('tabs_create:')).length}`;
+          return { content: [{ type: 'text', text: JSON.stringify({ tabId }) }] };
+        }
+        if (toolName === 'read_page' && args.tabId === 'real-tab-3') {
+          return { content: [{ type: 'text', text: 'boom' }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'ok' }] };
+      }),
+    };
+
+    const result = await task.run(adapter);
+
+    expect(result.success).toBe(false);
+    expect(calls.filter((call) => call.startsWith('read_page:'))).toHaveLength(5);
+    expect(calls.filter((call) => call.startsWith('tabs_close:'))).toHaveLength(5);
   });
 
   test('matrix tasks fail if tabs_create does not return a concrete tab id', async () => {

@@ -154,10 +154,11 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
     name: scenario.name,
     description: scenario.description,
     async run(adapter: MCPAdapter): Promise<TaskResult> {
-      const startTime = Date.now();
+      let startTime = Date.now();
       const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
       let responseChars = 0;
       let screenshotBytes = 0;
+      const createdTabIds: string[] = [];
 
       try {
         const tabIds = new Map<string, string>();
@@ -168,16 +169,14 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
             const text = result.content?.find((item) => typeof item.text === 'string')?.text;
             throw new Error(`Benchmark step failed: tabs_create${text ? ` — ${text.slice(0, 160)}` : ''}`);
           }
-          measureCall(result, args, counters);
-          const payload = responsePayloadSize(result);
-          responseChars += payload.responseChars;
-          screenshotBytes += payload.screenshotBytes;
           const tabId = extractTabId(result);
           if (!tabId) {
             throw new Error(`Benchmark scenario ${scenario.name} could not resolve tab alias ${placeholder}: tabs_create returned no tabId`);
           }
           tabIds.set(placeholder, tabId);
+          createdTabIds.push(tabId);
         }
+        startTime = Date.now();
 
         const runStep = async (step: BenchmarkMatrixScenario['steps'][number]) => {
           const args = { ...step.args };
@@ -200,13 +199,18 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
         };
 
         if (scenario.category === 'parallel-tabs') {
-          await Promise.all(scenario.steps.map(runStep));
+          const settled = await Promise.allSettled(scenario.steps.map(runStep));
+          const rejected = settled.find((entry): entry is PromiseRejectedResult => entry.status === 'rejected');
+          if (rejected) {
+            throw rejected.reason instanceof Error ? rejected.reason : new Error(String(rejected.reason));
+          }
         } else {
           for (const step of scenario.steps) {
             await runStep(step);
           }
         }
 
+        await closeCreatedTabs(adapter, createdTabIds);
         const nodeRssBytes = process.memoryUsage().rss;
         return {
           success: true,
@@ -225,6 +229,7 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
           },
         };
       } catch (error) {
+        await closeCreatedTabs(adapter, createdTabIds);
         return {
           success: false,
           inputChars: counters.inputChars,
@@ -242,6 +247,11 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
       }
     },
   };
+}
+
+async function closeCreatedTabs(adapter: MCPAdapter, tabIds: string[]): Promise<void> {
+  if (tabIds.length === 0) return;
+  await Promise.allSettled(tabIds.map((tabId) => adapter.callTool('tabs_close', { tabId })));
 }
 
 export function createMatrixTasks(filter: MatrixFilter = {}): BenchmarkTask[] {
