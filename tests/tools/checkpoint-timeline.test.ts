@@ -117,10 +117,39 @@ describe('oc_checkpoint timeline (#1025)', () => {
     const timelineDir = path.join(tmpDir, 'timeline');
     fs.mkdirSync(timelineDir, { recursive: true });
     fs.writeFileSync(path.join(timelineDir, 'bad.json'), '{not json');
+    fs.writeFileSync(path.join(timelineDir, 'invalid.json'), JSON.stringify({
+      version: 1,
+      timestamp: Date.now(),
+      checkpointId: 'cp_invalid_shape',
+      taskDescription: 'bad',
+      completedSteps: 'not-an-array',
+      pendingSteps: [],
+      currentUrl: null,
+      tabStates: [],
+      extractedData: {},
+    }));
 
     const listed = readJson(await handler('sess-1', { action: 'list' }));
     expect(listed.checkpoints).toEqual([]);
     expect(listed.warnings.join('\n')).toContain('Skipped corrupt checkpoint timeline entry');
+    expect(listed.warnings.join('\n')).toContain('Skipped invalid checkpoint timeline entry');
+  });
+
+  test('load falls back to newest timeline entry when current checkpoint is missing', async () => {
+    const handler = await loadHandler();
+
+    const first = readJson(await handler('sess-1', {
+      action: 'save',
+      taskDescription: 'timeline fallback',
+      completedSteps: ['saved'],
+      pendingSteps: [],
+    }));
+    fs.unlinkSync(path.join(tmpDir, 'current-checkpoint.json'));
+
+    const loaded = readJson(await handler('sess-1', { action: 'load' }));
+    expect(loaded.status).toBe('loaded');
+    expect(loaded.checkpointId).toBe(first.checkpointId);
+    expect(loaded.taskDescription).toBe('timeline fallback');
   });
 
   test('retention prunes old timeline artifacts only', async () => {

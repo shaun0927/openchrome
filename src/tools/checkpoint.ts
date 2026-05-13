@@ -137,9 +137,40 @@ function parseRetentionLimit(): number {
   return Math.min(Math.max(Math.floor(raw), 1), 100);
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isTabStateArray(value: unknown): value is AutomationCheckpoint['tabStates'] {
+  return Array.isArray(value) && value.every((tab) => (
+    tab &&
+    typeof tab === 'object' &&
+    typeof (tab as Record<string, unknown>).tabId === 'string' &&
+    typeof (tab as Record<string, unknown>).url === 'string' &&
+    typeof (tab as Record<string, unknown>).title === 'string'
+  ));
+}
+
+function isAutomationCheckpoint(value: unknown): value is AutomationCheckpoint {
+  if (!value || typeof value !== 'object') return false;
+  const cp = value as Record<string, unknown>;
+  return cp.version === 1 &&
+    typeof cp.timestamp === 'number' &&
+    Number.isFinite(cp.timestamp) &&
+    typeof cp.taskDescription === 'string' &&
+    isStringArray(cp.completedSteps) &&
+    isStringArray(cp.pendingSteps) &&
+    (typeof cp.currentUrl === 'string' || cp.currentUrl === null) &&
+    isTabStateArray(cp.tabStates) &&
+    Boolean(cp.extractedData) &&
+    typeof cp.extractedData === 'object' &&
+    (cp.checkpointId === undefined || typeof cp.checkpointId === 'string');
+}
+
 function toListEntry(cp: AutomationCheckpoint, now = Date.now()): CheckpointListEntry | null {
-  if (!cp.checkpointId) return null;
+  if (!isAutomationCheckpoint(cp) || !cp.checkpointId) return null;
   const createdAt = cp.createdAt ?? cp.timestamp;
+  if (!Number.isFinite(createdAt)) return null;
   return {
     checkpointId: cp.checkpointId,
     ...(cp.parentId ? { parentId: cp.parentId } : {}),
@@ -157,9 +188,12 @@ function toListEntry(cp: AutomationCheckpoint, now = Date.now()): CheckpointList
 }
 
 async function readTimelineCheckpoint(filePath: string): Promise<{ checkpoint: AutomationCheckpoint | null; warning?: string }> {
-  const result = await readFileSafe<AutomationCheckpoint>(filePath);
+  const result = await readFileSafe<unknown>(filePath);
   if (!result.success || !result.data) {
     return { checkpoint: null, warning: `Skipped corrupt checkpoint timeline entry: ${path.basename(filePath)}` };
+  }
+  if (!isAutomationCheckpoint(result.data) || !result.data.checkpointId) {
+    return { checkpoint: null, warning: `Skipped invalid checkpoint timeline entry: ${path.basename(filePath)}` };
   }
   return { checkpoint: result.data };
 }
@@ -351,7 +385,11 @@ const handler: ToolHandler = async (
 
   if (action === 'load') {
     const checkpointId = typeof args.checkpointId === 'string' ? args.checkpointId : undefined;
-    const cp = checkpointId ? await readCheckpointById(checkpointId) : await readCurrentCheckpoint();
+    let cp = checkpointId ? await readCheckpointById(checkpointId) : await readCurrentCheckpoint();
+    if (!cp && !checkpointId) {
+      const timeline = await readTimelineEntries();
+      cp = timeline.checkpoints[0] ?? null;
+    }
     if (!cp) {
       return {
         content: [
