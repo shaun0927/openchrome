@@ -42,8 +42,12 @@ function buildSnapshotEvalContext(snapshot: SnapshotInput): EvalContext {
   return {
     async url() { return snapshot.url ?? ''; },
     async domText(selector) {
-      if (domTextBySelector) return domTextBySelector[selector ?? 'body'] ?? domTextBySelector.body ?? null;
-      return bodyText ?? null;
+      if (!domTextBySelector) return bodyText ?? null;
+      const requestedSelector = selector ?? 'body';
+      if (requestedSelector === 'body') return domTextBySelector.body ?? null;
+      return Object.prototype.hasOwnProperty.call(domTextBySelector, requestedSelector)
+        ? domTextBySelector[requestedSelector] ?? null
+        : null;
     },
     async domCount(selector) { return snapshot.dom_count?.[selector] ?? 0; },
     async networkSince() { return snapshot.network ?? []; },
@@ -397,7 +401,11 @@ export class PlanExecutor {
           Object.assign(params, recovered.params);
           continue;
         }
-        // No handler for empty — treat as non-fatal, just skip storing
+        // Compatibility/fail-safe (#1031): pre-existing cached plans treated an
+        // empty, non-error tool result as a completed step unless the plan
+        // explicitly supplied `stepN_empty_result` recovery. Keep that contract
+        // for optional observe/poll steps, but still run parseResult below so
+        // empty values are visible to successCriteria/finalVerification gates.
       }
 
       // f. Parse and store result if requested

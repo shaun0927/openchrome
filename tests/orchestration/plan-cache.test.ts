@@ -891,6 +891,24 @@ describe('PlanExecutor final verification gate', () => {
     expect(result.finalVerification?.failedAssertion?.index).toBe(0);
   });
 
+  test('does not fall back to body text for selector-specific final assertions', async () => {
+    const selectorMissingHandler: ToolHandler = jest.fn(async () => makeMCPResult(JSON.stringify({
+      url: 'https://example.com/done',
+      dom_text: { body: 'Done' },
+      captured_at: Date.now(),
+    })));
+    const selectorMissingResolver = (toolName: string): ToolHandler | null => (
+      toolName === 'snapshot_tool' ? selectorMissingHandler : null
+    );
+    const executor = new PlanExecutor(selectorMissingResolver);
+
+    const result = await executor.execute(planWithFinalAssertion('Done'), SESSION_ID, {});
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Final verification failed');
+    expect(result.finalVerification?.failedAssertion?.index).toBe(0);
+  });
+
   test('fails clearly when requested evidence kind is unsupported', async () => {
     const executor = new PlanExecutor(resolver);
     const result = await executor.execute(
