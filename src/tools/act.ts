@@ -25,6 +25,12 @@ import {
   getCachedSequence,
   cacheSequence,
   validateCachedSequence,
+  ActionCacheKeyV2Parts,
+  ActionCacheV2LookupDecision,
+  buildActionCacheKeyV2Parts,
+  cacheSequenceV2,
+  getCachedSequenceV2,
+  validateCachedSequenceV2,
   buildWorkflowPageSignature,
   cacheWorkflowSequence,
   getWorkflowCachedSequence,
@@ -135,6 +141,72 @@ async function collectWorkflowPageSignature(page: any): Promise<WorkflowPageSign
   } catch {
     return null;
   }
+}
+
+
+async function collectActionCacheKeyParts(
+  page: any,
+  pageUrl: string,
+  instruction: string,
+  actions: ParsedAction[],
+  optionFingerprint: string,
+): Promise<ActionCacheKeyV2Parts | null> {
+  try {
+    const projection = await page.evaluate(() => {
+      const nodes = Array.from(document.querySelectorAll(
+        'button, a, input, select, textarea, [role], [aria-label], [placeholder]'
+      )).slice(0, 120).map((el) => {
+        const element = el as HTMLElement;
+        const input = element as HTMLInputElement;
+        const rect = element.getBoundingClientRect();
+        const tag = element.tagName.toLowerCase();
+        const type = (input.getAttribute?.('type') || '').toLowerCase();
+        const role = element.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' ? 'textbox' : tag);
+        const rawName = element.getAttribute('aria-label')
+          || element.getAttribute('title')
+          || element.getAttribute('placeholder')
+          || (type === 'password' ? '' : (element.innerText || element.textContent || ''))
+          || (type === 'password' ? '' : (input.name || input.id || ''));
+        return {
+          role,
+          name: String(rawName || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+          tag,
+          type,
+          disabled: Boolean((input as { disabled?: boolean }).disabled),
+          visible: rect.width > 0 && rect.height > 0,
+        };
+      }).filter(node => node.visible);
+
+      return {
+        title: document.title,
+        path: window.location.pathname,
+        locale: navigator.language,
+        userAgent: navigator.userAgent,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        nodes,
+      };
+    });
+
+    return buildActionCacheKeyV2Parts({
+      url: pageUrl,
+      instruction,
+      actionKinds: actions.map(action => action.action),
+      viewport: projection.viewport,
+      locale: projection.locale,
+      userAgent: projection.userAgent,
+      pageFingerprint: JSON.stringify({ title: projection.title, path: projection.path, nodes: projection.nodes }),
+      optionFingerprint,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function formatActionCacheStatus(decision: ActionCacheV2LookupDecision | null): string {
+  if (!decision) return '[cache] status=BYPASS keyVersion=2 reason=unavailable';
+  const parts = [`status=${decision.status}`, `keyVersion=${decision.keyVersion}`, `reason=${decision.reason}`];
+  if (decision.keyHash) parts.push(`key=${decision.keyHash.slice(0, 12)}`);
+  return `[cache] ${parts.join(' ')}`;
 }
 
 function formatWorkflowDebug(decision: WorkflowCacheDecision): string {
@@ -541,6 +613,8 @@ const handler: ToolHandler = async (
   let parseWarning: string | undefined;
   let workflowSignature: WorkflowPageSignature | null = null;
   let workflowDecision: WorkflowCacheDecision | null = null;
+  let actionCacheKeyParts: ActionCacheKeyV2Parts | null = null;
+  let actionCacheDecision: ActionCacheV2LookupDecision | null = null;
 
   if (templateMatch) {
     actions = templateMatch.actions;
@@ -559,28 +633,35 @@ const handler: ToolHandler = async (
     if (workflowDecision?.decision === 'accepted' && workflowDecision.actions) {
       actions = workflowDecision.actions;
       source = 'workflow_cache';
+      actionCacheDecision = { status: 'BYPASS', keyVersion: 2, reason: 'workflow_cache_accepted' };
     } else {
-      // 3. Preserve existing legacy action cache behavior for compatibility.
-      const cached = getCachedSequence(pageUrl, instruction);
-      if (cached) {
-        actions = cached.actions;
+      // 3. Parse deterministically, then use parsed action kinds to build the
+      // safer page-fingerprint action cache v2 key.
+      const parseResult = parseInstruction(instruction);
+      if (!parseResult.success || parseResult.actions.length === 0) {
+        const errMsg = parseResult.error || 'Could not parse instruction';
+        const suggestion = parseResult.suggestion || 'Try individual steps like "click X", "type Y in Z".';
+        return {
+          content: [{
+            type: 'text',
+            text: `[act] Parse error: ${errMsg}
+
+Suggestion: ${suggestion}`,
+          }],
+          isError: true,
+        };
+      }
+
+      actions = parseResult.actions;
+      parseWarning = parseResult.suggestion;
+      actionCacheKeyParts = await collectActionCacheKeyParts(page, pageUrl, instruction, actions, `verify=${verifyMode}`);
+      actionCacheDecision = actionCacheKeyParts
+        ? getCachedSequenceV2(pageUrl, instruction, actionCacheKeyParts, { allowLegacyFallback: true })
+        : { status: 'BYPASS', keyVersion: 2, reason: 'fingerprint_unavailable' };
+
+      if (actionCacheDecision.actions && actionCacheDecision.status === 'HIT') {
+        actions = actionCacheDecision.actions;
         source = 'cache';
-      } else {
-        // 4. Fall back to NL parsing
-        const parseResult = parseInstruction(instruction);
-        if (!parseResult.success || parseResult.actions.length === 0) {
-          const errMsg = parseResult.error || 'Could not parse instruction';
-          const suggestion = parseResult.suggestion || 'Try individual steps like "click X", "type Y in Z".';
-          return {
-            content: [{
-              type: 'text',
-              text: `[act] Parse error: ${errMsg}\n\nSuggestion: ${suggestion}`,
-            }],
-            isError: true,
-          };
-        }
-        actions = parseResult.actions;
-        parseWarning = parseResult.suggestion;
       }
     }
   }
@@ -671,6 +752,7 @@ const handler: ToolHandler = async (
   if (success && source === 'parsed') {
     try {
       cacheSequence(page.url(), instruction, actions);
+      if (actionCacheKeyParts) cacheSequenceV2(page.url(), instruction, actions, actionCacheKeyParts);
       // Boost confidence above MIN_CONFIDENCE so the entry is retrievable immediately
       validateCachedSequence(page.url(), instruction, true);
     } catch { /* non-fatal */ }
@@ -691,7 +773,11 @@ const handler: ToolHandler = async (
   // Boost confidence on successful cache hit
   if (success && source === 'cache') {
     try {
-      validateCachedSequence(page.url(), instruction, true);
+      if (actionCacheDecision?.keyVersion === 2 && actionCacheDecision.keyHash) {
+        validateCachedSequenceV2(page.url(), instruction, actionCacheDecision.keyHash, true);
+      } else {
+        validateCachedSequence(page.url(), instruction, true);
+      }
     } catch { /* non-fatal */ }
   }
 
@@ -704,7 +790,11 @@ const handler: ToolHandler = async (
   // If cached sequence failed, reduce confidence
   if (!success && source === 'cache') {
     try {
-      validateCachedSequence(page.url(), instruction, false);
+      if (actionCacheDecision?.keyVersion === 2 && actionCacheDecision.keyHash) {
+        validateCachedSequenceV2(page.url(), instruction, actionCacheDecision.keyHash, false);
+      } else {
+        validateCachedSequence(page.url(), instruction, false);
+      }
     } catch { /* non-fatal */ }
   }
 
@@ -728,7 +818,7 @@ const handler: ToolHandler = async (
     stepLines.push(`Step ${r.step}: ${symbol} ${label}`);
   }
 
-  const lines: string[] = [headerLine, '', ...stepLines];
+  const lines: string[] = [headerLine, formatActionCacheStatus(actionCacheDecision), '', ...stepLines];
 
   // Verification — legacy text summary. Preserved verbatim so default
   // (`verify` absent or `true`) callers see the same `[Verification] …` line.

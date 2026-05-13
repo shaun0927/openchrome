@@ -307,6 +307,7 @@ describe('ActTool', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Could not find');
       expect(result.content[0].text).toContain('[WorkflowCache] decision=miss reason=no_candidate');
+      expect(result.content[0].text).toContain('[cache] status=');
     });
 
     test('navigate step calls page.goto', async () => {
@@ -403,14 +404,16 @@ describe('ActTool', () => {
       const page = await mockSessionManager.getPage(testSessionId, testTargetId);
 
       const handler = await getActHandler();
-      await handler(testSessionId, {
+      const result = await handler(testSessionId, {
         tabId: testTargetId,
         instruction: 'click go',
         verify: false,
       }) as any;
 
-      // page.evaluate should NOT have been called for verification
-      expect(page!.evaluate).not.toHaveBeenCalled();
+      // page.evaluate may be used for cache fingerprinting, but verify=false
+      // must still suppress the legacy [Verification] summary line.
+      expect(result.content[0].text).not.toContain('[Verification]');
+      expect(result.content[0].text).toContain('[cache] status=');
     });
 
     test('verify=true (default) calls page.evaluate for state summary', async () => {

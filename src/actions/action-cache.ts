@@ -5,13 +5,54 @@
  * On repeat visits to the same domain, tries the cached sequence first.
  */
 
+import { createHash } from 'crypto';
+
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import { ParsedAction } from './action-parser';
 
 const CACHE_KEY_PREFIX = 'act-sequence:';
 const WORKFLOW_CACHE_KEY_PREFIX = 'act-workflow:';
+const CACHE_V2_KEY_PREFIX = 'act-sequence-v2:';
 const MIN_CONFIDENCE = 0.6;
 const DEFAULT_SIGNATURE_THRESHOLD = 0.75;
+
+
+export type ActionCacheStatus = 'HIT' | 'MISS' | 'STALE' | 'BYPASS';
+
+export interface ActionCacheKeyV2Parts {
+  version: 2;
+  domain: string;
+  urlPattern: string;
+  normalizedInstruction: string;
+  actionKinds: string[];
+  viewport: { width: number; height: number };
+  locale?: string;
+  userAgentClass?: 'chrome' | 'chromium' | 'unknown';
+  pageFingerprint: string;
+  optionFingerprint: string;
+}
+
+export interface CachedSequenceV2 extends CachedSequence {
+  version: 2;
+  keyVersion: 2;
+  keyHash: string;
+  keyParts: ActionCacheKeyV2Parts;
+  metadata: {
+    status?: ActionCacheStatus;
+    createdAt: number;
+    lastUsedAt?: number;
+  };
+}
+
+export interface ActionCacheV2LookupDecision {
+  status: ActionCacheStatus;
+  keyVersion: 2 | 1;
+  reason: string;
+  keyHash?: string;
+  entry?: CachedSequenceV2;
+  legacy?: CachedSequence;
+  actions?: ParsedAction[];
+}
 
 export interface CachedSequence {
   instruction: string;
@@ -79,6 +120,114 @@ export interface WorkflowCacheDecision {
   safety?: WorkflowCacheEntry['safety'];
   entry?: WorkflowCacheEntry;
   actions?: ParsedAction[];
+}
+
+
+export function buildActionCacheKeyV2Parts(input: {
+  url: string;
+  instruction: string;
+  actionKinds: string[];
+  viewport: { width: number; height: number };
+  pageFingerprint: string;
+  optionFingerprint?: string;
+  locale?: string;
+  userAgent?: string;
+}): ActionCacheKeyV2Parts | null {
+  const domain = extractDomainFromUrl(input.url);
+  const urlPattern = buildUrlPattern(input.url);
+  if (!domain || !urlPattern) return null;
+
+  return {
+    version: 2,
+    domain,
+    urlPattern,
+    normalizedInstruction: normalizeForCache(input.instruction),
+    actionKinds: stableList(input.actionKinds),
+    viewport: {
+      width: Math.max(0, Math.round(input.viewport.width || 0)),
+      height: Math.max(0, Math.round(input.viewport.height || 0)),
+    },
+    ...(input.locale ? { locale: normalizeForCache(input.locale).slice(0, 24) } : {}),
+    userAgentClass: classifyUserAgent(input.userAgent),
+    pageFingerprint: boundedHash(input.pageFingerprint),
+    optionFingerprint: boundedHash(input.optionFingerprint || 'default'),
+  };
+}
+
+export function getActionCacheKeyV2Hash(parts: ActionCacheKeyV2Parts): string {
+  return boundedHash(JSON.stringify(parts));
+}
+
+export function getCachedSequenceV2(
+  url: string,
+  instruction: string,
+  keyParts: ActionCacheKeyV2Parts,
+  options: { allowLegacyFallback?: boolean } = {}
+): ActionCacheV2LookupDecision {
+  const domain = extractDomainFromUrl(url);
+  if (!domain) return { status: 'BYPASS', keyVersion: 2, reason: 'invalid_url' };
+
+  const keyHash = getActionCacheKeyV2Hash(keyParts);
+  const memory = getDomainMemory();
+  const entries = memory.query(domain, CACHE_V2_KEY_PREFIX + normalizeForCache(instruction));
+  let sawCandidate = false;
+
+  for (const knowledge of entries) {
+    const entry = parseCachedSequenceV2(knowledge.value);
+    if (!entry) continue;
+    sawCandidate = true;
+    if (Math.min(knowledge.confidence, MIN_CONFIDENCE + 0.4) < MIN_CONFIDENCE) continue;
+    if (entry.keyHash === keyHash) {
+      return { status: 'HIT', keyVersion: 2, reason: 'key_match', keyHash, entry, actions: entry.actions };
+    }
+  }
+
+  if (sawCandidate) {
+    return { status: 'STALE', keyVersion: 2, reason: 'page_or_option_fingerprint_mismatch', keyHash };
+  }
+
+  if (options.allowLegacyFallback) {
+    const legacy = getCachedSequence(url, instruction);
+    if (legacy) {
+      return { status: 'HIT', keyVersion: 1, reason: 'legacy_v1_fallback', keyHash, legacy, actions: legacy.actions };
+    }
+  }
+
+  return { status: 'MISS', keyVersion: 2, reason: 'no_candidate', keyHash };
+}
+
+export function cacheSequenceV2(url: string, instruction: string, actions: ParsedAction[], keyParts: ActionCacheKeyV2Parts): CachedSequenceV2 | null {
+  const domain = extractDomainFromUrl(url);
+  if (!domain) return null;
+
+  const keyHash = getActionCacheKeyV2Hash(keyParts);
+  const value: CachedSequenceV2 = {
+    version: 2,
+    keyVersion: 2,
+    keyHash,
+    keyParts,
+    instruction,
+    actions,
+    cachedAt: Date.now(),
+    metadata: { createdAt: Date.now() },
+  };
+
+  const memory = getDomainMemory();
+  const key = CACHE_V2_KEY_PREFIX + normalizeForCache(instruction);
+  memory.record(domain, key, JSON.stringify(value));
+  memory.validate(memory.query(domain, key)[0]?.id ?? '', true);
+  return value;
+}
+
+export function validateCachedSequenceV2(url: string, instruction: string, keyHash: string, success: boolean): void {
+  const domain = extractDomainFromUrl(url);
+  if (!domain) return;
+
+  const key = CACHE_V2_KEY_PREFIX + normalizeForCache(instruction);
+  const memory = getDomainMemory();
+  const entries = memory.query(domain, key);
+  const matched = entries.find(entry => parseCachedSequenceV2(entry.value)?.keyHash === keyHash);
+  if (matched) memory.validate(matched.id, success);
 }
 
 /**
@@ -291,6 +440,28 @@ export function validateWorkflowCachedSequence(
     cacheAction: success ? undefined : 'decrement_confidence',
     entry,
   };
+}
+
+
+function parseCachedSequenceV2(value: string): CachedSequenceV2 | null {
+  try {
+    const parsed = JSON.parse(value) as CachedSequenceV2;
+    if (parsed?.version !== 2 || parsed?.keyVersion !== 2 || !parsed.keyHash || !Array.isArray(parsed.actions)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function boundedHash(input: string): string {
+  return createHash('sha256').update(String(input).slice(0, 20_000)).digest('hex').slice(0, 24);
+}
+
+function classifyUserAgent(userAgent?: string): 'chrome' | 'chromium' | 'unknown' {
+  const ua = (userAgent || '').toLowerCase();
+  if (ua.includes('chromium')) return 'chromium';
+  if (ua.includes('chrome')) return 'chrome';
+  return 'unknown';
 }
 
 /**
