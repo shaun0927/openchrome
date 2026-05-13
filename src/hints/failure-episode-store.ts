@@ -99,7 +99,7 @@ export class FailureEpisodeStore {
     }
 
     const episode: FailureEpisode = {
-      id: `episode-${now}-${stableSlug(`${domain}-${failedTool}-${recoveryTool}`)}`,
+      id: `episode-${now}-${stableSlug(`${domain}-${failedTool}-${errorFingerprint}-${recoveryTool}`)}`,
       domain,
       task_intent: sanitizeText(input.failure?.taskIntent, 160) || UNKNOWN,
       state_fingerprint: sanitizeText(input.failure?.stateFingerprint, 160) || UNKNOWN,

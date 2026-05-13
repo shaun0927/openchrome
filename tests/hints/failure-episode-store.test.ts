@@ -82,4 +82,26 @@ describe('FailureEpisodeStore', () => {
     store.recordFailedReuse(first.id);
     expect(store.match({ failedTool: 'interact', errorFingerprint: 'first failure' })).toBeNull();
   });
+
+  it('includes error fingerprint in generated episode ids', () => {
+    const store = new FailureEpisodeStore({ now: () => 1000 });
+
+    const timeout = store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'timeout waiting for element',
+      recoveryTool: 'read_page',
+      failure: { domain: 'example.test' },
+    });
+    const staleRef = store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'stale ref for element',
+      recoveryTool: 'read_page',
+      failure: { domain: 'example.test' },
+    });
+
+    expect(timeout.id).not.toBe(staleRef.id);
+    expect(timeout.id).toContain('timeout-waiting-for-elemen');
+    expect(staleRef.id).toContain('stale-ref-for-element');
+  });
+
 });
