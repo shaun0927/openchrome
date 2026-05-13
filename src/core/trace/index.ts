@@ -17,9 +17,11 @@ export {
   type AppendResult,
   type TraceStorageOptions,
 } from './storage';
+export { makeTraceTarget } from './types';
 export type {
   TraceEvent,
   TraceListFilter,
   TraceSessionMeta,
   TraceStatus,
+  TraceTarget,
 } from './types';
