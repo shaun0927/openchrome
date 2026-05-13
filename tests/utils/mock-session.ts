@@ -456,7 +456,7 @@ export function createMockRefIdManager() {
       return Date.now() - entry.createdAt > 30_000;
     }),
 
-    validateRef: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string, currentNodeName: string, currentTextContent?: string) => {
+    validateRef: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string, currentNodeName: string, currentTextContent?: string, currentName?: string) => {
       const entry = refs.get(sessionId)?.get(targetId)?.get(refId);
       if (!entry) return { valid: false, reason: 'Ref not found' };
 
@@ -471,6 +471,14 @@ export function createMockRefIdManager() {
         const currentPrefix = currentTextContent.slice(0, 30).trim();
         if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
           return { valid: false, stale: true, reason: `Element text changed` };
+        }
+      }
+
+      if (entry.name && currentName) {
+        const storedPrefix = entry.name.slice(0, 30).trim();
+        const currentPrefix = currentName.slice(0, 30).trim();
+        if (storedPrefix && currentPrefix && storedPrefix !== currentPrefix) {
+          return { valid: false, stale: true, reason: `Element name changed` };
         }
       }
 

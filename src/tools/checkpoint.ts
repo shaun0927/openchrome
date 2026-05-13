@@ -11,6 +11,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
 import { getSessionManager } from '../session-manager';
+import { safeTitle } from '../utils/safe-title';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -94,7 +95,7 @@ async function collectTabStates(): Promise<Array<{ tabId: string; url: string; t
             if (page) {
               url = page.url() || 'about:blank';
               try {
-                title = await page.title();
+                title = await safeTitle(page);
               } catch {
                 title = '';
               }
