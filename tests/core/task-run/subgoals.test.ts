@@ -100,6 +100,23 @@ describe('bounded subgoal decomposition', () => {
   });
 
 
+  test('schema rejects non-string global stop condition entries without throwing', () => {
+    const result = validateSubgoalPlan({
+      objective: 'x',
+      global_stop_conditions: ['auth handoff required', 'captcha or bot check', 'destructive confirmation required', 42],
+      subgoals: [{
+        id: 'bad-global-stop',
+        goal: 'read site',
+        success_criteria: 'content visible',
+        allowed_tools: ['read_page'],
+        stop_condition: 'content visible',
+      }],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join('\n')).toContain('global_stop_conditions must contain only strings');
+  });
+
   test('schema rejects non-string allowed tools without throwing', () => {
     const result = validateSubgoalPlan({
       objective: 'x',

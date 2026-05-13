@@ -39,6 +39,9 @@ export function validateSubgoalPlan(plan: unknown, opts: { allowedDomains?: stri
   const globalStopConditions = Array.isArray(row.global_stop_conditions) ? row.global_stop_conditions : undefined;
   if (!subgoals || subgoals.length === 0) errors.push('subgoals must be a non-empty array');
   if (!globalStopConditions) errors.push('global_stop_conditions must be an array');
+  else if (!globalStopConditions.every((item) => typeof item === 'string' && item.length > 0)) {
+    errors.push('global_stop_conditions must contain only strings');
+  }
 
   const seen = new Set<string>();
   for (const stop of REQUIRED_GLOBAL_STOPS) {
