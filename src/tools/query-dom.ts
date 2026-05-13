@@ -4,7 +4,6 @@
  * Replaces: selector_query, xpath_query
  */
 
-import { aliasFor } from '../utils/ref-id-manager';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
@@ -20,8 +19,6 @@ import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref
 
 interface CSSElementInfo {
   ref: string;
-  /** Canonical short element alias projection (#828). */
-  alias?: string;
   /**
    * Stable backend-node uid (#844). P2 contract: this field is always
    * present in the response shape. Value is `null` when
@@ -254,7 +251,6 @@ async function shadowCSSFallback(
 
         if (result?.value) {
           result.value.ref = `el_${i}`;
-          result.value.alias = aliasFor(`ref_${i + 1}`) ?? `@e${i}`;
           // Shadow fallback already has the backendNodeId. Avoid an extra
           // Page.getFrameTree CDP call here: shadow fallback tests and callers
           // rely on the resolveNode/callFunctionOn sequence staying stable.
@@ -380,7 +376,6 @@ async function handleCSS(
 
           return {
             ref: `el_${index}`,
-            alias: aliasFor(`ref_${index + 1}`) ?? `@e${index}`,
             // nodeRef is populated post-evaluate via CDP enrichment below
             // (P2 contract: field is always present in the response shape).
             nodeRef: null as string | null,
