@@ -368,36 +368,41 @@ export function parseSitemapXml(xml: string): SitemapParseResult {
  */
 export class CrawlTracker {
   private visited = new Set<string>();
-  private pending: Array<{ url: string; depth: number }> = [];
+  private pending: Array<{ url: string; depth: number; key?: string }> = [];
+
+  private keyFor(entry: { url: string; key?: string }): string {
+    return entry.key ?? normalizeUrl(entry.url);
+  }
 
   /** Mark a URL as visited. Returns false if already visited. */
-  visit(url: string): boolean {
-    const normalized = normalizeUrl(url);
-    if (this.visited.has(normalized)) return false;
-    this.visited.add(normalized);
+  visit(url: string, key?: string): boolean {
+    const visitedKey = key ?? normalizeUrl(url);
+    if (this.visited.has(visitedKey)) return false;
+    this.visited.add(visitedKey);
     return true;
   }
 
   /** Check if URL has been visited. */
-  hasVisited(url: string): boolean {
-    return this.visited.has(normalizeUrl(url));
+  hasVisited(url: string, key?: string): boolean {
+    return this.visited.has(key ?? normalizeUrl(url));
   }
 
   /** Add URLs to the pending queue if not already visited. */
-  enqueue(urls: Array<{ url: string; depth: number }>): void {
+  enqueue(urls: Array<{ url: string; depth: number; key?: string }>): void {
     for (const entry of urls) {
       const normalized = normalizeUrl(entry.url);
-      if (!this.visited.has(normalized)) {
-        this.pending.push({ url: normalized, depth: entry.depth });
+      const visitedKey = this.keyFor({ url: normalized, key: entry.key });
+      if (!this.visited.has(visitedKey)) {
+        this.pending.push({ url: normalized, depth: entry.depth, key: entry.key });
       }
     }
   }
 
   /** Get the next unvisited URL from the queue. Returns undefined if empty. */
-  dequeue(): { url: string; depth: number } | undefined {
+  dequeue(): { url: string; depth: number; key?: string } | undefined {
     while (this.pending.length > 0) {
       const next = this.pending.shift()!;
-      if (!this.visited.has(next.url)) {
+      if (!this.visited.has(this.keyFor(next))) {
         return next;
       }
     }

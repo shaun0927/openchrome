@@ -10,6 +10,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { writeFileAtomicSafe } from '../utils/atomic-file';
+import { safeTitle } from '../utils/safe-title';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -119,7 +120,7 @@ export async function collectTabs(): Promise<SnapshotTab[]> {
             if (page) {
               url = page.url() || 'about:blank';
               try {
-                title = await page.title();
+                title = await safeTitle(page);
               } catch {
                 title = '';
               }

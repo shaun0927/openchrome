@@ -38,6 +38,19 @@ function extractToken(stdout: string): string {
   return m[0];
 }
 
+function extractJsonArray(stdout: string): string {
+  for (const line of stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+    if (!line.startsWith('[')) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (Array.isArray(parsed)) return line;
+    } catch {
+      // Ignore unrelated bracket-prefixed test noise such as [WorkflowEngine].
+    }
+  }
+  throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
+}
+
 async function runCli(argv: string[]): Promise<RunResult> {
   const program = new Command();
   program.exitOverride((err) => {
@@ -126,11 +139,13 @@ describe('admin keys CLI', () => {
       '--description', 'test key',
     ]);
     expect(exitCode).toBeNull();
-    // Plaintext is the sole stdout payload.
-    const stdoutLines = stdout.split('\n').filter((l) => l.length > 0);
-    expect(stdoutLines).toHaveLength(1);
-    const plaintext = stdoutLines[0];
-    expect(plaintext).toMatch(/^oc_live_acme_[A-Za-z0-9]+$/);
+
+    // Plaintext is emitted exactly once even if unrelated Jest worker noise
+    // is captured by the shared stdout hook on Windows CI.
+    const stdoutTokens = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
+    expect(stdoutTokens).toHaveLength(1);
+    const plaintext = stdoutTokens[0];
+
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
     // keyId is reported on stderr, not stdout.
@@ -191,7 +206,7 @@ describe('admin keys CLI', () => {
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
     expect(listed.exitCode).toBeNull();
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; tenantId: string }>;
+    const parsed = JSON.parse(extractJsonArray(listed.stdout)) as Array<{ keyId: string; tenantId: string }>;
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].tenantId).toBe('acme');
@@ -212,7 +227,7 @@ describe('admin keys CLI', () => {
     expect(revoked.stderr).toContain('Revoked');
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; revokedAt?: number }>;
+    const parsed = JSON.parse(extractJsonArray(listed.stdout)) as Array<{ keyId: string; revokedAt?: number }>;
     const row = parsed.find((r) => r.keyId === keyId);
     expect(row).toBeDefined();
     expect(typeof row!.revokedAt).toBe('number');
@@ -238,7 +253,7 @@ describe('admin keys CLI', () => {
     expect(rotated.stdout + rotated.stderr).not.toContain(firstPlaintext);
 
     const listed = await runCli(['admin', 'keys', 'list', '--json']);
-    const parsed = JSON.parse(listed.stdout) as Array<{ keyId: string; revokedAt?: number }>;
+    const parsed = JSON.parse(extractJsonArray(listed.stdout)) as Array<{ keyId: string; revokedAt?: number }>;
     const oldRow = parsed.find((r) => r.keyId === firstKeyId);
     expect(oldRow).toBeDefined();
     expect(typeof oldRow!.revokedAt).toBe('number');

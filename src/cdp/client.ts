@@ -559,6 +559,8 @@ export class CDPClient {
     }
     this.browser = null;
 
+    const generation = ++this.connectionGeneration;
+
     // Attempt reconnection — do NOT auto-launch Chrome.
     // If Chrome was closed by the user, we should stay disconnected and only
     // re-launch when the next tool call arrives (lazy launch). This prevents
@@ -581,7 +583,16 @@ export class CDPClient {
       });
 
       try {
-        await this.connectInternal({ autoLaunch: false });
+        const connected = await this.connectInternal({ autoLaunch: false, generation });
+        if (connected === false) {
+          this.reconnecting = false;
+          this.reconnectingAttempt = 0;
+          this.reconnectNextRetryAt = 0;
+          if (this.connectionState === 'reconnecting') {
+            this.connectionState = 'disconnected';
+          }
+          return;
+        }
         console.error('[CDPClient] Reconnection successful');
         this.reconnectAttempts = 0;
         this.reconnecting = false;
@@ -1011,6 +1022,9 @@ export class CDPClient {
       }
       this.lastVerifiedAt = Date.now();
       this.consecutiveHeartbeatFailures = 0;
+      this.reconnecting = false;
+      this.reconnectingAttempt = 0;
+      this.reconnectNextRetryAt = 0;
       this.startHeartbeat();
       this.emitConnectionEvent({ type: 'reconnected', timestamp: Date.now() });
       console.error('[CDPClient] Reconnected to Chrome');
@@ -1574,15 +1588,18 @@ export class CDPClient {
           );
         }
         if (cookieScan.targetId) {
+          let cookieCopyTid: ReturnType<typeof setTimeout> | undefined;
           await Promise.race([
             this.copyCookiesViaCDP(cookieScan.targetId, page),
-            new Promise<void>((resolve) =>
-              setTimeout(() => {
+            new Promise<void>((resolve) => {
+              cookieCopyTid = setTimeout(() => {
                 console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
                 resolve();
-              }, DEFAULT_COOKIE_COPY_TIMEOUT_MS),
-            ),
-          ]);
+              }, DEFAULT_COOKIE_COPY_TIMEOUT_MS);
+            }),
+          ]).finally(() => {
+            if (cookieCopyTid) clearTimeout(cookieCopyTid);
+          });
         }
       }
     }
@@ -1597,10 +1614,15 @@ export class CDPClient {
     this.configurePageDefenses(page);
 
     // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
+    let pageConfigTid: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       page.setViewport(CDPClient.DEFAULT_VIEWPORT),
-      new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS)),
-    ]);
+      new Promise<void>((resolve) => {
+        pageConfigTid = setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS);
+      }),
+    ]).finally(() => {
+      if (pageConfigTid) clearTimeout(pageConfigTid);
+    });
 
     if (url) {
       try {
@@ -2077,10 +2099,15 @@ export class CDPClient {
 
     for (const target of targets) {
       if (getTargetId(target) === targetId && target.type() === 'page') {
+        let targetPageTid: ReturnType<typeof setTimeout> | undefined;
         const page = await Promise.race([
           target.page(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
-        ]);
+          new Promise<null>((resolve) => {
+            targetPageTid = setTimeout(() => resolve(null), 5000);
+          }),
+        ]).finally(() => {
+          if (targetPageTid) clearTimeout(targetPageTid);
+        });
         if (page) {
           // Populate index for future lookups
           this.targetIdIndex.set(targetId, page);
@@ -2236,6 +2263,10 @@ export function getCDPClient(options?: CDPClientOptions): CDPClient {
   return clientInstance;
 }
 
+export function _resetCDPClientForTesting(): void {
+  clientInstance = null;
+}
+
 /**
  * Factory for managing multiple CDPClient instances (one per Chrome port)
  */
@@ -2290,4 +2321,8 @@ export function getCDPClientFactory(): CDPClientFactory {
     factoryInstance = new CDPClientFactory();
   }
   return factoryInstance;
+}
+
+export function _resetCDPClientFactoryForTesting(): void {
+  factoryInstance = null;
 }

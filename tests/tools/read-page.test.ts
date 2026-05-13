@@ -74,13 +74,6 @@ describe('ReadPageTool', () => {
       sampleAccessibilityTree
     );
 
-    // Set up CDP response for depth 5 (used with interactive filter)
-    mockSessionManager.mockCDPClient.setCDPResponse(
-      'Accessibility.getFullAXTree',
-      { depth: 5 },
-      sampleAccessibilityTree
-    );
-
     // Set up DOM.getDocument response for DOM mode (now the default)
     mockSessionManager.mockCDPClient.setCDPResponse(
       'DOM.getDocument',
@@ -125,9 +118,27 @@ describe('ReadPageTool', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    // Keep delta snapshot cache isolated between read_page tests.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('../../src/compression/snapshot-store').SnapshotStore.getInstance().clear();
   });
 
   describe('Accessibility Tree', () => {
+    test('semantic include_metrics reports the final serialized payload size', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'semantic',
+        include_metrics: true,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      const payload = JSON.parse(text) as { _metrics: { returned_chars: number; estimated_tokens: number } };
+      expect(payload._metrics.returned_chars).toBe(text.length);
+      expect(payload._metrics.estimated_tokens).toBe(Math.ceil(text.length / 4));
+    });
+
     test('returns tree with default depth', async () => {
       const handler = await getReadPageHandler();
 
@@ -207,6 +218,23 @@ describe('ReadPageTool', () => {
         expect.anything(),
         'Accessibility.getFullAXTree',
         { depth: 3 }
+      );
+    });
+
+    test('caps custom depth above limit for interactive filter', async () => {
+      const handler = await getReadPageHandler();
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        filter: 'interactive',
+        depth: 10,
+      });
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        { depth: 5 }
       );
     });
 
@@ -561,6 +589,67 @@ describe('ReadPageTool', () => {
       expect(typeof matchingCall![2]).toBe('number');
       expect(typeof matchingCall![3]).toBe('string');
     });
+
+    test('compact AX mode omits non-actionable no-ref leaves while preserving actionable nodes', async () => {
+      const handler = await getReadPageHandler();
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        {
+          nodes: [
+            { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Compact Page' }, childIds: [2, 3] },
+            { nodeId: 2, role: { value: 'StaticText' }, name: { value: 'Decorative copy' } },
+            { nodeId: 3, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+          ],
+        }
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        compact: true,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('button: "Submit"');
+      expect(result.content[0].text).not.toContain('Decorative copy');
+    });
+
+    test('AX delta compression returns only changes after the first cached snapshot', async () => {
+      const handler = await getReadPageHandler();
+      const firstTree = {
+        nodes: [
+          { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Delta Page' }, childIds: [2] },
+          { nodeId: 2, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+        ],
+      };
+      const secondTree = {
+        nodes: [
+          { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Delta Page' }, childIds: [2, 3] },
+          { nodeId: 2, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+          { nodeId: 3, backendDOMNodeId: 102, role: { value: 'link' }, name: { value: 'Learn more' } },
+        ],
+      };
+      mockSessionManager.mockCDPClient.setCDPResponse('Accessibility.getFullAXTree', { depth: 8 }, firstTree);
+
+      const first = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        compression: 'delta',
+      }) as { content: Array<{ type: string; text: string }> };
+      expect(first.content[0].text).toContain('button: "Submit"');
+      expect(first.content[0].text).not.toContain('[AX Delta');
+
+      mockSessionManager.mockCDPClient.setCDPResponse('Accessibility.getFullAXTree', { depth: 8 }, secondTree);
+      const second = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        compression: 'delta',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(second.content[0].text).toContain('[AX Delta');
+      expect(second.content[0].text).toContain('Learn more');
+    });
+
   });
 
   describe('Error Handling', () => {
@@ -589,8 +678,13 @@ describe('ReadPageTool', () => {
       const handler = await getReadPageHandler();
       mockSessionManager.mockCDPClient.send.mockRejectedValueOnce(new Error('CDP error'));
 
+      // Use AX mode to exercise the top-level CDP error path. DOM mode now
+      // fails closed with its own dedicated message ("Read page DOM
+      // serialization error: …") covered by other tests, so steering this
+      // case through AX keeps the original assertion meaningful.
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
@@ -608,7 +702,7 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
-      expect(text).toMatch(/^\[page_stats\]/);
+      expect(text).toMatch(/(?:^|\n)\[page_stats\]/);
     });
 
     test('AX mode page_stats includes url and title', async () => {
