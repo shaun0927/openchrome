@@ -58,6 +58,7 @@ import { getActionRecorder } from './recording/action-recorder';
 import {
   substituteSecrets,
   redactSecrets,
+  redactSecretString,
   MissingSecretError,
   getSecretStore,
 } from './core/secrets';
@@ -1748,6 +1749,7 @@ export class MCPServer {
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
+      result = redactSecrets(result);
       this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');
 
@@ -1909,12 +1911,13 @@ export class MCPServer {
       return finalResult;
     } catch (error) {
       const message = formatError(error);
+      const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
       const aborted = abortReason !== null;
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
-      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, aborted ? 'aborted' : 'error', undefined, message);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, toolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
       getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
 
       // Audit log failed invocation — same correlation fields as success path.
