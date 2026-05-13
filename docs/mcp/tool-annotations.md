@@ -60,6 +60,7 @@ Categories below are documentation-only — the runtime source is
 | `wait_for`                 | Pure wait on observable state                        |
 | `oc_doctor_report`        | Cached doctor report read                            |
 | `oc_devtools_url`         | DevTools URL metadata read                           |
+| `oc_diff`                 | Evidence bundle diff read                            |
 | `oc_context_export`       | Portable context envelope export                     |
 | `oc_observe`              | Deterministic actionable-element enumeration         |
 | `oc_performance_analyze`  | Analyze an existing performance trace                |

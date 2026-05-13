@@ -118,6 +118,7 @@ import { registerOcAssertTool } from './oc-assert';
 
 // Outcome Contracts (#792) — evidence bundle capture
 import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
+import { registerOcDiffTool } from './oc-diff';
 
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
@@ -211,6 +212,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_policy: 'core',
   oc_copy_to_clipboard: 'core',
   oc_devtools_url: 'core',
+  oc_diff: 'core',
   oc_doctor_report: 'core',
   oc_evidence_bundle: 'core',
   oc_get_connection_info: 'core',
@@ -478,6 +480,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Outcome Contracts (#792) — evidence bundle capture
   registerOcEvidenceBundleTool(proxy);
+  registerOcDiffTool(proxy);
 
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(proxy);

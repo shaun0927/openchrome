@@ -95,6 +95,7 @@ export const TOOL_ANNOTATIONS = {
   oc_performance_analyze: READ_ONLY,
   oc_normalize_action: READ_ONLY,
   oc_progress_status: READ_ONLY,
+  oc_diff: READ_ONLY,
 
   // ── Network egress (navigation, crawling) ───────────────────────────────
   //
