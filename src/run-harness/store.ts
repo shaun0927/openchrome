@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { redactValue } from '../core/trace/redactor.js';
 import { TERMINAL_RUN_STATUSES, type RunEvent, type RunRecord, type RunStatus } from './types.js';
 
 export interface RunStoreOptions {
@@ -70,13 +71,13 @@ export class RunStore {
       updated_at: ts,
       session_id: input.session_id,
       tab_id: input.tab_id,
-      metadata: input.metadata,
+      metadata: sanitizeMetadata(input.metadata),
       events: [],
     };
     record.events.push(this.event(run_id, 'run_started', {
       session_id: input.session_id,
       tab_id: input.tab_id,
-      metadata: input.metadata,
+      metadata: sanitizeMetadata(input.metadata),
     }));
     this.writeRun(record);
     return record;
@@ -105,8 +106,8 @@ export class RunStore {
     record.status = input.status;
     record.updated_at = this.now();
     record.events.push(this.event(safeRunId, 'run_finished', {
-      message: input.message,
-      metadata: input.metadata,
+      message: sanitizeText(input.message),
+      metadata: sanitizeMetadata(input.metadata),
     }));
     this.writeRun(record);
     return record;
@@ -124,8 +125,8 @@ export class RunStore {
       ok: input.ok,
       duration_ms: input.duration_ms,
       args_hash: input.args ? hashRunArgs(input.args) : undefined,
-      message: input.message,
-      metadata: input.metadata,
+      message: sanitizeText(input.message),
+      metadata: sanitizeMetadata(input.metadata),
     });
     record.events.push(event);
     record.updated_at = event.ts;
@@ -177,6 +178,39 @@ export function sanitizeRunId(runId: string): string {
     throw new Error('run_id must be a non-empty safe basename under 160 characters');
   }
   return runId;
+}
+
+const RUN_LEDGER_REDACTED = '[REDACTED]';
+const RUN_LEDGER_SENSITIVE_KEY = /password|token|secret|credential|api[_-]?key/i;
+const RUN_LEDGER_SENSITIVE_TEXT = /(password|token|secret|credential|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi;
+const RUN_LEDGER_BEARER_TEXT = /Bearer\s+[^\s,;]+/gi;
+
+function sanitizeMetadata(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  return redactValue(sanitizeRunLedgerValue(value)) as Record<string, unknown>;
+}
+
+function sanitizeText(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : String(redactValue(sanitizeRunLedgerString(value)));
+}
+
+function sanitizeRunLedgerValue(value: unknown): unknown {
+  if (typeof value === 'string') return sanitizeRunLedgerString(value);
+  if (Array.isArray(value)) return value.map(sanitizeRunLedgerValue);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = RUN_LEDGER_SENSITIVE_KEY.test(key) ? RUN_LEDGER_REDACTED : sanitizeRunLedgerValue(inner);
+    }
+    return out;
+  }
+  return value;
+}
+
+function sanitizeRunLedgerString(value: string): string {
+  return value
+    .replace(RUN_LEDGER_SENSITIVE_TEXT, (_match, key: string) => `${key}=${RUN_LEDGER_REDACTED}`)
+    .replace(RUN_LEDGER_BEARER_TEXT, `Bearer ${RUN_LEDGER_REDACTED}`);
 }
 
 function canonicalJson(value: unknown): string {

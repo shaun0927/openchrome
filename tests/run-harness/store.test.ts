@@ -32,6 +32,33 @@ describe('RunStore', () => {
     expect(run.events[1].args_hash).toBe(hashRunArgs({ password: 'different', url: 'https://example.com' }));
   });
 
+  it('redacts persisted metadata and messages', () => {
+    const { dir, store } = tempStore();
+    store.startRun({
+      run_id: 'run-redact',
+      metadata: { token: 'abc123', nested: { note: 'password=hunter2 Bearer abc123' } },
+    });
+    store.appendToolFinished({
+      run_id: 'run-redact',
+      tool: 'read_page',
+      ok: false,
+      message: 'failed with api_key=secret123',
+      metadata: { credential: 'plain', detail: 'secret=visible' },
+    });
+    store.finishRun('run-redact', {
+      status: 'failed',
+      message: 'token=final Bearer abc123',
+      metadata: { nested: { password: 'hunter2' } },
+    });
+
+    const raw = fs.readFileSync(path.join(dir, 'run-redact.json'), 'utf8');
+    expect(raw).not.toContain('abc123');
+    expect(raw).not.toContain('hunter2');
+    expect(raw).not.toContain('secret123');
+    expect(raw).not.toContain('plain');
+    expect(raw).toContain('[REDACTED]');
+  });
+
   it('finishes a run once and ignores later terminal writes', () => {
     const { store } = tempStore();
     store.startRun({ run_id: 'run-finish' });
