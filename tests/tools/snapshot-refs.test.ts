@@ -147,9 +147,12 @@ describe('Snapshot Refs (#831)', () => {
       const result = await handler(testSessionId, {
         tabId: testTargetId,
         mode: 'ax',
-      }) as { content: Array<{ type: string; text: string }>; refs?: Record<string, unknown> };
+      }) as { content: Array<{ type: string; text: string }>; refs?: Record<string, unknown>; snapshot?: { snapshotId: string; capturedAt: number; url: string; tabId: string } };
 
       expect(result.refs).toBeDefined();
+      expect(result.snapshot).toBeDefined();
+      expect(result.snapshot?.tabId).toBe(testTargetId);
+      expect(result.snapshot?.url).toBe('https://example.com');
       const refs = result.refs as Record<string, {
         role: string;
         name?: string;
@@ -158,6 +161,9 @@ describe('Snapshot Refs (#831)', () => {
         frame_id?: string;
         created_at: number;
         stale_after_ms: number;
+        snapshot_id: string;
+        snapshot_captured_at: number;
+        snapshot_url: string;
       }>;
       // At least one ref produced from sampleAccessibilityTree
       const refKeys = Object.keys(refs);
@@ -168,6 +174,9 @@ describe('Snapshot Refs (#831)', () => {
         expect(typeof entry.role).toBe('string');
         expect(typeof entry.created_at).toBe('number');
         expect(typeof entry.stale_after_ms).toBe('number');
+        expect(entry.snapshot_id).toBe(result.snapshot?.snapshotId);
+        expect(entry.snapshot_captured_at).toBe(result.snapshot?.capturedAt);
+        expect(entry.snapshot_url).toBe(result.snapshot?.url);
         // Default TTL is 30s
         expect(entry.stale_after_ms).toBeGreaterThan(0);
       }
@@ -217,6 +226,12 @@ describe('Snapshot Refs (#831)', () => {
       (mockRefIdManager.isRefStale as jest.Mock).mockImplementation(
         (sid: string, tid: string, r: string) => r === refId,
       );
+      (mockRefIdManager.getRefStalenessWarning as jest.Mock).mockReturnValue({
+        code: 'possibly_stale_snapshot',
+        message: 'Ref exceeded stale_after_ms.',
+        ref_id: refId,
+        hint: "call read_page (mode='ax') to get fresh refs",
+      });
 
       const result = await handler(testSessionId, {
         tabId: testTargetId,
@@ -224,7 +239,7 @@ describe('Snapshot Refs (#831)', () => {
         action: 'click',
       }) as {
         content: Array<{ type: string; text: string }>;
-        error?: { code: string; ref_id: string };
+        error?: { code: string; ref_id: string; stale_warning?: { code: string; ref_id: string } };
         isError?: boolean;
       };
 
@@ -234,6 +249,7 @@ describe('Snapshot Refs (#831)', () => {
       expect(result.error).toBeDefined();
       expect(result.error?.code).toBe('STALE_REF');
       expect(result.error?.ref_id).toBe(refId);
+      expect(result.error?.stale_warning?.ref_id).toBe(refId);
     });
 
     test('stale ref (post-navigation, entry cleared) → STALE_REF error', async () => {
@@ -249,13 +265,14 @@ describe('Snapshot Refs (#831)', () => {
         action: 'click',
       }) as {
         content: Array<{ type: string; text: string }>;
-        error?: { code: string; ref_id: string };
+        error?: { code: string; ref_id: string; stale_warning?: { code: string; ref_id: string } };
         isError?: boolean;
       };
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('STALE_REF');
       expect(result.error?.code).toBe('STALE_REF');
+      expect(result.error?.stale_warning?.code).toBe('stale_snapshot');
     });
   });
 

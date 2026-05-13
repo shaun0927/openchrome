@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager, REF_TTL_MS } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
@@ -208,6 +208,16 @@ interface AXNode {
   value?: { value: string };
   childIds?: number[];
   properties?: Array<{ name: string; value: { value: unknown } }>;
+}
+
+
+function createReadPageSnapshotMetadata(tabId: string, url: string, capturedAt = Date.now()): SnapshotRefMetadata {
+  return {
+    snapshotId: `snap_${capturedAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    capturedAt,
+    url,
+    tabId,
+  };
 }
 
 const handler: ToolHandler = async (
@@ -874,7 +884,11 @@ const handler: ToolHandler = async (
       frame_id?: string;
       created_at: number;
       stale_after_ms: number;
+      snapshot_id: string;
+      snapshot_captured_at: number;
+      snapshot_url: string;
     }> = {};
+    const snapshotMetadata = createReadPageSnapshotMetadata(tabId, axPageStats.url);
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
@@ -926,7 +940,9 @@ const handler: ToolHandler = async (
           node.backendDOMNodeId,
           role,
           name,
-          tagName
+          tagName,
+          undefined,
+          { snapshot: snapshotMetadata }
         );
 
         // #831: record the structured ref entry for the response `refs` map.
@@ -941,6 +957,9 @@ const handler: ToolHandler = async (
           ...(entry?.frameId ? { frame_id: entry.frameId } : {}),
           created_at: entry?.createdAt ?? Date.now(),
           stale_after_ms: entry?.staleAfterMs ?? REF_TTL_MS,
+          snapshot_id: snapshotMetadata.snapshotId,
+          snapshot_captured_at: snapshotMetadata.capturedAt,
+          snapshot_url: snapshotMetadata.url,
         };
       }
 
@@ -1052,6 +1071,7 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
+          snapshot: snapshotMetadata,
         });
       }
 
@@ -1104,6 +1124,7 @@ const handler: ToolHandler = async (
             },
           ],
           refs: refsMap,
+          snapshot: snapshotMetadata,
         });
       }
     }
@@ -1111,6 +1132,7 @@ const handler: ToolHandler = async (
     return withDiagnostics({
       content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
       refs: refsMap,
+      snapshot: snapshotMetadata,
     });
   } catch (error) {
     return {

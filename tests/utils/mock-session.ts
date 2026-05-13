@@ -367,12 +367,12 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
  * Creates a simple mock RefIdManager for testing
  */
 export function createMockRefIdManager() {
-  const refs: Map<string, Map<string, Map<string, { refId: string; backendDOMNodeId: number; role: string; name?: string; tagName?: string; textContent?: string; createdAt: number }>>> = new Map();
+  const refs: Map<string, Map<string, Map<string, { refId: string; backendDOMNodeId: number; role: string; name?: string; tagName?: string; textContent?: string; createdAt: number; staleAfterMs: number; snapshot?: { snapshotId: string; capturedAt: number; url: string; tabId: string } }>>> = new Map();
   const counters: Map<string, Map<string, number>> = new Map();
 
   return {
     generateRef: jest.fn().mockImplementation(
-      (sessionId: string, targetId: string, backendDOMNodeId: number, role: string, name?: string, tagName?: string, textContent?: string) => {
+      (sessionId: string, targetId: string, backendDOMNodeId: number, role: string, name?: string, tagName?: string, textContent?: string, options?: { staleAfterMs?: number; snapshot?: { snapshotId: string; capturedAt: number; url: string; tabId: string } }) => {
         if (!refs.has(sessionId)) {
           refs.set(sessionId, new Map());
         }
@@ -398,6 +398,8 @@ export function createMockRefIdManager() {
           tagName,
           textContent,
           createdAt: Date.now(),
+          staleAfterMs: options?.staleAfterMs ?? 30_000,
+          snapshot: options?.snapshot,
         });
 
         return refId;
@@ -449,7 +451,31 @@ export function createMockRefIdManager() {
     isRefStale: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string) => {
       const entry = refs.get(sessionId)?.get(targetId)?.get(refId);
       if (!entry) return true;
-      return Date.now() - entry.createdAt > 30_000;
+      return Date.now() - entry.createdAt > entry.staleAfterMs;
+    }),
+
+
+    getRefStalenessWarning: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string) => {
+      const entry = refs.get(sessionId)?.get(targetId)?.get(refId);
+      if (!entry) {
+        return {
+          code: 'stale_snapshot',
+          message: `Ref ${refId} is no longer present for tab ${targetId}; the page likely navigated, reloaded, or refreshed refs.`,
+          ref_id: refId,
+          hint: "call read_page (mode='ax') to get fresh refs",
+        };
+      }
+      const ageMs = Date.now() - entry.createdAt;
+      if (ageMs <= entry.staleAfterMs) return undefined;
+      return {
+        code: 'possibly_stale_snapshot',
+        message: `Ref ${refId} is ${ageMs}ms old and exceeds stale_after_ms=${entry.staleAfterMs}.`,
+        ref_id: refId,
+        snapshot_id: entry.snapshot?.snapshotId,
+        captured_at: entry.snapshot?.capturedAt ?? entry.createdAt,
+        age_ms: ageMs,
+        hint: "call read_page (mode='ax') to get fresh refs",
+      };
     }),
 
     validateRef: jest.fn().mockImplementation((sessionId: string, targetId: string, refId: string, currentNodeName: string, currentTextContent?: string) => {
@@ -470,7 +496,7 @@ export function createMockRefIdManager() {
         }
       }
 
-      return { valid: true, stale: Date.now() - entry.createdAt > 30_000 };
+      return { valid: true, stale: Date.now() - entry.createdAt > entry.staleAfterMs };
     }),
 
     tryRelocateRef: jest.fn().mockResolvedValue(null),
