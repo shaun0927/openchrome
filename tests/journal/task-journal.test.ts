@@ -574,6 +574,19 @@ describe('TaskJournal failure summaries', () => {
     expect(entry.resultSummary).not.toContain('secret-token');
   });
 
+  it('does not classify unrelated stale wording as stale_ref', () => {
+    const entry = journal.createEntry(
+      'extract_data',
+      'sess',
+      {},
+      10,
+      false,
+      'empty result; stale cache warning was informational',
+    );
+
+    expect(entry.failureClass).toBe('empty_result');
+  });
+
   it('does not derive auth_redirect solely from destination URL path', () => {
     const entry = journal.createEntry(
       'navigate',

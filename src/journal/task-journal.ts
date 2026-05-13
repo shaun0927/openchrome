@@ -326,7 +326,7 @@ export class TaskJournal {
     if (entry.ok && !hasOkNonProgressSignal(text)) return null;
 
     if (
-      /(stale|no longer available|target .*not found|tab .*not found|ref_\d+|backendnodeid)/i.test(
+      /(no longer available|target .*not found|tab .*not found|ref_\d+|backendnodeid|stale\s+(?:ref|reference|element|node)|(?:ref|reference|element|node)\s+(?:is\s+)?stale)/i.test(
         text,
       )
     )
