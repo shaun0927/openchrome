@@ -59,6 +59,19 @@ describe('task envelope budget evaluation', () => {
     expect(meta.budget_status).toBe('exceeded');
     expect(meta.budget_exceeded).toContain('maxSameUrlNavigations');
   });
+
+  test('same URL navigation budget stays exceeded after later non-navigation calls', () => {
+    let meta = makeMeta();
+    meta = applyToolCallToTask(meta, call('navigate', { url: 'http://localhost/a' }));
+    meta = applyToolCallToTask(meta, call('navigate', { url: 'http://localhost/a' }));
+    meta = applyToolCallToTask(meta, call('navigate', { url: 'http://localhost/a' }));
+    expect(meta.budget_status).toBe('exceeded');
+
+    meta = applyToolCallToTask(meta, call('read_page'));
+
+    expect(meta.budget_status).toBe('exceeded');
+    expect(meta.budget_exceeded).toContain('maxSameUrlNavigations');
+  });
 });
 
 describe('task envelope store integration', () => {

@@ -103,7 +103,7 @@ export function applyToolCallToTask(meta: TaskMeta, call: RecordedToolCall): Tas
     counters.sameUrlNavigations[navUrl] = (counters.sameUrlNavigations[navUrl] ?? 0) + 1;
   }
 
-  const decision = evaluateBudget(meta, counters, policy, navUrl);
+  const decision = evaluateBudget(meta, counters, policy);
   const recentEvent: TaskRecentEvent = {
     ts: call.ts,
     tool: call.tool,
@@ -130,7 +130,6 @@ function evaluateBudget(
   meta: TaskMeta,
   counters: TaskCounters,
   policy: TaskEnvelopePolicy,
-  navUrl?: string,
 ): TaskBudgetDecision {
   const exceeded: string[] = [];
   const warnings: string[] = [];
@@ -139,9 +138,7 @@ function evaluateBudget(
   checkLimit('maxConsecutiveSameTool', counters.consecutiveSameTool, policy.maxConsecutiveSameTool, exceeded, warnings);
   checkLimit('maxObservationStreak', counters.observationStreak, policy.maxObservationStreak, exceeded, warnings);
   checkLimit('maxFailureStreak', counters.failureStreak, policy.maxFailureStreak, exceeded, warnings);
-  if (navUrl) {
-    checkLimit('maxSameUrlNavigations', counters.sameUrlNavigations[navUrl] ?? 0, policy.maxSameUrlNavigations, exceeded, warnings);
-  }
+  checkSameUrlNavigationLimit(counters.sameUrlNavigations, policy.maxSameUrlNavigations, exceeded, warnings);
   if (policy.maxWallMs) {
     checkLimit('maxWallMs', Date.now() - meta.created_at, policy.maxWallMs, exceeded, warnings);
   }
@@ -157,6 +154,24 @@ function evaluateBudget(
         ? 'checkpoint_or_verify'
         : undefined,
   };
+}
+
+function checkSameUrlNavigationLimit(
+  sameUrlNavigations: Record<string, number>,
+  limit: number | undefined,
+  exceeded: string[],
+  warnings: string[],
+): void {
+  if (!limit) return;
+  let atWarning = false;
+  for (const count of Object.values(sameUrlNavigations)) {
+    if (count > limit) {
+      exceeded.push('maxSameUrlNavigations');
+      return;
+    }
+    if (count >= Math.ceil(limit * 0.75)) atWarning = true;
+  }
+  if (atWarning) warnings.push('maxSameUrlNavigations');
 }
 
 function checkLimit(
