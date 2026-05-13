@@ -332,7 +332,7 @@ export class TaskJournal {
     )
       return "stale_ref";
     if (
-      /(authredirect|login page detected|redirected to login|sign in|signin|unauthorized|401)/i.test(
+      /(authredirect|auth_redirect_required|login page detected|redirected to login|sign in|signin|unauthorized|401)/i.test(
         text,
       )
     )
@@ -474,7 +474,7 @@ function emptyFailureClassCounts(): Record<JournalFailureClass, number> {
 }
 
 function hasNonProgressSignal(text: string): boolean {
-  return /(authredirect|login page detected|captcha|waf|stale|timed out|timeout|empty result|not making progress|stuck|stalling|contract.*fail|assertion.*fail)/i.test(
+  return /(authredirect|auth_redirect_required|login page detected|captcha|waf|stale|timed out|timeout|empty result|not making progress|stuck|stalling|contract.*fail|assertion.*fail|auth_redirect_required|failed_assertions|inconclusive)/i.test(
     text,
   );
 }

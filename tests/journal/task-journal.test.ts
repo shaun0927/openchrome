@@ -574,6 +574,26 @@ describe('TaskJournal failure summaries', () => {
     expect(entry.resultSummary).not.toContain('secret-token');
   });
 
+  it('classifies known non-progress signals even when the tool result was ok', () => {
+    for (const [tool, resultSummary, expected] of [
+      ['validate_page', 'auth_redirect_required', 'auth_redirect'],
+      ['oc_assert', 'failed_assertions contained missing text', 'contract_failed'],
+      ['oc_assert', 'assertion inconclusive after retries', 'contract_failed'],
+    ] as const) {
+      const entry: JournalEntry = {
+        ts: Date.now(),
+        tool,
+        sessionId: 'sess',
+        args: {},
+        durationMs: 10,
+        ok: true,
+        summary: `✓ ${tool}`,
+        resultSummary,
+      };
+      expect(journal.classifyFailure(entry)).toBe(expected);
+    }
+  });
+
   it('derives classes for older entries without stored failureClass fields', () => {
     const oldEntry: JournalEntry = {
       ts: Date.now(),
