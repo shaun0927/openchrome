@@ -13,6 +13,7 @@ model composes them into prose.
 | [multi-source-news-digest.md](multi-source-news-digest.md) | Pull headlines from several news sources and produce a one-screen daily digest. | `navigate`, `read_page`, `crawl` |
 | [fit-markdown.md](fit-markdown.md) | Return raw and fit markdown with deterministic prune/BM25 filters. | `read_page`, `crawl`, `crawl_sitemap` |
 | [docs-changelog-diff.md](docs-changelog-diff.md) | Compare two snapshots of a docs page (e.g. before/after a release) and explain what changed. | `navigate`, `read_page` |
+| [scoped-structured-extract.md](scoped-structured-extract.md) | Extract structured data from a specific selector, ref, or backend node without global metadata leakage. | `read_page`, `oc_observe`, `extract_data` |
 | [semantic-extract-data.md](semantic-extract-data.md) | Use query-based semantic `extract_data` host fallback with bounded chunks. | `extract_data` |
 | [competitive-feature-matrix.md](competitive-feature-matrix.md) | Build a structured feature-matrix table across several vendor pages. | `navigate`, `extract_data`, `read_page` |
 | [semantic-login-flow.md](semantic-login-flow.md) | Resolve semantic query refs, drive plan actions, and verify with an Outcome Contract. | `oc_query`, `fill_form`, `interact`, `oc_assert`, `oc_evidence_bundle`, `execute_plan` |
