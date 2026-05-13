@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -326,7 +327,9 @@ function overlapScore(left: Set<string>, right: Set<string>): number {
 }
 
 function stableSlug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'failure';
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'failure';
+  const hash = crypto.createHash('sha256').update(value).digest('hex').slice(0, 8);
+  return `${slug}-${hash}`;
 }
 
 function clampConfidence(value: number): number {

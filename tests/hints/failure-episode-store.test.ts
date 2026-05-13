@@ -100,8 +100,29 @@ describe('FailureEpisodeStore', () => {
     });
 
     expect(timeout.id).not.toBe(staleRef.id);
-    expect(timeout.id).toContain('timeout-waiting-for-elemen');
-    expect(staleRef.id).toContain('stale-ref-for-element');
+    expect(timeout.id).toMatch(/timeout-waiting-fo-[0-9a-f]{8}$/);
+    expect(staleRef.id).toMatch(/stale-ref-for-elem-[0-9a-f]{8}$/);
+  });
+
+
+  it('uses a hash suffix so truncated slugs remain collision-resistant', () => {
+    const store = new FailureEpisodeStore({ now: () => 2000 });
+    const first = store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'alpha beta gamma delta epsilon '.repeat(6) + 'first unique tail',
+      recoveryTool: 'read_page',
+      failure: { domain: 'example.test' },
+    });
+    const second = store.recordVerifiedRecovery({
+      failedTool: 'interact',
+      errorFingerprint: 'zulu yankee xray whiskey victor '.repeat(6) + 'second unique tail',
+      recoveryTool: 'read_page',
+      failure: { domain: 'example.test' },
+    });
+
+    expect(first.id).not.toBe(second.id);
+    expect(first.id).toMatch(/-[0-9a-f]{8}$/);
+    expect(second.id).toMatch(/-[0-9a-f]{8}$/);
   });
 
 });
