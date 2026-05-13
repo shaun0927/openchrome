@@ -24,7 +24,8 @@ import {
   summariseArgs,
   runTask,
 } from '../core/task-ledger';
-import type { TaskMeta } from '../core/task-ledger';
+import type { TaskMeta, TaskOwner } from '../core/task-ledger';
+import type { Principal } from '../auth/api-key-types';
 
 let storeSingleton: TaskStore | undefined;
 
@@ -82,7 +83,44 @@ interface StartHandlerOpts {
     toolName: string,
     args: Record<string, unknown>,
     signal: AbortSignal,
+    principal?: Principal,
   ) => Promise<MCPResult>;
+}
+
+
+let taskNonceSeq = 0;
+let startupReapPromise: Promise<unknown> = Promise.resolve();
+
+export function setTaskStartupReapPromise(promise: Promise<unknown>): void {
+  startupReapPromise = promise.catch((err) => {
+    console.error('[task-ledger] startup reapOrphans failed:', err);
+  });
+}
+
+export async function waitForTaskStartupReap(): Promise<void> {
+  await startupReapPromise;
+}
+
+export function taskOwnerFor(sessionId: string, principal?: Principal): TaskOwner {
+  return {
+    session_id: sessionId,
+    ...(principal?.tenantId ? { tenant_id: principal.tenantId } : {}),
+    ...(principal?.keyId ? { key_id: principal.keyId } : {}),
+    ...(principal?.mode ? { mode: principal.mode } : {}),
+  };
+}
+
+export function canAccessTask(meta: TaskMeta, sessionId: string, principal?: Principal): boolean {
+  if (!meta.owner) return true;
+  if (meta.owner.session_id !== sessionId) return false;
+  if ((principal?.mode === 'api-key' || principal?.mode === 'jwt') && meta.owner.tenant_id !== principal.tenantId) {
+    return false;
+  }
+  return true;
+}
+
+export function taskAccessDeniedResult(taskId: string): MCPResult {
+  return { isError: true, content: [{ type: 'text', text: `task ${taskId} is not visible in this session` }] };
 }
 
 const TASK_LEDGER_TOOLS = new Set([
@@ -112,12 +150,15 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
       return errorResult(`oc_task_start: tool ${JSON.stringify(kind)} is not registered`);
     }
 
+    await waitForTaskStartupReap();
+
     const store = getTaskStore();
     // Orphan reaping is wired once during tool registration/startup. Keep
     // oc_task_start on the latency-sensitive path and avoid rescanning the
     // whole ledger for every new background job.
     const createdAt = Date.now();
-    const taskId = computeTaskId(kind, args, createdAt);
+    const taskNonce = `${process.pid}:${createdAt}:${taskNonceSeq++}`;
+    const taskId = computeTaskId(kind, { ...args, __task_nonce: taskNonce }, createdAt);
     const meta: TaskMeta = {
       task_id: taskId,
       kind,
@@ -125,6 +166,8 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
       pid: process.pid,
       created_at: createdAt,
       args_summary: summariseArgs(args),
+      owner: taskOwnerFor(sessionId, _ctx?.principal),
+      task_nonce: taskNonce,
     };
     await store.create(meta);
 
@@ -137,7 +180,7 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
       invoke: async (signal) => {
         const merged: Record<string, unknown> = { ...args };
         if (opts.invokeTool) {
-          return await opts.invokeTool(sessionId, kind, merged, signal);
+          return await opts.invokeTool(sessionId, kind, merged, signal, _ctx?.principal);
         }
         // Test seam fallback: direct handler invocation remains available for
         // focused unit tests, while production registration always supplies
@@ -146,6 +189,7 @@ function makeHandler(opts: StartHandlerOpts): ToolHandler {
           startTime: Date.now(),
           deadlineMs: Number.MAX_SAFE_INTEGER,
           signal,
+          principal: _ctx?.principal,
         });
       },
     }).catch((err) => {
@@ -176,8 +220,8 @@ function errorResult(message: string): MCPResult {
 export function registerOcTaskStartTool(server: MCPServer): void {
   const handler = makeHandler({
     resolveTool: (name) => server.getToolHandler(name),
-    invokeTool: (sessionId, toolName, args, signal) =>
-      server.invokeRegisteredToolForTask(sessionId, toolName, args, signal),
+    invokeTool: (sessionId, toolName, args, signal, principal) =>
+      server.invokeRegisteredToolForTask(sessionId, toolName, args, signal, principal),
   });
   server.registerTool(definition.name, handler, definition);
 }

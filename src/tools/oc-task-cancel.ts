@@ -9,8 +9,8 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
-import { getTaskStore } from './oc-task-start';
+import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
+import { canAccessTask, getTaskStore, taskAccessDeniedResult, waitForTaskStartupReap } from './oc-task-start';
 import type { TaskStatus } from '../core/task-ledger';
 
 const definition: MCPToolDefinition = {
@@ -29,13 +29,15 @@ const definition: MCPToolDefinition = {
 };
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   params: Record<string, unknown>,
+  context?: ToolContext,
 ): Promise<MCPResult> => {
   const taskId = String(params.task_id ?? '');
   if (!taskId) {
     return { isError: true, content: [{ type: 'text', text: 'oc_task_cancel: task_id is required' }] };
   }
+  await waitForTaskStartupReap();
   const store = getTaskStore();
   const existing = store.readMetaSync(taskId);
   if (!existing) {
@@ -44,6 +46,7 @@ const handler: ToolHandler = async (
       content: [{ type: 'text', text: `oc_task_cancel: unknown task ${taskId}` }],
     };
   }
+  if (!canAccessTask(existing, sessionId, context?.principal)) return taskAccessDeniedResult(taskId);
   const now = Date.now();
   try {
     const next = await store.update(taskId, (cur) => {

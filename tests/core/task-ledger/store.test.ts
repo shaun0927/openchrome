@@ -197,6 +197,18 @@ describe('TaskStore — reapOrphans', () => {
     expect(back?.error?.code).toBe('orphaned');
   });
 
+
+  test('PENDING task whose pid is dead transitions to FAILED with code "orphaned"', async () => {
+    const deadPid = 2_000_000_000;
+    const meta = pendingMeta('eeeeeeeeeeeeeeef', { status: 'PENDING', pid: deadPid });
+    await store.create(meta);
+    const reaped = await store.reapOrphans();
+    expect(reaped).toContain(meta.task_id);
+    const back = store.readMetaSync(meta.task_id);
+    expect(back?.status).toBe('FAILED');
+    expect(back?.error?.code).toBe('orphaned');
+  });
+
   test('RUNNING task whose pid is alive is left untouched', async () => {
     const meta = pendingMeta('ffffffffffffffff', { status: 'RUNNING', pid: process.pid });
     await store.create(meta);

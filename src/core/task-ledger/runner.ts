@@ -85,12 +85,20 @@ export async function runTask(store: TaskStore, input: RunInput): Promise<RunOut
   let outcome: RunOutcome;
   try {
     const result = await invoke(ac.signal);
+    const afterInvokeMeta = store.readMetaSync(taskId);
+    if (afterInvokeMeta?.cancel_requested_at && cancelDetectedAt === undefined) {
+      cancelDetectedAt = afterInvokeMeta.cancel_requested_at;
+      if (!ac.signal.aborted) ac.abort();
+    }
     // If cancellation was requested but the tool returned normally,
     // honour the cancel — the tool may have aborted mid-stride and
     // returned partial state, which is the contracted behaviour.
     if (cancelDetectedAt !== undefined) {
       await store.writeResult(taskId, result);
       outcome = { status: 'CANCELLED', result };
+    } else if (isMcpErrorResult(result)) {
+      await store.writeResult(taskId, result);
+      outcome = { status: 'FAILED', result, error: { message: extractMcpErrorMessage(result) } };
     } else {
       await store.writeResult(taskId, result);
       outcome = { status: 'COMPLETED', result };
@@ -255,4 +263,14 @@ export async function waitForTerminal(
     // between the fast-path read above and the watcher attaching.
     check();
   });
+}
+
+
+function isMcpErrorResult(value: unknown): value is { isError: true; content?: Array<{ text?: string }> } {
+  return Boolean(value && typeof value === 'object' && (value as { isError?: unknown }).isError === true);
+}
+
+function extractMcpErrorMessage(result: { content?: Array<{ text?: string }> }): string {
+  const text = result.content?.find((item) => typeof item.text === 'string')?.text;
+  return text && text.length > 0 ? text : 'MCP tool returned isError=true';
 }

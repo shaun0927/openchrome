@@ -8,6 +8,7 @@ export type {
   TaskKind,
   TaskListFilter,
   TaskMeta,
+  TaskOwner,
   TaskStatus,
 } from './types';
 export {

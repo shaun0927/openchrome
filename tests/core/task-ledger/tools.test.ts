@@ -92,4 +92,55 @@ describe('oc_task_start handler — happy path', () => {
     expect(out.content?.[0]?.text).toContain('refusing to schedule');
     expect(innerTool).not.toHaveBeenCalled();
   });
+
+
+  test('identical starts in the same millisecond get distinct task ids', async () => {
+    const innerTool: ToolHandler = async () => ({ content: [{ type: 'text', text: 'ok' }] });
+    const handler = __test__.makeHandler({ resolveTool: (name) => (name === 'fake_inner' ? innerTool : null) });
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1234567890);
+    try {
+      const a = await handler('sess-1', { kind: 'fake_inner', args: { url: 'https://example.com' } });
+      const b = await handler('sess-1', { kind: 'fake_inner', args: { url: 'https://example.com' } });
+      expect(a.task_id).toMatch(/^[0-9a-f]{16}$/);
+      expect(b.task_id).toMatch(/^[0-9a-f]{16}$/);
+      expect(b.task_id).not.toBe(a.task_id);
+      const store = getTaskStore();
+      for (const id of [a.task_id, b.task_id] as string[]) {
+        for (let i = 0; i < 100; i++) {
+          const meta = store.readMetaSync(id);
+          if (meta?.status === 'COMPLETED' || meta?.status === 'FAILED') break;
+          await new Promise((r) => setTimeout(r, 10));
+        }
+      }
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('stores owner and forwards principal into pipeline invocation', async () => {
+    const innerTool: ToolHandler = async () => ({ content: [{ type: 'text', text: 'fallback' }] });
+    const seen: unknown[] = [];
+    const handler = __test__.makeHandler({
+      resolveTool: (name) => (name === 'fake_inner' ? innerTool : null),
+      invokeTool: async (_sessionId, _toolName, _args, _signal, principal) => {
+        seen.push(principal);
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+    });
+    const principal = { mode: 'api-key' as const, tenantId: 'tenant-a', keyId: 'key-a', scopes: ['write' as const] };
+    const out = await handler('sess-owned', { kind: 'fake_inner', args: {} }, {
+      startTime: Date.now(),
+      deadlineMs: 1000,
+      principal,
+    });
+    const meta = getTaskStore().readMetaSync(out.task_id as string);
+    expect(meta?.owner).toEqual({ session_id: 'sess-owned', tenant_id: 'tenant-a', key_id: 'key-a', mode: 'api-key' });
+    for (let i = 0; i < 100 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(seen[0]).toBe(principal);
+    for (let i = 0; i < 100; i++) {
+      const latest = getTaskStore().readMetaSync(out.task_id as string);
+      if (latest?.status === 'COMPLETED' || latest?.status === 'FAILED') break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  });
 });

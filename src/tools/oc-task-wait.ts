@@ -8,9 +8,9 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
+import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
 import { TaskWaitTimeoutError, waitForTerminal } from '../core/task-ledger';
-import { getTaskStore } from './oc-task-start';
+import { canAccessTask, getTaskStore, taskAccessDeniedResult, waitForTaskStartupReap } from './oc-task-start';
 
 const definition: MCPToolDefinition = {
   name: 'oc_task_wait',
@@ -28,8 +28,9 @@ const definition: MCPToolDefinition = {
 };
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   params: Record<string, unknown>,
+  context?: ToolContext,
 ): Promise<MCPResult> => {
   const taskId = String(params.task_id ?? '');
   if (!taskId) {
@@ -37,7 +38,12 @@ const handler: ToolHandler = async (
   }
   const timeoutMs = typeof params.timeout_ms === 'number' ? params.timeout_ms : 60_000;
   try {
-    const meta = await waitForTerminal(getTaskStore(), taskId, timeoutMs);
+    await waitForTaskStartupReap();
+    const store = getTaskStore();
+    const existing = store.readMetaSync(taskId);
+    if (existing && !canAccessTask(existing, sessionId, context?.principal)) return taskAccessDeniedResult(taskId);
+    const meta = await waitForTerminal(store, taskId, timeoutMs);
+    if (!canAccessTask(meta, sessionId, context?.principal)) return taskAccessDeniedResult(taskId);
     return {
       content: [
         {

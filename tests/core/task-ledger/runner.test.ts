@@ -89,6 +89,20 @@ describe('runTask — FAILED path', () => {
     expect(outcome.status).toBe('FAILED');
     expect(store.readMetaSync(id)?.error?.message).toBe('boom');
   });
+
+
+  test('MCP isError result lands as FAILED rather than COMPLETED', async () => {
+    const id = '2222222222222223';
+    await store.create(pendingMeta(id));
+    const outcome = await runTask(store, {
+      taskId: id,
+      pid: process.pid,
+      invoke: async () => ({ isError: true, content: [{ type: 'text', text: 'inner failed' }] }),
+    });
+    expect(outcome.status).toBe('FAILED');
+    expect(store.readMetaSync(id)?.status).toBe('FAILED');
+    expect(store.readMetaSync(id)?.error?.message).toBe('inner failed');
+  });
 });
 
 describe('runTask — cancellation', () => {

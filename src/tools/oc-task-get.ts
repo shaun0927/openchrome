@@ -4,8 +4,8 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
-import { getTaskStore } from './oc-task-start';
+import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
+import { canAccessTask, getTaskStore, taskAccessDeniedResult, waitForTaskStartupReap } from './oc-task-start';
 
 const definition: MCPToolDefinition = {
   name: 'oc_task_get',
@@ -26,13 +26,15 @@ const definition: MCPToolDefinition = {
 };
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   params: Record<string, unknown>,
+  context?: ToolContext,
 ): Promise<MCPResult> => {
   const taskId = String(params.task_id ?? '');
   if (!taskId) {
     return { isError: true, content: [{ type: 'text', text: 'oc_task_get: task_id is required' }] };
   }
+  await waitForTaskStartupReap();
   const store = getTaskStore();
   const meta = store.readMetaSync(taskId);
   if (!meta) {
@@ -41,6 +43,7 @@ const handler: ToolHandler = async (
       content: [{ type: 'text', text: `oc_task_get: unknown task ${taskId}` }],
     };
   }
+  if (!canAccessTask(meta, sessionId, context?.principal)) return taskAccessDeniedResult(taskId);
   const includeResult = params.include_result === true;
   const result = includeResult ? store.readResultSync(taskId) : undefined;
   return {

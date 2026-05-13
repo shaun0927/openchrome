@@ -615,8 +615,10 @@ export class MCPServer {
     let pending: ToolProgress | null = null;
     let pendingTimer: ReturnType<typeof setTimeout> | null = null;
     let highestProgress = -Infinity;
+    let closed = false;
 
     const send = (update: ToolProgress): void => {
+      if (closed) return;
       try {
         this.sendNotification('notifications/progress', {
           progressToken,
@@ -632,6 +634,7 @@ export class MCPServer {
     };
 
     const reporter = (update: ToolProgress): void => {
+      if (closed) return;
       // Enforce monotonic non-decreasing `progress`.
       if (update.progress < highestProgress) return;
       highestProgress = update.progress;
@@ -651,7 +654,7 @@ export class MCPServer {
         if (!pendingTimer) {
           pendingTimer = setTimeout(() => {
             pendingTimer = null;
-            if (pending) {
+            if (!closed && pending) {
               const p = pending;
               pending = null;
               send(p);
@@ -671,6 +674,7 @@ export class MCPServer {
         pending = null;
         send(p);
       }
+      closed = true;
     };
 
     return { reporter, flush };
@@ -1562,6 +1566,7 @@ export class MCPServer {
           startTime: Date.now(),
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
           signal,
+          principal,
           reportProgress,
         };
         let tid: ReturnType<typeof setTimeout>;
@@ -1599,6 +1604,7 @@ export class MCPServer {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
+              principal,
               reportProgress,
             };
             let tid2: ReturnType<typeof setTimeout>;
@@ -1642,6 +1648,7 @@ export class MCPServer {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
+              principal,
               reportProgress,
             };
             result = await Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext));
@@ -2198,11 +2205,12 @@ export class MCPServer {
     toolName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    principal?: Principal,
   ): Promise<MCPResult> {
     return this.handleToolsCall(
       { name: toolName, arguments: { ...args, sessionId } },
       undefined,
-      undefined,
+      principal,
       signal,
     );
   }

@@ -357,7 +357,7 @@ export class TaskStore {
   }
 
   /**
-   * Reap any RUNNING task whose owner pid is no longer alive. Returns
+   * Reap any RUNNING/PENDING task whose owner pid is no longer alive. Returns
    * the list of task ids that were transitioned to FAILED. Must be
    * called once at server startup before accepting any new tasks
    * (issue invariant #2). Safe to call concurrently — meta.json
@@ -365,14 +365,14 @@ export class TaskStore {
    */
   async reapOrphans(now: number = Date.now()): Promise<string[]> {
     const reaped: string[] = [];
-    const candidates = await this.list({ status: 'RUNNING', limit: Number.MAX_SAFE_INTEGER });
+    const candidates = await this.list({ status: ['PENDING', 'RUNNING'], limit: Number.MAX_SAFE_INTEGER });
     for (const meta of candidates) {
       if (isPidAlive(meta.pid)) continue;
       try {
         const next = await this.update(meta.task_id, (cur) => {
           // Re-check under the lock — another process may have just
           // reaped this row or transitioned it terminal.
-          if (cur.status !== 'RUNNING') return undefined;
+          if (cur.status !== 'RUNNING' && cur.status !== 'PENDING') return undefined;
           if (isPidAlive(cur.pid)) return undefined;
           return {
             ...cur,

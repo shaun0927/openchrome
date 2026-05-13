@@ -110,7 +110,7 @@ import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
 // Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
-import { registerOcTaskStartTool, getTaskStore } from './oc-task-start';
+import { registerOcTaskStartTool, getTaskStore, setTaskStartupReapPromise } from './oc-task-start';
 import { registerOcTaskListTool } from './oc-task-list';
 import { registerOcTaskGetTool } from './oc-task-get';
 import { registerOcTaskCancelTool } from './oc-task-cancel';
@@ -264,16 +264,15 @@ export function registerAllTools(server: MCPServer): void {
   // once at server start (issue #855 invariant #2) so a crash on a
   // previous boot transitions orphaned rows to FAILED before new
   // tasks are accepted. Best-effort: log and continue on failure.
-  void getTaskStore()
-    .reapOrphans()
-    .then((reaped) => {
-      if (reaped.length > 0) {
-        console.error(`[task-ledger] Reaped ${reaped.length} orphaned task(s) at startup`);
-      }
-    })
-    .catch((err) => {
-      console.error('[task-ledger] startup reapOrphans failed:', err);
-    });
+  setTaskStartupReapPromise(
+    getTaskStore()
+      .reapOrphans()
+      .then((reaped) => {
+        if (reaped.length > 0) {
+          console.error(`[task-ledger] Reaped ${reaped.length} orphaned task(s) at startup`);
+        }
+      }),
+  );
 
   // Doctor report tool (#898) — read cached `openchrome doctor` output
   registerOcDoctorReportTool(server);

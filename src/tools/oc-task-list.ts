@@ -6,9 +6,9 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
+import { MCPResult, MCPToolDefinition, ToolContext, ToolHandler } from '../types/mcp';
 import type { TaskKind, TaskListFilter, TaskStatus } from '../core/task-ledger';
-import { getTaskStore } from './oc-task-start';
+import { canAccessTask, getTaskStore, waitForTaskStartupReap } from './oc-task-start';
 
 const VALID_STATUS: ReadonlyArray<TaskStatus> = [
   'PENDING',
@@ -42,8 +42,9 @@ const definition: MCPToolDefinition = {
 };
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   params: Record<string, unknown>,
+  context?: ToolContext,
 ): Promise<MCPResult> => {
   const filter: TaskListFilter = {};
   if (params.status !== undefined) {
@@ -55,7 +56,8 @@ const handler: ToolHandler = async (
   if (typeof params.since === 'number') filter.since = params.since;
   if (typeof params.limit === 'number') filter.limit = params.limit;
 
-  const rows = await getTaskStore().list(filter);
+  await waitForTaskStartupReap();
+  const rows = (await getTaskStore().list(filter)).filter((row) => canAccessTask(row, sessionId, context?.principal));
   const summary = rows
     .map((r) => `${r.task_id}\t${r.status}\t${r.kind}\t${new Date(r.created_at).toISOString()}`)
     .join('\n');
