@@ -28,7 +28,10 @@ const definition: MCPToolDefinition = {
 const handler: ToolHandler = async (sessionId, params, context): Promise<MCPResult> => {
   const taskId = taskIdFrom(params);
   if (!taskId) return errorResult('oc_task_update: task_id is required');
-  const phase = params.phase !== undefined ? normalizeTaskPhase(params.phase) : undefined;
+  const phase = params.phase !== undefined ? validTaskPhase(params.phase) : undefined;
+  if (params.phase !== undefined && !phase) {
+    return errorResult('oc_task_update: phase must be explore, act, verify, recover, or done');
+  }
   const note = typeof params.note === 'string' ? params.note : undefined;
   const store = getTaskStore();
   const meta = store.readMetaSync(taskId);
@@ -55,6 +58,19 @@ const handler: ToolHandler = async (sessionId, params, context): Promise<MCPResu
 function taskIdFrom(params: Record<string, unknown>): string {
   const v = params.task_id ?? params.taskId;
   return typeof v === 'string' ? v : '';
+}
+
+function validTaskPhase(value: unknown): ReturnType<typeof normalizeTaskPhase> | undefined {
+  if (
+    value === 'explore' ||
+    value === 'act' ||
+    value === 'verify' ||
+    value === 'recover' ||
+    value === 'done'
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function errorResult(message: string): MCPResult {

@@ -129,6 +129,8 @@ const TASK_LEDGER_TOOLS = new Set([
   'oc_task_list',
   'oc_task_wait',
   'oc_task_cancel',
+  'oc_task_update',
+  'oc_task_finish',
 ]);
 
 function makeHandler(opts: StartHandlerOpts): ToolHandler {

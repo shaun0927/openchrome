@@ -156,6 +156,18 @@ describe('oc_task_start handler — happy path', () => {
     expect(innerTool).not.toHaveBeenCalled();
   });
 
+  test('rejects update and finish task-ledger tools from async scheduling', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => async () => ({ content: [] }) });
+
+    const update = await handler('sess-1', { kind: 'oc_task_update', args: {} });
+    const finish = await handler('sess-1', { kind: 'oc_task_finish', args: {} });
+
+    expect(update.isError).toBe(true);
+    expect(update.content?.[0]?.text).toContain('refusing to schedule');
+    expect(finish.isError).toBe(true);
+    expect(finish.content?.[0]?.text).toContain('refusing to schedule');
+  });
+
 
   test('identical starts in the same millisecond get distinct task ids', async () => {
     const innerTool: ToolHandler = async () => ({ content: [{ type: 'text', text: 'ok' }] });
@@ -238,5 +250,19 @@ describe('oc_task_start handler — happy path', () => {
     expect(deniedFinish.isError).toBe(true);
     expect(allowedUpdate.isError).not.toBe(true);
     expect(allowedUpdate.meta).toMatchObject({ task_id: taskId, phase: 'act' });
+  });
+
+  test('oc_task_update rejects invalid phases instead of coercing them', async () => {
+    const handler = __test__.makeHandler({ resolveTool: () => null });
+    const started = await handler('sess-1', { objective: 'phase validation' });
+
+    const out = await taskUpdateTest.handler('sess-1', {
+      taskId: started.task_id,
+      phase: 'not-a-phase',
+    });
+
+    expect(out.isError).toBe(true);
+    expect(out.content?.[0]?.text).toContain('phase must be');
+    expect(getTaskStore().readMetaSync(started.task_id as string)?.phase).toBe('explore');
   });
 });
