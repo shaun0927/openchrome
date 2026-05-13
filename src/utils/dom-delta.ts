@@ -292,9 +292,20 @@ export async function withDomDelta<T>(
     preUrl = '';
   }
 
-  // Inject the MutationObserver
+  // Inject the MutationObserver. Preserve the historical soft-timeout
+  // behavior: if injection is slow, proceed with the action and allow a
+  // late observer injection to be collected below, while still clearing the
+  // guard timer when injection wins quickly.
   try {
-    await withTimeout(page.evaluate(INJECT_OBSERVER_SCRIPT), 5000, 'inject DOM delta observer');
+    let injectTimeout: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      page.evaluate(INJECT_OBSERVER_SCRIPT),
+      new Promise<void>((resolve) => {
+        injectTimeout = setTimeout(resolve, 5000);
+      }),
+    ]).finally(() => {
+      if (injectTimeout) clearTimeout(injectTimeout);
+    });
   } catch {
     // If injection fails (e.g., page not ready), just run the action without delta
     const result = await action();
