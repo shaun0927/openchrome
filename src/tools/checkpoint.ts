@@ -141,6 +141,12 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
+function isValidCheckpointTimestamp(value: unknown): value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+  if (value < 0 || Math.abs(value) > 8.64e15) return false;
+  return !Number.isNaN(new Date(value).getTime());
+}
+
 function isTabStateArray(value: unknown): value is AutomationCheckpoint['tabStates'] {
   return Array.isArray(value) && value.every((tab) => (
     tab &&
@@ -155,8 +161,8 @@ function isAutomationCheckpoint(value: unknown): value is AutomationCheckpoint {
   if (!value || typeof value !== 'object') return false;
   const cp = value as Record<string, unknown>;
   return cp.version === 1 &&
-    typeof cp.timestamp === 'number' &&
-    Number.isFinite(cp.timestamp) &&
+    isValidCheckpointTimestamp(cp.timestamp) &&
+    (cp.createdAt === undefined || isValidCheckpointTimestamp(cp.createdAt)) &&
     typeof cp.taskDescription === 'string' &&
     isStringArray(cp.completedSteps) &&
     isStringArray(cp.pendingSteps) &&
@@ -170,7 +176,7 @@ function isAutomationCheckpoint(value: unknown): value is AutomationCheckpoint {
 function toListEntry(cp: AutomationCheckpoint, now = Date.now()): CheckpointListEntry | null {
   if (!isAutomationCheckpoint(cp) || !cp.checkpointId) return null;
   const createdAt = cp.createdAt ?? cp.timestamp;
-  if (!Number.isFinite(createdAt)) return null;
+  if (!isValidCheckpointTimestamp(createdAt)) return null;
   return {
     checkpointId: cp.checkpointId,
     ...(cp.parentId ? { parentId: cp.parentId } : {}),
@@ -229,14 +235,17 @@ async function pruneTimeline(): Promise<void> {
   const { checkpoints } = await readTimelineEntries();
   for (const cp of checkpoints.slice(limit)) {
     if (!cp.checkpointId) continue;
-    await fs.promises.unlink(timelinePathFor(cp.checkpointId)).catch(() => undefined);
+    const safeId = sanitizeCheckpointId(cp.checkpointId);
+    if (!safeId) continue;
+    await fs.promises.unlink(timelinePathFor(safeId)).catch(() => undefined);
   }
 }
 
 async function writeCheckpointTimeline(checkpoint: AutomationCheckpoint): Promise<void> {
-  if (!checkpoint.checkpointId) return;
+  const safeId = checkpoint.checkpointId ? sanitizeCheckpointId(checkpoint.checkpointId) : null;
+  if (!safeId) return;
   await fs.promises.mkdir(getTimelineDir(), { recursive: true });
-  await writeFileAtomicSafe(timelinePathFor(checkpoint.checkpointId), checkpoint);
+  await writeFileAtomicSafe(timelinePathFor(safeId), checkpoint);
   await pruneTimeline();
 }
 

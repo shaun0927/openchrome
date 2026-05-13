@@ -205,6 +205,51 @@ describe('oc_checkpoint timeline (#1025)', () => {
     }
   });
 
+  test('list rejects out-of-range checkpoint timestamps without throwing', async () => {
+    const handler = await loadHandler();
+    const timelineDir = path.join(tmpDir, 'timeline');
+    fs.mkdirSync(timelineDir, { recursive: true });
+    fs.writeFileSync(path.join(timelineDir, 'cp_bad_time.json'), JSON.stringify({
+      version: 1,
+      timestamp: Number.MAX_VALUE,
+      checkpointId: 'cp_bad_time',
+      taskDescription: 'bad time',
+      completedSteps: [],
+      pendingSteps: [],
+      currentUrl: null,
+      tabStates: [],
+      extractedData: {},
+    }));
+
+    const listed = readJson(await handler('sess-1', { action: 'list' }));
+    expect(listed.checkpoints).toEqual([]);
+    expect(listed.warnings.join('\n')).toContain('Skipped invalid checkpoint timeline entry');
+  });
+
+  test('retention sanitizes checkpoint ids before pruning timeline files', async () => {
+    process.env.OPENCHROME_CHECKPOINT_TIMELINE_MAX = '1';
+    const handler = await loadHandler();
+    const timelineDir = path.join(tmpDir, 'timeline');
+    fs.mkdirSync(timelineDir, { recursive: true });
+    const outsidePath = path.join(tmpDir, 'outside.json');
+    fs.writeFileSync(outsidePath, JSON.stringify({ keep: true }));
+    fs.writeFileSync(path.join(timelineDir, 'malicious.json'), JSON.stringify({
+      version: 1,
+      timestamp: 1,
+      checkpointId: '../outside',
+      taskDescription: 'malicious',
+      completedSteps: [],
+      pendingSteps: [],
+      currentUrl: null,
+      tabStates: [],
+      extractedData: {},
+    }));
+
+    await handler('sess-1', { action: 'save', taskDescription: 'newest' });
+
+    expect(fs.existsSync(outsidePath)).toBe(true);
+  });
+
   test('retention prunes old timeline artifacts only', async () => {
     process.env.OPENCHROME_CHECKPOINT_TIMELINE_MAX = '2';
     const handler = await loadHandler();
