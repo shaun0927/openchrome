@@ -8,7 +8,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
@@ -104,6 +104,13 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      ref: {
+        type: 'string',
+        description:
+          'Optional element ref from a recent read_page(mode="ax") snapshot. ' +
+          'When supplied and fresh, the tool skips DOM/AX re-resolution. ' +
+          'Stale or unknown refs return a STALE_REF error — call read_page again.',
+      },
     },
     // `query` is no longer strictly required: a caller can pass `nodeRef`
     // instead. We validate at runtime so the JSON-schema stays minimal and
@@ -113,6 +120,187 @@ const definition: MCPToolDefinition = {
   },
 };
 
+/**
+ * Shared post-action response builder.
+ *
+ * Both the ref fast-path and the AX/CSS resolution paths funnel through this
+ * helper so that `verify`, `returnFormat`, state-summary, and DOM-delta
+ * output behave identically regardless of which path produced the action.
+ *
+ * #948 codex P1: this was previously inlined in the AX/CSS branches only, so
+ * the ref path silently dropped `verify=true` screenshots and
+ * `returnFormat='state_summary' | 'both'` summaries.
+ */
+type PostActionInput = {
+  page: any;
+  context: ToolContext | undefined;
+  headerLine: string;
+  delta: string | null | undefined;
+  returnFormat: string;
+  verify: boolean | undefined;
+  verifyReport?: VerifyReport;
+  extraTopLevel?: Record<string, unknown>;
+};
+
+async function buildPostActionResponse(input: PostActionInput): Promise<MCPResult> {
+  const { page, context, headerLine, delta, returnFormat, verify, verifyReport, extraTopLevel } = input;
+
+  const lines: string[] = [headerLine];
+
+  if ((returnFormat === 'dom_delta' || returnFormat === 'both') && delta) {
+    lines.push(delta);
+  }
+
+  if (returnFormat === 'state_summary' || returnFormat === 'both') {
+    type StateSummary = {
+      url: string;
+      title: string;
+      scrollX: number;
+      scrollY: number;
+      activeInfo: string;
+      panels: string[];
+      headings: string[];
+    };
+    const stateSummary = (await withTimeout(page.evaluate(() => {
+      const url = window.location.href;
+      const title = document.title;
+      const scrollX = Math.round(window.scrollX);
+      const scrollY = Math.round(window.scrollY);
+
+      const active = document.activeElement;
+      let activeInfo = 'none';
+      if (active && active !== document.body) {
+        const inputEl = active as HTMLInputElement;
+        const role =
+          active.getAttribute('role') ||
+          (active.tagName === 'BUTTON'
+            ? 'button'
+            : active.tagName === 'INPUT'
+              ? inputEl.type || 'textbox'
+              : active.tagName.toLowerCase());
+        const name =
+          active.getAttribute('aria-label') ||
+          active.getAttribute('title') ||
+          active.textContent?.trim().slice(0, 40) ||
+          '';
+        activeInfo = `${role}${name ? ` "${name}"` : ''}`;
+      }
+
+      const panels: string[] = [];
+      const panelSelectors = [
+        '[role="tabpanel"]',
+        '[role="dialog"]',
+        '[role="main"]',
+        'main',
+        '.panel',
+        '[class*="panel"]',
+        '[class*="content"]',
+      ];
+      for (const sel of panelSelectors) {
+        if (panels.length >= 3) break;
+        try {
+          const els = document.querySelectorAll(sel);
+          for (const el of els) {
+            if (panels.length >= 3) break;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden') continue;
+            const text = el.textContent?.trim().slice(0, 80) || '';
+            if (text.length > 10) {
+              panels.push(text);
+            }
+          }
+        } catch {
+          // skip bad selectors
+        }
+      }
+
+      const headings: string[] = [];
+      for (const hEl of document.querySelectorAll('h1, h2, h3, [role="heading"]')) {
+        const rect = hEl.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        const style = window.getComputedStyle(hEl);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        const text = hEl.textContent?.trim().slice(0, 60) || '';
+        if (text) headings.push(text);
+        if (headings.length >= 3) break;
+      }
+
+      return { url, title, scrollX, scrollY, activeInfo, panels, headings };
+    }), 10000, 'interact', context).catch(() => ({
+      url: '', title: '', scrollX: 0, scrollY: 0,
+      activeInfo: 'unknown', panels: [] as string[], headings: [] as string[],
+    }))) as StateSummary;
+
+    lines.push(
+      `[State Summary] url: ${stateSummary.url} | scroll: ${stateSummary.scrollX},${stateSummary.scrollY} | active: ${stateSummary.activeInfo}`
+    );
+    const headings = Array.isArray(stateSummary.headings) ? stateSummary.headings : [];
+    const panels = Array.isArray(stateSummary.panels) ? stateSummary.panels : [];
+    if (headings.length > 0) {
+      lines.push(`[Headings] ${headings.map((h: string) => `"${h}"`).join(' | ')}`);
+    }
+    if (panels.length > 0) {
+      const panelParts = panels.map((p: string, i: number) => `Panel ${i + 1}: "${p}"`);
+      lines.push(`[Visible] ${panelParts.join(' | ')}`);
+    }
+  }
+
+  // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG.
+  let screenshotContent: { type: 'image'; data: string; mimeType: string } | null = null;
+  if (verify) {
+    try {
+      const screenshotResult = await Promise.race([
+        (async () => {
+          const cdpSession = await (page as any).target().createCDPSession();
+          try {
+            const { data } = await cdpSession.send('Page.captureScreenshot', {
+              format: 'webp',
+              quality: 60,
+              optimizeForSpeed: true,
+            });
+            return { data: data as string, mimeType: 'image/webp' };
+          } finally {
+            await cdpSession.detach().catch(() => {});
+          }
+        })(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
+      ]);
+
+      if (screenshotResult) {
+        screenshotContent = { type: 'image' as const, ...screenshotResult };
+      } else {
+        throw new Error('CDP screenshot timed out');
+      }
+    } catch {
+      try {
+        let fallbackTimer: NodeJS.Timeout;
+        const screenshot = await Promise.race([
+          page.screenshot({ encoding: 'base64', type: 'png', fullPage: false }).finally(() => clearTimeout(fallbackTimer)),
+          new Promise<never>((_, reject) => {
+            fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
+          }),
+        ]);
+        screenshotContent = { type: 'image' as const, data: screenshot as unknown as string, mimeType: 'image/png' };
+      } catch {
+        // Screenshot failure is non-fatal
+      }
+    }
+  }
+
+  const responseContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+    { type: 'text', text: lines.join('\n') },
+  ];
+  if (screenshotContent) responseContent.push(screenshotContent);
+
+  const result = {
+    content: responseContent,
+    ...(extraTopLevel || {}),
+  } as MCPResult;
+  return attachVerifyReport(result, verifyReport);
+}
+
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
@@ -121,7 +309,8 @@ const handler: ToolHandler = async (
   throwIfAborted(context);
   const tabId = args.tabId as string;
   const mode = (args.mode as string) || 'ref';
-  const query = args.query as string;
+  const query = args.query as string | undefined;
+  const ref = args.ref as string | undefined;
   const nodeRefArg = typeof args.nodeRef === 'string' ? (args.nodeRef as string) : undefined;
   const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
@@ -143,9 +332,9 @@ const handler: ToolHandler = async (
 
   // ─── Mode: coordinate ───
   if (mode === 'coordinate') {
-    if (query || nodeRefArg) {
+    if (query || ref || nodeRefArg) {
       return {
-        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query"/"nodeRef" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query"/"ref"/"nodeRef" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
         isError: true,
       };
     }
@@ -244,14 +433,17 @@ const handler: ToolHandler = async (
   }
   if (coordinateArg) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" or "nodeRef" instead.' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query", "ref", or "nodeRef" instead.' }],
       isError: true,
     };
   }
 
-  if (!query && !nodeRefArg) {
+  // Either query, ref, or nodeRef must be supplied for mode=ref. ref/nodeRef
+  // provide fast paths that skip DOM re-resolution; query falls back to AX → CSS
+  // discovery (#831/#844).
+  if (!query && !ref && !nodeRefArg) {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: either "query" or "nodeRef" is required when mode is "ref".' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: either "query", "ref", or "nodeRef" is required when mode is "ref".' }],
       isError: true,
     };
   }
@@ -267,6 +459,114 @@ const handler: ToolHandler = async (
         content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.${availableInfo}` }],
         isError: true,
       };
+    }
+
+    // ─── Ref Fast-Path (#831) ───
+    // When the caller provides an explicit `ref`, skip discovery entirely.
+    // A fresh ref → click via cached backendDOMNodeId.
+    // A stale/missing ref → STALE_REF (no silent coordinate fallback).
+    //
+    // Codex P1 (PR #948): the ref path now joins the same response-construction
+    // path as the AX/CSS paths so that callers requesting `verify: true` or
+    // `returnFormat: 'state_summary' | 'both'` still receive the screenshot /
+    // state-summary output. Previously the ref path returned early, dropping
+    // verify and returnFormat handling.
+    if (ref) {
+      const entry = refIdManager.getRef(sessionId, tabId, ref);
+      if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
+        return {
+          content: [{ type: 'text', text: formatStaleRefError(ref) }],
+          isError: true,
+          error: makeStaleRefError(ref),
+        };
+      }
+
+      const cdpClientForRef = sessionManager.getCDPClient();
+      try {
+        try {
+          await cdpClientForRef.send(page, 'DOM.scrollIntoViewIfNeeded', {
+            backendNodeId: entry.backendDOMNodeId,
+          });
+          await new Promise(resolve => setTimeout(resolve, DEFAULT_DOM_SETTLE_DELAY_MS));
+        } catch {
+          // Detached nodes are surfaced as STALE_REF by box-model resolution.
+        }
+
+        let rectX = 0, rectY = 0;
+        try {
+          const { model } = await cdpClientForRef.send<{ model: { content: number[] } }>(
+            page, 'DOM.getBoxModel', { backendNodeId: entry.backendDOMNodeId }
+          );
+          if (model?.content && model.content.length >= 8) {
+            const bx = model.content[0], by = model.content[1];
+            const bw = model.content[2] - bx, bh = model.content[5] - by;
+            if (bw > 0 && bh > 0) {
+              rectX = Math.round(bx + bw / 2);
+              rectY = Math.round(by + bh / 2);
+            }
+          }
+        } catch {
+          return {
+            content: [{ type: 'text', text: formatStaleRefError(ref) }],
+            isError: true,
+            error: makeStaleRefError(ref),
+          };
+        }
+
+        if (rectX === 0 && rectY === 0) {
+          return {
+            content: [{ type: 'text', text: formatStaleRefError(ref) }],
+            isError: true,
+            error: makeStaleRefError(ref),
+          };
+        }
+
+        const isStealthRef = sessionManager.isStealthTarget(tabId);
+        const { result: refActionResult, verify: refVerifyReport } = await runVerify(
+          page,
+          verifyMode,
+          async () =>
+            withDomDelta(page, async () => {
+              if (isStealthRef) await humanMouseMove(page, rectX, rectY);
+              if (action === 'double_click') await page.mouse.click(rectX, rectY, { clickCount: 2 });
+              else if (action === 'hover') {
+                if (!isStealthRef) await page.mouse.move(rectX, rectY);
+              } else {
+                await page.mouse.click(rectX, rectY);
+              }
+            }, { settleMs: Math.max(150, waitAfter) }),
+        );
+        const refDelta = refActionResult.delta;
+
+        invalidateAXCache(getTargetId(page.target()));
+        await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
+
+        const refVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+        const refOutcome = classifyOutcome(refDelta, entry.role);
+        const refLabel = `${entry.role}${entry.name ? ` "${entry.name}"` : ''}`;
+        const refLine = formatOutcomeLine(refOutcome, refVerb, refLabel, `[${ref}]`, '[via ref]');
+
+        // Build response using the same shared post-action handler as the
+        // AX/CSS paths — preserves `verify` and `returnFormat` behavior.
+        return await buildPostActionResponse({
+          page,
+          context,
+          headerLine: refLine,
+          delta: refDelta,
+          returnFormat,
+          verify: verifyMode === 'screenshot' || verifyMode === 'both',
+          verifyReport: refVerifyReport,
+          extraTopLevel: { via: 'ref' },
+        });
+      } catch (refErr) {
+        throwIfAborted(context);
+        console.error(`[interact] ref fast-path failed for ${ref}: ${refErr instanceof Error ? refErr.message : String(refErr)}`);
+        return {
+          content: [{ type: 'text', text: formatStaleRefError(ref) }],
+          isError: true,
+          error: makeStaleRefError(ref),
+        };
+      }
     }
 
     // ─── nodeRef branch (#844) ───
@@ -391,7 +691,8 @@ const handler: ToolHandler = async (
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     }
 
-    const queryNorm = normalizeQuery(query);
+    const queryString = query as string;
+    const queryNorm = normalizeQuery(queryString);
     const queryLower = queryNorm;
     const queryTokens = tokenizeQuery(queryNorm);
 
@@ -405,7 +706,7 @@ const handler: ToolHandler = async (
     // Try AX tree first — the browser's accessibility engine understands all UI frameworks
     try {
       const axMatches = await withTimeout(
-        resolveElementsByAXTree(page, cdpClient, query, {
+        resolveElementsByAXTree(page, cdpClient, queryString, {
           useCenter: true,
           maxResults: 3,
         }),
@@ -529,7 +830,7 @@ const handler: ToolHandler = async (
     // Budget check before expensive CSS discovery path
     if (context && !hasBudget(context, 15_000)) {
       return {
-        content: [{ type: 'text', text: `interact: deadline approaching — skipped CSS fallback for "${query}"` }],
+        content: [{ type: 'text', text: `interact: deadline approaching — skipped CSS fallback for "${queryString}"` }],
         isError: true,
       };
     }
@@ -566,7 +867,7 @@ const handler: ToolHandler = async (
           continue;
         }
         return {
-          content: [{ type: 'text', text: `No elements found matching "${query}"` }],
+          content: [{ type: 'text', text: `No elements found matching "${queryString}"` }],
           isError: true,
         };
       }
@@ -599,7 +900,7 @@ const handler: ToolHandler = async (
         content: [
           {
             type: 'text',
-            text: `No good match found for "${query}". Best candidate was "${bestMatch?.name || 'unknown'}" with low confidence.`,
+            text: `No good match found for "${queryString}". Best candidate was "${bestMatch?.name || 'unknown'}" with low confidence.`,
           },
         ],
         isError: true,
