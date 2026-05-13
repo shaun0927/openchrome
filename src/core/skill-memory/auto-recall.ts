@@ -74,18 +74,69 @@ export async function autoRecallForUrl(
   }
 }
 
-function truncateUtf8ToBytes(value: string, maxBytes: number): { text: string; bytes: number; truncated: boolean } {
-  const buf = Buffer.from(value, 'utf8');
-  if (buf.length <= maxBytes) {
-    return { text: value, bytes: buf.length, truncated: false };
-  }
+function fitsUtf8(value: string, maxBytes: number): boolean {
+  return Buffer.byteLength(value, 'utf8') <= maxBytes;
+}
 
-  let end = maxBytes;
+function truncateUtf8ToBytes(value: string, maxBytes: number): string {
+  const buf = Buffer.from(value, 'utf8');
+  if (buf.length <= maxBytes) return value;
+
+  let end = Math.max(0, maxBytes);
   while (end > 0 && (buf[end] & 0b1100_0000) === 0b1000_0000) {
     end--;
   }
-  const text = buf.subarray(0, end).toString('utf8');
-  return { text, bytes: Buffer.byteLength(text, 'utf8'), truncated: true };
+  let text = buf.subarray(0, end).toString('utf8');
+  while (Buffer.byteLength(text, 'utf8') > maxBytes) {
+    text = text.slice(0, -1);
+  }
+  return text;
+}
+
+function boundedSkillBody(
+  name: string,
+  steps: unknown,
+  maxBodyBytes: number,
+): { body: string; bytes: number; truncated: boolean } {
+  const full = JSON.stringify({ name, steps });
+  if (fitsUtf8(full, maxBodyBytes)) {
+    return { body: full, bytes: Buffer.byteLength(full, 'utf8'), truncated: false };
+  }
+
+  const stepList = Array.isArray(steps) ? steps : [];
+  let low = 0;
+  let high = stepList.length;
+  let best = JSON.stringify({ name, steps: [], truncated: true, original_step_count: stepList.length });
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = JSON.stringify({
+      name,
+      steps: stepList.slice(0, mid),
+      truncated: true,
+      original_step_count: stepList.length,
+    });
+    if (fitsUtf8(candidate, maxBodyBytes)) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  if (!fitsUtf8(best, maxBodyBytes)) {
+    const marker = JSON.stringify({ name: '', steps: [], truncated: true, original_step_count: stepList.length });
+    const baseBytes = Buffer.byteLength(marker, 'utf8');
+    const safeNameBudget = Math.max(0, maxBodyBytes - baseBytes);
+    const safeName = truncateUtf8ToBytes(name, safeNameBudget);
+    best = JSON.stringify({ name: safeName, steps: [], truncated: true, original_step_count: stepList.length });
+  }
+
+  if (!fitsUtf8(best, maxBodyBytes)) {
+    best = JSON.stringify({ truncated: true });
+  }
+
+  return { body: best, bytes: Buffer.byteLength(best, 'utf8'), truncated: true };
 }
 
 
@@ -143,13 +194,13 @@ export async function autoRecallForOrigin(opts: AutoRecallOptions): Promise<Auto
   let payloadTruncated = listTruncated;
 
   for (const record of capped) {
-    // Serialize the skill body: name + steps as JSON text.
-    const rawBody = JSON.stringify({ name: record.name, steps: record.steps });
-
-    const truncated = truncateUtf8ToBytes(rawBody, maxBodyBytes);
-    const body = truncated.text;
-    const bodyBytes = truncated.bytes;
-    const skillTruncated = truncated.truncated;
+    // Serialize the skill body as valid JSON text even when bounded.  Callers
+    // parse `body`, so truncation must drop whole JSON subtrees instead of
+    // clipping bytes out of the serialized string.
+    const bounded = boundedSkillBody(record.name, record.steps, maxBodyBytes);
+    const body = bounded.body;
+    const bodyBytes = bounded.bytes;
+    const skillTruncated = bounded.truncated;
     if (skillTruncated) {
       payloadTruncated = true;
     }

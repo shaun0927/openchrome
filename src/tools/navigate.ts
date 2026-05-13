@@ -593,7 +593,7 @@ const handler: ToolHandler = async (
             , context);
             if (authRedirect) {
               AdaptiveScreenshot.getInstance().reset(existingTabId);
-              return {
+              return await withDomainSkillsResult({
                 content: [{
                   type: 'text',
                   text: JSON.stringify({
@@ -612,7 +612,7 @@ const handler: ToolHandler = async (
                   }),
                 }],
                 isError: false,
-              };
+              }, recallArg);
             }
             AdaptiveScreenshot.getInstance().reset(existingTabId);
             const [summary, reuseBlockingDetection] = await Promise.all([
@@ -922,7 +922,7 @@ const handler: ToolHandler = async (
     // Auth redirect = fail-fast with clear error
     if (authRedirect) {
       AdaptiveScreenshot.getInstance().reset(tabId);
-      return {
+      return await withDomainSkillsResult({
         content: [{
           type: 'text',
           text: JSON.stringify({
@@ -939,7 +939,7 @@ const handler: ToolHandler = async (
           }),
         }],
         isError: false,
-      };
+      }, recallArg);
     }
 
     AdaptiveScreenshot.getInstance().reset(tabId);
@@ -998,7 +998,7 @@ const handler: ToolHandler = async (
 
           const hasContent = (timeoutReadiness.readyState === 'interactive' || timeoutReadiness.readyState === 'complete') && timeoutElementCount > 10;
           if (hasContent) {
-            return {
+            return await withDomainSkillsResult({
               content: [{
                 type: 'text',
                 text: JSON.stringify({
@@ -1011,7 +1011,7 @@ const handler: ToolHandler = async (
                   warning: 'Navigation load event timed out, but page has usable content. Proceed with caution.',
                 }),
               }],
-            };
+            }, recallArg);
           }
         }
       } catch { /* page might be gone — fall through to error */ }

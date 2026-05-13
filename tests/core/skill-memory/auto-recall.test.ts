@@ -74,10 +74,27 @@ describe('autoRecallForOrigin', () => {
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0].truncated).toBe(true);
     expect(result.truncated).toBe(true);
-    // Body should be no longer than 100 bytes.
+    // Body should be no longer than 100 bytes and remain parseable JSON.
     expect(Buffer.byteLength(result.skills[0].body, 'utf8')).toBeLessThanOrEqual(100);
+    const parsed = JSON.parse(result.skills[0].body) as { truncated?: boolean; steps?: unknown[] };
+    expect(parsed.truncated).toBe(true);
+    expect(Array.isArray(parsed.steps)).toBe(true);
   });
 
+  test('oversized single-step bodies stay valid JSON instead of clipped prefixes', async () => {
+    await writeSkill(rootDir, 'huge-step.com', 'single-huge', [{ kind: 'note', text: 'x'.repeat(5000) }]);
+
+    const result = await autoRecallForOrigin({
+      origin: 'huge-step.com',
+      rootDir,
+      maxBodyBytes: 128,
+    });
+
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].truncated).toBe(true);
+    expect(Buffer.byteLength(result.skills[0].body, 'utf8')).toBeLessThanOrEqual(128);
+    expect(() => JSON.parse(result.skills[0].body)).not.toThrow();
+  });
 
   test('UTF-8 truncation never exceeds maxBodyBytes for multibyte input', async () => {
     await writeSkill(rootDir, 'utf8.com', 'emoji-skill', [{ note: '😀'.repeat(50) }]);
