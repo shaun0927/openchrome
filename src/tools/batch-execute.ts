@@ -367,7 +367,16 @@ const handler: ToolHandler = async (
           await new Promise((resolve) => setTimeout(resolve, Math.max(0, task.interItemWaitMs!)));
         }
         const wait = await runWaitSpec(task, task.interItemWaitFor);
-        if (wait) result.wait = wait;
+        if (wait) {
+          result.wait = wait;
+          if (!wait.success) {
+            result.success = false;
+            result.error = `interItemWaitFor failed: ${wait.error ?? wait.type}`;
+            recordBatchItemMetric('err');
+            results.push(result);
+            break;
+          }
+        }
       }
       results.push(result);
     }

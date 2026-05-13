@@ -103,4 +103,26 @@ describe('batch_execute idempotency and inter-item waits', () => {
     expect(page.waitForFunction).toHaveBeenCalledWith('window.__ready === true', { timeout: 30000, polling: 100 });
     expect(mockSend).toHaveBeenCalledTimes(2);
   });
+
+  test('failed interItemWaitFor stops before the next sibling starts', async () => {
+    page.waitForFunction.mockRejectedValueOnce(new Error('not ready'));
+    const handler = makeHandler();
+    const result = parse(await handler('session-1', {
+      concurrency: 1,
+      tasks: [
+        { tabId: 'tab-1', script: 'click()', interItemWaitFor: { type: 'function', value: 'window.__ready === true', pollIntervalMs: 100 } },
+        { tabId: 'tab-1', script: 'read()' },
+      ],
+    }));
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({
+      success: false,
+      error: 'interItemWaitFor failed: not ready',
+      wait: { success: false, type: 'function', error: 'not ready' },
+    });
+    expect(result.summary).toMatchObject({ total: 1, succeeded: 0, failed: 1 });
+    expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
 });
