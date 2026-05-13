@@ -36,6 +36,17 @@ export const REDACTED = '[REDACTED]';
  */
 export const TRACE_TARGET_ALLOWLIST = ['nodeRef', 'backendNodeId', 'loaderId'] as const;
 
+const VAULT_LITERAL_REDACTIONS = new Map<string, string>();
+
+export function registerVaultTraceRedaction(name: string, plaintext: string): void {
+  if (!name || !plaintext) return;
+  VAULT_LITERAL_REDACTIONS.set(plaintext, `<vault:${name}>`);
+}
+
+export function clearVaultTraceRedactionsForTest(): void {
+  VAULT_LITERAL_REDACTIONS.clear();
+}
+
 const SENSITIVE_KEY_NAMES = [
   'password',
   'passwd',
@@ -118,6 +129,9 @@ function isSensitiveKey(key: string): boolean {
  */
 export function scrubString(value: string): string {
   let out = value;
+  for (const [plaintext, token] of VAULT_LITERAL_REDACTIONS) {
+    out = out.split(plaintext).join(token);
+  }
   for (const { name, re } of CREDENTIAL_PATTERNS) {
     if (name === 'url_credential_param') {
       out = out.replace(re, (_m, p1: string) => `${p1}=${REDACTED}`);

@@ -122,6 +122,7 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
+import { isPilotEnabled } from '../harness/flags';
 
 // Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
 import { registerOcTaskStartTool, getTaskStore, setTaskStartupReapPromise } from './oc-task-start';
@@ -570,6 +571,17 @@ export function registerAllTools(server: MCPServer): void {
 
   // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
   registerTaskRunTools(server);
+
+  // Pilot-only tools. Keep require() behind the runtime flag so core startup
+  // does not load src/pilot/** when --pilot is unset.
+  if (isPilotEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcPilotHandoffTool } = require('../pilot/handoff/tool') as typeof import('../pilot/handoff/tool');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcCredentialsTool } = require('../pilot/tools/oc-credentials') as typeof import('../pilot/tools/oc-credentials');
+    registerOcPilotHandoffTool(server);
+    registerOcCredentialsTool(server);
+  }
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

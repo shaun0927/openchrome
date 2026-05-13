@@ -8,6 +8,32 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
+import { isPilotEnabled } from '../harness/flags';
+
+async function resolveMaybeVault(value: unknown): Promise<{ value: unknown; token?: string; plaintext?: string; error?: MCPResult }> {
+  if (typeof value !== 'string' || !value.startsWith('vault://') || !isPilotEnabled()) return { value };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vault = require('../pilot/credentials/store') as typeof import('../pilot/credentials/store');
+    const resolved = await vault.resolveVaultValue(value);
+    return { value: resolved.value, token: resolved.token, plaintext: String(resolved.value) };
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String((error as { code: unknown }).code) : 'VAULT_ERROR';
+    return {
+      value,
+      error: {
+        content: [{ type: 'text', text: `Error: ${code}: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+        errorReason: code,
+      } as MCPResult,
+    };
+  }
+}
+
+function maskVaultText(text: string, vault?: { token?: string; plaintext?: string }): string {
+  if (!vault?.token || !vault.plaintext) return text;
+  return text.split(vault.plaintext).join(vault.token);
+}
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
@@ -87,6 +113,10 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+
+  const vaultValue = await resolveMaybeVault(value);
+  if (vaultValue.error) return vaultValue.error;
+  const inputValue = vaultValue.value;
 
   // Budget gate: form_input involves multiple sequential CDP calls (resolve + focus + evaluate + type)
   if (context && !hasBudget(context, 10_000)) {
@@ -280,7 +310,7 @@ const handler: ToolHandler = async (
                 }
               }
             `,
-            arguments: [{ value }],
+            arguments: [{ value: inputValue }],
             returnByValue: true,
           });
         }
@@ -306,7 +336,7 @@ const handler: ToolHandler = async (
           });
 
           // Insert the new value via CDP Input.insertText
-          await cdpClient.send(page, 'Input.insertText', { text: String(value) });
+          await cdpClient.send(page, 'Input.insertText', { text: String(inputValue) });
           usedCDP = true;
         } catch {
           // CDP focus/input failed — element may not be focusable via CDP
@@ -316,7 +346,7 @@ const handler: ToolHandler = async (
         if (usedCDP) {
           return {
             result: {
-              value: { success: true, message: `Set value to "${value}"` },
+              value: { success: true, message: `Set value to "${inputValue}"` },
             },
           } as { result: { value: { success: boolean; message?: string; error?: string } } };
         }
@@ -354,7 +384,7 @@ const handler: ToolHandler = async (
               }
             }
           `,
-          arguments: [{ value }],
+          arguments: [{ value: inputValue }],
           returnByValue: true,
         });
       } else if (elInfo.tagName === 'select') {
@@ -391,7 +421,7 @@ const handler: ToolHandler = async (
               }
             }
           `,
-          arguments: [{ value }],
+          arguments: [{ value: inputValue }],
           returnByValue: true,
         });
       } else if (elInfo.contentEditable) {
@@ -413,7 +443,7 @@ const handler: ToolHandler = async (
               }
             }
           `,
-          arguments: [{ value }],
+          arguments: [{ value: inputValue }],
           returnByValue: true,
         });
       } else {
@@ -429,7 +459,7 @@ const handler: ToolHandler = async (
 
     if (response.success) {
       return {
-        content: [{ type: 'text', text: (response.message || 'Value set successfully') + delta }],
+        content: [{ type: 'text', text: maskVaultText((response.message || 'Value set successfully') + delta, vaultValue) }],
       };
     } else {
       return {
