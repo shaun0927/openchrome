@@ -406,34 +406,49 @@ export class TaskJournal {
     ok: boolean,
   ): string {
     const s = ok ? "✓" : "✗";
+    let base: string;
     switch (tool) {
       case "navigate":
-        return `${s} → ${args.url || "unknown"}`;
+        base = `${s} → ${args.url || "unknown"}`;
+        break;
       case "read_page":
-        return `${s} Read page`;
+        base = `${s} Read page`;
+        break;
       case "interact":
-        return `${s} Click "${args.description || args.selector || ""}"`;
+        base = `${s} Click "${args.description || args.selector || ""}"`;
+        break;
       case "fill_form": {
         const fields = args.fields as Record<string, unknown> | undefined;
-        return `${s} Fill form (${fields ? Object.keys(fields).length : 0} fields)`;
+        base = `${s} Fill form (${fields ? Object.keys(fields).length : 0} fields)`;
+        break;
       }
       case "find":
-        return `${s} Find "${args.description || args.selector || ""}"`;
+        base = `${s} Find "${args.description || args.selector || ""}"`;
+        break;
       case "javascript_tool":
-        return `${s} JS eval`;
+        base = `${s} JS eval`;
+        break;
       case "tabs_create":
-        return `${s} New tab${args.url ? ` → ${args.url}` : ""}`;
+        base = `${s} New tab${args.url ? ` → ${args.url}` : ""}`;
+        break;
       case "tabs_close":
-        return `${s} Close tab`;
+        base = `${s} Close tab`;
+        break;
       case "oc_stop":
-        return `${s} Stop OpenChrome`;
+        base = `${s} Stop OpenChrome`;
+        break;
       case "oc_session_snapshot":
-        return `${s} Snapshot saved`;
+        base = `${s} Snapshot saved`;
+        break;
       case "workflow_init":
-        return `${s} Workflow started`;
+        base = `${s} Workflow started`;
+        break;
       default:
-        return `${s} ${tool}`;
+        base = `${s} ${tool}`;
     }
+    // Append intent label if provided and non-empty (issue #894).
+    const intent = typeof args.intent === 'string' && args.intent ? args.intent : undefined;
+    return intent ? `${base} [intent: "${intent}"]` : base;
   }
 
   /**
