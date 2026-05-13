@@ -332,6 +332,7 @@ export class TaskRunStore {
     return text.split('\n').filter(Boolean).length + 1;
   }
 
+
   private runDir(runId: string): string {
     assertSafeId(runId);
     return path.join(this.rootDir, runId);
