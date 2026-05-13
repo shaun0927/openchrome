@@ -6,7 +6,8 @@ export {
   buildOpenGraphExtractor,
   buildCssHeuristicExtractor,
   buildMultipleItemExtractor,
+  buildStandardDomExtractor,
 } from './strategies';
 export type { StrategyResult } from './strategies';
-export { buildExtractionPlan, buildFieldPlan, isSafeSelectorToken } from './plan';
-export type { ExtractionPlan, ExtractionFieldPlan } from './plan';
+export { EXTRACTION_MODES, EXTRACTION_MODE_BUDGETS, parseExtractionMode } from './mode';
+export type { ExtractionMode, ExtractionModeBudget } from './mode';

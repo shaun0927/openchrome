@@ -4,12 +4,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { redactValue } from '../core/trace/redactor.js';
+import { evidenceTriggerForEvent, RunEvidenceCapture, shouldAutoCaptureRunEvidence } from './evidence.js';
 import { TERMINAL_RUN_STATUSES, type RunEvent, type RunRecord, type RunStatus } from './types.js';
 
 export interface RunStoreOptions {
   rootDir?: string;
   now?: () => number;
   idFactory?: () => string;
+  evidenceRootDir?: string;
 }
 
 export interface StartRunInput {
@@ -49,11 +51,13 @@ export class RunStore {
   private readonly rootDir: string;
   private readonly now: () => number;
   private readonly idFactory: () => string;
+  private readonly evidenceCapture: RunEvidenceCapture;
 
   constructor(opts: RunStoreOptions = {}) {
     this.rootDir = opts.rootDir ?? defaultRunRootDir();
     this.now = opts.now ?? Date.now;
     this.idFactory = opts.idFactory ?? (() => crypto.randomUUID());
+    this.evidenceCapture = new RunEvidenceCapture({ rootDir: opts.evidenceRootDir, now: this.now, idFactory: this.idFactory });
   }
 
   startRun(input: StartRunInput = {}): RunRecord {
@@ -129,6 +133,28 @@ export class RunStore {
       metadata: sanitizeMetadata(input.metadata),
     });
     record.events.push(event);
+    if (shouldAutoCaptureRunEvidence(event)) {
+      const captured = this.evidenceCapture.capture({
+        record,
+        event,
+        trigger: evidenceTriggerForEvent(event),
+        failureCategory: stringMetadata(input.metadata?.failureCategory),
+        message: input.message,
+      });
+      if (captured) {
+        record.events.push(this.event(safeRunId, 'evidence', {
+          session_id: input.session_id,
+          tab_id: input.tab_id,
+          tool: input.tool,
+          message: 'auto-captured run evidence bundle',
+          metadata: {
+            path: captured.path,
+            trigger: captured.bundle.trigger,
+            failureCategory: captured.bundle.failure_category,
+          },
+        }));
+      }
+    }
     record.updated_at = event.ts;
     this.writeRun(record);
     return event;
@@ -192,6 +218,10 @@ function sanitizeMetadata(value: Record<string, unknown> | undefined): Record<st
 
 function sanitizeText(value: string | undefined): string | undefined {
   return value === undefined ? undefined : String(redactValue(sanitizeRunLedgerString(value)));
+}
+
+function stringMetadata(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 function sanitizeRunLedgerValue(value: unknown): unknown {

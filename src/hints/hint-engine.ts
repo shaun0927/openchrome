@@ -30,6 +30,10 @@ import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
 import { setupHintRules } from './rules/setup-hints';
 import { consoleBufferPressureRules } from './rules/console-buffer-pressure';
+import {
+  mapHintRuleToRecoveryCategory,
+  RecoveryFeedbackWriter,
+} from '../core/trace/recovery-feedback';
 
 export interface HintContext {
   toolName: string;
@@ -98,6 +102,7 @@ export class HintEngine {
   private logStream: fs.WriteStream | null = null;
   private logBuffer: string[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private recoveryFeedback: RecoveryFeedbackWriter | null = null;
   private static readonly FLUSH_INTERVAL = 200; // ms
 
   constructor(activityTracker: ActivityTracker, progressTracker?: ProgressTracker, repeatedCallDetector?: RepeatedCallDetector) {
@@ -146,6 +151,11 @@ export class HintEngine {
    */
   enableLearning(dirPath: string): void {
     this.learner.enablePersistence(dirPath);
+  }
+
+  /** Enable best-effort recovery feedback JSONL bundles (#1048). */
+  enableRecoveryFeedback(dirPath: string): void {
+    this.recoveryFeedback = new RecoveryFeedbackWriter({ dirPath });
   }
 
   /**
@@ -213,6 +223,7 @@ export class HintEngine {
         'Step back and try a completely different approach, or ask the user for help.';
       const severity = fireCount >= 2 ? 'critical' as const : 'warning' as const;
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stuck', hint: rawHintText, severity, fireCount });
+      this.recordRecoveryFeedback('progress-tracker-stuck', rawHintText, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
       return {
         severity,
         rule: 'progress-tracker-stuck',
@@ -230,6 +241,7 @@ export class HintEngine {
         'Consider trying a different approach before getting stuck.';
       const severity = this.getSeverity(fireCount);
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stalling', hint: rawHintText, severity, fireCount });
+      this.recordRecoveryFeedback('progress-tracker-stalling', rawHintText, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
       return {
         severity,
         rule: 'progress-tracker-stalling',
@@ -294,6 +306,7 @@ export class HintEngine {
         this.hintEscalation.set(key, fireCount);
         const severity = repeated.severity;
         this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'repeated-identical-tool-call', hint: repeated.hint, severity, fireCount });
+        this.recordRecoveryFeedback('repeated-identical-tool-call', repeated.hint, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
         return {
           severity,
           rule: 'repeated-identical-tool-call',
@@ -363,8 +376,56 @@ export class HintEngine {
     this.learner.onToolComplete(toolName, isError);
 
     this.log({ timestamp: Date.now(), toolName, isError, matchedRule, hint: formattedHint, severity, fireCount });
+    if (mapHintRuleToRecoveryCategory(matchedRule, resultText) !== 'unknown') {
+      this.recordRecoveryFeedback(matchedRule, rawHint, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
+    }
 
     return hintResult;
+  }
+
+  private recordRecoveryFeedback(
+    rule: string,
+    rawHint: string,
+    severity: HintSeverity,
+    fireCount: number,
+    toolName: string,
+    resultText: string,
+    isError: boolean,
+    sessionId: string,
+    recentCalls: ToolCallEvent[],
+  ): void {
+    if (!this.recoveryFeedback) return;
+    const now = Date.now();
+    const category = mapHintRuleToRecoveryCategory(rule, resultText);
+    this.recoveryFeedback.append({
+      sessionId,
+      startedAt: now,
+      endedAt: now,
+      trigger: {
+        tool: toolName,
+        category,
+        errorFingerprint: resultText,
+        resultExcerpt: resultText,
+      },
+      context: {
+        recentTools: recentCalls.map((call) => call.toolName),
+        nonProgressCalls: category === 'non_progress' ? fireCount : 0,
+      },
+      hints: [{ rule, severity, rawHint }],
+      recovery: {
+        attemptedTools: [],
+        succeeded: false,
+        attempts: 0,
+        durationMs: 0,
+      },
+      outcome: {
+        finalStatus: isError || category === 'non_progress' ? 'failed' : 'escalated',
+        feedback: category === 'blocked_page'
+          ? 'blocked_page detected; no recovery attempted; escalated to host/user'
+          : undefined,
+      },
+      traceRefs: [],
+    });
   }
 
   private getSeverity(fireCount: number, maxSeverity?: HintSeverity): HintSeverity {
