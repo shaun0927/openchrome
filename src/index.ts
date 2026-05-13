@@ -394,7 +394,7 @@ program
     resetReadinessMachine();
 
     const server = getMCPServer();
-    registerAllTools(server);
+    await registerAllTools(server);
 
     // Dev-only hook: artificial delay for the tools component transition.
     // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
