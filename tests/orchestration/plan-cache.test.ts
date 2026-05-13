@@ -921,3 +921,77 @@ describe('PlanExecutor final verification gate', () => {
     expect(result.error).toContain('unsupported finalVerification.requiredEvidence');
   });
 });
+
+describe('Plan failure taxonomy (#1012)', () => {
+  test('executor classifies thrown step errors and exposes recovery candidates', async () => {
+    const handlers: Record<string, ToolHandler> = {
+      boom: jest.fn().mockRejectedValue(new Error('STALE_REF: old ref')),
+    };
+    const executor = new PlanExecutor((tool) => handlers[tool] || null);
+    const plan = buildPlan({
+      id: 'failure-taxonomy-plan',
+      steps: [buildStep({ order: 1, tool: 'boom', timeout: 100 })],
+      errorHandlers: [{ condition: 'step1_error', action: 'refresh refs', steps: [] }],
+    });
+
+    const result = await executor.execute(plan, 'sess', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toEqual(expect.objectContaining({
+      class: 'stale_ref',
+      stepOrder: 1,
+      tool: 'boom',
+    }));
+    expect(result.recoveryCandidates).toEqual([
+      expect.objectContaining({ source: 'error_handler', condition: 'step1_error', action: 'refresh refs' }),
+    ]);
+  });
+
+  test('executor classifies empty result that later fails success criteria', async () => {
+    const handlers: Record<string, ToolHandler> = {
+      empty: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: '[]' }] }),
+    };
+    const executor = new PlanExecutor((tool) => handlers[tool] || null);
+    const plan = buildPlan({
+      id: 'empty-taxonomy-plan',
+      steps: [buildStep({
+        order: 1,
+        tool: 'empty',
+        timeout: 100,
+        parseResult: { format: 'json', storeAs: 'items' },
+      })],
+      successCriteria: { minDataItems: 1 },
+    });
+
+    const result = await executor.execute(plan, 'sess', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toEqual(expect.objectContaining({
+      class: 'empty_result',
+      stepOrder: 1,
+      tool: 'empty',
+    }));
+  });
+
+  test('registry persists failure-class counts without changing aggregate stats', () => {
+    const tmpDir = makeTempDir();
+    try {
+      const registry = new PlanRegistry(tmpDir);
+      registry.registerPlan(buildPlan({ id: 'stats-failure-plan' }), buildPattern());
+
+      registry.updateStats('stats-failure-plan', false, 100, 'stale_ref');
+      registry.updateStats('stats-failure-plan', false, 200, 'contract_failed');
+      registry.updateStats('stats-failure-plan', true, 300);
+
+      const reloaded = new PlanRegistry(tmpDir);
+      reloaded.load();
+      const entry = reloaded.getEntry('stats-failure-plan')!;
+      expect(entry.stats.totalExecutions).toBe(3);
+      expect(entry.stats.successCount).toBe(1);
+      expect(entry.stats.failCount).toBe(2);
+      expect(entry.stats.failureClassCounts).toEqual({ stale_ref: 1, contract_failed: 1 });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

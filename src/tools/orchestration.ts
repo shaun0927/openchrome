@@ -806,7 +806,7 @@ const executePlanHandler: ToolHandler = async (
     );
 
     // Update stats
-    registry.updateStats(planId, result.success, result.durationMs);
+    registry.updateStats(planId, result.success, result.durationMs, result.failure?.class);
 
     return {
       content: [{
@@ -819,6 +819,8 @@ const executePlanHandler: ToolHandler = async (
           durationMs: result.durationMs,
           data: result.data,
           error: result.error,
+          failure: result.failure,
+          recoveryCandidates: result.recoveryCandidates,
           ...(result.taskSignature ? { taskSignature: result.taskSignature } : {}),
           message: result.success
             ? `Plan "${planId}" executed successfully in ${result.durationMs}ms (${result.stepsExecuted}/${result.totalSteps} steps)`
