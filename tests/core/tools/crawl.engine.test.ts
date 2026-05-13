@@ -423,3 +423,180 @@ describe('crawl_sitemap engine=static', () => {
     expect(mockSessionManager.createTarget).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// crawl content cache modes (#987)
+// ---------------------------------------------------------------------------
+
+describe('crawl cache modes', () => {
+  let cacheDir: string;
+
+  beforeEach(() => {
+    cacheDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'openchrome-crawl-cache-'));
+    process.env.OPENCHROME_CRAWL_CACHE_DIR = cacheDir;
+    server.setRoute('/cache.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Cacheable', `<h1>Cacheable</h1><p>${PARA}</p>`),
+    });
+    server.setRoute('/account.html', {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: RICH_HTML('Account Settings', '<form><input type="password" name="password" /></form>' + PARA),
+    });
+  });
+
+  afterEach(() => {
+    delete process.env.OPENCHROME_CRAWL_CACHE_DIR;
+    require('fs').rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  test('default cache_mode disabled preserves output shape and does not write files', async () => {
+    const handler = await loadHandler('crawl');
+    const result = await handler('cache-default', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+    });
+    const parsed = parseResult(result);
+    expect(parsed.pages[0].cache).toBeUndefined();
+    expect(require('fs').readdirSync(cacheDir)).toEqual([]);
+  });
+
+  test('enabled mode stores then serves a hit without fetching the page again', async () => {
+    const handler = await loadHandler('crawl');
+    const before = server.hitCount('/cache.html');
+    const first = parseResult(await handler('cache-enabled', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+    expect(first.pages[0].cache).toMatchObject({ status: 'miss', write: 'stored', hit: false });
+    expect(server.hitCount('/cache.html')).toBe(before + 1);
+
+    const second = parseResult(await handler('cache-enabled', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+    expect(second.pages[0].cache).toMatchObject({ status: 'hit', hit: true });
+    expect(server.hitCount('/cache.html')).toBe(before + 1);
+  });
+
+  test('read_only does not create entries on miss and write_only never serves hits', async () => {
+    const handler = await loadHandler('crawl');
+    const before = server.hitCount('/cache.html');
+    const readOnly = parseResult(await handler('cache-read-only', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'read_only',
+    }));
+    expect(readOnly.pages[0].cache).toMatchObject({ status: 'miss', write: 'disabled' });
+    expect(require('fs').readdirSync(cacheDir)).toEqual([]);
+
+    const writeOnlyA = parseResult(await handler('cache-write-only', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'write_only',
+    }));
+    const writeOnlyB = parseResult(await handler('cache-write-only', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'write_only',
+    }));
+    expect(writeOnlyA.pages[0].cache).toMatchObject({ status: 'write_only', write: 'stored' });
+    expect(writeOnlyB.pages[0].cache).toMatchObject({ status: 'write_only', write: 'stored' });
+    expect(server.hitCount('/cache.html')).toBe(before + 3);
+  });
+
+  test('bypass overwrites and public scope skips auth-sensitive pages', async () => {
+    const handler = await loadHandler('crawl');
+    const bypass = parseResult(await handler('cache-bypass', {
+      url: `${server.origin}/cache.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'bypass',
+    }));
+    expect(bypass.pages[0].cache).toMatchObject({ status: 'bypass', write: 'stored' });
+
+    const sensitive = parseResult(await handler('cache-sensitive', {
+      url: `${server.origin}/account.html`,
+      max_pages: 1,
+      max_depth: 0,
+      delay_ms: 0,
+      engine: 'static',
+      respect_robots: false,
+      cache_mode: 'enabled',
+    }));
+    expect(sensitive.pages[0].cache).toMatchObject({ status: 'miss', write: 'skipped' });
+    expect(String((sensitive.pages[0].cache as Record<string, unknown>).write_skipped_reason)).toMatch(/auth-sensitive/);
+  });
+});
+
+describe('crawl_sitemap cache_mode=enabled', () => {
+  let cacheDir: string;
+
+  beforeEach(() => {
+    cacheDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'openchrome-sitemap-cache-'));
+    process.env.OPENCHROME_CRAWL_CACHE_DIR = cacheDir;
+  });
+
+  afterEach(() => {
+    delete process.env.OPENCHROME_CRAWL_CACHE_DIR;
+    require('fs').rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  test('stores sitemap page content and serves later page hits from cache', async () => {
+    const handler = await loadHandler('crawl_sitemap');
+    const before = server.hitCount('/page-a.html');
+    const first = parseResult(await handler('sitemap-cache', {
+      url: server.origin,
+      max_pages: 1,
+      concurrency: 1,
+      engine: 'static',
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+    expect(first.pages[0].cache).toMatchObject({ status: 'miss', write: 'stored' });
+    expect(server.hitCount('/page-a.html')).toBe(before + 1);
+
+    const second = parseResult(await handler('sitemap-cache', {
+      url: server.origin,
+      max_pages: 1,
+      concurrency: 1,
+      engine: 'static',
+      cache_mode: 'enabled',
+      cache_ttl_ms: 60_000,
+    }));
+    expect(second.pages[0].cache).toMatchObject({ status: 'hit', hit: true });
+    expect(server.hitCount('/page-a.html')).toBe(before + 1);
+  });
+});
