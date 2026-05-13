@@ -268,24 +268,6 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   workflow_init: 'workflow',
   workflow_status: 'workflow',
 
-  // workflow — diagnostics and progress (developer/tooling tools)
-  oc_normalize_action: 'workflow',
-  oc_progress_status: 'workflow',
-  oc_reflect: 'workflow',
-
-  // workflow — run harness (#1021)
-  oc_run_events: 'workflow',
-  oc_run_finish: 'workflow',
-  oc_run_start: 'workflow',
-  oc_run_status: 'workflow',
-
-  // workflow — async task ledger (#855)
-  oc_task_cancel: 'workflow',
-  oc_task_get: 'workflow',
-  oc_task_list: 'workflow',
-  oc_task_start: 'workflow',
-  oc_task_wait: 'workflow',
-
   // totp — 2FA / TOTP generation
   oc_totp_generate: 'totp',
 
