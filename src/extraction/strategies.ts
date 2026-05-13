@@ -9,6 +9,7 @@ interface RuntimeFieldPlan {
   field: string;
   aliases: string[];
   selectorTokens: string[];
+  expectedType?: string | string[];
 }
 
 function normalisePlans(fields: FieldInput): RuntimeFieldPlan[] {
@@ -20,13 +21,18 @@ function normalisePlans(fields: FieldInput): RuntimeFieldPlan[] {
       field: field.field,
       aliases: field.aliases,
       selectorTokens: field.selectorTokens,
+      expectedType: field.expectedType,
     };
   });
 }
 
 export function buildJsonLdExtractor(fields: FieldInput): string {
   const plans = normalisePlans(fields);
-  return `(function(fp){var r=Object.create(null);var sc=document.querySelectorAll('script[type="application/ld+json"]');function has(o,k){return !!o&&Object.prototype.hasOwnProperty.call(o,k)}function get(o,k){return has(o,k)?o[k]:undefined}function norm(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'')}function read(item,keys){for(var a=0;a<keys.length;a++){var key=keys[a];if(has(item,key))return item[key];var nk=norm(key);if(nk){for(var p in item){if(!has(item,p))continue;if(norm(p)===nk)return item[p]}}}return undefined}function val(v){return v}for(var i=0;i<sc.length;i++){try{var d=JSON.parse(sc[i].textContent||'');var g=get(d,'@graph');var it=Array.isArray(d)?d:(g?g:[d]);for(var j=0;j<it.length;j++){var item=it[j];if(!item||typeof item!=='object')continue;for(var k=0;k<fp.length;k++){var f=fp[k];if(has(r,f.field)&&r[f.field]!=null)continue;var keys=f.aliases&&f.aliases.length?f.aliases:[f.field];var v=read(item,keys);var offers=get(item,'offers');if(v===undefined&&offers){var of=Array.isArray(offers)?offers:[offers];for(var o=0;o<of.length;o++){v=read(of[o],keys);if(v!==undefined)break}}if(v!==undefined)r[f.field]=val(v)}}}catch(e){}}return r})(${JSON.stringify(plans)})`;
+  // val(v, t): project JSON-LD value based on declared schema type.
+  // Scalar types attempt common JSON-LD shape projections; object/untyped preserve as-is.
+  // IIFE scalar projection keys tried in order: @value, value, ratingValue, name.
+  const valFn = `function val(v,t){if(v===null||v===undefined)return v;var st={'string':1,'number':1,'integer':1,'boolean':1};var ts=Array.isArray(t)?t:[t];var isScalar=ts.some(function(x){return st[x]});if(!isScalar)return v;if(typeof v!=='object')return v;var proj=['@value','value','ratingValue','name'];for(var pi=0;pi<proj.length;pi++){if(has(v,proj[pi]))return v[proj[pi]]}return v}`;
+  return `(function(fp){var r=Object.create(null);var sc=document.querySelectorAll('script[type="application/ld+json"]');function has(o,k){return !!o&&Object.prototype.hasOwnProperty.call(o,k)}function get(o,k){return has(o,k)?o[k]:undefined}function norm(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'')}function read(item,keys){for(var a=0;a<keys.length;a++){var key=keys[a];if(has(item,key))return item[key];var nk=norm(key);if(nk){for(var p in item){if(!has(item,p))continue;if(norm(p)===nk)return item[p]}}}return undefined}${valFn}for(var i=0;i<sc.length;i++){try{var d=JSON.parse(sc[i].textContent||'');var g=get(d,'@graph');var it=Array.isArray(d)?d:(g?g:[d]);for(var j=0;j<it.length;j++){var item=it[j];if(!item||typeof item!=='object')continue;for(var k=0;k<fp.length;k++){var f=fp[k];if(has(r,f.field)&&r[f.field]!=null)continue;var keys=f.aliases&&f.aliases.length?f.aliases:[f.field];var v=read(item,keys);var offers=get(item,'offers');if(v===undefined&&offers){var of=Array.isArray(offers)?offers:[offers];for(var o=0;o<of.length;o++){v=read(of[o],keys);if(v!==undefined)break}}if(v!==undefined)r[f.field]=val(v,f.expectedType)}}}catch(e){}}return r})(${JSON.stringify(plans)})`;
 }
 
 export function buildMicrodataExtractor(fields: FieldInput): string {

@@ -107,3 +107,62 @@ test('JSON-LD own alias is not suppressed by inherited result fields', () => {
     delete (Object.prototype as { headline?: string }).headline;
   }
 });
+
+test('JSON-LD scalar projection: string field extracts ratingValue from object', () => {
+  // When schema declares type: "string", val() should project ratingValue from the nested object
+  const plan = buildExtractionPlan({ rating: { type: 'string' } });
+  const script = buildJsonLdExtractor(plan.fields);
+  const documentMock = {
+    querySelectorAll: (selector: string) => selector === 'script[type="application/ld+json"]'
+      ? [{ textContent: JSON.stringify({ '@type': 'Product', aggregateRating: { ratingValue: '4.7', reviewCount: 120 } }) }]
+      : [],
+  };
+
+  const result = runExtractor<Record<string, unknown>>(script, documentMock);
+  // rating alias matches aggregateRating; ratingValue projected from the nested object
+  expect(result.rating).toBe('4.7');
+});
+
+test('JSON-LD object-typed field preserves nested object as-is', () => {
+  // When schema declares type: "object", val() should return the raw nested value
+  const plan = buildExtractionPlan({ aggregateRating: { type: 'object', properties: { ratingValue: { type: 'string' } } } });
+  const script = buildJsonLdExtractor(plan.fields);
+  const nestedRating = { ratingValue: '4.7', reviewCount: 120 };
+  const documentMock = {
+    querySelectorAll: (selector: string) => selector === 'script[type="application/ld+json"]'
+      ? [{ textContent: JSON.stringify({ '@type': 'Product', aggregateRating: nestedRating }) }]
+      : [],
+  };
+
+  const result = runExtractor<Record<string, unknown>>(script, documentMock);
+  expect(result.aggregateRating).toEqual(nestedRating);
+});
+
+test('JSON-LD scalar projection: number field extracts @value from typed value object', () => {
+  // When schema declares type: "number", val() should project @value from { "@value": "4.7" }
+  const plan = buildExtractionPlan({ price: { type: 'number' } });
+  const script = buildJsonLdExtractor(plan.fields);
+  const documentMock = {
+    querySelectorAll: (selector: string) => selector === 'script[type="application/ld+json"]'
+      ? [{ textContent: JSON.stringify({ '@type': 'Offer', price: { '@value': '29.99' } }) }]
+      : [],
+  };
+
+  const result = runExtractor<Record<string, unknown>>(script, documentMock);
+  expect(result.price).toBe('29.99');
+});
+
+test('JSON-LD untyped field preserves raw object value', () => {
+  // When no type declared, val() should preserve the value as-is (no projection)
+  const plan = buildExtractionPlan({ brand: {} });
+  const script = buildJsonLdExtractor(plan.fields);
+  const brandObj = { '@type': 'Brand', name: 'Acme' };
+  const documentMock = {
+    querySelectorAll: (selector: string) => selector === 'script[type="application/ld+json"]'
+      ? [{ textContent: JSON.stringify({ '@type': 'Product', brand: brandObj }) }]
+      : [],
+  };
+
+  const result = runExtractor<Record<string, unknown>>(script, documentMock);
+  expect(result.brand).toEqual(brandObj);
+});
