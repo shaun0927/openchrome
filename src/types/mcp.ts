@@ -126,8 +126,8 @@ export interface MCPToolDefinition {
    * Tools without `outputSchema` continue to return free-form `content[]`.
    */
   outputSchema?: MCPObjectSchema;
-  /** Required MCP-spec tool annotations. */
-  annotations: ToolAnnotations;
+  /** Optional MCP-spec tool annotations. */
+  annotations?: ToolAnnotations;
 }
 
 /**
