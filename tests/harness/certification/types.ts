@@ -28,7 +28,7 @@ export interface HarnessScenarioResult {
   hints: Array<{ rule: string; severity: string }>;
   contractVerdicts?: Array<{ contractId: string; verdict: string }>;
   failureReason?: string;
-  thresholds: Pick<HarnessCertificationThresholds, 'maxNonProgressCalls' | 'maxStuckEvents' | 'maxP99ToolLatencyMs' | 'maxToolCalls'>;
+  thresholds: Pick<HarnessCertificationThresholds, 'maxNonProgressCalls' | 'maxStuckEvents' | 'maxP99ToolLatencyMs' | 'maxToolCalls' | 'scenarioTimeoutMs'>;
   toolTrace: HarnessToolTraceEntry[];
 }
 

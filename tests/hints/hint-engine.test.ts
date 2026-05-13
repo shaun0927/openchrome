@@ -136,6 +136,29 @@ describe('HintEngine', () => {
     });
   });
 
+  describe('recovery feedback bundles', () => {
+    it('writes a blocked-page feedback bundle when a blocking hint fires', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-feedback-hints-'));
+      const engine = new HintEngine(new ActivityTracker());
+      engine.enableRecoveryFeedback(tmpDir);
+
+      const hint = engine.getHint(
+        'navigate',
+        makeResult(JSON.stringify({ blockingPage: { type: 'access-denied', detail: '403 Forbidden' } })),
+        false,
+        'session-a',
+      );
+
+      expect(hint?.rule).toBe('access-denied-detected');
+      const files = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.jsonl'));
+      expect(files).toHaveLength(1);
+      const parsed = JSON.parse(fs.readFileSync(path.join(tmpDir, files[0]), 'utf8').trim());
+      expect(parsed.sessionId).toBe('session-a');
+      expect(parsed.trigger.category).toBe('blocked_page');
+      expect(parsed.hints[0].rule).toBe('access-denied-detected');
+    });
+  });
+
   describe('composite suggestion rules', () => {
     it('should suggest interact after find+click pattern', () => {
       const tracker = makeTracker([{ toolName: 'find' }]);

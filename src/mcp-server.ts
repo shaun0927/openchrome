@@ -485,6 +485,7 @@ export class MCPServer {
     this.hintEngine = new HintEngine(this.activityTracker);
     this.hintEngine.enableLogging(hintsDir);
     this.hintEngine.enableLearning(hintsDir);
+    this.hintEngine.enableRecoveryFeedback(path.join(process.cwd(), '.openchrome', 'recovery-feedback'));
 
     // Initialize passive recovery trajectory ledger (#1017). Default-on with the
     // existing .openchrome harness logs; set OPENCHROME_RECOVERY_LEDGER=0 to disable.

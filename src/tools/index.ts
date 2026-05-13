@@ -121,8 +121,6 @@ import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
 
-// Skill memory tools (#875) — deterministic replay
-import { registerOcSkillReplayTool } from './oc-skill-replay';
 // Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
 import { registerOcTaskStartTool, getTaskStore, setTaskStartupReapPromise } from './oc-task-start';
 import { registerOcTaskListTool } from './oc-task-list';
@@ -158,6 +156,9 @@ import { registerRunHarnessTools } from '../run-harness/tools';
 import { registerTaskRunTools } from './task-run';
 // Read-only progress diagnostics (#1060).
 import { registerOcProgressStatusTool } from './oc-progress-status';
+// 2-stage large-output fetch (#887) — store + paging tool.
+import { registerOcOutputFetchTool } from './oc-output-fetch';
+import { getHandleStore } from '../core/output/handle-store';
 
 
 /**
@@ -213,6 +214,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_journal: 'core',
   oc_observe: 'core',
   oc_open_host_settings: 'core',
+  oc_output_fetch: 'core',
   oc_performance_analyze: 'core',
   oc_performance_insights: 'core',
   oc_reap_orphans: 'core',
@@ -463,6 +465,9 @@ export function registerAllTools(server: MCPServer): void {
   // Read-only anti-wandering diagnostics (#1060).
   registerOcProgressStatusTool(server);
 
+  // 2-stage large-output fetch (#887) — paging tool for handle payloads.
+  registerOcOutputFetchTool(proxy);
+
   // Outcome Contracts (#792) — evidence bundle capture
   registerOcEvidenceBundleTool(proxy);
 
@@ -474,9 +479,19 @@ export function registerAllTools(server: MCPServer): void {
   // OPENCHROME_SKILL_REPLAY=1 are both active.
   if (isSkillReplayEnabled()) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { registerOcSkillReplayTool } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
-    registerOcSkillReplayTool(proxy);
+    const { registerOcSkillReplayTool: _reg } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
+    _reg(proxy);
   }
+
+  // P2 fix (#887): purge expired output handles every 5 minutes.
+  // `.unref()` ensures the interval does not prevent clean process exit.
+  const _outputPurgeTimer = setInterval(() => {
+    const removed = getHandleStore().purgeExpired();
+    if (removed > 0) {
+      console.error(`[output-handles] Purged ${removed} expired handle(s)`);
+    }
+  }, 5 * 60 * 1000);
+  _outputPurgeTimer.unref();
 
   // Async task ledger (#855) — persistent background task table
   registerOcTaskStartTool(server);

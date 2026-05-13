@@ -97,6 +97,7 @@ function finalize(spec: ScenarioSpec, thresholds: HarnessCertificationThresholds
     spec.nonProgressCalls > thresholds.maxNonProgressCalls ? `nonProgressCalls ${spec.nonProgressCalls} > ${thresholds.maxNonProgressCalls}` : undefined,
     spec.stuckEvents > thresholds.maxStuckEvents ? `stuckEvents ${spec.stuckEvents} > ${thresholds.maxStuckEvents}` : undefined,
     p99 > thresholds.maxP99ToolLatencyMs ? `p99ToolLatencyMs ${p99} > ${thresholds.maxP99ToolLatencyMs}` : undefined,
+    durationMs > thresholds.scenarioTimeoutMs ? `durationMs ${durationMs} > ${thresholds.scenarioTimeoutMs}` : undefined,
     spec.id === 'stale-ref-recovery' && spec.recoverySucceeded !== true ? 'expected stale-ref recovery did not occur' : undefined,
     spec.tools.some((tool) => !tool.ok) && spec.id !== 'stale-ref-recovery' ? 'unexpected failed tool call' : undefined,
   ].filter(Boolean) as string[];
@@ -120,6 +121,7 @@ function finalize(spec: ScenarioSpec, thresholds: HarnessCertificationThresholds
       maxStuckEvents: thresholds.maxStuckEvents,
       maxP99ToolLatencyMs: thresholds.maxP99ToolLatencyMs,
       maxToolCalls: thresholds.maxToolCalls,
+      scenarioTimeoutMs: thresholds.scenarioTimeoutMs,
     },
     toolTrace: spec.tools,
   };

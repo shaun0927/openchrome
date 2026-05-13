@@ -23,6 +23,7 @@ describe('harness certification report', () => {
       expect(typeof scenario.toolCalls).toBe('number');
       expect(typeof scenario.nonProgressCalls).toBe('number');
       expect(typeof scenario.durationMs).toBe('number');
+      expect(scenario.thresholds.scenarioTimeoutMs).toBe(thresholds.scenarioTimeoutMs);
       expect(Array.isArray(scenario.hints)).toBe(true);
       expect(Array.isArray(scenario.toolTrace)).toBe(true);
     }
@@ -45,5 +46,11 @@ describe('harness certification report', () => {
   test('strict thresholds fail certification', () => {
     const report = buildReport({ ...thresholds, maxNonProgressCalls: 0 }, new Date('2026-05-13T00:00:00.000Z'));
     expect(() => assertReportPasses(report)).toThrow(/certification failed/);
+  });
+
+  test('scenarioTimeoutMs participates in scenario verdicts', () => {
+    const report = buildReport({ ...thresholds, scenarioTimeoutMs: 1 }, new Date('2026-05-13T00:00:00.000Z'));
+    expect(report.scenarios.some((scenario) => scenario.failureReason?.includes('durationMs'))).toBe(true);
+    expect(() => assertReportPasses(report)).toThrow(/durationMs/);
   });
 });

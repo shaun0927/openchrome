@@ -79,3 +79,46 @@ describe('RunStore', () => {
     expect(() => store.startRun({ run_id: '../escape' })).toThrow(/run_id/);
   });
 });
+
+describe('run evidence auto-capture', () => {
+  it('captures evidence metadata for failed tool calls and redacts secrets', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-evidence-store-'));
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-evidence-out-'));
+    let now = 1000;
+    let seq = 0;
+    const store = new RunStore({ rootDir: dir, evidenceRootDir: evidenceDir, now: () => now++, idFactory: () => `ev-${seq++}` });
+    store.startRun({ run_id: 'run-evidence', session_id: 's1', tab_id: 't1' });
+    store.appendToolFinished({
+      run_id: 'run-evidence',
+      session_id: 's1',
+      tab_id: 't1',
+      tool: 'interact',
+      ok: false,
+      message: 'selector not found password=hunter2',
+      metadata: { url: 'https://example.test', title: 'Example', failureCategory: 'ELEMENT_NOT_FOUND', token: 'abc123' },
+    });
+
+    const run = store.getRun('run-evidence')!;
+    const evidenceEvent = run.events.find((event) => event.kind === 'evidence')!;
+    expect(evidenceEvent).toBeTruthy();
+    const evidencePath = (evidenceEvent.metadata as any).path as string;
+    const raw = fs.readFileSync(evidencePath, 'utf8');
+    expect(raw).toContain('ELEMENT_NOT_FOUND');
+    expect(raw).toContain('disabled by run evidence safe mode');
+    expect(raw).not.toContain('hunter2');
+    expect(raw).not.toContain('abc123');
+  });
+
+  it('captures evidence for stuck progress metadata without network or console slices', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-stuck-store-'));
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-run-stuck-evidence-'));
+    const store = new RunStore({ rootDir: dir, evidenceRootDir: evidenceDir, now: () => 2000, idFactory: () => 'stuck-id' });
+    store.startRun({ run_id: 'run-stuck' });
+    store.appendToolFinished({ run_id: 'run-stuck', tool: 'read_page', ok: true, metadata: { progress: { status: 'stuck' } } });
+    const evidenceEvent = store.getRun('run-stuck')!.events.find((event) => event.kind === 'evidence')!;
+    const parsed = JSON.parse(fs.readFileSync((evidenceEvent.metadata as any).path, 'utf8'));
+    expect(parsed.trigger).toBe('stuck');
+    expect(parsed.metadata.network.included).toBe(false);
+    expect(parsed.metadata.console.included).toBe(false);
+  });
+});
