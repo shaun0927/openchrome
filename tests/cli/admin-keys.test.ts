@@ -39,15 +39,18 @@ function extractToken(stdout: string): string {
 }
 
 function extractJsonArray(stdout: string): string {
-  for (let start = stdout.indexOf('['); start !== -1; start = stdout.indexOf('[', start + 1)) {
+  const starts: number[] = [];
+  for (let i = 0; i < stdout.length; i++) {
+    if (stdout[i] === '[') starts.push(i);
+  }
+  for (const start of starts) {
     for (let end = stdout.lastIndexOf(']'); end > start; end = stdout.lastIndexOf(']', end - 1)) {
       const candidate = stdout.slice(start, end + 1);
       try {
         const parsed = JSON.parse(candidate);
         if (Array.isArray(parsed)) return candidate;
       } catch {
-        // Continue scanning: Jest console-capture noise can contain bracketed
-        // log prefixes before the CLI's own JSON payload in shared workers.
+        // Ignore unrelated log prefixes such as [WorkflowEngine] captured by the shared stdout hook.
       }
     }
   }
@@ -142,12 +145,13 @@ describe('admin keys CLI', () => {
       '--description', 'test key',
     ]);
     expect(exitCode).toBeNull();
-// Plaintext is emitted exactly once even if unrelated Jest worker noise
-    // is captured by the shared stdout hook on CI.
+
+    // Plaintext is emitted exactly once even if unrelated Jest worker noise
+    // is captured by the shared stdout hook on Windows CI.
     const stdoutTokens = stdout.match(/oc_live_acme_[A-Za-z0-9]+/g) ?? [];
     expect(stdoutTokens).toHaveLength(1);
     const plaintext = stdoutTokens[0];
-    expect(plaintext).toMatch(/^oc_live_acme_[A-Za-z0-9]+$/);
+
     // Warning routed to stderr.
     expect(stderr).toContain('SAVE THIS KEY NOW');
     // keyId is reported on stderr, not stdout.

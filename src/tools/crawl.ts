@@ -29,6 +29,7 @@ import {
   StaticReason,
 } from '../utils/static-fetch';
 import { buildUrlScoreOptions, scoreUrl, UrlScoreOptions } from '../core/crawl/url-scorer';
+import { AdaptiveCrawlDispatcher, DispatcherMode, parseAdaptiveDispatcherOptions } from '../core/crawl/dispatcher';
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
@@ -105,6 +106,15 @@ const definition: MCPToolDefinition = {
           exclude_paths: { type: 'array', items: { type: 'string' } },
           same_depth_bias: { type: 'number' },
         },
+      },
+      dispatcher: {
+        type: 'string',
+        enum: ['fixed', 'adaptive'],
+        description: 'Crawl concurrency dispatcher. Default: fixed. adaptive reduces concurrency on memory/error pressure and records origin backoff for 429/503 responses.',
+      },
+      dispatcher_options: {
+        type: 'object',
+        description: 'dispatcher=adaptive options: min_concurrency, max_concurrency, memory_pressure_mb, origin_backoff_ms, rate_limit_statuses.',
       },
     },
     required: ['url'],
@@ -604,6 +614,20 @@ const handler: ToolHandler = async (
     return undefined;
   }
 
+  const dispatcherArg = args.dispatcher as string | undefined;
+  let dispatcherMode: DispatcherMode = 'fixed';
+  if (dispatcherArg === 'fixed' || dispatcherArg === 'adaptive') {
+    dispatcherMode = dispatcherArg;
+  } else if (dispatcherArg !== undefined) {
+    return {
+      content: [{ type: 'text', text: 'Error: dispatcher must be one of "fixed", "adaptive"' }],
+      isError: true,
+    };
+  }
+  const adaptiveDispatcher = dispatcherMode === 'adaptive'
+    ? new AdaptiveCrawlDispatcher(concurrency, parseAdaptiveDispatcherOptions(args.dispatcher_options, concurrency))
+    : null;
+
   const startTime = Date.now();
   const tracker = new CrawlTracker();
   const pages: CrawledPage[] = [];
@@ -698,6 +722,7 @@ const handler: ToolHandler = async (
       const batchResults = await Promise.all(
         batch.map((item) =>
           limiter(async () => {
+            const runFetch = async () => {
             // Check robots.txt before fetching
             const allowed = await isRobotsAllowed(item.url);
             if (!allowed) {
@@ -789,6 +814,16 @@ const handler: ToolHandler = async (
             }
 
             return { page: result, links, depth: item.depth };
+            };
+            const origin = new URL(item.url).origin;
+            const output = adaptiveDispatcher
+              ? await adaptiveDispatcher.run(origin, runFetch)
+              : await runFetch();
+            if (adaptiveDispatcher) {
+              const statusMatch = output.page.error?.match(/status\s+(\d{3})/i);
+              adaptiveDispatcher.recordResponse(origin, statusMatch ? Number(statusMatch[1]) : undefined);
+            }
+            return output;
           }),
         ),
       );
@@ -836,6 +871,7 @@ const handler: ToolHandler = async (
       duration_ms: durationMs,
       scope,
       ...(strategy === 'best_first' ? { strategy, scored_urls: scoredUrls, skipped_below_threshold: skippedBelowThreshold } : {}),
+      ...(adaptiveDispatcher ? { dispatcher: adaptiveDispatcher.stats() } : {}),
     };
 
     const output = { summary, pages };
