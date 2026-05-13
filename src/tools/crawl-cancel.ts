@@ -19,7 +19,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      jobId: { type: 'string', description: 'Job id returned by crawl_start.' },
+      jobId: { type: 'string', description: 'REQUIRED Job id returned by crawl_start.' },
     },
     required: ['jobId'],
   },

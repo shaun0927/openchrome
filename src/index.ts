@@ -114,7 +114,7 @@ program
       registerAllTools(server);
       const manifest = server.getToolManifest();
       process.stdout.write(JSON.stringify(manifest.tools) + '\n');
-      process.exit(0);
+      return;
     }
 
 
