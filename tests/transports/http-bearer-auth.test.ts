@@ -10,13 +10,20 @@ import * as net from 'node:net';
 // Inline require to avoid TS module resolution issues with dynamic transport loading
 const { HTTPTransport } = require('../../src/transports/http');
 
-const TEST_PORT_START = 20_000 + (process.pid % 400) * 100;
-let nextTestPort = TEST_PORT_START;
-let activePort = TEST_PORT_START;
+let activePort = 0;
 
-function allocatePort(): number {
-  activePort = nextTestPort++;
-  return activePort;
+async function allocatePort(): Promise<number> {
+  const port = await new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close((err) => err ? reject(err) : resolve(port));
+    });
+  });
+  activePort = port;
+  return port;
 }
 const TEST_TOKEN = 'test-s...c123';
 const TRUSTED_ORIGIN = 'http://127.0.0.1:5173';
@@ -149,7 +156,7 @@ describe('HTTP Bearer Token Auth', () => {
 
   describe('with auth token configured', () => {
     beforeEach(async () => {
-      transport = new HTTPTransport(allocatePort(), '127.0.0.1', TEST_TOKEN);
+      transport = new HTTPTransport(await allocatePort(), '127.0.0.1', TEST_TOKEN);
       await startTransport(transport);
     });
 
@@ -200,12 +207,12 @@ describe('HTTP Bearer Token Auth', () => {
   });
 
   describe('unauthenticated HTTP policy', () => {
-    it('fails closed by default when no auth is configured', () => {
-      expect(() => new HTTPTransport(allocatePort(), '127.0.0.1')).toThrow(/Refusing to start unauthenticated HTTP transport/);
+    it('fails closed by default when no auth is configured', async () => {
+      await expect(async () => new HTTPTransport(await allocatePort(), '127.0.0.1')).rejects.toThrow(/Refusing to start unauthenticated HTTP transport/);
     });
 
     it('allows explicit loopback-only development mode', async () => {
-      transport = new HTTPTransport(allocatePort(), '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
+      transport = new HTTPTransport(await allocatePort(), '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       await startTransport(transport);
       const res = await request('/mcp', 'POST', { 'Content-Type': 'application/json' },
         JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }));
@@ -214,22 +221,22 @@ describe('HTTP Bearer Token Auth', () => {
 
     it('allows explicit loopback development mode via env flag', async () => {
       process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP = '1';
-      transport = new HTTPTransport(allocatePort(), '127.0.0.1');
+      transport = new HTTPTransport(await allocatePort(), '127.0.0.1');
       await startTransport(transport);
       const res = await request('/health');
       expect(res.status).toBe(200);
     });
 
-    it('refuses external bind without auth even with development opt-in', () => {
-      expect(() => new HTTPTransport(allocatePort(), '0.0.0.0', undefined, { allowUnauthenticatedHttp: true }))
-        .toThrow(/non-loopback host/);
+    it('refuses external bind without auth even with development opt-in', async () => {
+      await expect(async () => new HTTPTransport(await allocatePort(), '0.0.0.0', undefined, { allowUnauthenticatedHttp: true }))
+        .rejects.toThrow(/non-loopback host/);
     });
   });
 
   describe('CORS allowlist', () => {
     beforeEach(async () => {
       process.env.OPENCHROME_HTTP_CORS_ORIGINS = TRUSTED_ORIGIN;
-      transport = new HTTPTransport(allocatePort(), '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
+      transport = new HTTPTransport(await allocatePort(), '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
       await startTransport(transport);
     });
 
