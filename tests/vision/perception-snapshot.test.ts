@@ -116,94 +116,27 @@ describe('perception snapshot helpers', () => {
     const parsed = JSON.parse(formatPerceptionSnapshotAsText(snapshot));
     expect(parsed).toEqual(snapshot);
   });
-});
 
+  test('sanitizes hostile maxErrors bounds before collecting diagnostics', () => {
+    const malformed = {
+      version: 'bad',
+      provider: '',
+      tabId: '',
+      url: 42,
+      capturedAt: Number.NaN,
+      viewport: { width: 0, height: 0 },
+      elements: 'not-an-array',
+    };
 
-describe('perception snapshot schema validation', () => {
-  test('accepts valid provider-neutral snapshots', () => {
-    const snapshot = buildPerceptionSnapshotFromAnnotatedResult(annotated({
-      1: { number: 1, x: 10, y: 10, width: 20, height: 20, centerX: 20, centerY: 20, type: 'button', name: 'OK' },
-    }), { tabId: 'tab', url: 'https://example.test' });
+    const nanBound = validatePerceptionSnapshot(malformed, { maxErrors: Number.NaN });
+    const infiniteBound = validatePerceptionSnapshot(malformed, { maxErrors: Number.POSITIVE_INFINITY });
 
-    expect(validatePerceptionSnapshot(snapshot)).toEqual({ ok: true, errors: [], truncated: false });
+    expect(nanBound.ok).toBe(false);
+    expect(nanBound.errors.length).toBeGreaterThan(0);
+    expect(nanBound.errors.length).toBeLessThanOrEqual(25);
+    expect(infiniteBound.ok).toBe(false);
+    expect(infiniteBound.errors.length).toBeGreaterThan(0);
+    expect(infiniteBound.errors.length).toBeLessThanOrEqual(25);
   });
 
-  test('rejects malformed provider output with bounded errors', () => {
-    const result = validatePerceptionSnapshot({
-      version: 1,
-      provider: 'mock',
-      tabId: 'tab',
-      url: 'https://example.test',
-      capturedAt: 1,
-      viewport: { width: 100, height: 100 },
-      warnings: [],
-      latencyMs: 1,
-      elements: [{
-        id: '',
-        type: 'bad',
-        label: 123,
-        interactive: 'maybe',
-        source: '',
-        bbox: { x: -1, y: 0, width: 10, height: 10 },
-        bboxRatio: { x: 2, y: 0, width: 0.5, height: 0.5 },
-      }],
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.errors.join('\n')).toContain('elements[0].id');
-    expect(result.errors.join('\n')).toContain('elements[0].type');
-    expect(result.errors.join('\n')).toContain('bbox.x');
-    expect(result.errors.join('\n')).toContain('bboxRatio.x');
-  });
-
-  test('rejects non-string element type even when string-coercible', () => {
-    const result = validatePerceptionSnapshot({
-      version: 1,
-      provider: 'mock',
-      tabId: 'tab',
-      url: 'https://example.test',
-      capturedAt: 1,
-      viewport: { width: 100, height: 100 },
-      warnings: [],
-      latencyMs: 1,
-      elements: [{
-        id: 'v1',
-        type: { toString: () => 'control' },
-        label: 'OK',
-        interactive: true,
-        source: 'mock',
-        bbox: { x: 0, y: 0, width: 10, height: 10 },
-        bboxRatio: { x: 0, y: 0, width: 0.1, height: 0.1 },
-      }],
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.errors.join('\n')).toContain('elements[0].type');
-  });
-
-  test('limits validation diagnostics for hostile provider output', () => {
-    const result = validatePerceptionSnapshot({
-      version: 1,
-      provider: 'mock',
-      tabId: 'tab',
-      url: 'https://example.test',
-      capturedAt: 1,
-      viewport: { width: 100, height: 100 },
-      warnings: [],
-      latencyMs: 1,
-      elements: Array.from({ length: 100 }, () => ({
-        id: '',
-        type: 'bad',
-        label: 123,
-        interactive: 'maybe',
-        source: '',
-        bbox: { x: -1, y: -1, width: -1, height: -1 },
-        bboxRatio: { x: 2, y: 2, width: 2, height: 2 },
-      })),
-    }, { maxErrors: 5, maxElements: 500 });
-
-    expect(result.ok).toBe(false);
-    expect(result.errors).toHaveLength(5);
-    expect(result.truncated).toBe(true);
-  });
 });

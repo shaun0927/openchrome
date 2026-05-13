@@ -136,11 +136,17 @@ export interface PerceptionValidationResult {
   truncated: boolean;
 }
 
+
+function sanitizePositiveInteger(value: unknown, fallback: number, cap: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(cap, Math.max(1, Math.floor(value)));
+}
+
 export function validatePerceptionSnapshot(
   snapshot: unknown,
   options: PerceptionValidationOptions = {}
 ): PerceptionValidationResult {
-  const maxErrors = Math.max(1, options.maxErrors ?? 25);
+  const maxErrors = sanitizePositiveInteger(options.maxErrors, 25, 100);
   const errors: string[] = [];
   const addError = (message: string): void => {
     if (errors.length < maxErrors) errors.push(message);
