@@ -965,6 +965,14 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
   return { ...result, content: sanitizedContent };
 };
 
+/**
+ * Exported reference to the sanitized handler so the shared
+ * `returnAfterState` plumbing (src/tools/_shared/return-after-state.ts)
+ * can invoke read_page in-process for the post-action snapshot without
+ * re-creating the formatter/sanitizer pipeline. Internal API.
+ */
+export const readPageHandlerForReuse: ToolHandler = sanitizedHandler;
+
 export function registerReadPageTool(server: MCPServer): void {
   server.registerTool('read_page', sanitizedHandler, definition);
 }
