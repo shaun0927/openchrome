@@ -195,6 +195,7 @@ export const TOOL_ANNOTATIONS = {
   oc_context_import: MUTATES,
 
   // ── Pilot tier (loaded only under --pilot) ──────────────────────────────
+  oc_credentials: MUTATES,
   oc_pilot_handoff_create: MUTATES,
   oc_pilot_handoff_redeem: MUTATES,
   oc_react: READ_ONLY,
