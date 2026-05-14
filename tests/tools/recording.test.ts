@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { pathToFileURL } from 'url';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -389,7 +390,8 @@ describe('recording tools', () => {
       const actions = [makeAction()];
       mockReadMetadata.mockResolvedValue(metadata);
       mockReadActions.mockReturnValue(actions);
-      setSessionMcpRoots('mcp-rec-deny', { roots: [{ uri: 'file:///tmp/allowed-recordings' }] });
+      const allowedRoot = path.resolve(path.dirname(tmpDir), 'allowed-recordings');
+      setSessionMcpRoots('mcp-rec-deny', { roots: [{ uri: pathToFileURL(allowedRoot).href }] });
 
       const result = await runWithRequestContext(
         { requestId: 'req-recording-roots-deny', mcpSessionId: 'mcp-rec-deny' },
