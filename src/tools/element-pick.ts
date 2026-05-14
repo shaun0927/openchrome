@@ -24,7 +24,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      tabId: { type: 'string', description: 'Tab ID to pick from' },
+      tabId: { type: 'string', description: 'REQUIRED Tab ID to pick from' },
       action: { type: 'string', enum: ['start', 'cancel'], description: 'start waits for a picked element; cancel cancels an in-flight pick. Default: start.' },
       timeoutMs: { type: 'number', description: 'Max wait for a click in ms. Default 60000; capped at 300000.' },
       cancelOnEscape: { type: 'boolean', description: 'Reserved for compatibility; Escape cancellation is enabled by the overlay.' },
