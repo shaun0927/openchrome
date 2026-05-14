@@ -106,4 +106,44 @@ describe('element_pick tool (#899)', () => {
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toEqual({ success: false, error: 'timeout' });
   });
+
+  test('start returns navigated when the main frame navigates before a pick resolves', async () => {
+    const { handler } = await loadHandler(mockSessionManager);
+    const page = mockSessionManager.pages.get(tabId)!;
+    const mainFrame = { url: jest.fn().mockReturnValue('https://example.test/next') };
+    let frameNavigated: ((frame: unknown) => void) | undefined;
+
+    (page.mainFrame as jest.Mock).mockReturnValue(mainFrame);
+    (page.on as jest.Mock).mockImplementation((event: string, listener: (frame: unknown) => void) => {
+      if (event === 'framenavigated') frameNavigated = listener;
+      return page;
+    });
+    (page.off as jest.Mock).mockImplementation((event: string, listener: (frame: unknown) => void) => {
+      if (event === 'framenavigated' && frameNavigated === listener) frameNavigated = undefined;
+      return page;
+    });
+    (page.evaluate as jest.Mock)
+      .mockResolvedValueOnce({ success: true, installed: true })
+      .mockImplementationOnce(() => new Promise(() => {
+        setTimeout(() => frameNavigated?.(mainFrame), 0);
+      }));
+
+    const result = await handler(sessionId, { tabId, action: 'start', timeoutMs: 25 });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ success: false, error: 'navigated' });
+    expect(page.off).toHaveBeenCalledWith('framenavigated', expect.any(Function));
+  });
+
+  test('start maps execution-context navigation failures to a structured navigated error', async () => {
+    const { handler } = await loadHandler(mockSessionManager);
+    const page = mockSessionManager.pages.get(tabId)!;
+    (page.evaluate as jest.Mock)
+      .mockResolvedValueOnce({ success: true, installed: true })
+      .mockRejectedValueOnce(new Error('Execution context was destroyed, most likely because of a navigation.'));
+
+    const result = await handler(sessionId, { tabId, action: 'start', timeoutMs: 25 });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ success: false, error: 'navigated' });
+  });
 });
