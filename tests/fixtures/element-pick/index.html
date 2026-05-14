@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Element Pick Fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 32px; }
+    #pick-target { display: inline-block; padding: 12px 18px; cursor: pointer; }
+    #secret-input { display: block; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <h1>Element Pick Fixture</h1>
+  <button id="pick-target" aria-label="Pick target action" data-testid="pick-target">Pick Target</button>
+  <input id="secret-input" name="api_token" value="fixture-secret-token" aria-label="Secret fixture input" />
+  <p id="status">ready</p>
+  <script>
+    document.getElementById('pick-target').addEventListener('click', () => {
+      document.getElementById('status').textContent = 'underlying click should be blocked by picker';
+    });
+  </script>
+</body>
+</html>
