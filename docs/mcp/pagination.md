@@ -101,7 +101,7 @@ return {
 | ----------------- | ---------------------------------- |
 | `paginate` helper | ✅ shipped (this PR)                |
 | `read_page`       | Follow-up issue                    |
-| `query_dom`       | Follow-up issue                    |
+| `query_dom`       | ✅ multiple CSS/XPath results accept `cursor` and return `nextCursor` / `hasMore` / `totalCount` |
 | `console_capture` | Follow-up issue                    |
 | `network`         | Follow-up issue                    |
 | `crawl`           | Follow-up issue                    |
@@ -111,6 +111,14 @@ chunking logic with a `paginate(...)` call, route the result fields into the
 tool's `structuredContent`. Bundling them here would multiply review
 surface — separate PRs keep each adoption reviewable against the tool's
 specific data-shape and ordering invariants.
+
+### `query_dom`
+
+For `multiple: true`, pass `limit` as the page size and pass a previous
+`nextCursor` as `cursor`. CSS responses use `elements`; XPath responses use
+`results`. Both include `totalCount`, `hasMore`, and optional `nextCursor` in
+text JSON and `structuredContent`. Calls without `cursor` preserve first-page
+behavior and the default page size remains 50.
 
 ## Why opaque cursors (and not `start_index`)
 

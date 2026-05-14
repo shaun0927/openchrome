@@ -11,6 +11,8 @@ import {
   TaskRunTransitionError,
   UpdateTaskRunInput,
 } from '../core/task-run';
+import { buildAutoSnapshotArgs, SnapshotTrigger } from '../session-snapshot-policy';
+import { collectTabs, generateSnapshotId, saveSnapshot, SessionSnapshot } from './session-snapshot';
 
 const store = new TaskRunStore();
 
@@ -72,6 +74,15 @@ const startDefinition: MCPToolDefinition = {
       session_id: { type: 'string', description: 'Optional OpenChrome session id to associate.' },
       workflow_id: { type: 'string', description: 'Optional workflow id to associate.' },
       ledger_task_ids: { type: 'array', items: { type: 'string' }, description: 'Optional #855 async ledger task ids to link when available.' },
+      auto_session_snapshot: {
+        type: 'object',
+        description: 'Optional #1013 policy. When enabled, TaskRun lifecycle tools write compact oc_session_snapshot artifacts without changing ordinary browser tools.',
+        properties: {
+          enabled: { type: 'boolean' },
+          mode: { type: 'string', enum: ['best-effort', 'strict'] },
+          max_snapshots: { type: 'number', description: 'Maximum snapshot ids to retain on the TaskRun metadata; default 10, max 100.' },
+        },
+      },
     },
     required: ['goal'],
   },
@@ -182,7 +193,8 @@ const listDefinition: MCPToolDefinition = {
 const startHandler: ToolHandler = async (_sessionId, args) => {
   try {
     const meta = await store.start(args as unknown as StartTaskRunInput);
-    return jsonResult({ task_run: meta });
+    const snapshot = await takeTaskRunAutoSessionSnapshot(meta, 'start');
+    return jsonResult({ task_run: snapshot?.task_run || meta, ...(snapshot ? { auto_session_snapshot: snapshot.auto_session_snapshot } : {}) });
   } catch (error) {
     return errorResult(error);
   }
@@ -205,7 +217,9 @@ const checkpointHandler: ToolHandler = async (_sessionId, args) => {
       current_cursor: args.current_cursor as string | undefined,
       evidence: args.evidence as never,
     });
-    return jsonResult({ checkpoint });
+    const meta = await store.get(runId);
+    const snapshot = await takeTaskRunAutoSessionSnapshot(meta, 'retry', checkpoint.summary);
+    return jsonResult({ checkpoint, ...(snapshot ? { task_run: snapshot.task_run, auto_session_snapshot: snapshot.auto_session_snapshot } : {}) });
   } catch (error) {
     return errorResult(error);
   }
@@ -215,7 +229,8 @@ const needsHelpHandler: ToolHandler = async (_sessionId, args) => {
   try {
     const runId = String(args.run_id || '');
     const meta = await store.needsHelp(runId, args as unknown as NeedsHelpInput);
-    return jsonResult({ task_run: meta });
+    const snapshot = await takeTaskRunAutoSessionSnapshot(meta, 'retry', meta.needs_help?.reason);
+    return jsonResult({ task_run: snapshot?.task_run || meta, ...(snapshot ? { auto_session_snapshot: snapshot.auto_session_snapshot } : {}) });
   } catch (error) {
     return errorResult(error);
   }
@@ -225,7 +240,8 @@ const completeHandler: ToolHandler = async (_sessionId, args) => {
   try {
     const runId = String(args.run_id || '');
     const meta = await store.complete(runId, args as CompleteInput);
-    return jsonResult({ task_run: meta });
+    const snapshot = await takeTaskRunAutoSessionSnapshot(meta, 'final', meta.progress_summary);
+    return jsonResult({ task_run: snapshot?.task_run || meta, ...(snapshot ? { auto_session_snapshot: snapshot.auto_session_snapshot } : {}) });
   } catch (error) {
     return errorResult(error);
   }
@@ -253,6 +269,57 @@ const listHandler: ToolHandler = async (_sessionId, args) => {
     return errorResult(error);
   }
 };
+
+
+async function takeTaskRunAutoSessionSnapshot(
+  meta: Awaited<ReturnType<TaskRunStore['get']>>,
+  trigger: SnapshotTrigger,
+  currentStep?: string,
+): Promise<{ task_run: Awaited<ReturnType<TaskRunStore['get']>>; auto_session_snapshot: { snapshot_id?: string; trigger: SnapshotTrigger; error?: string } } | null> {
+  const policy = meta.auto_session_snapshot_policy;
+  if (!policy?.enabled) return null;
+
+  try {
+    const args = buildAutoSnapshotArgs({
+      objective: meta.goal,
+      currentStep: currentStep || meta.progress_summary || `TaskRun ${meta.status}`,
+      completedSteps: meta.completed_items,
+      nextActions: buildTaskRunNextActions(meta),
+      notes: `TaskRun ${meta.run_id} status=${meta.status}`,
+    }, trigger);
+    const snapshotId = generateSnapshotId();
+    const snapshot: SessionSnapshot = {
+      version: 1,
+      id: snapshotId,
+      timestamp: Date.now(),
+      tabs: await collectTabs(),
+      memo: {
+        objective: args.objective,
+        currentStep: args.currentStep,
+        nextActions: args.nextActions,
+        completedSteps: args.completedSteps,
+        notes: args.notes,
+      },
+      label: args.label,
+    };
+    await saveSnapshot(snapshot);
+    const updated = await store.recordAutoSessionSnapshot(meta.run_id, snapshotId);
+    return { task_run: updated, auto_session_snapshot: { snapshot_id: snapshotId, trigger } };
+  } catch (error) {
+    const updated = await store.recordAutoSessionSnapshotFailure(meta.run_id, error);
+    const message = error instanceof Error ? error.message : String(error);
+    if (policy.mode === 'strict') throw error;
+    return { task_run: updated, auto_session_snapshot: { trigger, error: message } };
+  }
+}
+
+function buildTaskRunNextActions(meta: Awaited<ReturnType<TaskRunStore['get']>>): string[] {
+  if (meta.status === 'COMPLETED') return ['Review completion evidence or call oc_session_resume after compaction.'];
+  if (meta.status === 'FAILED' || meta.status === 'CANCELLED') return ['Review failure evidence before restarting or retrying the task.'];
+  if (meta.needs_help?.resume_hint) return [meta.needs_help.resume_hint];
+  if (meta.success_criteria && meta.success_criteria.length > 0) return meta.success_criteria.slice(0, 5);
+  return ['Continue the TaskRun and update progress with oc_task_run_update or oc_task_run_checkpoint.'];
+}
 
 export function registerTaskRunTools(server: MCPServer): void {
   server.registerTool('oc_task_run_start', startHandler, startDefinition);
