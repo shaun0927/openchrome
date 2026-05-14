@@ -780,6 +780,35 @@ describe('HintEngine', () => {
   });
 
   describe('Progress Tracking Integration', () => {
+
+
+    it('adds ranked recovery candidates to stuck stale-ref hints', () => {
+      const tracker = makeTracker([
+        { toolName: 'interact', result: 'error' },
+        { toolName: 'interact', result: 'error' },
+      ]);
+      const engine = new HintEngine(tracker as any);
+      const hint = engine.getHint('interact', makeResult('STALE_REF: element not found', true), true, undefined, { tabId: 'tab-1', ref: 'ref_1' });
+
+      expect(hint!.rule).toBe('progress-tracker-stuck');
+      expect(hint!.recoveryCandidates?.[0]).toMatchObject({ tool: 'read_page', risk: 'read_only' });
+      expect(hint!.hint).toContain('Ranked recovery candidates');
+      expect(hint!.hint).not.toContain('ref_1');
+    });
+
+    it('does not suggest blind interaction candidates for blocking pages', () => {
+      const tracker = makeTracker([
+        { toolName: 'click', result: 'error' },
+        { toolName: 'click', result: 'error' },
+      ]);
+      const engine = new HintEngine(tracker as any);
+      const hint = engine.getHint('click', makeResult('CAPTCHA Access Denied', true), true);
+
+      expect(hint!.rule).toBe('progress-tracker-stuck');
+      expect(hint!.recoveryCandidates?.map(c => c.tool)).toEqual(['read_page', 'tabs_context']);
+      expect(hint!.recoveryCandidates?.every(c => c.risk === 'read_only')).toBe(true);
+    });
+
     it('returns stuck hint when 3+ consecutive errors', () => {
       const tracker = makeTracker([
         { toolName: 'navigate', result: 'error', error: 'timed out' },
