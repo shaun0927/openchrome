@@ -31,8 +31,28 @@ import {
   type ValidatedLocatorFallbackCandidate,
 } from '../core/perception/locator-fallback';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { isPilotEnabled } from '../harness/flags';
 import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
+
+
+async function resolveInteractVault(value: unknown): Promise<{ value: unknown; token?: string; plaintext?: string; error?: MCPResult }> {
+  if (typeof value !== 'string' || !value.startsWith('vault://') || !isPilotEnabled()) return { value };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vault = require('../pilot/credentials/store') as typeof import('../pilot/credentials/store');
+    const resolved = await vault.resolveVaultValue(value);
+    return { value: resolved.value, token: resolved.token, plaintext: String(resolved.value) };
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String((error as { code: unknown }).code) : 'VAULT_ERROR';
+    return { value, error: { content: [{ type: 'text', text: `Error: ${code}: ${error instanceof Error ? error.message : String(error)}` }], isError: true, errorReason: code } as MCPResult };
+  }
+}
+
+function maskInteractVault(text: string, vault?: { token?: string; plaintext?: string }): string {
+  if (!vault?.token || !vault.plaintext) return text;
+  return text.split(vault.plaintext).join(vault.token);
+}
 
 /**
  * Inject the structured {@link VerifyReport} onto an MCPResult under
@@ -83,8 +103,12 @@ const definition: MCPToolDefinition = {
       },
       action: {
         type: 'string',
-        enum: ['click', 'double_click', 'hover'],
-        description: 'Action to perform. Default: click',
+        enum: ['click', 'double_click', 'hover', 'type'],
+        description: 'Action to perform. Default: click. Use type with value to enter text.',
+      },
+      value: {
+        type: 'string',
+        description: 'Text to type when action is type. Supports vault://name in pilot mode.',
       },
       waitAfter: {
         type: 'number',
@@ -213,6 +237,13 @@ const coreHandler: ToolHandler = async (
   const query = args.query as string;
   const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
+  const rawValue = args.value;
+  const vaultValue = await resolveInteractVault(rawValue);
+  if (vaultValue.error) return vaultValue.error;
+  const typeValue = vaultValue.value;
+  if (action === 'type' && typeValue === undefined) {
+    return { content: [{ type: 'text', text: 'Error: value is required when action is type' }], isError: true };
+  }
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
   const returnFormat = (args.returnFormat as string) || 'both';
   const verifyMode = coerceVerifyMode(args.verify);
@@ -369,6 +400,14 @@ const coreHandler: ToolHandler = async (
         await page.mouse.click(cx, cy, { clickCount: 2 });
       } else if (action === 'hover') {
         await page.mouse.move(cx, cy);
+      } else if (action === 'type') {
+        await page.mouse.click(cx, cy);
+        const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+        await page.keyboard.down(modifier);
+        await page.keyboard.press('KeyA');
+        await page.keyboard.up(modifier);
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(String(typeValue));
       } else {
         await page.mouse.click(cx, cy);
       }
@@ -382,11 +421,11 @@ const coreHandler: ToolHandler = async (
         });
       }
 
-      const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+      const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
       const lines = [`${actionVerb} [${refArg}] [via ref]`];
 
       return {
-        content: [{ type: 'text', text: lines.join('\n') }],
+        content: [{ type: 'text', text: maskInteractVault(lines.join('\n'), vaultValue) }],
         via: 'ref',
       } as MCPResult;
     } catch (err) {
@@ -467,7 +506,7 @@ const coreHandler: ToolHandler = async (
       if (delta) lines.push('', '[DOM Delta]', delta);
 
       const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
-        { type: 'text' as const, text: lines.join('\n') },
+        { type: 'text' as const, text: maskInteractVault(lines.join('\n'), vaultValue) },
       ];
 
       if (verifyMode !== 'none') {
@@ -584,6 +623,15 @@ const coreHandler: ToolHandler = async (
               if (isStealth) await humanMouseMove(page, axX, axY);
               if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
               else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
+              else if (action === 'type') {
+                await page.mouse.click(axX, axY);
+                const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+                await page.keyboard.down(modifier);
+                await page.keyboard.press('KeyA');
+                await page.keyboard.up(modifier);
+                await page.keyboard.press('Backspace');
+                await page.keyboard.type(String(typeValue));
+              }
               else await page.mouse.click(axX, axY);
             }, { settleMs: Math.max(150, waitAfter) }),
         );
@@ -611,7 +659,7 @@ const coreHandler: ToolHandler = async (
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
         // Classify outcome and build response
-        const axVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+        const axVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
         const axOutcome = classifyOutcome(axDelta, ax.role);
         const axLine = formatOutcomeLine(axOutcome, axVerb, `${ax.role} "${ax.name}"`, `[${axRef}]`, `[${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]`);
 
@@ -635,7 +683,7 @@ const coreHandler: ToolHandler = async (
         if (axState.activeInfo !== 'none') lines.push('', `[Focused] ${axState.activeInfo}`);
 
         const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
-          { type: 'text' as const, text: lines.join('\n') },
+          { type: 'text' as const, text: maskInteractVault(lines.join('\n'), vaultValue) },
         ];
 
         // Legacy screenshot content (backcompat for `verify: true` → 'screenshot').
@@ -796,6 +844,14 @@ const coreHandler: ToolHandler = async (
               await page.mouse.click(finalX, finalY, { clickCount: 2 });
             } else if (action === 'hover') {
               if (!isStealthCSS) await page.mouse.move(finalX, finalY);
+            } else if (action === 'type') {
+              await page.mouse.click(finalX, finalY);
+              const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+              await page.keyboard.down(modifier);
+              await page.keyboard.press('KeyA');
+              await page.keyboard.up(modifier);
+              await page.keyboard.press('Backspace');
+              await page.keyboard.type(String(typeValue));
             } else {
               await page.mouse.click(finalX, finalY);
             }
@@ -835,7 +891,7 @@ const coreHandler: ToolHandler = async (
     invalidateAXCache(getTargetId(page.target()));
 
     // Build compact action label with confidence score
-    const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+    const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
     const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
     const textPart = textSample ? ` "${textSample}"` : '';
     const refPart = refId ? ` [${refId}]` : '';
@@ -990,7 +1046,7 @@ const coreHandler: ToolHandler = async (
     }
 
     const responseContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
-      { type: 'text', text: lines.join('\n') },
+      { type: 'text', text: maskInteractVault(lines.join('\n'), vaultValue) },
     ];
     if (screenshotContent) {
       responseContent.push(screenshotContent);

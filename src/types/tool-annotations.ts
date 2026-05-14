@@ -92,6 +92,7 @@ export const TOOL_ANNOTATIONS = {
   oc_devtools_url: READ_ONLY,
   oc_context_export: READ_ONLY,
   oc_observe: READ_ONLY,
+  element_pick: MUTATES,
   oc_performance_analyze: READ_ONLY,
   oc_normalize_action: READ_ONLY,
   oc_progress_status: READ_ONLY,
@@ -194,6 +195,7 @@ export const TOOL_ANNOTATIONS = {
   oc_context_import: MUTATES,
 
   // ── Pilot tier (loaded only under --pilot) ──────────────────────────────
+  oc_credentials: MUTATES,
   oc_pilot_handoff_create: MUTATES,
   oc_pilot_handoff_redeem: MUTATES,
   oc_react: READ_ONLY,

@@ -123,6 +123,7 @@ import { registerOcDiffTool } from './oc-diff';
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
+import { isPilotEnabled } from '../harness/flags';
 
 // Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
 import { registerOcTaskStartTool, getTaskStore, setTaskStartupReapPromise } from './oc-task-start';
@@ -155,6 +156,7 @@ import {
 } from '../harness/flags';
 // oc_observe (#866) — deterministic actionable-element enumeration
 import { registerOcObserveTool } from './oc-observe';
+import { registerElementPickTool } from './element-pick';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
@@ -229,6 +231,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_get_connection_info: 'core',
   oc_journal: 'core',
   oc_observe: 'core',
+  element_pick: 'core',
   oc_open_host_settings: 'core',
   oc_output_fetch: 'core',
   oc_performance_analyze: 'core',
@@ -296,6 +299,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_totp_generate: 'totp',
 
   // pilot — experimental pilot-tier tools
+  oc_credentials: 'pilot',
   oc_pilot_handoff_create: 'pilot',
   oc_pilot_run_with_recovery: 'pilot',
   oc_pilot_handoff_redeem: 'pilot',
@@ -592,6 +596,7 @@ export function registerAllTools(server: MCPServer): void {
   }
   // oc_observe (#866) — deterministic actionable-element enumeration
   registerOcObserveTool(proxy);
+  registerElementPickTool(proxy);
   // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
   registerOcDevToolsUrlTool(proxy);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
@@ -604,6 +609,17 @@ export function registerAllTools(server: MCPServer): void {
 
   // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
   registerTaskRunTools(server);
+
+  // Pilot-only tools. Keep require() behind the runtime flag so core startup
+  // does not load src/pilot/** when --pilot is unset.
+  if (isPilotEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcPilotHandoffTool } = require('../pilot/handoff/tool') as typeof import('../pilot/handoff/tool');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcCredentialsTool } = require('../pilot/tools/oc-credentials') as typeof import('../pilot/tools/oc-credentials');
+    registerOcPilotHandoffTool(server);
+    registerOcCredentialsTool(server);
+  }
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }
