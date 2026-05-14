@@ -573,7 +573,11 @@ export function registerAllTools(server: MCPServer): void {
   }
   // oc_observe (#866) — deterministic actionable-element enumeration
   registerOcObserveTool(proxy);
-  registerElementPickTool(proxy);
+  // element_pick (#899) — default-on for deterministic clients, but allow
+  // strict byte-parity operators to suppress it from tools/list.
+  if (process.env.OPENCHROME_ELEMENT_PICK !== '0') {
+    registerElementPickTool(proxy);
+  }
   // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
   registerOcDevToolsUrlTool(proxy);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
