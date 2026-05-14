@@ -33,28 +33,6 @@ interface RunResult {
  * emits exactly one token, so a regex match is both sufficient and robust.
  */
 
-/**
- * Parse the CLI JSON payload from captured stdout while ignoring unrelated
- * Jest console-rendering noise that can be captured by the in-process stdout
- * hook when another timer logs in the same worker. The admin list command emits
- * one top-level array, so selecting the first complete JSON array preserves the
- * assertion that plaintext does not leak into the actual CLI JSON output.
- */
-function parseJsonArrayFromStdout<T>(stdout: string): T[] {
-  const start = stdout.indexOf('[');
-  if (start < 0) throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
-  for (let end = stdout.length - 1; end >= start; end--) {
-    if (stdout[end] !== ']') continue;
-    const candidate = stdout.slice(start, end + 1);
-    try {
-      return JSON.parse(candidate) as T[];
-    } catch {
-      // Keep scanning left: prefixed Jest noise may contain bracketed labels.
-    }
-  }
-  throw new Error(`No parseable JSON array found in stdout: ${JSON.stringify(stdout)}`);
-}
-
 function extractToken(stdout: string): string {
   const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
   if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
