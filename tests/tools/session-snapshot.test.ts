@@ -6,6 +6,7 @@
 
 import * as path from 'path';
 import * as os from 'os';
+import { pathToFileURL } from 'url';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -533,7 +534,9 @@ describe('oc_session_snapshot', () => {
     test('denies snapshot writes when MCP file roots exclude the snapshot directory', async () => {
       const mockSM = makeMockSessionManager([]);
       (getSessionManager as jest.Mock).mockReturnValue(mockSM);
-      setSessionMcpRoots('mcp-snapshot-deny', { roots: [{ uri: 'file:///tmp/allowed-snapshots' }] });
+      const { SNAPSHOT_DIR } = await import('../../src/tools/session-snapshot');
+      const allowedRoot = path.resolve(path.dirname(SNAPSHOT_DIR), 'allowed-snapshots');
+      setSessionMcpRoots('mcp-snapshot-deny', { roots: [{ uri: pathToFileURL(allowedRoot).href }] });
 
       const handler = await getSnapshotHandler();
 
