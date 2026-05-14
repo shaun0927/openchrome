@@ -60,9 +60,11 @@ describe('benchmark result envelope', () => {
   });
 
   test('rejects an envelope missing environment fields', () => {
+    // Copy the environment first — buildResultEnvelope stores it by reference,
+    // and mutating the shared `env` would poison the other tests.
     const bad = buildResultEnvelope({
       axis: 'reliability',
-      environment: env,
+      environment: { ...env },
       competitors: [{ name: 'OpenChrome', version: '1.12.0' }],
       results: [],
     });
