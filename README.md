@@ -24,9 +24,8 @@
 ## What it is
 
 OpenChrome is an **MCP server** that controls your real, already-logged-in Chrome
-through the Chrome DevTools Protocol — no middleware, no separate browser, no
-re-authentication. One Chrome process, many isolated tabs, ~300 MB for 20 parallel
-lanes.
+through the CDP — no middleware, no separate browser, no re-authentication. 
+One Chrome process, many isolated tabs, ~300 MB for 20 parallel lanes.
 
 It is **harness-engineered**: the server doesn't just expose browser APIs, it wraps
 them with a hint engine, a circuit breaker, an automatic-recovery runtime, and
