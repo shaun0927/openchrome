@@ -1,3 +1,6 @@
+import * as path from 'path';
+import { pathToFileURL } from 'url';
+
 import {
   assertFilePathAllowedBySessionRoots,
   assertUrlAllowedBySessionRoots,
@@ -7,6 +10,11 @@ import {
 } from '../../src/security/mcp-roots';
 
 describe('MCP roots network narrowing (#880)', () => {
+  const fileRootPath = path.resolve('tmp', 'task-a');
+  const fileRootUri = pathToFileURL(fileRootPath).href;
+  const siblingPath = path.resolve('tmp', 'task-b', 'page.pdf');
+  const similarPrefixPath = path.resolve('tmp', 'task-a-sibling', 'page.pdf');
+
   afterEach(() => clearAllSessionMcpRoots());
 
   test('parses only https roots for network enforcement', () => {
@@ -14,7 +22,7 @@ describe('MCP roots network narrowing (#880)', () => {
       roots: [
         { uri: 'https://example.com' },
         { uri: 'https://*.staging.example.com' },
-        { uri: 'file:///tmp/task-a' },
+        { uri: fileRootUri },
         { uri: 'openchrome://future' },
       ],
     });
@@ -25,7 +33,7 @@ describe('MCP roots network narrowing (#880)', () => {
       { uri: 'https://*.staging.example.com', protocol: 'https:', host: 'staging.example.com', wildcardSubdomains: true },
     ]);
     expect(parsed.file).toEqual([
-      { uri: 'file:///tmp/task-a', path: '/tmp/task-a' },
+      { uri: fileRootUri, path: fileRootPath },
     ]);
   });
 
@@ -48,23 +56,23 @@ describe('MCP roots network narrowing (#880)', () => {
   });
 
   test('falls back to unchanged behavior when no applicable network roots exist', () => {
-    setSessionMcpRoots('mcp-a', { roots: [{ uri: 'file:///tmp/task-a' }] });
+    setSessionMcpRoots('mcp-a', { roots: [{ uri: fileRootUri }] });
 
     expect(() => assertUrlAllowedBySessionRoots('mcp-a', 'https://any.example.com')).not.toThrow();
   });
 
   test('allows file outputs inside file roots and rejects siblings', () => {
-    setSessionMcpRoots('mcp-a', { roots: [{ uri: 'file:///tmp/task-a' }] });
+    setSessionMcpRoots('mcp-a', { roots: [{ uri: fileRootUri }] });
 
-    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', '/tmp/task-a/page.pdf')).not.toThrow();
-    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', '/tmp/task-a/nested/page.pdf')).not.toThrow();
-    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', '/tmp/task-b/page.pdf')).toThrow(/MCP roots narrowing/);
-    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', '/tmp/task-a-sibling/page.pdf')).toThrow(/MCP roots narrowing/);
+    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', path.join(fileRootPath, 'page.pdf'))).not.toThrow();
+    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', path.join(fileRootPath, 'nested', 'page.pdf'))).not.toThrow();
+    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', siblingPath)).toThrow(/MCP roots narrowing/);
+    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', similarPrefixPath)).toThrow(/MCP roots narrowing/);
   });
 
   test('falls back to unchanged behavior when no applicable file roots exist', () => {
     setSessionMcpRoots('mcp-a', { roots: [{ uri: 'https://example.com' }] });
 
-    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', '/tmp/anywhere/page.pdf')).not.toThrow();
+    expect(() => assertFilePathAllowedBySessionRoots('mcp-a', path.resolve('tmp', 'anywhere', 'page.pdf'))).not.toThrow();
   });
 });

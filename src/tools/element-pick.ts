@@ -72,12 +72,7 @@ const handler: ToolHandler = async (sessionId: string, args: Record<string, unkn
       return jsonResult(payload);
     }
 
-    const overlayResult = await withTimeout(
-      page.evaluate(`window.__openchromeElementPick.startAsync({ timeoutMs: ${timeoutMs} })`),
-      timeoutMs + 1000,
-      'element_pick.start',
-      context,
-    ) as ElementPickOverlayResult;
+    const overlayResult = await startElementPick(page, timeoutMs, context);
 
     if (!overlayResult || overlayResult.success !== true || !('element' in overlayResult)) {
       return jsonResult(overlayResult ?? { success: false, error: 'unknown' }, true);
@@ -105,6 +100,53 @@ function jsonResult(payload: object, isError = false): MCPResult {
     structuredContent: payload as Record<string, unknown>,
     ...(isError ? { isError: true } : {}),
   };
+}
+
+async function startElementPick(page: any, timeoutMs: number, context?: ToolContext): Promise<ElementPickOverlayResult> {
+  let cleanupNavigationListener = () => {};
+  const navigationResult = new Promise<ElementPickFailure>((resolve) => {
+    const onFrameNavigated = (frame: unknown) => {
+      if (!isMainFrameNavigation(page, frame)) return;
+      cleanupNavigationListener();
+      resolve({ success: false, error: 'navigated' });
+    };
+    page.on?.('framenavigated', onFrameNavigated);
+    cleanupNavigationListener = () => {
+      page.off?.('framenavigated', onFrameNavigated);
+    };
+  });
+
+  const overlayResult = withTimeout(
+    page.evaluate(`window.__openchromeElementPick.startAsync({ timeoutMs: ${timeoutMs} })`),
+    timeoutMs + 1000,
+    'element_pick.start',
+    context,
+  ).catch((error) => {
+    if (isNavigationAbort(error)) {
+      return { success: false, error: 'navigated' };
+    }
+    throw error;
+  }) as Promise<ElementPickOverlayResult>;
+
+  try {
+    return await Promise.race([overlayResult, navigationResult]);
+  } finally {
+    cleanupNavigationListener();
+  }
+}
+
+function isMainFrameNavigation(page: any, frame: unknown): boolean {
+  try {
+    const mainFrame = typeof page.mainFrame === 'function' ? page.mainFrame() : undefined;
+    return !mainFrame || frame === mainFrame;
+  } catch {
+    return true;
+  }
+}
+
+function isNavigationAbort(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /execution context was destroyed|cannot find context|frame was detached|navigation|target closed/i.test(message);
 }
 
 export function registerElementPickTool(server: MCPServer): void {
