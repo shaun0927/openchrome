@@ -21,6 +21,7 @@ import { isPilotEnabled } from '../harness/flags';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
+import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
 
 
@@ -117,6 +118,11 @@ const definition: MCPToolDefinition = {
         description: 'Human-readable label for this action in audit logs (≤120 chars)',
         maxLength: 120,
       },
+capture_artifact: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, stage replay artifact steps for oc_skill_record after successfully filled fields. Default false is a strict no-op.',
+      },
       returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['tabId'],
@@ -141,6 +147,7 @@ const coreHandler: ToolHandler = async (
   const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
   const verifyMode = coerceVerifyMode(args.verify);
   const intent = args.intent as string | undefined;
+  const captureArtifact = shouldCaptureReplayArtifact(args.capture_artifact);
 
   // Validate intent when provided — use typeof guard for null-safety
   if (typeof intent === 'string') {
@@ -296,7 +303,18 @@ const coreHandler: ToolHandler = async (
           } else {
             await page.keyboard.type(stringValue);
           }
-          filledFields.push(`${refKey}: "${maskVaultValue(refKey, stringValue, vaultMasks).slice(0, 20)}${maskVaultValue(refKey, stringValue, vaultMasks).length > 20 ? '...' : ''}" [via ref]`);
+          if (captureArtifact) {
+            await captureBackendNodeReplayStep({
+              cdpClient,
+              page,
+              backendNodeId: entry.backendDOMNodeId,
+              kind: 'fill',
+              args: { value: stringValue },
+            });
+          }
+
+          const maskedRefValue = maskVaultValue(refKey, stringValue, vaultMasks);
+          filledFields.push(`${refKey}: "${maskedRefValue.slice(0, 20)}${maskedRefValue.length > 20 ? '...' : ''}" [via ref]`);
         } catch {
           throwIfAborted(context);
           return { submitted, loginResult: null, submitErrored: false, staleRef: refKey };
@@ -376,6 +394,16 @@ const coreHandler: ToolHandler = async (
               await humanType(page, String(fieldValue));
             } else {
               await page.keyboard.type(String(fieldValue));
+            }
+
+            if (captureArtifact) {
+              await captureBackendNodeReplayStep({
+                cdpClient,
+                page,
+                backendNodeId: axMatch.backendDOMNodeId,
+                kind: 'fill',
+                args: { value: String(fieldValue) },
+              });
             }
 
             invalidateAXCache(getTargetId(page.target()));
@@ -508,7 +536,18 @@ const coreHandler: ToolHandler = async (
             }
           }
 
-          filledFields.push(`${fieldKey}: "${maskVaultValue(fieldKey, String(fieldValue), vaultMasks).slice(0, 20)}${maskVaultValue(fieldKey, String(fieldValue), vaultMasks).length > 20 ? '...' : ''}"`);
+          if (captureArtifact && bestMatch.backendDOMNodeId) {
+            await captureBackendNodeReplayStep({
+              cdpClient,
+              page,
+              backendNodeId: bestMatch.backendDOMNodeId,
+              kind: bestMatch.tagName === 'select' ? 'select' : 'fill',
+              args: { value: String(fieldValue) },
+            });
+          }
+
+          const maskedFieldValue = maskVaultValue(fieldKey, String(fieldValue), vaultMasks);
+          filledFields.push(`${fieldKey}: "${maskedFieldValue.slice(0, 20)}${maskedFieldValue.length > 20 ? '...' : ''}"`);
         } catch (e) {
           throwIfAborted(context);
           errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
