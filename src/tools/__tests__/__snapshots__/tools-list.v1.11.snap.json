@@ -208,6 +208,18 @@
       "name": "oc_stop"
     },
     {
+      "name": "oc_lane_close"
+    },
+    {
+      "name": "oc_lane_create"
+    },
+    {
+      "name": "oc_lane_get"
+    },
+    {
+      "name": "oc_lane_list"
+    },
+    {
       "name": "oc_task_cancel"
     },
     {
