@@ -47,6 +47,7 @@ Categories below are documentation-only — the runtime source is
 | `tabs_context`             | Tab list snapshot                                    |
 | `list_profiles`            | Chrome profile enumeration                           |
 | `performance_metrics`      | Page performance read                                |
+| `oc_vitals`                | Web Vitals performance read                          |
 | `oc_profile_status`        | Profile status read                                  |
 | `oc_get_connection_info`   | Server/Chrome connection metadata read               |
 | `oc_connection_health`     | Health probe                                         |
@@ -63,6 +64,7 @@ Categories below are documentation-only — the runtime source is
 | `oc_context_export`       | Portable context envelope export                     |
 | `oc_observe`              | Deterministic actionable-element enumeration         |
 | `oc_performance_analyze`  | Analyze an existing performance trace                |
+| `oc_progress_status`       | Session progress diagnostics                         |
 
 ### Network egress — `{ readOnly:F, destructive:F, idempotent:F, openWorld:T }`
 
