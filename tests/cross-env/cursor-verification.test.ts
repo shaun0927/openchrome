@@ -117,9 +117,9 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       expect(initResult.protocolVersion).toBe('2024-11-05');
     });
 
-    test('Server capabilities: tools.listChanged=true, resources={}', () => {
+    test('Server capabilities advertise resource subscriptions', () => {
       expect(initResult.capabilities.tools.listChanged).toBe(true);
-      expect(initResult.capabilities.resources).toEqual({});
+      expect(initResult.capabilities.resources).toEqual({ listChanged: true, subscribe: true });
     });
 
     test('Server info: name="openchrome", version present', () => {

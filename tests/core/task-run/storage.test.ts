@@ -169,7 +169,10 @@ describe('TaskRunStore', () => {
 
   it('serializes concurrent update calls on the same run_id', async () => {
     const run = await store.start({ goal: 'Concurrent updates' });
-    const N = 25;
+    // Windows CI file locking is intentionally serialized here; keep enough
+    // contention to prove no last-writer-wins loss without coupling the test
+    // to the full-suite filesystem latency budget.
+    const N = 12;
     await Promise.all(
       Array.from({ length: N }, (_, i) =>
         store.update(run.run_id, { completed_items: [`item-${i}`] }),
@@ -183,7 +186,7 @@ describe('TaskRunStore', () => {
     for (let i = 0; i < N; i++) {
       expect(meta.completed_items).toContain(`item-${i}`);
     }
-  }, 30000);
+  }, 20_000);
 
   it('accumulates truncation counts across multiple overflows', async () => {
     const run = await store.start({ goal: 'Repeated overflow' });

@@ -195,6 +195,7 @@ export const TOOL_ANNOTATIONS = {
   // ── Pilot tier (loaded only under --pilot) ──────────────────────────────
   oc_pilot_handoff_create: MUTATES,
   oc_pilot_handoff_redeem: MUTATES,
+  oc_react: READ_ONLY,
 
   // ── Crawl job control (develop-era additions merged after this PR) ─────
   // `crawl_start` issues network requests, so its worst-case input set
