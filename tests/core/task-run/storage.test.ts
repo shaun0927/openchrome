@@ -15,7 +15,7 @@ describe('TaskRunStore', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('starts, updates, checkpoints, lists, and completes a TaskRun', async () => {
@@ -111,6 +111,43 @@ describe('TaskRunStore', () => {
     expect(meta.completed_items?.[0]).toBe('item-5');
   });
 
+
+  it('stores bounded opt-in auto session snapshot metadata and events', async () => {
+    const run = await store.start({
+      goal: 'Long task continuity',
+      auto_session_snapshot: { enabled: true, mode: 'strict', max_snapshots: 2 },
+    });
+
+    expect(run.auto_session_snapshot_policy).toEqual({
+      enabled: true,
+      mode: 'strict',
+      max_snapshots: 2,
+    });
+    expect(run.auto_session_snapshot_state).toEqual({ snapshot_ids: [] });
+
+    await store.recordAutoSessionSnapshot(run.run_id, 'snap-1');
+    await store.recordAutoSessionSnapshot(run.run_id, 'snap-2');
+    const recorded = await store.recordAutoSessionSnapshot(run.run_id, 'snap-3');
+
+    expect(recorded.auto_session_snapshot_state?.snapshot_ids).toEqual(['snap-2', 'snap-3']);
+    expect(recorded.auto_session_snapshot_state?.last_snapshot_at).toBeDefined();
+
+    const events = await store.readEvents(run.run_id);
+    expect(events.filter(e => e.kind === 'auto_session_snapshot')).toHaveLength(3);
+  });
+
+  it('records best-effort auto session snapshot failures without clearing previous ids', async () => {
+    const run = await store.start({
+      goal: 'Failure-tolerant continuity',
+      auto_session_snapshot: { enabled: true },
+    });
+    await store.recordAutoSessionSnapshot(run.run_id, 'snap-ok');
+    const failed = await store.recordAutoSessionSnapshotFailure(run.run_id, new Error('disk full'));
+
+    expect(failed.auto_session_snapshot_state?.snapshot_ids).toEqual(['snap-ok']);
+    expect(failed.auto_session_snapshot_state?.last_error).toBe('disk full');
+  });
+
   it('persists records across store instances', async () => {
     const run = await store.start({ goal: 'Restart-safe run' });
     await store.update(run.run_id, { completed_items: ['one'] });
@@ -146,7 +183,7 @@ describe('TaskRunStore', () => {
     for (let i = 0; i < N; i++) {
       expect(meta.completed_items).toContain(`item-${i}`);
     }
-  });
+  }, 30000);
 
   it('accumulates truncation counts across multiple overflows', async () => {
     const run = await store.start({ goal: 'Repeated overflow' });

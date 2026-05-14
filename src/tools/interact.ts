@@ -31,6 +31,7 @@ import {
   type ValidatedLocatorFallbackCandidate,
 } from '../core/perception/locator-fallback';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
 
 /**
  * Inject the structured {@link VerifyReport} onto an MCPResult under
@@ -94,6 +95,7 @@ const definition: MCPToolDefinition = {
         description: 'Response content. Default: both',
       },
       verify: VERIFY_FIELD_SCHEMA,
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
       waitForMs: {
         type: 'number',
         description: 'Poll timeout for element in ms. Max: 30000',
@@ -194,7 +196,7 @@ async function validateLocatorCandidate(
   return { ...candidate, selector: candidate.selector, rect };
 }
 
-const handler: ToolHandler = async (
+const coreHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
@@ -320,7 +322,7 @@ const handler: ToolHandler = async (
       } as MCPResult;
     }
 
-    const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refArg);
+    const backendDOMNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, refArg);
     if (!backendDOMNodeId) {
       const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact').catch(() => null);
       if (page) {
@@ -972,6 +974,26 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+};
+
+
+const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
+  const result = await coreHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+
+  try {
+    const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'interact');
+    if (page) {
+      await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+    }
+  } catch {
+    // Snapshot chaining is best-effort; never mask the successful action result.
+  }
+  return result;
 };
 
 export function registerInteractTool(server: MCPServer): void {
