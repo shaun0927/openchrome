@@ -6,6 +6,7 @@
 import path from 'path';
 import { Page, Target, BrowserContext, Browser } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
+import { TargetOwnershipRegistry } from './session/target-registry';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
@@ -109,7 +110,7 @@ const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'str
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
-  private targetToWorker: Map<string, { sessionId: string; workerId: string }> = new Map();
+  private targetToWorker = new TargetOwnershipRegistry();
   /**
    * Maps targetId → `{browser, name}` for the owning named context (#848).
    * Targets opened in the default Chrome context are not present here;
@@ -1253,13 +1254,17 @@ export class SessionManager {
   async getPage(sessionId: string, targetId: string, workerId?: string, toolName?: string): Promise<Page | null> {
     const ownerInfo = this.targetToWorker.get(targetId);
 
-    if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
+    if (!ownerInfo) {
       // Fallback: target may exist in Chrome but not in our tracking map.
       // This happens after cross-origin navigation (e.g., OAuth redirect) where
       // Chrome replaces the renderer process, creating a new target that we missed
       // (we skip targetcreated indexing to prevent ghost tabs).
       const recovered = await this.tryRecoverTarget(sessionId, targetId, workerId);
       if (recovered) return recovered;
+      throw new Error(this.buildStaleTargetError(sessionId, targetId));
+    }
+
+    if (ownerInfo.sessionId !== sessionId) {
       throw new Error(this.buildStaleTargetError(sessionId, targetId));
     }
 

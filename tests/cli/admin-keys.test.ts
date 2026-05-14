@@ -32,6 +32,7 @@ interface RunResult {
  * block ahead of the CLI's own single-line token emission. The CLI only ever
  * emits exactly one token, so a regex match is both sufficient and robust.
  */
+
 function extractToken(stdout: string): string {
   const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
   if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
@@ -40,9 +41,9 @@ function extractToken(stdout: string): string {
 
 /**
  * Extract the JSON array emitted by `admin keys list --json` while ignoring
- * unrelated Jest worker noise captured by the shared stdout hook on CI. The
- * command output contract is a single top-level array, so the parser scans for
- * the first balanced array that decodes successfully instead of accepting
+ * unrelated Jest worker noise captured by the shared stdout hook on Windows CI.
+ * The command output contract is a single top-level array, so the parser scans
+ * for the first balanced array that decodes successfully instead of accepting
  * arbitrary prefixes as JSON.
  */
 function parseJsonArrayFromStdout<T>(stdout: string): T[] {

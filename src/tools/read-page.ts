@@ -20,6 +20,7 @@ import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown
 import { applyContentFilter, parseContentFilterType } from '../core/extract/content-filter';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
+import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 
 /**
  * Build the `[node_refs]` block that surfaces the #844 backend-node uid
@@ -177,12 +178,22 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'When true, include approximate returned size/token metrics in the emitted payload. Default: false.',
       },
+      boundaryMarkers: {
+        type: 'boolean',
+        description: 'Wrap page-origin plaintext in <oc:page>. Default true; false disables.',
+      },
     },
     required: ['tabId'],
   },
   annotations: TOOL_ANNOTATIONS.read_page,
 };
 
+
+
+function shortAliasForRef(refId: string): string | undefined {
+  const match = refId.match(/^ref_(\d+)$/);
+  return match ? `@e${match[1]}` : undefined;
+}
 
 function compactAXLines(lines: string[]): string[] {
   const keep = new Set<number>();
@@ -287,6 +298,10 @@ const handler: ToolHandler = async (
     }
 
     const cdpClient = sessionManager.getCDPClient();
+    const boundaryMarkers = areBoundaryMarkersEnabled(args);
+    const wrapPage = (body: string, emittedMode: string) => (
+      boundaryMarkers ? wrapBoundaryMarker('page', { src: page.url(), mode: emittedMode }, body) : body
+    );
 
     // Mode dispatch
     const requestedMode = args.mode as string | undefined;
@@ -415,15 +430,21 @@ const handler: ToolHandler = async (
             bm25Threshold: filterOptions.bm25Threshold as number | undefined,
             pruneThreshold: filterOptions.pruneThreshold as number | undefined,
           });
+          const filteredPayload = {
+            ...filtered,
+            content: withTextMetrics(wrapPage(filtered.content, 'markdown'), 'markdown', truncated),
+            ...(filtered.raw_markdown ? { raw_markdown: wrapPage(filtered.raw_markdown, 'markdown') } : {}),
+            ...(filtered.fit_markdown ? { fit_markdown: wrapPage(filtered.fit_markdown, 'markdown') } : {}),
+          };
           return {
-            content: [{ type: 'text', text: JSON.stringify({ ...filtered, content: withTextMetrics(filtered.content, 'markdown', truncated) }) }],
+            content: [{ type: 'text', text: JSON.stringify(filteredPayload) }],
           };
         } catch (error) {
           return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
         }
       }
       return {
-        content: [{ type: 'text', text: withTextMetrics(rawMarkdown, 'markdown', truncated) }],
+        content: [{ type: 'text', text: withTextMetrics(wrapPage(rawMarkdown, 'markdown'), 'markdown', truncated) }],
       };
     }
 
@@ -585,7 +606,7 @@ const handler: ToolHandler = async (
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: withTextMetrics(cssText + cssPaginationSection, 'css') }],
+        content: [{ type: 'text', text: withTextMetrics(wrapPage(cssText, 'css') + cssPaginationSection, 'css') }],
       };
     }
 
@@ -846,7 +867,7 @@ const handler: ToolHandler = async (
         const includePaginationDom = args.includePagination !== false;
         const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
         return withDiagnostics({
-          content: [{ type: 'text', text: withTextMetrics(outputText + nodeRefsBlock + domPaginationSection, 'dom') }],
+          content: [{ type: 'text', text: withTextMetrics(wrapPage(outputText, 'dom') + nodeRefsBlock + domPaginationSection, 'dom') }],
         });
       } catch (error) {
         if (isExplicitDomMode) {
@@ -1053,7 +1074,8 @@ const handler: ToolHandler = async (
 
       // Build line
       const indentStr = '  '.repeat(indent);
-      let line = `${indentStr}[${refId || 'no-ref'}] ${role}`;
+      const refLabel = refId ? `${refId} ${shortAliasForRef(refId) ?? ''}`.trim() : 'no-ref';
+      let line = `${indentStr}[${refLabel}] ${role}`;
       if (name) line += `: "${name}"`;
       if (value) line += ` = "${value}"`;
 
@@ -1218,7 +1240,7 @@ const handler: ToolHandler = async (
     }
 
     return withDiagnostics({
-      content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
+      content: [{ type: 'text', text: pageStatsLine + wrapPage(output, 'ax') + axPaginationSection }],
       refs: refsMap,
       snapshot: snapshotMetadata,
     });

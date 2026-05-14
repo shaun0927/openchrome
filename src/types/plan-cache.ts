@@ -136,6 +136,7 @@ export interface PlanEntry {
     failCount: number;
     avgDurationMs: number;
     lastUsed: number;
+    failureClassCounts?: Partial<Record<PlanFailureClass, number>>;
   };
   /** Confidence score (0.0 - 1.0) based on success rate */
   confidence: number;
@@ -148,6 +149,32 @@ export interface PlanRegistryData {
   version: string;
   plans: PlanEntry[];
   updatedAt: number;
+}
+
+
+export type PlanFailureClass =
+  | 'step_error'
+  | 'empty_result'
+  | 'timeout'
+  | 'contract_failed'
+  | 'stale_ref'
+  | 'auth_redirect'
+  | 'unknown';
+
+export interface PlanFailureMetadata {
+  class: PlanFailureClass;
+  stepOrder?: number;
+  tool?: string;
+  message: string;
+  hintRule?: string;
+  reflectionId?: string;
+}
+
+export interface PlanRecoveryCandidate {
+  source: 'error_handler' | 'hint' | 'reflection';
+  condition?: string;
+  action: string;
+  message: string;
 }
 
 /** Result of plan execution */
@@ -165,6 +192,10 @@ export interface PlanExecutionResult {
   data?: Record<string, unknown>;
   /** Error message (if failed) */
   error?: string;
+  /** Structured failure metadata when success=false. */
+  failure?: PlanFailureMetadata;
+  /** Safe, explanatory recovery options. These are never auto-executed. */
+  recoveryCandidates?: PlanRecoveryCandidate[];
   /** Execution duration in milliseconds */
   durationMs: number;
   /** Number of steps executed */

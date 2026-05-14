@@ -13,14 +13,8 @@
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
-import {
-  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
-  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
-} from '../config/defaults';
 import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport, TransportMessageContext } from './index';
-import { renderPrometheusMetrics, type PrometheusMetric } from './prometheus';
-import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
 import {
   REQUEST_ID_HEADER,
@@ -38,130 +32,36 @@ import {
   type Principal,
 } from '../middleware/auth';
 import { logAuditEntry } from '../security/audit-logger';
-import { authorizeDashboardEndpoint, canSeeTenant } from '../middleware/dashboard-authz';
 import { extractTenantId, TenantIdError } from '../middleware/tenant-extractor';
 import { isStrictTenantIsolationEnabled } from '../tenant/registry';
 import type { TenantId } from '../tenant/types';
+import {
+  HTTP_BODY_TIMEOUT_MS,
+  HTTP_HEADERS_TIMEOUT_MS,
+  HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
+  HTTP_JSON_RPC_BATCH_MAX_SIZE,
+  HTTP_KEEPALIVE_TIMEOUT_MS,
+  HTTP_REQUEST_TIMEOUT_MS,
+  HTTP_SOCKET_TIMEOUT_MS,
+  MAX_BODY_BYTES,
+  SSE_KEEPALIVE_INTERVAL_MS,
+} from './http/config';
+import { applyCors, formatServerOriginHost, parseCorsOrigins } from './http/cors';
+import {
+  envFlag,
+  resolveAuthMode,
+  validateUnauthenticatedHttpPolicy,
+} from './http/auth';
+import { createBatchTooLargeError, mapBatchWithConcurrency } from './http/batch';
+import {
+  handleDashboardMetrics,
+  handleDashboardPrometheusMetrics,
+  handleDashboardScreenshot,
+  handleDashboardSessions,
+  handleDashboardToolCalls,
+} from './http/dashboard-routes';
 
-/** Maximum allowed HTTP request body size (10 MB) to prevent OOM from oversized requests */
-const MAX_BODY_BYTES = 10 * 1024 * 1024;
-
-/** SSE keepalive ping interval in milliseconds */
-const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
-
-// ─── Request/socket timeouts (Slowloris defense) ─────────────────────────
-// Node's http.Server has two of these built-in (requestTimeout,
-// headersTimeout, keepAliveTimeout) but their defaults vary across Node
-// versions and platforms. Explicit values make behavior deterministic.
-// All values in milliseconds; override via OPENCHROME_HTTP_* env vars.
-
-/** Max wall time between accepting the connection and finishing the request. */
-const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 30_000;
-/** Max time to receive the full request headers. */
-const DEFAULT_HTTP_HEADERS_TIMEOUT_MS = 10_000;
-/** Idle timeout between keep-alive requests on the same connection. */
-const DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS = 5_000;
-/** Per-socket idle timeout (triggers automatic socket destroy). */
-const DEFAULT_HTTP_SOCKET_TIMEOUT_MS = 60_000;
-/** Max time to receive the full request body after headers. */
-const DEFAULT_HTTP_BODY_TIMEOUT_MS = 15_000;
-
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function envFlag(name: string): boolean {
-  const raw = process.env[name];
-  return raw === '1' || raw === 'true' || raw === 'yes';
-}
-
-function isLoopbackHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1');
-  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1';
-}
-
-function parseCorsOrigins(raw: string | undefined): Set<string> {
-  return new Set((raw || '').split(',').map((origin) => origin.trim()).filter(Boolean));
-}
-
-/**
- * Format the configured server bind into a canonical origin host (URL `host`
- * form: `hostname` or `hostname:port`, with IPv6 hostnames bracketed). This
- * value is what `isSameOriginRequest` compares against — it is derived from
- * operator configuration, not from the request, so it cannot be spoofed via
- * the Host header.
- */
-function formatServerOriginHost(host: string, port: number): string {
-  const trimmed = host.trim().toLowerCase();
-  const stripped = trimmed.replace(/^\[(.*)\]$/, '$1');
-  const isIPv6 = stripped.includes(':');
-  const hostPart = isIPv6 ? `[${stripped}]` : stripped;
-  // Default port 80 is the only http default; OpenChrome binds 3100 by
-  // default, but be explicit about what `URL.host` would produce.
-  return port === 80 ? hostPart : `${hostPart}:${port}`;
-}
-
-/**
- * Treat a request as same-origin when the full origin tuple (scheme, host,
- * port) in the `Origin` header matches the configured server bind. Browsers
- * send `Origin` on same-origin non-GET requests (POST/OPTIONS), so without
- * this bypass a browser app served from the OpenChrome origin would be
- * rejected by the CORS allowlist even though no cross-origin trust boundary
- * is crossed.
- *
- * The comparison uses the operator-configured `host:port`, NOT the client-
- * supplied `Host` header. Trusting the Host header here would let DNS-
- * rebinding attackers (whose page is served from a domain that was rebound
- * to loopback) match `Origin === Host` and bypass the allowlist — defeating
- * the very protection the allowlist provides for the unauthenticated
- * loopback development mode.
- *
- * Scheme is enforced because the HTTP transport speaks plain `http` only;
- * permitting an `https` Origin to bypass the allowlist would let cross-
- * origin `https` callers reach `/mcp` whenever the same host is also exposed
- * over `http`. Operators behind TLS termination must add the public origin
- * to the allowlist explicitly.
- */
-function isSameOriginRequest(originValue: string, serverOriginHost: string): boolean {
-  try {
-    const originUrl = new URL(originValue);
-    if (originUrl.protocol !== 'http:') return false;
-    return originUrl.host.toLowerCase() === serverOriginHost;
-  } catch {
-    return false;
-  }
-}
-
-const HTTP_REQUEST_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_REQUEST_TIMEOUT_MS',  DEFAULT_HTTP_REQUEST_TIMEOUT_MS);
-const HTTP_HEADERS_TIMEOUT_MS  = envInt('OPENCHROME_HTTP_HEADERS_TIMEOUT_MS',  DEFAULT_HTTP_HEADERS_TIMEOUT_MS);
-const HTTP_KEEPALIVE_TIMEOUT_MS = envInt('OPENCHROME_HTTP_KEEPALIVE_TIMEOUT_MS', DEFAULT_HTTP_KEEPALIVE_TIMEOUT_MS);
-const HTTP_SOCKET_TIMEOUT_MS   = envInt('OPENCHROME_HTTP_SOCKET_TIMEOUT_MS',   DEFAULT_HTTP_SOCKET_TIMEOUT_MS);
-const HTTP_BODY_TIMEOUT_MS     = envInt('OPENCHROME_HTTP_BODY_TIMEOUT_MS',     DEFAULT_HTTP_BODY_TIMEOUT_MS);
-const HTTP_JSON_RPC_BATCH_MAX_SIZE = envInt(
-  'OPENCHROME_HTTP_JSON_RPC_BATCH_MAX_SIZE',
-  DEFAULT_HTTP_JSON_RPC_BATCH_MAX_SIZE,
-);
-const HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY = Math.max(
-  1,
-  envInt(
-    'OPENCHROME_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY',
-    DEFAULT_HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
-  ),
-);
-
-/** Exported for tests to assert current effective values. */
-export const HTTP_TIMEOUTS = Object.freeze({
-  requestTimeoutMs:   HTTP_REQUEST_TIMEOUT_MS,
-  headersTimeoutMs:   HTTP_HEADERS_TIMEOUT_MS,
-  keepAliveTimeoutMs: HTTP_KEEPALIVE_TIMEOUT_MS,
-  socketTimeoutMs:    HTTP_SOCKET_TIMEOUT_MS,
-  bodyTimeoutMs:      HTTP_BODY_TIMEOUT_MS,
-  jsonRpcBatchMaxSize: HTTP_JSON_RPC_BATCH_MAX_SIZE,
-  jsonRpcBatchMaxConcurrency: HTTP_JSON_RPC_BATCH_MAX_CONCURRENCY,
-});
+export { HTTP_TIMEOUTS } from './http/config';
 
 /** Active SSE connections for server-initiated notifications */
 interface SSEConnection {
@@ -213,9 +113,9 @@ export class HTTPTransport implements MCPTransport {
     this.host = host;
     this.authToken = authToken;
     const verifier = options.jwt ? createJwtVerifier(options.jwt) : undefined;
-    this.authMode = HTTPTransport.resolveAuthMode(authToken, options.apiKeyStore, verifier);
+    this.authMode = resolveAuthMode(authToken, options.apiKeyStore, verifier);
     const allowUnauthenticatedHttp = options.allowUnauthenticatedHttp ?? envFlag('OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP');
-    HTTPTransport.validateUnauthenticatedHttpPolicy(this.authMode, this.host, allowUnauthenticatedHttp);
+    validateUnauthenticatedHttpPolicy(this.authMode, this.host, allowUnauthenticatedHttp);
     this.corsAllowedOrigins = new Set([
       ...parseCorsOrigins(process.env.OPENCHROME_HTTP_CORS_ORIGINS),
       ...(options.corsAllowedOrigins || []),
@@ -225,87 +125,19 @@ export class HTTPTransport implements MCPTransport {
 
   /**
    * Resolve the runtime auth mode from env + ctor args.
-   * Precedence:
-   *   1. Explicit env OPENCHROME_AUTH_MODE=legacy-shared-token -> legacy
-   *      (fail-closed: throws if no token is configured; setting this env is
-   *      an explicit operator request to enforce auth, so we must not silently
-   *      downgrade to `disabled` on a wiring/secret-injection failure).
-   *   2. store && jwt -> api-key-or-jwt
-   *   3. ApiKeyStore provided -> api-key
-   *   4. jwt provided -> jwt
-   *   5. authToken provided (backwards compat) -> legacy
-   *   6. Nothing configured -> disabled
+   * Kept as a public facade for callers/tests while the implementation lives
+   * in `transports/http/auth` for issue #687's facade-preserving split.
    */
   static resolveAuthMode(
     authToken: string | undefined,
     store: ApiKeyStore | undefined,
     verifier?: JwtVerifier,
   ): AuthMode {
-    const envMode = process.env.OPENCHROME_AUTH_MODE;
-    if (envMode === 'legacy-shared-token') {
-      if (!authToken) {
-        throw new Error(
-          'OPENCHROME_AUTH_MODE=legacy-shared-token requires a shared token ' +
-            '(set OPENCHROME_AUTH_TOKEN or pass authToken to HTTPTransport). ' +
-            'Refusing to start with the env flag set but no token configured — ' +
-            'silently falling back to unauthenticated mode would be a security regression.',
-        );
-      }
-      return { kind: 'legacy-shared-token', token: authToken };
-    }
-    if (store && verifier) {
-      return { kind: 'api-key-or-jwt', store, verifier };
-    }
-    if (store) {
-      return { kind: 'api-key', store };
-    }
-    if (verifier) {
-      return { kind: 'jwt', verifier };
-    }
-    if (authToken) {
-      return { kind: 'legacy-shared-token', token: authToken };
-    }
-    return { kind: 'disabled' };
-  }
-
-  private static validateUnauthenticatedHttpPolicy(
-    authMode: AuthMode,
-    host: string,
-    allowUnauthenticatedHttp: boolean,
-  ): void {
-    if (authMode.kind !== 'disabled') return;
-
-    const migration = 'Configure HTTP auth (OPENCHROME_AUTH_TOKEN, API keys, or JWT), use stdio, ' +
-      'or set OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1 for loopback-only development.';
-    if (!allowUnauthenticatedHttp) {
-      throw new Error(`Refusing to start unauthenticated HTTP transport. ${migration}`);
-    }
-    if (!isLoopbackHost(host)) {
-      throw new Error(
-        `Refusing to start unauthenticated HTTP transport on non-loopback host ${host}. ${migration}`,
-      );
-    }
+    return resolveAuthMode(authToken, store, verifier);
   }
 
   private applyCors(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
-    const origin = req.headers.origin;
-    const originValue = typeof origin === 'string' ? origin : undefined;
-    const sameOrigin = originValue ? isSameOriginRequest(originValue, this.serverOriginHost) : false;
-    if (originValue && this.corsAllowedOrigins.has(originValue)) {
-      res.setHeader('Access-Control-Allow-Origin', originValue);
-      res.setHeader('Vary', 'Origin');
-    }
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', `Content-Type, Mcp-Session-Id, Authorization, X-Tenant-Id, ${REQUEST_ID_HEADER}`);
-    res.setHeader('Access-Control-Expose-Headers', `Mcp-Session-Id, ${REQUEST_ID_HEADER}`);
-
-    const isMcpEndpoint = pathname === '/mcp' || pathname === '/mcp/sse';
-    if (originValue && isMcpEndpoint && !sameOrigin && !this.corsAllowedOrigins.has(originValue)) {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'CORS origin not allowed' }));
-      return false;
-    }
-    return true;
+    return applyCors(req, res, pathname, this.corsAllowedOrigins, this.serverOriginHost);
   }
 
   /** Returns the resolved principal for a given request, if any. */
@@ -675,335 +507,35 @@ export class HTTPTransport implements MCPTransport {
    * GET /api/screenshot - capture active tab screenshot as base64 WebP
    */
   private handleScreenshot(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
-    const requestedSessionId = url.searchParams.get('session_id') || url.searchParams.get('sessionId');
-    const sessionId = requestedSessionId || 'default';
-
-    if (!this.sessionManager) {
-      const authz = authorizeDashboardEndpoint(req, 'screenshot');
-      if (!authz.ok) {
-        this.writeDashboardAuthzFailure(res, 'screenshot', sessionId, authz.status, authz.error);
-        return;
-      }
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Session manager not available' }));
-      return;
-    }
-
-    // Always look up the resolved session — including the implicit "default" —
-    // so that a tenant-scoped caller cannot read another tenant's default
-    // session screenshot just by omitting `session_id`.
-    const session = this.sessionManager.getSession(sessionId);
-    const authz = authorizeDashboardEndpoint(req, 'screenshot', {
-      requireSessionOwnership: true,
-      requestedSessionTenantId: session?.tenantId,
-    });
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'screenshot', sessionId, authz.status, authz.error);
-      return;
-    }
-
-    this.captureScreenshot(sessionId)
-      .then((data) => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(data));
-      })
-      .catch((err) => {
-        console.error('[HTTPTransport] Screenshot error:', err);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Screenshot failed' }));
-      });
-  }
-
-  private writeDashboardAuthzFailure(
-    res: http.ServerResponse,
-    endpoint: 'screenshot' | 'sessions' | 'tool-calls' | 'metrics',
-    sessionId: string,
-    status: 401 | 403,
-    error: string,
-  ): void {
-    // Audit denial so that probing of cross-tenant resources is observable in
-    // the same place that auth_failure entries already live.
-    try {
-      logAuditEntry('dashboard_authz_failure', sessionId, { endpoint, status }, undefined, { status: 'error' });
-    } catch {
-      // best-effort
-    }
-    res.writeHead(status, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error }));
-  }
-
-  private async captureScreenshot(sessionId: string): Promise<{ base64: string; format: string; sessionId: string }> {
-    const sm = this.sessionManager!;
-    const infos = sm.getAllSessionInfos();
-    const sessionInfo = infos.find((s) => s.id === sessionId);
-
-    if (!sessionInfo || sessionInfo.targetCount === 0) {
-      throw new Error(`No tabs found for session "${sessionId}"`);
-    }
-
-    // Get the first worker's first target as the "active" page
-    const cdpClient = sm.getCDPClient();
-    let targetId: string | undefined;
-
-    for (const worker of sessionInfo.workers) {
-      const workerData = sm.getWorker(sessionId, worker.id);
-      if (workerData && workerData.targets.size > 0) {
-        // Get the most recently added target (last in insertion order)
-        for (const tid of workerData.targets) {
-          targetId = tid;
-        }
-        break;
-      }
-    }
-
-    if (!targetId) {
-      throw new Error(`No active target found for session "${sessionId}"`);
-    }
-
-    const page = await cdpClient.getPageByTargetId(targetId);
-    if (!page || page.isClosed()) {
-      throw new Error(`Page for target ${targetId} is closed or unavailable`);
-    }
-
-    const cdpSession = await page.createCDPSession();
-    try {
-      const result = await cdpSession.send('Page.captureScreenshot', {
-        format: 'webp',
-        quality: 60,
-      }) as { data: string };
-      return { base64: result.data, format: 'webp', sessionId };
-    } finally {
-      await cdpSession.detach().catch(() => { /* ignore */ });
-    }
+    handleDashboardScreenshot(req, url, res, this.sessionManager);
   }
 
   /**
    * GET /api/sessions - return connected sessions with tab counts
    */
   private handleSessions(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const authz = authorizeDashboardEndpoint(req, 'sessions');
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'sessions', 'anonymous', authz.status, authz.error);
-      return;
-    }
-
-    if (!this.sessionManager) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ sessions: [] }));
-      return;
-    }
-
-    const infos = this.sessionManager.getAllSessionInfos()
-      .filter((info) => canSeeTenant(authz.principal, info.tenantId));
-    const sessions = infos.map((info) => ({
-      id: info.id,
-      name: info.name,
-      tabCount: info.targetCount,
-      workerCount: info.workerCount,
-      createdAt: info.createdAt,
-      lastActivityAt: info.lastActivityAt,
-    }));
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ sessions }));
+    handleDashboardSessions(req, res, this.sessionManager);
   }
 
   /**
    * GET /api/tool-calls - return recent tool calls from dashboard state
    */
   private handleToolCalls(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
-    const sessionId = url.searchParams.get('session_id') || undefined;
-    const requestedSession = sessionId && this.sessionManager
-      ? this.sessionManager.getSession(sessionId)
-      : undefined;
-
-    const authz = authorizeDashboardEndpoint(req, 'tool-calls', {
-      requireSessionOwnership: sessionId !== undefined,
-      requestedSessionTenantId: requestedSession?.tenantId,
-    });
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'tool-calls', sessionId ?? 'anonymous', authz.status, authz.error);
-      return;
-    }
-
-    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
-    const clampedLimit = Math.min(Math.max(1, limit), 100);
-
-    const dashboardState = getDashboardState();
-    let calls = dashboardState.getToolCalls(sessionId, clampedLimit);
-
-    // Tenant-scoped admins must not see tool calls from other tenants. When the
-    // session has been deleted we cannot prove ownership, so the call is hidden.
-    const sm = this.sessionManager;
-    if (sm) {
-      calls = calls.filter((c) => canSeeTenant(authz.principal, sm.getSession(c.sessionId)?.tenantId));
-    } else if (!canSeeTenant(authz.principal, undefined)) {
-      calls = [];
-    }
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ calls }));
+    handleDashboardToolCalls(req, url, res, this.sessionManager);
   }
 
   /**
    * GET /api/metrics - return server metrics
    */
   private handleMetrics(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const authz = authorizeDashboardEndpoint(req, 'metrics');
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'metrics', 'anonymous', authz.status, authz.error);
-      return;
-    }
-
-    const mem = process.memoryUsage();
-    const dashboardState = getDashboardState();
-
-    let tabCount = 0;
-    let sessionCount = 0;
-    if (this.sessionManager) {
-      // Tenant-scoped principals must only see counts for their own tenant —
-      // the global getStats() exposes activity from every tenant.
-      const visible = this.sessionManager.getAllSessionInfos()
-        .filter((info) => canSeeTenant(authz.principal, info.tenantId));
-      sessionCount = visible.length;
-      for (const info of visible) {
-        tabCount += info.targetCount;
-      }
-    }
-
-    const metrics = {
-      ram_mb: Math.round(mem.rss / 1024 / 1024 * 100) / 100,
-      tab_count: tabCount,
-      uptime_secs: dashboardState.getUptimeSecs(),
-      session_count: sessionCount,
-    };
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(metrics));
+    handleDashboardMetrics(req, res, this.sessionManager);
   }
 
   /**
    * GET /metrics — Prometheus text exposition format (#839).
-   *
-   * Auth-required via the existing bearer/api-key chain used by
-   * /api/metrics. Counters are read-only views over already-tracked
-   * in-process state; no new persistence is introduced. Hand-rolled
-   * exposition format avoids the prom-client dependency (P5).
    */
   private handlePrometheusMetrics(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const authz = authorizeDashboardEndpoint(req, 'metrics');
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'metrics', 'anonymous', authz.status, authz.error);
-      return;
-    }
-
-    const mem = process.memoryUsage();
-    const dashboardState = getDashboardState();
-
-    let tabCount = 0;
-    let sessionCount = 0;
-    const toolCallCounts: Record<string, { success: number; error: number }> = {};
-    if (this.sessionManager) {
-      const visible = this.sessionManager.getAllSessionInfos()
-        .filter((info) => canSeeTenant(authz.principal, info.tenantId));
-      sessionCount = visible.length;
-      for (const info of visible) {
-        tabCount += info.targetCount;
-      }
-    }
-
-    // `openchrome_tool_calls_total` is read from the process-lifetime
-    // monotonic counter in DashboardState (#839, P2) — the ring buffer
-    // is bounded so deriving counts from it would let values shrink as
-    // old entries age out, violating Prometheus counter semantics.
-    //
-    // Each counter row carries the session that produced the call; we
-    // resolve that session's tenant and skip rows the principal cannot
-    // see, mirroring `handleToolCalls` (#839, P1). Sessions that have
-    // been deleted cannot be attributed to a tenant and are hidden.
-    const sm = this.sessionManager;
-    for (const row of dashboardState.getToolCallTotals()) {
-      if (!row.toolName) continue;
-      if (sm) {
-        const sessionTenantId = sm.getSession(row.sessionId)?.tenantId;
-        if (!canSeeTenant(authz.principal, sessionTenantId)) continue;
-      } else if (!canSeeTenant(authz.principal, undefined)) {
-        continue;
-      }
-      const slot = toolCallCounts[row.toolName] ?? { success: 0, error: 0 };
-      slot[row.result] += row.count;
-      toolCallCounts[row.toolName] = slot;
-    }
-
-    // `openchrome_tool_calls_active` is an inherently transient gauge: it
-    // reflects in-flight calls at scrape time. We read it from the dashboard
-    // ring (the only place active calls are tracked) and apply the same
-    // tenant filter as above.
-    let activeCount = 0;
-    for (const call of dashboardState.getToolCalls(undefined, 1000)) {
-      if (call.status !== 'running') continue;
-      if (sm) {
-        const sessionTenantId = sm.getSession(call.sessionId)?.tenantId;
-        if (!canSeeTenant(authz.principal, sessionTenantId)) continue;
-      } else if (!canSeeTenant(authz.principal, undefined)) {
-        continue;
-      }
-      activeCount++;
-    }
-
-    const toolCallSamples: Array<{ labels: Record<string, string>; value: number }> = [];
-    for (const [tool, counts] of Object.entries(toolCallCounts)) {
-      if (counts.success > 0) {
-        toolCallSamples.push({ labels: { tool, result: 'success' }, value: counts.success });
-      }
-      if (counts.error > 0) {
-        toolCallSamples.push({ labels: { tool, result: 'error' }, value: counts.error });
-      }
-    }
-
-    const metrics: PrometheusMetric[] = [
-      {
-        name: 'openchrome_uptime_seconds',
-        help: 'Server uptime in seconds since process start.',
-        type: 'gauge',
-        value: dashboardState.getUptimeSecs(),
-      },
-      {
-        name: 'openchrome_ram_bytes',
-        help: 'Resident set size (RSS) of the openchrome server process.',
-        type: 'gauge',
-        value: mem.rss,
-      },
-      {
-        name: 'openchrome_tab_count',
-        help: 'Number of Chrome tabs currently tracked across visible sessions.',
-        type: 'gauge',
-        value: tabCount,
-      },
-      {
-        name: 'openchrome_session_count',
-        help: 'Number of active MCP sessions visible to the requesting principal.',
-        type: 'gauge',
-        value: sessionCount,
-      },
-      {
-        name: 'openchrome_tool_calls_total',
-        help: 'Cumulative tool call count, labelled by tool name and result.',
-        type: 'counter',
-        samples: toolCallSamples,
-      },
-      {
-        name: 'openchrome_tool_calls_active',
-        help: 'Tool calls currently in flight (status="running" in the dashboard ring).',
-        type: 'gauge',
-        value: activeCount,
-      },
-    ];
-
-    res.writeHead(200, {
-      'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
-    });
-    res.end(renderPrometheusMetrics(metrics));
+    handleDashboardPrometheusMetrics(req, res, this.sessionManager);
   }
 
   /**
@@ -1442,17 +974,7 @@ export class HTTPTransport implements MCPTransport {
   }
 
   private createBatchTooLargeError(): MCPResponse {
-    // id: null is the JSON-RPC 2.0 §5.1 sentinel for errors detected before a
-    // request id can be parsed (or, here, any meaningful per-element id can be
-    // chosen). It also avoids colliding with an active client-request id.
-    return {
-      jsonrpc: '2.0',
-      id: null,
-      error: {
-        code: MCPErrorCodes.INVALID_REQUEST,
-        message: `JSON-RPC batch size exceeds maximum of ${HTTP_JSON_RPC_BATCH_MAX_SIZE}`,
-      },
-    };
+    return createBatchTooLargeError(HTTP_JSON_RPC_BATCH_MAX_SIZE);
   }
 
   private async mapBatchWithConcurrency<T, R>(
@@ -1460,18 +982,6 @@ export class HTTPTransport implements MCPTransport {
     concurrency: number,
     fn: (item: T) => Promise<R>,
   ): Promise<R[]> {
-    const results = new Array<R>(items.length);
-    let nextIndex = 0;
-
-    const workerCount = Math.min(concurrency, items.length);
-    const workers = Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const currentIndex = nextIndex++;
-        results[currentIndex] = await fn(items[currentIndex]);
-      }
-    });
-
-    await Promise.all(workers);
-    return results;
+    return mapBatchWithConcurrency(items, concurrency, fn);
   }
 }
