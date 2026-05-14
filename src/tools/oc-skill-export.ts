@@ -8,7 +8,7 @@ import { codegenPath, defaultCodegenRoot, listCodegenFiles, type CodegenMode } f
 const definition: MCPToolDefinition = {
   name: 'oc_skill_export',
   description: 'Export an opt-in codegen replay artifact written by --codegen. Returns the path and byte count for puppeteer, playwright, or mcp-replay output. Default OpenChrome behavior is unchanged when --codegen is off.',
-  annotations: TOOL_ANNOTATIONS.oc_skill_recall,
+  annotations: TOOL_ANNOTATIONS.oc_skill_export,
   inputSchema: {
     type: 'object',
     properties: {
