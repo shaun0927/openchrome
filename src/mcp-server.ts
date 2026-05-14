@@ -48,6 +48,7 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
+import { assertFilePathAllowedBySessionRoots, assertUrlAllowedBySessionRoots, setSessionMcpRoots } from './security/mcp-roots';
 import { isClientDisconnect } from './errors/abort';
 import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
 import { isAllowed, requiredScope } from './auth/scope-policy';
@@ -59,6 +60,7 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
 import {
   substituteSecrets,
   redactSecrets,
@@ -69,15 +71,88 @@ import {
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
+import { redactPredicateSource } from './core/trace/redactor';
+import { getLifecycleBus, type LifecycleEvent, type Unsubscribe } from './core/lifecycle';
+import {
+  LIVE_RESOURCE_TEMPLATES,
+  ResourceRpcError,
+  assertLiveResourceAccess,
+  liveResourceDefinitions,
+  readLiveResource,
+  sessionStateUri,
+  sessionTabsUri,
+  journalUri,
+  recordingUri,
+} from './resources/live-state';
+import { ResourceSubscriptionManager } from './resources/subscriptions';
+import {
+  buildInvalidJsonRpcRequestResponse,
+  extractPrincipalAndScrub,
+  isInitializedNotification,
+  isJsonRpcNotification,
+  isServerToClientResponseMessage,
+} from './mcp/request-ingress';
+export { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
+import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
 import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
 
-function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+function redactToolArgsForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  if (toolName === 'wait_for' && args.type === 'function' && typeof args.value === 'string') {
+    return { ...args, value: redactPredicateSource(args.value) };
+  }
   if (toolName !== 'act' || !('variables' in args)) {
     return args;
   }
   return { ...args, variables: '[redacted]' };
 }
+
+function extractNetworkRootCandidateUrls(toolName: string, args: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) out.push(value);
+  };
+  switch (toolName) {
+    case 'navigate':
+    case 'tabs_create':
+    case 'crawl':
+      push(args.url);
+      break;
+    case 'crawl_sitemap':
+      push(args.url);
+      push(args.sitemap_url);
+      break;
+    case 'request_intercept': {
+      const rules = Array.isArray(args.rules) ? args.rules : [];
+      for (const rule of rules) {
+        if (!rule || typeof rule !== 'object') continue;
+        const pattern = (rule as { pattern?: unknown }).pattern;
+        if (typeof pattern === 'string' && /^https:\/\//i.test(pattern)) push(pattern);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return out;
+}
+
+function extractFileRootCandidatePaths(toolName: string, args: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) out.push(value);
+  };
+  switch (toolName) {
+    case 'page_pdf':
+    case 'page_screenshot':
+      push(args.path);
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -87,15 +162,6 @@ const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_status',
   'oc_recording_export',
 ]);
-
-/**
- * Detect if an error is a Chrome/CDP connection error that may be recoverable
- * by reconnecting to the browser.
- */
-export function estimateOutputTokensFromChars(chars: number): number {
-  // Heuristic only; intentionally avoids provider-specific tokenizer deps.
-  return Math.max(0, Math.ceil(chars / 4));
-}
 
 /**
  * Summarize an MCPResult for journal recording, stripping injected hint text.
@@ -136,47 +202,10 @@ function stringifyResultPayload(result: MCPResult): string {
   }
 }
 
-const CACHE_STATUS_LABELS = new Set(['HIT', 'MISS', 'BYPASS', 'ERROR']);
-const CACHE_KEY_VERSION_LABEL_RE = /^v?\d{1,3}$/i;
-
-function normalizeCacheStatusLabel(raw: string): string {
-  const normalized = raw.trim().toUpperCase();
-  return CACHE_STATUS_LABELS.has(normalized) ? normalized : 'UNKNOWN';
-}
-
-function normalizeCacheKeyVersionLabel(raw: unknown): string {
-  if (raw === undefined || raw === null || raw === '') return 'unknown';
-  const normalized = String(raw).trim();
-  if (normalized === '') return 'unknown';
-  return CACHE_KEY_VERSION_LABEL_RE.test(normalized) ? normalized : 'other';
-}
-
-export function extractCacheStatus(result: MCPResult): { status: string; keyVersion: string } | null {
-  const raw = (result as Record<string, unknown>)._cache
-    ?? (result as Record<string, unknown>).cache
-    ?? (result as Record<string, unknown>).cacheStatus;
-  if (typeof raw === 'string') {
-    return { status: normalizeCacheStatusLabel(raw), keyVersion: 'unknown' };
-  }
-  if (raw && typeof raw === 'object') {
-    const obj = raw as Record<string, unknown>;
-    const status = typeof obj.status === 'string' ? obj.status : typeof obj.cacheStatus === 'string' ? obj.cacheStatus : null;
-    if (!status) return null;
-    const keyVersion = obj.keyVersion ?? obj.version ?? 'unknown';
-    return {
-      status: normalizeCacheStatusLabel(status),
-      keyVersion: normalizeCacheKeyVersionLabel(keyVersion),
-    };
-  }
-  if (result.structuredContent && typeof result.structuredContent.cacheStatus === 'string') {
-    return {
-      status: normalizeCacheStatusLabel(result.structuredContent.cacheStatus),
-      keyVersion: normalizeCacheKeyVersionLabel(result.structuredContent.cacheKeyVersion),
-    };
-  }
-  return null;
-}
-
+/**
+ * Detect if an error is a Chrome/CDP connection error that may be recoverable
+ * by reconnecting to the browser.
+ */
 export function isConnectionError(error: unknown): boolean {
   if (error instanceof OpenChromeConnectionError) return true;
   const message = formatError(error);
@@ -203,8 +232,35 @@ export function isConnectionError(error: unknown): boolean {
 }
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
- *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish', 'oc_progress_status']);
+ *  sleep/wake). Skip session initialization so recovery handlers can always run.
+ *
+ *  Task ledger tools (`oc_task_*`) are also listed here because they are pure
+ *  ledger operations (or, for `oc_task_start`, just persist a meta row before
+ *  background work begins). They never touch the browser themselves, so they
+ *  must not trigger Chrome auto-launch on malformed input (#1034).
+ *
+ *  Run-harness tools (`oc_run_*`) and `oc_progress_status` are pure read /
+ *  bookkeeping calls landed on develop after this PR branched — also skip. */
+const SKIP_SESSION_INIT_TOOLS = new Set([
+  'oc_stop',
+  'oc_reap_orphans',
+  'oc_profile_status',
+  'oc_session_snapshot',
+  'oc_session_resume',
+  'oc_journal',
+  'oc_task_start',
+  'oc_task_list',
+  'oc_task_get',
+  'oc_task_cancel',
+  'oc_task_wait',
+  'oc_task_update',
+  'oc_task_finish',
+  'oc_run_start',
+  'oc_run_status',
+  'oc_run_events',
+  'oc_run_finish',
+  'oc_progress_status',
+]);
 
 const RUN_HARNESS_LONG_TASK_TOOLS = new Set([
   'execute_plan',
@@ -364,9 +420,35 @@ export interface MCPServerOptions {
   capabilityFilter?: Set<ToolCapability>;
 }
 
+
+const TASK_ENVELOPE_BROWSER_TOOLS = new Set([
+  'navigate',
+  'read_page',
+  'find',
+  'interact',
+  'act',
+  'fill_form',
+  'form_input',
+  'computer',
+  'page_screenshot',
+  'tabs_context',
+  'tabs_list',
+  'tabs_get',
+  'inspect',
+  'vision_find',
+  'oc_assert',
+]);
+
+function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>): string | undefined {
+  if (!TASK_ENVELOPE_BROWSER_TOOLS.has(toolName)) return undefined;
+  return extractTaskId(args);
+}
+
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
   private resources: Map<string, MCPResourceDefinition> = new Map();
+  private resourceSubscriptions = new ResourceSubscriptionManager();
+  private liveResourceLifecycleUnsubscribe: Unsubscribe | null = null;
   private manifestVersion: number = 1;
   private sessionManager: SessionManager;
   private transport: MCPTransport | null = null;
@@ -467,6 +549,8 @@ export class MCPServer {
     // Register built-in resources
     this.registerResource(usageGuideResource);
     this.registerResource(skillGraphResourceTemplate);
+
+    this.wireLiveResourceUpdateEmitters();
 
     // Initialize dashboard if enabled
     if (options.dashboard) {
@@ -700,6 +784,14 @@ export class MCPServer {
     });
   }
 
+  private getCurrentClientCapabilities(): { roots?: object; sampling?: object; elicitation?: object } {
+    const mcpSessionId = currentRequestContext()?.mcpSessionId;
+    if (mcpSessionId) {
+      return this.clientCapabilitiesBySession.get(mcpSessionId) ?? {};
+    }
+    return this.clientCapabilities;
+  }
+
   /**
    * Reject every pending server→client request. Called when the transport
    * tears down (HTTP DELETE / stdio EOF) so callers don't hang forever.
@@ -831,26 +923,37 @@ export class MCPServer {
    * in start().
    */
   wireRateLimiterCleanup(transport: MCPTransport): void {
-    const hasHook = typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function';
-    if (!hasHook) return;
-    (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
-      (sessionId: string) => {
-        if (this.rateLimiter) {
-          this.rateLimiter.removeSession(sessionId);
-        }
-        // Intentionally NOT clearing sessionTenants here: the transport
-        // callback receives the HTTP `Mcp-Session-Id` (a UUID assigned at
-        // initialize), whereas tenant claims are keyed by the tool-call
-        // sessionId (client-supplied via params/toolArgs, defaulting to
-        // 'default'). Those two spaces don't match, so deleting by this id
-        // would usually be a no-op, and on an unlucky collision would drop
-        // someone else's binding. sessionTenants is instead reclaimed by
-        // (a) the MCP `sessions/delete` handler and (b) the periodic
-        // `sweepSessionTenants()` tick scheduled in start().
-        this.rejectPendingS2cRequestsForSession(sessionId, 's2c_aborted:connection_closed');
-        this.clientCapabilitiesBySession.delete(sessionId);
-      },
-    );
+    const cleanupConnectionState = (sessionId: string): void => {
+      this.rejectPendingS2cRequestsForSession(sessionId, 's2c_aborted:connection_closed');
+      this.clientCapabilitiesBySession.delete(sessionId);
+      this.resourceSubscriptions.cleanupSession(sessionId);
+    };
+
+    const hasDeleteHook = typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function';
+    if (hasDeleteHook) {
+      (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
+        (sessionId: string) => {
+          if (this.rateLimiter) {
+            this.rateLimiter.removeSession(sessionId);
+          }
+          // Intentionally NOT clearing sessionTenants here: the transport
+          // callback receives the HTTP `Mcp-Session-Id` (a UUID assigned at
+          // initialize), whereas tenant claims are keyed by the tool-call
+          // sessionId (client-supplied via params/toolArgs, defaulting to
+          // 'default'). Those two spaces don't match, so deleting by this id
+          // would usually be a no-op, and on an unlucky collision would drop
+          // someone else's binding. sessionTenants is instead reclaimed by
+          // (a) the MCP `sessions/delete` handler and (b) the periodic
+          // `sweepSessionTenants()` tick scheduled in start().
+          cleanupConnectionState(sessionId);
+        },
+      );
+    }
+
+    const hasCloseHook = typeof (transport as unknown as { onSessionClose?: unknown }).onSessionClose === 'function';
+    if (hasCloseHook) {
+      (transport as unknown as { onSessionClose: (cb: (id: string) => void) => void }).onSessionClose(cleanupConnectionState);
+    }
   }
 
   /**
@@ -899,15 +1002,7 @@ export class MCPServer {
     // sent earlier via `requestFromClient`. Route it to the pending resolver
     // and short-circuit BEFORE the regular client-request validation (which
     // would otherwise reject the response as "missing method field").
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      parsed.jsonrpc === '2.0' &&
-      parsed.id !== undefined &&
-      parsed.id !== null &&
-      typeof parsed.method !== 'string' &&
-      ('result' in parsed || 'error' in parsed)
-    ) {
+    if (isServerToClientResponseMessage(parsed)) {
       const idKey = String(parsed.id);
       const entry = this.pendingClientRequests.get(idKey);
       if (entry) {
@@ -929,42 +1024,34 @@ export class MCPServer {
     }
 
     // Validate JSON-RPC 2.0 envelope
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      parsed.jsonrpc !== '2.0' ||
-      typeof parsed.method !== 'string'
-    ) {
-      return {
-        jsonrpc: '2.0' as const,
-        id: (parsed.id as string | number) ?? 0,
-        error: {
-          code: MCPErrorCodes.INVALID_REQUEST,
-          message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
-        },
-      };
-    }
+    const invalidRequest = buildInvalidJsonRpcRequestResponse(parsed);
+    if (invalidRequest) return invalidRequest;
 
     // Read the transport-injected principal via the non-forgeable Symbol key
     // (see PRINCIPAL_SYM in src/middleware/auth.ts). JSON.parse cannot produce
     // symbol-keyed properties, so anything under PRINCIPAL_SYM was placed here
     // by the transport after authenticating the request — clients cannot
     // spoof a principal by including `"__principal": {...}` in their JSON body.
-    const principal = (parsed as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] as
-      | Principal
-      | undefined;
-    // Scrub any string-named `__principal` that a malicious caller may have
-    // embedded in the JSON. We don't read it, but deleting here prevents it
-    // from echoing back out via JSON.stringify in later response paths.
-    if ('__principal' in parsed) {
-      delete (parsed as Record<string, unknown>).__principal;
-    }
+    const principal = extractPrincipalAndScrub(parsed as Record<PropertyKey, unknown>);
 
     // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
-    if (parsed.id === undefined || parsed.id === null) {
+    if (isJsonRpcNotification(parsed)) {
       const method = parsed.method as string;
-      if (method === 'notifications/initialized' || method === 'initialized') {
+      if (isInitializedNotification(method)) {
         console.error(`[MCPServer] Received notification: ${method}`);
+        const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
+        if (mcpSessionId) {
+          void this.refreshSessionRoots(mcpSessionId).catch((err) => {
+            console.error(`[MCPServer] initial roots/list refresh failed for session ${mcpSessionId}: ${formatError(err)}`);
+          });
+        }
+      } else if (method === 'notifications/roots/list_changed' || method === 'roots/list_changed') {
+        const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
+        if (mcpSessionId) {
+          void this.refreshSessionRoots(mcpSessionId).catch((err) => {
+            console.error(`[MCPServer] roots/list refresh failed for session ${mcpSessionId}: ${formatError(err)}`);
+          });
+        }
       }
       // All notifications are silently ignored (no response sent)
       return null;
@@ -1101,8 +1188,20 @@ export class MCPServer {
           result = await this.handleResourcesList();
           break;
 
+        case 'resources/templates/list':
+          result = await this.handleResourcesTemplatesList();
+          break;
+
         case 'resources/read':
           result = await this.handleResourcesRead(params);
+          break;
+
+        case 'resources/subscribe':
+          result = await this.handleResourcesSubscribe(params);
+          break;
+
+        case 'resources/unsubscribe':
+          result = await this.handleResourcesUnsubscribe(params);
           break;
 
         case 'sessions/list':
@@ -1141,8 +1240,59 @@ export class MCPServer {
         result,
       };
     } catch (error) {
+      if (error instanceof ResourceRpcError) {
+        return this.errorResponse(id, error.code, error.message, error.data);
+      }
       const message = formatError(error);
       return this.errorResponse(id, MCPErrorCodes.INTERNAL_ERROR, message);
+    }
+  }
+
+
+  private async refreshSessionRoots(mcpSessionId: string): Promise<void> {
+    const caps = this.clientCapabilitiesBySession.get(mcpSessionId) ?? this.clientCapabilities;
+    if (!caps.roots) return;
+    const roots = await this.requestFromClient<unknown>('roots/list', undefined, { timeoutMs: 250 });
+    setSessionMcpRoots(mcpSessionId, roots);
+  }
+
+  private enforceNetworkRootsForTool(
+    mcpSessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): MCPResult | null {
+    const urls = extractNetworkRootCandidateUrls(toolName, args);
+    if (urls.length === 0) return null;
+    try {
+      for (const url of urls) {
+        assertUrlAllowedBySessionRoots(mcpSessionId, url);
+      }
+      return null;
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: formatError(error) }],
+        isError: true,
+      };
+    }
+  }
+
+  private enforceFileRootsForTool(
+    mcpSessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): MCPResult | null {
+    const paths = extractFileRootCandidatePaths(toolName, args);
+    if (paths.length === 0) return null;
+    try {
+      for (const filePath of paths) {
+        assertFilePathAllowedBySessionRoots(mcpSessionId, filePath);
+      }
+      return null;
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: formatError(error) }],
+        isError: true,
+      };
     }
   }
 
@@ -1200,12 +1350,16 @@ export class MCPServer {
       protocolVersion: '2024-11-05',
       capabilities: {
         tools: { listChanged: this.clientSupportsListChanged },
-        resources: {},
+        resources: { listChanged: true, subscribe: true },
         // #870 — advertise structured-logging support. Empty object per MCP
         // spec means "supported, no sub-capabilities yet". Clients drive the
         // level via `logging/setLevel`; events flow as
         // `notifications/message`.
         logging: {},
+        // #880 — OpenChrome can react to client roots/list_changed and treats
+        // roots as additive narrowing only. Empty object follows MCP capability
+        // convention: support exists without extra sub-capabilities.
+        roots: {},
       },
       serverInfo: {
         name: 'openchrome',
@@ -1283,7 +1437,15 @@ export class MCPServer {
     for (const resource of this.resources.values()) {
       resources.push(resource);
     }
+    resources.push(...liveResourceDefinitions(this.sessionManager));
     return { resources };
+  }
+
+  /**
+   * Handle resources/templates/list request
+   */
+  private async handleResourcesTemplatesList(): Promise<MCPResult> {
+    return { resourceTemplates: LIVE_RESOURCE_TEMPLATES };
   }
 
   /**
@@ -1318,6 +1480,19 @@ export class MCPServer {
       };
     }
 
+    const live = await this.tryReadLiveResource(uri);
+    if (live) {
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: live.mimeType,
+            text: live.text,
+          },
+        ],
+      };
+    }
+
     const resource = this.resources.get(uri);
     if (!resource) {
       throw new Error(`Unknown resource: ${uri}`);
@@ -1342,6 +1517,79 @@ export class MCPServer {
     };
   }
 
+
+
+  private async tryReadLiveResource(uri: string): Promise<{ mimeType: string; text: string } | null> {
+    if (!uri.startsWith('oc://')) return null;
+    return readLiveResource(this.sessionManager, uri);
+  }
+
+  /**
+   * Handle resources/subscribe request
+   */
+  private async handleResourcesSubscribe(params?: Record<string, unknown>): Promise<MCPResult> {
+    const uri = this.requireResourceUri(params, 'resources/subscribe');
+    assertLiveResourceAccess(this.sessionManager, uri);
+    const result = this.resourceSubscriptions.subscribe(uri);
+    return { ...result };
+  }
+
+  /**
+   * Handle resources/unsubscribe request
+   */
+  private async handleResourcesUnsubscribe(params?: Record<string, unknown>): Promise<MCPResult> {
+    const uri = this.requireResourceUri(params, 'resources/unsubscribe');
+    const result = this.resourceSubscriptions.unsubscribe(uri);
+    return { ...result };
+  }
+
+  private requireResourceUri(params: Record<string, unknown> | undefined, method: string): string {
+    if (!params) {
+      throw new Error(`Missing params for ${method}`);
+    }
+    const uri = params.uri;
+    if (typeof uri !== 'string' || uri.length === 0) {
+      throw new Error('Missing resource uri');
+    }
+    return uri;
+  }
+
+  private wireLiveResourceUpdateEmitters(): void {
+    if (typeof this.sessionManager.addEventListener === 'function') {
+      this.sessionManager.addEventListener((event) => {
+        if (event.type === 'session:target-added' || event.type === 'session:target-removed' || event.type === 'session:target-closed') {
+          this.emitResourceUpdated(sessionTabsUri(event.sessionId));
+          this.emitResourceUpdated(sessionStateUri(event.sessionId));
+        }
+        if (event.type === 'session:created' || event.type === 'session:deleted') {
+          this.emitResourceUpdated(sessionStateUri(event.sessionId));
+          this.emitResourcesListChanged();
+        }
+      });
+    }
+    if (this.liveResourceLifecycleUnsubscribe) return;
+    this.liveResourceLifecycleUnsubscribe = getLifecycleBus().on('*', (event: LifecycleEvent) => {
+      if ('sessionId' in event) {
+        if (event.kind.startsWith('target:') || event.kind.startsWith('worker:')) {
+          this.emitResourceUpdated(sessionTabsUri(event.sessionId));
+          this.emitResourceUpdated(sessionStateUri(event.sessionId));
+        }
+        if (event.kind.startsWith('session:')) {
+          this.emitResourceUpdated(sessionStateUri(event.sessionId));
+          this.emitResourcesListChanged();
+        }
+      }
+    });
+  }
+
+  private emitResourceUpdated(uri: string): void {
+    this.resourceSubscriptions.emitUpdated(uri, this.transport);
+  }
+
+  private emitResourcesListChanged(): void {
+    this.resourceSubscriptions.emitListChanged(this.transport);
+  }
+
   /**
    * Handle tools/call request
    */
@@ -1357,7 +1605,7 @@ export class MCPServer {
 
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
-    const telemetryToolArgs = redactActVariablesForTelemetry(toolName, toolArgs);
+    const telemetryToolArgs = redactToolArgsForTelemetry(toolName, toolArgs);
     // Use 'default' session if no sessionId is provided
     const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
 
@@ -1562,6 +1810,26 @@ export class MCPServer {
       throw err;
     }
 
+    const rootsDenial = this.enforceNetworkRootsForTool(
+      currentRequestContext()?.mcpSessionId ?? sessionId,
+      toolName,
+      substitutedArgs,
+    );
+    if (rootsDenial) {
+      this.recordToolOutputObservability(toolName, rootsDenial);
+      return rootsDenial;
+    }
+
+    const fileRootsDenial = this.enforceFileRootsForTool(
+      currentRequestContext()?.mcpSessionId ?? sessionId,
+      toolName,
+      substitutedArgs,
+    );
+    if (fileRootsDenial) {
+      this.recordToolOutputObservability(toolName, fileRootsDenial);
+      return fileRootsDenial;
+    }
+
     // All static gates passed (scope, tool existence, required args). Only
     // now do we claim the session for the caller's tenant — a denied or
     // invalid call must NOT be able to lock a sessionId that would then
@@ -1664,6 +1932,8 @@ export class MCPServer {
     } catch {
       // CDPClient may not be initialized — proceed with normal flow
     }
+
+    const taskEnvelopeId = taskEnvelopeIdForTool(toolName, toolArgs);
 
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
@@ -1805,6 +2075,8 @@ export class MCPServer {
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
           signal,
           principal,
+          clientCapabilities: this.getCurrentClientCapabilities(),
+          requestClient: this.requestFromClient.bind(this),
           reportProgress,
         };
         let tid: ReturnType<typeof setTimeout>;
@@ -1843,6 +2115,8 @@ export class MCPServer {
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
               principal,
+              clientCapabilities: this.getCurrentClientCapabilities(),
+              requestClient: this.requestFromClient.bind(this),
               reportProgress,
             };
             let tid2: ReturnType<typeof setTimeout>;
@@ -1887,6 +2161,8 @@ export class MCPServer {
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
               principal,
+              clientCapabilities: this.getCurrentClientCapabilities(),
+              requestClient: this.requestFromClient.bind(this),
               reportProgress,
             };
             result = await Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext));
@@ -1914,6 +2190,7 @@ export class MCPServer {
       result = redactSecrets(result);
       this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');
+      this.emitResourceUpdated('oc://dashboard/state');
 
       // Record Prometheus metrics
       try {
@@ -1931,6 +2208,8 @@ export class MCPServer {
         const toolSucceeded = (result as MCPResult).isError !== true;
         const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, toolSucceeded);
         journal.record(entry);
+        this.emitResourceUpdated(journalUri(sessionId));
+        this.emitResourceUpdated(journalUri(sessionId));
       } catch {
         // Best-effort journal recording
       }
@@ -1941,7 +2220,9 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const summary = (result as Record<string, unknown>)?._summary as string | undefined;
-          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, true, { tabId, summary }).then(() => {
+            if (recorder.activeRecordingId) this.emitResourceUpdated(recordingUri(recorder.activeRecordingId));
+          }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -2067,6 +2348,17 @@ export class MCPServer {
         };
       }
 
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: result.isError !== true,
+      });
 
       if (runHarnessId && !toolName.startsWith('oc_run_')) {
         try {
@@ -2120,6 +2412,7 @@ export class MCPServer {
       this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
       this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
       getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
+      this.emitResourceUpdated('oc://dashboard/state');
 
       // Audit log failed invocation — same correlation fields as success path.
       try {
@@ -2164,7 +2457,9 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const errMsg = message;
-          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).then(() => {
+            if (recorder.activeRecordingId) this.emitResourceUpdated(recordingUri(recorder.activeRecordingId));
+          }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -2305,6 +2600,18 @@ export class MCPServer {
         }
 
       }
+
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: !errorIsError,
+      });
 
       // Secrets redaction (#834) — see success path. Error messages can
       // include the literal value (e.g. "type ... failed for value X").
@@ -2819,6 +3126,11 @@ export class MCPServer {
     // transport tears down so callers don't hang forever on Promises that
     // can never resolve.
     this.rejectAllPendingS2cRequests('s2c_aborted:connection_closed');
+
+    if (this.liveResourceLifecycleUnsubscribe) {
+      this.liveResourceLifecycleUnsubscribe();
+      this.liveResourceLifecycleUnsubscribe = null;
+    }
 
     // Stop dashboard
     if (this.dashboard) {

@@ -40,7 +40,13 @@ jest.mock('../../src/session-manager', () => ({
 
 import { registerOcSkillReplayTool } from '../../src/tools/oc-skill-replay';
 import { registerOcSkillRecordTool } from '../../src/tools/oc-skill-record';
-import { REPLAY_ARTIFACT_SCHEMA_VERSION, SkillMemoryStore, type ReplayArtifact } from '../../src/core/skill-memory';
+import {
+  captureReplayStep,
+  recorderBufferSize,
+  REPLAY_ARTIFACT_SCHEMA_VERSION,
+  SkillMemoryStore,
+  type ReplayArtifact,
+} from '../../src/core/skill-memory';
 import type { MCPServer } from '../../src/mcp-server';
 
 type HandlerFn = (sessionId: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -237,6 +243,32 @@ describe('oc_skill_replay — artifact handling', () => {
 });
 
 describe('oc_skill_record — replay_artifacts plumb-through', () => {
+  test('flushes buffered replay steps from session targets into a v2 record', async () => {
+    _mockTargetIds = ['target-buffered'];
+    captureReplayStep('target-buffered', {
+      kind: 'click',
+      selectors: [{ type: 'css', value: '#submit' }],
+    });
+
+    const r = parseResult(
+      await server.call('oc_skill_record', {
+        domain: 'localhost',
+        name: 'buffered',
+        steps: [{ kind: 'click' }],
+        contract_id: 'c1',
+      }),
+    );
+
+    expect(r.skill_id).not.toBe('');
+    expect(recorderBufferSize('target-buffered')).toBe(0);
+    const store = new SkillMemoryStore({ domain: 'localhost' });
+    const rec = store.get(r.skill_id as string);
+    expect(rec?.replayArtifacts?.[0]).toMatchObject({
+      schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
+      steps: [{ kind: 'click', selectors: [{ type: 'css', value: '#submit' }] }],
+    });
+  });
+
   test('round-trips a single artifact via record + get', async () => {
     const r = parseResult(
       await server.call('oc_skill_record', {

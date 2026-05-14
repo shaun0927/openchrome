@@ -6,6 +6,20 @@ import type { HintRule } from '../hint-engine';
 
 export const successHintRules: HintRule[] = [
   {
+    name: 'element-pick-skill-record',
+    priority: 394,
+    match(ctx) {
+      if ((ctx.fireCounts.get('element-pick-skill-record') ?? 0) > 0) return null;
+      if (ctx.toolName !== 'interact') return null;
+      if (ctx.isError) return null;
+      const nodeRef = extractNodeRef(ctx.currentArgs);
+      if (!nodeRef) return null;
+      const recentPick = ctx.recentCalls.find((call) => call.toolName === 'element_pick' && call.result === 'success');
+      if (!recentPick) return null;
+      return `Hint: You just successfully interacted with nodeRef ${nodeRef} after an element_pick. Consider oc_skill_record with the picker output so this selector/AX context can seed skill memory.`;
+    },
+  },
+  {
     name: 'navigate-error-page',
     priority: 400,
     match(ctx) {
@@ -59,3 +73,19 @@ export const successHintRules: HintRule[] = [
     },
   },
 ];
+
+function extractNodeRef(args: Record<string, unknown> | undefined): string | null {
+  if (!args) return null;
+  for (const key of ['nodeRef', 'ref']) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  for (const key of ['target', 'element']) {
+    const value = args[key];
+    if (value && typeof value === 'object') {
+      const nested = (value as Record<string, unknown>).nodeRef ?? (value as Record<string, unknown>).ref;
+      if (typeof nested === 'string' && nested.trim()) return nested;
+    }
+  }
+  return null;
+}

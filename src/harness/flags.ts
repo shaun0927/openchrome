@@ -128,6 +128,10 @@ export const isDynamicSkillsEnabled = (): boolean =>
 export const isSkillReplayEnabled = (): boolean =>
   isFamilyEnabledOptIn('OPENCHROME_SKILL_REPLAY');
 
+/** Pilot-tier React DevTools hook inspection (#838). Defaults on inside --pilot. */
+export const isReactPilotEnabled = (): boolean =>
+  isFamilyEnabled('OPENCHROME_REACT_PILOT');
+
 /**
  * Proxy hook family (issue #874). Explicit opt-in on top of --pilot.
  */
@@ -146,6 +150,7 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['skill_curator', isSkillCuratorEnabled],
   ['dynamic_skills', isDynamicSkillsEnabled],
   ['skill_replay', isSkillReplayEnabled],
+  ['react_pilot', isReactPilotEnabled],
   ['proxy_hook', isProxyHookEnabled]
 ];
 

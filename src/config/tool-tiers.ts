@@ -21,6 +21,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   fill_form: 1,
   read_page: 1,
   oc_observe: 1,              // src/tools/oc-observe.ts — compact observable action map (#866)
+  element_pick: 1,             // src/tools/element-pick.ts — in-page picker facts (#899)
   inspect: 1,
   query_dom: 1,
   oc_query: 1, // src/tools/oc-query.ts — semantic refs for interaction workflows (#1045)

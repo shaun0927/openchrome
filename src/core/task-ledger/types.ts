@@ -35,6 +35,7 @@ export type TaskStatus =
  * server's tool registry is the source of truth.
  */
 export type TaskKind =
+  | 'browser_task'
   | 'crawl'
   | 'crawl_sitemap'
   | 'recording'
@@ -45,6 +46,57 @@ export type TaskKind =
 export interface TaskError {
   message: string;
   code?: string;
+}
+
+export type TaskPhase = 'explore' | 'act' | 'verify' | 'recover' | 'done';
+export type BudgetStatus = 'ok' | 'warning' | 'exceeded';
+
+export interface TaskEnvelopePolicy {
+  maxToolCalls?: number;
+  maxWallMs?: number;
+  maxConsecutiveSameTool?: number;
+  maxObservationStreak?: number;
+  maxFailureStreak?: number;
+  maxSameUrlNavigations?: number;
+  allowedDomains?: string[];
+  checkpointEveryCalls?: number;
+}
+
+export interface TaskCounters {
+  toolCalls: number;
+  actionCalls: number;
+  observationCalls: number;
+  failureCalls: number;
+  consecutiveSameTool: number;
+  observationStreak: number;
+  failureStreak: number;
+  sameUrlNavigations: Record<string, number>;
+}
+
+export interface TaskRecentEvent {
+  ts: number;
+  tool: string;
+  ok: boolean;
+  summary: string;
+}
+
+export interface TaskBudgetDecision {
+  status: BudgetStatus;
+  exceeded: string[];
+  warnings: string[];
+  recommended_next?: string;
+}
+
+export interface RecordedToolCall {
+  ts: number;
+  tool: string;
+  sessionId: string;
+  tenantId?: string;
+  keyId?: string;
+  principalMode?: string;
+  args: Record<string, unknown>;
+  durationMs: number;
+  ok: boolean;
 }
 
 export interface TaskOwner {
@@ -74,7 +126,21 @@ export interface TaskMeta {
   result_path?: string;
   error?: TaskError;
   cancel_requested_at?: number;
+  /** Optional host-declared objective for task-level browser harness envelopes (#1034). */
+  objective?: string;
+  /** Current host-declared phase. OpenChrome records facts; the host decides phase transitions. */
+  phase?: TaskPhase;
+  /** Deterministic task budget / wandering policy. */
+  policy?: TaskEnvelopePolicy;
+  counters?: TaskCounters;
+  budget_status?: BudgetStatus;
+  budget_exceeded?: string[];
+  recommended_next?: string;
+  recent_events?: TaskRecentEvent[];
+  last_tool_name?: string;
+  last_activity_at?: number;
 }
+
 
 /**
  * A single event appended to the per-task `events.jsonl` file. Events
@@ -92,7 +158,9 @@ export interface TaskEvent {
     | 'completed'
     | 'failed'
     | 'cancelled'
-    | 'cancel_requested';
+    | 'cancel_requested'
+    | 'tool_call'
+    | 'budget';
   data?: Record<string, unknown>;
 }
 
