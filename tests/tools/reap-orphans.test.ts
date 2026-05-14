@@ -6,9 +6,11 @@
 import { createMockSessionManager } from '../utils/mock-session';
 
 const mockCleanOrphanedChromeProcesses = jest.fn();
+const mockPreviewOrphanedChromeProcesses = jest.fn();
 
 jest.mock('../../src/utils/pid-manager', () => ({
   cleanOrphanedChromeProcesses: mockCleanOrphanedChromeProcesses,
+  previewOrphanedChromeProcesses: mockPreviewOrphanedChromeProcesses,
 }));
 
 import { MCPServer } from '../../src/mcp-server';
@@ -26,6 +28,11 @@ describe('oc_reap_orphans tool', () => {
     delete process.env.OPENCHROME_CDP_PORT;
     setGlobalConfig({ port: 9222 });
     mockCleanOrphanedChromeProcesses.mockReturnValue(0);
+    mockPreviewOrphanedChromeProcesses.mockReturnValue({
+      count: 0,
+      samples: [],
+      details: { checkedPorts: [9222, 9223, 9224, 9225, 9226], pidFileCandidates: 0, markerCandidates: 0 },
+    });
 
     const mockSessionManager = createMockSessionManager();
     server = new MCPServer(mockSessionManager as any);
@@ -62,6 +69,39 @@ describe('oc_reap_orphans tool', () => {
 
     expect(mockCleanOrphanedChromeProcesses).toHaveBeenCalledWith([9222, 9223, 9224, 9225, 9226]);
     expect(data.checkedPorts).toEqual([9222, 9223, 9224, 9225, 9226]);
+  });
+
+
+  test('dryRun previews orphan reap without killing processes', async () => {
+    mockPreviewOrphanedChromeProcesses.mockReturnValue({
+      count: 2,
+      samples: [
+        { pid: 111, source: 'pid-file', port: 9555 },
+        { pid: 222, source: 'marker', marker: 'marker-222', userDataDir: '/tmp/profile' },
+      ],
+      details: { checkedPorts: [9555], pidFileCandidates: 1, markerCandidates: 1 },
+    });
+
+    const result = await handler('broken-session', { ports: [9555], dryRun: true });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(mockPreviewOrphanedChromeProcesses).toHaveBeenCalledWith([9555]);
+    expect(mockCleanOrphanedChromeProcesses).not.toHaveBeenCalled();
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual({
+      dryRun: true,
+      wouldAffect: {
+        count: 2,
+        samples: [
+          { pid: 111, source: 'pid-file', port: 9555 },
+          { pid: 222, source: 'marker', marker: 'marker-222', userDataDir: '/tmp/profile' },
+        ],
+        details: { checkedPorts: [9555], pidFileCandidates: 1, markerCandidates: 1 },
+      },
+      guidance: 'Pass dryRun:false (or omit) to execute.',
+    });
+    expect(data.dryRun).toBe(true);
+    expect(data.wouldAffect.count).toBe(2);
   });
 
   test('deduplicates explicit ports and preserves explicit override semantics', async () => {

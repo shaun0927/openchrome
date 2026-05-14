@@ -33,12 +33,19 @@ interface RunResult {
  * emits exactly one token, so a regex match is both sufficient and robust.
  */
 
+
+function extractToken(stdout: string): string {
+  const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
+  if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
+  return m[0];
+}
+
 /**
- * Parse the CLI JSON payload from captured stdout while ignoring unrelated
- * Jest console-rendering noise that can be captured by the in-process stdout
- * hook when another timer logs in the same worker. The admin list command emits
- * one top-level array, so selecting the first complete JSON array preserves the
- * assertion that plaintext does not leak into the actual CLI JSON output.
+ * Extract the JSON array emitted by `admin keys list --json` while ignoring
+ * unrelated Jest worker noise captured by the shared stdout hook on Windows CI.
+ * The command output contract is a single top-level array, so the parser scans
+ * for the first balanced array that decodes successfully instead of accepting
+ * arbitrary prefixes as JSON.
  */
 function parseJsonArrayFromStdout<T>(stdout: string): T[] {
   for (let start = stdout.indexOf('['); start !== -1; start = stdout.indexOf('[', start + 1)) {
@@ -81,12 +88,6 @@ function parseJsonArrayFromStdout<T>(stdout: string): T[] {
   }
 
   throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
-}
-
-function extractToken(stdout: string): string {
-  const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
-  if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
-  return m[0];
 }
 
 async function runCli(argv: string[]): Promise<RunResult> {

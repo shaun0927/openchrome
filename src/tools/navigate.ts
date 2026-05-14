@@ -23,6 +23,7 @@ import { getGlobalConfig } from '../config/global';
 import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import type { Page } from 'puppeteer-core';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { captureNavigationReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
 const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
@@ -476,6 +477,11 @@ const definition: MCPToolDefinition = {
       recall: {
         type: 'boolean',
         description: 'Override OPENCHROME_AUTO_RECALL for this call. true forces domain skill injection; false suppresses it even when the flag is on.',
+      },
+      capture_artifact: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, stage a replay artifact navigation step for oc_skill_record after a successful URL navigation. Default false is a strict no-op.',
       },
     },
     required: ['url'],
@@ -1050,7 +1056,9 @@ const handler: ToolHandler = async (
  */
 const wrappedHandler: ToolHandler = async (sessionId, args, context) => {
   const result = await handler(sessionId, args, context);
-  if (result.isError !== true && isDynamicSkillsEnabled()) {
+  const captureArtifact = shouldCaptureReplayArtifact(args.capture_artifact);
+  const dynamicSkillsEnabled = isDynamicSkillsEnabled();
+  if (result.isError !== true && (captureArtifact || dynamicSkillsEnabled)) {
     // Best-effort: parse the response payload to recover the final
     // URL. We do not throw on parse failure — the navigate response
     // is already on its way back to the client.
@@ -1065,7 +1073,15 @@ const wrappedHandler: ToolHandler = async (sessionId, args, context) => {
         // construction, no new synthesis surface to gain).
         const isAuthRedirect = parsed.authRedirect === true;
         const action = typeof parsed.action === 'string' ? parsed.action : undefined;
-        if (finalUrl && !isAuthRedirect && action !== 'back' && action !== 'forward') {
+        const shouldRecordNavigation = finalUrl && !isAuthRedirect && action === 'navigate';
+        if (shouldRecordNavigation && captureArtifact) {
+          const tabId = typeof parsed.tabId === 'string' ? parsed.tabId : args.tabId as string | undefined;
+          if (tabId) {
+            const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'navigate');
+            if (page) captureNavigationReplayStep({ page, url: finalUrl });
+          }
+        }
+        if (shouldRecordNavigation && dynamicSkillsEnabled) {
           void emitDomainEnteredIfActive(sessionId, finalUrl);
         }
       }

@@ -15,8 +15,9 @@
  *   1. Every .js file in dist/ that mentions a FAKE_SLOW_ name also contains
  *      the gate guard string — i.e. the code was not accidentally written
  *      without the guard.
- *   2. The strings do NOT appear in any file outside of src/index.js — they
- *      must not leak into tool registrations, the MCP protocol layer, etc.
+ *   2. The strings appear only in the compiled startup/readiness files that
+ *      own those hooks; they must not leak into tool registrations, the MCP
+ *      protocol layer, etc.
  *
  * Usage (from repo root):
  *   node scripts/verify/A6-no-dev-hooks-in-dist.mjs
@@ -38,8 +39,11 @@ const HOOK_NAMES = [
 /** The gate expression that must co-exist in any file containing a hook name. */
 const GATE_EXPRESSION = 'OPENCHROME_DEV_HOOKS';
 
-/** Only dist/index.js (compiled from src/index.ts) is allowed to contain hook names. */
-const ALLOWED_FILE_SUFFIX = join('dist', 'index.js');
+/** Only compiled startup/readiness files are allowed to contain hook names. */
+const ALLOWED_FILE_SUFFIXES = [
+  join('dist', 'index.js'),
+  join('dist', 'watchdog', 'chrome-readiness.js'),
+];
 
 async function collectJs(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -79,12 +83,12 @@ async function main() {
     for (const hookName of HOOK_NAMES) {
       if (!src.includes(hookName)) continue;
 
-      // Hook name found — check it's in the allowed file
-      if (!file.endsWith(ALLOWED_FILE_SUFFIX)) {
+      // Hook name found — check it's in an allowed compiled startup/readiness file.
+      if (!ALLOWED_FILE_SUFFIXES.some((suffix) => file.endsWith(suffix))) {
         violations.push({
           file: rel,
           hookName,
-          reason: `hook name found outside dist/index.js`,
+          reason: `hook name found outside allowed startup/readiness files`,
         });
         continue;
       }
@@ -106,7 +110,7 @@ async function main() {
       console.error(`  ${file}: "${hookName}" — ${reason}`);
     }
     console.error('');
-    console.error('Dev-only hooks must only appear in dist/index.js and must be');
+    console.error('Dev-only hooks must only appear in allowed startup/readiness files and must be');
     console.error(`guarded by the "${GATE_EXPRESSION}" gate expression.`);
     process.exit(1);
   }

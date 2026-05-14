@@ -18,9 +18,13 @@ describe('oc_run_status budget guard', () => {
   it('finishes the run as needs_strategy_change and records evidence metadata', async () => {
     const handlers = new Map<string, any>();
     registerRunHarnessTools({ registerTool: (name: string, handler: any) => handlers.set(name, handler) } as any);
-    const start = JSON.parse((await handlers.get('oc_run_start')('s1', { run_id: 'budget-tool' })).content[0].text);
+    const start = JSON.parse((await handlers.get('oc_run_start')('s1', {
+      run_id: 'budget-tool',
+      budget: { max_same_tool_retries: 1 },
+    })).content[0].text);
     expect(start.status).toBe('running');
     expect(start.resource_uri).toBeUndefined();
+    expect(start.budget).toEqual({ max_same_tool_retries: 1 });
 
     const store = (jest.requireMock('../../src/run-harness/store').getRunStore() as RunStore);
     store.appendToolFinished({ run_id: 'budget-tool', tool: 'interact', ok: false, message: 'element not found' });
@@ -28,7 +32,6 @@ describe('oc_run_status budget guard', () => {
 
     const statusResult = await handlers.get('oc_run_status')('s1', {
       run_id: 'budget-tool',
-      budget: { max_same_tool_retries: 1 },
     });
     const status = JSON.parse(statusResult.content[0].text);
     expect(statusResult.isError).toBe(true);

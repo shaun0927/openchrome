@@ -4,6 +4,7 @@
  * Replaces: selector_query, xpath_query
  */
 
+import * as crypto from 'crypto';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
@@ -12,6 +13,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
 import { isSnapshotCacheEnabled } from '../utils/snapshot-cache-helper';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+import { decodeCursor, encodeCursor, paginate } from '../utils/paginate';
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -78,7 +80,11 @@ const definition: MCPToolDefinition = {
       },
       limit: {
         type: 'number',
-        description: '(xpath, multiple) Max results to return',
+        description: '(multiple) Max results per page. Defaults to 50 for CSS/XPath.',
+      },
+      cursor: {
+        type: 'string',
+        description: 'Opaque pagination cursor returned as nextCursor from a prior query_dom multiple-result call.',
       },
     },
     required: ['tabId', 'method'],
@@ -283,6 +289,8 @@ async function handleCSS(
   const selector = args.selector as string;
   const multiple = (args.multiple as boolean) ?? false;
   const pierceShadow = (args.pierceShadow as boolean) ?? true;
+  const cursor = typeof args.cursor === 'string' ? args.cursor : undefined;
+  const pageSize = normalizePageSize(args.limit, 50);
 
   if (!selector) {
     return {
@@ -347,9 +355,19 @@ async function handleCSS(
       };
     }
 
-    const MAX_SELECTOR_RESULTS = 50;
+    const contentHash = hashCursorScope('css', tabId, selector, elements.length);
+    let pageResult: ReturnType<typeof paginate<import('puppeteer-core').ElementHandle<Element>>>;
+    let cursorOffset = 0;
+    try {
+      cursorOffset = cursor ? decodeCursor(cursor).offset : 0;
+      pageResult = paginate(elements, { pageSize, cursor, contentHash });
+    } catch (error) {
+      return invalidCursorResult(error);
+    }
+    if (pageResult.staleCursor) return staleCursorResult();
+
     const totalCount = elements.length;
-    const limitedElements = elements.slice(0, MAX_SELECTOR_RESULTS);
+    const limitedElements = pageResult.items;
     const elementInfos: CSSElementInfo[] = [];
 
     for (let i = 0; i < limitedElements.length; i++) {
@@ -435,12 +453,17 @@ async function handleCSS(
       elements: elementInfos,
       count: elementInfos.length,
     };
-    if (totalCount > MAX_SELECTOR_RESULTS) {
-      result.totalCount = totalCount;
-      result.note = `Results limited to first ${MAX_SELECTOR_RESULTS} of ${totalCount} matching elements`;
+    result.totalCount = totalCount;
+    result.hasMore = pageResult.hasMore;
+    if (pageResult.nextCursor) result.nextCursor = pageResult.nextCursor;
+    if (totalCount > elementInfos.length) {
+      result.note = pageResult.hasMore
+        ? `Results page returned ${elementInfos.length} of ${totalCount} matching elements; pass nextCursor as cursor for the next page`
+        : `Results page returned final ${elementInfos.length} of ${totalCount} matching elements`;
     }
     return {
       content: [{ type: 'text', text: JSON.stringify(result) }],
+      structuredContent: result,
     };
   } else {
     const element = await page.$(selector);
@@ -566,7 +589,8 @@ async function handleXPath(
   const tabId = args.tabId as string;
   const xpath = args.xpath as string;
   const multiple = (args.multiple as boolean | undefined) ?? false;
-  const limit = (args.limit as number | undefined) ?? 50;
+  const limit = normalizePageSize(args.limit, 50);
+  const cursor = typeof args.cursor === 'string' ? args.cursor : undefined;
 
   if (!xpath) {
     return {
@@ -585,8 +609,20 @@ async function handleXPath(
   }
 
   if (multiple) {
+    let cursorOffset = 0;
+    let cursorHash: string | undefined;
+    try {
+      if (cursor) {
+        const decoded = decodeCursor(cursor);
+        cursorOffset = decoded.offset;
+        cursorHash = decoded.hash;
+      }
+    } catch (error) {
+      return invalidCursorResult(error);
+    }
+
     const result = await withTimeout(page.evaluate(
-      (xpathExpr: string, maxResults: number) => {
+      (xpathExpr: string, offset: number, pageSizeInner: number) => {
         function extractElementInfo(element: Element, xpathStr: string) {
           const tagName = element.tagName.toLowerCase();
           const id = element.id || undefined;
@@ -656,9 +692,9 @@ async function handleXPath(
         }
         walkShadowRoots(document);
 
-        const limited = allNodes.slice(0, maxResults);
+        const limited = allNodes.slice(offset, offset + pageSizeInner);
         const elements: ReturnType<typeof extractElementInfo>[] = limited.map(
-          (el, idx) => extractElementInfo(el, `(${xpathExpr})[${idx + 1}]`)
+          (el, idx) => extractElementInfo(el, `(${xpathExpr})[${offset + idx + 1}]`)
         );
 
         return {
@@ -667,28 +703,40 @@ async function handleXPath(
         };
       },
       xpath,
+      cursorOffset,
       limit
     ), 15000, 'query_dom', context);
+
+    const contentHash = hashCursorScope('xpath', tabId, xpath, result.totalCount);
+    if (cursorHash && cursorHash !== contentHash) return staleCursorResult();
+    const nextOffset = cursorOffset + result.elements.length;
+    const hasMore = nextOffset < result.totalCount;
+    const nextCursor = hasMore ? encodeCursor({ offset: nextOffset, hash: contentHash }) : undefined;
+
+    const payload: Record<string, unknown> = {
+      action: 'query_dom',
+      method: 'xpath',
+      xpath,
+      multiple: true,
+      results: result.elements,
+      count: result.elements.length,
+      totalCount: result.totalCount,
+      hasMore,
+      ...(nextCursor && { nextCursor }),
+      message:
+        result.elements.length > 0
+          ? `Found ${result.totalCount} element(s), returned ${result.elements.length}`
+          : 'No elements found',
+    };
 
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify({
-            action: 'query_dom',
-            method: 'xpath',
-            xpath,
-            multiple: true,
-            results: result.elements,
-            count: result.elements.length,
-            totalCount: result.totalCount,
-            message:
-              result.elements.length > 0
-                ? `Found ${result.totalCount} element(s), returned ${result.elements.length}`
-                : 'No elements found',
-          }),
+          text: JSON.stringify(payload),
         },
       ],
+      structuredContent: payload,
     };
   } else {
     const element = await withTimeout(page.evaluate((xpathExpr: string) => {
@@ -796,6 +844,40 @@ async function handleXPath(
       ],
     };
   }
+}
+
+function normalizePageSize(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(500, Math.floor(value)));
+}
+
+function hashCursorScope(method: string, tabId: string, query: string, totalCount: number): string {
+  return crypto.createHash('sha256')
+    .update(method)
+    .update('\0')
+    .update(tabId)
+    .update('\0')
+    .update(query)
+    .update('\0')
+    .update(String(totalCount))
+    .digest('hex');
+}
+
+function invalidCursorResult(error: unknown): MCPResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_cursor', message } }) }],
+    structuredContent: { error: { code: 'invalid_cursor', message } },
+  };
+}
+
+function staleCursorResult(): MCPResult {
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } }) }],
+    structuredContent: { error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } },
+  };
 }
 
 // ---------------------------------------------------------------------------

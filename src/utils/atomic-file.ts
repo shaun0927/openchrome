@@ -9,6 +9,10 @@ import * as os from 'os';
 import writeFileAtomic from 'write-file-atomic';
 import * as lockfile from 'proper-lockfile';
 
+const ATOMIC_WRITE_RETRY_CODES = new Set(['EPERM', 'EBUSY']);
+const ATOMIC_WRITE_MAX_ATTEMPTS = 4;
+const ATOMIC_WRITE_RETRY_DELAY_MS = 25;
+
 export interface WriteOptions {
   /** Create backup before writing */
   backup?: boolean;
@@ -46,11 +50,34 @@ export async function writeFileAtomicSafe(
     await backupFile(filePath);
   }
 
-  // Use write-file-atomic for safe writing
-  if (Buffer.isBuffer(content)) {
-    await writeFileAtomic(filePath, content);
-  } else {
-    await writeFileAtomic(filePath, content, { encoding: 'utf8' });
+  await writeFileAtomicWithTransientRetry(filePath, content);
+}
+
+async function writeFileAtomicWithTransientRetry(
+  filePath: string,
+  content: string | Buffer,
+): Promise<void> {
+  for (let attempt = 1; attempt <= ATOMIC_WRITE_MAX_ATTEMPTS; attempt++) {
+    try {
+      if (Buffer.isBuffer(content)) {
+        await writeFileAtomic(filePath, content);
+      } else {
+        await writeFileAtomic(filePath, content, { encoding: 'utf8' });
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const canRetry = code !== undefined && ATOMIC_WRITE_RETRY_CODES.has(code);
+      if (!canRetry || attempt === ATOMIC_WRITE_MAX_ATTEMPTS) {
+        throw err;
+      }
+
+      // Windows can briefly deny the final temp-file rename while another
+      // process/thread has just observed the destination via fs.watch or a
+      // synchronous read. Retrying only these OS lock codes preserves the
+      // atomic-write contract without masking semantic write failures.
+      await new Promise((resolve) => setTimeout(resolve, ATOMIC_WRITE_RETRY_DELAY_MS * attempt));
+    }
   }
 }
 

@@ -692,6 +692,39 @@ describe('generateResumeGuide supplemental artifacts', () => {
     expect(guide).toContain('Avoid: repeating the last failed call');
   });
 
+
+
+  test('includes task checkpoint context when taskId context is supplied', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      taskRun: {
+        taskId: 'task-1035',
+        status: 'RUNNING',
+        objective: 'verify automatic checkpoints',
+        currentCursor: 'https://example.com/page-b',
+        latestCheckpoint: {
+          checkpoint_id: 'cp-1',
+          run_id: 'task-1035',
+          summary: 'Reached page B',
+          current_cursor: 'https://example.com/page-b',
+          created_at: Date.now() - 30_000,
+        },
+        latestCheckpointAgeMs: 30_000,
+        recentEvents: [{ ts: Date.now() - 10_000, kind: 'checkpointed', data: { checkpoint_id: 'cp-1' } }],
+        lastSuccessfulAction: 'navigate page B',
+        lastFailure: 'stale target recovered',
+        nextHostAction: 'resume',
+      },
+    } as any);
+
+    expect(guide).toContain('Task checkpoint context:');
+    expect(guide).toContain('Task ID: task-1035');
+    expect(guide).toContain('Latest checkpoint: cp-1');
+    expect(guide).toContain('Last successful action: navigate page B');
+    expect(guide).toContain('Last failure: stale target recovered');
+    expect(guide).toContain('Next host action class: resume');
+  });
+
   test('links evidence bundles without embedding blobs', () => {
     const snap = makeSnapshot();
     const guide = generateResumeGuide(snap as any, [], {

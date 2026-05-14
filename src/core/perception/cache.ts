@@ -87,3 +87,22 @@ export class PerceptualCache {
     return this.entries.size;
   }
 }
+
+/** Hamming distance for equal-width perceptual hash strings (#832). */
+export function hammingDistance(a: string, b: string): number {
+  const left = a.trim().toLowerCase();
+  const right = b.trim().toLowerCase();
+  const max = Math.max(left.length, right.length);
+  let distance = 0;
+  for (let i = 0; i < max; i++) {
+    const ca = left[i] ?? '0';
+    const cb = right[i] ?? '0';
+    const na = Number.parseInt(ca, 16);
+    const nb = Number.parseInt(cb, 16);
+    if (Number.isFinite(na) && Number.isFinite(nb)) {
+      let xor = na ^ nb;
+      while (xor) { distance += xor & 1; xor >>= 1; }
+    } else if (ca !== cb) distance += 1;
+  }
+  return distance;
+}
