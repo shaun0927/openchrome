@@ -56,6 +56,39 @@ describe('oc_pilot_run_with_recovery', () => {
     expect(out.recovery[0].actions[0]).toMatchObject({ tool: 'read_page', ok: true });
   });
 
+  it('recovers page-not-ready failures with wait_for_page_ready evidence', async () => {
+    const server = makeServer({
+      interact: jest.fn(async () => result('timeout waiting for page ready', true)),
+      wait_for: jest.fn(async () => result('loaded')),
+    });
+    registerOcPilotRunWithRecoveryTool(server as any);
+
+    const response = await server.call({
+      tabId: 'tab-1',
+      action: { tool: 'interact', arguments: { query: 'Delayed button' } },
+      allowedRecipes: ['wait_for_page_ready'],
+      maxRecoveryAttempts: 1,
+    });
+    const out = parse(response);
+
+    expect(out.status).toBe('recovered');
+    expect(out.recovery[0]).toMatchObject({ recipe: 'wait_for_page_ready', reason: 'page_not_ready' });
+    expect(out.recovery[0].actions[0]).toMatchObject({ tool: 'wait_for', ok: true });
+  });
+
+  it('rejects declared future recipes until their follow-up implementations land', async () => {
+    const server = makeServer({});
+    registerOcPilotRunWithRecoveryTool(server as any);
+
+    const response = await server.call({
+      action: { tool: 'interact', arguments: { query: 'Submit' } },
+      allowedRecipes: ['reacquire_ref'],
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.content?.[0]?.text).toContain('recipe reacquire_ref is declared but not implemented yet');
+  });
+
   it('rejects unsafe tools and hard bound violations', async () => {
     const server = makeServer({});
     registerOcPilotRunWithRecoveryTool(server as any);
