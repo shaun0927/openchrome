@@ -34,6 +34,7 @@ import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
 import { getIdleState } from '../utils/idle-state';
+import { applyRegisteredPreloads } from './preload-injector';
 import { TargetPageIndex } from './target-page-index';
 
 // Cookie type shared across methods
@@ -861,6 +862,7 @@ export class CDPClient {
           this.targetIdIndex.set(targetId, page);
           this.touchTargetActivity(targetId);
           this.configurePageDefenses(page);
+          await applyRegisteredPreloads(page);
           console.error(`[CDPClient] Indexed popup target ${targetId} (URL: ${url})`);
         }
       } catch {
@@ -1610,6 +1612,7 @@ export class CDPClient {
     }
 
     this.configurePageDefenses(page);
+    await applyRegisteredPreloads(page);
 
     // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
     let pageConfigTid: ReturnType<typeof setTimeout> | undefined;
@@ -1730,6 +1733,7 @@ export class CDPClient {
     this.targetIdIndex.set(targetId, page);
     this.touchTargetActivity(targetId);
     this.configurePageDefenses(page);
+    await applyRegisteredPreloads(page);
 
     // Stealth-only fingerprint defenses (WebGL, Canvas, Audio, hardware, screen, webdriver)
     const fpScript = getStealthFingerprintDefenseScript();

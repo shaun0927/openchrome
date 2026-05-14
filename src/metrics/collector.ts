@@ -263,6 +263,9 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerGauge('openchrome_tabs_health', 'Tab health status count');
     instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
     instance.registerCounter('openchrome_tool_calls_aborted_total', 'Tool calls aborted before successful completion');
+    instance.registerCounter('openchrome_react_query_total', 'Pilot React inspection queries by subcommand');
+    instance.registerCounter('openchrome_react_renders_observed_total', 'Pilot React render observations');
+    instance.registerCounter('openchrome_react_unavailable_total', 'Pilot React unavailable results by reason');
     instance.registerCounter('openchrome_listener_errors_total', 'Async EventEmitter listener errors surfaced by safeAsyncListener');
     instance.registerCounter('openchrome_zombie_targets_cleaned_total', 'Tracked targets evicted after listener or cleanup failures');
     instance.registerCounter('openchrome_unhandled_rejections_total', 'Process-level unhandled promise rejections (safety-net counter)');
