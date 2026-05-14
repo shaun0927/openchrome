@@ -86,6 +86,10 @@ The contract that governs every PR landing on `develop`:
   native runtime dep. Future native deps go into `optionalDependencies`
   with a documented fallback.
 
+## Transport surfaces
+
+OpenChrome supports `stdio`, `http`, and `both` transport modes over the same deterministic MCP tool server. Use [`docs/getting-started/http-daemon.md`](getting-started/http-daemon.md) for the operator-focused HTTP daemon walkthrough, including multi-client topology, auth, `/health`, `/metrics`, and idle-timeout behavior. Use [`docs/transport-lifecycle.md`](transport-lifecycle.md) for stability commitments and deprecation policy.
+
 ## Data flow for a typical agent loop
 
 ```
@@ -164,6 +168,11 @@ Mandatory native runtime dep: **`argon2`** (authentication). Pure-JS deps:
 (`rebrowser-puppeteer-core` re-namespaced), `uuid`, `write-file-atomic`.
 Top-level `npm overrides` for `basic-ftp` and `ip-address` neutralize
 transitive advisories.
+
+
+## Composition patterns
+
+OpenChrome keeps multi-step research composition in host-controlled recipes rather than adding server-side LLM planning. Runnable examples live in [`docs/recipes/`](recipes/README.md), including the topic survey, single-page deep extract, and changelog watch patterns from issue #858. These recipes combine existing deterministic tools such as `read_page`, `extract_data`, `validate_page`, `oc_assert`, `oc_evidence_bundle`, and `batch_execute` without changing the MCP API surface.
 
 ## Out of scope for the server
 
