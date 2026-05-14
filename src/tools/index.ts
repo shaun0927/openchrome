@@ -123,6 +123,7 @@ import { registerOcDiffTool } from './oc-diff';
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
+import { registerOcSkillExportTool } from './oc-skill-export';
 import { isPilotEnabled } from '../harness/flags';
 
 // Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
@@ -241,6 +242,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_session_snapshot: 'core',
   oc_skill_recall: 'core',
   oc_skill_record: 'core',
+  oc_skill_export: 'core',
   oc_skill_replay: 'pilot',
   oc_stop: 'core',
   page_content: 'core',
@@ -506,6 +508,7 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(proxy);
   registerOcSkillRecallTool(proxy);
+  registerOcSkillExportTool(proxy);
   // Skill replay (#856) — pilot-tier. Dynamically imported so no
   // `src/pilot/**` dependency is loaded unless --pilot and
   // OPENCHROME_SKILL_REPLAY=1 are both active.

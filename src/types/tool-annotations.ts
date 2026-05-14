@@ -80,6 +80,7 @@ export const TOOL_ANNOTATIONS = {
   oc_connection_health: READ_ONLY,
   oc_policy: READ_ONLY,
   oc_skill_recall: READ_ONLY,
+  oc_skill_export: READ_ONLY,
   vision_find: READ_ONLY,
   oc_assert: READ_ONLY,
   oc_recording_list: READ_ONLY,
