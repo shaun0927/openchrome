@@ -82,13 +82,20 @@ async function getToolNames(server: MCPServer): Promise<string[]> {
 
 describe('capability-filter: default surface (P2 compliance)', () => {
   let server: MCPServer;
+  const originalElementPickFlag = process.env.OPENCHROME_ELEMENT_PICK;
 
   beforeEach(() => {
+    process.env.OPENCHROME_ELEMENT_PICK = '0';
     server = makeServer();
     registerAllTools(server);
   });
 
   afterEach(() => {
+    if (originalElementPickFlag === undefined) {
+      delete process.env.OPENCHROME_ELEMENT_PICK;
+    } else {
+      process.env.OPENCHROME_ELEMENT_PICK = originalElementPickFlag;
+    }
     jest.clearAllMocks();
   });
 
