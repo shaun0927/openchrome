@@ -55,6 +55,28 @@ describe('scoreRecoveryOutcome', () => {
     expect(score.score).toBe(-1);
   });
 
+
+
+  it('scores recovery via fresh read above repeating the same failed action', () => {
+    const repeatedFailure = scoreRecoveryOutcome({
+      toolName: 'interact',
+      isError: true,
+      errorText: 'STALE_REF: element not found',
+      repeatedFailureCount: 1,
+    });
+    const freshReadRecovery = scoreRecoveryOutcome({
+      toolName: 'read_page',
+      resultText: '[ref_1] Submit button',
+      observationOnly: true,
+      freshRefsDiscovered: true,
+    });
+
+    expect(repeatedFailure.classification).toBe('failure');
+    expect(freshReadRecovery.classification).toBe('progress');
+    expect(freshReadRecovery.score).toBeGreaterThan(repeatedFailure.score);
+    expect(freshReadRecovery.reasons).toContain('fresh actionable refs discovered');
+  });
+
   it('handles missing evidence deterministically', () => {
     const a = scoreRecoveryOutcome({ toolName: 'unknown_tool' });
     const b = scoreRecoveryOutcome({ toolName: 'unknown_tool' });

@@ -160,6 +160,8 @@ import { registerRunHarnessTools } from '../run-harness/tools';
 import { registerTaskRunTools } from './task-run';
 // Read-only progress diagnostics (#1060).
 import { registerOcProgressStatusTool } from './oc-progress-status';
+// Web Vitals snapshot (#840).
+import { registerOcVitalsTool } from './oc-vitals';
 // 2-stage large-output fetch (#887) — store + paging tool.
 import { registerOcOutputFetchTool } from './oc-output-fetch';
 import { registerOcPilotRunWithRecoveryTool } from './oc-pilot-run-with-recovery';
@@ -296,6 +298,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   // ledger ops with no special filter group.
   oc_normalize_action: 'core',
   oc_progress_status: 'core',
+  oc_vitals: 'core',
   oc_reflect: 'core',
   oc_run_events: 'core',
   oc_run_finish: 'core',
@@ -478,6 +481,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Read-only anti-wandering diagnostics (#1060).
   registerOcProgressStatusTool(server);
+  registerOcVitalsTool(proxy);
 
   // 2-stage large-output fetch (#887) — paging tool for handle payloads.
   registerOcOutputFetchTool(proxy);
