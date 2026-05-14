@@ -708,6 +708,14 @@ export class MCPServer {
     });
   }
 
+  private getCurrentClientCapabilities(): { roots?: object; sampling?: object; elicitation?: object } {
+    const mcpSessionId = currentRequestContext()?.mcpSessionId;
+    if (mcpSessionId) {
+      return this.clientCapabilitiesBySession.get(mcpSessionId) ?? {};
+    }
+    return this.clientCapabilities;
+  }
+
   /**
    * Reject every pending server→client request. Called when the transport
    * tears down (HTTP DELETE / stdio EOF) so callers don't hang forever.
@@ -1815,6 +1823,8 @@ export class MCPServer {
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
           signal,
           principal,
+          clientCapabilities: this.getCurrentClientCapabilities(),
+          requestClient: this.requestFromClient.bind(this),
           reportProgress,
         };
         let tid: ReturnType<typeof setTimeout>;
@@ -1853,6 +1863,8 @@ export class MCPServer {
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
               principal,
+              clientCapabilities: this.getCurrentClientCapabilities(),
+              requestClient: this.requestFromClient.bind(this),
               reportProgress,
             };
             let tid2: ReturnType<typeof setTimeout>;
@@ -1897,6 +1909,8 @@ export class MCPServer {
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
               signal,
               principal,
+              clientCapabilities: this.getCurrentClientCapabilities(),
+              requestClient: this.requestFromClient.bind(this),
               reportProgress,
             };
             result = await Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext));
