@@ -27,6 +27,11 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Keep Chrome running, just disconnect. Default: false',
       },
+      dryRun: {
+        type: 'boolean',
+        default: false,
+        description: 'Preview sessions/tabs and managed Chrome resources that oc_stop would shut down without mutating runtime state.',
+      },
     },
     required: [],
   },
@@ -38,10 +43,53 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
   const keepChrome = (args.keepChrome as boolean) || false;
+  const dryRun = args.dryRun === true;
   const steps: string[] = [];
   const startTime = Date.now();
 
   try {
+    if (dryRun) {
+      const sessionManager = getSessionManager();
+      const sessions = sessionManager.getAllSessionInfos();
+      const totalTabs = sessions.reduce((sum, session) => sum + session.targetCount, 0);
+      const samples = sessions.slice(0, 10).map((session) => ({
+        id: session.id,
+        name: session.name,
+        targetCount: session.targetCount,
+        workerCount: session.workerCount,
+      }));
+      const wouldAffect = {
+        count: sessions.length,
+        samples,
+        details: {
+          sessions: sessions.length,
+          tabs: totalTabs,
+          keepChrome,
+          headedFallback: true,
+          connectionPool: true,
+          cdpClient: true,
+          chromeProcess: !keepChrome,
+        },
+      };
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            action: 'oc_stop',
+            dryRun: true,
+            wouldAffect,
+            message: `Would stop ${sessions.length} session(s) and ${totalTabs} tab(s)${keepChrome ? ', keeping Chrome running' : ', including managed Chrome shutdown'}.`,
+          }),
+        }],
+        structuredContent: {
+          dryRun: true,
+          wouldAffect,
+          guidance: 'Pass dryRun:false (or omit) to execute.',
+        },
+        isError: false,
+      };
+    }
+
     // Step 1: Clean up all sessions (closes workers, tabs, browser contexts)
     // Wrapped in its own try/catch so a broken CDP connection doesn't prevent
     // the remaining steps (pool shutdown, CDP disconnect, Chrome kill) from running.

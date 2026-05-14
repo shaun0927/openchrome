@@ -54,6 +54,45 @@ import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell 
 
 const program = new Command();
 
+async function readHiddenLine(prompt: string): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    return Buffer.concat(chunks).toString('utf8').trimEnd();
+  }
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    const stdout = process.stdout;
+    stdout.write(prompt);
+    stdin.setRawMode(true);
+    stdin.resume();
+    let value = '';
+    const onData = (buf: Buffer) => {
+      const char = buf.toString('utf8');
+      if (char === '\r' || char === '\n') {
+        stdin.setRawMode(false);
+        stdin.pause();
+        stdin.off('data', onData);
+        stdout.write('\n');
+        resolve(value);
+      } else if (char === '\u0003') {
+        process.exit(130);
+      } else if (char === '\u007f') {
+        value = value.slice(0, -1);
+      } else {
+        value += char;
+      }
+    };
+    stdin.on('data', onData);
+  });
+}
+
+async function loadVaultStore() {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const mod = require('../pilot/credentials/store') as { getCredentialVaultStore: () => { list: () => Promise<unknown>; save: (name: string, value: string) => Promise<void>; delete: (name: string) => Promise<boolean>; rotateKey: (newPassphrase?: string) => Promise<void> } };
+  return mod.getCredentialVaultStore();
+}
+
 // Package info - from dist/cli/ go up two levels to root
 const packageJsonPath = path.join(__dirname, '..', '..', 'package.json');
 let version = '0.1.0';
@@ -68,6 +107,47 @@ program
   .name('openchrome')
   .description('MCP server for parallel Claude Code browser sessions via CDP')
   .version(version);
+
+
+const vault = program
+  .command('vault')
+  .description('Manage the pilot local credential vault used by vault://name references');
+
+vault
+  .command('save <name>')
+  .description('Save a credential value from hidden TTY input or stdin')
+  .action(async (name: string) => {
+    const value = await readHiddenLine('Credential value: ');
+    const store = await loadVaultStore();
+    await store.save(name, value);
+    console.log(JSON.stringify({ ok: true, name, token: `<vault:${name}>` }));
+  });
+
+vault
+  .command('list')
+  .description('List credential names only')
+  .action(async () => {
+    const store = await loadVaultStore();
+    console.log(JSON.stringify({ ok: true, credentials: await store.list() }, null, 2));
+  });
+
+vault
+  .command('delete <name>')
+  .description('Delete a credential by name')
+  .action(async (name: string) => {
+    const store = await loadVaultStore();
+    console.log(JSON.stringify({ ok: true, name, deleted: await store.delete(name) }));
+  });
+
+vault
+  .command('rotate-key')
+  .description('Re-encrypt the vault with fresh key material')
+  .action(async () => {
+    const passphrase = process.env.OPENCHROME_VAULT_PASSPHRASE ? await readHiddenLine('New vault passphrase: ') : undefined;
+    const store = await loadVaultStore();
+    await store.rotateKey(passphrase);
+    console.log(JSON.stringify({ ok: true, rotated: true }));
+  });
 
 program
   .command('install')
