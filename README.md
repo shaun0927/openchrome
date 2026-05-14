@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Harness-Engineered Browser Automation</b><br>
-  The MCP server that drives — and guides — AI agents through a real Chrome.
+  The MCP server that drives and guides AI agents through a real Chrome.
 </p>
 
 <p align="center">
