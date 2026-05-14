@@ -8,6 +8,9 @@ model composes them into prose.
 
 | Recipe | Goal | Tools touched |
 |---|---|---|
+| [topic-survey.md](topic-survey.md) | Survey a public fixture and capture a bounded landing-page fact set before deeper crawl/extract work. | `crawl_sitemap`, `extract_data`, `validate_page`, `batch_execute` |
+| [single-page-deep-extract.md](single-page-deep-extract.md) | Extract a small structured row set from one high-value public page, then verify it before synthesis. | `read_page`, `extract_data`, `oc_assert`, `batch_execute` |
+| [changelog-watch.md](changelog-watch.md) | Compare two deterministic observations of a stable page and only summarize when drift is detected. | `oc_evidence_bundle`, `read_page`, `batch_execute` |
 | [action-cache-v2.md](action-cache-v2.md) | Interpret `act` cache status and verify page-fingerprint drift behavior. | `act` |
 | [fast-profile.md](fast-profile.md) | Enable and verify the opt-in low-token runtime profile. | `oc_get_connection_info`, `read_page` |
 | [multi-source-news-digest.md](multi-source-news-digest.md) | Pull headlines from several news sources and produce a one-screen daily digest. | `navigate`, `read_page`, `crawl` |
