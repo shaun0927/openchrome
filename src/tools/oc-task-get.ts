@@ -72,6 +72,7 @@ const handler: ToolHandler = async (
     budget_exceeded: meta.budget_exceeded,
     recommended_next: meta.recommended_next,
     recent_events: meta.recent_events ?? [],
+    lanes: meta.lanes ?? [],
     phase: meta.phase,
     objective: meta.objective,
     ...(includeResult ? { result } : {}),

@@ -24,6 +24,7 @@ import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import type { Page } from 'puppeteer-core';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { captureNavigationReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
+import { getBrowserLane, recordLaneToolCall, resolveLaneForTool } from '../core/browser-lanes';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
 const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
@@ -454,6 +455,8 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Worker ID for parallel ops. Default: default',
       },
+      taskId: { type: 'string', description: 'Task id when routing through a task-scoped browser lane.' },
+      laneId: { type: 'string', description: 'Task-scoped browser lane id. When supplied with taskId, navigate uses/records the lane-owned target.' },
       stealth: {
         type: 'boolean',
         description: 'CDP-free mode: opens tab via Chrome debug API without CDP attachment during page load. Use for Cloudflare Turnstile or similar anti-bot pages. CDP attaches after page settles.',
@@ -495,7 +498,7 @@ const handler: ToolHandler = async (
   context?: ToolContext
 ): Promise<MCPResult> => {
   throwIfAborted(context);
-  const tabId = args.tabId as string | undefined;
+  let tabId = args.tabId as string | undefined;
   const url = args.url as string;
   const profileDirectory = args.profileDirectory as string | undefined;
   const recallArg = args.recall as boolean | undefined;
@@ -506,8 +509,28 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
-  // Auto-generate a profile-scoped workerId when profileDirectory is specified
-  const workerId = (args.workerId as string | undefined) || (profileDirectory ? `profile:${profileDirectory}` : undefined);
+  // Auto-generate a profile-scoped workerId when profileDirectory is specified.
+  // If taskId+laneId are supplied, route creation through the lane worker and
+  // default tabId to the lane's most recent target. This is additive: callers
+  // that omit laneId keep the existing worker/tab semantics.
+  const laneRef = resolveLaneForTool(args);
+  let laneWorkerId: string | undefined;
+  if (laneRef.taskId || laneRef.laneId) {
+    if (!laneRef.taskId || !laneRef.laneId) {
+      return { content: [{ type: 'text', text: 'Error: taskId and laneId must be supplied together' }], isError: true };
+    }
+    try {
+      const lane = getBrowserLane(laneRef.taskId, laneRef.laneId);
+      laneWorkerId = lane.workerId;
+      if (!tabId) tabId = lane.targetIds[lane.targetIds.length - 1];
+      if (tabId && !lane.targetIds.includes(tabId)) {
+        return { content: [{ type: 'text', text: `Error: tabId ${tabId} does not belong to lane ${laneRef.laneId}` }], isError: true };
+      }
+    } catch (error) {
+      return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  }
+  const workerId = laneWorkerId || (args.workerId as string | undefined) || (profileDirectory ? `profile:${profileDirectory}` : undefined);
   const stealth = args.stealth as boolean | undefined;
   const stealthSettleMs = Math.min(Math.max((args.stealthSettleMs as number) || 8000, 1000), 30000);
   const autoFallback = args.autoFallback !== false; // default: true
@@ -660,6 +683,7 @@ const handler: ToolHandler = async (
               title: reuseTitle,
               tabId: existingTabId,
               workerId: resolvedWorkerId,
+              ...(laneRef.laneId ? { laneId: laneRef.laneId, taskId: laneRef.taskId } : {}),
               reused: true,
               elementCount: reuseElementCount,
               readiness: reuseReadiness,
@@ -670,6 +694,7 @@ const handler: ToolHandler = async (
               ...(reuseAuthGuidance ?? {}),
               ...(reuseDomainSkills !== undefined && { domain_skills: reuseDomainSkills }),
             });
+            await recordLaneToolCall(args, true, existingTabId);
             return {
               content: [{ type: 'text', text: reuseResultText }],
             };
@@ -732,6 +757,7 @@ const handler: ToolHandler = async (
         title: newTabTitle,
         tabId: targetId,
         workerId: assignedWorkerId,
+        ...(laneRef.laneId ? { laneId: laneRef.laneId, taskId: laneRef.taskId } : {}),
         created: true,
         elementCount: newTabElementCount,
         readiness: newTabReadiness,

@@ -106,6 +106,21 @@ export interface TaskOwner {
   mode?: string;
 }
 
+export interface BrowserLane {
+  lane_id: string;
+  task_id: string;
+  name?: string;
+  purpose?: string;
+  status: 'open' | 'closing' | 'closed' | 'failed';
+  sessionId: string;
+  workerId: string;
+  targetIds: string[];
+  created_at: number;
+  last_activity_at: number;
+  counters: { toolCalls: number; failures: number };
+  recovery?: 'target_missing';
+}
+
 export interface TaskMeta {
   /** 16-hex SHA-256(kind\x00args_json\x00created_at) */
   task_id: string;
@@ -137,6 +152,8 @@ export interface TaskMeta {
   budget_exceeded?: string[];
   recommended_next?: string;
   recent_events?: TaskRecentEvent[];
+  /** Task-scoped browser lanes owned by this task (#1037). */
+  lanes?: BrowserLane[];
   last_tool_name?: string;
   last_activity_at?: number;
 }
