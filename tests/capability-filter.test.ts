@@ -27,6 +27,7 @@ jest.mock('../src/session-manager', () => ({
 import { getSessionManager } from '../src/session-manager';
 import { MCPServer, MCPServerOptions } from '../src/mcp-server';
 import { TOOL_CAPABILITY_MAP, registerAllTools } from '../src/tools';
+import { resolveCapabilityFilterOptions } from '../src/config/capability-filter';
 import type { ToolCapability } from '../src/types/mcp';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -153,6 +154,26 @@ describe('capability-filter: --tools-only=core', () => {
     expect(names).toContain('read_page');
     expect(names).toContain('interact');
     expect(names).toContain('javascript_tool');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 2a: CLI alias parsing for --slim
+// ---------------------------------------------------------------------------
+
+describe('capability-filter: --slim alias parsing', () => {
+  test('--slim resolves to core-only capability filter', () => {
+    const result = resolveCapabilityFilterOptions({ slim: true });
+    expect(result.errorMessage).toBeUndefined();
+    expect(Array.from(result.capabilityFilter ?? [])).toEqual(['core']);
+    expect(result.logMessage).toContain('Capability filter (slim): core');
+  });
+
+  test('--slim is mutually exclusive with explicit filter flags', () => {
+    expect(resolveCapabilityFilterOptions({ slim: true, toolsOnly: 'core' }).errorMessage)
+      .toContain('mutually exclusive');
+    expect(resolveCapabilityFilterOptions({ slim: true, disableTools: 'workflow' }).errorMessage)
+      .toContain('mutually exclusive');
   });
 });
 

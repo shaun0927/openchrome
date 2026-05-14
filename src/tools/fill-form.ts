@@ -17,9 +17,54 @@ import { resolveElementsByAXTree, invalidateAXCache } from '../utils/ax-element-
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { normalizeQuery } from '../utils/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
+import { isPilotEnabled } from '../harness/flags';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
+import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
+import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
+
+
+async function resolveFormVaultFields(fields: Record<string, string | boolean | number>): Promise<{
+  fields: Record<string, string | boolean | number>;
+  masks: Map<string, { plaintext: string; token: string }>;
+  error?: MCPResult;
+}> {
+  if (!isPilotEnabled()) return { fields, masks: new Map() };
+  const resolved: Record<string, string | boolean | number> = {};
+  const masks = new Map<string, { plaintext: string; token: string }>();
+  for (const [key, value] of Object.entries(fields)) {
+    if (typeof value === 'string' && value.startsWith('vault://')) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const vault = require('../pilot/credentials/store') as typeof import('../pilot/credentials/store');
+        const out = await vault.resolveVaultValue(value);
+        resolved[key] = String(out.value);
+        if (out.token) masks.set(key, { plaintext: String(out.value), token: out.token });
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? String((error as { code: unknown }).code) : 'VAULT_ERROR';
+        return {
+          fields,
+          masks,
+          error: {
+            content: [{ type: 'text', text: `Error: ${code}: ${error instanceof Error ? error.message : String(error)}` }],
+            isError: true,
+            errorReason: code,
+          } as MCPResult,
+        };
+      }
+    } else {
+      resolved[key] = value;
+    }
+  }
+  return { fields: resolved, masks };
+}
+
+function maskVaultValue(fieldKey: string, value: string, masks: Map<string, { plaintext: string; token: string }>): string {
+  const mask = masks.get(fieldKey);
+  if (!mask) return value;
+  return value.split(mask.plaintext).join(mask.token);
+}
 
 const definition: MCPToolDefinition = {
   name: 'fill_form',
@@ -73,6 +118,12 @@ const definition: MCPToolDefinition = {
         description: 'Human-readable label for this action in audit logs (≤120 chars)',
         maxLength: 120,
       },
+capture_artifact: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, stage replay artifact steps for oc_skill_record after successfully filled fields. Default false is a strict no-op.',
+      },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['tabId'],
   },
@@ -80,15 +131,15 @@ const definition: MCPToolDefinition = {
 };
 
 
-const handler: ToolHandler = async (
+const coreHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
 ): Promise<MCPResult> => {
   throwIfAborted(context);
   const tabId = args.tabId as string;
-  const fields = (args.fields as Record<string, string | boolean | number> | undefined) ?? {};
-  const refsArg = (args.refs as Record<string, string | boolean | number> | undefined) ?? {};
+  let fields = (args.fields as Record<string, string | boolean | number> | undefined) ?? {};
+  let refsArg = (args.refs as Record<string, string | boolean | number> | undefined) ?? {};
   const submit = args.submit as string | undefined;
   const clearFirst = args.clear_first !== false; // Default to true
   const waitForMs = args.waitForMs as number | undefined;
@@ -96,6 +147,7 @@ const handler: ToolHandler = async (
   const loginCheck: 'auto' | 'off' = (args.loginCheck === 'off') ? 'off' : 'auto';
   const verifyMode = coerceVerifyMode(args.verify);
   const intent = args.intent as string | undefined;
+  const captureArtifact = shouldCaptureReplayArtifact(args.capture_artifact);
 
   // Validate intent when provided — use typeof guard for null-safety
   if (typeof intent === 'string') {
@@ -131,6 +183,14 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+
+  const vaultFields = await resolveFormVaultFields(fields);
+  if (vaultFields.error) return vaultFields.error;
+  fields = vaultFields.fields;
+  const vaultRefs = await resolveFormVaultFields(refsArg);
+  if (vaultRefs.error) return vaultRefs.error;
+  refsArg = vaultRefs.fields;
+  const vaultMasks = new Map([...vaultFields.masks, ...vaultRefs.masks]);
 
   try {
     const page = await sessionManager.getPage(sessionId, tabId, undefined, 'fill_form');
@@ -243,7 +303,18 @@ const handler: ToolHandler = async (
           } else {
             await page.keyboard.type(stringValue);
           }
-          filledFields.push(`${refKey}: "${stringValue.slice(0, 20)}${stringValue.length > 20 ? '...' : ''}" [via ref]`);
+          if (captureArtifact) {
+            await captureBackendNodeReplayStep({
+              cdpClient,
+              page,
+              backendNodeId: entry.backendDOMNodeId,
+              kind: 'fill',
+              args: { value: stringValue },
+            });
+          }
+
+          const maskedRefValue = maskVaultValue(refKey, stringValue, vaultMasks);
+          filledFields.push(`${refKey}: "${maskedRefValue.slice(0, 20)}${maskedRefValue.length > 20 ? '...' : ''}" [via ref]`);
         } catch {
           throwIfAborted(context);
           return { submitted, loginResult: null, submitErrored: false, staleRef: refKey };
@@ -325,8 +396,18 @@ const handler: ToolHandler = async (
               await page.keyboard.type(String(fieldValue));
             }
 
+            if (captureArtifact) {
+              await captureBackendNodeReplayStep({
+                cdpClient,
+                page,
+                backendNodeId: axMatch.backendDOMNodeId,
+                kind: 'fill',
+                args: { value: String(fieldValue) },
+              });
+            }
+
             invalidateAXCache(getTargetId(page.target()));
-            filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
+            filledFields.push(`${fieldKey}: "${maskVaultValue(fieldKey, String(fieldValue), vaultMasks).slice(0, 20)}${maskVaultValue(fieldKey, String(fieldValue), vaultMasks).length > 20 ? '...' : ''}"`);
           } catch (e) {
             throwIfAborted(context);
             errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
@@ -455,7 +536,18 @@ const handler: ToolHandler = async (
             }
           }
 
-          filledFields.push(`${fieldKey}: "${String(fieldValue).slice(0, 20)}${String(fieldValue).length > 20 ? '...' : ''}"`);
+          if (captureArtifact && bestMatch.backendDOMNodeId) {
+            await captureBackendNodeReplayStep({
+              cdpClient,
+              page,
+              backendNodeId: bestMatch.backendDOMNodeId,
+              kind: bestMatch.tagName === 'select' ? 'select' : 'fill',
+              args: { value: String(fieldValue) },
+            });
+          }
+
+          const maskedFieldValue = maskVaultValue(fieldKey, String(fieldValue), vaultMasks);
+          filledFields.push(`${fieldKey}: "${maskedFieldValue.slice(0, 20)}${maskedFieldValue.length > 20 ? '...' : ''}"`);
         } catch (e) {
           throwIfAborted(context);
           errors.push(`Failed to fill "${fieldKey}": ${e instanceof Error ? e.message : String(e)}`);
@@ -603,7 +695,9 @@ const handler: ToolHandler = async (
       // One line per field: "  fieldName: "value" → ✓"
       for (const [fieldKey, fieldValue] of Object.entries(fields)) {
         const valueStr = String(fieldValue);
-        const maskedValue = fieldKey.toLowerCase().includes('password') ? '***' : valueStr.slice(0, 50);
+        const maskedValue = vaultMasks.has(fieldKey)
+          ? vaultMasks.get(fieldKey)!.token
+          : fieldKey.toLowerCase().includes('password') ? '***' : valueStr.slice(0, 50);
         const filled = !errors.some(e => e.includes(`"${fieldKey}"`));
         if (filled) {
           resultParts.push(`  ${fieldKey}: "${maskedValue}" \u2192 \u2713`);
@@ -671,6 +765,26 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+};
+
+
+const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
+  const result = await coreHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+
+  try {
+    const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'fill_form');
+    if (page) {
+      await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+    }
+  } catch {
+    // Snapshot chaining is best-effort; never mask the successful action result.
+  }
+  return result;
 };
 
 export function registerFillFormTool(server: MCPServer): void {

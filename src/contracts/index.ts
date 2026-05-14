@@ -68,3 +68,4 @@ export {
   scoreHash,
   teachClass,
 } from './screenshot-class';
+export { createChromeEvalContext } from './chrome-eval-context';
