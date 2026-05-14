@@ -32,6 +32,7 @@ import {
 } from '../core/perception/locator-fallback';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { isPilotEnabled } from '../harness/flags';
+import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
 
 
@@ -136,6 +137,11 @@ const definition: MCPToolDefinition = {
         type: 'string',
         maxLength: 120,
         description: 'Optional short label (≤120 chars) describing the user-facing goal of this action, e.g. "submit login form". Recorded in the task journal for observability.',
+      },
+      capture_artifact: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, stage a replay artifact step for oc_skill_record after a successful click. Default false is a strict no-op.',
       },
       locatorFallback: {
         type: 'object',
@@ -249,6 +255,7 @@ const coreHandler: ToolHandler = async (
 
   const intent = args.intent as string | undefined;
   const refArg = args.ref as string | undefined;
+  const captureArtifact = shouldCaptureReplayArtifact(args.capture_artifact);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
@@ -403,6 +410,15 @@ const coreHandler: ToolHandler = async (
         await page.keyboard.type(String(typeValue));
       } else {
         await page.mouse.click(cx, cy);
+      }
+
+      if (captureArtifact && action === 'click') {
+        await captureBackendNodeReplayStep({
+          cdpClient,
+          page,
+          backendNodeId: backendDOMNodeId,
+          kind: 'click',
+        });
       }
 
       const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
@@ -630,6 +646,15 @@ const coreHandler: ToolHandler = async (
           ax.role, ax.name, undefined, undefined
         );
 
+        if (captureArtifact && action === 'click') {
+          await captureBackendNodeReplayStep({
+            cdpClient,
+            page,
+            backendNodeId: ax.backendDOMNodeId,
+            kind: 'click',
+          });
+        }
+
         // Clean up any leftover tags
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
@@ -848,6 +873,15 @@ const coreHandler: ToolHandler = async (
         bestMatch.tagName,
         bestMatch.textContent
       );
+    }
+
+    if (captureArtifact && action === 'click' && bestMatch.backendDOMNodeId) {
+      await captureBackendNodeReplayStep({
+        cdpClient,
+        page,
+        backendNodeId: bestMatch.backendDOMNodeId,
+        kind: 'click',
+      });
     }
 
     // Clean up discovery tags to prevent stale properties

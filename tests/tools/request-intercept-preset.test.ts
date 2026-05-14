@@ -680,3 +680,89 @@ describe('OPENCHROME_OPTIMIZE_BANDWIDTH env auto-apply', () => {
     expect(parsed.preset).toBeNull();
   });
 });
+
+describe('dryRun preview (#878)', () => {
+  test('enable dryRun previews preset rules without enabling interception', async () => {
+    const handler = await loadHandler();
+    const page = await getMockPage() as unknown as { setRequestInterception: jest.Mock };
+
+    const result = (await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'enable',
+      preset: 'optimize-bandwidth-light',
+      dryRun: true,
+    })) as { content: Array<{ text: string }>; structuredContent?: Record<string, unknown>; isError?: boolean };
+
+    expect(result.isError).toBe(false);
+    expect(page.setRequestInterception).not.toHaveBeenCalled();
+    const parsed = parseToolResult(result);
+    expect(parsed.dryRun).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      dryRun: true,
+      wouldAffect: {
+        count: 0,
+        details: {
+          action: 'enable',
+          parsedRuleCount: 3,
+          existingRulesCount: 0,
+          observedRequestCount: 0,
+          preset: 'optimize-bandwidth-light',
+        },
+      },
+      guidance: 'Pass dryRun:false (or omit) to execute.',
+    });
+  });
+
+  test('addRule dryRun previews matched observed requests without mutating rules', async () => {
+    const handler = await loadHandler();
+    await addRule(handler, { pattern: '*', action: 'log' });
+    await handler(testSessionId, { tabId: testTargetId, action: 'enable' });
+
+    await (await getRequestListener())(createMockRequest({
+      url: 'https://cdn.example.com/hero.png',
+      resourceType: 'image',
+    }));
+    await (await getRequestListener())(createMockRequest({
+      url: 'https://api.example.com/data',
+      resourceType: 'xhr',
+    }));
+
+    const before = parseToolResult(await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'listRules',
+    }));
+
+    const result = (await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'addRule',
+      dryRun: true,
+      rule: {
+        pattern: '*://cdn.example.com/*',
+        resourceTypes: ['image'],
+        action: 'block',
+      },
+    })) as { content: Array<{ text: string }>; structuredContent?: Record<string, unknown>; isError?: boolean };
+
+    const after = parseToolResult(await handler(testSessionId, {
+      tabId: testTargetId,
+      action: 'listRules',
+    }));
+
+    expect(result.isError).toBe(false);
+    expect(after).toEqual(before);
+    expect(result.structuredContent).toMatchObject({
+      dryRun: true,
+      wouldAffect: {
+        count: 1,
+        samples: [{ url: 'https://cdn.example.com/hero.png', resourceType: 'image', method: 'GET' }],
+        details: {
+          action: 'addRule',
+          parsedRuleCount: 1,
+          existingRulesCount: 1,
+          observedRequestCount: 2,
+        },
+      },
+      guidance: 'Pass dryRun:false (or omit) to execute.',
+    });
+  });
+});

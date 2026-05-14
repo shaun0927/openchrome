@@ -7,6 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
+import { getMetricsCollector } from '../metrics/collector';
 
 const definition: MCPToolDefinition = {
   name: 'wait_for',
@@ -35,11 +36,71 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Require visibility (selector). Default: false',
       },
+      pollIntervalMs: {
+        type: 'number',
+        description: 'Function mode only: predicate polling interval in ms for main-frame evaluation. Default 200, min 50, max 5000.',
+      },
     },
     required: ['tabId', 'type'],
   },
   annotations: TOOL_ANNOTATIONS.wait_for,
 };
+
+function clampPollInterval(value: unknown): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 200;
+  return Math.min(5000, Math.max(50, n));
+}
+
+function classifyFunctionWaitError(error: unknown): 'timeout' | 'navigation_lost' | 'predicate_error' {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('timeout') || message.includes('Timeout') || message.includes('timed out') || /waiting failed:.*exceeded/i.test(message)) {
+    return 'timeout';
+  }
+  if (/navigation|execution context.*destroyed|frame.*detached|target.*closed|session closed/i.test(message)) {
+    return 'navigation_lost';
+  }
+  return 'predicate_error';
+}
+
+function recordFunctionWaitMetric(result: 'matched' | 'timeout' | 'predicate_error' | 'navigation_lost', elapsedMs: number): void {
+  try {
+    const metrics = getMetricsCollector();
+    metrics.inc('openchrome_wait_predicate_total', { result });
+    metrics.observe('openchrome_wait_predicate_elapsed_ms', { result }, elapsedMs);
+  } catch {
+    // Best-effort telemetry only.
+  }
+}
+
+function buildFunctionWaitFact(
+  result: 'matched' | 'timeout' | 'predicate_error' | 'navigation_lost',
+  elapsedMs: number,
+  pollIntervalMs: number,
+  error?: unknown,
+): MCPResult {
+  const err = error instanceof Error
+    ? { name: error.name || 'Error', message: error.message }
+    : error === undefined
+      ? undefined
+      : { name: 'Error', message: String(error) };
+  const payload = {
+    action: 'wait_for',
+    type: 'function',
+    matched: result === 'matched',
+    result,
+    elapsedMs,
+    pollIntervalMs,
+    ...(err ? { error: err } : {}),
+    message: result === 'matched'
+      ? `Function returned truthy after ${elapsedMs}ms`
+      : `Function wait completed as ${result} after ${elapsedMs}ms`,
+  };
+  recordFunctionWaitMetric(result, elapsedMs);
+  return {
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    structuredContent: payload as unknown as Record<string, unknown>,
+  };
+}
 
 const handler: ToolHandler = async (
   sessionId: string,
@@ -50,6 +111,7 @@ const handler: ToolHandler = async (
   const value = args.value as string | undefined;
   const timeout = (args.timeout as number) ?? 30000;
   const visible = (args.visible as boolean) ?? false;
+  const pollIntervalMs = clampPollInterval(args.pollIntervalMs);
 
   const sessionManager = getSessionManager();
 
@@ -150,23 +212,15 @@ const handler: ToolHandler = async (
           };
         }
 
-        await page.waitForFunction(value, { timeout });
-
-        const elapsed = Date.now() - startTime;
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                action: 'wait_for',
-                type: 'function',
-                elapsed,
-                message: `Function returned truthy after ${elapsed}ms`,
-              }),
-            },
-          ],
-        };
+        try {
+          await page.waitForFunction(value, { timeout, polling: pollIntervalMs });
+          const elapsed = Date.now() - startTime;
+          return buildFunctionWaitFact('matched', elapsed, pollIntervalMs);
+        } catch (error) {
+          const elapsed = Date.now() - startTime;
+          const result = classifyFunctionWaitError(error);
+          return buildFunctionWaitFact(result, elapsed, pollIntervalMs, error);
+        }
       }
 
       case 'url_match': {
