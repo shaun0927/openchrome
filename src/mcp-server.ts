@@ -48,6 +48,7 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
+import { assertUrlAllowedBySessionRoots, setSessionMcpRoots } from './security/mcp-roots';
 import { isClientDisconnect } from './errors/abort';
 import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
 import { isAllowed, requiredScope } from './auth/scope-policy';
@@ -101,6 +102,37 @@ function redactActVariablesForTelemetry(toolName: string, args: Record<string, u
   }
   return { ...args, variables: '[redacted]' };
 }
+
+function extractNetworkRootCandidateUrls(toolName: string, args: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) out.push(value);
+  };
+  switch (toolName) {
+    case 'navigate':
+    case 'tabs_create':
+    case 'crawl':
+      push(args.url);
+      break;
+    case 'crawl_sitemap':
+      push(args.url);
+      push(args.sitemap_url);
+      break;
+    case 'request_intercept': {
+      const rules = Array.isArray(args.rules) ? args.rules : [];
+      for (const rule of rules) {
+        if (!rule || typeof rule !== 'object') continue;
+        const pattern = (rule as { pattern?: unknown }).pattern;
+        if (typeof pattern === 'string' && /^https:\/\//i.test(pattern)) push(pattern);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return out;
+}
+
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
@@ -987,6 +1019,19 @@ export class MCPServer {
       const method = parsed.method as string;
       if (isInitializedNotification(method)) {
         console.error(`[MCPServer] Received notification: ${method}`);
+        const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
+        if (mcpSessionId) {
+          void this.refreshSessionRoots(mcpSessionId).catch((err) => {
+            console.error(`[MCPServer] initial roots/list refresh failed for session ${mcpSessionId}: ${formatError(err)}`);
+          });
+        }
+      } else if (method === 'notifications/roots/list_changed' || method === 'roots/list_changed') {
+        const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
+        if (mcpSessionId) {
+          void this.refreshSessionRoots(mcpSessionId).catch((err) => {
+            console.error(`[MCPServer] roots/list refresh failed for session ${mcpSessionId}: ${formatError(err)}`);
+          });
+        }
       }
       // All notifications are silently ignored (no response sent)
       return null;
@@ -1183,6 +1228,34 @@ export class MCPServer {
     }
   }
 
+
+  private async refreshSessionRoots(mcpSessionId: string): Promise<void> {
+    const caps = this.clientCapabilitiesBySession.get(mcpSessionId) ?? this.clientCapabilities;
+    if (!caps.roots) return;
+    const roots = await this.requestFromClient<unknown>('roots/list', undefined, { timeoutMs: 250 });
+    setSessionMcpRoots(mcpSessionId, roots);
+  }
+
+  private enforceNetworkRootsForTool(
+    mcpSessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): MCPResult | null {
+    const urls = extractNetworkRootCandidateUrls(toolName, args);
+    if (urls.length === 0) return null;
+    try {
+      for (const url of urls) {
+        assertUrlAllowedBySessionRoots(mcpSessionId, url);
+      }
+      return null;
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: formatError(error) }],
+        isError: true,
+      };
+    }
+  }
+
   /**
    * Handle initialize request
    */
@@ -1243,6 +1316,10 @@ export class MCPServer {
         // level via `logging/setLevel`; events flow as
         // `notifications/message`.
         logging: {},
+        // #880 — OpenChrome can react to client roots/list_changed and treats
+        // roots as additive narrowing only. Empty object follows MCP capability
+        // convention: support exists without extra sub-capabilities.
+        roots: {},
       },
       serverInfo: {
         name: 'openchrome',
@@ -1691,6 +1768,16 @@ export class MCPServer {
         };
       }
       throw err;
+    }
+
+    const rootsDenial = this.enforceNetworkRootsForTool(
+      currentRequestContext()?.mcpSessionId ?? sessionId,
+      toolName,
+      substitutedArgs,
+    );
+    if (rootsDenial) {
+      this.recordToolOutputObservability(toolName, rootsDenial);
+      return rootsDenial;
     }
 
     // All static gates passed (scope, tool existence, required args). Only
