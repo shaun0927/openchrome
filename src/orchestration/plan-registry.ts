@@ -13,6 +13,7 @@ import type {
   PlanEntry,
   PlanRegistryData,
   TaskPattern,
+  PlanFailureClass,
 } from '../types/plan-cache';
 
 const DEFAULT_BASE_PATH = path.join(os.homedir(), '.openchrome', 'plans');
@@ -139,7 +140,7 @@ export class PlanRegistry {
   /**
    * Update execution stats for a plan and recalculate confidence.
    */
-  updateStats(planId: string, success: boolean, durationMs: number): void {
+  updateStats(planId: string, success: boolean, durationMs: number, failureClass?: PlanFailureClass): void {
     const entry = this.data.plans.find(p => p.id === planId);
     if (!entry) return;
 
@@ -149,6 +150,10 @@ export class PlanRegistry {
       stats.successCount++;
     } else {
       stats.failCount++;
+      if (failureClass) {
+        stats.failureClassCounts = stats.failureClassCounts || {};
+        stats.failureClassCounts[failureClass] = (stats.failureClassCounts[failureClass] || 0) + 1;
+      }
     }
 
     // Rolling average for duration
@@ -204,6 +209,7 @@ export class PlanRegistry {
         failCount: 0,
         avgDurationMs: 0,
         lastUsed: 0,
+        failureClassCounts: {},
       },
       confidence: 0.5, // Initial neutral confidence
       minConfidenceToUse: 0.3,
