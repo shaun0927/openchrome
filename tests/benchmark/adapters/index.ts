@@ -23,3 +23,11 @@ export {
   PuppeteerBrowserLike,
   PuppeteerPageLike,
 } from './puppeteer-adapter';
+
+export {
+  PlaywrightAdapter,
+  PlaywrightAdapterOptions,
+  PlaywrightBrowserLike,
+  PlaywrightContextLike,
+  PlaywrightPageLike,
+} from './playwright-adapter';
