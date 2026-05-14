@@ -219,6 +219,59 @@ function estimatedStaticAssetResponseBytes(resourceType: string): number {
   return STATIC_ASSET_RESPONSE_BYTE_ESTIMATES[resourceType.toLowerCase()] ?? 0;
 }
 
+function ruleMatchesLog(rule: InterceptRule, log: RequestLogEntry): boolean {
+  if (!matchesPattern(log.url, rule.pattern)) return false;
+  if (rule.resourceTypes && rule.resourceTypes.length > 0) {
+    return rule.resourceTypes.includes(log.resourceType.toLowerCase()) ||
+      rule.resourceTypes.includes(log.resourceType);
+  }
+  return true;
+}
+
+function dryRunPreviewResult(args: {
+  action: 'enable' | 'addRule';
+  rules: InterceptRule[];
+  existingRulesCount: number;
+  loggedRequests: RequestLogEntry[];
+  preset?: BandwidthPreset | null;
+}): MCPResult {
+  const matchedLogs = args.loggedRequests.filter((log) => args.rules.some((rule) => ruleMatchesLog(rule, log)));
+  const samples = matchedLogs.slice(0, 10).map((log) => ({
+    url: log.url,
+    resourceType: log.resourceType,
+    method: log.method,
+  }));
+  const wouldAffect = {
+    count: matchedLogs.length,
+    samples,
+    details: {
+      action: args.action,
+      parsedRules: args.rules,
+      parsedRuleCount: args.rules.length,
+      existingRulesCount: args.existingRulesCount,
+      observedRequestCount: args.loggedRequests.length,
+      preset: args.preset ?? null,
+    },
+  };
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        action: 'request_intercept',
+        dryRun: true,
+        wouldAffect,
+        message: `Dry-run preview: ${args.rules.length} rule(s) would be installed; ${matchedLogs.length} observed request(s) would match.`,
+      }),
+    }],
+    structuredContent: {
+      dryRun: true,
+      wouldAffect,
+      guidance: 'Pass dryRun:false (or omit) to execute.',
+    },
+    isError: false,
+  };
+}
+
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
   annotations: TOOL_ANNOTATIONS.request_intercept,
@@ -284,6 +337,11 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Max logs to return (getLogs)',
       },
+      dryRun: {
+        type: 'boolean',
+        default: false,
+        description: 'Preview enable/addRule rule installation without enabling interception, installing listeners, or mutating rules.',
+      },
     },
     required: ['tabId', 'action'],
   },
@@ -327,6 +385,7 @@ const handler: ToolHandler = async (
   const ruleId = args.ruleId as string | undefined;
   const limit = args.limit as number | undefined;
   const presetArg = args.preset as string | undefined;
+  const dryRun = args.dryRun === true;
 
   // Validate preset before any other work
   if (presetArg !== undefined) {
@@ -371,7 +430,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get or create state
+    // Get or create state. dryRun must not create per-tab state by itself.
     let state = interceptStates.get(tabId);
     if (!state) {
       state = {
@@ -381,7 +440,9 @@ const handler: ToolHandler = async (
         loggedRequests: [],
         maxLogs: 500,
       };
-      interceptStates.set(tabId, state);
+      if (!dryRun) {
+        interceptStates.set(tabId, state);
+      }
     }
 
     switch (action) {
@@ -391,6 +452,21 @@ const handler: ToolHandler = async (
           (ENV_PRESET && SUPPORTED_PRESETS.includes(ENV_PRESET as BandwidthPreset)
             ? (ENV_PRESET as BandwidthPreset)
             : undefined);
+
+        if (dryRun) {
+          const nextRules = state.rules.filter((r) => !r.id.startsWith('preset-'));
+          if (activePreset) {
+            nextRules.unshift(...presetToRules(activePreset));
+          }
+          const installedRules = nextRules.filter((rule) => !state.rules.includes(rule));
+          return dryRunPreviewResult({
+            action: 'enable',
+            rules: installedRules.length > 0 ? installedRules : nextRules,
+            existingRulesCount: state.rules.length,
+            loggedRequests: state.loggedRequests,
+            preset: activePreset ?? null,
+          });
+        }
 
         if (state.enabled) {
           // Re-enable with an explicit `preset` arg replaces the previously
@@ -630,12 +706,21 @@ const handler: ToolHandler = async (
         }
 
         const newRule: InterceptRule = {
-          id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          id: dryRun ? 'dry-run-rule' : `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           pattern: ruleArg.pattern,
           resourceTypes: ruleArg.resourceTypes,
           action: ruleArg.action,
           modifyOptions: ruleArg.modifyOptions,
         };
+
+        if (dryRun) {
+          return dryRunPreviewResult({
+            action: 'addRule',
+            rules: [newRule],
+            existingRulesCount: state.rules.length,
+            loggedRequests: state.loggedRequests,
+          });
+        }
 
         state.rules.push(newRule);
 

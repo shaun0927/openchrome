@@ -14,6 +14,8 @@ import { getExistingChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { writeFileAtomicSafe } from '../utils/atomic-file';
 import { safeTitle } from '../utils/safe-title';
+import { currentRequestContext } from '../observability/request-id';
+import { assertFilePathAllowedBySessionRoots } from '../security/mcp-roots';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -224,15 +226,17 @@ async function ensureDir(): Promise<void> {
   await fs.promises.mkdir(SNAPSHOT_DIR, { recursive: true });
 }
 
-export async function saveSnapshot(snapshot: SessionSnapshot): Promise<void> {
+export async function saveSnapshot(snapshot: SessionSnapshot, mcpSessionId?: string): Promise<void> {
   await ensureDir();
 
   // Save as latest.json (atomic overwrite)
   const latestPath = path.join(SNAPSHOT_DIR, 'latest.json');
+  if (mcpSessionId) assertFilePathAllowedBySessionRoots(mcpSessionId, latestPath);
   await writeFileAtomicSafe(latestPath, snapshot);
 
   // Save history copy
   const historyPath = path.join(SNAPSHOT_DIR, `${snapshot.id}.json`);
+  if (mcpSessionId) assertFilePathAllowedBySessionRoots(mcpSessionId, historyPath);
   await writeFileAtomicSafe(historyPath, snapshot);
 
   // Prune old snapshots
@@ -275,7 +279,7 @@ export async function pruneSnapshots(): Promise<void> {
 // ─── Handler ───────────────────────────────────────────────────────────────
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const memo: SnapshotMemo = {
@@ -299,7 +303,14 @@ const handler: ToolHandler = async (
     label: (args.label as string) || undefined,
   };
 
-  await saveSnapshot(snapshot);
+  try {
+    await saveSnapshot(snapshot, currentRequestContext()?.mcpSessionId ?? sessionId);
+  } catch (error) {
+    return {
+      content: [{ type: 'text', text: `Error saving snapshot: ${error instanceof Error ? error.message : String(error)}` }],
+      isError: true,
+    };
+  }
 
   const text = [
     `Snapshot saved: ${snapshotId}`,

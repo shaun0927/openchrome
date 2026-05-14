@@ -11,6 +11,8 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getActionRecorder, registerSessionRecorder, unregisterSessionRecorder } from '../recording/action-recorder';
 import { getRecordingStore } from '../recording/recording-store';
 import { RecordingAction, RecordingMetadata } from '../recording/types';
+import { currentRequestContext } from '../observability/request-id';
+import { assertFilePathAllowedBySessionRoots } from '../security/mcp-roots';
 
 /** Matches the RECORDING_ID_PATTERN exported from recording-store */
 const RECORDING_ID_PATTERN = /^rec-\d{8}-\d{6}-[a-z0-9]{4,6}$/;
@@ -274,7 +276,7 @@ const exportDefinition: MCPToolDefinition = {
 };
 
 const exportHandler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const recordingId = args.recordingId as string;
@@ -309,6 +311,7 @@ const exportHandler: ToolHandler = async (
       const html = await generateHtmlReport(metadata, actions, store);
       const dir = store.getRecordingDir(recordingId);
       const filepath = path.join(dir, 'report.html');
+      assertFilePathAllowedBySessionRoots(currentRequestContext()?.mcpSessionId ?? sessionId, filepath);
       await fs.promises.writeFile(filepath, html, 'utf-8');
       return {
         content: [{ type: 'text', text: `HTML report saved to: ${filepath}` }],

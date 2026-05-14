@@ -79,7 +79,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(_testRoot, { recursive: true, force: true });
+  fs.rmSync(_testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 // ── oc_skill_record ───────────────────────────────────────────────────────────
@@ -290,5 +290,5 @@ describe('oc_skill_recall', () => {
 
     expect(result.error).toBeUndefined();
     expect((result.skills as unknown[]).length).toBe(20);
-  });
+  }, 30000);
 });

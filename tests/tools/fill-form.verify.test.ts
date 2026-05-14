@@ -26,6 +26,10 @@ describe('fill_form tool — verify field (#827)', () => {
 
     const def = tools.get('fill_form')!.definition;
     expect(def.inputSchema.properties.verify).toEqual(VERIFY_FIELD_SCHEMA);
+    expect(def.inputSchema.properties.capture_artifact).toMatchObject({
+      type: 'boolean',
+      default: false,
+    });
   });
 
   describe('backcompat mapping', () => {

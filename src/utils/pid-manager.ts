@@ -168,6 +168,55 @@ export function readChromePid(port: number): number | null {
   }
 }
 
+
+export interface OrphanChromePreview {
+  count: number;
+  samples: Array<{ pid: number; source: 'pid-file' | 'marker'; port?: number; marker?: string; userDataDir?: string }>;
+  details: {
+    checkedPorts: number[];
+    pidFileCandidates: number;
+    markerCandidates: number;
+  };
+}
+
+export function previewOrphanedChromeProcesses(basePorts: number[]): OrphanChromePreview {
+  const samples: OrphanChromePreview['samples'] = [];
+  let pidFileCandidates = 0;
+  for (const port of basePorts) {
+    const chromePid = readChromePid(port);
+    if (chromePid === null) continue;
+    if (!isPidAlive(chromePid)) continue;
+    const serverPids = listActivePids(port);
+    if (serverPids.length > 0) continue;
+    pidFileCandidates++;
+    if (samples.length < 10) samples.push({ pid: chromePid, source: 'pid-file', port });
+  }
+
+  let markerCandidates = 0;
+  for (const { marker } of listMarkers()) {
+    if (classifyMarker(marker) !== 'kill') continue;
+    markerCandidates++;
+    if (samples.length < 10) {
+      samples.push({
+        pid: marker.pid,
+        source: 'marker',
+        marker: marker.marker,
+        userDataDir: marker.userDataDir,
+      });
+    }
+  }
+
+  return {
+    count: pidFileCandidates + markerCandidates,
+    samples,
+    details: {
+      checkedPorts: basePorts,
+      pidFileCandidates,
+      markerCandidates,
+    },
+  };
+}
+
 /**
  * Kill orphaned Chrome processes from previous crashed sessions.
  * An orphan is a Chrome process whose PID file exists AND is alive,
