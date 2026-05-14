@@ -13,7 +13,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
-import { assertDomainAllowed } from '../security/domain-guard';
+import { assertDomainAllowed, DomainPolicyError } from '../security/domain-guard';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import {
@@ -101,10 +101,17 @@ const handler: ToolHandler = async (
     }
   }
 
-  // Domain blocklist check before creating the tab
+  // Domain policy check before creating the tab
   try {
     assertDomainAllowed(url);
   } catch (error) {
+    if (error instanceof DomainPolicyError) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify(error.blocked) }],
+        structuredContent: error.blocked as unknown as Record<string, unknown>,
+        isError: true,
+      };
+    }
     return {
       content: [
         {

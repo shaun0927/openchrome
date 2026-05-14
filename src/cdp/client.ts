@@ -34,6 +34,9 @@ import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
 import { getIdleState } from '../utils/idle-state';
+import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
+import { applyRegisteredPreloads } from './preload-injector';
+import { TargetPageIndex } from './target-page-index';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -110,7 +113,7 @@ export class CDPClient {
   private autoLaunch: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
-  private targetIdIndex: Map<string, Page> = new Map();
+  private targetIdIndex = new TargetPageIndex();
   private targetActivityAt: Map<string, number> = new Map();
   private inFlightCookieScans: Map<string, Promise<CookieScanResult>> = new Map();
   private lastCookieScanResult: CookieScanResult | null = null;
@@ -800,6 +803,19 @@ export class CDPClient {
       // Inbound CDP event — reset idle window (issue #649 Part A).
       getIdleState().notifyActive();
       if (target.type() !== 'page') return;
+      const url = target.url();
+      if (!isInternalBrowserUrl(url)) {
+        try {
+          assertDomainAllowed(url);
+        } catch (err) {
+          const targetId = getTargetId(target);
+          if (targetId) {
+            await this.closePage(targetId).catch(() => {});
+          }
+          console.error(`[CDPClient] Blocked changed target by domain policy (URL: ${url}): ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+      }
       const targetId = getTargetId(target);
       if (this.targetIdIndex.has(targetId)) {
         console.error(`[CDPClient] Target changed: ${targetId}`);
@@ -822,10 +838,21 @@ export class CDPClient {
       if (target.type() !== 'page') return;
 
       const url = target.url();
+      // New Chrome pages are commonly born as about:blank before createPage()
+      // or popup scripts navigate them. Do not close these provisional targets;
+      // targetchanged enforces the allowlist once they reach a real URL.
+      if (isInternalBrowserUrl(url)) return;
+      try {
+        assertDomainAllowed(url);
+      } catch (err) {
+        const targetId = getTargetId(target);
+        if (targetId) {
+          await this.closePage(targetId).catch(() => {});
+        }
+        console.error(`[CDPClient] Blocked popup target by domain policy (URL: ${url}): ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
       // Filter out Chrome internal pages and blank pages
-      if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
-          url.startsWith('devtools://') || url === 'about:blank') return;
-
       // Check if this target was opened by a tracked page (popup/window.open)
       const opener = target.opener();
       if (!opener) return; // Not a popup - skip to avoid ghost tabs
@@ -860,6 +887,7 @@ export class CDPClient {
           this.targetIdIndex.set(targetId, page);
           this.touchTargetActivity(targetId);
           this.configurePageDefenses(page);
+          await applyRegisteredPreloads(page);
           console.error(`[CDPClient] Indexed popup target ${targetId} (URL: ${url})`);
         }
       } catch {
@@ -1609,6 +1637,7 @@ export class CDPClient {
     }
 
     this.configurePageDefenses(page);
+    await applyRegisteredPreloads(page);
 
     // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
     let pageConfigTid: ReturnType<typeof setTimeout> | undefined;
@@ -1623,7 +1652,9 @@ export class CDPClient {
 
     if (url) {
       try {
+        assertDomainAllowed(url);
         await smartGoto(page, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+        assertDomainAllowed(page.url());
       } catch (err) {
         // Close the page to prevent about:blank ghost tabs on navigation failure
         const targetId = getTargetId(page.target());
@@ -1729,6 +1760,7 @@ export class CDPClient {
     this.targetIdIndex.set(targetId, page);
     this.touchTargetActivity(targetId);
     this.configurePageDefenses(page);
+    await applyRegisteredPreloads(page);
 
     // Stealth-only fingerprint defenses (WebGL, Canvas, Audio, hardware, screen, webdriver)
     const fpScript = getStealthFingerprintDefenseScript();
@@ -1737,6 +1769,7 @@ export class CDPClient {
     await page.evaluateOnNewDocument(stackScript).catch(() => {});
 
     // Step 4: Navigate to the real URL — all defenses now fire at document_start
+    assertDomainAllowed(url);
     console.error(`[CDPClient] Stealth tab ${targetId}: navigating to ${url} with defenses pre-registered`);
     try {
       await page.goto(url, {
@@ -1753,6 +1786,14 @@ export class CDPClient {
     // The page has loaded with defenses active; this extra wait lets async challenges finish.
     const postNavSettleMs = Math.max(settleMs - 5000, 2000); // At least 2s, reduced from total settle
     await new Promise<void>(resolve => setTimeout(resolve, postNavSettleMs));
+
+    try {
+      assertDomainAllowed(page.url());
+    } catch (err) {
+      this.targetIdIndex.delete(targetId);
+      await page.close().catch(() => {});
+      throw err;
+    }
 
     // Step 6: Defense-in-depth — apply patches directly to the current page.
     // evaluateOnNewDocument should have handled this at document_start, but we
@@ -2059,7 +2100,7 @@ export class CDPClient {
   async rebuildTargetIdIndex(): Promise<number> {
     // Build into a fresh Map, then swap atomically to avoid a window
     // where concurrent getPageByTargetId() calls miss the fast path.
-    const newIndex = new Map<string, Page>();
+    const newIndex = new TargetPageIndex();
     let indexed = 0;
     try {
       const browser = this.getBrowser();

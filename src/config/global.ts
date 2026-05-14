@@ -45,6 +45,8 @@ export interface GlobalConfig extends WindowBoundsConfig {
   security?: {
     /** Domains to block AI agent access to. Supports glob patterns (e.g., "*.bank.com") */
     blocked_domains?: string[];
+    /** Optional allowlist: when present, only http(s) URLs whose host matches these patterns are allowed. */
+    allow_hosts?: string[];
     /** Enable audit logging of tool invocations (default: false) */
     audit_log?: boolean;
     /** Custom audit log path (default: ~/.openchrome/audit.log) */

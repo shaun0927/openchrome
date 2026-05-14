@@ -254,6 +254,17 @@ function withSkillLock<T>(lockDir: string, fn: () => T): T {
       break;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'EBUSY') {
+        // Windows can transiently deny mkdir for a lock directory while
+        // another process is creating/removing that same path. Treat only
+        // these OS lock codes like contention and keep the existing bounded
+        // wait instead of failing a serialized writer.
+        if (Date.now() - started >= SKILL_LOCK_WAIT_MS) {
+          throw new Error(`skill-memory: timed out waiting for lock ${lockDir}`);
+        }
+        sleepSync(SKILL_LOCK_POLL_MS);
+        continue;
+      }
       if (code !== 'EEXIST') throw err;
 
       let stale = false;
